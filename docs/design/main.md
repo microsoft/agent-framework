@@ -50,6 +50,18 @@ interacting with different language models. It exposes a standardized metadata
 about the model it provides (e.g., model name, tool call and vision capabilities, etc.)
 to support validation and composition with other components.
 
+The framework provides a set of pre-built model clients:
+- OpenAIChatCompletionClient: a model client that is backed by OpenAI's Chat Completion API.
+- OpenAIResponseClient: a model client that is backed by OpenAI's Response API.
+- AzureOpenAIAIChatCompletionClient: a model client that is backed by Azure OpenAI's Chat Completion API.
+- AzureOpenAIResponseClient: a model client that is backed by Azure OpenAI's Response API.
+- AzureAIClient: a model client that is backed by Azure AI's models.
+- AnthropicClient: a model client that is backed by Anthropic's models.
+- GeminiClient: a model client that is backed by Gemini's models.
+- HuggingFaceClient: a model client that is backed by Hugging Face-hosted models.
+- OllamaClient: a model client that is backed by Ollama-hosted models.
+- VLLMClient: a model client that is backed by VLLM-hosted models.
+
 ### Model Context (term)
 
 Model context (or simply "context") refers to data types that are produced by
@@ -64,21 +76,32 @@ language models and may be invoked using data in the context.
 [Model Context Protocol](https://modelcontextprotocol.io/introduction) (MCP)
 is a standard protocol that defines a model context provider.
 
+
 ### Tool (class)
 
 A tool is a model context provider that can be used to invoke procedure code
 and returns the result as context to the language model.
-Tool can have arguments for invocation. 
+A tool may have arguments for invocation. 
 The arguments must be defined using JSON schema that language model supports.
 
-A tool may come with 
+A tool may have dependencies such as tokens, credentials,
+or output message channels that will be provided by the framework.
+
+The framework provides a set of pre-built tools:
+- FunctionTool: a tool that wraps a function.
+- AzureAISearchTool: a tool that is backed by Azure AI Search Service.
 
 ### Workbench (class)
 
 A workbench is a model context provider that provides a set of tools sharing
-common state and resource. 
+common state and resource.
+For example, a workbench can be used by multiple agents to edit the same document,
+work on the same code repository, or operatng on a common database.
 
 _Question: should we make Workbench an extension of MCP?_
+
+The framework provides a set of pre-built workbenches:
+- MCPWorkbench: a workbench that is backed by a Model Context Protocol (MCP) server.
 
 ### Memory (class)
 
@@ -92,10 +115,23 @@ and provide an interface for synthesizing summaries of the interactions.
 Some memory may implement tool or workbench interfaces to allow models to
 operate on them.
 
+The framework provides a set of pre-built memories:
+- ListMemory: a memory retrieves context formatted from all data it stores as a list.
+
+_Question: should we consider memory as vendor-specific?_
+
 ### Thread (class)
 
-A thread is a model context provider that stores the message history
-used with a chat-based language model.
+A thread is a model context provider that stores views the message history 
+and provides a view of the message history to the language model.
+
+The framework provides a set of pre-built threads:
+- UnboundedThread: a thread that provides view for all of the message history
+- TruncatedThread: a thread that provides a view of a message history from the last N messages.
+- TokenLimitedThread: a thread that provides a view of a message history up to
+a certain number of tokens.
+- TimeLimitedThread: a thread that provides a view of a message history up to
+a certain time limit.
 
 ### Actor (class)
 
@@ -119,7 +155,7 @@ The framework provides a set of pre-built agents:
 and use thread, memory, tools and workbenches in a configurable way.
 - AzureAIAgent: an agent that is backed by Azure AI Agent Service.
 - OpenAIAgent: an agent that is backed by OpenAI's response API.
-- A2AAgent: an agent that is backed by the [A2A Protocol]()
+- A2AAgent: an agent that is backed by the [A2A Protocol](https://google.github.io/A2A/documentation/).
 
 
 ### Guardrail (term)
@@ -137,6 +173,18 @@ A guardrail may also be an agent, they are not mutually exclusive.
 The implementaiton of some tools or agents may also uses components similar to
 guardrails but that's not what being discussed here.
 
+The framework provides a set of pre-built guardrails as reference implementation:
+- JailbreakGuardrail: a guardrail that uses a language model to detect malicious instructions
+and jailbreaks in the input messages.
+- SecretGuardrail: a guardrail that uses a configurable set of rules to detect
+sensitive data such as passwords, credit card numbers, tokens, etc. in the output messages.
+- PIIGuardrail: a guardrail that uses a configurable set of rules to detect
+personally identifiable information (PII) such as email addresses, phone numbers,
+social security numbers, etc. in the output messages.
+- PythonCodeReviewGuardrail: a guardrail that uses a Python linting tools and language
+model to review code in the output messages.
+
+
 ### Workflow (class)
 
 A workflow is an actor consists of multiple child actors, some of which may be
@@ -148,6 +196,15 @@ produced by the child actors, and create the output messages.
 The composition of actors can be declaratively defined using a directed graph, or can
 emerge from the type-based message routing defined for each actor.
 
+The framework provides a set of pre-built workflows:
+- SequentialWorkflow: a workflow that invokes its child actors in a sequential order.
+- GraphWorkflow: a workflow that specifies the order of invocation as a directed graph.
+- SwarmWorkflow: a workflow that invokes next child actors based on `HandoffMessage` message produces by 
+  the previous child actors.
+- TypeRoutedWorkflow: a workflow that routes messages to its child actors based on the type of the messages
+the actors can handle.
+
+
 ## Deployment and Scaling
 
 Agents and workflows created using this framework can be deloyed through
@@ -155,4 +212,8 @@ the [Agent Runtime](https://github.com/microsoft/agent-runtime).
 
 ## Monitoring and Debugging
 
+TBD.
+
 ## Evaluation and Optimization
+
+TBD.
