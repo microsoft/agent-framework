@@ -119,6 +119,8 @@ The framework provides a set of pre-built agents:
 and use thread, memory, tools and workbenches in a configurable way.
 - AzureAIAgent: an agent that is backed by Azure AI Agent Service.
 - OpenAIAgent: an agent that is backed by OpenAI's response API.
+- A2AAgent: an agent that is backed by the [A2A Protocol]()
+
 
 ### Guardrail (term)
 
