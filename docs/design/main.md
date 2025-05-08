@@ -94,7 +94,7 @@ to refer to entities that use language models. This aligns with the usage in the
 AI community, where people often refer to "Agent" as an entity that can perceive, plan
 and act._
 
-### Component Hierarchy
+### Component Relationships
 
 The following diagram shows the component hierarchy of the framework:
 
