@@ -96,32 +96,32 @@ and act._
 
 ### Component Relationships
 
-The following diagram shows the component hierarchy of the framework:
+The following diagram shows the component relationship of the framework:
 
 ```mermaid
 graph TD
-    Component[Component] --> Actor[Actor]
-    Actor --> Agent[Agent]
-    Actor --> Guardrail[Guardrail]
-    Actor --> Workflow[Workflow]
+    Component[Component] --> |extends| Actor[Actor]
+    Actor --> |extends| Agent[Agent]
+    Actor --> |extends| Guardrail[Guardrail]
+    Actor --> |extends| Workflow[Workflow]
     
-    Component --> ModelClient[Model Client]
-    Component --> VectorStore[Vector Store]
-    Component --> EmbeddingClient[Embedding Client]
-    Component --> Tool[Tool]
-    Component --> Workbench[Workbench]
-    Component --> Memory[Memory]
-    Component --> Thread[Thread]
+    Component --> |extends| ModelClient[Model Client]
+    Component --> |extends| VectorStore[Vector Store]
+    Component --> |extends| EmbeddingClient[Embedding Client]
+    Component --> |extends| Tool[Tool]
+    Component --> |extends| Workbench[Workbench]
+    Component --> |extends| Memory[Memory]
+    Component --> |extends| Thread[Thread]
     
-    Agent --> uses1[Uses Model Client]
-    Agent --> uses2[Uses Thread]
-    Agent --> uses3[Uses Tools/Workbenches]
-    Agent --> uses4[Uses Memory]
+    Agent --> |uses| uses1[Model Client]
+    Agent --> |uses| uses2[Thread]
+    Agent --> |uses| uses3[Tools/Workbenches]
+    Agent --> |uses| uses4[Memory]
     
-    Workflow --> contains[Contains Child Actors]
-    
-    VectorStore --> usedBy[Used by Memory]
-    EmbeddingClient --> usedBy2[Used by Vector Store]
+    Workflow --> |contains| contains[Child Actors]
+
+    Memory --> |uses| uses5[Vector Store]
+    VectorStore --> |uses| uses6[Embedding Client]
 ```
 
 
