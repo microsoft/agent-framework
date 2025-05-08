@@ -10,6 +10,7 @@ What values does the framework provide?
 Table of Contents
 - [Main Components](#main-components)
     - [Model Client](#model-client-class)
+    - [Vector Store and Embedding Client](#vector-store-and-embedding-client-class)
     - [Model Context](#model-context-term)
     - [Model Context Provider](#model-context-provider-term)
     - [Tool](#tool-class)
