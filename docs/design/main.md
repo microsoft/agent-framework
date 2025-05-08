@@ -230,7 +230,7 @@ The framework provides a set of pre-built agents:
 - `ChatCompletionAgent`: an agent that uses a chat-completion model to process messages
 and use thread, memory, tools and workbenches in a configurable way.
 - `AzureAIAgent`: an agent that is backed by Azure AI Agent Service.
-- `ResponseAgent`: an agent that is backed by OpenAI's Responses API.
+- `ResponsesAgent`: an agent that is backed by OpenAI's Responses API.
 - `A2AAgent`: an agent that is backed by the [A2A Protocol](https://google.github.io/A2A/documentation/).
 
 
