@@ -13,18 +13,16 @@ What is this document?
 - Detailed design of each element and its implementation will be in a separate document.
 
 Table of Contents
-- [Main Components](#main-components)
-    - [Concepts](#concepts)
-        - [Component](#component)
-        - [Model Context](#model-context)
-        - [Actor](#actor)
-    - [Component Relationships](#component-relationships)
+- [Core Data Types](#core-data-types)
+- [Component](#component)
+- [Agent Components](#agent-components)
     - [Model Client](#model-client)
     - [Vector Store and Embedding Client](#vector-store-and-embedding-client)
     - [Tool](#tool)
     - [MCP Workbench](#mcp-workbench)
     - [Memory](#memory)
     - [Thread](#thread)
+- [Actor Components](#actor-components)
     - [Agent](#agent)
     - [Guardrail](#guardrail)
     - [Workflow](#workflow)
@@ -33,31 +31,11 @@ Table of Contents
 - [Evaluation](#evaluation)
 - [Debugging](#debugging)
 
-## Main Components
+## Core Data Types
 
-### Concepts
+To unify the interaction between components, we define a set of core
+data types.
 
-#### Component
-
-A component is a class that provides a specific functionality and can be used
-independently by applications.
-
-Components can be composed to create complex components. For example,
-an agent can be composed from model clients, tools and memory,
-and a tool can be composed from an agent or a workflow.
-It is the responsibility of the framework to validate components
-and their composition,
-and ensure the lifecycle of the components are managed correctly.
-
-We do not discuss the implementation details of the components, as some of them
-such as actors will be backed by the [agent runtime](https://github.com/microsoft/agent-runtime).
-
-_Question: should components be serializable?_
-
-
-#### Model Context
-
-Model context refers to content produced by or consumed by language models.
 For example, text, images, function calls, tool schema are 
 all examples of such data types.
 These data types are used to interact with model clients, tools, workbenches, threads, and memory,
@@ -73,29 +51,22 @@ in the application for transforming data between components.
 
 _TODO: define a set of model context data types based on MEAI and MCP._
 
-#### Actor
+## Component
 
-An actor is a component that takes a sequence of messages and produces a stream
-of messages. The data types of the messages can be built-in or defined by the application,
-but they must be serializable and defined for each actor.
-These data types are not necessarily the same ones in model context.
+A component is a class that provides a specific functionality and can be used
+independently by applications.
 
-An actor holds state managed by the agent runtime through the state API,
-which supports stateful components such as threads, workbenches, and memory.
+Components can be composed to create complex components. For example,
+an agent can be composed from model clients, tools and memory,
+and a tool can be composed from an agent or a workflow.
+It is the responsibility of the framework to validate components
+and their composition,
+and ensure the lifecycle of the components are managed correctly.
 
-_NOTE: we need to align the actor definition in the agent runtime with this one,
-so we are using the actor class directly from the agent runtime._
+We do not discuss the implementation details of the components, as some of them
+such as actors will be backed by the [agent runtime](https://github.com/microsoft/agent-runtime).
 
-_NOTE: we need to design the agent runtime to make sure the state API can
-be used to implement the components in the agent framework._
-
-_NOTE: Instead of "Agent", in the runtime, we should use "Actor" to refer to the
-current agent base class `autogen_core.Agent`. We want to reserve the term "Agent"
-to refer to entities that use language models. This aligns with the usage in the
-AI community, where people often refer to "Agent" as an entity that can perceive, plan
-and act._
-
-### Component Relationships
+_Question: should components be serializable?_
 
 The following diagram shows the component relationship of the framework:
 
@@ -125,6 +96,9 @@ graph TD
     VectorStore --> |uses| uses6[Embedding Client]
 ```
 
+## Agent Components
+
+Agent components are components that are used to build an agent.
 
 ### Model Client
 
@@ -244,6 +218,28 @@ The framework provides a set of pre-built threads:
 a certain number of tokens.
 - `TimeLimitedThread`: a thread that provides a view of a message history up to
 a certain time limit.
+
+## Actor Components
+
+An actor is a component that takes a sequence of messages and produces a stream
+of messages. The data types of the messages can be built-in or defined by the application,
+but they must be serializable and defined for each actor.
+These data types are not necessarily the same ones in model context.
+
+An actor holds state managed by the agent runtime through the state API,
+which supports stateful components such as threads, workbenches, and memory.
+
+_NOTE: we need to align the actor definition in the agent runtime with this one,
+so we are using the actor class directly from the agent runtime._
+
+_NOTE: we need to design the agent runtime to make sure the state API can
+be used to implement the components in the agent framework._
+
+_NOTE: Instead of "Agent", in the runtime, we should use "Actor" to refer to the
+current agent base class `autogen_core.Agent`. We want to reserve the term "Agent"
+to refer to entities that use language models. This aligns with the usage in the
+AI community, where people often refer to "Agent" as an entity that can perceive, plan
+and act._
 
 ### Agent
 
