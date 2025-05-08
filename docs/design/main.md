@@ -64,6 +64,11 @@ The framework provides a set of pre-built model clients:
 - BedrockClient: a model client that is backed by AWS Bedrock-hosted models.
 - NIMClient: a model client that is backed by NVIDIA's NIM-hosted models.
 
+Prompt template is a component that is used by model clients to generate
+prompts with parameters set based on some injected context.
+This gets into the actual interface and implementation detail of model clients,
+so we just mention it here.
+
 ### Vector Store and Embedding Client (class)
 
 A vector store is component that provides a unified interface for
