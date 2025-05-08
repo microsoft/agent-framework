@@ -52,7 +52,7 @@ to support validation and composition with other components.
 
 The framework provides a set of pre-built model clients:
 - OpenAIChatCompletionClient: a model client that is backed by OpenAI's Chat Completion API.
-- AzureOpenAIAIChatCompletionClient: a model client that is backed by Azure OpenAI's Chat Completion API.
+- AzureOpenAIChatCompletionClient: a model client that is backed by Azure OpenAI's Chat Completion API.
 - AzureOpenAIResponseClient: a model client that is backed by Azure OpenAI's Response API.
 - AzureAIClient: a model client that is backed by Azure AI's models.
 - AnthropicClient: a model client that is backed by Anthropic's models.
