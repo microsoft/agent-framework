@@ -52,7 +52,6 @@ to support validation and composition with other components.
 
 The framework provides a set of pre-built model clients:
 - OpenAIChatCompletionClient: a model client that is backed by OpenAI's Chat Completion API.
-- OpenAIResponseClient: a model client that is backed by OpenAI's Response API.
 - AzureOpenAIAIChatCompletionClient: a model client that is backed by Azure OpenAI's Chat Completion API.
 - AzureOpenAIResponseClient: a model client that is backed by Azure OpenAI's Response API.
 - AzureAIClient: a model client that is backed by Azure AI's models.
@@ -61,6 +60,46 @@ The framework provides a set of pre-built model clients:
 - HuggingFaceClient: a model client that is backed by Hugging Face-hosted models.
 - OllamaClient: a model client that is backed by Ollama-hosted models.
 - VLLMClient: a model client that is backed by VLLM-hosted models.
+- ONNXRuntimeClient: a model client that is backed by ONNX Runtime-hosted models.
+- BedrockClient: a model client that is backed by AWS Bedrock-hosted models.
+- NIMClient: a model client that is backed by NVIDIA's NIM-hosted models.
+
+### Vector Store and Embedding Client (class)
+
+A vector store is component that provides a unified interface for
+interacting with different vector databases, similar to model clients.
+It exposes indexing and querying methods, including vector, text-based
+and hybrid queries.
+
+The details can be filled in based on the existing vector abstraction
+in Semantic Kernel.
+
+The framework provides pre-built vector stores (already exist in
+Semantic Kernel):
+- Azure AI Search
+- Cosmos DB
+- Chroma
+- Couchbase
+- Elasticsearch
+- Faiss
+- In-memory
+- JDBC
+- MongoDB
+- Pinecone
+- Postgres
+- Qdrant
+- Redis
+- SQL Server
+- SQLite
+- Volatile
+- Weaviate
+
+Many vector store implementations will require embedding clients
+to function. An embedding client is a component that implements a unified interface
+to interact with different embedding models.
+
+The framework provides a set of pre-built embedding clients:
+- TBD.
 
 ### Model Context (term)
 
@@ -75,6 +114,8 @@ language models and may be invoked using data in the context.
 
 [Model Context Protocol](https://modelcontextprotocol.io/introduction) (MCP)
 is a standard protocol that defines a model context provider.
+
+_TODO: define a set of model context content types based on MEAI and MCP._
 
 
 ### Tool (class)
@@ -105,7 +146,7 @@ The framework provides a set of pre-built workbenches:
 
 ### Memory (class)
 
-A memory is a model context provider that stores arbitrary data types while providing
+A memory is a stateful model context provider that stores arbitrary data types while providing
 an interface for retrieving context from the stored data for language models.
 For example, a memory can store multi-media documents, and provide an interface
 for synthesizing context from snippets of the documents.
@@ -122,7 +163,7 @@ _Question: should we consider memory as vendor-specific?_
 
 ### Thread (class)
 
-A thread is a model context provider that stores views the message history 
+A thread is a stateful model context provider that stores views the message history 
 and provides a view of the message history to the language model.
 
 The framework provides a set of pre-built threads:
@@ -154,7 +195,7 @@ The framework provides a set of pre-built agents:
 - ChatCompletionAgent: an agent that uses a chat-completion model to process messages
 and use thread, memory, tools and workbenches in a configurable way.
 - AzureAIAgent: an agent that is backed by Azure AI Agent Service.
-- OpenAIAgent: an agent that is backed by OpenAI's response API.
+- ResponseAgent: an agent that is backed by OpenAI's response API.
 - A2AAgent: an agent that is backed by the [A2A Protocol](https://google.github.io/A2A/documentation/).
 
 
@@ -210,10 +251,24 @@ the actors can handle.
 Agents and workflows created using this framework can be deloyed through
 the [Agent Runtime](https://github.com/microsoft/agent-runtime).
 
-## Monitoring and Debugging
+Details TBD.
 
-TBD.
+## Monitoring
 
-## Evaluation and Optimization
+Traces should follow the [OTEL GenAI Conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/).
 
-TBD.
+Details TBD.
+
+## Evaluation
+
+Integrate with Azure AI Evaluation Service.
+
+Details TBD.
+
+## Debugging
+
+Future work, a placeholder here for our mind.
+
+## Optimization
+
+Future work, a placeholder here for our mind.
