@@ -1,4 +1,4 @@
-# Agent Framework Design Doc (Draft)
+# Agent Framework: Overview
 
 
 What values does the framework provide?
@@ -6,6 +6,11 @@ What values does the framework provide?
 - An easy path for deploying, securing and scaling applications, both locally and in the cloud.
 - A set of tools for monitoring, debugging, evaluation and optimization, both locally and in the cloud.
 - A community of developers and users for support, ideas, and contributions, benefiting everyone in the ecosystem.
+
+What is this document?
+- An overview of the new framework.
+- Defining the major elements of the framework and their relationships.
+- Detailed design of each element and its implementation will be in a separate document.
 
 Table of Contents
 - [Main Components](#main-components)
@@ -88,6 +93,37 @@ current agent base class `autogen_core.Agent`. We want to reserve the term "Agen
 to refer to entities that use language models. This aligns with the usage in the
 AI community, where people often refer to "Agent" as an entity that can perceive, plan
 and act._
+
+### Component Hierarchy
+
+The following diagram shows the component hierarchy of the framework:
+
+```mermaid
+graph TD
+    Component[Component] --> Actor[Actor]
+    Actor --> Agent[Agent]
+    Actor --> Guardrail[Guardrail]
+    Actor --> Workflow[Workflow]
+    
+    Component --> ModelClient[Model Client]
+    Component --> VectorStore[Vector Store]
+    Component --> EmbeddingClient[Embedding Client]
+    Component --> Tool[Tool]
+    Component --> Workbench[Workbench]
+    Component --> Memory[Memory]
+    Component --> Thread[Thread]
+    
+    Agent --> uses1[Uses Model Client]
+    Agent --> uses2[Uses Thread]
+    Agent --> uses3[Uses Tools/Workbenches]
+    Agent --> uses4[Uses Memory]
+    
+    Workflow --> contains[Contains Child Actors]
+    
+    VectorStore --> usedBy[Used by Memory]
+    EmbeddingClient --> usedBy2[Used by Vector Store]
+```
+
 
 ### Model Client
 
@@ -211,9 +247,12 @@ a certain time limit.
 
 ### Agent
 
-An agent is an actor that uses a language model to process and produce messages.
-During its handling of messages, it uses thread to keep track of the interaction
-with the model, optionally invoke tools and workbenches, and store and retrieve data through memory.
+An agent is an actor that uses a language model. 
+During its handling of messages, the agent:
+- Uses model client to process messages,
+- Uses thread to keep track of the interaction with the model,
+- Invokes tools or workbenches, and
+- Retrieves and stores data through memory.
 
 An agent base class has access to a set of well-known states through the state API provided by its
 actor base class. These well-known states are:
