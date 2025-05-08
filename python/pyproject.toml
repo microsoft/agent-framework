@@ -53,7 +53,8 @@ select = [
     "T20", # typing checks
     "TD", # todos
     "W", # pycodestyle warning checks
-    "T100", # Debugger
+    "T100", # Debugger,
+    "S", # Bandit checks
 ]
 ignore = [
     "D100", # allow missing docstring in public module
