@@ -22,7 +22,7 @@ Table of Contents
     - [Model Client](#model-client)
     - [Vector Store and Embedding Client](#vector-store-and-embedding-client)
     - [Tool](#tool)
-    - [Workbench](#workbench)
+    - [MCP Workbench](#mcp-workbench)
     - [Memory](#memory)
     - [Thread](#thread)
     - [Agent](#agent)
@@ -110,13 +110,13 @@ graph TD
     Component --> |extends| VectorStore[Vector Store]
     Component --> |extends| EmbeddingClient[Embedding Client]
     Component --> |extends| Tool[Tool]
-    Component --> |extends| Workbench[Workbench]
+    Component --> |extends| MCPWorkbench[MCP Workbench]
     Component --> |extends| Memory[Memory]
     Component --> |extends| Thread[Thread]
     
     Agent --> |uses| uses1[Model Client]
     Agent --> |uses| uses2[Thread]
-    Agent --> |uses| uses3[Tools/Workbenches]
+    Agent --> |uses| uses3[Tools and MCP Workbenches]
     Agent --> |uses| uses4[Memory]
     
     Workflow --> |contains| contains[Child Actors]
@@ -203,18 +203,17 @@ The framework provides a set of pre-built tools:
 - `FunctionTool`: a tool that wraps a function.
 - `AzureAISearchTool`: a tool that is backed by Azure AI Search Service.
 
-### Workbench
+### MCP Workbench
 
-A workbench is a component that provides a set of tools sharing
-common state and resource.
-For example, a workbench can be used by multiple agents to edit the same document,
-work on the same code repository, or operatng on a common database.
+An MCP workbench is a component that wraps an [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server.
 
-The framework provides a set of pre-built workbenches:
-- `MCPWorkbench`: a workbench that is backed by a Model Context Protocol (MCP) server.
+While MCP supports a richer set of features, for the purpose of the first
+version of the framework, we focus on tool-related features:
+- `list_tools`: list the tools available in the MCP server.
+- `call_tool`: call a tool in the MCP server.
 
-_Question: should we just use MCP as a component, forget about workbench? It looks like
-there isn't going to be another workbench class._
+The tools provided by MCP workbench should match the tool interface to ensure
+minimal boilerplate code when dealing with both tools and MCP workbenches.
 
 ### Memory
 
