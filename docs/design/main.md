@@ -18,6 +18,7 @@ Table of Contents
         - [Component](#component)
         - [Model Context](#model-context)
         - [Actor](#actor)
+    - [Component Relationships](#component-relationships)
     - [Model Client](#model-client)
     - [Vector Store and Embedding Client](#vector-store-and-embedding-client)
     - [Tool](#tool)
@@ -254,13 +255,13 @@ During its handling of messages, the agent:
 - Invokes tools or workbenches, and
 - Retrieves and stores data through memory.
 
-An agent base class has access to a set of well-known states through the state API provided by its
-actor base class. These well-known states are:
+An agent base class has access to a set of well-known states through the state API provided by its actor base class. These well-known states are:
 - `Thread`: the thread component.
 - `Memory`: the memory component.
-- `Workbench`: the workbench component.
 
-A agent may not use the components provided by the framework to implement
+It is up to the implementation of the agent class to decide how these states and
+components are used.
+An agent may not use the components provided by the framework to implement
 the actor interface.
 Azure AI Agent is an example of such agent: its implementation is
 backed by the Azure AI Agent Service.
@@ -315,12 +316,9 @@ AgentChat, Semantic Kernel's Agent Framework and Process Framework.
 _Question: should we consider this a replacement for the Process Framework?_
 
 The framework provides a set of pre-built workflows:
-- `SequentialWorkflow`: a workflow that invokes its child actors in a sequential order.
 - `GraphWorkflow`: a workflow that specifies the order of invocation as a directed graph.
-- `SwarmWorkflow`: a workflow that invokes next child actors based on `HandoffMessage` message produced by 
-    the previous child actors.
-- `TypeRoutedWorkflow`: a workflow that routes messages to its child actors based on the type of the messages
-the actors can handle.
+- `RoutedWorkflow`: a workflow that routes messages to its child actors based on the
+message type and the message content. Swarm is an example of such workflow.
 
 ## Deployment and Scaling
 
