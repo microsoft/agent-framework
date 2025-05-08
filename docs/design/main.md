@@ -38,18 +38,18 @@ data types.
 
 For example, text, images, function calls, tool schema are 
 all examples of such data types.
-These data types are used to interact with model clients, tools, workbenches, threads, and memory,
-forming the connective tissue between the components.
+These data types are used to interact with agent components (model clients, tools, MCP, threads, and memory),
+forming the connective tissue between those components.
 
 In AutoGen, these are the data types mostly defined in `autogen_core.models` module,
 and others like `autogen_core.Image` and `autogen_core.FunctionCall`. This is just
 an example as AutoGen has no formal definition of model context.
 
-A design goal of the new framework to simplify the interaction between components
-through a common set of model context data types, minimizing boilerplate code
+A design goal of the new framework to simplify the interaction between agent components
+through a common set of data types, minimizing boilerplate code
 in the application for transforming data between components.
 
-_TODO: define a set of model context data types based on MEAI and MCP._
+We can start with a set of data types based on Microsoft.Extension.AI and MCP.
 
 ## Component
 
@@ -66,7 +66,10 @@ and ensure the lifecycle of the components are managed correctly.
 We do not discuss the implementation details of the components, as some of them
 such as actors will be backed by the [agent runtime](https://github.com/microsoft/agent-runtime).
 
-_Question: should components be serializable?_
+A component can be created from a set of serializable configuration parameters,
+with the help of dependency injection to resolve non-serializable dependencies.
+For example, a model client can be created from a set of parameters like temperature and model names,
+but the actual underlying client can be instantiated as an object.
 
 The following diagram shows the component relationship of the framework:
 
@@ -171,13 +174,20 @@ A tool may have arguments for invocation.
 The arguments must be defined using JSON schema that language model supports.
 
 A tool may have dependencies such as tokens, credentials,
-or output message channels that will be provided by the framework.
+or output message channels that will be provided by the framework
+through dependency injection.
+
+A tool may also have an action guard that is used to ensure the
+tool is invoked with proper arguments, or that the agent has the
+right context such as human approval to invoke the tool.
 
 The framework provides a set of pre-built tools:
 - `FunctionTool`: a tool that wraps a function.
 - `AzureAISearchTool`: a tool that is backed by Azure AI Search Service.
 
 ### MCP Workbench
+
+(Name to be determined)
 
 An MCP workbench is a component that wraps an [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server.
 
@@ -269,7 +279,7 @@ and use thread, memory, tools and workbenches in a configurable way.
 - `A2AAgent`: an agent that is backed by the [A2A Protocol](https://google.github.io/A2A/documentation/).
 
 
-### Guardrail
+### Guardrail 
 
 A guardrail is an actor that enforces constraints on
 the messages sent to or produced by other actors.
@@ -279,8 +289,9 @@ output messages of an agent does not contain sensitive information or harmful co
 In another example, a guardrail can be used to review code produced by an agent
 is safe and following the security guidelines.
 
-The implementaiton of some tools or agents may also uses components similar to
-guardrails but that's not what being discussed here.
+The implementation of guardrails and tool guard may share common subcomponents
+for enforcing constraints, but the former is an actor, 
+and the latter is used within an agent.
 
 The framework provides a set of pre-built guardrails as reference implementation:
 - `JailbreakGuardrail`: a guardrail that uses a language model to detect malicious instructions
@@ -304,6 +315,10 @@ produced by the child actors, and create the output messages.
 
 The composition of actors can be declaratively defined using a directed graph, or can
 emerge from the type-based message routing defined for each actor.
+
+The workflow should understand the agent and guardrail interfaces, and knows
+how to compose them appropriately to achieve functionality like trip-wiring
+and retry.
 
 The design goal of workflow is to cover all the use cases of current AutoGen's
 AgentChat, Semantic Kernel's Agent Framework and Process Framework.
