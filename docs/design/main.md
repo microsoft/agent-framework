@@ -63,9 +63,6 @@ It is the responsibility of the framework to validate components
 and their composition,
 and ensure the lifecycle of the components are managed correctly.
 
-We do not discuss the implementation details of the components, as some of them
-such as actors will be backed by the [agent runtime](https://github.com/microsoft/agent-runtime).
-
 A component can be created from a set of serializable configuration parameters,
 with the help of dependency injection to resolve non-serializable dependencies.
 For example, a model client can be created from a set of parameters like temperature and model names,
@@ -98,6 +95,16 @@ graph TD
     Memory --> |uses| uses5[Vector Store]
     VectorStore --> |uses| uses6[Embedding Client]
 ```
+
+### Agent Runtime
+
+Some components are implemented using the [Agent Runtime](https://github.com/microsoft/agent-runtime):
+- Thread as a state object
+- Memory as a state object
+- Agent as an actor
+- Guardrail as an actor
+- Workflow as an actor that orchestrates other actors.
+
 
 ## Agent Components
 
@@ -236,8 +243,9 @@ of messages. The data types of the messages can be built-in or defined by the ap
 but they must be serializable and defined for each actor.
 These data types are not necessarily the same ones in model context.
 
-An actor holds state managed by the agent runtime through the state API,
-which supports stateful components such as threads, workbenches, and memory.
+The actor class is inherited from the actor base class in the agent runtime,
+so it holds state managed by the agent runtime through the state API, including
+the thread and memory components.
 
 _NOTE: we need to align the actor definition in the agent runtime with this one,
 so we are using the actor class directly from the agent runtime._
