@@ -4,7 +4,7 @@
 What values does the framework provide?
 - A set of configurable, extensible and high-quality components (e.g., model clients, tools, MCP workbenches and memory).
 - An easy path for deploying, securing and scaling applications, both locally and in the cloud.
-- A set of tools for monitoring, debugging, evaluation and optimization.
+- A set of tools for monitoring, debugging, evaluation and optimization, both locally and in the cloud.
 - A community of developers and users for support, ideas, and contributions, benefiting everyone in the ecosystem.
 
 Table of Contents
