@@ -96,8 +96,6 @@ graph TD
     VectorStore --> |uses| uses6[Embedding Client]
 ```
 
-### Agent Runtime
-
 Some components are implemented using the [Agent Runtime](https://github.com/microsoft/agent-runtime):
 - Thread as a state object
 - Memory as a state object
