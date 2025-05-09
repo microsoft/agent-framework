@@ -334,7 +334,7 @@ The framework provides a set of pre-built workflows:
 - `RoutedWorkflow`: a workflow that routes messages to its child actors based on the
 message type and the message content. Swarm is an example of such workflow.
 
-Pesudo Python code for creating a `GraphWorkflow`:
+Pesudo Python code for creating a `GraphWorkflow`.
 
 ```python
 from agent_framework import GraphWorkflow, GraphBuilder, ChatCompletionAgent, PIIGuardrail, SecretGuardrail, Any, All
@@ -376,8 +376,15 @@ graph = GraphBuilder() \
     .add_output_guardrail(secret_guardrail) \
     .build()
 
-workflow = GraphWorkflow(
-    graph=graph,
+workflow = GraphWorkflow(graph=graph)
+
+# This is just a teaser, we still need to define how the actual API looks like.
+events = workflow.run_stream(
+    input_message="Hello, world!",
+    context={
+        "user_id": "123456",
+        "session_id": "abcdefg"
+    },
     dependencies={
         "Tool1": ...,
         "Tool2": ...,
