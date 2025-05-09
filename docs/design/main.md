@@ -2,7 +2,7 @@
 
 
 What values does the framework provide?
-- A set of configurable, extensible and high-quality components (e.g., model clients, tools, MCP workbenches and memory).
+- A set of configurable, extensible and high-quality components (e.g., model clients, tools, MCP servers and memory).
 - An easy path for deploying, securing and scaling applications, both locally and in the cloud.
 - A set of tools for monitoring, debugging, evaluation and optimization, both locally and in the cloud.
 - A community of developers and users for support, ideas, and contributions, benefiting everyone in the ecosystem.
@@ -19,7 +19,7 @@ Table of Contents
     - [Model Client](#model-client)
     - [Vector Store and Embedding Client](#vector-store-and-embedding-client)
     - [Tool](#tool)
-    - [MCP Workbench](#mcp-workbench)
+    - [MCP Server](#mcp-server)
     - [Memory](#memory)
     - [Thread](#thread)
 - [Actor Components](#actor-components)
@@ -81,13 +81,13 @@ graph TD
     Component --> |extends| VectorStore[Vector Store]
     Component --> |extends| EmbeddingClient[Embedding Client]
     Component --> |extends| Tool[Tool]
-    Component --> |extends| MCPWorkbench[MCP Workbench]
+    Component --> |extends| MCPServer[MCP Server]
     Component --> |extends| Memory[Memory]
     Component --> |extends| Thread[Thread]
     
     Agent --> |uses| uses1[Model Client]
     Agent --> |uses| uses2[Thread]
-    Agent --> |uses| uses3[Tools and MCP Workbenches]
+    Agent --> |uses| uses3[Tools and MCP Servers]
     Agent --> |uses| uses4[Memory]
     
     Workflow --> |contains| contains[Child Actors]
@@ -190,19 +190,18 @@ The framework provides a set of pre-built tools:
 - `FunctionTool`: a tool that wraps a function.
 - `AzureAISearchTool`: a tool that is backed by Azure AI Search Service.
 
-### MCP Workbench
+### MCP Server 
 
-(Name to be determined)
+(Exact name to be determined)
 
-An MCP workbench is a component that wraps an [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server.
+An MCP server is a component that wraps a session to an 
+[Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server.
 
-While MCP supports a richer set of features, for the purpose of the first
-version of the framework, we focus on tool-related features:
-- `list_tools`: list the tools available in the MCP server.
-- `call_tool`: call a tool in the MCP server.
+The tools provided by MCP server should match the tool interface to ensure
+minimal boilerplate code when dealing with both tools and MCP servers.
 
-The tools provided by MCP workbench should match the tool interface to ensure
-minimal boilerplate code when dealing with both tools and MCP workbenches.
+Other features like sampling and resources, should be accessible through
+the MCP server interface as well.
 
 ### Memory
 
@@ -213,13 +212,14 @@ for synthesizing model context from snippets of the documents.
 In another example, a memory can store the past interactions with a language model,
 and provide an interface for synthesizing summaries of the interactions.
 
-Some memory may implement tool or workbench interfaces to allow models to
+Some memory may implement tool or MCP server interfaces to allow models to
 operate on them.
 
 The framework provides a set of pre-built memories:
 - `ListMemory`: a memory that synthesizes model context formatted from all data it stores as a list.
 - `VectorMemory`: a memory that synthesize model context from data retrieved from a vector store.
 This may be a base class for vendor-specific implementations.
+- `Mem0Memory`: a memory that is backed by Mem0.
 
 ### Thread
 
@@ -263,7 +263,7 @@ An agent is an actor that uses a language model.
 During its handling of messages, the agent:
 - Uses model client to process messages,
 - Uses thread to keep track of the interaction with the model,
-- Invokes tools or workbenches, and
+- Invokes tools or MCP servers, and
 - Retrieves and stores data through memory.
 
 An agent base class has access to a set of well-known states through the state API provided by its actor base class. These well-known states are:
@@ -279,7 +279,7 @@ backed by the Azure AI Agent Service.
 
 The framework provides a set of pre-built agents:
 - `ChatCompletionAgent`: an agent that uses a chat-completion model to process messages
-and use thread, memory, tools and workbenches in a configurable way.
+and use thread, memory, tools and MCP servers in a configurable way.
 - `AzureAIAgent`: an agent that is backed by Azure AI Agent Service.
 - `ResponsesAgent`: an agent that is backed by OpenAI's Responses API.
 - `A2AAgent`: an agent that is backed by the [A2A Protocol](https://google.github.io/A2A/documentation/).
@@ -326,15 +326,22 @@ The workflow should understand the agent and guardrail interfaces, and knows
 how to compose them appropriately to achieve functionality like trip-wiring
 and retry.
 
-The design goal of workflow is to cover all the use cases of current AutoGen's
+The workflow should cover all the use cases of current AutoGen's
 AgentChat, Semantic Kernel's Agent Framework and Process Framework.
-
-_Question: should we consider this a replacement for the Process Framework?_
 
 The framework provides a set of pre-built workflows:
 - `GraphWorkflow`: a workflow that specifies the order of invocation as a directed graph.
 - `RoutedWorkflow`: a workflow that routes messages to its child actors based on the
 message type and the message content. Swarm is an example of such workflow.
+
+Pesudo Python code for creating a `GraphWorkflow`:
+
+```python
+from agent_framework import GraphWorkflow, GraphBuilder, Agent, Guardrail
+
+```
+
+
 
 ## Deployment and Scaling
 
@@ -352,6 +359,7 @@ Details TBD.
 ## Evaluation
 
 Integrate with Azure AI Evaluation Service.
+Integrate with LangSmith.
 
 Details TBD.
 
