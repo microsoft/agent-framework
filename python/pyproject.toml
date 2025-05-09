@@ -1,0 +1,98 @@
+[project]
+name = "agent-framework"
+readme = "README.md"
+requires-python = ">=3.10"
+version = "0.0.0"
+license = {file = "LICENSE"}
+urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
+dependencies = [
+]
+
+[dependency-groups]
+dev = [
+    "pre-commit >= 3.7",
+    "pyright>=1.1.400",
+    "mypy>=1.15.0",
+    "ruff>=0.11.8",
+]
+
+[build-system]
+requires = ["hatchling", "uv-dynamic-versioning"]
+build-backend = "hatchling.build"
+
+
+[tool.uv-dynamic-versioning]
+fallback-version = "0.0.0"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+include = ["*.py", "*.pyi", "**/pyproject.toml", "*.ipynb"]
+preview = true
+
+[tool.ruff.lint]
+fixable = ["ALL"]
+unfixable = []
+select = [
+    "ASYNC", # async checks
+    "B", # bugbear checks
+    "CPY", # copyright
+    "D", # pydocstyle checks
+    "E", # pycodestyle error checks
+    "ERA", # remove connected out code
+    "F", # pyflakes checks
+    "FIX", # fixme checks
+    "I", # isort
+    "INP", # implicit namespace package
+    "ISC", # implicit string concat
+    "Q", # flake8-quotes checks
+    "RET", # flake8-return check
+    "RSE", # raise exception parantheses check
+    "RUF", # RUF specific rules
+    "SIM", # flake8-simplify check
+    "T20", # typing checks
+    "TD", # todos
+    "W", # pycodestyle warning checks
+    "T100", # Debugger,
+    "S", # Bandit checks
+]
+ignore = [
+    "D100", # allow missing docstring in public module
+    "D104", # allow missing docstring in public package
+    "TD003", # allow missing link to todo issue
+    "FIX002" # allow todo
+]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.flake8-copyright]
+notice-rgx = "^# Copyright \\(c\\) Microsoft\\. All rights reserved\\."
+min-file-size = 1
+
+[tool.pyright]
+include = ["src", "tests", "samples"]
+typeCheckingMode = "strict"
+reportUnnecessaryIsInstance = false
+reportMissingTypeStubs = false
+venvPath = "."
+venv = ".venv"
+
+[tool.mypy]
+strict = true
+python_version = "3.9"
+ignore_missing_imports = true
+
+disallow_untyped_defs = true
+no_implicit_optional = true
+check_untyped_defs = true
+warn_return_any = true
+show_error_codes = true
+warn_unused_ignores = false
+
+disallow_incomplete_defs = true
+disallow_untyped_decorators = true
+disallow_any_unimported = true
