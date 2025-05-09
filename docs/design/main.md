@@ -337,11 +337,56 @@ message type and the message content. Swarm is an example of such workflow.
 Pesudo Python code for creating a `GraphWorkflow`:
 
 ```python
-from agent_framework import GraphWorkflow, GraphBuilder, Agent, Guardrail
+from agent_framework import GraphWorkflow, GraphBuilder, ChatCompletionAgent, PIIGuardrail, SecretGuardrail, Any, All
 
+agent1 = ChatCompletionAgent(
+    model_client="OpenAIChatCompletionClient",
+    tools=["Tool1", "Tool2"],
+    memory="ListMemory",
+    thread="UnboundedThread"
+)
+agent2 = ChatCompletionAgent(
+    model_client="OpenAIChatCompletionClient",
+    tools=["Tool3", "Tool4"],
+    memory="ListMemory",
+    thread="TruncatedThread"
+)
+pii_guardrail = PIIGuardrail(
+    config={
+        "rules": [
+            {
+                "type": "email",
+                "action": "block"
+            },
+            {
+                "type": "phone",
+                "action": "block"
+            }
+        ]
+    }
+)
+secret_guardrail = SecretGuardrail(...)
+
+graph = GraphBuilder() \
+    .add_agent(agent1) \
+    .add_agent(agent2) \
+    .add_transition(agent1, agent2, conditions=Any(..., All(...))]) \
+    .add_transition(agent1, agent1, conditions=All(...)) \
+    .add_output_guardrail(pii_guardrail) \
+    .add_output_guardrail(secret_guardrail) \
+    .build()
+
+workflow = GraphWorkflow(
+    graph=graph,
+    dependencies={
+        "Tool1": ...,
+        "Tool2": ...,
+        "Tool3": ...,
+        "Tool4": ...,
+        ...,
+    }
+)
 ```
-
-
 
 ## Deployment and Scaling
 
