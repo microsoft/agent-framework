@@ -370,8 +370,8 @@ secret_guardrail = SecretGuardrail(...)
 graph = GraphBuilder() \
     .add_agent(agent1) \
     .add_agent(agent2) \
+    .add_loop(agent1, agent1, conditions=Any(...)) \
     .add_transition(agent1, agent2, conditions=Any(..., All(...))]) \
-    .add_transition(agent1, agent1, conditions=All(...)) \
     .add_output_guardrail(pii_guardrail) \
     .add_output_guardrail(secret_guardrail) \
     .build()
@@ -385,7 +385,7 @@ events = workflow.run_stream(
         "user_id": "123456",
         "session_id": "abcdefg"
     },
-    dependencies={
+    tools={
         "Tool1": ...,
         "Tool2": ...,
         "Tool3": ...,
@@ -394,6 +394,7 @@ events = workflow.run_stream(
     }
 )
 ```
+
 
 ## Deployment and Scaling
 
