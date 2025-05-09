@@ -4,9 +4,6 @@ on:
   workflow_dispatch:
   pull_request:
     branches: ["main"]
-    paths:
-      - "python/**"
-      - ".github/workflows/check-python.yml"
 
 jobs:
   pre-commit:
