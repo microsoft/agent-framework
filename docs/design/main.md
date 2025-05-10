@@ -289,6 +289,11 @@ An agent base class has access to a set of well-known states through the state A
 
 It is up to the implementation of the agent class to decide how these states and
 components are used.
+
+__An important design goal of the framework is to ensure the developer experience
+of creating custom agent is as easy as possible.__ Existing frameworks
+has made "kitchen-sink" agents that are hard to understand and maintain.
+
 An agent may not use the components provided by the framework to implement
 the actor interface.
 Azure AI Agent is an example of such agent: its implementation is
@@ -297,7 +302,8 @@ backed by the Azure AI Agent Service.
 The framework provides a set of pre-built agents:
 
 - `ChatCompletionAgent`: an agent that uses a chat-completion model to process messages
-and use thread, memory, tools and MCP servers in a configurable way.
+and use thread, memory, tools and MCP servers in a configurable way. __If we can make
+custom agents easy to implement, we can remove this agent.__
 - `AzureAIAgent`: an agent that is backed by Azure AI Agent Service.
 - `ResponsesAgent`: an agent that is backed by OpenAI's Responses API.
 - `A2AAgent`: an agent that is backed by the [A2A Protocol](https://google.github.io/A2A/documentation/).
