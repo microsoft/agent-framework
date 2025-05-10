@@ -1,31 +1,33 @@
 # Agent Framework: Overview
 
-
 What values does the framework provide?
+
 - A set of configurable, extensible and high-quality components (e.g., model clients, tools, MCP servers and memory).
 - An easy path for deploying, securing and scaling applications, both locally and in the cloud.
 - A set of tools for monitoring, debugging, evaluation and optimization, both locally and in the cloud.
 - A community of developers and users for support, ideas, and contributions, benefiting everyone in the ecosystem.
 
 What is this document?
+
 - An overview of the new framework.
 - Defining the major elements of the framework and their relationships.
 - Detailed design of each element and its implementation will be in a separate document.
 
 Table of Contents
+
 - [Core Data Types](#core-data-types)
 - [Component](#component)
 - [Agent Components](#agent-components)
-    - [Model Client](#model-client)
-    - [Vector Store and Embedding Client](#vector-store-and-embedding-client)
-    - [Tool](#tool)
-    - [MCP Server](#mcp-server)
-    - [Memory](#memory)
-    - [Thread](#thread)
+  - [Model Client](#model-client)
+  - [Vector Store and Embedding Client](#vector-store-and-embedding-client)
+  - [Tool](#tool)
+  - [MCP Server](#mcp-server)
+  - [Memory](#memory)
+  - [Thread](#thread)
 - [Actor Components](#actor-components)
-    - [Agent](#agent)
-    - [Guardrail](#guardrail)
-    - [Workflow](#workflow)
+  - [Agent](#agent)
+  - [Guardrail](#guardrail)
+  - [Workflow](#workflow)
 - [Deployment and Scaling](#deployment-and-scaling)
 - [Monitoring](#monitoring)
 - [Evaluation](#evaluation)
@@ -36,7 +38,7 @@ Table of Contents
 To unify the interaction between components, we define a set of core
 data types.
 
-For example, text, images, function calls, tool schema are 
+For example, text, images, function calls, tool schema are
 all examples of such data types.
 These data types are used to interact with agent components (model clients, tools, MCP, threads, and memory),
 forming the connective tissue between those components.
@@ -97,12 +99,12 @@ graph TD
 ```
 
 Some components are implemented using the [Agent Runtime](https://github.com/microsoft/agent-runtime):
+
 - Thread as a state object
 - Memory as a state object
 - Agent as an actor
 - Guardrail as an actor
 - Workflow as an actor that orchestrates other actors.
-
 
 ## Agent Components
 
@@ -116,6 +118,7 @@ about the model it provides (e.g., model name, tool call and vision capabilities
 to support validation and composition with other components.
 
 The framework provides a set of pre-built model clients:
+
 - `OpenAIChatCompletionClient`
 - `AzureOpenAIChatCompletionClient`
 - `AzureOpenAIResponseClient`
@@ -146,6 +149,7 @@ in Semantic Kernel.
 
 The framework provides pre-built vector stores (already exist in
 Semantic Kernel):
+
 - Azure AI Search
 - Cosmos DB
 - Chroma
@@ -169,13 +173,21 @@ to function. An embedding client is a component that implements a unified interf
 to interact with different embedding models.
 
 The framework provides a set of pre-built embedding clients:
+
 - TBD.
 
 ### Tool
 
 A tool is a component that can be used to invoke procedure code
-and returns the result as context to the language model.
-A tool may have arguments for invocation. 
+and returns a well-defined result type to the caller.
+
+The result type should indicate the success or failure of the invocation,
+as well as the output of the invocation in terms of the core data types.
+There may be other fields in the result type for things like
+side effects, etc.. We should address this when designing the
+tool interface.
+
+A tool may have arguments for invocation.
 The arguments must be defined using JSON schema that language model supports.
 
 A tool may have dependencies such as tokens, credentials,
@@ -187,14 +199,15 @@ tool is invoked with proper arguments, or that the agent has the
 right context such as human approval to invoke the tool.
 
 The framework provides a set of pre-built tools:
+
 - `FunctionTool`: a tool that wraps a function.
 - `AzureAISearchTool`: a tool that is backed by Azure AI Search Service.
 
-### MCP Server 
+### MCP Server
 
 (Exact name to be determined)
 
-An MCP server is a component that wraps a session to an 
+An MCP server is a component that wraps a session to an
 [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server.
 
 The tools provided by MCP server should match the tool interface to ensure
@@ -216,6 +229,7 @@ Some memory may implement tool or MCP server interfaces to allow models to
 operate on them.
 
 The framework provides a set of pre-built memories:
+
 - `ListMemory`: a memory that synthesizes model context formatted from all data it stores as a list.
 - `VectorMemory`: a memory that synthesize model context from data retrieved from a vector store.
 This may be a base class for vendor-specific implementations.
@@ -223,10 +237,11 @@ This may be a base class for vendor-specific implementations.
 
 ### Thread
 
-A thread is a component that stores message history 
+A thread is a component that stores message history
 and provides a view of the message history to the language model.
 
 The framework provides a set of pre-built threads:
+
 - `UnboundedThread`: a thread that provides view for all of the message history
 - `TruncatedThread`: a thread that provides a view of a message history from the last N messages.
 - `TokenLimitedThread`: a thread that provides a view of a message history up to
@@ -259,14 +274,16 @@ and act._
 
 ### Agent
 
-An agent is an actor that uses a language model. 
+An agent is an actor that uses a language model.
 During its handling of messages, the agent:
+
 - Uses model client to process messages,
 - Uses thread to keep track of the interaction with the model,
 - Invokes tools or MCP servers, and
 - Retrieves and stores data through memory.
 
 An agent base class has access to a set of well-known states through the state API provided by its actor base class. These well-known states are:
+
 - `Thread`: the thread component.
 - `Memory`: the memory component.
 
@@ -278,14 +295,14 @@ Azure AI Agent is an example of such agent: its implementation is
 backed by the Azure AI Agent Service.
 
 The framework provides a set of pre-built agents:
+
 - `ChatCompletionAgent`: an agent that uses a chat-completion model to process messages
 and use thread, memory, tools and MCP servers in a configurable way.
 - `AzureAIAgent`: an agent that is backed by Azure AI Agent Service.
 - `ResponsesAgent`: an agent that is backed by OpenAI's Responses API.
 - `A2AAgent`: an agent that is backed by the [A2A Protocol](https://google.github.io/A2A/documentation/).
 
-
-### Guardrail 
+### Guardrail
 
 A guardrail is an actor that enforces constraints on
 the messages sent to or produced by other actors.
@@ -296,10 +313,11 @@ In another example, a guardrail can be used to review code produced by an agent
 is safe and following the security guidelines.
 
 The implementation of guardrails and tool guard may share common subcomponents
-for enforcing constraints, but the former is an actor, 
+for enforcing constraints, but the former is an actor,
 and the latter is used within an agent.
 
 The framework provides a set of pre-built guardrails as reference implementation:
+
 - `JailbreakGuardrail`: a guardrail that uses a language model to detect malicious instructions
 and jailbreaks in the input messages.
 - `SecretGuardrail`: a guardrail that uses a configurable set of rules to detect
@@ -309,7 +327,6 @@ personally identifiable information (PII) such as email addresses, phone numbers
 social security numbers, etc. in the output messages.
 - `PythonCodeReviewGuardrail`: a guardrail that uses Python linting tools and a language
 model to review code in the output messages.
-
 
 ### Workflow
 
@@ -330,6 +347,7 @@ The workflow should cover all the use cases of current AutoGen's
 AgentChat, Semantic Kernel's Agent Framework and Process Framework.
 
 The framework provides a set of pre-built workflows:
+
 - `GraphWorkflow`: a workflow that specifies the order of invocation as a directed graph.
 - `RoutedWorkflow`: a workflow that routes messages to its child actors based on the
 message type and the message content. Swarm is an example of such workflow.
@@ -395,7 +413,6 @@ events = workflow.run_stream(
 )
 ```
 
-
 ## Deployment and Scaling
 
 Agents and workflows created using this framework can be deloyed through
@@ -412,7 +429,6 @@ Details TBD.
 ## Evaluation
 
 Integrate with Azure AI Evaluation Service.
-Integrate with LangSmith.
 
 Details TBD.
 
