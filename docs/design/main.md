@@ -298,21 +298,21 @@ have made "kitchen-sink" agents that are hard to understand and maintain.
 A teaser of the experience for creating a custom agent is shown below.
 
 ```python
-from agent_framework import Agent, MessageBatch
+from agent_framework import Agent, MessageBatch, Thread
 
 class ToolCallingAgent(Agent):
-    async def on_messages(self, messages: MessageBatch) -> MessageBatch:
+    async def run(self, messages: MessageBatch, thread: Thread) -> MessageBatch:
         # Update the thread with the messages.
-        await self.thread.update(messages.to_model_messages())
+        await thread.update(messages.to_model_messages())
         # Create a response using the model client.
-        create_result = await self.model_client.create(thread=self.thread)
+        create_result = await self.model_client.create(thread=thread)
         # Update the thread with the response.
-        await self.thread.update(create_result.to_model_messages())
+        await thread.update(create_result.to_model_messages())
         if create_result.is_tool_call():
             # Call the tools with the tool calls in the response.
             tool_result = await self.mcp_server.call_tools(create_result.tool_calls)
             # Update the thread with the tool result.
-            await self.thread.update(tool_result.to_model_messages())
+            await thread.update(tool_result.to_model_messages())
             # Return the tool result as the response.
             return MessageBatch(messages=tool_result.messages)
         else: 
