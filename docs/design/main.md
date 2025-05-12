@@ -267,7 +267,7 @@ _NOTE: we need to design the agent runtime to make sure the state API can
 be used to implement the components in the agent framework._
 
 _NOTE: Instead of "Agent", in the runtime, we should use "Actor" to refer to the
-current agent base class `autogen_core.Agent`. We want to reserve the term "Agent"
+current agent base class `agent_runtime.Agent`. We want to reserve the term "Agent"
 to refer to entities that use language models. This aligns with the usage in the
 AI community, where people often refer to "Agent" as an entity that can perceive, plan
 and act._
