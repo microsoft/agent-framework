@@ -233,6 +233,7 @@ The framework provides a set of pre-built memories:
 - `ListMemory`: a memory that synthesizes model context formatted from all data it stores as a list.
 - `VectorMemory`: a memory that synthesize model context from data retrieved from a vector store.
 This may be a base class for vendor-specific implementations.
+- `AzureAISearchMemory`: a memory that synthesizes model context from data retrieved from Azure AI Search.
 - `Mem0Memory`: a memory that is backed by Mem0.
 
 ### Thread
