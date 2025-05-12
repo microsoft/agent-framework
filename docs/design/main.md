@@ -292,7 +292,32 @@ components are used.
 
 __An important design goal of the framework is to ensure the developer experience
 of creating custom agent is as easy as possible.__ Existing frameworks
-has made "kitchen-sink" agents that are hard to understand and maintain.
+have made "kitchen-sink" agents that are hard to understand and maintain.
+
+A teaser of the experience for creating a custom agent is shown below.
+
+```python
+from agent_framework import Agent, MessageBatch
+
+class ToolCallingAgent(Agent):
+    async def on_messages(self, messages: MessageBatch) -> MessageBatch:
+        # Update memory with the messages.
+        await self.memory.update(messages)
+        # Create a response using the model client.
+        create_result = await self.model_client.create(thread=self.memory.thread)
+        # Update memory with the response.
+        await self.memory.update(create_result)
+        if create_result.is_tool_call():
+            # Call the tools with the tool calls in the response.
+            tool_result = await self.mcp_server.call_tools(create_result.tool_calls)
+            # Update memory with the tool result.
+            await self.memory.update(tool_result)
+            # Return the tool result as the response.
+            return MessageBatch(messages=tool_result.messages)
+        else: 
+            # Return the response as the result.
+            return MessageBatch(messages=create_result.messages)
+```
 
 An agent may not use the components provided by the framework to implement
 the actor interface.
@@ -337,7 +362,7 @@ model to review code in the output messages.
 ### Workflow
 
 A workflow is an actor consists of multiple child actors, some of which may be
-agents, some of which may be guardrails, and some may be other workflows.
+actors, and some may be other workflows.
 During its handling of messages, it invokes its child actors
 in some order (could be concurrent or sequential), collects the messages
 produced by the child actors, and create the output messages.
