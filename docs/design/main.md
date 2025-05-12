@@ -301,17 +301,17 @@ from agent_framework import Agent, MessageBatch
 
 class ToolCallingAgent(Agent):
     async def on_messages(self, messages: MessageBatch) -> MessageBatch:
-        # Update memory with the messages.
-        await self.memory.update(messages)
+        # Update the thread with the messages.
+        await self.thread.update(messages.to_model_messages())
         # Create a response using the model client.
-        create_result = await self.model_client.create(thread=self.memory.thread)
-        # Update memory with the response.
-        await self.memory.update(create_result)
+        create_result = await self.model_client.create(thread=self.thread)
+        # Update the thread with the response.
+        await self.thread.update(create_result.to_model_messages())
         if create_result.is_tool_call():
             # Call the tools with the tool calls in the response.
             tool_result = await self.mcp_server.call_tools(create_result.tool_calls)
-            # Update memory with the tool result.
-            await self.memory.update(tool_result)
+            # Update the thread with the tool result.
+            await self.thread.update(tool_result.to_model_messages())
             # Return the tool result as the response.
             return MessageBatch(messages=tool_result.messages)
         else: 
