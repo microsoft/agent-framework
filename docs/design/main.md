@@ -76,7 +76,6 @@ The following diagram shows the component relationship of the framework:
 graph TD
     Component[Component] --> |extends| Actor[Actor]
     Actor --> |extends| Agent[Agent]
-    Actor --> |extends| Guardrail[Guardrail]
     Actor --> |extends| Workflow[Workflow]
     
     Component --> |extends| ModelClient[Model Client]
@@ -86,11 +85,13 @@ graph TD
     Component --> |extends| MCPServer[MCP Server]
     Component --> |extends| Memory[Memory]
     Component --> |extends| Thread[Thread]
+    Component --> |extends| Guardrail[Guardrail]
     
     Agent --> |uses| uses1[Model Client]
     Agent --> |uses| uses2[Thread]
     Agent --> |uses| uses3[Tools and MCP Servers]
     Agent --> |uses| uses4[Memory]
+    Agent --> |uses| uses5[Guardrail]
     
     Workflow --> |contains| contains[Child Actors]
 
@@ -250,6 +251,48 @@ a certain number of tokens.
 - `TimeLimitedThread`: a thread that provides a view of a message history up to
 a certain time limit.
 
+### Guardrail
+
+A guardrail is an agent component that enforces constraints on
+the input and output of other agent components.
+For example, a guardrail can be used to ensure the input messages to a model
+does not contain jailbreaks or malicious instructions, or that the
+output of a tool call does not contain sensitive information or harmful content.
+
+The framework provides a set of pre-built guardrails as reference implementation:
+
+- `JailbreakGuardrail`: a guardrail that uses a language model to detect malicious instructions
+and jailbreaks in the input messages.
+- `SecretGuardrail`: a guardrail that uses a configurable set of rules to detect
+sensitive data such as passwords, credit card numbers, tokens, etc. in model or tool outputs.
+- `PIIGuardrail`: a guardrail that uses a configurable set of rules to detect
+personally identifiable information (PII) such as email addresses, phone numbers,
+social security numbers, etc. in model or tool outputs.
+
+A teaser of the experience of using a built-in guardrail:
+
+```python
+from agent_framework import PIIGuardrail, MCPServer
+
+guardrail = PIIGuardrail(
+    config={
+        "rules": [
+            {
+                "type": "email",
+                "action": "block"
+            },
+            {
+                "type": "phone",
+                "action": "block"
+            }
+        ]
+    }
+)
+
+mcp_server = MCPServer(...)
+mcp_server.add_output_guardrail(guardrail)
+```
+
 ## Actor Components
 
 An actor is a component that takes a sequence of messages and produces a stream
@@ -334,32 +377,6 @@ custom agents easy to implement, we can remove this agent.__
 - `ResponsesAgent`: an agent that is backed by OpenAI's Responses API.
 - `A2AAgent`: an agent that is backed by the [A2A Protocol](https://google.github.io/A2A/documentation/).
 
-### Guardrail
-
-A guardrail is an actor that enforces constraints on
-the messages sent to or produced by other actors.
-For example, a guardrail can be used to ensure the input messages to an agent
-does not contain jailbreaks or malicious instructions, or that the
-output messages of an agent does not contain sensitive information or harmful content.
-In another example, a guardrail can be used to review code produced by an agent
-is safe and following the security guidelines.
-
-The implementation of guardrails and tool guard may share common subcomponents
-for enforcing constraints, but the former is an actor,
-and the latter is used within an agent.
-
-The framework provides a set of pre-built guardrails as reference implementation:
-
-- `JailbreakGuardrail`: a guardrail that uses a language model to detect malicious instructions
-and jailbreaks in the input messages.
-- `SecretGuardrail`: a guardrail that uses a configurable set of rules to detect
-sensitive data such as passwords, credit card numbers, tokens, etc. in the output messages.
-- `PIIGuardrail`: a guardrail that uses a configurable set of rules to detect
-personally identifiable information (PII) such as email addresses, phone numbers,
-social security numbers, etc. in the output messages.
-- `PythonCodeReviewGuardrail`: a guardrail that uses Python linting tools and a language
-model to review code in the output messages.
-
 ### Workflow
 
 A workflow is an actor consists of multiple child actors, some of which may be
@@ -382,48 +399,30 @@ The framework provides a set of pre-built workflows:
 
 - `GraphWorkflow`: a workflow that specifies the order of invocation as a directed graph.
 - `RoutedWorkflow`: a workflow that routes messages to its child actors based on the
-message type and the message content. Swarm is an example of such workflow.
+message type and the message content. Swarm is an example of such workflow (details TBD).
 
 Pesudo Python code for creating a `GraphWorkflow`.
 
 ```python
-from agent_framework import GraphWorkflow, GraphBuilder, ChatCompletionAgent, PIIGuardrail, SecretGuardrail, Any, All
+from agent_framework import GraphWorkflow, GraphBuilder, ChatCompletionAgent, Any, All
 
 agent1 = ChatCompletionAgent(
     model_client="OpenAIChatCompletionClient",
-    tools=["Tool1", "Tool2"],
+    mcp_servers=["MCPServer1", "MCPServer2"],
     memory="ListMemory",
-    thread="UnboundedThread"
 )
+
 agent2 = ChatCompletionAgent(
     model_client="OpenAIChatCompletionClient",
-    tools=["Tool3", "Tool4"],
+    mcp_servers=["MCPServer3", "MCPServer4"],
     memory="ListMemory",
-    thread="TruncatedThread"
 )
-pii_guardrail = PIIGuardrail(
-    config={
-        "rules": [
-            {
-                "type": "email",
-                "action": "block"
-            },
-            {
-                "type": "phone",
-                "action": "block"
-            }
-        ]
-    }
-)
-secret_guardrail = SecretGuardrail(...)
 
 graph = GraphBuilder() \
     .add_agent(agent1) \
     .add_agent(agent2) \
     .add_loop(agent1, agent1, conditions=Any(...)) \
     .add_transition(agent1, agent2, conditions=Any(..., All(...))]) \
-    .add_output_guardrail(pii_guardrail) \
-    .add_output_guardrail(secret_guardrail) \
     .build()
 
 workflow = GraphWorkflow(graph=graph)
@@ -435,13 +434,7 @@ events = workflow.run_stream(
         "user_id": "123456",
         "session_id": "abcdefg"
     },
-    tools={
-        "Tool1": ...,
-        "Tool2": ...,
-        "Tool3": ...,
-        "Tool4": ...,
-        ...,
-    }
+    mcp_servers=["MCPServer1", "MCPServer2", "MCPServer3", "MCPServer4"],
 )
 ```
 
