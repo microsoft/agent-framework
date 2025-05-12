@@ -319,7 +319,7 @@ class ToolCallingAgent(Agent):
             return MessageBatch(messages=create_result.messages)
 ```
 
-An agent may not use the components provided by the framework to implement
+An agent might not use the components provided by the framework to implement
 the actor interface.
 Azure AI Agent is an example of such agent: its implementation is
 backed by the Azure AI Agent Service.
