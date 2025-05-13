@@ -4,7 +4,7 @@ What values does the framework provide?
 
 - A set of configurable, extensible and high-quality components (e.g., model clients, tools, MCP servers and memory).
 - An easy path for deploying, securing and scaling applications, both locally and in the cloud.
-- A set of tools for monitoring, debugging, evaluation and optimization, both locally and in the cloud.
+- Integration with tools for monitoring, debugging, evaluation and optimization, both locally and in the cloud.
 - A community of developers and users for support, ideas, and contributions, benefiting everyone in the ecosystem.
 
 What is this document?
@@ -24,9 +24,9 @@ Table of Contents
   - [MCP Server](#mcp-server)
   - [Memory](#memory)
   - [Thread](#thread)
+  - [Guardrail](#guardrail)
 - [Actor Components](#actor-components)
   - [Agent](#agent)
-  - [Guardrail](#guardrail)
   - [Workflow](#workflow)
 - [Deployment and Scaling](#deployment-and-scaling)
 - [Monitoring](#monitoring)
@@ -62,8 +62,7 @@ Components can be composed to create complex components. For example,
 an agent can be composed from model clients, tools and memory,
 and a tool can be composed from an agent or a workflow.
 It is the responsibility of the framework to validate components
-and their composition,
-and ensure the lifecycle of the components are managed correctly.
+and their composition.
 
 A component can be created from a set of serializable configuration parameters,
 with the help of dependency injection to resolve non-serializable dependencies.
@@ -203,6 +202,8 @@ The framework provides a set of pre-built tools:
 
 - `FunctionTool`: a tool that wraps a function.
 - `AzureAISearchTool`: a tool that is backed by Azure AI Search Service.
+- `OpenAPITool`: a tool that is backed by a service that defines an OpenAPI spec.
+- Other tools backed by Foundry.
 
 ### MCP Server
 
@@ -453,7 +454,7 @@ Details TBD.
 
 ## Evaluation
 
-Integrate with Azure AI Evaluation Service.
+Integrate with Azure AI Evaluation Service and other 3rd party services.
 
 Details TBD.
 
