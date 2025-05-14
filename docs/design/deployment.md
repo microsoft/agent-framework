@@ -22,6 +22,19 @@ agentrunner --entrypoint myapp:app --state-dir /tmp/agents
 
 This would bring up a process and expose some interface that would make this agent accessible. Depending on how `agentrunner` is invoked, perhaps different interfaces are exposed.
 
+### Single agent per process
+
+Alterntively, if only a single agent per process is required. It might look like:
+
+
+```python
+from agent_framework import AgentRuntime
+
+def app(runtime: AgentRuntime) -> MyAgent:
+    return MyAgent(runtime)
+```
+
+
 ## State
 
 State is associated with an agent `id`. The agent id is based on how the agentrunner is invoked. For example, there may be a REST server exposed with the following route:
