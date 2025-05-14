@@ -5,7 +5,7 @@ After defining an agent using the standard `Agent` base class, you setup your ap
 ```python
 from agent_framework import AgentRuntime
 
-def create_agent(id: str, runtime: AgentRuntime) -> None:
+def create_agent(id: str, runtime: AgentRuntime) -> MyAgent:
     return MyAgent(id, runtime)
 
 def app(runtime: AgentRuntime) -> None:
