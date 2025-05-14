@@ -1,6 +1,6 @@
 # Deployment
 
-After defining an agent using the standard `Agent` base class, you setup your app in a similar way to a Flask/FastAPI app.
+After defining an agent using the standard `Agent` base class, you set up your app in a similar way to a Flask/FastAPI app.
 
 ```python
 from agent_framework import AgentRuntime
