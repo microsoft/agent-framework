@@ -32,7 +32,6 @@ Table of Contents
   - [Deployment and Scaling](#deployment-and-scaling)
   - [Monitoring](#monitoring)
   - [Evaluation](#evaluation)
-  - [Evaluation](#evaluation-1)
     - [Core Evaluation Concepts](#core-evaluation-concepts)
     - [Evaluation Components](#evaluation-components)
     - [Metrics](#metrics)
@@ -462,8 +461,6 @@ Details TBD.
 Traces should follow the [OTEL GenAI Conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/).
 
 Details TBD.
-
-## Evaluation
 
 ## Evaluation
 
