@@ -468,9 +468,8 @@ The framework provides a comprehensive evaluation system for assessing agent per
 
 ### Core Evaluation Concepts
 
-- **Trajectory Evaluation**: Analyze the path (sequence of tool calls, reasoning steps) an agent takes to reach its final response.
-- **Response Evaluation**: Assess the final output of an agent against quality criteria.
 - **Standardized Trajectory Format**: A unified representation of agent interactions (messages, tool calls, events) enabling consistent evaluation across different agent implementations.
+- **Trajectory Evaluation**: Analyze both the path an agent takes and the final response it generates. This includes evaluating the sequence of tool calls, the order of operations, and the final output.
 
 ### Evaluation Components
 
