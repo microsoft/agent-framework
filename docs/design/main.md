@@ -34,10 +34,10 @@ Table of Contents
   - [Evaluation](#evaluation)
     - [Core Evaluation Concepts](#core-evaluation-concepts)
     - [Evaluation Components](#evaluation-components)
-    - [Metrics](#metrics)
+    - [(Example) Metrics](#example-metrics)
       - [Computation-based Metrics](#computation-based-metrics)
       - [Model-based Metrics](#model-based-metrics)
-    - [Example Metrics](#example-metrics)
+    - [Example Metrics](#example-metrics-1)
     - [Sample Developer Experience](#sample-developer-experience)
     - [Integration with Cloud Services](#integration-with-cloud-services)
   - [Debugging](#debugging)
@@ -483,7 +483,7 @@ The framework provides these key evaluation components:
 - **Evaluator**: Coordinates the evaluation process by running computation-based metrics directly and applying judges to model-based metrics.
 - **Integration**: Connect with cloud evaluation services including Azure AI Evaluation.
 
-### Metrics
+### (Example) Metrics
 
 #### Computation-based Metrics
 
