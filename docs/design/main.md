@@ -339,31 +339,6 @@ __An important design goal of the framework is to ensure the developer experienc
 of creating custom agent is as easy as possible.__ Existing frameworks
 have made "kitchen-sink" agents that are hard to understand and maintain.
 
-A teaser of the experience for creating a custom agent is shown below.
-
-```python
-from agent_framework import Agent, MessageBatch, Thread
-
-class ToolCallingAgent(Agent):
-    async def run(self, messages: MessageBatch, thread: Thread) -> MessageBatch:
-        # Update the thread with the messages.
-        await thread.update(messages.to_model_messages())
-        # Create a response using the model client.
-        create_result = await self.model_client.create(thread=thread)
-        # Update the thread with the response.
-        await thread.update(create_result.to_model_messages())
-        if create_result.is_tool_call():
-            # Call the tools with the tool calls in the response.
-            tool_result = await self.mcp_server.call_tools(create_result.tool_calls)
-            # Update the thread with the tool result.
-            await thread.update(tool_result.to_model_messages())
-            # Return the tool result as the response.
-            return MessageBatch(messages=tool_result.messages)
-        else: 
-            # Return the response as the result.
-            return MessageBatch(messages=create_result.messages)
-```
-
 An agent might not use the components provided by the framework to implement
 the actor interface.
 Azure AI Agent is an example of such agent: its implementation is
@@ -377,6 +352,8 @@ custom agents easy to implement, we can remove this agent.__
 - `AzureAIAgent`: an agent that is backed by Azure AI Agent Service.
 - `ResponsesAgent`: an agent that is backed by OpenAI's Responses API.
 - `A2AAgent`: an agent that is backed by the [A2A Protocol](https://google.github.io/A2A/documentation/).
+
+For more details on the agent, see [Agents](agents.md).
 
 ### Workflow
 
@@ -402,42 +379,7 @@ The framework provides a set of pre-built workflows:
 - `RoutedWorkflow`: a workflow that routes messages to its child actors based on the
 message type and the message content. Swarm is an example of such workflow (details TBD).
 
-Pesudo Python code for creating a `GraphWorkflow`.
-
-```python
-from agent_framework import GraphWorkflow, GraphBuilder, ChatCompletionAgent, Any, All
-
-agent1 = ChatCompletionAgent(
-    model_client="OpenAIChatCompletionClient",
-    mcp_servers=["MCPServer1", "MCPServer2"],
-    memory="ListMemory",
-)
-
-agent2 = ChatCompletionAgent(
-    model_client="OpenAIChatCompletionClient",
-    mcp_servers=["MCPServer3", "MCPServer4"],
-    memory="ListMemory",
-)
-
-graph = GraphBuilder() \
-    .add_agent(agent1) \
-    .add_agent(agent2) \
-    .add_loop(agent1, agent1, conditions=Any(...)) \
-    .add_transition(agent1, agent2, conditions=Any(..., All(...))]) \
-    .build()
-
-workflow = GraphWorkflow(graph=graph)
-
-# This is just a teaser, we still need to define how the actual API looks like.
-events = workflow.run_stream(
-    input_message="Hello, world!",
-    context={
-        "user_id": "123456",
-        "session_id": "abcdefg"
-    },
-    mcp_servers=["MCPServer1", "MCPServer2", "MCPServer3", "MCPServer4"],
-)
-```
+For more details on the workflow, see [Workflows](workflows.md).
 
 ## Deployment and Scaling
 
