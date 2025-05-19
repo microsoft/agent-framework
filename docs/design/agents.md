@@ -124,9 +124,9 @@ Developer can instantiate a subclass of `Agent` directly using it's constructor,
 and run it by calling the `run` method.
 
 ```python
-from agent_framework import Agent, MessageBatch, OpenAIChatCompletionClient, UnboundedThread, RunContext, Tool
+from agent_framework import Agent, MessageBatch, OpenAIChatCompletionClient, UnboundedThread, RunContext, FunctionTool
 
-@Tool
+@FuntionTool
 def my_tool(input: str) -> str:
     return f"Tool result for {input}"
 
@@ -186,15 +186,21 @@ and then run it.
 ```python
 # Create an instance of the agent with a unique ID,
 # and returns a reference to the agent instance.
-stub: AgentStub = runtime.get(ToolCallingAgent, key="123")
-# We can also use a full agent identifier with the type name and the key.
-stub: AgentStub = runtime.get("ToolCallingAgent/123")
+stub = runtime.get(ToolCallingAgent, key="123")
+# We can also use the full agent identifier with the type name and the key.
+stub = runtime.get("ToolCallingAgent/123")
 
 # Create a task as a message batch.
 task = MessageBatch[MyMessage](messages=[MyMessage("Hello")])
 
 # Run the agent with the task and an new context that emits events to the console.
 result = await stub.run(task, RunContext(event_channel="console"))
+
+# We can also run the agent with RunContext created by the runtime,
+# which will emit events to the event channel configured for the runtime.
+# This is useful for remote runtime where the event channel maybe hosted 
+# in a different process or using a cloud service.
+result = await stub.run(task, runtime.create_run_context())
 ```
 
 ## Deploying an agent
@@ -220,5 +226,53 @@ await runtime.serve(port=8080)
 # <host_address>:8080/my_agent/123/agent.json
 ```
 
+## Using Foundry Agent Service
 
-## Use Foundry Agent Service
+The framework offers a built-in agent class for users of the Foundry Agent Service.
+The agent class essentially acts as a proxy to the agent hosted by the Foundry Agent Service,
+whether the agent is running directly or through an agent runtime.
+
+```python
+from agent_framework import FoundryAgent, MessageBatch, RunContext
+
+agent = FoundryAgent(
+    name="my_foundry_agent",
+    project_client="ProjectClient",
+    agent_id="my_agent_id", # If not provided, a new agent will be created.
+    thread_id="my_thread_id", # If not provided, a new thread will be created.
+    deployment_name="my_deployment",
+    instruction="my_instruction",
+    ... # Other parameters for the agent creation.
+)
+
+# Create a task as a message batch.
+task = MessageBatch[Message](messages=[Message("Hello")])
+
+# Run the agent with the task and an new context that emits events to the console.
+result = await agent.run(task, RunContext(event_channel="console"))
+```
+
+When using agent runtime, the agent class can be registered with the runtime
+and then run through the runtime.
+
+```python
+runtime = AgentRuntime()
+runtime.register(FoundryAgent, {
+    "project_client": "ProjectClient",
+    "agent_id": "my_agent_id", # If not provided, a new agent will be created.
+    "thread_id": "my_thread_id", # If not provided, a new thread will be created.
+    "deployment_name": "my_deployment",
+    "instruction": "my_instruction",
+    ... # Other parameters for the agent creation.
+})
+
+# Create an instance of the agent with a unique ID,
+# and returns a reference to the agent instance.
+stub = runtime.get(FoundryAgent, key="123")
+
+# Create a task as a message batch.
+task = MessageBatch[Message](messages=[Message("Hello")])
+
+# Run the agent with the task and a context created by the runtime.
+result = await stub.run(task, runtime.create_run_context())
+```
