@@ -135,7 +135,7 @@ Things to note in the implementation of the `run` method:
 - Components such as `thread` and `model_client` interacts smoothly with little boilerplate code.
 - The `context` parameter provides convenient access to the workflow run fixtures such as event channel.
 
-## Run the agent directly
+## Run agent directly
 
 Developer can instantiate a subclass of `Agent` directly using it's constructor, 
 and run it by calling the `run` method.
@@ -163,7 +163,7 @@ task = MessageBatch[MyMessage](messages=[MyMessage("Hello")])
 result = await agent.run(task, RunContext(event_channel="console"))
 ```
 
-## Run the agent through a runtime
+## Run agent on a runtime
 
 When the agent is deployed through a runtime, it is instantiated and run by the runtime
 instead of the developer's application.
@@ -250,6 +250,11 @@ stub = runtime.get(ToolCallingAgent, key=session_id)
 If agent instances are created directly by the application, or registered to
 the runtime with concrete objects (local only), then the components can be reused
 or shared by simply passing the same component instances to different agent instances.
+
+> **Note**: this is just an idea for now. We need to think about the implications.
+> Perhaps we should make all components actors as well and let the runtime manage them.
+> This also makes it easy to express "agent-as-tool" pattern where the agent is
+> hosted on the runtime and can be used as a tool in another agent.
 
 If the agent instances are created by the runtime with configuration parameters,
 then the components themselves must be registered with the runtime.

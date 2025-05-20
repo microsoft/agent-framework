@@ -373,12 +373,6 @@ and retry.
 The workflow should cover all the use cases of current AutoGen's
 AgentChat, Semantic Kernel's Agent Framework and Process Framework.
 
-The framework provides a set of pre-built workflows:
-
-- `GraphWorkflow`: a workflow that specifies the order of invocation as a directed graph.
-- `RoutedWorkflow`: a workflow that routes messages to its child actors based on the
-message type and the message content. Swarm is an example of such workflow (details TBD).
-
 For more details on the workflow, see [Workflows](workflows.md).
 
 ## Deployment and Scaling
