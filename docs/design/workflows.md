@@ -200,3 +200,5 @@ The pre-defined workflows are:
 - `SelectorGroupChat`: agents are selected on each iteration by the workflow's built-in
   LLM based selector.
 - `Swarm`: use handoffs.
+
+The predefined workflows are implemented as subclasses of the `Workflow` class.
