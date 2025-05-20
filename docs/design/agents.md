@@ -18,8 +18,20 @@ from agent_framework import RunContext, Message, MessageBatch, ModelClient, Thre
 
 TInput = TypeVar("TInput", bound=Message)
 TOutput = TypeVar("TOutput", bound=Message)
+TConfig = TypeVar("TConfig", bound="BaseModel")
 
-class Agent(Actor, ABC, Generic[TInput, TOutput]):
+class Agent(Actor, ABC, Generic[TInput, TOutput, TConfig]):
+    """The base class for all agents in the framework.
+
+    Each agent is a subclass of this class, and implements the `run` method
+    to process incoming messages, and the `create` method to create an agent instance
+    when used by the runtime.
+
+    Each agent class should specify the input and output message types it can process
+    and produce. The input and output types are used by workflow for validation and routing.
+    The agent class should also specify the configuration type it needs to create an instance
+    by the runtime.
+    """
 
     @abstractmethod
     async def run(self, messages: MessageBatch[TInput], context: RunContext) -> MessageBatch[TOutput]:
