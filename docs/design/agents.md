@@ -11,11 +11,6 @@ in the `agent_runtime` package. It is the base class for all agents in the frame
 There is the code for the `Agent` base class:
 
 ```python
-from typing import Generic, TypeVar
-from abc import ABC, abstractmethod
-from agent_runtime import Actor, ActorInstantiationContext
-from agent_framework import RunContext, Message, MessageBatch, ModelClient, Thread, Tool
-
 TInput = TypeVar("TInput", bound=Message)
 TOutput = TypeVar("TOutput", bound=Message)
 
@@ -54,24 +49,26 @@ The `ToolCallingAgent` class is a subclass of the `Agent` base class.
 It implements the `run` method to process incoming messages and call tools if needed.
 
 ```python
-from agent_framework import Agent, MessageBatch, Message
-
 class MyMessage(Message):
     ...
 
 class ToolCallingAgent(Agent[MyMessage, MyMessage]):
     def __init__(
         self, 
-        model_client: ModelClient
-        thread: Thread
-        tools: list[Tool]
+        model_client: ModelClient,
+        thread: Thread,
+        tools: list[Tool],
+        input_guardrails: list[InputGuardrails[MyMessage]],
     ) -> None:
         super().__init__(name=name)
         self.model_client = model_client
         self.tools = tools
         self.thread = thread
+        self.input_guardrails = input_guardrails
 
     async def run(self, messages: MessageBatch[MyMessage], context: RunContext) -> MessageBatch[MyMessage]:
+        # Raise exception if the guardrail is triggered.
+        await self.input_guardrails.trip_wire(messages)
         # Update the thread with the messages.
         await self.thread.update(messages.to_model_messages())
         # Create a response using the model client.
@@ -81,6 +78,10 @@ class ToolCallingAgent(Agent[MyMessage, MyMessage]):
         # Update the thread with the response.
         await self.thread.update(create_result.to_model_messages())
         if create_result.is_tool_call():
+            # Get user approval for the tool call.
+            approval = await context.get_user_approval(create_result.tool_calls)
+            if not approval:
+                # ... return a canned response.
             # Call the tools with the tool calls in the response.
             tool_result = await self.mcp_server.call_tools(create_result.tool_calls)
             # Emit the event to notify the workflow consumer of a tool call.
@@ -105,8 +106,6 @@ Developer can instantiate a subclass of `Agent` directly using it's constructor,
 and run it by calling the `run` method.
 
 ```python
-from agent_framework import Agent, MessageBatch, OpenAIChatCompletionClient, UnboundedThread, RunContext, FunctionTool
-
 @FuntionTool
 def my_tool(input: str) -> str:
     return f"Tool result for {input}"
@@ -117,13 +116,14 @@ agent = ToolCallingAgent(
     model_client=model_client, 
     thread=thread,
     tools=[my_tool],
+    guardrails=[JailbreakGuardrail()]
 )
 
 # Create a task as a message batch.
 task = MessageBatch[MyMessage](messages=[MyMessage("Hello")])
 
 # Run the agent with the task and an new context that emits events to the console.
-result = await agent.run(task, RunContext(event_channel="console"))
+result = await agent.run(task, ConsoleRunContext)
 ```
 
 ## Run agent on a runtime
