@@ -51,7 +51,7 @@ class Agent(Actor, ABC, Generic[TInput, TOutput, TConfig]):
     
     @classmethod
     @abstractmethod
-    async def create(cls, context: ActorInstantiationContext) -> "Agent":
+    async def create(cls, context: ActorInstantiationContext[TConfig]) -> "Agent":
         """The factory method to create an agent instance from the context provided
         by the runtime: e.g., the user session. Typically, each component will be
         created based on the context provided here. So each component will also
@@ -60,9 +60,8 @@ class Agent(Actor, ABC, Generic[TInput, TOutput, TConfig]):
         The factory method is called by the runtime to create actor instance
         managed by the runtime.
 
-        The `context` varaible provides access to the various components
-        that are needed to create the agent instance. The components are
-        created by the runtime and passed to the factory method.
+        The `context` varaible provides access to the configurations from which
+        the components are be created from.
         """
         ...
 ```
@@ -80,7 +79,12 @@ from agent_framework import Agent, MessageBatch, Message
 class MyMessage(Message):
     ...
 
-class ToolCallingAgent(Agent[MyMessage, MyMessage]):
+class ToolCallingAgentConfig(BaseModel):
+    model_client: ModelClient
+    thread: Thread
+    tools: list[Tool]
+
+class ToolCallingAgent(Agent[MyMessage, MyMessage, ToolCallingAgentConfig]):
     def __init__(
         self, 
         name: str,
@@ -116,12 +120,13 @@ class ToolCallingAgent(Agent[MyMessage, MyMessage]):
             return MessageBatch(messages=create_result.messages)
     
     @classmethod
-    async def create(cls, context: ActorInstantiationContext) -> "ToolCallingAgent":
+    async def create(cls, context: ActorInstantiationContext[ToolCallingAgentConfig]) -> "ToolCallingAgent":
+        # The components are provided by the runtime when creating the instantiation context.
         return cls(
             name=context.name,
-            model_client=context.get("model_client", type=ModelClient),
-            thread=context.get("thread", type=Thread),
-            tools=context.get("tools", type=list[Tool]),
+            model_client=context.config.model_client,
+            thread=context.config.thread,
+            tools=context.config.tools,
         )
 ```
 
@@ -180,13 +185,18 @@ runtime.register(ToolCallingAgent, {
 })
 
 # For remote runtime, we cannot pass the component objects directly.
-# Instead, we pass the component type and the configuration parameters to create 
-# the component instance.
+# Instead, we register the component type, the configuration parameters to create 
+# the component instance, and the component ID for reference.
+# The configuration parameters must be serializable to JSON for remote runtime.
+runtime.register(OpenAIChatCompletionClient, {"model": "gpt-4.1"}, "openai_client")
+runtime.register(UnboundedThread, {}, "unbounded_thread")
+# Register the agent class with the runtime, using the component IDs instead of the component objects.
+runtime.register(ToolCallingAgent, {
+    "model_client": "openai_client",
+    "thread": "unbounded_thread",
+})
 # When the runtime creates the agent instance, it will also create the components
 # using the parameters provided here.
-# The configuration parameters must be serializable to JSON for remote runtime.
-runtime.register("model_client", OpenAIChatCompletionClient, {"model": "gpt-4.1"})
-runtime.register("thread", UnboundedThread, {})
 
 # NOTE: FunctionTool is tricky to register in a remote runtime.
 ```
