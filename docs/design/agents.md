@@ -123,7 +123,7 @@ agent = ToolCallingAgent(
 task = MessageBatch[MyMessage](messages=[MyMessage("Hello")])
 
 # Run the agent with the task and an new context that emits events to the console.
-result = await agent.run(task, ConsoleRunContext)
+result = await agent.run(task, ConsoleRunContext())
 ```
 
 ## Run agent on a runtime
