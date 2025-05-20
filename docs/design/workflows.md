@@ -166,3 +166,37 @@ workflow = Workflow(router=router)
 
 The validation of the router is done as part of the workflow creation, to ensure
 that no gap exists in the routing, and warning for cascading routes.
+
+## Terminating `Workflow`
+
+A `workflow` may run indefinitely, so it is important to have a way to terminate
+it.
+
+```python
+# Use a termination condition to stop the workflow when the condition is met.
+# Detail design TBD.
+condition = TerminationCondition(
+    condition=Any(...),
+    timeout="1h",
+)
+workflow = Workflow(graph=graph, termination_condition=condition)
+```
+
+TBD.
+
+## Pre-defined workflows
+
+The framework ships with a few pre-defined workflows for common orchestration
+patterns. These workflows can be used as-is or as a starting point for
+new developers, however, when using them, you should be aware of the underlying
+implementation and move on to custom workflows when a limit is reached.
+
+The pre-defined workflows are:
+- `Sequential`: A sequential workflow that calls each agent in order,
+  its message flow can be configured separately.
+- `MapReduce`: A map-reduce workflow that splits a task into smaller
+  tasks, runs them in parallel and then combines the results.
+- `RoundRobinGroupChat`: agents are called in a round-robin fashion in a loop.
+- `SelectorGroupChat`: agents are selected on each iteration by the workflow's built-in
+  LLM based selector.
+- `Swarm`: use handoffs.
