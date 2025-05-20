@@ -40,8 +40,8 @@ graph = GraphBuilder() \
     .add_transition(agent2, agent3, conditions=Any(..., All(...))]) \
     .build()
 
-# Create a workflow from the graph.
-workflow = Workflow(graph=graph)
+# Create a workflow from the graph, specifying the input and output message types.
+workflow = Workflow[Message, Message](graph=graph)
 
 # Create a message batch to send to the workflow.
 # The run context is used to pass in the event channel and other context
@@ -92,7 +92,7 @@ graph = GraphBuilder() \
     .build()
 
 # Create a workflow from the graph.
-workflow = Workflow(graph=graph)
+workflow = Workflow[Message, Message](graph=graph)
 
 # The rest is the same as the previous example.
 ```
@@ -114,7 +114,7 @@ graph = GraphBuilder() \
     .build()
 
 # Register the workflow with the agent runtime.
-runtime.register(Workflow, config={
+runtime.register(Workflow[Message, Message], {
     "graph": graph,
 }, type_name="workflow1")
 
@@ -152,7 +152,7 @@ router = RouterBuilder() \
 ).build()
 
 # Create a workflow from the graph and router.
-workflow = Workflow(graph=graph, router=router)
+workflow = Workflow[Message, Message](graph=graph, router=router)
 ```
 
 You can also skip the graph all together and just create a workflow from the router.
@@ -161,7 +161,7 @@ to their inboxes, according to the routing rules.
 
 ```python
 # Create a workflow from the router.
-workflow = Workflow(router=router)
+workflow = Workflow[Message, Message](router=router)
 ```
 
 The validation of the router is done as part of the workflow creation, to ensure
@@ -179,7 +179,7 @@ condition = TerminationCondition(
     condition=Any(...),
     timeout="1h",
 )
-workflow = Workflow(graph=graph, termination_condition=condition)
+workflow = Workflow[Message, Message](graph=graph, termination_condition=condition)
 ```
 
 TBD.

@@ -18,19 +18,15 @@ from agent_framework import RunContext, Message, MessageBatch, ModelClient, Thre
 
 TInput = TypeVar("TInput", bound=Message)
 TOutput = TypeVar("TOutput", bound=Message)
-TConfig = TypeVar("TConfig", bound="BaseModel")
 
-class Agent(Actor, ABC, Generic[TInput, TOutput, TConfig]):
+class Agent(Actor, ABC, Generic[TInput, TOutput]):
     """The base class for all agents in the framework.
 
     Each agent is a subclass of this class, and implements the `run` method
-    to process incoming messages, and the `create` method to create an agent instance
-    when used by the runtime.
+    to process incoming messages.
 
     Each agent class should specify the input and output message types it can process
     and produce. The input and output types are used by workflow for validation and routing.
-    The agent class should also specify the configuration type it needs to create an instance
-    by the runtime.
     """
 
     @abstractmethod
@@ -48,22 +44,6 @@ class Agent(Actor, ABC, Generic[TInput, TOutput, TConfig]):
         """
         ...
     
-    
-    @classmethod
-    @abstractmethod
-    async def create(cls, context: ActorInstantiationContext[TConfig]) -> "Agent":
-        """The factory method to create an agent instance from the context provided
-        by the runtime: e.g., the user session. Typically, each component will be
-        created based on the context provided here. So each component will also
-        be associated with the user session.
-
-        The factory method is called by the runtime to create actor instance
-        managed by the runtime.
-
-        The `context` varaible provides access to the configurations from which
-        the components are be created from.
-        """
-        ...
 ```
 
 ## `ToolCallingAgent` example
@@ -79,18 +59,12 @@ from agent_framework import Agent, MessageBatch, Message
 class MyMessage(Message):
     ...
 
-class ToolCallingAgentConfig(BaseModel):
-    model_client: ModelClient
-    thread: Thread
-    tools: list[Tool]
-
-class ToolCallingAgent(Agent[MyMessage, MyMessage, ToolCallingAgentConfig]):
+class ToolCallingAgent(Agent[MyMessage, MyMessage]):
     def __init__(
         self, 
-        name: str,
-        model_client: ModelClient,
-        thread: Thread,
-        tools: list[Tool], 
+        model_client: ModelClient
+        thread: Thread
+        tools: list[Tool]
     ) -> None:
         super().__init__(name=name)
         self.model_client = model_client
@@ -118,16 +92,6 @@ class ToolCallingAgent(Agent[MyMessage, MyMessage, ToolCallingAgentConfig]):
         else: 
             # Return the response as the result.
             return MessageBatch(messages=create_result.messages)
-    
-    @classmethod
-    async def create(cls, context: ActorInstantiationContext[ToolCallingAgentConfig]) -> "ToolCallingAgent":
-        # The components are provided by the runtime when creating the instantiation context.
-        return cls(
-            name=context.name,
-            model_client=context.config.model_client,
-            thread=context.config.thread,
-            tools=context.config.tools,
-        )
 ```
 
 Things to note in the implementation of the `run` method:
@@ -150,7 +114,6 @@ def my_tool(input: str) -> str:
 thread = UnboundedThread()
 model_client = OpenAIChatCompletionClient("gpt-4.1")
 agent = ToolCallingAgent(
-    name="my_agent", 
     model_client=model_client, 
     thread=thread,
     tools=[my_tool],
@@ -181,7 +144,7 @@ runtime = AgentRuntime()
 # Register the agent class with the runtime, under the type name same as the class name.
 # This is the default behavior but can be overridden by specifying a different type name.
 # Configuration parameters are provided to the runtime to create the components
-runtime.register(ToolCallingAgent, config={
+runtime.register(ToolCallingAgent, {
     "model_client": {
         "type": "OpenAIChatCompletionClient",
         "model": "gpt-4.1",
@@ -196,7 +159,7 @@ runtime.register(ToolCallingAgent, config={
 # when we want to register the same class to different type names with different configurations.
 # In this case, we are using the object directly instead of the config -- only
 # works for local runtime.
-runtime.register(ToolCallingAgent, config={
+runtime.register(ToolCallingAgent, {
     "model_client": OpenAIChatCompletionClient("gpt-4.1"),
     "thread": UnboundedThread(),
     "tools": [my_tool],
@@ -261,10 +224,10 @@ then the components themselves must be registered with the runtime.
 
 ```python
 # Register the components with the runtime, so that they can be reused.
-runtime.register(OpenAIChatCompletionClient, config={
+runtime.register(OpenAIChatCompletionClient, {
     "model": "gpt-4.1",
 }, type_name="my_model_client")
-runtime.register(UnboundedThread, config={}, type_name="my_thread")
+runtime.register(UnboundedThread, {}, type_name="my_thread")
 
 client_stub = runtime.get(OpenAIChatCompletionClient, key="client_123")
 thread_stub = runtime.get(UnboundedThread, key="thread_123")
