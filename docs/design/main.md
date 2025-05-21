@@ -25,7 +25,7 @@ Table of Contents
   - [Memory](#memory)
   - [Thread](#thread)
   - [Guardrail](#guardrail)
-- [Agent and Workflow](#agents-and-workflows)
+- [Agent and Workflow](#agent-and-workflow)
   - [Agent](#agent)
   - [Workflow](#workflow)
 - [Deployment and Scaling](#deployment-and-scaling)
