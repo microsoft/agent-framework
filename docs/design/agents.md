@@ -3,7 +3,38 @@
 The design goal is a smooth experience to create single agent from
 agent components, and to deploy and run the agent through a runtime.
 
-## `Agent` base class
+## Design Choices
+
+There are two main design choices for an agent abstraction:
+1. **Stateful Agent**: Agent is a class that implements a `run` method while
+    maintaining a state. For some use cases, the agent is ephemeral and created
+    with a task and an externalized state for the task. For other use cases, 
+    the agent maintains a state across different tasks.
+2. **Stateless Agent**: Agent is a configuration (i.e., a data class
+    or a Pydantic base model) with model client, tools, MCP servers, and other
+    components). The agent itself is stateless and a separate function or runner
+    class is used to run the agent with a task and an externalized state.
+
+The table below provides breakdown of the two design choices:
+
+| Aspect | Stateful Agent | Stateless Agent |
+|--------|----------------|-----------------|
+| Task  | Handles task directly and updates its state | Runs task with a runner and exporting the state as the output |
+| Statefulness | Allowed to maintains state depending on implementation | Stateless |
+| State management | State is managed by the agent class, can be exported, imported, and reseted through methods | State is temporarily managed by the runner during a run, and completely exported as part of the output |
+| State serialization | State is custom and up to the implementation, while built-in states are serializable | State is defined by the framework and must be serializable |
+| Components | Interacts with components directly within itself | Interacts with components through the runner |
+| Parameters | Parameters are passed to the constructor | Parameters are passed to the constructor |
+| Customization | Customizable by subclassing the agent class | Customizable by creating a new runner function or class |
+| Workflow behavior | A stateful node in a workflow -- depending on implementation it could be stateless | A stateless node in a workflow and an externalized state passes through the nodes in the workflow |
+| Workflow topology | Workflow can be defined either by the control flow (execution order) or the data flow (message delivery), or both together | Control flow and data flow are the same, similar to an ETL pipeline |
+
+For **stateful agents**, see the [Stateful Agent](#stateful-agent) section below.
+For **stateless agents**, see the [Stateless Agent](#stateless-agent) section below.
+
+## Stateful Agent
+
+### `Agent` base class
 
 The `Agent` base class is an abstract class all agents in the framework
 must inherit from. 
@@ -40,7 +71,7 @@ class Agent(ABC, Generic[TInput, TOutput]):
     
 ```
 
-## `ToolCallingAgent` example
+### `ToolCallingAgent` example
 
 Here is a simple example of a custom agent that calls a tool and returns the result.
 Its input and output message types are custom-defined message types that inherit from the `Message` base class.
@@ -99,7 +130,7 @@ Things to note in the implementation of the `run` method:
 - Components such as `thread` and `model_client` interacts smoothly with little boilerplate code.
 - The `context` parameter provides convenient access to the workflow run fixtures such as event channel.
 
-## Run agent directly
+### Run agent directly
 
 Developer can instantiate a subclass of `Agent` directly using it's constructor, 
 and run it by calling the `run` method.
@@ -125,7 +156,7 @@ task = [MyMessage("Hello")]
 result = await agent.run(task, ConsoleRunContext())
 ```
 
-## Using Foundry Agent Service
+### Using Foundry Agent Service
 
 The framework offers a built-in agent class for users of the Foundry Agent Service.
 The agent class essentially acts as a proxy to the agent hosted by the Foundry Agent Service.
