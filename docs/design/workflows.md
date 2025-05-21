@@ -2,8 +2,7 @@
 
 The design goal is to create workflows that can be specified in a declarative
 way to allow for easy creation and modification without needing to change the
-underlying code. Also, workflows should be able to run completely locally or
-in a distributed agent runtime, with the same developer experience.
+underlying code. 
 
 ## `Workflow` is Agent
 
@@ -46,82 +45,9 @@ workflow = Workflow[Message, Message](graph=graph)
 # Create a message batch to send to the workflow.
 # The run context is used to pass in the event channel and other context
 # shared by the agents.
-task = MessageBatch(messages=[...])
+task = [...]
 context = RunContext(event_channel="console")
 result = workflow.run(task=task, context=context)
-```
-
-## Run `Workflow` on agent runtime
-
-The agents in a workflow can be hosted on an agent runtime, which may contain
-local or remote agents.
-
-```python
-# Register agents with the agent runtime.
-# These steps may be done separately from the workflow creation.
-runtime.register(MCPAgent, config={
-    "model_client": {
-        "type": "OpenAIChatCompletionClient",
-        "model": "gpt-4.1",
-    }
-    "mcp_server": [{
-        "type": "MCPServer",
-        ...,
-    },
-    {
-        "type": "MCPServer",
-        ...,
-    }],
-}, type_name="agent1")
-runtime.register(MCPAgent, config=..., type_name="agent2")
-runtime.register(MCPAgent, config=..., type_name="agent3")
-
-# Get the agent stubs from the agent runtime.
-agent1_stub = runtime.get("agent1/123", class=MCPAgent)
-agent2_stub = runtime.get("agent2/123", class=MCPAgent)
-agent3_stub = runtime.get("agent3/123", class=MCPAgent)
-
-# Create a directed graph of agents with conditional loops and transitions.
-# This step is the same as the previous example.
-graph = GraphBuilder() \
-    .add_agent(agent1_stub) \
-    .add_agent(agent2_stub) \
-    .add_agent(agent3_stub) \
-    .add_loop(agent1_stub, agent2_stub, conditions=Any(...)) \
-    .add_transition(agent2_stub, agent3_stub, conditions=Any(..., All(...))]) \
-    .build()
-
-# Create a workflow from the graph.
-workflow = Workflow[Message, Message](graph=graph)
-
-# The rest is the same as the previous example.
-```
-
-The workflow itself may be run on the agent runtime as well.
-We need to register the workflow with the agent runtime.
-
-```python
-# Create a graph with only agent type information.
-# For each agent, the key is optional: if provided, the exact agent instance
-# will be used. If not provided, the agent runtime will create a new agent
-# with the same key as the workflow's key.
-graph = GraphBuilder() \
-    .add_agent("agent1", class=MCPAgent, key="123") \
-    .add_agent("agent2", class=MCPAgent) \
-    .add_agent("agent3", class=MCPAgent) \
-    .add_loop("agent1/123", "agent2", conditions=Any(...)) \
-    .add_transition("agent2", "agent3", conditions=Any(..., All(...))]) \
-    .build()
-
-# Register the workflow with the agent runtime.
-runtime.register(Workflow[Message, Message], {
-    "graph": graph,
-}, type_name="workflow1")
-
-# Get the workflow stub from the agent runtime.
-workflow_stub = runtime.get("workflow1/xyz", class=Workflow)
-
-# The rest is the same as the previous example.
 ```
 
 ## Message flow in `Workflow`
@@ -129,7 +55,7 @@ workflow_stub = runtime.get("workflow1/xyz", class=Workflow)
 By default, each message is delivered to an "inbox" of every agent in a `Workflow`,
 if the agent's input message type matches the message type (i.e., subclasses
 the message type). The messages in the "inbox" are then converted into a
-`MessageBatch` and passed to the agent's `run` method.
+list of messages and passed to the agent's `run` method.
 
 > NOTE: the input message type can be a union of different message types. In
 > this case, the message is checked against each type in the union and if
