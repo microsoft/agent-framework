@@ -27,7 +27,6 @@ The table below provides breakdown of the two design choices:
 | Parameters | Parameters are passed to the constructor | Parameters are passed to the constructor |
 | Customization | Customizable by subclassing the agent class | Customizable by creating a new runner function or class |
 | Workflow behavior | A stateful node in a workflow -- depending on implementation it could be stateless | A stateless node in a workflow and an externalized state passes through the nodes in the workflow |
-| Workflow topology | Workflow can be defined either by the control flow (execution order) or the data flow (message delivery), or both together | Control flow and data flow are the same, similar to an ETL pipeline |
 
 For **stateful agents**, see the [Stateful Agent](#stateful-agent) section below.
 For **stateless agents**, see the [Stateless Agent](#stateless-agent) section below.
@@ -130,7 +129,7 @@ Things to note in the implementation of the `run` method:
 - Components such as `thread` and `model_client` interacts smoothly with little boilerplate code.
 - The `context` parameter provides convenient access to the workflow run fixtures such as event channel.
 
-### Run agent directly
+### Run agent
 
 Developer can instantiate a subclass of `Agent` directly using it's constructor, 
 and run it by calling the `run` method.
@@ -156,6 +155,29 @@ task = [MyMessage("Hello")]
 result = await agent.run(task, ConsoleRunContext())
 ```
 
+### Managing state
+
+For stateful agents, the state is managed by the agent class itself.
+
+```python
+# Export the state.
+state = await agent.save_state()
+
+# Import the state.
+await agent.load_state(state)
+
+# Reset the state.
+await agent.reset_state()
+
+# Serialize the state -- this requires the state to be serializable.
+serialized = state.model_dump_json()
+```
+
+### Workflow agent
+
+See [Workflows](workflows.md) for more details on how to create a workflow agent
+with stateful agents.
+
 ### Using Foundry Agent Service
 
 The framework offers a built-in agent class for users of the Foundry Agent Service.
@@ -178,3 +200,98 @@ task = [Message("Hello")]
 # Run the agent with the task and an new context that emits events to the console.
 result = await agent.run(task, RunContext(event_channel="console"))
 ```
+
+## Stateless Agent
+
+### `Agent` base model
+
+The `Agent` base model is a Pydantic model that defines the parameters for an agent.
+
+```python
+class Agent(BaseModel, Generic[TInput, TOutput]):
+    """The base model for all agents in the framework."""
+    model_client: ModelClient
+    tools: list[Tool] = []
+    input_guardrails: list[InputGuardrails] = []
+    output_guardrails: list[OutputGuardrails] = []
+    mcp_server: MCPServer | list[MCPServer]
+```
+
+### Run agent
+
+The `Agent` base model is a configuration model and does not have a `run` method.
+Instead, a separate Runner function is used to run the agent.
+
+```python
+agent = Agent(
+    model_client="OpenAIChatCompletionClient",
+    mcp_server=["MCPServer1", "MCPServer2"],
+    tools=[my_tool],
+    input_guardrails=[JailbreakGuardrail()],
+)
+
+# The task is a thread of messages.
+thread = [Message("Hello")]
+
+# Run the agent with the task and an new context that emits events to the console.
+result = await Runner.run(agent, thread, RunContext(event_channel="console"))
+
+# The conversation state is returned as part of the result.
+print(result.thread)
+
+# To run the agent again to continue the same conversation,
+# we can reuse the thread and add a new message to it.
+thread = result.thread + [Message("How are you?")]
+result = await Runner.run(agent, thread, RunContext(event_channel="console"))
+```
+
+Depending on the implementation of the `Runner`, the agent may have different
+ways to run. We can achieve the same behavior as in the stateful agent.
+
+### Managing state
+
+The agent itself is stateless, so there the state is explictly managed by the
+application. For example, the `run` method may accept additional parameters
+such as `memory` which connects to an external memory service.
+It is the responsibility of the application to ensure those states are
+managed properly.
+
+### Workflow agent
+
+See [Workflows](workflows.md) for more details on how to create a workflow agent
+with stateless agents.
+
+### Using Foundry Agent Service
+
+It's straight forward to use the Foundry Agent Service with stateless agents.
+
+```python
+agent = FoundryAgent(
+    name="my_foundry_agent",
+    project_client="ProjectClient",
+    agent_id="my_agent_id", # If not provided, a new agent will be created.
+    deployment_name="my_deployment",
+    instruction="my_instruction",
+    ... # Other parameters for the agent creation.
+)
+
+# Create a thread that is backed by the Foundry Agent Service.
+thread = FoundryThread(thread_id="my_thread_id")
+
+# Run the agent with the task and an new context that emits events to the console.
+result = await Runner.run(agent, thread, RunContext(event_channel="console"))
+
+# The Foundry thread is updated with new messages.
+print(result.thread)
+
+# To run the agent again to continue the same conversation,
+# we can reuse the thread and add a new message to it.
+# This requires overloading the `__add__` operator for the `FoundryThread` class.
+thread = result.thread + [Message("How are you?")]
+
+# Run the agent again.
+result = await Runner.run(agent, thread, RunContext(event_channel="console"))
+```
+
+> NOTE: We need a way to reconcile the message types used by the application
+> with the message types that is accepted by the Foundry Agent Service.

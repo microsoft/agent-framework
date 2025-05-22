@@ -10,7 +10,7 @@ A `Workflow` is an agent composed of other agents. It follows the same interface
 as an agent. This allows for nested workflows, where a workflow can contain other
 workflows.
 
-## Run `Workflow`
+## Creating a `Workflow`
 
 This is the experience of creating a `Workflow` with agent instances directly.
 
@@ -41,14 +41,39 @@ graph = GraphBuilder() \
 
 # Create a workflow from the graph, specifying the input and output message types.
 workflow = Workflow[Message, Message](graph=graph)
+```
 
+## Run `Workflow`
+
+Depending on whether the agents follow the stateful or stateless model,
+the design of running the workflow is different.
+
+### For Stateful Agents
+
+[Stateful agents](agents.md#stateful-agent) are agents that maintain their
+state across multiple runs. Because `Workflow` is an agent, it is also stateful.
+
+```python
 # Create a message batch to send to the workflow.
 # The run context is used to pass in the event channel and other context
 # shared by the agents.
 task = [...]
 context = RunContext(event_channel="console")
-result = workflow.run(task=task, context=context)
+result = await workflow.run(task=task, context=context)
 ```
+
+### For Stateless Agents
+[Stateless agents](agents.md#stateless-agent) are run by a runner class.
+In this design, the `Workflow` is also stateless.
+
+```python
+thread = [...]
+context = RunContext(event_channel="console")
+result = await Runner.run(workflow, thread, context=context)
+```
+
+In this design, the `run` method of the `Runner` class is responsible for
+executing the child agents according to the order specified in the graph.
 
 ## Message flow in `Workflow`
 
@@ -72,9 +97,9 @@ This requires a separate configuration step besides the graph.
 graph = ...
 
 router = RouterBuilder() \
-    .add_route(source="agent1", target="agent2", from_type=MessageType1) \
-    .add_route(source=["agent1", "agent2"], target="agent3", batch_size=10, ttl="1h") \
-    .add_route(target="agent4", from_type=MessageType3 | MessageType4) \
+    .add_route(source=agent1, target=agent2, from_type=MessageType1) \
+    .add_route(source=[agent1, agent2], target=agent3, batch_size=10, ttl="1h") \
+    .add_route(target=agent4, from_type=MessageType3 | MessageType4) \
 ).build()
 
 # Create a workflow from the graph and router.
