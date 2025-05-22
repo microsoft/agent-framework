@@ -15,33 +15,23 @@ What is this document?
 
 Table of Contents
 
-- [Agent Framework: Overview](#agent-framework-overview)
-  - [Core Data Types](#core-data-types)
-  - [Component](#component)
-  - [Agent Components](#agent-components)
-    - [Model Client](#model-client)
-    - [Vector Store and Embedding Client](#vector-store-and-embedding-client)
-    - [Tool](#tool)
-    - [MCP Server](#mcp-server)
-    - [Memory](#memory)
-    - [Thread](#thread)
-    - [Guardrail](#guardrail)
-  - [Actor Components](#actor-components)
-    - [Agent](#agent)
-    - [Workflow](#workflow)
-  - [Deployment and Scaling](#deployment-and-scaling)
-  - [Monitoring](#monitoring)
-  - [Evaluation](#evaluation)
-    - [Core Evaluation Concepts](#core-evaluation-concepts)
-    - [Evaluation Components](#evaluation-components)
-    - [(Example) Metrics](#example-metrics)
-      - [Computation-based Metrics](#computation-based-metrics)
-      - [Model-based Metrics](#model-based-metrics)
-    - [Example Metrics](#example-metrics-1)
-    - [Sample Developer Experience](#sample-developer-experience)
-    - [Integration with Cloud Services](#integration-with-cloud-services)
-  - [Debugging](#debugging)
-  - [Optimization](#optimization)
+- [Core Data Types](#core-data-types)
+- [Component](#component)
+- [Agent Components](#agent-components)
+  - [Model Client](#model-client)
+  - [Vector Store and Embedding Client](#vector-store-and-embedding-client)
+  - [Tool](#tool)
+  - [MCP Server](#mcp-server)
+  - [Memory](#memory)
+  - [Thread](#thread)
+  - [Guardrail](#guardrail)
+- [Agent and Workflow](#agent-and-workflow)
+  - [Agent](#agent)
+  - [Workflow](#workflow)
+- [Deployment and Scaling](#deployment-and-scaling)
+- [Monitoring](#monitoring)
+- [Evaluation](#evaluation)
+- [Debugging](#debugging)
 
 ## Core Data Types
 
@@ -83,10 +73,9 @@ The following diagram shows the component relationship of the framework:
 
 ```mermaid
 graph TD
-    Component[Component] --> |extends| Actor[Actor]
-    Actor --> |extends| Agent[Agent]
-    Actor --> |extends| Workflow[Workflow]
-
+    Component[Component] --> |extends| Agent[Agent]
+    Agent --> |extends| Workflow[Workflow]
+    
     Component --> |extends| ModelClient[Model Client]
     Component --> |extends| VectorStore[Vector Store]
     Component --> |extends| EmbeddingClient[Embedding Client]
@@ -95,26 +84,18 @@ graph TD
     Component --> |extends| Memory[Memory]
     Component --> |extends| Thread[Thread]
     Component --> |extends| Guardrail[Guardrail]
-
+    
     Agent --> |uses| uses1[Model Client]
     Agent --> |uses| uses2[Thread]
     Agent --> |uses| uses3[Tools and MCP Servers]
     Agent --> |uses| uses4[Memory]
     Agent --> |uses| uses5[Guardrail]
-
-    Workflow --> |contains| contains[Child Actors]
+    
+    Workflow --> |contains| contains[Child Agents]
 
     Memory --> |uses| uses5[Vector Store]
     VectorStore --> |uses| uses6[Embedding Client]
 ```
-
-Some components are implemented using the [Agent Runtime](https://github.com/microsoft/agent-runtime):
-
-- Thread as a state object
-- Memory as a state object
-- Agent as an actor
-- Guardrail as an actor
-- Workflow as an actor that orchestrates other actors.
 
 ## Agent Components
 
@@ -244,7 +225,7 @@ The framework provides a set of pre-built memories:
 
 - `ListMemory`: a memory that synthesizes model context formatted from all data it stores as a list.
 - `VectorMemory`: a memory that synthesize model context from data retrieved from a vector store.
-  This may be a base class for vendor-specific implementations.
+This may be a base class for vendor-specific implementations.
 - `AzureAISearchMemory`: a memory that synthesizes model context from data retrieved from Azure AI Search.
 - `Mem0Memory`: a memory that is backed by Mem0.
 
@@ -258,9 +239,9 @@ The framework provides a set of pre-built threads:
 - `UnboundedThread`: a thread that provides view for all of the message history
 - `TruncatedThread`: a thread that provides a view of a message history from the last N messages.
 - `TokenLimitedThread`: a thread that provides a view of a message history up to
-  a certain number of tokens.
+a certain number of tokens.
 - `TimeLimitedThread`: a thread that provides a view of a message history up to
-  a certain time limit.
+a certain time limit.
 
 ### Guardrail
 
@@ -273,12 +254,12 @@ output of a tool call does not contain sensitive information or harmful content.
 The framework provides a set of pre-built guardrails as reference implementation:
 
 - `JailbreakGuardrail`: a guardrail that uses a language model to detect malicious instructions
-  and jailbreaks in the input messages.
+and jailbreaks in the input messages.
 - `SecretGuardrail`: a guardrail that uses a configurable set of rules to detect
-  sensitive data such as passwords, credit card numbers, tokens, etc. in model or tool outputs.
+sensitive data such as passwords, credit card numbers, tokens, etc. in model or tool outputs.
 - `PIIGuardrail`: a guardrail that uses a configurable set of rules to detect
-  personally identifiable information (PII) such as email addresses, phone numbers,
-  social security numbers, etc. in model or tool outputs.
+personally identifiable information (PII) such as email addresses, phone numbers,
+social security numbers, etc. in model or tool outputs.
 
 A teaser of the experience of using a built-in guardrail:
 
@@ -304,155 +285,60 @@ mcp_server = MCPServer(...)
 mcp_server.add_output_guardrail(guardrail)
 ```
 
-## Actor Components
+## Agent and Workflow
 
-An actor is a component that takes a sequence of messages and produces a stream
+An agent is a component that takes a sequence of messages and produces a sequence
 of messages. The data types of the messages can be built-in or defined by the application,
-but they must be serializable and defined for each actor.
-These data types are not necessarily the same ones in model context.
-
-The actor class is inherited from the actor base class in the agent runtime,
-so it holds state managed by the agent runtime through the state API, including
-the thread and memory components.
-
-_NOTE: we need to align the actor definition in the agent runtime with this one,
-so we are using the actor class directly from the agent runtime._
-
-_NOTE: we need to design the agent runtime to make sure the state API can
-be used to implement the components in the agent framework._
-
-_NOTE: Instead of "Agent", in the runtime, we should use "Actor" to refer to the
-current agent base class `agent_runtime.Agent`. We want to reserve the term "Agent"
-to refer to entities that use language models. This aligns with the usage in the
-AI community, where people often refer to "Agent" as an entity that can perceive, plan
-and act._
+but they must be serializable and defined for each agent.
 
 ### Agent
 
-An agent is an actor that uses a language model.
-During its handling of messages, the agent:
+During its handling of messages, an agent may:
 
-- Uses model client to process messages,
-- Uses thread to keep track of the interaction with the model,
-- Invokes tools or MCP servers, and
-- Retrieves and stores data through memory.
+- Use model client to process messages,
+- Use thread to keep track of the interaction with the model,
+- Invoke tools or MCP servers, and
+- Retrieve and store data through memory.
 
-An agent base class has access to a set of well-known states through the state API provided by its actor base class. These well-known states are:
+It is up to the implementation of the agent class to decide how these components are used.
 
-- `Thread`: the thread component.
-- `Memory`: the memory component.
-
-It is up to the implementation of the agent class to decide how these states and
-components are used.
-
-**An important design goal of the framework is to ensure the developer experience
-of creating custom agent is as easy as possible.** Existing frameworks
+__An important design goal of the framework is to ensure the developer experience
+of creating custom agent is as easy as possible.__ Existing frameworks
 have made "kitchen-sink" agents that are hard to understand and maintain.
 
-A teaser of the experience for creating a custom agent is shown below.
-
-```python
-from agent_framework import Agent, MessageBatch, Thread
-
-class ToolCallingAgent(Agent):
-    async def run(self, messages: MessageBatch, thread: Thread) -> MessageBatch:
-        # Update the thread with the messages.
-        await thread.update(messages.to_model_messages())
-        # Create a response using the model client.
-        create_result = await self.model_client.create(thread=thread)
-        # Update the thread with the response.
-        await thread.update(create_result.to_model_messages())
-        if create_result.is_tool_call():
-            # Call the tools with the tool calls in the response.
-            tool_result = await self.mcp_server.call_tools(create_result.tool_calls)
-            # Update the thread with the tool result.
-            await thread.update(tool_result.to_model_messages())
-            # Return the tool result as the response.
-            return MessageBatch(messages=tool_result.messages)
-        else:
-            # Return the response as the result.
-            return MessageBatch(messages=create_result.messages)
-```
-
 An agent might not use the components provided by the framework to implement
-the actor interface.
+the agent interface.
 Azure AI Agent is an example of such agent: its implementation is
 backed by the Azure AI Agent Service.
 
 The framework provides a set of pre-built agents:
 
 - `ChatCompletionAgent`: an agent that uses a chat-completion model to process messages
-  and use thread, memory, tools and MCP servers in a configurable way. **If we can make
-  custom agents easy to implement, we can remove this agent.**
+and use thread, memory, tools and MCP servers in a configurable way. __If we can make
+custom agents easy to implement, we can remove this agent.__
 - `AzureAIAgent`: an agent that is backed by Azure AI Agent Service.
 - `ResponsesAgent`: an agent that is backed by OpenAI's Responses API.
 - `A2AAgent`: an agent that is backed by the [A2A Protocol](https://google.github.io/A2A/documentation/).
 
+For more details on the agent, see [Agents](agents.md).
+
 ### Workflow
 
-A workflow is an actor consists of multiple child actors, some of which may be
-actors, and some may be other workflows.
-During its handling of messages, it invokes its child actors
+A workflow is an agent consists of multiple child agents, some of which may be
+other workflows.
+During its handling of messages, it invokes its child agents
 in some order (could be concurrent or sequential), collects the messages
-produced by the child actors, and create the output messages.
+produced by the child agents, and create the output messages.
 
-The composition of actors can be declaratively defined using a directed graph, or can
-emerge from the type-based message routing defined for each actor.
-
-The workflow should understand the agent and guardrail interfaces, and knows
-how to compose them appropriately to achieve functionality like trip-wiring
-and retry.
+The composition of agents can be declaratively defined using a directed graph, or can
+emerge from the type-based message routing defined for each agent.
 
 The workflow should cover all the use cases of current AutoGen's
 AgentChat, Semantic Kernel's Agent Framework and Process Framework.
 
-The framework provides a set of pre-built workflows:
-
-- `GraphWorkflow`: a workflow that specifies the order of invocation as a directed graph.
-- `RoutedWorkflow`: a workflow that routes messages to its child actors based on the
-  message type and the message content. Swarm is an example of such workflow (details TBD).
-
-Pesudo Python code for creating a `GraphWorkflow`.
-
-```python
-from agent_framework import GraphWorkflow, GraphBuilder, ChatCompletionAgent, Any, All
-
-agent1 = ChatCompletionAgent(
-    model_client="OpenAIChatCompletionClient",
-    mcp_servers=["MCPServer1", "MCPServer2"],
-    memory="ListMemory",
-)
-
-agent2 = ChatCompletionAgent(
-    model_client="OpenAIChatCompletionClient",
-    mcp_servers=["MCPServer3", "MCPServer4"],
-    memory="ListMemory",
-)
-
-graph = GraphBuilder() \
-    .add_agent(agent1) \
-    .add_agent(agent2) \
-    .add_loop(agent1, agent1, conditions=Any(...)) \
-    .add_transition(agent1, agent2, conditions=Any(..., All(...))]) \
-    .build()
-
-workflow = GraphWorkflow(graph=graph)
-
-# This is just a teaser, we still need to define how the actual API looks like.
-events = workflow.run_stream(
-    input_message="Hello, world!",
-    context={
-        "user_id": "123456",
-        "session_id": "abcdefg"
-    },
-    mcp_servers=["MCPServer1", "MCPServer2", "MCPServer3", "MCPServer4"],
-)
-```
+For more details on the workflow, see [Workflows](workflows.md).
 
 ## Deployment and Scaling
-
-Agents and workflows created using this framework can be deloyed through
-the [Agent Runtime](https://github.com/microsoft/agent-runtime).
 
 Details TBD.
 
@@ -464,102 +350,9 @@ Details TBD.
 
 ## Evaluation
 
-The framework provides a comprehensive evaluation system for assessing agent performance, enabling developers to measure both the quality of agent responses and the efficiency of their decision-making processes.
+Integrate with Azure AI Evaluation Service and other 3rd party services.
 
-### Core Evaluation Concepts
-
-- **Standardized Trajectory Format**: A unified representation of agent interactions (messages, tool calls, events) enabling consistent evaluation across different agent implementations.
-- **Trajectory Evaluation**: Analyze both the path an agent takes and the final response it generates. This includes evaluating the sequence of tool calls, the order of operations, and the final output.
-
-### Evaluation Components
-
-The framework provides these key evaluation components:
-
-- **Trajectory Converter**: Transforms agent runs from various frameworks into a standardized format for evaluation.
-- **Metrics Library**:
-  - Computation-based metrics: Direct algorithms that calculate objective measures without requiring a model
-  - Model-based metrics: Evaluation criteria that require a model to assess subjective qualities
-- **Judge**: For model-based metrics, a judge is the LLM responsible for applying evaluation criteria. Different judge models can be selected based on evaluation needs.
-- **Evaluator**: Coordinates the evaluation process by running computation-based metrics directly and applying judges to model-based metrics.
-- **Integration**: Connect with cloud evaluation services including Azure AI Evaluation.
-
-### (Example) Metrics
-
-#### Computation-based Metrics
-
-- **Tool Match**: Measures tool call sequence matching in various ways:
-  - Exact Match: Perfect match with reference sequence
-  - In-Order Match: Required tools called in correct order (extra steps allowed)
-  - Any-Order Match: All required tools called regardless of order
-- **Precision**: Proportion of agent's tool calls that match reference tool calls.
-- **Recall**: Proportion of reference tool calls included in the agent's tool calls.
-- **Single Tool Usage**: Checks if a specific tool was used during the trajectory.
-- **Tool Call Errors**: Measures rate of tool call failures or errors.
-- **Latency**: Time required for agent to complete its task.
-
-#### Model-based Metrics
-
-- **Task Adherence**: Evaluates how well the agent's response addresses the assigned task.
-- **Coherence**: Assesses logical flow and internal consistency of the response.
-- **Safety**: Detects potential harmful content in responses.
-- **Follows Trajectory**: Evaluates if the response logically follows from the tools used.
-- **Efficiency**: Measures if the agent took an optimal path to reach the solution.
-
-### Example Metrics
-
-The framework provides both computation-based metrics that run directly and model-based metrics that require a judge:
-
-```python
-# Example of computation-based metric (runs direct calculations, no judge needed)
-trajectory_match = ExactTrajectoryMatch()
-
-# Example of model-based metric (requires a judge model to evaluate)
-task_adherence_metric = PointwiseMetric(
-    metric="task_adherence",
-    metric_prompt_template=PointwiseMetricPromptTemplate(
-        criteria={
-            "Task adherence": (
-                "Evaluate whether the agent's response appropriately addresses the assigned task. "
-                "Consider these sub-points:\n"
-                "  - Does the response directly address the user's request?\n"
-                "  - Does the response incorporate information gathered from tool calls?\n"
-                "  - Is the response complete without missing important aspects of the task?\n"
-            )
-        },
-        rating_rubric={
-            "5": "Excellent - Completely addresses all aspects of the task with thorough detail",
-            "4": "Good - Addresses most aspects of the task effectively",
-            "3": "Adequate - Addresses the core of the task but may miss minor details",
-            "2": "Poor - Only partially addresses the task with significant gaps",
-            "1": "Inadequate - Fails to address the task or contains major inaccuracies",
-        },
-    ),
-)
-
-# Evaluator combines both types of metrics
-evaluator = Evaluator(
-    computation_metrics=[trajectory_match],  # Run directly
-    model_metrics=[task_adherence_metric],   # Require a judge
-    judge=JudgeModel(model="o3-mini", temperature=0)  # Judge for model-based metrics
-)
-```
-
-### Sample Developer Experience
-
-1. **Prepare Dataset**: Create a dataset with tasks, expected responses, and optional reference trajectories.
-2. **Configure Metrics**: Select from pre-built metrics or define custom metrics based on evaluation needs.
-3. **Select Judges**: Choose appropriate judge models for model-based metrics, optimizing for evaluation quality.
-4. **Run Evaluation**: Execute the evaluation against agent runs or existing trajectory data.
-5. **Analyze Results**: Review metrics, identify areas for improvement, and compare different agent configurations.
-
-### Integration with Cloud Services
-
-The framework supports evaluation through:
-
-- **Local Evaluation**: Run evaluations directly within the framework.
-- **Azure AI Evaluation**: Connect to Azure AI Evaluation Service for comprehensive agent assessment.
-
-By standardizing trajectory representation, the framework simplifies evaluation across different agent architectures and enables seamless integration with both local and cloud-based evaluation systems.
+Details TBD.
 
 ## Debugging
 
