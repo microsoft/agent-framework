@@ -295,3 +295,9 @@ result = await Runner.run(agent, thread, RunContext(event_channel="console"))
 
 > NOTE: We need a way to reconcile the message types used by the application
 > with the message types that is accepted by the Foundry Agent Service.
+
+
+## Other Design Considerations
+
+- Do we want to ask user to supply the message type for the agent, or do we want
+    to only allow built-in message types?
