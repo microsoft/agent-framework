@@ -189,6 +189,8 @@ A tool may also have an action guard that is used to ensure the
 tool is invoked with proper arguments, or that the agent has the
 right context such as human approval to invoke the tool.
 
+See [Tools](tools.md) for more details.
+
 The framework provides a set of pre-built tools:
 
 - `FunctionTool`: a tool that wraps a function.
