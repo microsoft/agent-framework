@@ -12,20 +12,21 @@ workflows.
 
 ## Agents in a `Workflow`
 
-Each agent (or a `Workflow`) in a `Workflow` can have its own `thread` which it will
-always run on, or some or all of the agents can share a `thread`.
+Each agent (or a `Workflow`) in a `Workflow` has a thread on which it will
+always run. The thread may be privated, or shared among some or all of the agents.
 
 When do agents share a `thread`?
 
 - When an agent is called through handoff or as a tool by another agent, the caller
-    agent's thread is shared with the callee agent.
+    agent's thread may be shared with the callee agent.
 
 When do agents not share a `thread`?
-- When agents is called through a "fan-out" and "fan-in" pattern, where the worker
-    agents are called in parallel and the results are combined by a parent agent.
 
-Thread sharing can be configured through the `Workflow`'s constructor by the application.
-By default, each agent has its own thread and no sharing.
+- When a set of worker agents are called through a "fan-out" and "fan-in" pattern, where the worker
+    agents are called in parallel and the results are combined by an aggregator agent.
+
+Thread sharing can be configured through the `Workflow`'s constructor.
+By default, each agent has its own private thread and no sharing.
 
 
 ## `Workflow` from control flow graph
@@ -67,13 +68,15 @@ graph = GraphBuilder() \
 workflow = Workflow(graph=graph)
 ```
 
-## `Workflow` from router
+## `Workflow` from message router
 
 By default, each message is delivered to an _inbox_ of every agent in a `Workflow`.
 When an agent is called, the inbox is cleared and the messages are added
-to the thread that is then passed to the agent.
+to the thread that is used by the agent.
 
-To customize the message flow, we can configure how each "inbox" behaves.
+If multiple agents share a thread, each message is added exactly once to the thread.
+
+To customize the message flow, we can configure how each inbox behaves.
 Each agent's inbox can be configured to only accept messages from a specific sender(s). 
 We can also configure the inbox batch size, time-to-live for messages in the inbox
 and various other parameters that controls how the inbox is processed.
