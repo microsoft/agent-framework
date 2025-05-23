@@ -3,17 +3,17 @@
 The design goal is a smooth experience to create single agent from
 agent components.
 
-## `Agent` protocol
+## `Agent` base class
 
 ```python
-class Agent(Protocol):
-    """The protocol for all agents in the framework."""
+class Agent(ABC):
+    """The base class for all agents in the framework."""
 
+    @abstractmethod
     async def run(
         self, 
         thread: Thread,
         context: Context,
-        memory: Memory | None = None,
     ) -> Result:
         """The method to run the agent on a thread of messages, and return the result.
 
@@ -21,16 +21,21 @@ class Agent(Protocol):
             thread: The thread of messages to process: it may be a local thread
                 or a stub thread that is backed by a remote service.
             context: The context for the current invocation of the agent, providing
-                access to the event channel, scratchpad and other shared resources.
-            memory: The long-term memory to use for this invocation of the agent:
-                user preferences, facts, data, etc. This is optional and can be None
-                if not needed.
+                access to the event channel, and human-in-the-loop (HITL) features.
         
         Returns:
             The result of running the agent, which includes the final response
             and the updated thread.
         """
         ...
+
+
+@dataclass
+class Context:
+    """The context for the current invocation of the agent."""
+    event_channel: EventChannel
+    ... # Other fields, could be extended to include more for application-specific needs.
+
 
 @dataclass
 class Result:
@@ -43,7 +48,7 @@ class Result:
 ## `ToolCallingAgent` example
 
 Here is an example of a custom agent that calls a tool and returns the result.
-The `ToolCallingAgent` implements the `Agent` protocol:
+The `ToolCallingAgent` implements the `Agent` base class and
 it implements the `run` method to process incoming messages and call tools if needed.
 
 ```python
@@ -103,6 +108,10 @@ Things to note in the implementation of the `run` method:
 - Components such as `thread` and `model_client` interacts smoothly with little boilerplate code.
 - The `context` parameter provides convenient access to the workflow run fixtures such as event channel.
 
+## Run
+
+A _run_ is a single invocation of the agent or a workflow given a thread of messages.
+
 ## Run agent
 
 Developer can instantiate a subclass of `Agent` directly using it's constructor, 
@@ -130,20 +139,33 @@ thread = [
 result = await agent.run(thread, ConsoleRunContext())
 ```
 
+## User session
+
+A user session is a logical concept which involves a sequence of messages exchanged between the user and the agent.
+Consider the following examples:
+
+- A chat session in ChatGPT.
+- A delegation of task to a workflow agent from a user, with data exchanged between the user
+    and the workflow such as occassional feedbacks from the user and status updates from the workflow.
+
+A user session may involve multiple runs.
+
+
 ## Agent state
 
-The agent is meant to be stateless and all the state is associated with
-`thread`, `memory` and `context`. The agent itself should not maintain any state
-between runs. The caller of the `run` method is responsible for managing the state.
+The agent is created for each user session and is not meant to be reused across different sessions.
+Any state that is needed for the agent for the current user session should be passed
+in as its constructor parameters.
 
-> NOTE: this does not prevent custom agents from maintaining a state across runs.
-> However the best practice is to keep the agent stateless and use `thread`, `memory` and `context`
-> for all the state management.
+- Stateless agents are agents that do not maintain any state between runs.
+- Stateful agents are agents that maintain state between runs.
+
 
 ## Run agent concurrently
 
-When the agent is stateless, it can be run concurrently on multiple threads.
+For agents that are stateless, we can run the same instance of the agent concurrently.
 
+we can run the same instances of the agent concurrently
 ```python
 # Create threads for concurrent tasks.
 thread1 = [
@@ -161,6 +183,10 @@ results = await asyncio.gather(
     agent.run(thread2, ConsoleRunContext()),
 )
 ```
+
+For stateful agents it is up the caller to decide if the agent can be run concurrently,
+or multiple instances of the agent should be created for each thread.
+
 
 ## Using Foundry Agent Service
 

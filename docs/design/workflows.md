@@ -10,6 +10,24 @@ A `Workflow` is an agent composed of other agents. It follows the same interface
 as an agent. This allows for nested workflows, where a workflow can contain other
 workflows.
 
+## Agents in a `Workflow`
+
+Each agent (or a `Workflow`) in a `Workflow` can have its own `thread` which it will
+always run on, or some or all of the agents can share a `thread`.
+
+When do agents share a `thread`?
+
+- When an agent is called through handoff or as a tool by another agent, the caller
+    agent's thread is shared with the callee agent.
+
+When do agents not share a `thread`?
+- When agents is called through a "fan-out" and "fan-in" pattern, where the worker
+    agents are called in parallel and the results are combined by a parent agent.
+
+Thread sharing can be configured through the `Workflow`'s constructor by the application.
+By default, each agent has its own thread and no sharing.
+
+
 ## `Workflow` from control flow graph
 
 A `Workflow` can be created from a control flow graph of agents.
@@ -55,20 +73,21 @@ By default, each message is delivered to an _inbox_ of every agent in a `Workflo
 When an agent is called, the inbox is cleared and the messages are added
 to the thread that is then passed to the agent.
 
-To customize the message flow, we can configure how the "inbox" behaves.
-Each agent's inbox can be configured to only accept messages of a specific type 
-and/or from a specific sender(s). 
+To customize the message flow, we can configure how each "inbox" behaves.
+Each agent's inbox can be configured to only accept messages from a specific sender(s). 
 We can also configure the inbox batch size, time-to-live for messages in the inbox
 and various other parameters that controls how the inbox is processed.
-This requires a separate configuration step besides the graph.
+
+The configuration of agents' inboxes is done using a `Router` object,
+which can be built using a `RouterBuilder` object.
 
 ```python
 graph = ...
 
 router = RouterBuilder() \
-    .add_route(source=agent1, target=agent2, from_type=MessageType1) \
-    .add_route(source=[agent1, agent2], target=agent3, batch_size=10, ttl="1h") \
-    .add_route(target=agent4, from_type=MessageType3 | MessageType4) \
+    .add_route(source=agent1, target=agent2) \ # Agent2 will receive messages from agent1.
+    .add_route(source=[agent1, agent2], target=agent3, batch_size=10, ttl="1h") \ # Agent3 will receive messages from agent1 and agent2, with a batch size of 10 and a time-to-live of 1 hour.
+    .add_route(source=Router.ANY, target=agent4) \ # Agent4 will receive all messages.
 ).build()
 
 # Create a workflow from the graph and router.
@@ -77,7 +96,7 @@ workflow = Workflow(graph=graph, router=router)
 
 You can also skip the graph all together and just create a workflow from the router.
 In this case, all agents will run concurrently to process the messages delivered
-to their inboxes, according to the routing rules.
+to their inboxes, according to the inbox rules.
 
 ```python
 # Create a workflow from the router.
@@ -88,6 +107,8 @@ The validation of the router is done as part of the workflow creation, to ensure
 that no gap exists in the routing, and warning for cascading routes.
 
 ## Run `Workflow`
+
+It is the same as running an agent.
 
 ```python
 # Create a message batch to send to the workflow.
