@@ -1,0 +1,40 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- THIS PROPERTY GROUP MUST COME FIRST -->
+    <AssemblyName>Microsoft.Agents.Abstractions</AssemblyName>
+    <RootNamespace>Microsoft.Agents</RootNamespace>
+    <TargetFrameworks>net8.0;netstandard2.0</TargetFrameworks>
+    <NoWarn>$(NoWarn);CA2227;CA1062;CA1822</NoWarn>
+    <EnablePackageValidation>false</EnablePackageValidation>
+  </PropertyGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <PropertyGroup>
+    <!-- NuGet Package Settings -->
+    <Title>Microsoft Agent Framework - Abstractions</Title>
+    <Description>Microsoft Agent Framework abstractions. This package is automatically installed by Microsoft Agent Framework packages if needed.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+	<Compile Include="$(RepoRoot)/dotnet/src/InternalUtilities/src/Diagnostics/*" Link="%(RecursiveDir)Utilities/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+	<PackageReference Include="Microsoft.Extensions.AI" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="System.Linq.Async" />
+    <PackageReference Include="System.Text.Json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Agents.UnitTests" />
+    <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Internal\" />
+  </ItemGroup>
+
+</Project>

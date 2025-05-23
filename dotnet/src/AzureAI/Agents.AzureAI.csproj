@@ -1,0 +1,49 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- THIS PROPERTY GROUP MUST COME FIRST -->
+    <AssemblyName>Microsoft.Agents.AzureAI</AssemblyName>
+    <RootNamespace>Microsoft.Agents.AzureAI</RootNamespace>
+    <TargetFrameworks>net8.0;netstandard2.0</TargetFrameworks>
+    <NoWarn>$(NoWarn);CA2227;CA1062;CA1822;VSTHRD200;CA1305</NoWarn>
+    <EnablePackageValidation>false</EnablePackageValidation>
+    <VersionSuffix>preview</VersionSuffix>
+  </PropertyGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <PropertyGroup>
+    <!-- NuGet Package Settings -->
+    <Title>Microsoft Agent Framework - AzureAI</Title>
+    <Description>Defines a concrete Agent based on the Azure AI Agent API.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+	  <Compile Include="$(RepoRoot)/dotnet/src/InternalUtilities/src/System/*" Link="%(RecursiveDir)Utilities/%(Filename)%(Extension)" />
+	  <Compile Include="$(RepoRoot)/dotnet/src/InternalUtilities/src/Diagnostics/*" Link="%(RecursiveDir)Utilities/%(Filename)%(Extension)" />
+	  <Compile Include="$(RepoRoot)/dotnet/src/InternalUtilities/src/Schema/*" Link="%(RecursiveDir)Utilities/%(Filename)%(Extension)" />
+	  <Compile Include="$(RepoRoot)/dotnet/src/InternalUtilities/src/Agents/*" Link="%(RecursiveDir)Utilities/%(Filename)%(Extension)" />
+	  <Compile Include="$(RepoRoot)/dotnet/src/InternalUtilities/src/Http/*" Link="%(RecursiveDir)Utilities/%(Filename)%(Extension)" />
+	  <Compile Include="$(RepoRoot)/dotnet/src/InternalUtilities/src/Text/*" Link="%(RecursiveDir)Utilities/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="C:\SemanticKernel\skrepo\agent-framework\dotnet\src\InternalUtilities\agents\Extensions\KernelFunctionMetadataExtensions.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Abstractions\Agents.Abstractions.csproj" />
+    <ProjectReference Include="..\Core\Agents.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.AI.Agents.Persistent" /> 
+    <PackageReference Include="Azure.Identity" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Agents.UnitTests" />
+    <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,34 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- THIS PROPERTY GROUP MUST COME FIRST -->
+    <AssemblyName>Microsoft.Agents.Core</AssemblyName>
+    <RootNamespace>Microsoft.Agents</RootNamespace>
+    <TargetFrameworks>net8.0;netstandard2.0</TargetFrameworks>
+    <NoWarn>$(NoWarn);SKEXP0110;SKEXP0001</NoWarn>
+    <EnablePackageValidation>false</EnablePackageValidation>
+  </PropertyGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <PropertyGroup>
+    <!-- NuGet Package Settings -->
+    <Title>Microsoft Agent Framework - Core</Title>
+    <Description>Defines core set of concrete Agent based on the Agent Abstractions.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+	  <Compile Include="$(RepoRoot)/dotnet/src/InternalUtilities/src/Agents/*" Link="%(RecursiveDir)Utilities/%(Filename)%(Extension)" />
+	  <Compile Include="$(RepoRoot)/dotnet/src/InternalUtilities/src/Diagnostics/*" Link="%(RecursiveDir)Utilities/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Abstractions\Agents.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Agents.UnitTests" />
+    <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
+  </ItemGroup>
+
+</Project>
