@@ -10,7 +10,7 @@ APIs and make them available to agents.
 class ToolResult:
     """The result of running a tool."""
     is_error: bool
-    output: List[ImageContent | TextContent]
+    output: List[ImageContent | TextContent] # The content types are defined as part of the core data types.
     ... # Other fields, could be extended to include more for application-specific needs.
 
 class Tool(ABC):
