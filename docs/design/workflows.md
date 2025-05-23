@@ -10,9 +10,15 @@ A `Workflow` is an agent composed of other agents. It follows the same interface
 as an agent. This allows for nested workflows, where a workflow can contain other
 workflows.
 
-## Creating a `Workflow`
+## `Workflow` from control flow graph
 
-This is the experience of creating a `Workflow` with agent instances directly.
+A `Workflow` can be created from a control flow graph of agents.
+The graph is a directed graph where each node is an agent and each edge
+is a transition between agents. The graph can contain loops
+and conditional transitions.
+
+The control flow graph specifies the order in which agents are called
+and the conditions under which they are called.
 
 ```python
 # Create agent instances.
@@ -39,52 +45,15 @@ graph = GraphBuilder() \
     .add_transition(agent2, agent3, conditions=Any(..., All(...))]) \
     .build()
 
-# Create a workflow from the graph, specifying the input and output message types.
-workflow = Workflow[Message, Message](graph=graph)
+# Create a workflow from the graph.
+workflow = Workflow(graph=graph)
 ```
 
-## Run `Workflow`
+## `Workflow` from router
 
-Depending on whether the agents follow the stateful or stateless model,
-the design of running the workflow is different.
-
-### For Stateful Agents
-
-[Stateful agents](agents.md#stateful-agent) are agents that maintain their
-state across multiple runs. Because `Workflow` is an agent, it is also stateful.
-
-```python
-# Create a message batch to send to the workflow.
-# The run context is used to pass in the event channel and other context
-# shared by the agents.
-task = [...]
-context = RunContext(event_channel="console")
-result = await workflow.run(task=task, context=context)
-```
-
-### For Stateless Agents
-[Stateless agents](agents.md#stateless-agent) are run by a runner class.
-In this design, the `Workflow` is also stateless.
-
-```python
-thread = [...]
-context = RunContext(event_channel="console")
-result = await Runner.run(workflow, thread, context=context)
-```
-
-In this design, the `run` method of the `Runner` class is responsible for
-executing the child agents according to the order specified in the graph.
-
-## Message flow in `Workflow`
-
-By default, each message is delivered to an "inbox" of every agent in a `Workflow`,
-if the agent's input message type matches the message type (i.e., subclasses
-the message type). The messages in the "inbox" are then converted into a
-list of messages and passed to the agent's `run` method.
-
-> NOTE: the input message type can be a union of different message types. In
-> this case, the message is checked against each type in the union and if
-> it matches any of them, it is delivered to the agent.
+By default, each message is delivered to an _inbox_ of every agent in a `Workflow`.
+When an agent is called, the inbox is cleared and the messages are added
+to the thread that is then passed to the agent.
 
 To customize the message flow, we can configure how the "inbox" behaves.
 Each agent's inbox can be configured to only accept messages of a specific type 
@@ -103,7 +72,7 @@ router = RouterBuilder() \
 ).build()
 
 # Create a workflow from the graph and router.
-workflow = Workflow[Message, Message](graph=graph, router=router)
+workflow = Workflow(graph=graph, router=router)
 ```
 
 You can also skip the graph all together and just create a workflow from the router.
@@ -112,11 +81,25 @@ to their inboxes, according to the routing rules.
 
 ```python
 # Create a workflow from the router.
-workflow = Workflow[Message, Message](router=router)
+workflow = Workflow(router=router)
 ```
 
 The validation of the router is done as part of the workflow creation, to ensure
 that no gap exists in the routing, and warning for cascading routes.
+
+## Run `Workflow`
+
+```python
+# Create a message batch to send to the workflow.
+# The run context is used to pass in the event channel and other context
+# shared by the agents.
+thread = [
+    Message("Hello"),
+    Message("Can you find the file 'foo.txt' for me?"),
+]
+context = RunContext(event_channel="console")
+result = await workflow.run(thread, context=context)
+```
 
 ## Terminating `Workflow`
 
@@ -130,7 +113,7 @@ condition = TerminationCondition(
     condition=Any(...),
     timeout="1h",
 )
-workflow = Workflow[Message, Message](graph=graph, termination_condition=condition)
+workflow = Workflow(graph=graph, termination_condition=condition)
 ```
 
 TBD.
