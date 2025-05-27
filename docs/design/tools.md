@@ -17,13 +17,11 @@ class Tool(ABC):
     """The base class for all tools in the framework."""
 
     @property
-    @abstractmethod
     def name(self) -> str:
         """The name of the tool, used to identify it in the system."""
         ...
     
     @property
-    @abstractmethod
     def description(self) -> str:
         """The description of the tool, used to provide information about its
         functionality.
@@ -31,14 +29,12 @@ class Tool(ABC):
         ...
 
     @property
-    @abstractmethod
     def schema(self) -> ToolSchema:
         """The schema of the tool, which defines the JSON schema of the input
         arguments."""
         ...
 
     @property
-    @abstractmethod
     def strict(self) -> bool:
         """Whether the JSON schema is in strict mode. If true, no optional
         arguments are allowed.
@@ -47,13 +43,13 @@ class Tool(ABC):
     
     async def __call__(
         self,
-        args: dict[str, Any],
+        call: ToolCall,
         context: Context,
     ) -> ToolResult:
         """The method to call to run the tool with arguments and return the result.
         
         Args:
-            args: The arguments to pass to the tool
+            call: The tool call containing the name and arguments to pass to the tool.
             context: The context for the current invocation of the tool, providing
                 access to the event channel, and human-in-the-loop (HITL) features.
 
@@ -66,6 +62,8 @@ class Tool(ABC):
             await self.on_invoke(args, context)
             # Call the run method to actually run the tool.
             result = await self.run(args, context)
+            # Call the on_output method to handle the output of the tool.
+            result = await self.on_output(result, context)
         except Exception as e:
             # If an error occurs, call the on_error method to handle it.
             result = await self.on_error(e, context)
@@ -74,54 +72,74 @@ class Tool(ABC):
     @abstractmethod
     async def run(
         self,
-        args: dict[str, Any],
+        calls: ToolCall,
         context: Context,
     ) -> ToolResult:
-        """The method called by the tool itself to run the tool with arguments and return the result.
-        
-        Args:
-            args: The arguments to pass to the tool.
-            context: The context for the current invocation of the tool, providing
-                access to the event channel, and human-in-the-loop (HITL) features.
-        
-        Returns:
-            The result of running the tool.
-        """
+        """The method called by the tool itself to run the tool with arguments and return the result."""
         ...
     
-    @abstractmethod
     async def on_invoke(
         self,
-        args: dict[str, Any],
+        calls: ToolCall,
         context: Context,
     ) -> None:
         """The method called by the tool when is invoked but before it is run.
+
         This is useful for input guardrails to be applied to the arguments
         before the tool is run.
-
-        
-        Args:
-            args: The arguments to pass to the tool.
-            context: The context for the current invocation of the tool, providing
-                access to the event channel, and human-in-the-loop (HITL) features.
         """ 
         ...
     
-    @abstractmethod
     async def on_error(
         self,
         error: Exception,
         context: Context,
     ) -> ToolResult:
-        """The method called by the tool when an error is raised.
-        
-        Args:
-            error: The error that occurred.
-            context: The context for the current invocation of the tool, providing
-                access to the event channel, and human-in-the-loop (HITL) features.
+        """The method called by the tool when an error is raised."""
+        ...
+    
+    async def on_output(
+        self,
+        output: ToolResult,
+        context: Context,
+    ) -> ToolResult:
+        """The method called by the tool when the output is ready.
 
-        Returns:
-            The result of handling the error.
+        This is where output guardrails can be applied to the result
+        before it is returned to the caller.
+        """
+        ...
+    
+    def add_input_guardrails(
+        self, 
+        guardrails: list[InputGuardrail[ToolCall]]
+    ) -> None:
+        """Add input guardrails to the tool.
+
+        Args:
+            guardrails: The list of input guardrails to add.
+        """
+        ...
+    
+    def add_output_guardrails(
+        self, 
+        guardrails: list[OutputGuardrail[ToolResult]]
+    ) -> None:
+        """Add output guardrails to the tool.
+
+        Args:
+            guardrails: The list of output guardrails to add.
+        """
+        ...
+    
+    def add_on_error_func(
+        self, 
+        on_error_func: Callable[[Exception, Context], Awaitable[ToolResult]]
+    ) -> None:
+        """Add a function to call when an error is raised during the call to `run`.
+
+        Args:
+            on_error_func: The function to call when an error is raised.
         """
         ...
 ```
@@ -148,6 +166,8 @@ def web_search(
   arguments are allowed.
 - `input_guardrails`: a list of input guardrails to apply to the arguments
   before the tool is run.
+- `output_guardrails`: a list of output guardrails to apply to the result
+  before it is returned.
 
 ## `AgentTool`
 

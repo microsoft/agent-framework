@@ -28,6 +28,7 @@ When do agents not share a `thread`?
 Thread sharing can be configured through the `Workflow`'s constructor.
 By default, each agent has its own private thread and no sharing.
 
+See [Threads](threads.md) for more details on how threads work.
 
 ## `Workflow` from control flow graph
 
@@ -125,22 +126,60 @@ context = RunContext(event_channel="console")
 result = await workflow.run(thread, context=context)
 ```
 
-## Terminating `Workflow`
+## `Workflow` has a final response
 
-A `workflow` may run indefinitely, so it is important to have a way to terminate
-it.
+A `Workflow` is expected to have a final response, which is the final response in the 
+result of the last agent in the workflow. The final response is returned as part of the
+`Result` object returned by the `run` method.
+
+This is to ensure the workflow can be used in the same way as an agent. 
+
+## Stopping `Workflow`
+
+A `workflow` may run indefinitely, so it is important to have a way to stop it.
 
 ```python
-# Use a termination condition to stop the workflow when the condition is met.
+# Use a stopping condition to stop the workflow when the condition is met.
 # Detail design TBD.
-condition = TerminationCondition(
+condition = StopCondition(
     condition=Any(...),
     timeout="1h",
 )
-workflow = Workflow(graph=graph, termination_condition=condition)
+workflow = Workflow(graph=graph, stop_condition=condition)
 ```
 
 TBD.
+
+## `Workflow` can be stateless
+
+The workflow state is kept in the thread object as input to the `run` method.
+If not provided, the workflow will create new sub-threads for each agent
+in the workflow for their private threads, otherwise, the workflow will
+use the provided sub-thread.
+
+```python
+# Create a workflow with a graph and router.
+workflow = Workflow(graph=graph, router=router, stop_condition=condition)
+
+# Create a new thread.
+thread = [
+    Message("Hello"),
+    Message("Can you find the file 'foo.txt' for me?"),
+]
+
+# Run the workflow.
+result = await workflow.run(thread, context=context)
+
+# Update the thread with new messages from the user.
+thread = result.thread + [
+    Message("Can you find the file 'bar.txt' for me?"),
+]
+
+# Resume the workflow from where it left off.
+result = await workflow.run(thread, context=context)
+```
+
+Read more about [Threads](threads.md) for more details on threads.
 
 ## Pre-defined workflows
 
