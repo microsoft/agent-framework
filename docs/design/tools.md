@@ -1,7 +1,33 @@
 # Tools
 
-The design goal is to make it easy to create new tools and integrate existing
-APIs and make them available to agents.
+> The design goal is to make it easy to create new tools and integrate existing APIs and make them available to agents.
+
+A tool is a component that can be used to invoke procedure code
+and returns a well-defined result type to the caller.
+
+The result type should indicate the success or failure of the invocation,
+as well as the output of the invocation in terms of the core data types.
+There may be other fields in the result type for things like
+side effects, etc.. We should address this when designing the
+tool interface.
+
+A tool may have arguments for invocation.
+The arguments must be defined using JSON schema that language model supports.
+
+A tool may have dependencies such as tokens, credentials,
+or output message channels that will be provided by through
+a context variable passed to the tool when it is invoked.
+
+A tool may also have guardrails that are used to ensure the
+tool is invoked with proper arguments, or that the agent has the
+right context such as human approval to invoke the tool.
+
+The framework provides a set of pre-built tools:
+
+- `FunctionTool`: a tool that wraps a function.
+- `AzureAISearchTool`: a tool that is backed by Azure AI Search Service.
+- `OpenAPITool`: a tool that is backed by a service that defines an OpenAPI spec.
+- Other tools backed by Foundry.
 
 ## `Tool` base class
 

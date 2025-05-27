@@ -1,6 +1,13 @@
 # MCP Servers
 
-MCP servers provides a convenient wrapper to access MCP services.
+An MCP server is a component that wraps a session to an
+[Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server.
+
+The tools provided by MCP server should match the tool interface to ensure
+minimal boilerplate code when dealing with both tools and MCP servers.
+
+Other features like sampling and resources, should be accessible through
+the MCP server interface as well.
 
 
 ## MCP Server base class (draft)

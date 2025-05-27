@@ -1,7 +1,29 @@
 # Model Clients
 
-Model clients are used to interact with locally and remotely hosted language 
-models.
+A model client is a component that implements a unified interface for
+interacting with different language models. It exposes a standardized metadata
+about the model it provides (e.g., model name, tool call and vision capabilities, etc.)
+to support validation and composition with other components.
+
+The framework provides a set of pre-built model clients:
+
+- `OpenAIChatCompletionClient`
+- `AzureOpenAIChatCompletionClient`
+- `AzureOpenAIResponseClient`
+- `AzureAIClient`
+- `AnthropicClient`
+- `GeminiClient`
+- `HuggingFaceClient`
+- `OllamaClient`
+- `VLLMClient`
+- `ONNXRuntimeClient`
+- `BedrockClient`
+- `NIMClient`
+
+Prompt template is a component that is used by model clients to generate prompts with parameters set based on some injected context.
+prompts with parameters set based on some injected context.
+This gets into the actual interface and implementation detail of model clients,
+so we just mention it here.
 
 The design goal is to provide integration with a wide range of model providers,
 including both open-source and commercial models, while maintaining a consistent

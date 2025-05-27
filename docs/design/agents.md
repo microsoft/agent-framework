@@ -1,7 +1,31 @@
 # Agents
 
-The design goal is a smooth experience to create single agent from
-agent components.
+During its handling of messages, an agent may:
+
+- Use model client to process messages,
+- Use thread to keep track of the interaction with the model,
+- Invoke tools or MCP servers, and
+- Retrieve and store data through memory.
+
+It is up to the implementation of the agent class to decide how these components are used.
+
+__An important design goal of the framework is to ensure the developer experience
+of creating custom agent is as easy as possible.__ Existing frameworks
+have made "kitchen-sink" agents that are hard to understand and maintain.
+
+An agent might not use the components provided by the framework to implement
+the agent interface.
+Azure AI Agent is an example of such agent: its implementation is
+backed by the Azure AI Agent Service.
+
+The framework provides a set of pre-built agents:
+
+- `ChatCompletionAgent`: an agent that uses a chat-completion model to process messages
+and use thread, memory, tools and MCP servers in a configurable way. __If we can make
+custom agents easy to implement, we can remove this agent.__
+- `AzureAIAgent`: an agent that is backed by Azure AI Agent Service.
+- `ResponsesAgent`: an agent that is backed by OpenAI's Responses API.
+- `A2AAgent`: an agent that is backed by the [A2A Protocol](https://google.github.io/A2A/documentation/).
 
 ## `Agent` base class
 

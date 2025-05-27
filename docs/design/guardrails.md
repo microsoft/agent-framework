@@ -24,3 +24,25 @@ model_client.add_output_guardrails([
     HarmfulContentGuardrail[Message](...),
 ])
 ```
+
+Another example to show how to use a guardrail with an MCP server:
+
+```python
+guardrail = PIIGuardrail(
+    config={
+        "rules": [
+            {
+                "type": "email",
+                "action": "block"
+            },
+            {
+                "type": "phone",
+                "action": "block"
+            }
+        ]
+    }
+)
+
+mcp_server = MCPServer(...)
+mcp_server.add_output_guardrail(guardrail)
+```
