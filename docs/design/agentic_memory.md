@@ -8,16 +8,14 @@ and LangChain even provides explicit 'memory' classes for handling conversation 
 But for technical precision, we follow OpenAI's practice of never applying the term 'memory' to chat history or context windows. 
 
 A convas or whiteboard is a type of state that some call memory,
-but we recommend using the less exotic terms 'state' or 'data' for such information. 
+but we recommend using the less loaded terms 'state' or 'data' for such information. 
 
 Because agentic memory implementations often rely on vector databases,
 the term 'memory' is sometimes extended to include vector stores themselves,
 or any system (such as RAG) that retrieves data from vector stores for insertion into a context window.
-When talking about agents, we recommend defining 'memory' more narrowly than information retrieval in general.
+But when talking about agents, we recommend defining 'memory' more narrowly than general information retrieval.
 
 <img src="imgs/not_agentic_memory.png" alt="Description" width="500">
-
-## Agentic Memory
 
 We define Agentic Memory as an agent's ability to store and retrieve memories in roughly human-like ways:
 
@@ -28,9 +26,10 @@ To illustrate these concepts, imagine the straightforward approach of treating p
 then applying standard RAG by chunking the chats, indexing and storing them in a vector DB,
 and later retrieving into the context window any chunks that closely match a user turn.
 While relatively easy to implement (given an existing RAG system),
-this approach inherits the generally poor precision and recall of standard RAG. 
+this approach inherits the poor precision and recall of standard RAG. 
+
 This highlights the crucial importance of evaluations.
-For the discussion of other implementations discussed below, it's useful to distinguish among three progressive stages of any AI system evaluation:
+For further discussion below, it's useful to distinguish among three progressive stages of any AI system evaluation:
 
 1. Proof-of-concept evaluations, to assess whether a proposed system is worth trying to develop further.
 2. Extended evaluations, to guide the improvement and building out of the system. This is where most of the evaluation-driven development occurs, and where most of a system's problems are discovered and resolved. Choosing an evaluation that is misaligned with the downstream target scenario can waste time and even guide the system's development in the wrong direction.
@@ -49,7 +48,7 @@ then stored that information in a vector DB and associated structures for later 
 POC evaluations were included in AutoGen as code samples. We performed no extended evaluations,
 but several members of the AutoGen community applied Teachable Agents to their own use cases.
 
-After 2023, research into agentic memory made further progress by branching into two largely separate categories
+Since 2023, research into agentic memory has made further progress by branching into two largely separate categories
 that we refer to as Personal-Info Memory and Task-Centric Memory, covered below.
 
 <img src="imgs/agentic_memory.png" alt="Description" width="500">
@@ -68,7 +67,7 @@ We highlight three important examples of personal-info memory.
 In 2024, OpenAI rolled out a [memory feature](https://help.openai.com/en/articles/8590148-memory-faq) in ChatGPT
 that is very similar to the personal-info memory aspects of AutoGen's Teachable Agents.
 The details of OpenAI's implementation and internal evaluations have not been made public.
-The memory feature has received mixed anecdotal accounts from users, with some citing good results like giving good movie recommendations,
+The memory feature has prompted mixed anecdotal accounts from users, with some citing good results like giving good movie recommendations,
 and others turning the feature off to avoid degradation of generations.
 
 ### Mem0
@@ -96,7 +95,7 @@ faster and more reliably through their own trial-and-error experience, with or w
 (which was required for Teachable Agents to learn task-solving skills).
 Despite overlapping a bit with personal-info memory, these two forms of agentic memory are disjoint in most respects.
 One can imagine certain tasks (like "Recommend a movie I would enjoy watching tonight") which personal-info memory
-would help the agent solve. But for the broad set of general tasks,
+would help the agent solve. But for tasks in general,
 there is no reason to expect that personal-info memory can fill the role of task-centric memory,
 and we find no reports of such results in the literature.
 
@@ -133,8 +132,8 @@ over competing agent services that lack task-centric memory.
 
 ### Dynamic Cheatsheet (DC)
 
-The second implementation of task-centric memory that we have seen is the [Dynamic Cheatsheet research paper](https://arxiv.org/pdf/2504.07952)
-(posted to arXiv in April, 2025) and its open source [repository](https://github.com/suzgunmirac/dynamic-cheatsheet).
+The second implementation of task-centric memory that we have seen is the open source [Dynamic Cheatsheet](https://arxiv.org/pdf/2504.07952)
+(arXiv, April, 2025).
 The implementations of DC and TCM are very different. But DC's evaluations on the AIME benchmark are interesting,
 and we plan to investigate DC further for potential usage as a baseline for comparison to TCM.
 
