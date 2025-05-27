@@ -7,7 +7,7 @@ Chat history and the model's context window are sometimes referred to as memory 
 and LangChain even provides explicit 'memory' classes for handling conversation history.
 But for technical precision, we follow OpenAI's practice of never applying the term 'memory' to chat history or context windows. 
 
-A convas or whiteboard is a type of state that some call memory,
+A canvas or whiteboard is a type of state that some call memory,
 but we recommend using the less loaded terms 'state' or 'data' for such information. 
 
 Because agentic memory implementations often rely on vector databases,
