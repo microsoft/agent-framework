@@ -38,7 +38,7 @@ class ModelClient(ABC):
     @abstractmethod
     async def create(
         self,
-        messages: list[Message],
+        thread: Thread,
         context: Context,
         stream: bool = False,
         tools: Optional[list[Tool]] = None,
@@ -47,7 +47,7 @@ class ModelClient(ABC):
         """Generate a response from the model based on the provided messages.
 
         Args:
-            messages: The list of messages to process.
+            thread: The conversation context to generate a response.
             context: The context for the current invocation of the model client.
                 This is for accessing event channels for streaming tokens.
             stream: Whether to stream the response tokens.

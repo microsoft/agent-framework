@@ -83,39 +83,27 @@ class ToolCallingAgent(Agent):
         self, 
         model_client: ModelClient,
         tools: list[Tool],
-        input_guardrails: list[InputGuardrails[MyMessage]],
     ) -> None:
         self.model_client = model_client
         self.tools = tools
-        self.input_guardrails = input_guardrails
 
-    async def run(
-        self, 
-        thread: Thread, 
-        context: RunContext, 
-        memory: Memory | None = None,
-    ) -> Result:
-        # Raise exception if the guardrail is triggered.
-        await self.input_guardrails.trip_wire(messages)
-        # Update the thread with the messages.
-        await thread.update(messages)
-        # Create a response using the model client.
-        create_result = await self.model_client.create(thread=thread)
+    async def run(self, thread: Thread, context: Context) -> Result:
+        # Create a response using the model client, passing the thread and context.
+        create_result = await self.model_client.create(thread, context, tools=self.tools)
         # Emit the event to notify the workflow consumer of a model response.
         await context.emit(ModelResponseEvent(create_result))
-        # Update the thread with the response.
-        await thread.update(create_result.to_model_messages())
         if create_result.is_tool_call():
-            # Get user approval for the tool call.
+            # Get user approval for the tool call through the context.
             approval = await context.get_user_approval(create_result.tool_calls)
             if not approval:
                 # ... return a canned response.
             # Call the tools with the tool calls in the response.
-            tool_result = await self.mcp_server.call_tools(create_result.tool_calls)
+            tools = ... # Find the tool by name in the tools list.
+            tool_results = ... # Call the tool with the tool call arguments.
             # Emit the event to notify the workflow consumer of a tool call.
             await context.emit(ToolCallEvent(tool_result))
             # Update the thread with the tool result.
-            await thread.update(tool_result.to_model_messages())
+            await thread.append(tool_result.to_messages())
             # Return the tool result as the response.
             return Result(
                 thread=thread,
