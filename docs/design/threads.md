@@ -5,6 +5,8 @@ They are meant to be shown to the user as part of a user interface.
 They can be persisted to a database or a file system, and used to
 resume a previous user session.
 
+Thread should use message and content types as defined in [Core Data Types](types.md).
+
 A thread can contain sub-threads as a dictionary of threads. 
 This is to ensure agents in a workflow can run concurrently on different threads.
 The default thread has the key `main` and the sub-threads having keys that are usually

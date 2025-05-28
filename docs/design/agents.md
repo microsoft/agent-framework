@@ -1,5 +1,7 @@
 # Agents
 
+An agent is a component that processes messages in a thread and returns a result.
+
 During its handling of messages, an agent may:
 
 - Use model client to process messages,
