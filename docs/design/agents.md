@@ -332,7 +332,7 @@ class Agent(Protocol):
         """The method to run the agent on a thread of messages, and return the result.
 
         Args:
-            thread: The thread of messages to process.
+            thread: The current conversation state.
             context: The context for the current invocation of the agent, providing
                 access to the event channel, and human-in-the-loop (HITL) features.
         Returns:
@@ -428,6 +428,8 @@ can use it without any issues. This puts a constraint on the agent implementatio
 and also what can be represented as state in the thread.
 Though, if the thread abstraction is designed well, it relieves the developer
 from implementing the conversation state management logic themselves.
+The developer only needs to come up with custom thread when the built-in thread
+abstraction does not work with their custom agent.
 
 ### Discussion
 
