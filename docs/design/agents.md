@@ -29,7 +29,7 @@ custom agents easy to implement, we can remove this agent.__
 - `ResponsesAgent`: an agent that is backed by OpenAI's Responses API.
 - `A2AAgent`: an agent that is backed by the [A2A Protocol](https://google.github.io/A2A/documentation/).
 
-## `Agent` base class
+## `Agent` protocol
 
 ```python
 class Agent(Protocol):
@@ -195,21 +195,34 @@ Consider the following examples:
 A user session may involve multiple runs.
 
 
-## Agent state
+## User session state
 
-The agent is created for each user session and is not meant to be reused across different sessions.
-Any state that is needed for the agent for the current user session should be passed
-in as its constructor parameters.
+Rather than classifying agents as stateless or stateful, we focus on how state is managed during a user session.
 
-- Stateless agents are agents that do not maintain any state between runs.
-- Stateful agents are agents that maintain state between runs.
+There are several states that an application may maintain during a user session:
+- **Conversation or workflow state**. This is the conversation history or execution 
+    history in a workflow. This state is typically owned and managed by the thread object.
+- **Long-term memory**. This can be information relevant to the user, 
+    such as user preferences, past interactions, or other relevant data.
+    This can also be information relevant to the task, such as past trajectories,
+    past results, or other task-related data. These states are typically
+    owned and managed by a memory object.
 
+The thread is always passed through the agent's `run` method.
+Whereas the memory is can be set through the constructor of the agent.
+
+See the [Memory](memory.md) design document for more details on how memory
+is used in the framework.
+
+It is up to the application to decide whether to reuse state across different
+user sessions. The framework should provide the necessary methods and storage layer integration
+for persisting and retrieving state, but the application should decide how to use them.
 
 ## Run agent concurrently
 
-For agents that are stateless, we can run the same instance of the agent concurrently.
+If the agent just call models and tools that are stateless, 
+we can run the same instance of the agent concurrently.
 
-we can run the same instances of the agent concurrently
 ```python
 # Create threads for concurrent tasks.
 thread1 = [
@@ -223,13 +236,17 @@ thread2 = [
 
 # Run the agent concurrently on multiple threads.
 results = await asyncio.gather(
-    agent.run(thread1, ConsoleRunContext()),
-    agent.run(thread2, ConsoleRunContext()),
+    agent.run(thread1, context),
+    agent.run(thread2, context),
 )
+# The `context`'s event handlers will emit events from both runs.
 ```
 
-For stateful agents it is up the caller to decide if the agent can be run concurrently,
-or multiple instances of the agent should be created for each thread.
+This is not always the right way to run concurrent agents, as some tools
+or memory associated with the agent may not be concurrent-safe.
+
+It is up the application to decide if an agent can run concurrently,
+or multiple instances should be created for each thread.
 
 
 ## Using Foundry Agent Service
