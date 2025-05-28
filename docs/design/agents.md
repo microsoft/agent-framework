@@ -345,11 +345,11 @@ class CustomAgent(Agent):
     def __init__(self, 
         model_client: ModelClient,
         tools: list[Tool],
-        state: CustomState,
+        state: CustomState, # Could be a thread or a custom state object, or nothing at all.
     ) -> None:
         self.model_client = model_client
         self.tools = tools
-        self.state = state
+        self.state = state # Could be created by the agent within the constructor.
 ```
 
 For agent without conversation state, the agent is initialized with
@@ -405,16 +405,48 @@ is completely up to the agent implementation. This means that custom agents can
 be created with different conversation state management strategies, such as:
 - Using a custom thread implementation that provides additional features.
 - Using a custom state object that provides additional features.
+When using a custom state object, the developer must also implement
+methods for exporting and importing the state.
 
 For agent without conversation state, the thread abstraction is required to
 encapsulate the conversation state and ensure that the agent's `run` method
 can use it without any issues. This puts a constraint on the agent implementation,
 and also what can be represented as state in the thread.
+Though, if the thread abstraction is designed well, it relieves the developer
+from implementing the conversation state management logic themselves.
 
-### Summary
+### Discussion
 
 - Either agent or thread must manage the conversation state.
 - The class that manages the conversation state must provide a way to manipulate
     it for orchestration purposes.
 - Isolate thread as a separate required abstraction may introduce compatibility
     issues.
+- A thread abstraction with methods for manipulating the conversation state
+    should always be provided by the framework, whether it is exposed again
+    through the agent or not.
+
+In a scenario with built-in agents and built-in threads, the developer experience
+is nearly identical except for agent without conversation state the developer
+must ensure the thread is compatible with the agent's `run` method.
+
+In a scenario with custom agents and built-in threads, the developer experience
+is simpler for agent without conversation state, as the thread abstraction
+is already provided by the framework and the agent can use it directly. Plus,
+the developer doesn't need to implement the conversation state management logic
+through the agent's other methods, which will mostly likely be boilerplate code.
+
+In a scenario with built-in agents and custom threads, the developer experience
+is nearly identical, as in either case the developer must ensure
+the agent's `run` method is compatible with the thread or general state object.
+
+In a scenario with custom agents and custom threads, the developer experience
+is nearly identical, as in either case the developer must ensure
+the agent's `run` method is compatible with the thread or general state object,
+and that the state management logic is implemented in the agent or the thread.
+
+Overall, the agent without conversation state abstraction
+provides a simpler and more consistent developer experience, as it relies on
+the thread abstraction provided by the framework. The downside is that 
+developer must ensure the thread used is compatible with the agent's `run` method
+-- this can be mitigated by enforcing strong types and validation.
