@@ -122,6 +122,31 @@ Things to note in the implementation of the `run` method:
 - Components such as `thread` and `model_client` interacts smoothly with little boilerplate code.
 - The `context` parameter provides convenient access to the workflow run fixtures such as event channel.
 
+An agent doesn't need to use components provided by the framework to implement the agent interface.
+
+For example, in a multi-agent workflow, we may need a verification agent in a using deterministic
+logic to critic another agent's response.
+
+```python
+class CriticAgent(Agent):
+    def __init__(self) -> None:
+        self.verification_logic = ... # Some verification logic, e.g. a set of rules.
+
+    async def run(self, thread: Thread, context: Context) -> Result:
+        # Use the verification logic to verify the last message in the thread.
+        response = thread.get_last_message()
+        is_verified = self.verification_logic.verify(response)
+        if is_verified:
+            final_response = Message("The response is verified.")
+        else:
+            final_response = Message("The response is not verified.")
+        
+        return Result(
+            thread=thread,
+            final_response=final_response,
+        )
+```
+
 ## Run
 
 A _run_ is a single invocation of the agent or a workflow given a thread of messages.
