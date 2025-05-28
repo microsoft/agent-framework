@@ -32,10 +32,9 @@ custom agents easy to implement, we can remove this agent.__
 ## `Agent` base class
 
 ```python
-class Agent(ABC):
-    """The base class for all agents in the framework."""
+class Agent(Protocol):
+    """The protocol for all agents in the framework."""
 
-    @abstractmethod
     async def run(
         self, 
         thread: Thread,
@@ -59,7 +58,10 @@ class Agent(ABC):
 @dataclass
 class Context:
     """The context for the current invocation of the agent."""
-    event_channel: EventChannel
+    event_handler: EventHandler
+    """The event consumer for handling events emitted by the agent."""
+    user_input_source: UserInputSource
+    """The user input source for requesting for user input during the agent run."""
     ... # Other fields, could be extended to include more for application-specific needs.
 
 
@@ -157,7 +159,7 @@ Developer can instantiate a subclass of `Agent` directly using it's constructor,
 and run it by calling the `run` method.
 
 ```python
-@FuntionTool
+@FunctionTool
 def my_tool(input: str) -> str:
     return f"Tool result for {input}"
 
@@ -165,7 +167,6 @@ model_client = OpenAIChatCompletionClient("gpt-4.1")
 agent = ToolCallingAgent(
     model_client=model_client, 
     tools=[my_tool],
-    guardrails=[JailbreakGuardrail()]
 )
 
 # Create a thread for the current task.
@@ -174,8 +175,12 @@ thread = [
     Message("Can you find the file 'foo.txt' for me?"),
 ]
 
-# Run the agent with the task and an new context that emits events to the console.
-result = await agent.run(thread, ConsoleRunContext())
+# Create a context that uses a handler that prints emitted events to the console, 
+# and a user input source that reads from the console.
+context = Context(event_handler=ConsoleEventHandler(), user_input_source=ConsoleUserInputSource())
+
+# Run the agent with the thread and context.
+result = await agent.run(thread, context)
 ```
 
 ## User session
