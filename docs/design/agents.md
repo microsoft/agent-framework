@@ -393,6 +393,11 @@ Potential methods (just initial ideas):
 - `reset()` to reset the conversation state.
 - `branch()` to create a new branch of the conversation state from an existing state.
 
+Example: AutoGen's MagenticOne orchestration requires the agents to be able to
+reset their conversation states during re-planning. It is reasonable to expect
+other types of orchestration logic will require behavior like branching
+or backtracking.
+
 For agent without conversation state, the orchestration code can directly
 manipulate the thread that is passed to the agent's `run` method. So the orchestration code
 can clone, fork, or reset the thread as needed.
@@ -456,4 +461,5 @@ Overall, the agent without conversation state abstraction
 provides a simpler and more consistent developer experience, as it relies on
 the thread abstraction provided by the framework. The downside is that 
 developer must ensure the thread used is compatible with the agent's `run` method
--- this can be mitigated by enforcing strong types and validation.
+-- this can be mitigated by enforcing strong types and validation, as well as
+built-in factory methods for creating new threads given the agent type.
