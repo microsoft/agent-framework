@@ -270,3 +270,151 @@ thread = FoundryThread(thread_id="my_thread_id")
 # Run the agent on the thread and an new context that emits events to the console.
 result = await agent.run(thread, RunContext(event_channel="console"))
 ```
+
+## Alternative agent abstractions
+
+There are two alternatives:
+
+1. **Agent with private conversation state**: The agent manages its own conversation state,
+    either by using a thread or other custom logics. The conversation state is 
+    not shared with other agents or workflows. It is up to the agent to decide how
+    to manage the conversation state.
+2. **Agent without conversation state**: The conversation state is externalized
+    and managed by a thread abstraction. The agent is invoked with a thread on
+    every run. While it can still use the thread to append messages etc., it loses
+    control over the conversation state the moment the run method returns.
+
+### Protocol comparison
+
+For agent with private conversation state, agent is invoked with new messages
+and the agent is responsible for managing the conversation state internally.
+
+```python
+class Agent(Protocol):
+
+    asynd def run(
+        self, 
+        messages: list[Message],
+        context: Context,
+    ) -> Result:
+        """The method to run the agent and return the result.
+
+        Args:
+            messages: The list of new messages to process.
+            context: The context for the current invocation of the agent, providing
+                access to the event channel, and human-in-the-loop (HITL) features.
+
+        Returns:
+            The result of running the agent, which includes the final response.
+        """
+        ...
+```
+
+For agent without conversation state, the agent is invoked with a thread
+and the agent is responsible for processing the messages in the thread.
+
+```python
+class Agent(Protocol):
+
+    async def run(
+        self, 
+        thread: Thread,
+        context: Context,
+    ) -> Result:
+        """The method to run the agent on a thread of messages, and return the result.
+
+        Args:
+            thread: The thread of messages to process.
+            context: The context for the current invocation of the agent, providing
+                access to the event channel, and human-in-the-loop (HITL) features.
+        Returns:
+            The result of running the agent, which includes the final response
+            and the updated thread.
+        """
+        ...
+```
+
+### Constructor comparison
+
+For agent with private conversation state, the agent is initialized with
+the a state in addition to components like model client and tools, which could be a thread passed to the constructor,
+or a custom state object that the agent uses to manage its conversation state.
+
+```python
+class CustomAgent(Agent):
+    def __init__(self, 
+        model_client: ModelClient,
+        tools: list[Tool],
+        state: CustomState,
+    ) -> None:
+        self.model_client = model_client
+        self.tools = tools
+        self.state = state
+```
+
+For agent without conversation state, the agent is initialized with
+the components it needs to process messages, such as a model client and tools.
+
+```python
+class CustomAgent(Agent):
+    def __init__(
+        self, 
+        model_client: ModelClient,
+        tools: list[Tool],
+    ) -> None:
+        self.model_client = model_client
+        self.tools = tools
+```
+
+### Thread-Agent compatibility considerations
+
+For agent with private conversation state, compatibility with thread is not a concern,
+as this is completely managed by the agent itself.
+
+For agent without conversation state, the thread must be compatible with the agent's
+`run` method. For example, a `FoundryAgent` must work with a `FoundryThread`
+because the thread is backed by the Foundry Agent Service, and the implementation
+requires the thread to be compatible with the service's API.
+
+Compatibility constraints:
+- `FoundryAgent` must work with `FoundryThread`.
+- `OpenAIAssistantAgent` must work with `OpenAIAssistantThread`.
+- `ResponsesAgent` must work with `ResponsesThread`, when using the stateful mode of the Responses API.
+
+### Workflow-Agent compatibility considerations
+
+For agent with private conversation state, the orchestration code cannot directly
+modifies the conversation state of every agent in the workflow.
+This means that for resetting the conversation state, branching a conversation,
+or other orchestration logic, the agent must provides public
+methods for the orchestration code to manipulate its conversation state.
+
+Potential methods (just initial ideas):
+- `reset()` to reset the conversation state.
+- `branch()` to create a new branch of the conversation state from an existing state.
+
+For agent without conversation state, the orchestration code can directly
+manipulate the thread that is passed to the agent's `run` method. So the orchestration code
+can clone, fork, or reset the thread as needed.
+This also means that the agent's converstion state must be abstracted as a thread.
+
+### Extensibility considerations
+
+For agent with private conversation state, the management of the conversation state
+is completely up to the agent implementation. This means that custom agents can
+be created with different conversation state management strategies, such as:
+- Using a custom thread implementation that provides additional features.
+- Using a custom state object that provides additional features.
+
+For agent without conversation state, the thread abstraction is required to
+encapsulate the conversation state and ensure that the agent's `run` method
+can use it without any issues. This puts a constraint on the agent implementation,
+and also what can be represented as state in the thread.
+
+### Summary
+
+- Either agent or thread must manage the conversation state.
+- The class that manages the conversation state must provide a way to manipulate
+    it for orchestration purposes.
+- Isolate thread as a separate required abstraction may introduce compatibility
+    issues.
