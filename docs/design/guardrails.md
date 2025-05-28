@@ -3,6 +3,8 @@
 The design goal is to provide a flexible and extensible way to implement guardrails
 and a built-in set of guardrails that can be used for common use cases.
 
+> NOTE: this is work in progress.
+
 Guardrails can be template-based to adapt to different input data types, which
 include:
 - `Message` for agent messages.
