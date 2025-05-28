@@ -445,6 +445,13 @@ is nearly identical, as in either case the developer must ensure
 the agent's `run` method is compatible with the thread or general state object,
 and that the state management logic is implemented in the agent or the thread.
 
+| Scenario | Agent with Conversation State | Agent without Conversation State |
+|----------|------------------------------------------|---------------------------------------------|
+| Built-in Agents, Built-in Threads | Simpler -- it should just work as there is no compatibility issue at runtime | Developer must ensure thread compatibility with agent's `run` method at runtime |
+| Custom Agents, Built-in Threads | Developer must implement state management methods on the agent. | Simpler, as thread abstraction is provided by the framework and agent can use it directly |
+| Built-in Agents, Custom Threads | Developer must ensure compatibility of the custom thread or state with agent's `run` method | Developer must ensure compatibility of the custom thread with agent's `run` method |
+| Custom Agents, Custom Threads | Developer is fully responsible for implementing state management. | Developer is fully responsible for implementing state management. |
+
 Overall, the agent without conversation state abstraction
 provides a simpler and more consistent developer experience, as it relies on
 the thread abstraction provided by the framework. The downside is that 
