@@ -287,12 +287,14 @@ There are two alternatives:
 ### Protocol comparison
 
 For agent with private conversation state, agent is invoked with new messages
-and the agent is responsible for managing the conversation state internally.
+and the agent is responsible for managing the conversation state while exposing
+public methods for the orchestration code to manipulate its conversation state
+indirectly.
 
 ```python
 class Agent(Protocol):
 
-    asynd def run(
+    async def run(
         self, 
         messages: list[Message],
         context: Context,
@@ -308,6 +310,12 @@ class Agent(Protocol):
             The result of running the agent, which includes the final response.
         """
         ...
+    
+    async def reset() -> None:
+        """Reset the conversation state of the agent."""
+        ...
+    
+    # And other methods for managing the conversation state.
 ```
 
 For agent without conversation state, the agent is invoked with a thread
@@ -350,6 +358,7 @@ class CustomAgent(Agent):
         self.model_client = model_client
         self.tools = tools
         self.state = state # Could be created by the agent within the constructor.
+
 ```
 
 For agent without conversation state, the agent is initialized with
