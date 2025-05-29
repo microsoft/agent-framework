@@ -5,9 +5,7 @@
   <PropertyGroup>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-  </PropertyGroup>
-
-  <PropertyGroup>
+    <IsAotCompatible>false</IsAotCompatible>
     <ProjectsTargetFrameworks>net472;net9.0</ProjectsTargetFrameworks>
     <ProjectsDebugTargetFrameworks>net9.0</ProjectsDebugTargetFrameworks>
   </PropertyGroup>
