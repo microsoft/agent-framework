@@ -3,6 +3,11 @@
   <Import Project="../Directory.Build.props" />
 
   <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <PropertyGroup>
     <ProjectsTargetFrameworks>net472;net9.0</ProjectsTargetFrameworks>
     <ProjectsDebugTargetFrameworks>net9.0</ProjectsDebugTargetFrameworks>
   </PropertyGroup>
@@ -13,6 +18,10 @@
     <PackageReference Include="Moq" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
   </ItemGroup>
 
 </Project>
