@@ -9,10 +9,10 @@
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
 
-  <Import Project="$(RepoRoot)/dotnet/src/Tests.Packages.props" />
+  <Import Project="$(RepoRoot)/dotnet/Tests.Packages.props" />
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Microsoft.Agents\Microsoft.Agents.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Agents\Microsoft.Agents.csproj" />
   </ItemGroup>
 
   <ItemGroup>
