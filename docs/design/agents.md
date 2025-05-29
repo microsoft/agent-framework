@@ -49,8 +49,7 @@ class Agent(Protocol):
                 access to the event channel, and human-in-the-loop (HITL) features.
         
         Returns:
-            The result of running the agent, which includes the final response
-            and the updated thread.
+            The result of running the agent, which includes the final response.
         """
         ...
 
@@ -68,7 +67,6 @@ class Context:
 @dataclass
 class Result:
     """The result of running an agent."""
-    thread: Thread
     final_response: Message
     ... # Other fields, could be extended to include more for application-specific needs.
 ```
@@ -108,13 +106,11 @@ class ToolCallingAgent(Agent):
             await thread.append(tool_result.to_messages())
             # Return the tool result as the response.
             return Result(
-                thread=thread,
                 final_response=tool_result,
             )
         else: 
             # Return the response as the result.
             return Result(
-                thread=thread,
                 final_response=create_result,
             )
 ```
@@ -144,7 +140,6 @@ class CriticAgent(Agent):
             final_response = Message("The response is not verified.")
         
         return Result(
-            thread=thread,
             final_response=final_response,
         )
 ```
@@ -336,8 +331,7 @@ class Agent(Protocol):
             context: The context for the current invocation of the agent, providing
                 access to the event channel, and human-in-the-loop (HITL) features.
         Returns:
-            The result of running the agent, which includes the final response
-            and the updated thread.
+            The result of running the agent, which includes the final response.
         """
         ...
 ```
