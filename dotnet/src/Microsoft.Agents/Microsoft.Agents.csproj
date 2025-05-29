@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;netstandard2.0</TargetFrameworks>
+    <VersionSuffix>alpha</VersionSuffix>
+  </PropertyGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.Abstractions\Microsoft.Agents.Abstractions.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <!-- NuGet Package Settings -->
+    <Title>Microsoft Agent Framework</Title>
+    <Description>Contains the Microsoft Agent Framework core functionality.</Description>
+  </PropertyGroup>
+
+</Project>
