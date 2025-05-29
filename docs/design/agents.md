@@ -474,3 +474,9 @@ the thread abstraction provided by the framework. The downside is that
 developer must ensure the thread used is compatible with the agent's `run` method
 -- this can be mitigated by enforcing strong types and validation, as well as
 built-in factory methods for creating new threads given the agent type.
+
+Another factor to consider is that Semantic Kernel already has agent abstraction
+that passes a thread per invocation, so it is easier for us to migrate to the
+new interface. 
+
+> **We should continue to question this decision as we implement more agents and workflows, and revisit the design.**
