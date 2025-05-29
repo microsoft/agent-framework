@@ -1,5 +1,12 @@
 ﻿<Project>
 
+  <Import Project="../Directory.Build.props" />
+
+  <PropertyGroup>
+    <ProjectsTargetFrameworks>net472;net9.0</ProjectsTargetFrameworks>
+    <ProjectsDebugTargetFrameworks>net9.0</ProjectsDebugTargetFrameworks>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="coverlet.collector" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />

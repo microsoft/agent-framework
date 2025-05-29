@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
 
@@ -9,7 +9,9 @@
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
 
-  <Import Project="$(RepoRoot)/dotnet/Tests.Packages.props" />
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+    <TargetFramework>$(ProjectsDebugTargetFrameworks)</TargetFramework>
+  </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Microsoft.Agents.Abstractions\Microsoft.Agents.Abstractions.csproj" />

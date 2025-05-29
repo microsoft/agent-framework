@@ -29,7 +29,7 @@
     <Company>Microsoft</Company>
     <Product>Agent Framework</Product>
     <Description>Empowers app owners to integrate Agents quickly and easily into their apps.</Description>
-    <PackageTags>AI, Artificial Intelligence, Agent, SDK</PackageTags>
+    <PackageTags>AI, Artificial Intelligence, Agent, SDK, Framework</PackageTags>
     <PackageId>$(AssemblyName)</PackageId>
 
     <!-- Required license, copyright, and repo information. Packages can override. -->
