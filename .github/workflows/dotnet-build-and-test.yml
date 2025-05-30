@@ -65,6 +65,7 @@ jobs:
           done
       - name: Package install check
         shell: bash
+        # All frameworks are only built for the release configuration, so we only run this step for the release configuration
         if: matrix.configuration == 'Release'
         run: |
           export SOLUTIONS=$(find ./dotnet/ -type f -name "*.slnx" | tr '\n' ' ')
