@@ -32,10 +32,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { dotnet: "net9.0", os: "ubuntu-latest", configuration: Release, integration-tests: true, environment: "integration" }
-          - { dotnet: "net9.0", os: "ubuntu-latest", configuration: Debug }
-          - { dotnet: "net9.0", os: "windows-latest", configuration: Release }
-          - { dotnet: "net472", os: "windows-latest", configuration: Release, integration-tests: true, environment: "integration" }
+          - { targetFramework: "net9.0", os: "ubuntu-latest", configuration: Release, integration-tests: true, environment: "integration" }
+          - { targetFramework: "net9.0", os: "ubuntu-latest", configuration: Debug }
+          - { targetFramework: "net9.0", os: "windows-latest", configuration: Release }
+          - { targetFramework: "net472", os: "windows-latest", configuration: Release, integration-tests: true, environment: "integration" }
 
     runs-on: ${{ matrix.os }}
     environment: ${{ matrix.environment }}
@@ -56,7 +56,7 @@ jobs:
         run: |
           export SOLUTIONS=$(find ./dotnet/ -type f -name "*.slnx" | tr '\n' ' ')
           for solution in $SOLUTIONS; do
-            dotnet build $solution -f ${{ matrix.dotnet }} -c ${{ matrix.configuration }} --warnaserror
+            dotnet build $solution -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} --warnaserror
           done
       - name: Package install check
         shell: bash
@@ -67,13 +67,13 @@ jobs:
 
           export SOLUTIONS=$(find ./dotnet/ -type f -name "*.slnx" | tr '\n' ' ')
           for solution in $SOLUTIONS; do
-            dotnet pack $solution -f ${{ matrix.dotnet }} -c ${{ matrix.configuration }} --no-build --no-restore --output "$TEMP_DIR/artifacts"
+            dotnet pack $solution -c ${{ matrix.configuration }} --no-build --no-restore --output "$TEMP_DIR/artifacts"
           done
 
           cd "$TEMP_DIR"
 
           # Create a new console app to test the package installation
-          dotnet new console -f ${{ matrix.dotnet }} --name packcheck --output consoleapp
+          dotnet new console -f ${{ matrix.targetFramework }} --name packcheck --output consoleapp
 
           # Create minimal nuget.config and use only dotnet nuget commands
           echo '<?xml version="1.0" encoding="utf-8"?><configuration><packageSources><clear /></packageSources></configuration>' > consoleapp/nuget.config
@@ -85,7 +85,7 @@ jobs:
           # Change to project directory to ensure local nuget.config is used
           cd consoleapp
           dotnet add packcheck.csproj package Microsoft.Agents --prerelease
-          dotnet build -f ${{ matrix.dotnet }} -c ${{ matrix.configuration }} packcheck.csproj
+          dotnet build -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} packcheck.csproj
 
           # Clean up
           cd ..
@@ -97,7 +97,7 @@ jobs:
         run: |
           export UT_PROJECTS=$(find ./dotnet -type f -name "*.UnitTests.csproj" | tr '\n' ' ')
           for project in $UT_PROJECTS; do
-            dotnet test -f ${{ matrix.dotnet }} -c ${{ matrix.configuration }} $project --no-build -v Normal --logger trx --collect:"XPlat Code Coverage" --results-directory:"TestResults/Coverage/" -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByAttribute=GeneratedCodeAttribute,CompilerGeneratedAttribute,ExcludeFromCodeCoverageAttribute
+            dotnet test -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} $project --no-build -v Normal --logger trx --collect:"XPlat Code Coverage" --results-directory:"TestResults/Coverage/" -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByAttribute=GeneratedCodeAttribute,CompilerGeneratedAttribute,ExcludeFromCodeCoverageAttribute
           done
 
       - name: Azure CLI Login
@@ -169,7 +169,7 @@ jobs:
       - name: Upload coverage report artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CoverageReport-${{ matrix.os }}-${{ matrix.dotnet }}-${{ matrix.configuration }} # Artifact name
+          name: CoverageReport-${{ matrix.os }}-${{ matrix.targetFramework }}-${{ matrix.configuration }} # Artifact name
           path: ./TestResults/Reports # Directory containing files to upload
 
       - name: Check coverage
