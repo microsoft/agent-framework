@@ -27,100 +27,71 @@ The framework should provides default implementations of a thread class that:
 - Can support checkpointing, rollback, and time travel, for both agent and workflow.
 - Can automantically export truncated views to be used by model clients to keep the context size within limits.
 
-## `Thread` base class
+## `AgentThread` base class
 
 ```python
-class Thread(ABC):
+class AgentThread(ABC):
     """The base class for all threads defining the minimum interface."""
 
     # ---------- Message-handling ----------
     @abstractmethod
-    async def on_new_message(self, message: "Message") -> None:
+    async def on_new_messages(self, messages: list["Message"]) -> None:
         """Handle a new message added to the thread."""
         ...
-    
-    # ---------- State management ----------
-    @abstractmethod
-    async def fork(self, message_id: str | None = None) -> "Thread":
-        """Create a fork of the thread starting from the given message ID.
-        
-        If no message ID is provided, the fork will start from the latest message."""
-        ...
-    
-    @abstractmethod
-    async def reset(self) -> None:
-        """Reset the thread to its initial state."""
-        ...
-    
-    @abstractmethod
-    async def save_state(self) -> Mapping[str, Any]:
-        """Save the current state of the thread as a serializable dictionary."""
-        ...
-    
-    @abstractmethod
-    async def load_state(self, state: Mapping[str, Any]) -> None:
-        """Load the state of the thread from a serializable dictionary."""
-        ...
-    
 
     # ---------- Lifecycle management ----------
     @classmethod
     @abstractmethod
-    async def create(self) -> "Thread":
+    async def create(self) -> "AgentThread":
         """Create a new thread of the same type."""
         ...
-    
-    @abstractmethod
-    async def delete(self) -> None:
-        """Delete the thread. It will not be recoverable."""
-        ...    
+
+    # For delete and release resources, subclass should override built-in Python `del` method.    
 ```
 
-## `ChatHistoryThread` class
+## `ChatMessageThread` class
 
-The most common thread type is going to be the `ChatHistoryThread`, which is a thread that stores the messages in a list. This thread type works well with `ChatCompletionAgent` and its subclasses.
+The most common thread type is going to be the `ChatMessageThread`, which is a thread that stores the messages in a list. This thread type works well with `ChatCompletionAgent` and its subclasses.
 
 ```python
-class ChatHistoryThread(Thread):
+class ChatMessageThread(AgentThread):
     """A thread that stores the messages in a list."""
 
     def __init__(self):
-        self_messages = []  # List to store messages in the thread
-
-    async def on_new_message(self, message: "Message") -> None:
-        """Handle a new message added to the thread."""
-        self._messages.append(message)
+        # NOTE: We should have some way to prevent direct calling of the constructor from the base class
+        # and enforce using the `create` class method.
+        if ThreadCreationContext.is_active:
+            raise RuntimeError("Cannot instantiate ChatMessageThread directly. Use ChatMessageThread.create() instead.")
+        self._messages: list["Message"] = []
     
-    async def fork(self, message_id: str | None = None) -> "ChatHistoryThread":
+    @property
+    def messages(self) -> list["Message"]:
+        """Get the list of messages in the thread."""
+        return self._messages
+
+    async def on_new_messages(self, messages: list["Message"]) -> None:
+        """Handle a list of new messages added to the thread."""
+        self._messages.extend(messages)
+    
+    async def fork(self, message_id: str | None = None) -> "ChatMessageThread":
         """Create a fork of the thread starting from the given message ID.
+
+        NOTE: we may need to create a new base class / protocol for this behavior.
         
         If no message ID is provided, the fork will start from the latest message."""
-        new_thread = ChatHistoryThread()
+        new_thread = ChatMessageThread()
         if message_id is None:
             new_thread._messages = self._messages.copy()
         else:
             index = next((i for i, msg in enumerate(self._messages) if msg.id == message_id), -1)
             new_thread._messages = self._messages[index + 1:] if index != -1 else []
         return new_thread
-    
-    async def reset(self) -> None:
-        """Reset the thread to its initial state."""
-        self._messages.clear()
-    
-    async def save_state(self) -> Mapping[str, Any]:
-        """Save the current state of the thread as a serializable dictionary."""
-        return {
-            "messages": [msg.to_dict() for msg in self._messages],
-        }
-    
-    async def load_state(self, state: Mapping[str, Any]) -> None:
-        """Load the state of the thread from a serializable dictionary."""
-        self._messages = [Message.from_dict(msg) for msg in state.get("messages", [])]
 
     @classmethod
-    async def create(cls) -> "ChatHistoryThread":
+    async def create(cls) -> "ChatMessageThread":
         """Create a new chat history thread."""
-        return cls()
+        with ThreadCreationContext.activate():
+            return cls()
 
     async def delete(self) -> None:
         """Delete the thread. It will not be recoverable."""
@@ -133,14 +104,14 @@ The `WorkflowThread` is a specialized thread that manages the execution state of
 
 ```python
 
-class WorkflowThread(Thread):
+class WorkflowThread(AgentThread):
     """A thread that manages the execution state of a workflow."""
 
     # ----------- Execution state management -----------
     # TBD
 
     # ----------- Lifecycle management -----------
-    async def create_sub_thread(self, agent: Agent, key: str) -> "Thread":
+    async def create_sub_thread(self, agent: Agent, key: str) -> "AgentThread":
         """Create a sub-thread for the given agent with the given key."""
         pass
     
@@ -148,6 +119,6 @@ class WorkflowThread(Thread):
         """Delete the sub-thread with the given key."""
         pass
     
-    async def get_sub_thread(self, key: str) -> "Thread":
+    async def get_sub_thread(self, key: str) -> "AgentThread":
         """Get the sub-thread with the given key."""
         pass

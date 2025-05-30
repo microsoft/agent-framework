@@ -32,18 +32,24 @@ custom agents easy to implement, we can remove this agent.__
 ## `Agent` base class
 
 ```python
-class Agent(ABC):
+TThread = TypeVar("TThread", bound="AgentThread")
+
+class Agent(ABC, Generic[TThread]):
     """The base class for all agents in the framework."""
 
     @abstractmethod
     async def run(
         self, 
-        thread: Thread,
-        context: Context,
+        messages: list[Message],
+        thread: TThread,
+        context: RunContext,
     ) -> Result:
         """The method to run the agent on a thread of messages, and return the result.
 
         Args:
+            messages: The list of new messages to process that have not been added
+                to the thread yet. The agent may use these messages and append
+                new messages to the thread as part of its processing.
             thread: The thread of messages to process: it may be a local thread
                 or a stub thread that is backed by a remote service.
             context: The context for the current invocation of the agent, providing
@@ -56,22 +62,27 @@ class Agent(ABC):
     
     @classmethod
     @abstractmethod
-    async def create_thread(self) -> Thread:
+    async def create_thread(self) -> TThread:
         """Create a new thread for the agent to use.
 
         Returns:
-            Thread: A new thread that is compatible with the agent.
+            A new thread that is compatible with the agent.
         """
         ...
 
 
 @dataclass
-class Context:
+class RunContext:
     """The context for the current invocation of the agent."""
-    event_handler: EventHandler
-    """The event consumer for handling events emitted by the agent."""
+
+    event_handler: EventHandler | Callable[[Message], Awaitable[None]]
+    """The event consumer for handling events emitted by the agent. Could be
+    a callable that takes a message and returns an awaitable, or an instance of
+    `EventHandler` that handles events emitted by the agent."""
+
     user_input_source: UserInputSource
     """The user input source for requesting for user input during the agent run."""
+
     ... # Other fields, could be extended to include more for application-specific needs.
 
 
@@ -89,7 +100,7 @@ The `ToolCallingAgent` implements the `Agent` base class and
 it implements the `run` method to process incoming messages and call tools if needed.
 
 ```python
-class ToolCallingAgent(Agent):
+class ToolCallingAgent(Agent[ChatMessageThread]):
     def __init__(
         self, 
         model_client: ModelClient,
@@ -99,9 +110,11 @@ class ToolCallingAgent(Agent):
         self.tools = tools
 
     @override
-    async def run(self, thread: ChatHistoryThread, context: Context) -> Result:
+    async def run(self, messages: list[Message], thread: ChatMessageThread, context: RunContext) -> Result:
+        # Apply the messages to the thread.
+        await thread.on_new_messages(messages)
         # Create a response using the model client, passing the thread and context.
-        create_result = await self.model_client.create(thread, context, tools=self.tools)
+        create_result = await self.model_client.create(thread.messages, context, tools=self.tools)
         # Emit the event to notify the workflow consumer of a model response.
         await context.emit(ModelResponseEvent(create_result))
         if create_result.is_tool_call():
@@ -127,9 +140,12 @@ class ToolCallingAgent(Agent):
             )
     
     @classmethod
-    async def create_thread(self) -> Thread:
-        """Create a new thread for the agent to use."""
-        return await ChatHistoryThread.create()
+    async def create_thread(self) -> ChatMessageThread:
+        """Create a new thread for the agent to use.
+        
+        NOTE: this could be part of a new base class for this type of agent.
+        """
+        return await ChatMessageThread.create()
 ```
 
 Things to note in the implementation of the `run` method:
@@ -151,10 +167,9 @@ class CriticAgent(ChatCompletionAgent):
     def __init__(self) -> None:
         self.verification_logic = ... # Some verification logic, e.g. a set of rules.
 
-    async def run(self, thread: ChatHistoryThread, context: Context) -> Result:
-        # Use the verification logic to verify the last message in the thread.
-        response = thread.get_last_message()
-        is_verified = self.verification_logic.verify(response)
+    async def run(self, messages: list[Message], thread: ChatMessageThread, context: RunContext) -> Result:
+        # Use the verification logic to verify the messages.
+        is_verified = self.verification_logic.verify(messages)
         if is_verified:
             final_response = Message("The response is verified.")
         else:
@@ -186,17 +201,14 @@ agent = ToolCallingAgent(
 )
 
 # Create a thread for the current task.
-thread = [
-    Message("Hello"),
-    Message("Can you find the file 'foo.txt' for me?"),
-]
+thread = await ChatMessageThread.create()
 
 # Create a context that uses a handler that prints emitted events to the console, 
 # and a user input source that reads from the console.
-context = Context(event_handler=ConsoleEventHandler(), user_input_source=ConsoleUserInputSource())
+context = RunContext(event_handler=ConsoleEventHandler(), user_input_source=ConsoleUserInputSource())
 
 # Run the agent with the thread and context.
-result = await agent.run(thread, context)
+result = await agent.run([Message("Can you find the file 'foo.txt' for me?")], thread, context)
 ```
 
 ## User session
@@ -241,19 +253,13 @@ we can run the same instance of the agent concurrently.
 
 ```python
 # Create threads for concurrent tasks.
-thread1 = [
-    Message("Hello"),
-    Message("Can you find the file 'foo.txt' for me?"),
-]
-thread2 = [
-    Message("Hello"),
-    Message("Can you find the file 'bar.txt' for me?"),
-]
+thread1 = ChatMessageThread.create()
+thread2 = ChatMessageThread.create()
 
 # Run the agent concurrently on multiple threads.
 results = await asyncio.gather(
-    agent.run(thread1, context),
-    agent.run(thread2, context),
+    agent.run([Message(...)], thread1, context),
+    agent.run([Message(...)], thread2, context),
 )
 # The `context`'s event handlers will emit events from both runs.
 ```
@@ -284,7 +290,7 @@ agent = FoundryAgent(
 thread = FoundryThread(thread_id="my_thread_id")
 
 # Run the agent on the thread and an new context that emits events to the console.
-result = await agent.run(thread, RunContext(event_channel="console"))
+result = await agent.run([Message(...)], thread, RunRunContext(event_channel="console"))
 ```
 
 ## Alternative agent abstractions
@@ -308,12 +314,12 @@ public methods for the orchestration code to manipulate its conversation state
 indirectly.
 
 ```python
-class Agent(Protocol):
+class Agent(ABC):
 
     async def run(
         self, 
         messages: list[Message],
-        context: Context,
+        context: RunContext,
     ) -> Result:
         """The method to run the agent and return the result.
 
@@ -338,16 +344,18 @@ For agent without conversation state, the agent is invoked with a thread
 and the agent is responsible for processing the messages in the thread.
 
 ```python
-class Agent(Protocol):
+class Agent(ABC, Generic[TThread]):
 
     async def run(
         self, 
-        thread: Thread,
-        context: Context,
+        messages: list[Message],
+        thread: TThread,
+        context: RunContext,
     ) -> Result:
         """The method to run the agent on a thread of messages, and return the result.
 
         Args:
+            messages: The list of new messages to process.
             thread: The current conversation state.
             context: The context for the current invocation of the agent, providing
                 access to the event channel, and human-in-the-loop (HITL) features.
@@ -364,7 +372,7 @@ the a state in addition to components like model client and tools, which could b
 or a custom state object that the agent uses to manage its conversation state.
 
 ```python
-class CustomAgent(Agent):
+class CustomAgent(Agent[ChatMessageThread]):
     def __init__(self, 
         model_client: ModelClient,
         tools: list[Tool],
@@ -380,7 +388,7 @@ For agent without conversation state, the agent is initialized with
 the components it needs to process messages, such as a model client and tools.
 
 ```python
-class CustomAgent(Agent):
+class CustomAgent(Agent[ChatMessageThread]):
     def __init__(
         self, 
         model_client: ModelClient,
@@ -493,5 +501,8 @@ built-in factory methods for creating new threads given the agent type.
 Another factor to consider is that Semantic Kernel already has agent abstraction
 that passes a thread per invocation, so it is easier for us to migrate to the
 new interface. 
+
+**Decision**: We will use the agent abstraction without conversation state 
+as the interface for agents in the framework.
 
 > **We should continue to question this decision as we implement more agents and workflows, and revisit the design.**
