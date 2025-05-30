@@ -29,12 +29,13 @@ custom agents easy to implement, we can remove this agent.__
 - `ResponsesAgent`: an agent that is backed by OpenAI's Responses API.
 - `A2AAgent`: an agent that is backed by the [A2A Protocol](https://google.github.io/A2A/documentation/).
 
-## `Agent` protocol
+## `Agent` base class
 
 ```python
-class Agent(Protocol):
-    """The protocol for all agents in the framework."""
+class Agent(ABC):
+    """The base class for all agents in the framework."""
 
+    @abstractmethod
     async def run(
         self, 
         thread: Thread,
@@ -50,6 +51,16 @@ class Agent(Protocol):
         
         Returns:
             The result of running the agent, which includes the final response.
+        """
+        ...
+    
+    @classmethod
+    @abstractmethod
+    async def create_thread(self) -> Thread:
+        """Create a new thread for the agent to use.
+
+        Returns:
+            Thread: A new thread that is compatible with the agent.
         """
         ...
 
@@ -87,7 +98,8 @@ class ToolCallingAgent(Agent):
         self.model_client = model_client
         self.tools = tools
 
-    async def run(self, thread: Thread, context: Context) -> Result:
+    @override
+    async def run(self, thread: ChatHistoryThread, context: Context) -> Result:
         # Create a response using the model client, passing the thread and context.
         create_result = await self.model_client.create(thread, context, tools=self.tools)
         # Emit the event to notify the workflow consumer of a model response.
@@ -113,6 +125,11 @@ class ToolCallingAgent(Agent):
             return Result(
                 final_response=create_result,
             )
+    
+    @classmethod
+    async def create_thread(self) -> Thread:
+        """Create a new thread for the agent to use."""
+        return await ChatHistoryThread.create()
 ```
 
 Things to note in the implementation of the `run` method:
@@ -120,17 +137,21 @@ Things to note in the implementation of the `run` method:
 - Components such as `thread` and `model_client` interacts smoothly with little boilerplate code.
 - The `context` parameter provides convenient access to the workflow run fixtures such as event channel.
 
+In practice, the developer likely will inherit from `ChatCompletionAgent` to
+customize the `run` method, so they don't need to implement the boilerplate code
+for creating a thread.
+
 An agent doesn't need to use components provided by the framework to implement the agent interface.
 
 For example, in a multi-agent workflow, we may need a verification agent in a using deterministic
 logic to critic another agent's response.
 
 ```python
-class CriticAgent(Agent):
+class CriticAgent(ChatCompletionAgent):
     def __init__(self) -> None:
         self.verification_logic = ... # Some verification logic, e.g. a set of rules.
 
-    async def run(self, thread: Thread, context: Context) -> Result:
+    async def run(self, thread: ChatHistoryThread, context: Context) -> Result:
         # Use the verification logic to verify the last message in the thread.
         response = thread.get_last_message()
         is_verified = self.verification_logic.verify(response)
