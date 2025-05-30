@@ -32,9 +32,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { dotnet: "9.0", os: "ubuntu-latest", configuration: Release, integration-tests: true, environment: "integration" }
-          - { dotnet: "9.0", os: "ubuntu-latest", configuration: Debug }
-          - { dotnet: "9.0", os: "windows-latest", configuration: Release }
+          - { dotnet: "net9.0", os: "ubuntu-latest", configuration: Release, integration-tests: true, environment: "integration" }
+          - { dotnet: "net9.0", os: "ubuntu-latest", configuration: Debug }
+          - { dotnet: "net9.0", os: "windows-latest", configuration: Release }
           - { dotnet: "net472", os: "windows-latest", configuration: Release, integration-tests: true, environment: "integration" }
 
     runs-on: ${{ matrix.os }}
@@ -47,7 +47,7 @@ jobs:
             .
             .github
             dotnet
-      - name: Setup dotnet ${{ matrix.dotnet }}
+      - name: Setup dotnet
         uses: actions/setup-dotnet@v4.3.1
         with:
           global-json-file: ${{ github.workspace }}/dotnet/global.json
