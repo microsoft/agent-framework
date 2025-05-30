@@ -67,13 +67,13 @@ jobs:
 
           export SOLUTIONS=$(find ./dotnet/ -type f -name "*.slnx" | tr '\n' ' ')
           for solution in $SOLUTIONS; do
-            dotnet pack $solution -c ${{ matrix.configuration }} --no-build --no-restore --output "$TEMP_DIR/artifacts"
+            dotnet pack $solution -f ${{ matrix.dotnet }} -c ${{ matrix.configuration }} --no-build --no-restore --output "$TEMP_DIR/artifacts"
           done
 
           cd "$TEMP_DIR"
 
           # Create a new console app to test the package installation
-          dotnet new console --name packcheck --output consoleapp
+          dotnet new console -f ${{ matrix.dotnet }} --name packcheck --output consoleapp
 
           # Create minimal nuget.config and use only dotnet nuget commands
           echo '<?xml version="1.0" encoding="utf-8"?><configuration><packageSources><clear /></packageSources></configuration>' > consoleapp/nuget.config
@@ -85,7 +85,7 @@ jobs:
           # Change to project directory to ensure local nuget.config is used
           cd consoleapp
           dotnet add packcheck.csproj package Microsoft.Agents --prerelease
-          dotnet build -c ${{ matrix.configuration }} packcheck.csproj
+          dotnet build -f ${{ matrix.dotnet }} -c ${{ matrix.configuration }} packcheck.csproj
 
           # Clean up
           cd ..
