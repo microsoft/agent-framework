@@ -39,7 +39,7 @@ jobs:
               integration-tests: true,
               environment: "integration",
             }
-          - { dotnet: "9.0", os: "windows-latest", configuration: Debug }
+          - { dotnet: "9.0", os: "ubuntu-latest", configuration: Debug }
           - { dotnet: "9.0", os: "windows-latest", configuration: Release }
 
     runs-on: ${{ matrix.os }}
