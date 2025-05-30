@@ -1,5 +1,5 @@
 #
-# This workflow will build and run all unit tests using dotnet docker containers,
+# This workflow will build all .slnx files in the dotnet folder, and run all unit tests and integration tests using dotnet docker containers,
 # each targeting a single version of the dotnet SDK.
 #
 
@@ -33,14 +33,14 @@ jobs:
       matrix:
         include:
           - {
-              dotnet: "8.0",
+              dotnet: "9.0",
               os: "ubuntu-latest",
               configuration: Release,
               integration-tests: true,
               environment: "integration",
             }
-          - { dotnet: "8.0", os: "windows-latest", configuration: Debug }
-          - { dotnet: "8.0", os: "windows-latest", configuration: Release }
+          - { dotnet: "9.0", os: "windows-latest", configuration: Debug }
+          - { dotnet: "9.0", os: "windows-latest", configuration: Release }
 
     runs-on: ${{ matrix.os }}
     environment: ${{ matrix.environment }}
@@ -48,6 +48,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          sparse-checkout: |
+            .
+            .github
+            dotnet
       - name: Setup dotnet ${{ matrix.dotnet }}
         uses: actions/setup-dotnet@v4.3.1
         with:
@@ -77,7 +81,7 @@ jobs:
 
           # Change to project directory to ensure local nuget.config is used
           cd consoleapp
-          dotnet add packcheck.csproj package Microsoft.Agents
+          dotnet add packcheck.csproj package Microsoft.Agents --prerelease
           dotnet build -c ${{ matrix.configuration }} packcheck.csproj
           cd ..
 
