@@ -32,15 +32,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {
-              dotnet: "9.0",
-              os: "ubuntu-latest",
-              configuration: Release,
-              integration-tests: true,
-              environment: "integration",
-            }
+          - { dotnet: "9.0", os: "ubuntu-latest", configuration: Release, integration-tests: true, environment: "integration" }
           - { dotnet: "9.0", os: "ubuntu-latest", configuration: Debug }
           - { dotnet: "9.0", os: "windows-latest", configuration: Release }
+          - { dotnet: "net472", os: "windows-latest", configuration: Release, integration-tests: true, environment: "integration" }
 
     runs-on: ${{ matrix.os }}
     environment: ${{ matrix.environment }}
@@ -61,7 +56,7 @@ jobs:
         run: |
           export SOLUTIONS=$(find ./dotnet/ -type f -name "*.slnx" | tr '\n' ' ')
           for solution in $SOLUTIONS; do
-            dotnet build $solution -c ${{ matrix.configuration }} --warnaserror
+            dotnet build $solution -f ${{ matrix.dotnet }} -c ${{ matrix.configuration }} --warnaserror
           done
       - name: Package install check
         shell: bash
@@ -97,24 +92,12 @@ jobs:
           cd ..
           rm -rf "$TEMP_DIR"
 
-      # We cannot run all test frameworks on Windows, so here we are have no framework restriction
       - name: Run Unit Tests Windows
         shell: bash
-        if: matrix.os == 'windows-latest'
         run: |
           export UT_PROJECTS=$(find ./dotnet -type f -name "*.UnitTests.csproj" | tr '\n' ' ')
           for project in $UT_PROJECTS; do
-            dotnet test -c ${{ matrix.configuration }} $project --no-build -v Normal --logger trx --collect:"XPlat Code Coverage" --results-directory:"TestResults/Coverage/" -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByAttribute=GeneratedCodeAttribute,CompilerGeneratedAttribute,ExcludeFromCodeCoverageAttribute
-          done
-
-      # We cannot run .net framework tests on Linux, so here we are targeting .net 9.0 only
-      - name: Run Unit Tests Linux
-        shell: bash
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          export UT_PROJECTS=$(find ./dotnet -type f -name "*.UnitTests.csproj" | tr '\n' ' ')
-          for project in $UT_PROJECTS; do
-            dotnet test -f net9.0 -c ${{ matrix.configuration }} $project --no-build -v Normal --logger trx --collect:"XPlat Code Coverage" --results-directory:"TestResults/Coverage/" -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByAttribute=GeneratedCodeAttribute,CompilerGeneratedAttribute,ExcludeFromCodeCoverageAttribute
+            dotnet test -f ${{ matrix.dotnet }} -c ${{ matrix.configuration }} $project --no-build -v Normal --logger trx --collect:"XPlat Code Coverage" --results-directory:"TestResults/Coverage/" -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByAttribute=GeneratedCodeAttribute,CompilerGeneratedAttribute,ExcludeFromCodeCoverageAttribute
           done
 
       - name: Azure CLI Login
