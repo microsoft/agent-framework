@@ -68,10 +68,16 @@ jobs:
         # All frameworks are only built for the release configuration, so we only run this step for the release configuration
         if: matrix.configuration == 'Release'
         run: |
+          TEMP_DIR=$(mktemp -d)
+
           export SOLUTIONS=$(find ./dotnet/ -type f -name "*.slnx" | tr '\n' ' ')
           for solution in $SOLUTIONS; do
             dotnet pack $solution -c ${{ matrix.configuration }} --no-build --no-restore --output ./artifacts
           done
+
+          cd "$TEMP_DIR"
+
+          # Create a new console app to test the package installation
           dotnet new console --name packcheck --output consoleapp
 
           # Create minimal nuget.config and use only dotnet nuget commands
@@ -85,11 +91,11 @@ jobs:
           cd consoleapp
           dotnet add packcheck.csproj package Microsoft.Agents --prerelease
           dotnet build -c ${{ matrix.configuration }} packcheck.csproj
-          cd ..
 
           # Clean up
-          rm -rf ./artifacts
-          rm -rf ./consoleapp
+          cd ..
+          cd ..
+          rm -rf "$TEMP_DIR"
 
       # We cannot run all test frameworks on Windows, so here we are have no framework restriction
       - name: Run Unit Tests Windows
