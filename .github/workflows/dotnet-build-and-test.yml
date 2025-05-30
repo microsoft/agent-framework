@@ -184,7 +184,7 @@ jobs:
 
       - name: Check coverage
         shell: pwsh
-        run: .github/workflows/check-coverage.ps1 -JsonReportPath "TestResults/Reports/Summary.json" -CoverageThreshold $env:COVERAGE_THRESHOLD
+        run: .github/workflows/dotnet-check-coverage.ps1 -JsonReportPath "TestResults/Reports/Summary.json" -CoverageThreshold $env:COVERAGE_THRESHOLD
 
   # This final job is required to satisfy the merge queue. It must only run (or succeed) if no tests failed
   dotnet-build-and-test-check:
