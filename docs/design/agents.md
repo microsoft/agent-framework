@@ -153,7 +153,7 @@ Things to note in the implementation of the `run` method:
 - Components such as `thread` and `model_client` interacts smoothly with little boilerplate code.
 - The `context` parameter provides convenient access to the workflow run fixtures such as event channel.
 
-In practice, the developer likely will inherit from `ChatCompletionAgent` to
+In practice, the developer likely will inherit from `ChatAgent` to
 customize the `run` method, so they don't need to implement the boilerplate code
 for creating a thread.
 
@@ -163,7 +163,7 @@ For example, in a multi-agent workflow, we may need a verification agent in a us
 logic to critic another agent's response.
 
 ```python
-class CriticAgent(ChatCompletionAgent):
+class CriticAgent(ChatAgent):
     def __init__(self) -> None:
         self.verification_logic = ... # Some verification logic, e.g. a set of rules.
 
