@@ -67,7 +67,7 @@ jobs:
 
           export SOLUTIONS=$(find ./dotnet/ -type f -name "*.slnx" | tr '\n' ' ')
           for solution in $SOLUTIONS; do
-            dotnet pack $solution /p:TargetFrameworks=${{ matrix.targetFramework }} -c ${{ matrix.configuration }} --no-build --no-restore --output "$TEMP_DIR/artifacts"
+            dotnet pack $solution /property:TargetFrameworks=${{ matrix.targetFramework }} -c ${{ matrix.configuration }} --no-build --no-restore --output "$TEMP_DIR/artifacts"
           done
 
           cd "$TEMP_DIR"
