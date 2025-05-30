@@ -61,7 +61,8 @@ jobs:
       - name: Package install check
         shell: bash
         # All frameworks are only built for the release configuration, so we only run this step for the release configuration
-        if: matrix.configuration == 'Release'
+        # and dotnet new doesn't support net472
+        if: matrix.configuration == 'Release' && matrix.targetFramework != 'net472'
         run: |
           TEMP_DIR=$(mktemp -d)
 
