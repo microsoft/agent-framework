@@ -36,7 +36,7 @@ find the design details of each component:
   - [Vector Store and Embedding Client](vector-stores.md)
   - [Tool](tools.md)
   - [MCP Server](mcp-servers.md)
-  - [Memory](memory.md)
+  - [Context Provider (memory, RAG, etc.)](context_providers.md)
   - [Thread](threads.md)
   - [Guardrail](guardrails.md)
 - Agent and Workflow:
@@ -70,19 +70,19 @@ graph TD
     Component --> |extends| EmbeddingClient[Embedding Client]
     Component --> |extends| Tool[Tool]
     Component --> |extends| MCPServer[MCP Server]
-    Component --> |extends| Memory[Memory]
+    Component --> |extends| ContextProvider[Context Provider]
     Component --> |extends| Thread[Thread]
     Component --> |extends| Guardrail[Guardrail]
     
     Agent --> |uses| uses1[Model Client]
     Agent --> |uses| uses2[Thread]
     Agent --> |uses| uses3[Tools and MCP Servers]
-    Agent --> |uses| uses4[Memory]
+    Agent --> |uses| uses4[Context Provider]
     Agent --> |uses| uses5[Guardrail]
     
     Workflow --> |contains| contains[Child Agents]
 
-    Memory --> |uses| uses5[Vector Store]
+    ContextProvider --> |uses| uses5[Vector Store]
     VectorStore --> |uses| uses6[Embedding Client]
 ```
 
