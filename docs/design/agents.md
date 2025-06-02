@@ -32,16 +32,17 @@ custom agents easy to implement, we can remove this agent.__
 ## `Agent` base class
 
 ```python
-TThread = TypeVar("TThread", bound="AgentThread")
+TInThread = TypeVar("TInThread", bound="AgentThread", contravariant=True)
+TNewThread = TypeVar("TOutThread", bound="AgentThread", covariant=True)
 
-class Agent(ABC, Generic[TThread]):
+class Agent(ABC, Generic[TInThread, TNewThread]):
     """The base class for all agents in the framework."""
 
     @abstractmethod
     async def run(
         self, 
         messages: list[Message],
-        thread: TThread,
+        thread: TInThread,
         context: RunContext,
     ) -> Result:
         """The method to run the agent on a thread of messages, and return the result.
@@ -62,7 +63,7 @@ class Agent(ABC, Generic[TThread]):
     
     @classmethod
     @abstractmethod
-    async def create_thread(self) -> TThread:
+    async def create_thread(self) -> TNewThread:
         """Create a new thread for the agent to use.
 
         Returns:
@@ -100,7 +101,11 @@ The `ToolCallingAgent` implements the `Agent` base class and
 it implements the `run` method to process incoming messages and call tools if needed.
 
 ```python
-class ToolCallingAgent(Agent[ChatMessageThread]):
+
+TInThread = TypeVar("TInThread", bound="ChatMessageThread", contravariant=True)
+TNewThread = TypeVar("TOuthread", bound="ChatMessageThread", covariant=True)
+
+class ToolCallingAgent(Agent[TInThread, TNewThread]):
     def __init__(
         self, 
         model_client: ModelClient,
@@ -109,8 +114,7 @@ class ToolCallingAgent(Agent[ChatMessageThread]):
         self.model_client = model_client
         self.tools = tools
 
-    @override
-    async def run(self, messages: list[Message], thread: ChatMessageThread, context: RunContext) -> Result:
+    async def run(self, messages: list[Message], thread: TInThread, context: RunContext) -> Result:
         # Apply the messages to the thread.
         await thread.on_new_messages(messages)
         # Create a response using the model client, passing the thread and context.
@@ -128,7 +132,7 @@ class ToolCallingAgent(Agent[ChatMessageThread]):
             # Emit the event to notify the workflow consumer of a tool call.
             await context.emit(ToolCallEvent(tool_result))
             # Update the thread with the tool result.
-            await thread.append(tool_result.to_messages())
+            await thread.on_new_messages(tool_result.to_messages())
             # Return the tool result as the response.
             return Result(
                 final_response=tool_result,
@@ -140,7 +144,7 @@ class ToolCallingAgent(Agent[ChatMessageThread]):
             )
     
     @classmethod
-    async def create_thread(self) -> ChatMessageThread:
+    async def create_thread(self) -> TNewThread:
         """Create a new thread for the agent to use.
         
         NOTE: this could be part of a new base class for this type of agent.
