@@ -8,7 +8,11 @@ The ContextProvider class supports such scenarios through a unified interface fo
 
 ```python
 class ContextProvider(ABC):
-    """The base class for context providers like Memory and RAG."""
+    """
+    The base class for context providers like Memory and RAG.
+    Subclasses will typically have extra methods and constructor parameters for specific functionality,
+    such as clearing memory contents, or adding files to a RAG provider. 
+    """
 
     @abstractmethod
     async def retrieve_relevant_context(self, messages: list["Message"]) -> TextContent | None:
@@ -16,13 +20,8 @@ class ContextProvider(ABC):
         ...
 
     @abstractmethod
-    async def store_relevant_context(self, messages: list["Message"]) -> None:
+    async def store_potentially_useful_context(self, messages: list["Message"]) -> None:
         """Stores any information derived from the messages that may be useful to retrieve later."""
-        ...
-
-    @abstractmethod
-    async def clear(self) -> None:
-        """Deletes all stored context."""
         ...
 
     # To close, delete and release any runtime resources, each subclass should override the built-in Python `del` method.    
@@ -57,13 +56,13 @@ It may realize the information is missing, and ask the user for it.
 
 The original user message (which assigned the task) is then added to the thread's message history as usual,
 which automatically calls the `AgentThread.on_new_messages(messages)`,
-which calls `store_relevant_context` on each context provider in the thread.
+which calls `store_potentially_useful_context` on each context provider in the thread.
 In this case the memory provider fails to find any useful information in the user's message to store.
 
 Suppose then that the user responds by supplying the missing information.
 This time the agent will succeed, since the LLM's context window now contains the relevant information.
 More importantly for our example, when the second user message is added to the thread's message history,
-`mem.store_relevant_context()` will find and store the relevant information for later retrieval.
+`mem.store_potentially_useful_context()` will extract and store the relevant information for later retrieval.
 
 For this example, suppose the user then initiates a new chat (clearing the message history),
 and assigns the original task again, but without providing the missing information.
