@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import AsyncIterable, List, Protocol, Sequence
 
-from agent_framework import CancellationToken, InputGuardrail, OutputGuardrail
+from agent_framework import InputGuardrail, OutputGuardrail
 from agent_framework.model_client import ChatMessage, ChatResponse, ChatResponseUpdate
 
 
@@ -13,15 +13,12 @@ class ModelClient(Protocol):
     async def generate_response(
         self,
         messages: Sequence[ChatMessage],
-        *,
-        cancellation_token: CancellationToken | None = None,
         **options,  # kwargs?
     ) -> ChatResponse:
         """Sends chat messages and returns the response.
 
         Args:
             messages: The sequence of chat messages to send.
-            cancellation_token: The `CancellationToken` to monitor for cancellation requests.
             **options: Additional options for the chat request, such as model_id, temperature, etc.
                        See `ChatOptions` for more details.
 
@@ -36,15 +33,12 @@ class ModelClient(Protocol):
     async def generate_streaming_response(
         self,
         messages: Sequence[ChatMessage],
-        *,
-        cancellation_token: CancellationToken | None = None,
         **options,  # kwargs?
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Sends chat messages and streams the response.
 
         Args:
             messages: The sequence of chat messages to send.
-            cancellation_token: The `CancellationToken` to monitor for cancellation requests.
             **options: Additional options for the chat request, such as model_id, temperature, etc.
                        See `ChatOptions` for more details.
 

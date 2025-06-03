@@ -2,7 +2,6 @@
 
 import importlib.metadata
 
-from ._cancellation_token import CancellationToken
 from ._guard_rails import InputGuardrail, OutputGuardrail
 
 try:
@@ -14,7 +13,6 @@ __ALL__ = [
     "__version__",
 ] + [
     export.__name__ for export in [
-        CancellationToken,
         InputGuardrail,
         OutputGuardrail,
     ]
