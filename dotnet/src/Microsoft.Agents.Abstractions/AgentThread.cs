@@ -20,12 +20,12 @@ public abstract class AgentThread
     /// <summary>
     /// Gets the id of the current thread.
     /// </summary>
-    public virtual string? Id { get; protected set; }
+    public string? Id { get; protected set; }
 
     /// <summary>
     /// Gets a value indicating whether the thread has been deleted.
     /// </summary>
-    public virtual bool IsDeleted { get; protected set; } = false;
+    public bool IsDeleted { get; protected set; } = false;
 
     /// <summary>
     /// Creates the thread and returns the thread id.
@@ -45,7 +45,7 @@ public abstract class AgentThread
             return;
         }
 
-        this.Id = await this.CreateInternalAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        this.Id = await this.CreateCoreAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -66,7 +66,7 @@ public abstract class AgentThread
             throw new InvalidOperationException("This thread cannot be deleted, since it has not been created.");
         }
 
-        await this.DeleteInternalAsync(cancellationToken).ConfigureAwait(false);
+        await this.DeleteCoreAsync(cancellationToken).ConfigureAwait(false);
 
         this.IsDeleted = true;
     }
@@ -93,7 +93,7 @@ public abstract class AgentThread
             await this.CreateAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        await this.OnNewMessageInternalAsync(newMessage, cancellationToken).ConfigureAwait(false);
+        await this.OnNewMessageCoreAsync(newMessage, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -102,7 +102,7 @@ public abstract class AgentThread
     /// </summary>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>The id of the thread that was created if one is available.</returns>
-    protected abstract Task<string?> CreateInternalAsync(CancellationToken cancellationToken);
+    protected abstract Task<string?> CreateCoreAsync(CancellationToken cancellationToken);
 
     /// <summary>
     /// Deletes the current thread.
@@ -110,7 +110,7 @@ public abstract class AgentThread
     /// </summary>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that completes when the thread has been deleted.</returns>
-    protected abstract Task DeleteInternalAsync(CancellationToken cancellationToken);
+    protected abstract Task DeleteCoreAsync(CancellationToken cancellationToken);
 
     /// <summary>
     /// This method is called when a new message has been contributed to the chat by any participant.
@@ -119,5 +119,5 @@ public abstract class AgentThread
     /// <param name="newMessage">The new message.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that completes when the context has been updated.</returns>
-    protected abstract Task OnNewMessageInternalAsync(ChatMessage newMessage, CancellationToken cancellationToken = default);
+    protected abstract Task OnNewMessageCoreAsync(ChatMessage newMessage, CancellationToken cancellationToken = default);
 }
