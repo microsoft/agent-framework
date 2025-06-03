@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Protocol, TypedDict
+from typing import Any, Dict, List, Literal, TypedDict
 
 from pydantic import BaseModel
+
+from agent_framework import AITool
 
 
 class ChatResponseFormatJson(BaseModel):
@@ -50,16 +52,6 @@ class RequiredChatToolMode(BaseModel):
 
 
 ChatToolMode = AutoChatToolMode | NoneChatToolMode | RequiredChatToolMode
-
-
-class AITool(Protocol):
-    """Represents a tool that can be specified to an AI service."""
-    name: str
-    """The name of the tool."""
-    description: str | None = None
-    """A description of the tool, suitable for use in describing the purpose to a model."""
-    additional_properties: Dict[str, Any] | None = None
-    """Additional properties associated with the tool."""
 
 
 # SyncRawRepresentationFactory = Callable[ChatOptions, Any]  # noqa: ERA001

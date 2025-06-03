@@ -3,6 +3,7 @@
 import importlib.metadata
 
 from ._guard_rails import InputGuardrail, OutputGuardrail
+from ._tool import AITool
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -15,5 +16,6 @@ __ALL__ = [
     export.__name__ for export in [
         InputGuardrail,
         OutputGuardrail,
+        AITool,
     ]
 ]
