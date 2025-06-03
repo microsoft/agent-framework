@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, ClassVar, Generic, Self, TypeVar
+from typing import Any, ClassVar, Generic, TypeVar
 
 from pydantic import BaseModel
 from pydantic.generics import GenericModel
+from typing_extensions import Self
 
 from agent_framework.model_client import AIContent, TextContent, UsageDetails
 
@@ -184,7 +185,9 @@ class ChatResponseUpdate(BaseModel):
 
     def with_(self, contents: list[AIContent] | None = None, message_id: str | None = None) -> Self:
         """Returns a new instance with the specified contents and message_id."""
-        contents |= []
+        if contents is None:
+            contents = []
+
         return self.model_copy(
             update={
                 "contents": self.contents + contents,
@@ -193,7 +196,7 @@ class ChatResponseUpdate(BaseModel):
         )
 
     @staticmethod
-    def join(updates: Sequence[Self]) -> ChatResponse:
+    def join(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
         """Joins multiple updates into a single ChatResponse."""
         if not updates:
             return ChatResponse(messages=[])

@@ -89,7 +89,7 @@ class ErrorContent(AIContent):
 
     def __str__(self) -> str:
         """Returns a string representation of the error."""
-        return f"Error {self.error_code}: {self.message}" if self.error_code else self.message
+        return f"Error {self.error_code}: {self.message}" if self.error_code else self.message or "Unknown error"
 
 
 class FunctionCallContent(AIContent):
@@ -172,10 +172,12 @@ class UsageDetails(BaseModel):
         if not isinstance(other, UsageDetails):
             return NotImplemented
 
-        additional_counts = self.additional_counts or {}
+        additional_counts: AdditionalCounts = self.additional_counts or {}
         if other.additional_counts:
             for key, value in other.additional_counts.items():
-                additional_counts[key] = additional_counts.get(key, 0) + value
+                # Do our best to do the right thing here.
+                if isinstance(value, (int, str, float)):
+                    additional_counts[key] = int(additional_counts.get(key, 0)) + int(value or 0)
 
         return UsageDetails(
             input_token_count=(self.input_token_count or 0) + (other.input_token_count or 0),

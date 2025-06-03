@@ -26,10 +26,10 @@ from ._chat_options import (
     AITool,
     AutoChatToolMode,
     ChatOptions,
-    ChatResponseFormat,
+    ChatResponseFormat,  # noqa: F401
     ChatResponseFormatJson,
     ChatResponseFormatText,
-    ChatToolMode,
+    ChatToolMode,  # noqa: F401
     NoneChatToolMode,
     RequiredChatToolMode,
 )
@@ -57,10 +57,10 @@ __ALL__ = [
         AITool,
         AutoChatToolMode,
         ChatOptions,
-        ChatResponseFormat,
+        # ChatResponseFormat,
         ChatResponseFormatJson,
         ChatResponseFormatText,
-        ChatToolMode,
+        # ChatToolMode,
         NoneChatToolMode,
         RequiredChatToolMode,
         ChatOptions,
@@ -68,4 +68,7 @@ __ALL__ = [
         ChatResponseFormatText,
         ModelClient,
     )
+] + [
+    "ChatResponseFormat",  # Alias for the union of response formats
+    "ChatToolMode",  # Alias for the union of tool modes
 ]

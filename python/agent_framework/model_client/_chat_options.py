@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, TypedDict
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agent_framework import AITool
 
@@ -18,7 +18,10 @@ class ChatResponseFormatJson(BaseModel):
     """The name of the schema."""
     schema_description: str | None = None
     """The description of the schema."""
-    schema: dict[str, Any] | None = None
+    schema_: dict[str, Any] | None = Field(
+        default=None,
+        alias="schema",
+    )
     """The JSON schema associated with the response, or `None` if there is none."""
 
 
@@ -71,37 +74,37 @@ class ChatOptions(TypedDict, total=False):
         `ModelClient.generate_streaming_response` methods.
     """
 
-    allow_multiple_tool_calls: bool | None = None
+    allow_multiple_tool_calls: bool | None
     """Indicates whether a single response is allowed to include multiple tool calls. If `False`,
     the `ModelClient` is asked to return a maximum of one tool call per request. If `True`, there is
     no limit. If `None`, the provider may select its own default."""
-    conversation_id: str | None = None
+    conversation_id: str | None
     """An optional identifier used to associate a request with an existing conversation."""
-    frequency_penalty: float | None = None
+    frequency_penalty: float | None
     """A penalty for repeated tokens in chat responses proportional to how many times they've appeared."""
-    max_output_tokens: int | None = None
+    max_output_tokens: int | None
     """The maximum number of tokens in the generated chat response."""
-    model_id: str | None = None
+    model_id: str | None
     """The model ID for the chat request."""
-    presence_penalty: float | None = None
+    presence_penalty: float | None
     """a value that influences the probability of generated tokens appearing based on their existing
     presence in generated text."""
-    response_format: ChatResponseFormat | None = None
+    response_format: ChatResponseFormat | None
     """The response format for the chat request."""
-    seed: int | None = None
+    seed: int | None
     """A seed value used by a service to control the reproducibility of results."""
-    stop_sequences: list[str] | None = None
+    stop_sequences: list[str] | None
     """The list of stop sequences."""
-    temperature: float | None = None
+    temperature: float | None
     """The temperature for generating chat responses."""
-    tool_mode: ChatToolMode | None = None
+    tool_mode: ChatToolMode | None
     """The tool mode for the chat request."""
-    tools: list[AITool] | None = None
+    tools: list[AITool] | None
     """The list of tools to include with a chat request."""
-    top_k: int | None = None
+    top_k: int | None
     """The number of most probable tokens that the model considers when generating the next part of
     the text."""
-    top_p: float | None = None
+    top_p: float | None
     """The 'nucleus sampling' factor (or "top p") for generating chat responses."""
 
     # raw_representation_factory: SyncRawRepresentationFactory | None = None  # ???  # noqa: ERA001
