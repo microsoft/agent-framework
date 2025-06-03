@@ -2,7 +2,6 @@
 
 import importlib.metadata
 
-from ._cancellation_token import CancellationToken
 from ._guard_rails import InputGuardrail, OutputGuardrail
 from ._logging import get_logger
 
@@ -16,7 +15,6 @@ __ALL__ = [
 ] + [
     export.__name__
     for export in [
-        CancellationToken,
         InputGuardrail,
         OutputGuardrail,
         get_logger,
