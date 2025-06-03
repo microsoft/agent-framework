@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, TypedDict
 
 from pydantic import BaseModel
 
@@ -121,11 +121,27 @@ class UriContent(AIContent):
     """The media type of the content, e.g., 'image/png', 'application/json', etc."""
 
 
-# TODO(): Do we want to surface this? Will it even be possible for agents to bookkeep without this?
 class UsageContent(AIContent):
     """Represents usage information associated with a chat request and response."""
     details: UsageDetails
     """The usage information."""
+
+
+class AdditionalCounts(TypedDict, total=False):
+    """Represents well-known additional counts for usage. This is not an exhaustive list.
+
+    Remarks:
+        To make it possible to avoid colisions between similarly-named, but unrelated, additional counts
+        between different AI services, any keys not explicitly defined here should be prefixed with the
+        name of the AI service, e.g., "openai." or "azure.". The separator "." was chosen because it cannot
+        be a legal character in a JSON key.
+
+        Over time additional counts may be added to this class.
+    """
+    thought_token_count: int
+    """The number of tokens used for thought processing."""
+    image_token_count: int
+    """The number of token equivalents used for image processing."""
 
 
 class UsageDetails(BaseModel):
@@ -136,5 +152,22 @@ class UsageDetails(BaseModel):
     """The number of tokens in the output."""
     total_token_count: int | None = None
     """The total number of tokens used to produce the response."""
-    additional_counts: Dict[str, int] | None = None
+    additional_counts: AdditionalCounts | None = None
     """A dictionary of additional usage counts."""
+
+    def __plus__(self, other: UsageDetails) -> UsageDetails:
+        """Combines two `UsageDetails` instances."""
+        if not isinstance(other, UsageDetails):
+            return NotImplemented
+
+        additional_counts = self.additional_counts or {}
+        if other.additional_counts:
+            for key, value in other.additional_counts.items():
+                additional_counts[key] = additional_counts.get(key, 0) + value
+
+        return UsageDetails(
+            input_token_count=(self.input_token_count or 0) + (other.input_token_count or 0),
+            output_token_count=(self.output_token_count or 0) + (other.output_token_count or 0),
+            total_token_count=(self.total_token_count or 0) + (other.total_token_count or 0),
+            additional_counts=additional_counts,
+        )
