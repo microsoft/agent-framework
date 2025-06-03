@@ -17,7 +17,7 @@ class ChatResponseFormatJson(BaseModel):
     """The name of the schema."""
     schema_description: str | None = None
     """The description of the schema."""
-    schema: Dict[str, Any] | None = None  # Should this be a type {t: pydantic.BaseModel} instead?
+    schema: Dict[str, Any] | None = None
     """The JSON schema associated with the response, or `None` if there is none."""
 
 
