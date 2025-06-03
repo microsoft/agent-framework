@@ -4,6 +4,7 @@ import importlib.metadata
 
 from ._guard_rails import InputGuardrail, OutputGuardrail
 from ._logging import get_logger
+from ._tool import AITool
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -18,5 +19,6 @@ __ALL__ = [
         InputGuardrail,
         OutputGuardrail,
         get_logger,
+        AITool,
     ]
 ]
