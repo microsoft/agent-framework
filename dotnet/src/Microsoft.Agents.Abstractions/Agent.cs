@@ -20,22 +20,22 @@ public abstract class Agent
     /// <value>
     /// The identifier of the agent. The default is a random GUID value, but for service agents, it will match the id of the agent in the service.
     /// </value>
-    public string Id { get; protected set; } = Guid.NewGuid().ToString();
+    public virtual string Id => Guid.NewGuid().ToString();
 
     /// <summary>
     /// Gets the name of the agent (optional).
     /// </summary>
-    public string? Name { get; protected set; }
+    public virtual string? Name { get; }
 
     /// <summary>
     /// Gets the description of the agent (optional).
     /// </summary>
-    public string? Description { get; protected set; }
+    public virtual string? Description { get; }
 
     /// <summary>
     /// Gets the instructions for the agent (optional).
     /// </summary>
-    public string? Instructions { get; protected set; }
+    public virtual string? Instructions { get; }
 
     /// <summary>
     /// Create a new <see cref="AgentThread"/> that is compatible with the agent.
