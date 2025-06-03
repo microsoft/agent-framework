@@ -1,0 +1,221 @@
+#
+# This workflow will build all .slnx files in the dotnet folder, and run all unit tests and integration tests using dotnet docker containers,
+# each targeting a single version of the dotnet SDK.
+#
+
+name: dotnet-build-and-test
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: ["main", "feature*"]
+    paths:
+      - dotnet/**
+      - '.github/workflows/dotnet-build-and-test.yml'
+  merge_group:
+    branches: ["main"]
+
+env:
+  COVERAGE_THRESHOLD: 80
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: "write"
+
+jobs:
+  dotnet-build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { targetFramework: "net9.0", os: "ubuntu-latest", configuration: Release, integration-tests: true, environment: "integration" }
+          - { targetFramework: "net9.0", os: "ubuntu-latest", configuration: Debug }
+          - { targetFramework: "net9.0", os: "windows-latest", configuration: Release }
+          - { targetFramework: "net472", os: "windows-latest", configuration: Release, integration-tests: true, environment: "integration" }
+
+    runs-on: ${{ matrix.os }}
+    environment: ${{ matrix.environment }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .
+            .github
+            dotnet
+      - name: Setup dotnet
+        uses: actions/setup-dotnet@v4.3.1
+        with:
+          global-json-file: ${{ github.workspace }}/dotnet/global.json
+      - name: Build dotnet solutions
+        shell: bash
+        run: |
+          export SOLUTIONS=$(find ./dotnet/ -type f -name "*.slnx" | tr '\n' ' ')
+          for solution in $SOLUTIONS; do
+            dotnet build $solution -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} --warnaserror
+          done
+      - name: Package install check
+        shell: bash
+        # All frameworks are only built for the release configuration, so we only run this step for the release configuration
+        # and dotnet new doesn't support net472
+        if: matrix.configuration == 'Release' && matrix.targetFramework != 'net472'
+        run: |
+          TEMP_DIR=$(mktemp -d)
+
+          export SOLUTIONS=$(find ./dotnet/ -type f -name "*.slnx" | tr '\n' ' ')
+          for solution in $SOLUTIONS; do
+            dotnet pack $solution /property:TargetFrameworks=${{ matrix.targetFramework }} -c ${{ matrix.configuration }} --no-build --no-restore --output "$TEMP_DIR/artifacts"
+          done
+
+          cd "$TEMP_DIR"
+
+          # Create a new console app to test the package installation
+          dotnet new console -f ${{ matrix.targetFramework }} --name packcheck --output consoleapp
+
+          # Create minimal nuget.config and use only dotnet nuget commands
+          echo '<?xml version="1.0" encoding="utf-8"?><configuration><packageSources><clear /></packageSources></configuration>' > consoleapp/nuget.config
+
+          # Add sources with local first using dotnet nuget commands
+          dotnet nuget add source ../artifacts --name local --configfile consoleapp/nuget.config
+          dotnet nuget add source https://api.nuget.org/v3/index.json --name nuget.org --configfile consoleapp/nuget.config
+
+          # Change to project directory to ensure local nuget.config is used
+          cd consoleapp
+          dotnet add packcheck.csproj package Microsoft.Agents --prerelease
+          dotnet build -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} packcheck.csproj
+
+          # Clean up
+          cd ..
+          cd ..
+          rm -rf "$TEMP_DIR"
+
+      - name: Run Unit Tests Windows
+        shell: bash
+        run: |
+          export UT_PROJECTS=$(find ./dotnet -type f -name "*.UnitTests.csproj" | tr '\n' ' ')
+          for project in $UT_PROJECTS; do
+            dotnet test -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} $project --no-build -v Normal --logger trx --collect:"XPlat Code Coverage" --results-directory:"TestResults/Coverage/" -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByAttribute=GeneratedCodeAttribute,CompilerGeneratedAttribute,ExcludeFromCodeCoverageAttribute
+          done
+
+      - name: Azure CLI Login
+        if: github.event_name != 'pull_request' && matrix.integration-tests
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Run Integration Tests
+        shell: bash
+        if: github.event_name != 'pull_request' && matrix.integration-tests
+        run: |
+          export INTEGRATION_TEST_PROJECTS=$(find ./dotnet -type f -name "*IntegrationTests.csproj" | grep -v "Experimental.Orchestration.Flow.IntegrationTests.csproj" | grep -v "VectorDataIntegrationTests.csproj" | tr '\n' ' ')
+          for project in $INTEGRATION_TEST_PROJECTS; do
+            dotnet test -f net8.0 -c ${{ matrix.configuration }} $project --no-build -v Normal --logger trx
+          done
+        env:
+          # Azure OpenAI Deployments
+          AzureOpenAI__Endpoint: ${{ secrets.AZUREOPENAI__ENDPOINT }}
+          AzureOpenAI__DeploymentName: ${{ vars.AZUREOPENAI__DEPLOYMENTNAME }}
+          AzureOpenAI__ChatDeploymentName: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
+          AzureOpenAIEmbeddings__Endpoint: ${{ secrets.AZUREOPENAI__ENDPOINT }}
+          AzureOpenAIEmbeddings__DeploymentName: ${{ vars.AZUREOPENAIEMBEDDING__DEPLOYMENTNAME }}
+          AzureOpenAITextToAudio__Endpoint: ${{ secrets.AZUREOPENAITEXTTOAUDIO__ENDPOINT }}
+          AzureOpenAITextToAudio__DeploymentName: ${{ vars.AZUREOPENAITEXTTOAUDIO__DEPLOYMENTNAME }}
+          AzureOpenAIAudioToText__Endpoint: ${{ secrets.AZUREOPENAIAUDIOTOTEXT__ENDPOINT }}
+          AzureOpenAIAudioToText__DeploymentName: ${{ vars.AZUREOPENAIAUDIOTOTEXT__DEPLOYMENTNAME }}
+          AzureOpenAITextToImage__Endpoint: ${{ secrets.AZUREOPENAITEXTTOIMAGE__ENDPOINT }}
+          AzureOpenAITextToImage__DeploymentName: ${{ vars.AZUREOPENAITEXTTOIMAGE__DEPLOYMENTNAME }}
+          Planners__AzureOpenAI__Endpoint: ${{ secrets.PLANNERS__AZUREOPENAI__ENDPOINT }}
+          Planners__AzureOpenAI__DeploymentName: ${{ vars.PLANNERS__AZUREOPENAI__DEPLOYMENTNAME }}
+          # OpenAI Models
+          OpenAI__ApiKey: ${{ secrets.OPENAI__APIKEY }}
+          OpenAI__ChatModelId: ${{ vars.OPENAI__CHATMODELID }}
+          OpenAIEmbeddings__ApiKey: ${{ secrets.OPENAIEMBEDDINGS__APIKEY }}
+          OpenAIEmbeddings__ModelId: ${{ vars.OPENAIEMBEDDINGS__MODELID }}
+          OpenAITextToAudio__ApiKey: ${{ secrets.OPENAITEXTTOAUDIO__APIKEY }}
+          OpenAITextToAudio__ModelId: ${{ vars.OPENAITEXTTOAUDIO__MODELID }}
+          OpenAIAudioToText__ApiKey: ${{ secrets.OPENAIAUDIOTOTEXT__APIKEY }}
+          OpenAIAudioToText__ModelId: ${{ vars.OPENAIAUDIOTOTEXT__MODELID }}
+          OpenAITextToImage__ApiKey: ${{ secrets.OPENAITEXTTOIMAGE__APIKEY }}
+          OpenAITextToImage__ModelId: ${{ vars.OPENAITEXTTOIMAGE__MODELID }}
+          Planners__OpenAI__ApiKey: ${{ secrets.PLANNERS__OPENAI__APIKEY }}
+          Planners__OpenAI__ModelId: ${{ vars.PLANNERS__OPENAI__MODELID }}
+          # Bing Web Search
+          Bing__ApiKey: ${{ secrets.BING__APIKEY }}
+          # Google Web Search
+          Google__SearchEngineId: ${{ secrets.GOOGLE__SEARCHENGINEID }}
+          Google__ApiKey: ${{ secrets.GOOGLE__APIKEY }}
+          # Azure AI Inference Endpoint
+          AzureAIInference__ApiKey: ${{ secrets.AZUREAIINFERENCE__APIKEY }}
+          AzureAIInference__Endpoint: ${{ secrets.AZUREAIINFERENCE__ENDPOINT }}
+          AzureAIInference__ChatModelId: ${{ vars.AZUREAIINFERENCE__CHATMODELID }}
+          # Azure AI Foundry
+          AzureAI__Endpoint: ${{ secrets.AZUREAI__ENDPOINT }}
+          AzureAI__ConnectionString: ${{ secrets.AZUREAI__CONNECTIONSTRING }}
+          AzureAI__ChatModelId: ${{ vars.AZUREAI__CHATMODELID }}
+
+      # Generate test reports and check coverage
+      - name: Generate test reports
+        uses: danielpalme/ReportGenerator-GitHub-Action@5.4.4
+        with:
+          reports: "./TestResults/Coverage/**/coverage.cobertura.xml"
+          targetdir: "./TestResults/Reports"
+          reporttypes: "HtmlInline;JsonSummary"
+
+      - name: Upload coverage report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CoverageReport-${{ matrix.os }}-${{ matrix.targetFramework }}-${{ matrix.configuration }} # Artifact name
+          path: ./TestResults/Reports # Directory containing files to upload
+
+      - name: Check coverage
+        shell: pwsh
+        run: .github/workflows/dotnet-check-coverage.ps1 -JsonReportPath "TestResults/Reports/Summary.json" -CoverageThreshold $env:COVERAGE_THRESHOLD
+
+  # This final job is required to satisfy the merge queue. It must only run (or succeed) if no tests failed
+  dotnet-build-and-test-check:
+    if: always()
+    runs-on: ubuntu-latest
+    needs: [dotnet-build-and-test]
+    steps:
+      - name: Get Date
+        shell: bash
+        run: |
+          echo "date=$(date +'%m/%d/%Y %H:%M:%S')" >> "$GITHUB_ENV"
+
+      - name: Run Type is Daily
+        if: ${{ github.event_name == 'schedule' }}
+        shell: bash
+        run: |
+          echo "run_type=Daily" >> "$GITHUB_ENV"
+
+      - name: Run Type is Manual
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        shell: bash
+        run: |
+          echo "run_type=Manual" >> "$GITHUB_ENV"
+
+      - name: Run Type is ${{ github.event_name }}
+        if: ${{ github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'}}
+        shell: bash
+        run: |
+          echo "run_type=${{ github.event_name }}" >> "$GITHUB_ENV"
+
+      - name: Fail workflow if tests failed
+        id: check_tests_failed
+        if: contains(join(needs.*.result, ','), 'failure')
+        uses: actions/github-script@v6
+        with:
+          script: core.setFailed('Integration Tests Failed!')
+
+      - name: Fail workflow if tests cancelled
+        id: check_tests_cancelled
+        if: contains(join(needs.*.result, ','), 'cancelled')
+        uses: actions/github-script@v6
+        with:
+          script: core.setFailed('Integration Tests Cancelled!')
