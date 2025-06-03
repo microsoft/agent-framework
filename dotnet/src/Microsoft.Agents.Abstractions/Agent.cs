@@ -54,7 +54,7 @@ public abstract class Agent
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
-    public virtual ChatResponse RunAsync(
+    public virtual Task<ChatResponse> RunAsync(
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
@@ -73,7 +73,7 @@ public abstract class Agent
     /// <remarks>
     /// The provided message string will be treated as a user message.
     /// </remarks>
-    public virtual ChatResponse RunAsync(
+    public virtual Task<ChatResponse> RunAsync(
         string message,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -92,7 +92,7 @@ public abstract class Agent
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
-    public virtual ChatResponse RunAsync(
+    public virtual Task<ChatResponse> RunAsync(
         ChatMessage message,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -111,7 +111,7 @@ public abstract class Agent
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
-    public abstract ChatResponse RunAsync(
+    public abstract Task<ChatResponse> RunAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,

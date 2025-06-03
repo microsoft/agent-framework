@@ -23,4 +23,8 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.Abstractions.UnitTests" />
+  </ItemGroup>
+
 </Project>
