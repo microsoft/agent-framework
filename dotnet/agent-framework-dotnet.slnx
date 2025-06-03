@@ -48,6 +48,14 @@
     <File Path="src/LegacySupport/IsExternalInit/IsExternalInit.cs" />
     <File Path="src/LegacySupport/IsExternalInit/README.md" />
   </Folder>
+  <Folder Name="/Solution Items/src/LegacySupport/TrimAttributes/">
+    <File Path="src/LegacySupport/TrimAttributes/DynamicallyAccessedMembersAttribute.cs" />
+    <File Path="src/LegacySupport/TrimAttributes/DynamicallyAccessedMemberTypes.cs" />
+    <File Path="src/LegacySupport/TrimAttributes/README.md" />
+    <File Path="src/LegacySupport/TrimAttributes/RequiresDynamicCodeAttribute.cs" />
+    <File Path="src/LegacySupport/TrimAttributes/RequiresUnreferencedCodeAttribute.cs" />
+    <File Path="src/LegacySupport/TrimAttributes/UnconditionalSuppressMessageAttribute.cs" />
+  </Folder>
   <Project Path="src/Microsoft.Agents.Abstractions/Microsoft.Agents.Abstractions.csproj" />
   <Project Path="src/Microsoft.Agents/Microsoft.Agents.csproj" />
   <Project Path="tests/Microsoft.Agents.Abstractions.UnitTests/Microsoft.Agents.Abstractions.UnitTests.csproj">

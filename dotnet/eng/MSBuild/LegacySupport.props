@@ -14,4 +14,8 @@
   <ItemGroup Condition="'$(InjectIsExternalInitOnLegacy)' == 'true' AND ('$(TargetFramework)' == 'net462' or '$(TargetFramework)' == 'netstandard2.0' or '$(TargetFramework)' == 'netcoreapp3.1')">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\LegacySupport\IsExternalInit\*.cs" LinkBase="LegacySupport\IsExternalInit" />
   </ItemGroup>
+
+  <ItemGroup Condition="'$(InjectTrimAttributesOnLegacy)' == 'true' AND ('$(TargetFramework)' == 'net462' or '$(TargetFramework)' == 'netstandard2.0' or '$(TargetFramework)' == 'netstandard2.1' or '$(TargetFramework)' == 'netcoreapp3.1')">
+    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\LegacySupport\TrimAttributes\*.cs" LinkBase="LegacySupport\TrimAttributes" />
+  </ItemGroup>
 </Project>
