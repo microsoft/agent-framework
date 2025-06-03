@@ -38,6 +38,16 @@ public abstract class Agent
     public string? Instructions { get; protected set; }
 
     /// <summary>
+    /// Create a new <see cref="AgentThread"/> that is compatible with the agent.
+    /// </summary>
+    /// <returns>A new <see cref="AgentThread"/> instance that is in the created state.</returns>
+    /// <remarks>
+    /// If an agent supports multiple thread types, this method should return the default thread
+    /// type for the agent or whatever the agent was configured to use.
+    /// </remarks>
+    public abstract AgentThread CreateThreadAsync();
+
+    /// <summary>
     /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the thread.
     /// </summary>
     /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent reponse.</param>
