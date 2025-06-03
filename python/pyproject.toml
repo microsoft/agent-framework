@@ -6,13 +6,13 @@ version = "0.0.0"
 license = {file = "LICENSE"}
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
 dependencies = [
-    "pydantic>=2.7.0"
+    "pydantic>=2.11.5",
 ]
 
 [dependency-groups]
 dev = [
     "pre-commit >= 3.7",
-    "pyright>=1.1.400",
+    "pyright>=1.1.401",
     "mypy>=1.15.0",
     "ruff>=0.11.8",
 ]
@@ -79,7 +79,7 @@ include = ["src", "tests", "samples"]
 typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
 reportMissingTypeStubs = false
-venvPath = "."
+venvPath = "python"
 venv = ".venv"
 
 [tool.mypy]
