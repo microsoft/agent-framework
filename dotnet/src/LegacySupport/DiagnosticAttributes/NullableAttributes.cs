@@ -1,5 +1,7 @@
 // Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable CA1019
+
 namespace System.Diagnostics.CodeAnalysis;
 
 #if !NETCOREAPP3_1_OR_GREATER
