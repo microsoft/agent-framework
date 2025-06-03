@@ -6,4 +6,8 @@
   <ItemGroup Condition="'$(InjectCallerAttributesOnLegacy)' == 'true' AND ('$(TargetFramework)' == 'net462' or '$(TargetFramework)' == 'netstandard2.0' or '$(TargetFramework)' == 'netstandard2.1')">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\LegacySupport\CallerAttributes\*.cs" LinkBase="LegacySupport\CallerAttributes" />
   </ItemGroup>
+
+  <ItemGroup Condition="'$(InjectExperimentalAttributeOnLegacy)' == 'true' AND ('$(TargetFramework)' == 'net462' or '$(TargetFramework)' == 'netstandard2.0' or '$(TargetFramework)' == 'netstandard2.1' or '$(TargetFramework)' == 'netcoreapp3.1' or '$(TargetFramework)' == 'net6.0' or '$(TargetFramework)' == 'net7.0')">
+    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\LegacySupport\ExperimentalAttribute\*.cs" LinkBase="LegacySupport\ExperimentalAttribute" />
+  </ItemGroup>
 </Project>
