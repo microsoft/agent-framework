@@ -8,11 +8,11 @@ from typing import Generic, Protocol, TypeVar
 from agent_framework.model_client import ChatMessage, ChatResponse, ChatResponseUpdate
 
 # These are only skeletons for the guardrail types.
-TInputMessages = TypeVar("TInputMessage", bound=Sequence[ChatMessage])
-TResponse = TypeVar("TResponse", bound=ChatResponse | Sequence[ChatResponseUpdate])
+TInputMessage = TypeVar("TInputMessage", bound=ChatMessage, covariant=True)
+TResponse = TypeVar("TResponse", bound=ChatResponse | Sequence[ChatResponseUpdate], covariant=True)
 
 
-class InputGuardrail(Protocol, Generic[TInputMessages]):
+class InputGuardrail(Protocol, Generic[TInputMessage]):
     """A protocol for input guardrails that can validate and transform input messages."""
 
     ...
