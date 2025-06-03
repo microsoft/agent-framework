@@ -46,7 +46,7 @@ ChatRole.TOOL = ChatRole(value="tool")
 class ChatMessage(BaseModel):
     """Represents a chat message used by a `ModelClient`."""
     author_name: str | None
-    """The name of the author of the message"""
+    """The name of the author of the message."""
     contents: List[AIContent]
     """The chat message content items."""
     message_id: str | None
