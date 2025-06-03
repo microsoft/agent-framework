@@ -13,7 +13,8 @@ except importlib.metadata.PackageNotFoundError:
 __ALL__ = [
     "__version__",
 ] + [
-    export.__name__ for export in [
+    export.__name__
+    for export in [
         InputGuardrail,
         OutputGuardrail,
         AITool,

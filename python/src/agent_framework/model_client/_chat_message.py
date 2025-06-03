@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Dict, Generic, List, Self, Sequence, TypeVar
+from collections.abc import Sequence
+from typing import Any, ClassVar, Generic, Self, TypeVar
 
 from pydantic import BaseModel
 from pydantic.generics import GenericModel
@@ -12,6 +13,7 @@ from agent_framework.model_client import AIContent, TextContent, UsageDetails
 
 class ChatRole(BaseModel):
     """Describes the intended purpose of a message within a chat interaction."""
+
     value: str
 
     SYSTEM: ClassVar[Self]  # type: ignore[assignment]
@@ -45,9 +47,10 @@ ChatRole.TOOL = ChatRole(value="tool")
 
 class ChatMessage(BaseModel):
     """Represents a chat message used by a `ModelClient`."""
+
     author_name: str | None
     """The name of the author of the message."""
-    contents: List[AIContent]
+    contents: list[AIContent]
     """The chat message content items."""
     message_id: str | None
     """The ID of the chat message."""
@@ -55,7 +58,7 @@ class ChatMessage(BaseModel):
     """The raw representation of the chat message from an underlying implementation."""
     role: ChatRole
     """The role of the author of the message."""
-    additional_properties: Dict[str, Any] | None = None
+    additional_properties: dict[str, Any] | None = None
     """Any additional properties associated with the chat message."""
 
     @property
@@ -73,6 +76,7 @@ TValue = TypeVar("TValue")
 
 class ChatFinishReason(BaseModel):
     """Represents the reason a chat response completed."""
+
     value: str
 
     CONTENT_FILTER: ClassVar[Self]  # type: ignore[assignment]
@@ -103,10 +107,11 @@ CreatedAtT = str  # Use a datetimeoffset type? Or a more specific type like date
 
 class ChatResponse(BaseModel):
     """Represents the response to a chat request."""
-    messages: List[ChatMessage]
+
+    messages: list[ChatMessage]
     """The chat response messages."""
 
-    additional_properties: Dict[str, Any] | None = None
+    additional_properties: dict[str, Any] | None = None
     """Any additional properties associated with the chat response."""
     conversation_id: str | None = None
     """An identifier for the state of the conversation."""
@@ -135,6 +140,7 @@ class StructuredResponse(GenericModel, Generic[TValue], ChatResponse):
     Type Parameters:
         TValue: The type of the value contained in the structured response.
     """
+
     value: TValue
     """The result value of the chat response as an instance of `TValue`."""
 
@@ -146,10 +152,11 @@ class StructuredResponse(GenericModel, Generic[TValue], ChatResponse):
 
 class ChatResponseUpdate(BaseModel):
     """Represents a single streaming response chunk from a `ModelClient`."""
-    contents: List[AIContent]
+
+    contents: list[AIContent]
     """The chat response update content items."""
 
-    additional_properties: Dict[str, Any] | None = None
+    additional_properties: dict[str, Any] | None = None
     """Any additional properties associated with the chat response update."""
     author_name: str | None = None
     """The name of the author of the response update."""
@@ -175,13 +182,15 @@ class ChatResponseUpdate(BaseModel):
         """Returns the concatenated text of all contents in the update."""
         return "\n".join(content.text for content in self.contents if isinstance(content, TextContent))
 
-    def with_(self, contents: List[AIContent] | None = None, message_id: str | None = None) -> Self:
+    def with_(self, contents: list[AIContent] | None = None, message_id: str | None = None) -> Self:
         """Returns a new instance with the specified contents and message_id."""
         contents |= []
-        return self.model_copy(update={
-            "contents": self.contents + contents,
-            "message_id": message_id or self.message_id,
-        })
+        return self.model_copy(
+            update={
+                "contents": self.contents + contents,
+                "message_id": message_id or self.message_id,
+            }
+        )
 
     @staticmethod
     def join(updates: Sequence[Self]) -> ChatResponse:
@@ -193,8 +202,8 @@ class ChatResponseUpdate(BaseModel):
         created_at: CreatedAtT | None = None
         finish_reason: ChatFinishReason | None = None
         model_id: str | None = None
-        raw_representation: List[Any | None] = []
-        additional_properties: Dict[str, Any] | None = None
+        raw_representation: list[Any | None] = []
+        additional_properties: dict[str, Any] | None = None
         response_id: str | None = None
         role: ChatRole | None = None
 
@@ -218,11 +227,12 @@ class ChatResponseUpdate(BaseModel):
             additional_properties = (additional_properties or {}) | (update.additional_properties or {})
 
         return ChatResponse(
-          messages=messages,
-          conversation_id=conversation_id,
-          created_at=created_at,
-          finish_reason=finish_reason,
-          model_id=model_id,
-          raw_representation=raw_representation,
-          response_id=response_id,
-          additional_properties=additional_properties)
+            messages=messages,
+            conversation_id=conversation_id,
+            created_at=created_at,
+            finish_reason=finish_reason,
+            model_id=model_id,
+            raw_representation=raw_representation,
+            response_id=response_id,
+            additional_properties=additional_properties,
+        )

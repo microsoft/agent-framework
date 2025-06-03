@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import AsyncIterable, List, Protocol, Sequence
+from collections.abc import AsyncIterable, Sequence
+from typing import Protocol
 
 from agent_framework import InputGuardrail, OutputGuardrail
 from agent_framework.model_client import ChatMessage, ChatResponse, ChatResponseUpdate
@@ -10,6 +11,7 @@ from agent_framework.model_client import ChatMessage, ChatResponse, ChatResponse
 
 class ModelClient(Protocol):
     """A protocol for a model client that can generate chat responses."""
+
     async def generate_response(
         self,
         messages: Sequence[ChatMessage],
@@ -51,10 +53,7 @@ class ModelClient(Protocol):
         """
         ...
 
-    def add_input_guardrails(
-        self,
-        guardrails: List[InputGuardrail[ChatMessage]]
-    ) -> None:
+    def add_input_guardrails(self, guardrails: list[InputGuardrail[ChatMessage]]) -> None:
         """Add input guardrails to the model client.
 
         Args:
@@ -63,8 +62,7 @@ class ModelClient(Protocol):
         ...
 
     def add_output_guardrails(
-        self,
-        guardrails: List[OutputGuardrail[ChatResponse | Sequence[ChatResponseUpdate]]]
+        self, guardrails: list[OutputGuardrail[ChatResponse | Sequence[ChatResponseUpdate]]]
     ) -> None:
         """Add output guardrails to the model client.
 
@@ -72,6 +70,7 @@ class ModelClient(Protocol):
             guardrails: The list of output guardrails to add.
         """
         ...
+
 
 # Note that a lot of additional functionality in M.E.AI is provided by typed-wrappers, e.g.:
 # - FunctionInvokingModelClient
