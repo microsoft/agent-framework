@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Generic, Protocol, Sequence, TypeVar
+from collections.abc import Sequence
+from typing import Generic, Protocol, TypeVar
 
 from agent_framework.model_client import ChatMessage, ChatResponse, ChatResponseUpdate
 
@@ -13,9 +14,11 @@ TResponse = TypeVar("TResponse", bound=ChatResponse | Sequence[ChatResponseUpdat
 
 class InputGuardrail(Protocol, Generic[TInputMessages]):
     """A protocol for input guardrails that can validate and transform input messages."""
+
     ...
 
 
 class OutputGuardrail(Protocol, Generic[TResponse]):
     """A protocol for output guardrails that can validate and transform output messages."""
+
     ...

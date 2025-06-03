@@ -2,21 +2,23 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, TypedDict
+from typing import Any, TypedDict
 
 from pydantic import BaseModel
 
 
 class AIContent(BaseModel):
     """Represents content used by AI services."""
+
     raw_representation: Any | None = None
     """The raw representation of the content from an underlying implementation."""
-    additional_properties: Dict[str, Any] | None = None
+    additional_properties: dict[str, Any] | None = None
     """Additional properties for the content."""
 
 
 class TextContent(AIContent):
     """Represents text content in a chat."""
+
     text: str
     """The text content represented by this instance."""
 
@@ -27,12 +29,14 @@ class TextReasoningContent(AIContent):
     Remarks:
         This class and `TextContent` are superficially similar, but distinct.
     """  # TODO(): Should we merge these two classes, and use a property to distinguish them?
+
     text: str
     """The text reasoning content represented by this instance."""
 
 
 class DataContent(AIContent):
     """Represents binary data content with an associated media type (also known as a MIME type)."""
+
     data: bytes
     """The data represented by this instance."""
 
@@ -43,6 +47,7 @@ class DataContent(AIContent):
     def base64_data(self) -> str:
         """Returns the data represented by this instance encoded as a Base64 string."""
         import base64
+
         return base64.b64encode(self.data).decode("utf-8")  # use ASCII instead? (Should be equivalent for base64)
 
     # @base64_data.setter
@@ -74,6 +79,7 @@ class ErrorContent(AIContent):
         Typically used for non-fatal errors, where something went wrong as part of the operation,
         but the operation was still able to continue.
     """
+
     error_code: str | None = None
     """The error code associated with the error."""
     details: str | None = None
@@ -88,11 +94,12 @@ class ErrorContent(AIContent):
 
 class FunctionCallContent(AIContent):
     """Represents a function call request."""
+
     call_id: str
     """The function call identifier."""
     name: str
     """The name of the function requested."""
-    arguments: Dict[str, Any | None] | None = None
+    arguments: dict[str, Any | None] | None = None
     """The arguments requested to be provided to the function."""
     exception: Exception | None = None
     """Any exception that occurred while mapping the original function call data to this representation."""
@@ -100,6 +107,7 @@ class FunctionCallContent(AIContent):
 
 class FunctionResultContent(AIContent):
     """Represents the result of a function call."""
+
     call_id: str
     """The identifier of the function call for which this is the result."""
     result: Any | None = None
@@ -115,6 +123,7 @@ class UriContent(AIContent):
         This is used for content that is identified by a URI, such as an image or a file.
         For data URIs, use `DataContent` instead.
     """
+
     uri: str
     """The URI of the content, e.g., 'https://example.com/image.png'."""
     media_type: str
@@ -123,6 +132,7 @@ class UriContent(AIContent):
 
 class UsageContent(AIContent):
     """Represents usage information associated with a chat request and response."""
+
     details: UsageDetails
     """The usage information."""
 
@@ -138,6 +148,7 @@ class AdditionalCounts(TypedDict, total=False):
 
         Over time additional counts may be added to this class.
     """
+
     thought_token_count: int
     """The number of tokens used for thought processing."""
     image_token_count: int
@@ -146,6 +157,7 @@ class AdditionalCounts(TypedDict, total=False):
 
 class UsageDetails(BaseModel):
     """Provides usage details about a request/response."""
+
     input_token_count: int | None = None
     """The number of tokens in the input."""
     output_token_count: int | None = None
