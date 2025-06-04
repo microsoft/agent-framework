@@ -35,8 +35,8 @@ $branchCoverage = $jsonContent.summary.branchcoverage
 
 $totalTableData = [PSCustomObject]@{
     'Metric'          = 'Total Coverage'
-    'Total Lines'   = Get-FormattedValue -Coverage $totallines
-    'Total Branches' = Get-FormattedValue -Coverage $totalbranches
+    'Total Lines'     = $totallines
+    'Total Branches'  = $totalbranches
     'Line Coverage'   = Get-FormattedValue -Coverage $lineCoverage
     'Branch Coverage' = Get-FormattedValue -Coverage $branchCoverage
 }
@@ -47,10 +47,10 @@ $assemblyTableData = @()
 
 foreach ($assembly in $jsonContent.coverage.assemblies) {
     $assemblyName = $assembly.name
-    $assemblyLineCoverage = $assembly.coverage
-    $assemblyBranchCoverage = $assembly.branchcoverage
     $assemblyTotallines = $assembly.totallines
     $assemblyTotalbranches = $assembly.totalbranches
+    $assemblyLineCoverage = $assembly.coverage
+    $assemblyBranchCoverage = $assembly.branchcoverage
     
     $isNonExperimentalAssembly = $nonExperimentalAssemblies -contains $assemblyName
 
@@ -63,8 +63,10 @@ foreach ($assembly in $jsonContent.coverage.assemblies) {
 
     $assemblyTableData += [PSCustomObject]@{
         'Assembly Name' = $assemblyName
-        'Line'          = Get-FormattedValue -Coverage $assemblyLineCoverage -UseIcon $isNonExperimentalAssembly
-        'Branch'        = Get-FormattedValue -Coverage $assemblyBranchCoverage -UseIcon $isNonExperimentalAssembly
+        'Total Lines'     = $assemblyTotallines
+        'Total Branches'  = $assemblyTotalbranches
+        'Line Coverage'   = Get-FormattedValue -Coverage $assemblyLineCoverage -UseIcon $isNonExperimentalAssembly
+        'Branch Coverage' = Get-FormattedValue -Coverage $assemblyBranchCoverage -UseIcon $isNonExperimentalAssembly
     }
 }
 
