@@ -243,7 +243,7 @@ public class AgentTests
     /// <summary>
     /// Mock class to test the <see cref="Agent.EnsureThreadExistsWithMessagesAsync{TThreadType}"/> method.
     /// </summary>
-    private class MockAgent : Agent
+    private sealed class MockAgent : Agent
     {
         public new Task<TThreadType> EnsureThreadExistsWithMessagesAsync<TThreadType>(
             IReadOnlyCollection<ChatMessage> messages,
