@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents;
 
@@ -79,7 +80,7 @@ public abstract class Agent
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(message);
+        Throw.IfNullOrWhitespace(message);
 
         return this.RunAsync(new ChatMessage(ChatRole.User, message), thread, options, cancellationToken);
     }
@@ -98,7 +99,7 @@ public abstract class Agent
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(message);
+        Throw.IfNull(message);
 
         return this.RunAsync([message], thread, options, cancellationToken);
     }
@@ -149,7 +150,7 @@ public abstract class Agent
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(message);
+        Throw.IfNullOrWhitespace(message);
 
         return this.RunStreamingAsync(new ChatMessage(ChatRole.User, message), thread, options, cancellationToken);
     }
@@ -168,7 +169,7 @@ public abstract class Agent
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(message);
+        Throw.IfNull(message);
 
         return this.RunStreamingAsync([message], thread, options, cancellationToken);
     }
@@ -203,10 +204,7 @@ public abstract class Agent
         CancellationToken cancellationToken)
         where TThreadType : AgentThread
     {
-        if (messages is null)
-        {
-            throw new ArgumentNullException(nameof(messages));
-        }
+        Throw.IfNull(messages);
 
         thread ??= constructThread is not null ? constructThread() : throw new ArgumentNullException(nameof(constructThread));
 

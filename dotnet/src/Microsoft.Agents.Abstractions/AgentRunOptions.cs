@@ -3,6 +3,7 @@
 using System;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents;
 
@@ -24,7 +25,7 @@ public class AgentRunOptions
     /// <param name="options">The options to clone.</param>
     public AgentRunOptions(AgentRunOptions options)
     {
-        ArgumentNullException.ThrowIfNull(options);
+        Throw.IfNull(options);
 
         this.AdditionalInstructions = options.AdditionalInstructions;
         this.OnIntermediateMessage = options.OnIntermediateMessage;
