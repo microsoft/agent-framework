@@ -43,4 +43,8 @@
       <_Parameter1>false</_Parameter1>
     </AssemblyAttribute>
   </ItemGroup>
+
+  <!-- Common properties -->
+  <Import Project="$(MSBuildThisFileDirectory)\eng\MSBuild\LegacySupport.props" />
+  <Import Project="$(MSBuildThisFileDirectory)\eng\MSBuild\Shared.props" />
 </Project>

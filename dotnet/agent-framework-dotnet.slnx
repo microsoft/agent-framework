@@ -20,6 +20,42 @@
     <File Path="tests/.editorconfig" />
     <File Path="tests/Directory.Build.props" />
   </Folder>
+  <Folder Name="/Solution Items/eng/MSBuild/">
+    <File Path="eng/MSBuild/LegacySupport.props" />
+    <File Path="eng/MSBuild/Shared.props" />
+    <File Path="eng/MSBuild/Shared.targets" />
+  </Folder>
+  <Folder Name="/Solution Items/src/Shared/Throw/">
+    <File Path="src/Shared/Throw/README.md" />
+    <File Path="src/Shared/Throw/Throw.cs" />
+  </Folder>
+  <Folder Name="/Solution Items/src/LegacySupport/">
+    <File Path="src/LegacySupport/README.md" />
+  </Folder>
+  <Folder Name="/Solution Items/src/LegacySupport/CallerAttributes/">
+    <File Path="src/LegacySupport/CallerAttributes/CallerArgumentExpressionAttribute.cs" />
+    <File Path="src/LegacySupport/CallerAttributes/README.md" />
+  </Folder>
+  <Folder Name="/Solution Items/src/LegacySupport/DiagnosticAttributes/">
+    <File Path="src/LegacySupport/DiagnosticAttributes/NullableAttributes.cs" />
+    <File Path="src/LegacySupport/DiagnosticAttributes/README.md" />
+  </Folder>
+  <Folder Name="/Solution Items/src/LegacySupport/ExperimentalAttribute/">
+    <File Path="src/LegacySupport/ExperimentalAttribute/ExperimentalAttribute.cs" />
+    <File Path="src/LegacySupport/ExperimentalAttribute/README.md" />
+  </Folder>
+  <Folder Name="/Solution Items/src/LegacySupport/IsExternalInit/">
+    <File Path="src/LegacySupport/IsExternalInit/IsExternalInit.cs" />
+    <File Path="src/LegacySupport/IsExternalInit/README.md" />
+  </Folder>
+  <Folder Name="/Solution Items/src/LegacySupport/TrimAttributes/">
+    <File Path="src/LegacySupport/TrimAttributes/DynamicallyAccessedMembersAttribute.cs" />
+    <File Path="src/LegacySupport/TrimAttributes/DynamicallyAccessedMemberTypes.cs" />
+    <File Path="src/LegacySupport/TrimAttributes/README.md" />
+    <File Path="src/LegacySupport/TrimAttributes/RequiresDynamicCodeAttribute.cs" />
+    <File Path="src/LegacySupport/TrimAttributes/RequiresUnreferencedCodeAttribute.cs" />
+    <File Path="src/LegacySupport/TrimAttributes/UnconditionalSuppressMessageAttribute.cs" />
+  </Folder>
   <Project Path="src/Microsoft.Agents.Abstractions/Microsoft.Agents.Abstractions.csproj" />
   <Project Path="src/Microsoft.Agents/Microsoft.Agents.csproj" />
   <Project Path="tests/Microsoft.Agents.Abstractions.UnitTests/Microsoft.Agents.Abstractions.UnitTests.csproj">
