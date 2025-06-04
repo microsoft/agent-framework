@@ -6,6 +6,10 @@
     <VersionSuffix>alpha</VersionSuffix>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <InjectSharedThrow>true</InjectSharedThrow>
+  </PropertyGroup>
+
   <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
     <TargetFrameworks>$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
   </PropertyGroup>
