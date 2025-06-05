@@ -15,7 +15,7 @@ class ContextProvider(ABC):
     """
 
     @abstractmethod
-    async def retrieve_relevant_context(self, messages: list["Message"]) -> ProvidedContext | None:
+    async def get_relevant_context(self, messages: list["Message"]) -> ProvidedContext | None:
         """Searches for and returns any information relevant to the messages."""
         ...
 
@@ -42,21 +42,21 @@ In this example, the app then clears memory to ensure that it starts empty.
 mem.clear()
 ```
 
-Then the app creates an agent thread and attaches the memory provider to it.
+Then the app creates an agent and passes the memory provider to it through the constructor or some other method.
 ```python
-thread.add_context_provider(mem)
+agent.add_context_provider(mem)
 ```
 
 After creating the agent, the app calls `agent.run(message, thread, run_config)` as usual,
 where the user message assigns a task that requires knowledge the agent doesn't have.
-`agent.run()` calls `retrieve_relevant_context(message)` on each context provider in the thread,
+`agent.run()` calls `get_relevant_context(message)` on each of the agent's context providers,
 but `None` is returned since memory is empty.
 Then `agent.run()` calls the model client as usual, but the LLM can't solve the task.
 It may realize the information is missing, and ask the user for it.
 
 The original user message (which assigned the task) is then added to the thread's message history as usual,
-which automatically calls the `AgentThread.on_new_messages(messages)`,
-which calls `on_new_messages` on each context provider in the thread.
+which automatically calls the `Agent.on_new_messages(messages)`,
+which calls `on_new_messages` on each context provider.
 In this case the memory provider fails to find any useful information in the user's message to store.
 
 Suppose then that the user responds by supplying the missing information.
@@ -66,10 +66,10 @@ More importantly for our example, when the second user message is added to the t
 
 For this example, suppose the user then initiates a new chat (clearing the message history),
 and assigns the original task again, but without providing the missing information.
-This time when `mem.retrieve_relevant_context(message)` is called, the memory provider finds the relevant information stored from the previous chat.
+This time when `mem.get_relevant_context(message)` is called, the memory provider finds the relevant information stored from the previous chat.
 Then `agent.run()` attaches the retrieved information to the context window before calling the model client,
 which allows the agent to succeed at the task without the user needing to repeat the missing information.
 
 For more advanced memory implementations that have the ability to learn from their own experience
-(instead of only from the user), `mem.retrieve_relevant_context(message)` may return useful context
+(instead of only from the user), `mem.get_relevant_context(message)` may return useful context
 that was not previously extracted by `mem.on_new_messages(messages)`.
