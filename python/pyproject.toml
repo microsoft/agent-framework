@@ -6,6 +6,7 @@ version = "0.0.0"
 license = {file = "LICENSE"}
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
 dependencies = [
+    "pydantic>=2.11.5",
 ]
 
 [dependency-groups]
