@@ -4,6 +4,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents;
 
@@ -120,4 +121,22 @@ public abstract class AgentThread
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that completes when the context has been updated.</returns>
     protected abstract Task OnNewMessageCoreAsync(ChatMessage newMessage, CancellationToken cancellationToken = default);
+
+    /// <summary>Asks the <see cref="AgentThread"/> for an object of the specified type <paramref name="serviceType"/>.</summary>
+    /// <param name="serviceType">The type of object being requested.</param>
+    /// <param name="serviceKey">An optional key that can be used to help identify the target service.</param>
+    /// <returns>The found object, otherwise <see langword="null"/>.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="serviceType"/> is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// The purpose of this method is to allow for the retrieval of strongly-typed services that might be provided by the <see cref="AgentThread"/>,
+    /// including itself or any services it might be wrapping.
+    /// </remarks>
+    public virtual object? GetService(Type serviceType, object? serviceKey = null)
+    {
+        Throw.IfNull(serviceType);
+
+        return
+            serviceKey is null && serviceType.IsInstanceOfType(this) ? this :
+            null;
+    }
 }
