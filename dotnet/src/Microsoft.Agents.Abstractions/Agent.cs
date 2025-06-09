@@ -51,7 +51,7 @@ public abstract class Agent
     /// If the thread needs to be created via a service call it would be created on first use.
     /// </para>
     /// </remarks>
-    public abstract AgentThread NewThreadAsync();
+    public abstract AgentThread GetNewThread();
 
     /// <summary>
     /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the thread.
@@ -194,23 +194,17 @@ public abstract class Agent
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Ensures that the thread exists, is of the expected type, and is active, plus adds the provided message to the thread.
+    /// Checks that the thread is of the expected type, or if null, creates the default thread type.
     /// </summary>
     /// <typeparam name="TThreadType">The expected type of the thead.</typeparam>
-    /// <param name="messages">The messages to add to the thread once it is setup.</param>
-    /// <param name="thread">The thread to create if it's null, validate it's type if not null, and start if it is not active.</param>
+    /// <param name="thread">The thread to create if it's null and validate its type if not null.</param>
     /// <param name="constructThread">A callback to use to construct the thread if it's null.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An async task that completes once all update are complete.</returns>
-    protected virtual async Task<TThreadType> EnsureThreadExistsWithMessagesAsync<TThreadType>(
-        IReadOnlyCollection<ChatMessage> messages,
+    protected virtual TThreadType ValidateOrCreateThreadType<TThreadType>(
         AgentThread? thread,
-        Func<TThreadType> constructThread,
-        CancellationToken cancellationToken)
+        Func<TThreadType> constructThread)
         where TThreadType : AgentThread
     {
-        Throw.IfNull(messages);
-
         thread ??= constructThread is not null ? constructThread() : throw new ArgumentNullException(nameof(constructThread));
 
         if (thread is not TThreadType concreteThreadType)
@@ -218,17 +212,11 @@ public abstract class Agent
             throw new NotSupportedException($"{this.GetType().Name} currently only supports agent threads of type {nameof(TThreadType)}.");
         }
 
-        // Notify the thread that new messages are available.
-        foreach (var message in messages)
-        {
-            await this.NotifyThreadOfNewMessage(thread, message, cancellationToken).ConfigureAwait(false);
-        }
-
         return concreteThreadType;
     }
 
     /// <summary>
-    /// Notfiy the given thread that a new message is available.
+    /// Notfiy the given thread that new messages are available.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -247,12 +235,15 @@ public abstract class Agent
     /// require the message.
     /// </para>
     /// </remarks>
-    /// <param name="thread">The thread to notify of the new message.</param>
-    /// <param name="message">The message to pass to the thread.</param>
+    /// <param name="thread">The thread to notify of the new messages.</param>
+    /// <param name="messages">The messages to pass to the thread.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An async task that completes once the notification is complete.</returns>
-    protected Task NotifyThreadOfNewMessage(AgentThread thread, ChatMessage message, CancellationToken cancellationToken)
+    protected async Task NotifyThreadOfNewMessagesAsync(AgentThread thread, IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken)
     {
-        return thread.OnNewMessageAsync(message, cancellationToken);
+        if (messages.Count > 0)
+        {
+            await thread.OnNewMessagesAsync(messages, cancellationToken).ConfigureAwait(false);
+        }
     }
 }

@@ -212,25 +212,35 @@ public class AgentTests
     }
 
     [Fact]
-    public async Task EnsureThreadExistsWithMessagesVerifiesAndCreatesThreadAndNotifiesThreadAsync()
+    public void ValidateOrCreateThreadTypeVerifiesAndCreatesThread()
     {
-        var messages = new[] { new ChatMessage(ChatRole.User, "msg1"), new ChatMessage(ChatRole.User, "msg2") };
-        var cancellationToken = new CancellationToken();
-
         // Custom thread type for type checking
         var threadMock = new Mock<TestAgentThread>() { CallBase = true };
 
         var agent = new MockAgent();
 
-        // Should create and notify
-        var result = await agent.EnsureThreadExistsWithMessagesAsync<TestAgentThread>(messages, null, () => threadMock.Object, cancellationToken);
+        // Should create
+        var result = agent.ValidateOrCreateThreadType<TestAgentThread>(null, () => threadMock.Object);
         Assert.Same(threadMock.Object, result);
-        threadMock.Protected().Verify("OnNewMessageAsync", Times.Once(), messages[0], CancellationToken.None);
-        threadMock.Protected().Verify("OnNewMessageAsync", Times.Once(), messages[1], CancellationToken.None);
 
         // Should throw if wrong type
         var wrongThread = new Mock<AgentThread>().Object;
-        await Assert.ThrowsAsync<NotSupportedException>(() => agent.EnsureThreadExistsWithMessagesAsync<TestAgentThread>(messages, wrongThread, () => threadMock.Object, cancellationToken));
+        Assert.Throws<NotSupportedException>(() => agent.ValidateOrCreateThreadType<TestAgentThread>(wrongThread, () => threadMock.Object));
+    }
+
+    [Fact]
+    public async Task NotifyThreadOfNewMessagesNotifiesThreadAsync()
+    {
+        var cancellationToken = new CancellationToken();
+
+        var messages = new[] { new ChatMessage(ChatRole.User, "msg1"), new ChatMessage(ChatRole.User, "msg2") };
+
+        var threadMock = new Mock<TestAgentThread>() { CallBase = true };
+        var agent = new MockAgent();
+
+        await agent.NotifyThreadOfNewMessagesAsync(threadMock.Object, messages, cancellationToken);
+
+        threadMock.Protected().Verify("OnNewMessagesAsync", Times.Once(), messages, cancellationToken);
     }
 
     /// <summary>
@@ -241,25 +251,26 @@ public class AgentTests
     }
 
     /// <summary>
-    /// Mock class to test the <see cref="Agent.EnsureThreadExistsWithMessagesAsync{TThreadType}"/> method.
+    /// Mock class to test the <see cref="Agent.ValidateOrCreateThreadType{TThreadType}"/> method.
     /// </summary>
     private sealed class MockAgent : Agent
     {
-        public new Task<TThreadType> EnsureThreadExistsWithMessagesAsync<TThreadType>(
-            IReadOnlyCollection<ChatMessage> messages,
+        public new TThreadType ValidateOrCreateThreadType<TThreadType>(
             AgentThread? thread,
-            Func<TThreadType> constructThread,
-            CancellationToken cancellationToken)
+            Func<TThreadType> constructThread)
             where TThreadType : AgentThread
         {
-            return base.EnsureThreadExistsWithMessagesAsync<TThreadType>(
-                messages,
+            return base.ValidateOrCreateThreadType<TThreadType>(
                 thread,
-                constructThread,
-                cancellationToken);
+                constructThread);
         }
 
-        public override AgentThread NewThreadAsync()
+        public new Task NotifyThreadOfNewMessagesAsync(AgentThread thread, IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken)
+        {
+            return base.NotifyThreadOfNewMessagesAsync(thread, messages, cancellationToken);
+        }
+
+        public override AgentThread GetNewThread()
         {
             throw new System.NotImplementedException();
         }
