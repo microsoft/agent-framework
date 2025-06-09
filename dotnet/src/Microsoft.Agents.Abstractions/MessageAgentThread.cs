@@ -2,15 +2,13 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents;
 
 /// <summary>
-/// An abstract base class for agent threads that can produce all chat history for agent invocation on each invocation.
+/// An interface for agent threads that allow retrieval of messages in the thread for agent invocation.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -24,7 +22,7 @@ namespace Microsoft.Agents;
 /// are constrained.
 /// </para>
 /// </remarks>
-public abstract class MessageAgentThread : AgentThread
+public interface IMessagesRetrievableThread
 {
     /// <summary>
     /// Asynchronously retrieves all messages to be used for the agent invocation.
@@ -35,15 +33,5 @@ public abstract class MessageAgentThread : AgentThread
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>The messages in the thread.</returns>
     /// <exception cref="InvalidOperationException">The thread has been deleted.</exception>
-    public abstract IAsyncEnumerable<ChatMessage> GetMessagesAsync(CancellationToken cancellationToken = default);
-
-    /// <inheritdoc/>
-    public override object? GetService(Type serviceType, object? serviceKey = null)
-    {
-        Throw.IfNull(serviceType);
-
-        return
-            serviceKey is null && serviceType == typeof(MessageAgentThread) ? this :
-            base.GetService(serviceType, serviceKey);
-    }
+    IAsyncEnumerable<ChatMessage> GetMessagesAsync(CancellationToken cancellationToken = default);
 }

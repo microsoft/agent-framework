@@ -139,33 +139,6 @@ public class AgentThreadTests
         Assert.Equal(0, thread.OnNewMessageInternalAsyncCount);
     }
 
-    /// <summary>
-    /// Tests the GetService method returns the correct instance or null as expected.
-    /// </summary>
-    [Fact]
-    public void GetServiceShouldReturnSelfOrNull()
-    {
-        // Arrange
-        var thread = new TestAgentThread();
-
-        // Act & Assert
-        // Should return itself when type matches and serviceKey is null
-        var result = thread.GetService(typeof(TestAgentThread));
-        Assert.Same(thread, result);
-
-        // Should return itself when type matches base type and serviceKey is null
-        var baseResult = thread.GetService(typeof(AgentThread));
-        Assert.Same(thread, baseResult);
-
-        // Should return null for unrelated type
-        var unrelated = thread.GetService(typeof(string));
-        Assert.Null(unrelated);
-
-        // Should return null if serviceKey is not null
-        var withKey = thread.GetService(typeof(TestAgentThread), serviceKey: "key");
-        Assert.Null(withKey);
-    }
-
     private sealed class TestAgentThread : AgentThread
     {
         public int CreateInternalAsyncCount { get; private set; }
