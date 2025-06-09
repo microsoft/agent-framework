@@ -16,7 +16,7 @@ namespace Microsoft.Agents;
 /// with the id of a server side thread that contains the chat history.
 /// </para>
 /// <para>
-/// This abstract base class is the base class for all thread types that support the case where the agent is invoked with messages.
+/// This interface can be implemented by all thread types that support the case where the agent is invoked with the chat history.
 /// Implementations must consider the size of the messages provided, so that they do not exceed the maximum size of the context window
 /// of the agent they are used with. Where appropriate, implementations should truncate or summarize messages so that the size of messages
 /// are constrained.
