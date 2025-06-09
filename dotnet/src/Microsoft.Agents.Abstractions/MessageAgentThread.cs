@@ -35,7 +35,6 @@ public abstract class MessageAgentThread : AgentThread
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>The messages in the thread.</returns>
     /// <exception cref="InvalidOperationException">The thread has been deleted.</exception>
-    [Experimental("SKEXP0110")]
     public abstract IAsyncEnumerable<ChatMessage> GetMessagesAsync(CancellationToken cancellationToken = default);
 
     /// <inheritdoc/>
@@ -44,7 +43,7 @@ public abstract class MessageAgentThread : AgentThread
         Throw.IfNull(serviceType);
 
         return
-            serviceKey is null && serviceType == typeof(MessageAgentThread) && this is MessageAgentThread messageAgentThread ? messageAgentThread :
+            serviceKey is null && serviceType == typeof(MessageAgentThread) ? this :
             base.GetService(serviceType, serviceKey);
     }
 }
