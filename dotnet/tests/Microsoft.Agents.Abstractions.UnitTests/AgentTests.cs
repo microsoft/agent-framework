@@ -259,7 +259,7 @@ public class AgentTests
                 cancellationToken);
         }
 
-        public override AgentThread CreateThreadAsync()
+        public override Task<AgentThread> CreateThreadAsync()
         {
             throw new System.NotImplementedException();
         }
