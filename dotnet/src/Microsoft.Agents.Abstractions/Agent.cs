@@ -46,7 +46,7 @@ public abstract class Agent
     /// If an agent supports multiple thread types, this method should return the default thread
     /// type for the agent or whatever the agent was configured to use.
     /// </remarks>
-    public abstract AgentThread CreateThreadAsync();
+    public abstract Task<AgentThread> CreateThreadAsync();
 
     /// <summary>
     /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the thread.
