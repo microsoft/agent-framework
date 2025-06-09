@@ -10,4 +10,6 @@
     <Message Text="Running dotnet format" Importance="high" />
     <Exec Command="dotnet format --no-restore -v diag $(ProjectFileName)" />
   </Target>
+  
+  <Import Project="$(MSBuildThisFileDirectory)\eng\MSBuild\Shared.targets" />
 </Project>

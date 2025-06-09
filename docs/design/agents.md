@@ -241,10 +241,10 @@ There are several states that an application may maintain during a user session:
     owned and managed by a memory object.
 
 The thread is always passed through the agent's `run` method.
-Whereas the memory is can be set through the constructor of the agent.
+Memory may be attached to the thread or passed to the agent's constructor.
 
-See the [Memory](memory.md) design document for more details on how memory
-is used in the framework.
+See the [Context Providers](context_providers.md) design document for more details on how memory
+and other context providers like RAG are used in the framework.
 
 It is up to the application to decide whether to reuse state across different
 user sessions. The framework should provide the necessary methods and storage layer integration

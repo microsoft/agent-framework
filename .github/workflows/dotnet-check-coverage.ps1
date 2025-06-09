@@ -28,11 +28,15 @@ function Get-FormattedValue {
     return "$formattedNumber% $icon"
 }
 
+$totallines = $jsonContent.summary.totallines
+$totalbranches = $jsonContent.summary.totalbranches
 $lineCoverage = $jsonContent.summary.linecoverage
 $branchCoverage = $jsonContent.summary.branchcoverage
 
 $totalTableData = [PSCustomObject]@{
     'Metric'          = 'Total Coverage'
+    'Total Lines'     = $totallines
+    'Total Branches'  = $totalbranches
     'Line Coverage'   = Get-FormattedValue -Coverage $lineCoverage
     'Branch Coverage' = Get-FormattedValue -Coverage $branchCoverage
 }
@@ -43,19 +47,26 @@ $assemblyTableData = @()
 
 foreach ($assembly in $jsonContent.coverage.assemblies) {
     $assemblyName = $assembly.name
+    $assemblyTotallines = $assembly.totallines
+    $assemblyTotalbranches = $assembly.totalbranches
     $assemblyLineCoverage = $assembly.coverage
     $assemblyBranchCoverage = $assembly.branchcoverage
-
+    
     $isNonExperimentalAssembly = $nonExperimentalAssemblies -contains $assemblyName
 
-    if ($isNonExperimentalAssembly -and ($assemblyLineCoverage -lt $CoverageThreshold -or $assemblyBranchCoverage -lt $CoverageThreshold)) {
+    $lineCoverageFailed = $assemblyLineCoverage -lt $CoverageThreshold -and $assemblyTotallines -gt 0
+    $branchCoverageFailed = $assemblyBranchCoverage -lt $CoverageThreshold -and $assemblyTotalbranches -gt 0
+
+    if ($isNonExperimentalAssembly -and ($lineCoverageFailed -or $branchCoverageFailed)) {
         $coverageBelowThreshold = $true
     }
 
     $assemblyTableData += [PSCustomObject]@{
         'Assembly Name' = $assemblyName
-        'Line'          = Get-FormattedValue -Coverage $assemblyLineCoverage -UseIcon $isNonExperimentalAssembly
-        'Branch'        = Get-FormattedValue -Coverage $assemblyBranchCoverage -UseIcon $isNonExperimentalAssembly
+        'Total Lines'     = $assemblyTotallines
+        'Total Branches'  = $assemblyTotalbranches
+        'Line Coverage'   = Get-FormattedValue -Coverage $assemblyLineCoverage -UseIcon $isNonExperimentalAssembly
+        'Branch Coverage' = Get-FormattedValue -Coverage $assemblyBranchCoverage -UseIcon $isNonExperimentalAssembly
     }
 }
 
