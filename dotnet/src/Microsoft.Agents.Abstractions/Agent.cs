@@ -39,14 +39,19 @@ public abstract class Agent
     public virtual string? Instructions { get; }
 
     /// <summary>
-    /// Create a new <see cref="AgentThread"/> that is compatible with the agent.
+    /// Get a new <see cref="AgentThread"/> instance that is compatible with the agent.
     /// </summary>
-    /// <returns>A new <see cref="AgentThread"/> instance that is in the created state.</returns>
+    /// <returns>A new <see cref="AgentThread"/> instance.</returns>
     /// <remarks>
+    /// <para>
     /// If an agent supports multiple thread types, this method should return the default thread
     /// type for the agent or whatever the agent was configured to use.
+    /// </para>
+    /// <para>
+    /// If the thread needs to be created via a service call it would be created on first use.
+    /// </para>
     /// </remarks>
-    public abstract Task<AgentThread> CreateThreadAsync();
+    public abstract AgentThread NewThreadAsync();
 
     /// <summary>
     /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the thread.
@@ -212,12 +217,6 @@ public abstract class Agent
         {
             throw new NotSupportedException($"{this.GetType().Name} currently only supports agent threads of type {nameof(TThreadType)}.");
         }
-
-        // We have to explicitly call create here to ensure that the thread is created
-        // before we run using the thread. While threads will be created when
-        // notified of new messages, some agents support invoking without a message,
-        // and in that case no messages will be sent in the next step.
-        await thread.CreateAsync(cancellationToken).ConfigureAwait(false);
 
         // Notify the thread that new messages are available.
         foreach (var message in messages)

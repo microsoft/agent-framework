@@ -225,8 +225,8 @@ public class AgentTests
         // Should create and notify
         var result = await agent.EnsureThreadExistsWithMessagesAsync<TestAgentThread>(messages, null, () => threadMock.Object, cancellationToken);
         Assert.Same(threadMock.Object, result);
-        threadMock.Protected().Verify("OnNewMessageCoreAsync", Times.Once(), messages[0], CancellationToken.None);
-        threadMock.Protected().Verify("OnNewMessageCoreAsync", Times.Once(), messages[1], CancellationToken.None);
+        threadMock.Protected().Verify("OnNewMessageAsync", Times.Once(), messages[0], CancellationToken.None);
+        threadMock.Protected().Verify("OnNewMessageAsync", Times.Once(), messages[1], CancellationToken.None);
 
         // Should throw if wrong type
         var wrongThread = new Mock<AgentThread>().Object;
@@ -259,7 +259,7 @@ public class AgentTests
                 cancellationToken);
         }
 
-        public override Task<AgentThread> CreateThreadAsync()
+        public override AgentThread NewThreadAsync()
         {
             throw new System.NotImplementedException();
         }
