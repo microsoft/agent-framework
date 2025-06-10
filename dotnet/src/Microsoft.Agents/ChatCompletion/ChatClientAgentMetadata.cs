@@ -2,6 +2,14 @@
 
 namespace Microsoft.Agents.ChatCompletion;
 
+/// <summary>
+/// Represents metadata for a chat client agent, including its identifier, name, instructions, and description.
+/// </summary>
+/// <remarks>
+/// This class is used to encapsulate information about a chat client agent, such as its unique
+/// identifier, display name, operational instructions, and a descriptive summary. It can be used to store and transfer
+/// agent-related metadata within a chat application.
+/// </remarks>
 public class ChatClientAgentMetadata
 {
     /// <summary>

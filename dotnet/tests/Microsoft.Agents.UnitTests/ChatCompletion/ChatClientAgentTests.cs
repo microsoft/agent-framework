@@ -96,7 +96,7 @@ public class ChatClientAgentTests
             });
 
         // Act
-        ChatResponse result = await agent.RunAsync([new (ChatRole.User, "Where are you?")]);
+        ChatResponse result = await agent.RunAsync([new(ChatRole.User, "Where are you?")]);
 
         // Assert
         Assert.Single(result.Messages);
