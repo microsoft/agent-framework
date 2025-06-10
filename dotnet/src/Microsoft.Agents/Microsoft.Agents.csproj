@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Microsoft.Agents.Abstractions\Microsoft.Agents.Abstractions.csproj" />
+    <PackageReference Include="Microsoft.Extensions.AI" />
   </ItemGroup>
 
   <PropertyGroup>

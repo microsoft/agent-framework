@@ -38,7 +38,7 @@ public class ChatClientAgentTests
         Assert.Equal("test description", agent.Description);
         Assert.Equal("test instructions", agent.Instructions);
         Assert.NotNull(agent.ChatClient);
-        Assert.Same(chatClient, agent.ChatClient);
+        Assert.Equal("AgentInvokingChatClient", agent.ChatClient.GetType().Name);
         Assert.Equal(ChatRole.System, agent.InstructionsRole);
     }
 
@@ -435,7 +435,7 @@ public class ChatClientAgentTests
     {
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
-        var metadata = new ChatClientAgentMetadata { Id = "custom-agent-id" };
+        var metadata = new ChatClientAgentOptions { Id = "custom-agent-id" };
         ChatClientAgent agent = new(chatClient, metadata);
 
         // Act & Assert
@@ -467,7 +467,7 @@ public class ChatClientAgentTests
     {
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
-        var metadata = new ChatClientAgentMetadata { Id = null };
+        var metadata = new ChatClientAgentOptions { Id = null };
         ChatClientAgent agent = new(chatClient, metadata);
 
         // Act & Assert
@@ -485,7 +485,7 @@ public class ChatClientAgentTests
     {
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
-        var metadata = new ChatClientAgentMetadata { Name = "Test Agent" };
+        var metadata = new ChatClientAgentOptions { Name = "Test Agent" };
         ChatClientAgent agent = new(chatClient, metadata);
 
         // Act & Assert
@@ -514,7 +514,7 @@ public class ChatClientAgentTests
     {
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
-        var metadata = new ChatClientAgentMetadata { Name = null };
+        var metadata = new ChatClientAgentOptions { Name = null };
         ChatClientAgent agent = new(chatClient, metadata);
 
         // Act & Assert
@@ -529,7 +529,7 @@ public class ChatClientAgentTests
     {
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
-        var metadata = new ChatClientAgentMetadata { Description = "A helpful test agent" };
+        var metadata = new ChatClientAgentOptions { Description = "A helpful test agent" };
         ChatClientAgent agent = new(chatClient, metadata);
 
         // Act & Assert
@@ -558,7 +558,7 @@ public class ChatClientAgentTests
     {
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
-        var metadata = new ChatClientAgentMetadata { Description = null };
+        var metadata = new ChatClientAgentOptions { Description = null };
         ChatClientAgent agent = new(chatClient, metadata);
 
         // Act & Assert
@@ -573,7 +573,7 @@ public class ChatClientAgentTests
     {
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
-        var metadata = new ChatClientAgentMetadata { Instructions = "You are a helpful assistant" };
+        var metadata = new ChatClientAgentOptions { Instructions = "You are a helpful assistant" };
         ChatClientAgent agent = new(chatClient, metadata);
 
         // Act & Assert
@@ -602,7 +602,7 @@ public class ChatClientAgentTests
     {
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
-        var metadata = new ChatClientAgentMetadata { Instructions = null };
+        var metadata = new ChatClientAgentOptions { Instructions = null };
         ChatClientAgent agent = new(chatClient, metadata);
 
         // Act & Assert

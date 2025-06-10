@@ -13,20 +13,25 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents;
 
 /// <summary>
-/// Placeholder class.
+/// Initializes a new instance of the <see cref="ChatClientAgent"/> class.
 /// </summary>
 public sealed class ChatClientAgent : Agent
 {
-    private readonly ChatClientAgentMetadata? _metadata;
+    private readonly ChatClientAgentOptions? _agentOptions;
     private readonly ILoggerFactory _loggerFactory;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ChatClientAgent"/> class.
     /// </summary>
-    public ChatClientAgent(IChatClient chatClient, ChatClientAgentMetadata? metadata, ILoggerFactory? loggerFactory = null)
+    /// <param name="chatClient">The chat client to use for invoking the agent.</param>
+    /// <param name="options">Optional agent options to configure the agent.</param>
+    /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
+    public ChatClientAgent(IChatClient chatClient, ChatClientAgentOptions? options = null, ILoggerFactory? loggerFactory = null)
     {
-        this.ChatClient = chatClient;
-        this._metadata = metadata;
+        Throw.IfNull(chatClient);
+
+        this.ChatClient = this.GetAgentInvokingChatClient(chatClient);
+        this._agentOptions = options;
         this._loggerFactory = loggerFactory ?? chatClient.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance;
     }
 
@@ -47,16 +52,16 @@ public sealed class ChatClientAgent : Agent
     public ChatRole InstructionsRole { get; set; } = ChatRole.System;
 
     /// <inheritdoc/>
-    public override string Id => this._metadata?.Id ?? base.Id;
+    public override string Id => this._agentOptions?.Id ?? base.Id;
 
     /// <inheritdoc/>
-    public override string? Name => this._metadata?.Name;
+    public override string? Name => this._agentOptions?.Name;
 
     /// <inheritdoc/>
-    public override string? Description => this._metadata?.Description;
+    public override string? Description => this._agentOptions?.Description;
 
     /// <inheritdoc/>
-    public override string? Instructions => this._metadata?.Instructions;
+    public override string? Instructions => this._agentOptions?.Instructions;
 
     /// <inheritdoc/>
     public override async Task<ChatResponse> RunAsync(
@@ -122,6 +127,26 @@ public sealed class ChatClientAgent : Agent
         return chatResponse;
     }
 
+    /// <inheritdoc/>
+    public override IAsyncEnumerable<ChatResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        throw new System.NotImplementedException();
+    }
+
+    /// <inheritdoc/>
+    public override AgentThread GetNewThread() => new ChatClientAgentThread();
+
+    #region Private
+
+    private async Task<TThreadType> ValidateOrCreateThreadTypeAsync<TThreadType>(AgentThread? thread, IReadOnlyCollection<ChatMessage> messages, Func<TThreadType> constructThread, CancellationToken cancellationToken)
+        where TThreadType : AgentThread
+    {
+        var chatClientThread = this.ValidateOrCreateThreadType<TThreadType>(thread, constructThread);
+
+        await this.NotifyThreadOfNewMessagesAsync(chatClientThread, messages, cancellationToken).ConfigureAwait(false);
+
+        return chatClientThread;
+    }
     private Task<List<ChatMessage>> GetMessagesWithAgentInstructionsAsync(IReadOnlyCollection<ChatMessage> originalChatMessages, AgentRunOptions? options, CancellationToken cancellationToken)
     {
         List<ChatMessage> instructedChatMessages = [];
@@ -141,22 +166,19 @@ public sealed class ChatClientAgent : Agent
         return Task.FromResult(instructedChatMessages);
     }
 
-    /// <inheritdoc/>
-    public override IAsyncEnumerable<ChatResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    private IChatClient GetAgentInvokingChatClient(IChatClient chatClient)
     {
-        throw new System.NotImplementedException();
+        var chatBuilder = chatClient
+            .AsBuilder()
+            .UseAgentInvocation();
+
+        if (chatClient.GetService<FunctionInvokingChatClient>() is null)
+        {
+            chatBuilder.UseFunctionInvocation();
+        }
+
+        return chatBuilder.Build();
     }
 
-    /// <inheritdoc/>
-    public override AgentThread GetNewThread() => new ChatClientAgentThread();
-
-    private async Task<TThreadType> ValidateOrCreateThreadTypeAsync<TThreadType>(AgentThread? thread, IReadOnlyCollection<ChatMessage> messages, Func<TThreadType> constructThread, CancellationToken cancellationToken)
-        where TThreadType : AgentThread
-    {
-        var chatClientThread = this.ValidateOrCreateThreadType<TThreadType>(thread, constructThread);
-
-        await this.NotifyThreadOfNewMessagesAsync(chatClientThread, messages, cancellationToken).ConfigureAwait(false);
-
-        return chatClientThread;
-    }
+    #endregion
 }
