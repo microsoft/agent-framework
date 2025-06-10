@@ -41,12 +41,13 @@ public abstract class Agent
     /// <summary>
     /// Create a new <see cref="AgentThread"/> that is compatible with the agent.
     /// </summary>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A new <see cref="AgentThread"/> instance that is in the created state.</returns>
     /// <remarks>
     /// If an agent supports multiple thread types, this method should return the default thread
     /// type for the agent or whatever the agent was configured to use.
     /// </remarks>
-    public abstract Task<AgentThread> CreateThreadAsync();
+    public abstract Task<AgentThread> CreateThreadAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the thread.
