@@ -87,7 +87,7 @@ public class ChatClientAgentTests
             s => s.GetResponseAsync(
                 It.IsAny<IEnumerable<ChatMessage>>(),
                 It.IsAny<ChatOptions>(),
-                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "what?")]));
+                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "I'm here!")]));
 
         ChatClientAgent agent =
             new(mockService.Object, new()
@@ -96,7 +96,7 @@ public class ChatClientAgentTests
             });
 
         // Act
-        ChatResponse result = await agent.RunAsync([]);
+        ChatResponse result = await agent.RunAsync([new (ChatRole.User, "Where are you?")]);
 
         // Assert
         Assert.Single(result.Messages);
@@ -108,6 +108,14 @@ public class ChatClientAgentTests
                     It.IsAny<ChatOptions>(),
                     It.IsAny<CancellationToken>()),
             Times.Once);
+
+        Assert.Single(result.Messages);
+        Assert.Collection(result.Messages,
+            message =>
+            {
+                Assert.Equal(ChatRole.Assistant, message.Role);
+                Assert.Equal("I'm here!", message.Text);
+            });
     }
 
     /// <summary>

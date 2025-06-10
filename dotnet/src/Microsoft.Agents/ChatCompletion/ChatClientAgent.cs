@@ -98,7 +98,6 @@ public sealed class ChatClientAgent : Agent
 
         List<ChatMessage> chatMessages = await this.GetMessagesWithAgentInstructionsAsync(threadMessages, options, cancellationToken).ConfigureAwait(false);
 
-        int messageCount = chatMessages.Count;
         var agentName = this.GetDisplayName();
         Type serviceType = this.ChatClient.GetType();
 
@@ -113,12 +112,9 @@ public sealed class ChatClientAgent : Agent
         logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, agentName, serviceType, messages.Count);
 
         // Capture mutated messages related function calling / tools
-        for (int messageIndex = messageCount; messageIndex < chatResponse.Messages.Count; messageIndex++)
+        foreach (ChatMessage message in chatResponse.Messages)
         {
-            ChatMessage message = chatResponse.Messages[messageIndex];
-
             message.AuthorName = this.Name;
-
             chatMessages.Add(message);
 
             await this.NotifyThreadOfNewMessage(chatClientThread, message, cancellationToken).ConfigureAwait(false);
@@ -133,7 +129,6 @@ public sealed class ChatClientAgent : Agent
             message.AuthorName = this.Name;
         }
 
-        chatResponse.Messages = chatMessages;
         return chatResponse;
     }
 
