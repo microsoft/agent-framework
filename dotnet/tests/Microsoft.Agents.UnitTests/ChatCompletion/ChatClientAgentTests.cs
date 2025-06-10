@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.ChatCompletion;
 using Microsoft.Extensions.AI;
 using Moq;
 
@@ -423,4 +424,263 @@ public class ChatClientAgentTests
         Assert.Equal("test instructions", capturedMessages[0].Text);
         Assert.Equal(ChatRole.System, capturedMessages[0].Role);
     }
+
+    #region Property Override Tests
+
+    /// <summary>
+    /// Verify that Id property returns metadata Id when provided, otherwise falls back to base implementation.
+    /// </summary>
+    [Fact]
+    public void IdReturnsMetadataIdWhenMetadataProvided()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var metadata = new ChatClientAgentMetadata { Id = "custom-agent-id" };
+        ChatClientAgent agent = new(chatClient, metadata);
+
+        // Act & Assert
+        Assert.Equal("custom-agent-id", agent.Id);
+    }
+
+    /// <summary>
+    /// Verify that Id property falls back to base implementation when metadata is null.
+    /// </summary>
+    [Fact]
+    public void IdFallsBackToBaseImplementationWhenMetadataIsNull()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        ChatClientAgent agent = new(chatClient, null);
+
+        // Act & Assert
+        Assert.NotNull(agent.Id);
+        Assert.NotEmpty(agent.Id);
+        // Base implementation returns a GUID, so it should be parseable as a GUID
+        Assert.True(Guid.TryParse(agent.Id, out _));
+    }
+
+    /// <summary>
+    /// Verify that Id property falls back to base implementation when metadata Id is null.
+    /// </summary>
+    [Fact]
+    public void IdFallsBackToBaseImplementationWhenMetadataIdIsNull()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var metadata = new ChatClientAgentMetadata { Id = null };
+        ChatClientAgent agent = new(chatClient, metadata);
+
+        // Act & Assert
+        Assert.NotNull(agent.Id);
+        Assert.NotEmpty(agent.Id);
+        // Base implementation returns a GUID, so it should be parseable as a GUID
+        Assert.True(Guid.TryParse(agent.Id, out _));
+    }
+
+    /// <summary>
+    /// Verify that Name property returns metadata Name when provided.
+    /// </summary>
+    [Fact]
+    public void NameReturnsMetadataNameWhenMetadataProvided()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var metadata = new ChatClientAgentMetadata { Name = "Test Agent" };
+        ChatClientAgent agent = new(chatClient, metadata);
+
+        // Act & Assert
+        Assert.Equal("Test Agent", agent.Name);
+    }
+
+    /// <summary>
+    /// Verify that Name property returns null when metadata is null.
+    /// </summary>
+    [Fact]
+    public void NameReturnsNullWhenMetadataIsNull()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        ChatClientAgent agent = new(chatClient, null);
+
+        // Act & Assert
+        Assert.Null(agent.Name);
+    }
+
+    /// <summary>
+    /// Verify that Name property returns null when metadata Name is null.
+    /// </summary>
+    [Fact]
+    public void NameReturnsNullWhenMetadataNameIsNull()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var metadata = new ChatClientAgentMetadata { Name = null };
+        ChatClientAgent agent = new(chatClient, metadata);
+
+        // Act & Assert
+        Assert.Null(agent.Name);
+    }
+
+    /// <summary>
+    /// Verify that Description property returns metadata Description when provided.
+    /// </summary>
+    [Fact]
+    public void DescriptionReturnsMetadataDescriptionWhenMetadataProvided()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var metadata = new ChatClientAgentMetadata { Description = "A helpful test agent" };
+        ChatClientAgent agent = new(chatClient, metadata);
+
+        // Act & Assert
+        Assert.Equal("A helpful test agent", agent.Description);
+    }
+
+    /// <summary>
+    /// Verify that Description property returns null when metadata is null.
+    /// </summary>
+    [Fact]
+    public void DescriptionReturnsNullWhenMetadataIsNull()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        ChatClientAgent agent = new(chatClient, null);
+
+        // Act & Assert
+        Assert.Null(agent.Description);
+    }
+
+    /// <summary>
+    /// Verify that Description property returns null when metadata Description is null.
+    /// </summary>
+    [Fact]
+    public void DescriptionReturnsNullWhenMetadataDescriptionIsNull()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var metadata = new ChatClientAgentMetadata { Description = null };
+        ChatClientAgent agent = new(chatClient, metadata);
+
+        // Act & Assert
+        Assert.Null(agent.Description);
+    }
+
+    /// <summary>
+    /// Verify that Instructions property returns metadata Instructions when provided.
+    /// </summary>
+    [Fact]
+    public void InstructionsReturnsMetadataInstructionsWhenMetadataProvided()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var metadata = new ChatClientAgentMetadata { Instructions = "You are a helpful assistant" };
+        ChatClientAgent agent = new(chatClient, metadata);
+
+        // Act & Assert
+        Assert.Equal("You are a helpful assistant", agent.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that Instructions property returns null when metadata is null.
+    /// </summary>
+    [Fact]
+    public void InstructionsReturnsNullWhenMetadataIsNull()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        ChatClientAgent agent = new(chatClient, null);
+
+        // Act & Assert
+        Assert.Null(agent.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that Instructions property returns null when metadata Instructions is null.
+    /// </summary>
+    [Fact]
+    public void InstructionsReturnsNullWhenMetadataInstructionsIsNull()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var metadata = new ChatClientAgentMetadata { Instructions = null };
+        ChatClientAgent agent = new(chatClient, metadata);
+
+        // Act & Assert
+        Assert.Null(agent.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that InstructionsRole property has default value of System.
+    /// </summary>
+    [Fact]
+    public void InstructionsRoleHasDefaultValueOfSystem()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        ChatClientAgent agent = new(chatClient, new());
+
+        // Act & Assert
+        Assert.Equal(ChatRole.System, agent.InstructionsRole);
+    }
+
+    /// <summary>
+    /// Verify that InstructionsRole property can be set to custom values.
+    /// </summary>
+    [Fact]
+    public void InstructionsRoleCanBeSetToCustomValue()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        ChatClientAgent agent = new(chatClient, new());
+
+        // Act
+        agent.InstructionsRole = ChatRole.User;
+
+        // Assert
+        Assert.Equal(ChatRole.User, agent.InstructionsRole);
+    }
+
+    #endregion
+
+    #region RunStreamingAsync Tests
+
+    /// <summary>
+    /// Verify that RunStreamingAsync throws NotImplementedException.
+    /// </summary>
+    [Fact]
+    public void RunStreamingAsyncThrowsNotImplementedException()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        ChatClientAgent agent = new(chatClient, new() { Instructions = "test instructions" });
+
+        // Act & Assert
+        Assert.Throws<NotImplementedException>(() =>
+        {
+            var result = agent.RunStreamingAsync([new(ChatRole.User, "test")]);
+            // Force enumeration to trigger the exception
+            result.GetAsyncEnumerator();
+        });
+    }
+
+    /// <summary>
+    /// Verify that RunStreamingAsync with string message throws NotImplementedException.
+    /// </summary>
+    [Fact]
+    public void RunStreamingAsyncWithStringMessageThrowsNotImplementedException()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        ChatClientAgent agent = new(chatClient, new() { Instructions = "test instructions" });
+
+        // Act & Assert
+        Assert.Throws<NotImplementedException>(() =>
+        {
+            var result = agent.RunStreamingAsync("test message");
+            // Force enumeration to trigger the exception
+            result.GetAsyncEnumerator();
+        });
+    }
+
+    #endregion
 }
