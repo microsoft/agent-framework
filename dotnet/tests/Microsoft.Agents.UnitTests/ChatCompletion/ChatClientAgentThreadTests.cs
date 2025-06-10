@@ -29,7 +29,7 @@ public class ChatClientAgentThreadTests
     /// This test verifies the interface works correctly when no messages have been added.
     /// </summary>
     [Fact]
-    public async Task VerifyIMessagesRetrievableThreadGetMessagesAsyncWhenEmpty()
+    public async Task VerifyIMessagesRetrievableThreadGetMessagesAsyncWhenEmptyAsync()
     {
         // Arrange
         var thread = new ChatClientAgentThread();
