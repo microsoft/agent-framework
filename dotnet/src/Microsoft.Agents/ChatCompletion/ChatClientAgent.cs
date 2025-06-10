@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.ChatCompletion;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -16,14 +17,16 @@ namespace Microsoft.Agents;
 /// </summary>
 public sealed class ChatClientAgent : Agent
 {
+    private readonly ChatClientAgentMetadata? _metadata;
     private readonly ILoggerFactory _loggerFactory;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ChatClientAgent"/> class.
     /// </summary>
-    public ChatClientAgent(IChatClient chatClient, ILoggerFactory? loggerFactory = null)
+    public ChatClientAgent(IChatClient chatClient, ChatClientAgentMetadata? metadata, ILoggerFactory? loggerFactory = null)
     {
         this.ChatClient = chatClient;
+        this._metadata = metadata;
         this._loggerFactory = loggerFactory ?? chatClient.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance;
     }
 
@@ -42,6 +45,18 @@ public sealed class ChatClientAgent : Agent
     /// will be dictated entirely by the provided plugins.
     /// </remarks>
     public ChatRole InstructionsRole { get; set; } = ChatRole.System;
+
+    /// <inheritdoc/>
+    public override string Id => this._metadata?.Id ?? base.Id;
+
+    /// <inheritdoc/>
+    public override string? Name => this._metadata?.Name;
+
+    /// <inheritdoc/>
+    public override string? Description => this._metadata?.Description;
+
+    /// <inheritdoc/>
+    public override string? Instructions => this._metadata?.Instructions;
 
     /// <inheritdoc/>
     public override Task<AgentThread> CreateThreadAsync(CancellationToken cancellationToken = default)
