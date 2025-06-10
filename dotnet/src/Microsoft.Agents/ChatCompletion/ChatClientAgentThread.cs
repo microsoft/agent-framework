@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -28,22 +27,9 @@ public sealed class ChatClientAgentThread : AgentThread, IMessagesRetrievableThr
 #pragma warning restore CS1998 // Async method lacks 'await' operators and will run synchronously
 
     /// <inheritdoc/>
-    protected override Task<string?> CreateCoreAsync(CancellationToken cancellationToken)
+    protected override Task OnNewMessagesAsync(IReadOnlyCollection<ChatMessage> newMessages, CancellationToken cancellationToken = default)
     {
-        return Task.FromResult<string?>(Guid.NewGuid().ToString("N"));
-    }
-
-    /// <inheritdoc/>
-    protected override Task DeleteCoreAsync(CancellationToken cancellationToken)
-    {
-        this._chatMessages.Clear();
-        return Task.CompletedTask;
-    }
-
-    /// <inheritdoc/>
-    protected override Task OnNewMessageCoreAsync(ChatMessage newMessage, CancellationToken cancellationToken = default)
-    {
-        this._chatMessages.Add(newMessage);
+        this._chatMessages.AddRange(newMessages);
         return Task.CompletedTask;
     }
 }

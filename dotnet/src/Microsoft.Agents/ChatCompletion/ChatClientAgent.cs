@@ -59,12 +59,6 @@ public sealed class ChatClientAgent : Agent
     public override string? Instructions => this._metadata?.Instructions;
 
     /// <inheritdoc/>
-    public override Task<AgentThread> CreateThreadAsync(CancellationToken cancellationToken = default)
-    {
-        return Task.FromResult<AgentThread>(new ChatClientAgentThread());
-    }
-
-    /// <inheritdoc/>
     public override async Task<ChatResponse> RunAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
@@ -80,11 +74,7 @@ public sealed class ChatClientAgent : Agent
             chatOptions = chatClientAgentRunOptions.ChatOptions;
         }
 
-        var chatClientThread = await this.EnsureThreadExistsWithMessagesAsync(
-            messages,
-            thread,
-            () => new ChatClientAgentThread(),
-            cancellationToken).ConfigureAwait(false);
+        var chatClientThread = await this.ValidateOrCreateThreadTypeAsync(thread, messages, () => new ChatClientAgentThread(), cancellationToken).ConfigureAwait(false);
 
         List<ChatMessage> threadMessages = [];
         if (chatClientThread is IMessagesRetrievableThread messagesRetrievableThread)
@@ -117,7 +107,7 @@ public sealed class ChatClientAgent : Agent
             message.AuthorName = this.Name;
             chatMessages.Add(message);
 
-            await this.NotifyThreadOfNewMessage(chatClientThread, message, cancellationToken).ConfigureAwait(false);
+            await this.NotifyThreadOfNewMessagesAsync(chatClientThread, [message], cancellationToken).ConfigureAwait(false);
             if (options?.OnIntermediateMessage is not null)
             {
                 await options.OnIntermediateMessage(message).ConfigureAwait(false);
@@ -155,5 +145,18 @@ public sealed class ChatClientAgent : Agent
     public override IAsyncEnumerable<ChatResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         throw new System.NotImplementedException();
+    }
+
+    /// <inheritdoc/>
+    public override AgentThread GetNewThread() => new ChatClientAgentThread();
+
+    private async Task<TThreadType> ValidateOrCreateThreadTypeAsync<TThreadType>(AgentThread? thread, IReadOnlyCollection<ChatMessage> messages, Func<TThreadType> constructThread, CancellationToken cancellationToken)
+        where TThreadType : AgentThread
+    {
+        var chatClientThread = this.ValidateOrCreateThreadType<TThreadType>(thread, constructThread);
+
+        await this.NotifyThreadOfNewMessagesAsync(chatClientThread, messages, cancellationToken).ConfigureAwait(false);
+
+        return chatClientThread;
     }
 }

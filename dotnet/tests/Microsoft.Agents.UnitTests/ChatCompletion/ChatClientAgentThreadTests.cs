@@ -71,8 +71,8 @@ public class ChatClientAgentThreadTests
             Instructions = "You are a helpful assistant"
         });
 
-        // Get the thread from the response and cast to IMessagesRetrievableThread
-        var thread = await agent.CreateThreadAsync();
+        // Get a new thread from the agent
+        var thread = agent.GetNewThread();
 
         // Run the agent again with the thread to populate it with messages
         var responseWithThread = await agent.RunAsync([userMessage], thread);
@@ -130,7 +130,6 @@ public class ChatClientAgentThreadTests
 
         // Assert
         Assert.Null(thread.Id); // Id should be null until created
-        Assert.False(thread.IsDeleted); // Should not be deleted initially
     }
 
     #region Core Override Method Tests
@@ -139,7 +138,7 @@ public class ChatClientAgentThreadTests
     /// Verify that thread creation generates a valid thread ID through integration with ChatClientAgent.
     /// </summary>
     [Fact]
-    public async Task ThreadCreationGeneratesValidThreadIdAsync()
+    public void ThreadCreationGeneratesValidThreadId()
     {
         // Arrange
         var mockChatClient = new Mock<IChatClient>();
@@ -153,7 +152,7 @@ public class ChatClientAgentThreadTests
         var agent = new ChatClientAgent(mockChatClient.Object, new());
 
         // Act
-        var thread = await agent.CreateThreadAsync();
+        var thread = agent.GetNewThread();
 
         // Assert
         Assert.NotNull(thread);
@@ -165,15 +164,15 @@ public class ChatClientAgentThreadTests
     /// Verify that thread creation generates unique instances.
     /// </summary>
     [Fact]
-    public async Task ThreadCreationGeneratesUniqueInstancesAsync()
+    public void ThreadCreationGeneratesUniqueInstances()
     {
         // Arrange
         var mockChatClient = new Mock<IChatClient>();
         var agent = new ChatClientAgent(mockChatClient.Object, new());
 
         // Act
-        var thread1 = await agent.CreateThreadAsync();
-        var thread2 = await agent.CreateThreadAsync();
+        var thread1 = agent.GetNewThread();
+        var thread2 = agent.GetNewThread();
 
         // Assert
         Assert.NotSame(thread1, thread2);
@@ -202,7 +201,7 @@ public class ChatClientAgentThreadTests
         var agent = new ChatClientAgent(mockChatClient.Object, new() { Instructions = "Test instructions" });
 
         // Act
-        var thread = await agent.CreateThreadAsync();
+        var thread = agent.GetNewThread();
 
         // Run the agent to populate the thread with messages
         await agent.RunAsync([userMessage], thread);
@@ -218,51 +217,6 @@ public class ChatClientAgentThreadTests
         Assert.Equal(2, retrievedMessages.Count);
         Assert.Contains(retrievedMessages, m => m.Text == "Hello" && m.Role == ChatRole.User);
         Assert.Contains(retrievedMessages, m => m.Text == "Hi there!" && m.Role == ChatRole.Assistant);
-    }
-
-    /// <summary>
-    /// Verify that thread deletion clears all messages.
-    /// </summary>
-    [Fact]
-    public async Task ThreadDeletionClearsAllMessagesAsync()
-    {
-        // Arrange
-        var userMessage = new ChatMessage(ChatRole.User, "Hello");
-        var assistantMessage = new ChatMessage(ChatRole.Assistant, "Hi there!");
-
-        var mockChatClient = new Mock<IChatClient>();
-        mockChatClient.Setup(
-            c => c.GetResponseAsync(
-                It.IsAny<IEnumerable<ChatMessage>>(),
-                It.IsAny<ChatOptions>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ChatResponse([assistantMessage]));
-
-        var agent = new ChatClientAgent(mockChatClient.Object, new());
-        var thread = await agent.CreateThreadAsync();
-
-        // Add messages to the thread
-        await agent.RunAsync([userMessage], thread);
-
-        // Verify messages were added
-        var messagesBeforeDelete = new List<ChatMessage>();
-        await foreach (var message in ((IMessagesRetrievableThread)thread).GetMessagesAsync())
-        {
-            messagesBeforeDelete.Add(message);
-        }
-        Assert.NotEmpty(messagesBeforeDelete);
-
-        // Act - Delete the thread
-        await thread.DeleteAsync();
-
-        // Assert - Verify messages are cleared
-        var messagesAfterDelete = new List<ChatMessage>();
-        await foreach (var message in ((IMessagesRetrievableThread)thread).GetMessagesAsync())
-        {
-            messagesAfterDelete.Add(message);
-        }
-        Assert.Empty(messagesAfterDelete);
-        Assert.True(thread.IsDeleted);
     }
 
     /// <summary>
@@ -290,7 +244,7 @@ public class ChatClientAgentThreadTests
             .ReturnsAsync(new ChatResponse([messages[3]]));
 
         var agent = new ChatClientAgent(mockChatClient.Object, new());
-        var thread = await agent.CreateThreadAsync();
+        var thread = agent.GetNewThread();
 
         // Act - Add messages through multiple agent runs
         await agent.RunAsync([messages[0]], thread);

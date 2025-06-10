@@ -353,8 +353,8 @@ public class ChatClientAgentTests
 
         ChatClientAgent agent = new(mockService.Object, new() { Instructions = "test instructions" });
 
-        // Create a thread using the agent's CreateThreadAsync method
-        var thread = await agent.CreateThreadAsync();
+        // Create a thread using the agent's GetNewThread method
+        var thread = agent.GetNewThread();
 
         // Act
         await agent.RunAsync([new(ChatRole.User, "new message")], thread: thread);
