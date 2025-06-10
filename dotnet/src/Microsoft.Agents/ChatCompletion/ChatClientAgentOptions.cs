@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-namespace Microsoft.Agents.ChatCompletion;
+namespace Microsoft.Agents;
 
 /// <summary>
 /// Represents metadata for a chat client agent, including its identifier, name, instructions, and description.

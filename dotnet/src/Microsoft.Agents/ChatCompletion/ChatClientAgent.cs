@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.ChatCompletion;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -30,7 +29,7 @@ public sealed class ChatClientAgent : Agent
     {
         Throw.IfNull(chatClient);
 
-        this.ChatClient = this.GetAgentInvokingChatClient(chatClient);
+        this.ChatClient = chatClient.AsAgentInvokingChatClient();
         this._agentOptions = options;
         this._loggerFactory = loggerFactory ?? chatClient.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance;
     }
@@ -164,20 +163,6 @@ public sealed class ChatClientAgent : Agent
         instructedChatMessages.AddRange(originalChatMessages);
 
         return Task.FromResult(instructedChatMessages);
-    }
-
-    private IChatClient GetAgentInvokingChatClient(IChatClient chatClient)
-    {
-        var chatBuilder = chatClient
-            .AsBuilder()
-            .UseAgentInvocation();
-
-        if (chatClient.GetService<FunctionInvokingChatClient>() is null)
-        {
-            chatBuilder.UseFunctionInvocation();
-        }
-
-        return chatBuilder.Build();
     }
 
     #endregion
