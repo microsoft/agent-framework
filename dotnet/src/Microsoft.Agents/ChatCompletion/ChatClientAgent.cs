@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -19,6 +20,7 @@ public sealed class ChatClientAgent : Agent
 {
     private readonly ChatClientAgentOptions? _agentOptions;
     private readonly ILogger _logger;
+    private readonly Type _chatClientType;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ChatClientAgent"/> class.
@@ -30,26 +32,24 @@ public sealed class ChatClientAgent : Agent
     {
         Throw.IfNull(chatClient);
 
+        this._chatClientType = chatClient.GetType();
         this.ChatClient = chatClient.AsAgentInvokingChatClient();
         this._agentOptions = options;
         this._logger = (loggerFactory ?? chatClient.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance).CreateLogger<ChatClientAgent>();
     }
 
     /// <summary>
-    /// The chat client.
+    /// The underlying chat client used by the agent to invoke chat completions.
     /// </summary>
     public IChatClient ChatClient { get; }
 
     /// <summary>
-    /// Gets the role used for agent instructions.  Defaults to "system".
+    /// Gets the role used for agent instruction messages. Defaults to <see cref="ChatRole.System"/>.
     /// </summary>
     /// <remarks>
-    /// Certain versions of "O*" series (deep reasoning) models require the instructions
-    /// to be provided as "developer" role.  Other versions support neither role and
-    /// an agent targeting such a model cannot provide instructions.  Agent functionality
-    /// will be dictated entirely by the provided plugins.
+    /// Depending on the AI model used, some APIs may require the instructions message role to be different from <see cref="ChatRole.System"/>.
     /// </remarks>
-    public ChatRole InstructionsRole { get; set; } = ChatRole.System;
+    public ChatRole InstructionsRole => this._agentOptions?.InstructionsRole ?? ChatRole.System;
 
     /// <inheritdoc/>
     public override string Id => this._agentOptions?.Id ?? base.Id;
@@ -72,35 +72,16 @@ public sealed class ChatClientAgent : Agent
     {
         Throw.IfNull(messages);
 
-        // Retrieve chat options from the provided AgentRunOptions if available.
-        ChatOptions? chatOptions = (options as ChatClientAgentRunOptions)?.ChatOptions;
+        (ChatClientAgentThread chatClientThread, ChatOptions? chatOptions, List<ChatMessage> threadMessages) =
+            await this.PrepareThreadAndMessagesAsync(thread, messages, options, cancellationToken).ConfigureAwait(false);
 
-        var chatClientThread = this.ValidateOrCreateThreadType<ChatClientAgentThread>(thread, () => new());
+        var agentName = this.GetAgentName();
 
-        // Add any existing messages from the thread to the messages to be sent to the chat client.
-        List<ChatMessage> threadMessages = [];
-        if (chatClientThread is IMessagesRetrievableThread messagesRetrievableThread)
-        {
-            await foreach (ChatMessage message in messagesRetrievableThread.GetMessagesAsync(cancellationToken).ConfigureAwait(false))
-            {
-                threadMessages.Add(message);
-            }
-        }
-
-        // Append to the existing thread messages the messages that were passed in to this call.
-        threadMessages.AddRange(messages);
-
-        // Update the messages with agent instructions.
-        this.UpdateThreadMessagesWithAgentInstructions(threadMessages, options);
-
-        var agentName = this.Name ?? "UnnamedAgent";
-        Type serviceType = this.ChatClient.GetType();
-
-        this._logger.LogAgentChatClientInvokingAgent(nameof(RunAsync), this.Id, agentName, serviceType);
+        this._logger.LogAgentChatClientInvokingAgent(nameof(RunAsync), this.Id, agentName, this._chatClientType);
 
         ChatResponse chatResponse = await this.ChatClient.GetResponseAsync(threadMessages, chatOptions, cancellationToken).ConfigureAwait(false);
 
-        this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, agentName, serviceType, messages.Count);
+        this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, agentName, this._chatClientType, messages.Count);
 
         // Only notify the thread of new messages if the chatResponse was successful to avoid inconsistent messages state in the thread.
         await this.NotifyThreadOfNewMessagesAsync(chatClientThread, messages, cancellationToken).ConfigureAwait(false);
@@ -124,15 +105,80 @@ public sealed class ChatClientAgent : Agent
     }
 
     /// <inheritdoc/>
-    public override IAsyncEnumerable<ChatResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public override async IAsyncEnumerable<ChatResponseUpdate> RunStreamingAsync(
+        IReadOnlyCollection<ChatMessage> messages,
+        AgentThread? thread = null,
+        AgentRunOptions? options = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        throw new System.NotImplementedException();
+        Throw.IfNull(messages);
+
+        (ChatClientAgentThread chatClientThread, ChatOptions? chatOptions, List<ChatMessage> threadMessages) =
+            await this.PrepareThreadAndMessagesAsync(thread, messages, options, cancellationToken).ConfigureAwait(false);
+
+        int messageCount = threadMessages.Count;
+        var agentName = this.GetAgentName();
+
+        this._logger.LogAgentChatClientInvokingAgent(nameof(RunStreamingAsync), this.Id, agentName, this._chatClientType);
+
+        var responseUpdatesEnumerable = this.ChatClient.GetStreamingResponseAsync(threadMessages, chatOptions, cancellationToken);
+
+        this._logger.LogAgentChatClientInvokedStreamingAgent(nameof(RunStreamingAsync), this.Id, agentName, this._chatClientType);
+
+        List<ChatResponseUpdate> responseUpdates = [];
+        await foreach (ChatResponseUpdate update in responseUpdatesEnumerable.ConfigureAwait(false))
+        {
+            responseUpdates.Add(update);
+            update.AuthorName ??= agentName;
+            yield return update;
+        }
+
+        var chatResponse = responseUpdates.ToChatResponse();
+        await this.NotifyThreadOfNewMessagesAsync(chatClientThread, [.. chatResponse.Messages], cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
     public override AgentThread GetNewThread() => new ChatClientAgentThread();
 
     #region Private
+
+    /// <summary>
+    /// Prepares the thread, chat options, and messages for agent execution.
+    /// </summary>
+    /// <param name="thread">The conversation thread to use or create.</param>
+    /// <param name="inputMessages">The input messages to use.</param>
+    /// <param name="options">Optional parameters for agent invocation.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A tuple containing the thread, chat options, and thread messages.</returns>
+    private async Task<(ChatClientAgentThread thread, ChatOptions? chatOptions, List<ChatMessage> threadMessages)> PrepareThreadAndMessagesAsync(
+        AgentThread? thread,
+        IReadOnlyCollection<ChatMessage> inputMessages,
+        AgentRunOptions? options,
+        CancellationToken cancellationToken)
+    {
+        // Retrieve chat options from the provided AgentRunOptions if available.
+        ChatOptions? chatOptions = (options as ChatClientAgentRunOptions)?.ChatOptions;
+
+        var chatClientThread = this.ValidateOrCreateThreadType<ChatClientAgentThread>(thread, () => new());
+
+        // Add any existing messages from the thread to the messages to be sent to the chat client.
+        List<ChatMessage> threadMessages = [];
+        if (chatClientThread is IMessagesRetrievableThread messagesRetrievableThread)
+        {
+            await foreach (ChatMessage message in messagesRetrievableThread.GetMessagesAsync(cancellationToken).ConfigureAwait(false))
+            {
+                threadMessages.Add(message);
+            }
+        }
+
+        // Update the messages with agent instructions.
+        this.UpdateThreadMessagesWithAgentInstructions(threadMessages, options);
+
+        // Add the input messages to the end of thread messages.
+        threadMessages.AddRange(inputMessages);
+
+        return (chatClientThread, chatOptions, threadMessages);
+    }
 
     private void UpdateThreadMessagesWithAgentInstructions(List<ChatMessage> threadMessages, AgentRunOptions? options)
     {
@@ -147,5 +193,6 @@ public sealed class ChatClientAgent : Agent
         }
     }
 
+    private string GetAgentName() => this.Name ?? "UnnamedAgent";
     #endregion
 }
