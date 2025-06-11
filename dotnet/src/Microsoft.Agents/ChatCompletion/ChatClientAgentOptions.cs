@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Microsoft.Extensions.AI;
+
 namespace Microsoft.Agents;
 
 /// <summary>
@@ -30,4 +32,11 @@ public class ChatClientAgentOptions
     /// Gets or sets the agent description.
     /// </summary>
     public string? Description { get; set; }
+
+    /// <summary>
+    /// Gets or sets the default thread storage location to use for threads created by the agent
+    /// if it cannot be determined from the provided <see cref="IChatClient"/> metadata.
+    /// </summary>
+    /// <value>Defaults to <see cref="ChatClientAgentThreadStorageLocation.LocalInMemory"/> if not set.</value>
+    public ChatClientAgentThreadStorageLocation? DefaultThreadStorageLocation { get; set; }
 }

@@ -75,7 +75,7 @@ public sealed class ChatClientAgent : Agent
         // Retrieve chat options from the provided AgentRunOptions if available.
         ChatOptions? chatOptions = (options as ChatClientAgentRunOptions)?.ChatOptions;
 
-        var chatClientThread = this.ValidateOrCreateThreadType<ChatClientAgentThread>(thread, () => new());
+        var chatClientThread = this.ValidateOrCreateThreadType<ChatClientAgentThread>(thread, this.GetNewChatClientAgentThread);
 
         // Add any existing messages from the thread to the messages to be sent to the chat client.
         List<ChatMessage> threadMessages = [];
@@ -98,7 +98,27 @@ public sealed class ChatClientAgent : Agent
 
         this._logger.LogAgentChatClientInvokingAgent(nameof(RunAsync), this.Id, agentName, serviceType);
 
+        // If the chat client thread contents is stored server side, we should pass the thread id
+        // so that the service can continue our thread.
+        if (chatClientThread.StorageLocation == ChatClientAgentThreadStorageLocation.InService && !string.IsNullOrWhiteSpace(chatClientThread.Id))
+        {
+            chatOptions = chatOptions ?? new ChatOptions();
+            chatOptions.ConversationId = chatClientThread.Id;
+        }
+
         ChatResponse chatResponse = await this.ChatClient.GetResponseAsync(threadMessages, chatOptions, cancellationToken).ConfigureAwait(false);
+
+        // If we got a conversation id back from the chat client, it means that the service supports server side thread storage
+        // so we should capture the id and update the thread with the new id.
+        if (chatClientThread.StorageLocation == ChatClientAgentThreadStorageLocation.InService)
+        {
+            if (!string.IsNullOrWhiteSpace(chatResponse.ConversationId))
+            {
+                throw new InvalidOperationException("Service did not return a valid conversation id when using a service managed thread.");
+            }
+
+            chatClientThread.Id = chatResponse.ConversationId;
+        }
 
         this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, agentName, serviceType, messages.Count);
 
@@ -130,9 +150,12 @@ public sealed class ChatClientAgent : Agent
     }
 
     /// <inheritdoc/>
-    public override AgentThread GetNewThread() => new ChatClientAgentThread();
+    public override AgentThread GetNewThread() => this.GetNewChatClientAgentThread();
 
     #region Private
+
+    // TODO: Use metadata from IChatClient to determine the right storage location.
+    private ChatClientAgentThread GetNewChatClientAgentThread() => new(this._agentOptions?.DefaultThreadStorageLocation ?? ChatClientAgentThreadStorageLocation.LocalInMemory);
 
     private void UpdateThreadMessagesWithAgentInstructions(List<ChatMessage> threadMessages, AgentRunOptions? options)
     {

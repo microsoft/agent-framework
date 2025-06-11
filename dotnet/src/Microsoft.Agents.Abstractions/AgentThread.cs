@@ -17,6 +17,11 @@ public class AgentThread
     /// <summary>
     /// Gets or sets the id of the current thread.
     /// </summary>
+    /// <remarks>
+    /// This id may be null if the thread has no id, or
+    /// if it represents a service-owned thread but the service
+    /// has not yet been called to create the thread.
+    /// </remarks>
     public string? Id { get; set; }
 
     /// <summary>
