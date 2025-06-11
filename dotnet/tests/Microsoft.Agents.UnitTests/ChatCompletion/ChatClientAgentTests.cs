@@ -190,10 +190,9 @@ public class ChatClientAgentTests
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
         ChatClientAgent agent = new(mockService.Object, new() { Instructions = "test instructions" });
-        var runOptions = new ChatClientAgentRunOptions { ChatOptions = chatOptions };
 
         // Act
-        await agent.RunAsync([new(ChatRole.User, "test")], options: runOptions);
+        await agent.RunAsync([new(ChatRole.User, "test")], chatOptions: chatOptions);
 
         // Assert
         mockService.Verify(

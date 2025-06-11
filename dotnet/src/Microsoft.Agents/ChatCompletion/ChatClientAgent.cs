@@ -13,7 +13,7 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents;
 
 /// <summary>
-/// Initializes a new instance of the <see cref="ChatClientAgent"/> class.
+/// Represents an agent that can be invoked using a chat client.
 /// </summary>
 public sealed class ChatClientAgent : Agent
 {
@@ -72,14 +72,12 @@ public sealed class ChatClientAgent : Agent
     {
         Throw.IfNull(messages);
 
-        ChatOptions? chatOptions = null;
-        if (options is ChatClientAgentRunOptions chatClientAgentRunOptions)
-        {
-            chatOptions = chatClientAgentRunOptions.ChatOptions;
-        }
+        // Retrieve chat options from the provided AgentRunOptions if available.
+        ChatOptions? chatOptions = (options as ChatClientAgentRunOptions)?.ChatOptions;
 
         var chatClientThread = this.ValidateOrCreateThreadType<ChatClientAgentThread>(thread, () => new());
 
+        // Add any existing messages from the thread to the messages to be sent to the chat client.
         List<ChatMessage> threadMessages = [];
         if (chatClientThread is IMessagesRetrievableThread messagesRetrievableThread)
         {
@@ -89,31 +87,32 @@ public sealed class ChatClientAgent : Agent
             }
         }
 
+        // Append to the existing thread messages the messages that were passed in to this call.
         threadMessages.AddRange(messages);
 
-        List<ChatMessage> chatMessages = await this.GetMessagesWithAgentInstructionsAsync(threadMessages, options, cancellationToken).ConfigureAwait(false);
+        // Update the messages with agent instructions.
+        this.UpdateThreadMessagesWithAgentInstructions(threadMessages, options);
 
         var agentName = this.Name ?? "UnnamedAgent";
         Type serviceType = this.ChatClient.GetType();
 
         this._logger.LogAgentChatClientInvokingAgent(nameof(RunAsync), this.Id, agentName, serviceType);
 
-        ChatResponse chatResponse =
-            await this.ChatClient.GetResponseAsync(
-                chatMessages,
-                chatOptions,
-                cancellationToken).ConfigureAwait(false);
+        ChatResponse chatResponse = await this.ChatClient.GetResponseAsync(threadMessages, chatOptions, cancellationToken).ConfigureAwait(false);
 
-        // Need to add the messages... 
+        this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, agentName, serviceType, messages.Count);
+
+        // Only notify the thread of new messages if the chatResponse was successful to avoid inconsistent messages state in the thread.
         await this.NotifyThreadOfNewMessagesAsync(chatClientThread, messages, cancellationToken).ConfigureAwait(false);
 
+        // Ensure that the author name is set for each message in the response.
         foreach (ChatMessage chatResponseMessage in chatResponse.Messages)
         {
             chatResponseMessage.AuthorName ??= agentName;
         }
-        var chatResponseMessages = chatResponse.Messages.ToArray();
 
-        this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, agentName, serviceType, messages.Count);
+        // Convert the chat response messages to a valid IReadOnlyCollection for notification signatures below.
+        var chatResponseMessages = chatResponse.Messages.ToArray();
 
         await this.NotifyThreadOfNewMessagesAsync(chatClientThread, chatResponseMessages, cancellationToken).ConfigureAwait(false);
         if (options?.OnIntermediateMessages is not null)
@@ -135,23 +134,17 @@ public sealed class ChatClientAgent : Agent
 
     #region Private
 
-    private Task<List<ChatMessage>> GetMessagesWithAgentInstructionsAsync(IReadOnlyCollection<ChatMessage> originalChatMessages, AgentRunOptions? options, CancellationToken cancellationToken)
+    private void UpdateThreadMessagesWithAgentInstructions(List<ChatMessage> threadMessages, AgentRunOptions? options)
     {
-        List<ChatMessage> instructedChatMessages = [];
+        if (!string.IsNullOrWhiteSpace(options?.AdditionalInstructions))
+        {
+            threadMessages.Insert(0, new(this.InstructionsRole, options?.AdditionalInstructions) { AuthorName = this.Name });
+        }
 
         if (!string.IsNullOrWhiteSpace(this.Instructions))
         {
-            instructedChatMessages.Add(new(this.InstructionsRole, this.Instructions) { AuthorName = this.Name });
+            threadMessages.Insert(0, new(this.InstructionsRole, this.Instructions) { AuthorName = this.Name });
         }
-
-        if (!string.IsNullOrWhiteSpace(options?.AdditionalInstructions))
-        {
-            instructedChatMessages.Add(new(this.InstructionsRole, options?.AdditionalInstructions) { AuthorName = this.Name });
-        }
-
-        instructedChatMessages.AddRange(originalChatMessages);
-
-        return Task.FromResult(instructedChatMessages);
     }
 
     #endregion
