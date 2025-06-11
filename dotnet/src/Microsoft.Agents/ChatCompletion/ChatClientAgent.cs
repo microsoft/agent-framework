@@ -78,7 +78,7 @@ public sealed class ChatClientAgent : Agent
             chatOptions = chatClientAgentRunOptions.ChatOptions;
         }
 
-        var chatClientThread = await this.ValidateOrCreateThreadTypeAsync(thread, messages, () => new ChatClientAgentThread(), cancellationToken).ConfigureAwait(false);
+        var chatClientThread = this.ValidateOrCreateThreadType<ChatClientAgentThread>(thread, () => new());
 
         List<ChatMessage> threadMessages = [];
         if (chatClientThread is IMessagesRetrievableThread messagesRetrievableThread)
@@ -88,6 +88,8 @@ public sealed class ChatClientAgent : Agent
                 threadMessages.Add(message);
             }
         }
+
+        threadMessages.AddRange(messages);
 
         List<ChatMessage> chatMessages = await this.GetMessagesWithAgentInstructionsAsync(threadMessages, options, cancellationToken).ConfigureAwait(false);
 
@@ -101,6 +103,9 @@ public sealed class ChatClientAgent : Agent
                 chatMessages,
                 chatOptions,
                 cancellationToken).ConfigureAwait(false);
+
+        // Need to add the messages... 
+        await this.NotifyThreadOfNewMessagesAsync(chatClientThread, messages, cancellationToken).ConfigureAwait(false);
 
         foreach (ChatMessage chatResponseMessage in chatResponse.Messages)
         {
@@ -130,15 +135,6 @@ public sealed class ChatClientAgent : Agent
 
     #region Private
 
-    private async Task<TThreadType> ValidateOrCreateThreadTypeAsync<TThreadType>(AgentThread? thread, IReadOnlyCollection<ChatMessage> messages, Func<TThreadType> constructThread, CancellationToken cancellationToken)
-        where TThreadType : AgentThread
-    {
-        var chatClientThread = this.ValidateOrCreateThreadType<TThreadType>(thread, constructThread);
-
-        await this.NotifyThreadOfNewMessagesAsync(chatClientThread, messages, cancellationToken).ConfigureAwait(false);
-
-        return chatClientThread;
-    }
     private Task<List<ChatMessage>> GetMessagesWithAgentInstructionsAsync(IReadOnlyCollection<ChatMessage> originalChatMessages, AgentRunOptions? options, CancellationToken cancellationToken)
     {
         List<ChatMessage> instructedChatMessages = [];
