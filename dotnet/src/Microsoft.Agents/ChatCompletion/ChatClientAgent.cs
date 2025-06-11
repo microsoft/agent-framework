@@ -112,7 +112,7 @@ public sealed class ChatClientAgent : Agent
         // so we should capture the id and update the thread with the new id.
         if (chatClientThread.StorageLocation == ChatClientAgentThreadStorageLocation.InService)
         {
-            if (!string.IsNullOrWhiteSpace(chatResponse.ConversationId))
+            if (string.IsNullOrWhiteSpace(chatResponse.ConversationId))
             {
                 throw new InvalidOperationException("Service did not return a valid conversation id when using a service managed thread.");
             }

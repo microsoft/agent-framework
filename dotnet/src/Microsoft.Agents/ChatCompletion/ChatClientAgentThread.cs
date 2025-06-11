@@ -32,7 +32,7 @@ public sealed class ChatClientAgentThread : AgentThread, IMessagesRetrievableThr
     /// </summary>
     /// <param name="id">The id of an existing server side thread to continue.</param>
     /// <remarks>
-    /// Ths constructor creates a <see cref="ChatClientAgentThread"/> that supports in-service message storage.
+    /// This constructor creates a <see cref="ChatClientAgentThread"/> that supports in-service message storage.
     /// </remarks>
     public ChatClientAgentThread(string id)
     {
@@ -47,7 +47,7 @@ public sealed class ChatClientAgentThread : AgentThread, IMessagesRetrievableThr
     /// </summary>
     /// <param name="messages">A set of initial messages to seed the thread with.</param>
     /// <remarks>
-    /// Ths constructor creates a <see cref="ChatClientAgentThread"/> that supports local in-memory message storage.
+    /// This constructor creates a <see cref="ChatClientAgentThread"/> that supports local in-memory message storage.
     /// </remarks>
     public ChatClientAgentThread(IEnumerable<ChatMessage> messages)
     {
