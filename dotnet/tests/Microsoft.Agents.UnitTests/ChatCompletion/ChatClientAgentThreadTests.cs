@@ -624,7 +624,7 @@ public class ChatClientAgentThreadTests
         // Create an async enumerable that yields some updates then throws
         static async IAsyncEnumerable<ChatResponseUpdate> GetUpdatesWithExceptionAsync()
         {
-            await ValueTask.CompletedTask; // Simulate async operation
+            await Task.CompletedTask; // Simulate async operation
             throw new InvalidOperationException("Streaming failed after partial response");
             yield break;
         }
