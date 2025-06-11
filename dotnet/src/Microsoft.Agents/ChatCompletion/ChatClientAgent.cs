@@ -85,7 +85,7 @@ public sealed class ChatClientAgent : Agent
         }
 
         // Convert the chat response messages to a valid IReadOnlyCollection for notification signatures below.
-        var chatResponseMessages = chatResponse.Messages.ToArray();
+        var chatResponseMessages = chatResponse.Messages as IReadOnlyCollection<ChatMessage> ?? chatResponse.Messages.ToArray();
 
         await this.NotifyThreadOfNewMessagesAsync(chatClientThread, chatResponseMessages, cancellationToken).ConfigureAwait(false);
         if (options?.OnIntermediateMessages is not null)
@@ -113,20 +113,40 @@ public sealed class ChatClientAgent : Agent
 
         this._logger.LogAgentChatClientInvokingAgent(nameof(RunStreamingAsync), this.Id, agentName, this._chatClientType);
 
-        var responseUpdatesEnumerable = this.ChatClient.GetStreamingResponseAsync(threadMessages, chatOptions, cancellationToken);
+        // Using the enumerator to ensure we consider the case where no updates are returned for notification.
+        var responseUpdatesEnumerator = this.ChatClient.GetStreamingResponseAsync(threadMessages, chatOptions, cancellationToken).GetAsyncEnumerator(cancellationToken);
 
         this._logger.LogAgentChatClientInvokedStreamingAgent(nameof(RunStreamingAsync), this.Id, agentName, this._chatClientType);
 
         List<ChatResponseUpdate> responseUpdates = [];
-        await foreach (ChatResponseUpdate update in responseUpdatesEnumerable.ConfigureAwait(false))
+
+        // Ensure we start the streaming request
+        var hasUpdates = await responseUpdatesEnumerator.MoveNextAsync().ConfigureAwait(false);
+
+        // To avoid inconsistent state we only notify the thread of the input messages if not error occurs after the initial request.
+        await this.NotifyThreadOfNewMessagesAsync(chatClientThread, messages, cancellationToken).ConfigureAwait(false);
+
+        while (hasUpdates)
         {
-            responseUpdates.Add(update);
-            update.AuthorName ??= agentName;
-            yield return update;
+            var update = responseUpdatesEnumerator.Current;
+            if (update is not null)
+            {
+                responseUpdates.Add(update);
+                update.AuthorName ??= agentName;
+                yield return update;
+            }
+
+            hasUpdates = await responseUpdatesEnumerator.MoveNextAsync().ConfigureAwait(false);
         }
 
         var chatResponse = responseUpdates.ToChatResponse();
-        await this.NotifyThreadOfNewMessagesAsync(chatClientThread, [.. chatResponse.Messages], cancellationToken).ConfigureAwait(false);
+        var chatResponseMessages = chatResponse.Messages as IReadOnlyCollection<ChatMessage> ?? chatResponse.Messages.ToArray();
+
+        await this.NotifyThreadOfNewMessagesAsync(chatClientThread, chatResponseMessages, cancellationToken).ConfigureAwait(false);
+        if (options?.OnIntermediateMessages is not null)
+        {
+            await options.OnIntermediateMessages(chatResponseMessages).ConfigureAwait(false);
+        }
     }
 
     /// <inheritdoc/>
