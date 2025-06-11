@@ -99,11 +99,25 @@ public sealed class ChatClientAgent : Agent
         this._logger.LogAgentChatClientInvokingAgent(nameof(RunAsync), this.Id, agentName, serviceType);
 
         // If the chat client thread contents is stored server side, we should pass the thread id
-        // so that the service can continue our thread.
-        if (chatClientThread.StorageLocation == ChatClientAgentThreadStorageLocation.InService && !string.IsNullOrWhiteSpace(chatClientThread.Id))
+        // to the chat client so that the service can continue our thread.
+        if (chatClientThread.StorageLocation == ChatClientAgentThreadStorageLocation.InService)
         {
-            chatOptions = chatOptions ?? new ChatOptions();
-            chatOptions.ConversationId = chatClientThread.Id;
+            // If a user provided two different thread ids, via the thread object and options, we should throw
+            // since we don't know which one to use.
+            if (!string.IsNullOrWhiteSpace(chatClientThread.Id) && !string.IsNullOrWhiteSpace(chatOptions?.ConversationId) && chatClientThread.Id != chatOptions.ConversationId)
+            {
+                throw new InvalidOperationException(
+                    $"The {nameof(ChatOptions.ConversationId)} provided via {nameof(ChatOptions)} is different to the id of the provided {nameof(AgentThread)}. Only one thread id can be used for a run.");
+            }
+
+            var targetId = chatClientThread.Id ?? chatOptions?.ConversationId;
+
+            // Only clone and update ChatOptions if we have an id from the thread or options.
+            if (!string.IsNullOrWhiteSpace(targetId))
+            {
+                chatOptions = chatOptions is null ? new ChatOptions() : chatOptions.Clone();
+                chatOptions.ConversationId = targetId;
+            }
         }
 
         ChatResponse chatResponse = await this.ChatClient.GetResponseAsync(threadMessages, chatOptions, cancellationToken).ConfigureAwait(false);
