@@ -287,9 +287,9 @@ public class ChatClientAgentTests
         var callbackMessages = new List<ChatMessage>();
         var runOptions = new AgentRunOptions
         {
-            OnIntermediateMessage = msg =>
+            OnIntermediateMessages = messages =>
             {
-                callbackMessages.Add(msg);
+                callbackMessages.AddRange(messages);
                 return Task.CompletedTask;
             }
         };

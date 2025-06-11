@@ -17,7 +17,7 @@ public class AgentRunOptionsTests
         var options = new AgentRunOptions
         {
             AdditionalInstructions = "Test instructions",
-            OnIntermediateMessage = msg => Task.CompletedTask
+            OnIntermediateMessages = msg => Task.CompletedTask
         };
 
         // Act
@@ -25,7 +25,7 @@ public class AgentRunOptionsTests
 
         // Assert
         Assert.Equal(options.AdditionalInstructions, clone.AdditionalInstructions);
-        Assert.Equal(options.OnIntermediateMessage, clone.OnIntermediateMessage);
+        Assert.Equal(options.OnIntermediateMessages, clone.OnIntermediateMessages);
     }
 
     [Fact]

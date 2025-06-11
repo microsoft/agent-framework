@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -17,7 +18,7 @@ namespace Microsoft.Agents;
 public sealed class ChatClientAgent : Agent
 {
     private readonly ChatClientAgentOptions? _agentOptions;
-    private readonly ILoggerFactory _loggerFactory;
+    private readonly ILogger _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ChatClientAgent"/> class.
@@ -31,7 +32,7 @@ public sealed class ChatClientAgent : Agent
 
         this.ChatClient = chatClient.AsAgentInvokingChatClient();
         this._agentOptions = options;
-        this._loggerFactory = loggerFactory ?? chatClient.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance;
+        this._logger = (loggerFactory ?? chatClient.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance).CreateLogger<ChatClientAgent>();
     }
 
     /// <summary>
@@ -71,7 +72,6 @@ public sealed class ChatClientAgent : Agent
     {
         Throw.IfNull(messages);
 
-        ILogger logger = this._loggerFactory.CreateLogger<ChatClientAgent>();
         ChatOptions? chatOptions = null;
         if (options is ChatClientAgentRunOptions chatClientAgentRunOptions)
         {
@@ -83,7 +83,6 @@ public sealed class ChatClientAgent : Agent
         List<ChatMessage> threadMessages = [];
         if (chatClientThread is IMessagesRetrievableThread messagesRetrievableThread)
         {
-            // Retrieve messages from the thread if it supports it
             await foreach (ChatMessage message in messagesRetrievableThread.GetMessagesAsync(cancellationToken).ConfigureAwait(false))
             {
                 threadMessages.Add(message);
@@ -92,10 +91,10 @@ public sealed class ChatClientAgent : Agent
 
         List<ChatMessage> chatMessages = await this.GetMessagesWithAgentInstructionsAsync(threadMessages, options, cancellationToken).ConfigureAwait(false);
 
-        var agentName = this.GetDisplayName();
+        var agentName = this.Name ?? "UnnamedAgent";
         Type serviceType = this.ChatClient.GetType();
 
-        logger.LogAgentChatClientInvokingAgent(nameof(RunAsync), this.Id, agentName, serviceType);
+        this._logger.LogAgentChatClientInvokingAgent(nameof(RunAsync), this.Id, agentName, serviceType);
 
         ChatResponse chatResponse =
             await this.ChatClient.GetResponseAsync(
@@ -103,24 +102,18 @@ public sealed class ChatClientAgent : Agent
                 chatOptions,
                 cancellationToken).ConfigureAwait(false);
 
-        logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, agentName, serviceType, messages.Count);
-
-        // Capture mutated messages related function calling / tools
-        foreach (ChatMessage message in chatResponse.Messages)
+        foreach (ChatMessage chatResponseMessage in chatResponse.Messages)
         {
-            message.AuthorName = this.Name;
-            chatMessages.Add(message);
-
-            await this.NotifyThreadOfNewMessagesAsync(chatClientThread, [message], cancellationToken).ConfigureAwait(false);
-            if (options?.OnIntermediateMessage is not null)
-            {
-                await options.OnIntermediateMessage(message).ConfigureAwait(false);
-            }
+            chatResponseMessage.AuthorName ??= agentName;
         }
+        var chatResponseMessages = chatResponse.Messages.ToArray();
 
-        foreach (ChatMessage message in chatMessages)
+        this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, agentName, serviceType, messages.Count);
+
+        await this.NotifyThreadOfNewMessagesAsync(chatClientThread, chatResponseMessages, cancellationToken).ConfigureAwait(false);
+        if (options?.OnIntermediateMessages is not null)
         {
-            message.AuthorName = this.Name;
+            await options.OnIntermediateMessages(chatResponseMessages).ConfigureAwait(false);
         }
 
         return chatResponse;

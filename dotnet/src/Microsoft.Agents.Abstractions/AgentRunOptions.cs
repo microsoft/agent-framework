@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
@@ -28,7 +29,7 @@ public class AgentRunOptions
         Throw.IfNull(options);
 
         this.AdditionalInstructions = options.AdditionalInstructions;
-        this.OnIntermediateMessage = options.OnIntermediateMessage;
+        this.OnIntermediateMessages = options.OnIntermediateMessages;
     }
 
     /// <summary>
@@ -46,5 +47,5 @@ public class AgentRunOptions
     /// when invoking the agent with streaming.
     /// </para>
     /// </remarks>
-    public Func<ChatMessage, Task>? OnIntermediateMessage { get; set; } = null;
+    public Func<IReadOnlyCollection<ChatMessage>, Task>? OnIntermediateMessages { get; set; } = null;
 }
