@@ -9,12 +9,12 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents;
 
 /// <summary>
-/// Represents an agent that can be invoked using a chat client.
+/// Extensions for <see cref="ChatClientAgent"/> agent types.
 /// </summary>
 public static class ChatClientAgentExtensions
 {
     /// <summary>
-    /// Convenience method to run the agent with ChatOptions.
+    /// Allow running a chat client agent with a <see cref="ChatOptions"/> configuration.
     /// </summary>
     /// <param name="agent">Target agent to run.</param>
     /// <param name="messages">Messages to send to the agent.</param>
@@ -34,11 +34,6 @@ public static class ChatClientAgentExtensions
         Throw.IfNull(agent);
         Throw.IfNull(messages);
 
-        if (chatOptions is not null)
-        {
-            agentOptions = new ChatClientAgentRunOptions { ChatOptions = chatOptions };
-        }
-
-        return agent.RunAsync(messages, thread, agentOptions, cancellationToken);
+        return agent.RunAsync(messages, thread, new ChatClientAgentRunOptions(agentOptions, chatOptions), cancellationToken);
     }
 }
