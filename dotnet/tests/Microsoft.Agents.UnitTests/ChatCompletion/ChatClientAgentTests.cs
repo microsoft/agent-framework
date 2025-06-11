@@ -38,7 +38,6 @@ public class ChatClientAgentTests
         Assert.Equal("test instructions", agent.Instructions);
         Assert.NotNull(agent.ChatClient);
         Assert.Equal("AgentInvokingChatClient", agent.ChatClient.GetType().Name);
-        Assert.Equal(ChatRole.System, agent.InstructionsRole);
     }
 
     /// <summary>
@@ -529,20 +528,6 @@ public class ChatClientAgentTests
 
         // Act & Assert
         Assert.Null(agent.Instructions);
-    }
-
-    /// <summary>
-    /// Verify that InstructionsRole property has default value of System.
-    /// </summary>
-    [Fact]
-    public void InstructionsRoleHasDefaultValueOfSystem()
-    {
-        // Arrange
-        var chatClient = new Mock<IChatClient>().Object;
-        ChatClientAgent agent = new(chatClient, new());
-
-        // Act & Assert
-        Assert.Equal(ChatRole.System, agent.InstructionsRole);
     }
 
     #endregion

@@ -43,14 +43,6 @@ public sealed class ChatClientAgent : Agent
     /// </summary>
     public IChatClient ChatClient { get; }
 
-    /// <summary>
-    /// Gets the role used for agent instruction messages. Defaults to <see cref="ChatRole.System"/>.
-    /// </summary>
-    /// <remarks>
-    /// Depending on the AI model used, some APIs may require the instructions message role to be different from <see cref="ChatRole.System"/>.
-    /// </remarks>
-    public ChatRole InstructionsRole => this._agentOptions?.InstructionsRole ?? ChatRole.System;
-
     /// <inheritdoc/>
     public override string Id => this._agentOptions?.Id ?? base.Id;
 
@@ -184,12 +176,12 @@ public sealed class ChatClientAgent : Agent
     {
         if (!string.IsNullOrWhiteSpace(options?.AdditionalInstructions))
         {
-            threadMessages.Insert(0, new(this.InstructionsRole, options?.AdditionalInstructions) { AuthorName = this.Name });
+            threadMessages.Insert(0, new(ChatRole.System, options?.AdditionalInstructions) { AuthorName = this.Name });
         }
 
         if (!string.IsNullOrWhiteSpace(this.Instructions))
         {
-            threadMessages.Insert(0, new(this.InstructionsRole, this.Instructions) { AuthorName = this.Name });
+            threadMessages.Insert(0, new(ChatRole.System, this.Instructions) { AuthorName = this.Name });
         }
     }
 
