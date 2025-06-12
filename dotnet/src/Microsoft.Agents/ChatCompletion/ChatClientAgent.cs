@@ -71,44 +71,13 @@ public sealed class ChatClientAgent : Agent
 
         this._logger.LogAgentChatClientInvokingAgent(nameof(RunAsync), this.Id, agentName, this._chatClientType);
 
-        // If the chat client thread contents is stored server side, we should pass the thread id
-        // to the chat client so that the service can continue our thread.
-        if (chatClientThread.StorageLocation == ChatClientAgentThreadStorageLocation.InService)
-        {
-            // If a user provided two different thread ids, via the thread object and options, we should throw
-            // since we don't know which one to use.
-            if (!string.IsNullOrWhiteSpace(chatClientThread.Id) && !string.IsNullOrWhiteSpace(chatOptions?.ConversationId) && chatClientThread.Id != chatOptions.ConversationId)
-            {
-                throw new InvalidOperationException(
-                    $"The {nameof(ChatOptions.ConversationId)} provided via {nameof(ChatOptions)} is different to the id of the provided {nameof(AgentThread)}. Only one thread id can be used for a run.");
-            }
-
-            var targetId = chatClientThread.Id ?? chatOptions?.ConversationId;
-
-            // Only clone and update ChatOptions if we have an id from the thread or options.
-            if (!string.IsNullOrWhiteSpace(targetId))
-            {
-                chatOptions = chatOptions is null ? new ChatOptions() : chatOptions.Clone();
-                chatOptions.ConversationId = targetId;
-            }
-        }
-
         ChatResponse chatResponse = await this.ChatClient.GetResponseAsync(threadMessages, chatOptions, cancellationToken).ConfigureAwait(false);
 
-        // If we got a conversation id back from the chat client, it means that the service supports server side thread storage
-        // so we should capture the id and update the thread with the new id.
-        if (chatClientThread.StorageLocation == ChatClientAgentThreadStorageLocation.InService)
-        {
-            if (string.IsNullOrWhiteSpace(chatResponse.ConversationId))
-            {
-                throw new InvalidOperationException("Service did not return a valid conversation id when using a service managed thread.");
-            }
-
-            chatClientThread.Id = chatResponse.ConversationId;
-        }
-
-        this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, agentName, serviceType, messages.Count);
         this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, agentName, this._chatClientType, messages.Count);
+
+        // We can derive the type of supported thread from whether we have a conversation id,
+        // so let's update it and set the conversation id for the service thread case.
+        this.UpdateThreadWithTypeAndConversationId(chatClientThread, chatResponse.ConversationId);
 
         // Only notify the thread of new messages if the chatResponse was successful to avoid inconsistent messages state in the thread.
         await this.NotifyThreadOfNewMessagesAsync(chatClientThread, messages, cancellationToken).ConfigureAwait(false);
@@ -227,7 +196,45 @@ public sealed class ChatClientAgent : Agent
         // Add the input messages to the end of thread messages.
         threadMessages.AddRange(inputMessages);
 
+        // If a user provided two different thread ids, via the thread object and options, we should throw
+        // since we don't know which one to use.
+        if (!string.IsNullOrWhiteSpace(chatClientThread.Id) && !string.IsNullOrWhiteSpace(chatOptions?.ConversationId) && chatClientThread.Id != chatOptions.ConversationId)
+        {
+            throw new InvalidOperationException(
+                $"The {nameof(ChatOptions.ConversationId)} provided via {nameof(ChatOptions)} is different to the id of the provided {nameof(AgentThread)}. Only one thread id can be used for a run.");
+        }
+
+        // Only clone and update ChatOptions if we have an id on the thread and we don't have the same one already in ChatOptions.
+        if (!string.IsNullOrWhiteSpace(chatClientThread.Id) && chatClientThread.Id != chatOptions?.ConversationId)
+        {
+            chatOptions = chatOptions is null ? new ChatOptions() : chatOptions.Clone();
+            chatOptions.ConversationId = chatClientThread.Id;
+        }
+
         return (chatClientThread, chatOptions, threadMessages);
+    }
+
+    private void UpdateThreadWithTypeAndConversationId(ChatClientAgentThread chatClientThread, string? responseConversationId)
+    {
+        // Set the thread's storage location, the first time that we use it.
+        if (chatClientThread.StorageLocation is null)
+        {
+            chatClientThread.StorageLocation = string.IsNullOrWhiteSpace(responseConversationId)
+                ? ChatClientAgentThreadStorageLocation.InService
+                : ChatClientAgentThreadStorageLocation.LocalInMemory;
+        }
+
+        // If we got a conversation id back from the chat client, it means that the service supports server side thread storage
+        // so we should capture the id and update the thread with the new id.
+        if (chatClientThread.StorageLocation == ChatClientAgentThreadStorageLocation.InService)
+        {
+            if (string.IsNullOrWhiteSpace(responseConversationId))
+            {
+                throw new InvalidOperationException("Service did not return a valid conversation id when using a service managed thread.");
+            }
+
+            chatClientThread.Id = responseConversationId;
+        }
     }
 
     private void UpdateThreadMessagesWithAgentInstructions(List<ChatMessage> threadMessages, AgentRunOptions? options)

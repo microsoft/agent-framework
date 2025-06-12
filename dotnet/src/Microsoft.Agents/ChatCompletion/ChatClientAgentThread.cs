@@ -15,7 +15,6 @@ namespace Microsoft.Agents;
 /// </summary>
 public sealed class ChatClientAgentThread : AgentThread, IMessagesRetrievableThread
 {
-    private readonly ChatClientAgentThreadStorageLocation _storageLocation;
     private readonly List<ChatMessage> _chatMessages = [];
 
     /// <summary>
@@ -24,7 +23,7 @@ public sealed class ChatClientAgentThread : AgentThread, IMessagesRetrievableThr
     /// <param name="storageLocation">The storage location for the thread messages. Defaults to <see cref="ChatClientAgentThreadStorageLocation.LocalInMemory"/> if not specified.</param>
     public ChatClientAgentThread(ChatClientAgentThreadStorageLocation storageLocation = ChatClientAgentThreadStorageLocation.LocalInMemory)
     {
-        this._storageLocation = storageLocation;
+        this.StorageLocation = storageLocation;
     }
 
     /// <summary>
@@ -39,7 +38,7 @@ public sealed class ChatClientAgentThread : AgentThread, IMessagesRetrievableThr
         Throw.IfNullOrWhitespace(id);
 
         this.Id = id;
-        this._storageLocation = ChatClientAgentThreadStorageLocation.InService;
+        this.StorageLocation = ChatClientAgentThreadStorageLocation.InService;
     }
 
     /// <summary>
@@ -54,13 +53,13 @@ public sealed class ChatClientAgentThread : AgentThread, IMessagesRetrievableThr
         Throw.IfNull(messages);
 
         this._chatMessages.AddRange(messages);
-        this._storageLocation = ChatClientAgentThreadStorageLocation.LocalInMemory;
+        this.StorageLocation = ChatClientAgentThreadStorageLocation.LocalInMemory;
     }
 
     /// <summary>
     /// Gets the location of the thread contents.
     /// </summary>
-    public ChatClientAgentThreadStorageLocation StorageLocation => this._storageLocation;
+    public ChatClientAgentThreadStorageLocation? StorageLocation { get; internal set; }
 
 #pragma warning disable CS1998 // Async method lacks 'await' operators and will run synchronously
     /// <inheritdoc/>
