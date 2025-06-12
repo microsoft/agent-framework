@@ -154,12 +154,9 @@ public sealed class ChatClientAgent : Agent
     }
 
     /// <inheritdoc/>
-    public override AgentThread GetNewThread() => this.GetNewChatClientAgentThread();
+    public override AgentThread GetNewThread() => new ChatClientAgentThread();
 
     #region Private
-
-    // TODO: Use metadata from IChatClient to determine the right storage location.
-    private ChatClientAgentThread GetNewChatClientAgentThread() => new(this._agentOptions?.DefaultThreadStorageLocation ?? ChatClientAgentThreadStorageLocation.LocalInMemory);
 
     /// <summary>
     /// Prepares the thread, chat options, and messages for agent execution.

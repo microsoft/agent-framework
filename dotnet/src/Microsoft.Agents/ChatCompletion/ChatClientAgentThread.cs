@@ -20,10 +20,8 @@ public sealed class ChatClientAgentThread : AgentThread, IMessagesRetrievableThr
     /// <summary>
     /// Initializes a new instance of the <see cref="ChatClientAgentThread"/> class.
     /// </summary>
-    /// <param name="storageLocation">The storage location for the thread messages. Defaults to <see cref="ChatClientAgentThreadStorageLocation.LocalInMemory"/> if not specified.</param>
-    public ChatClientAgentThread(ChatClientAgentThreadStorageLocation storageLocation = ChatClientAgentThreadStorageLocation.LocalInMemory)
+    public ChatClientAgentThread()
     {
-        this.StorageLocation = storageLocation;
     }
 
     /// <summary>
