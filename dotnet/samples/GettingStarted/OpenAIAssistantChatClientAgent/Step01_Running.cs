@@ -18,9 +18,6 @@ namespace GettingStarted.OpenAIAssistantChatClientAgent;
 /// </remarks>
 public sealed class Step01_Running : AgentSample, IAsyncLifetime
 {
-    private const string ParrotName = "Parrot";
-    private const string ParrotInstructions = "Repeat the user message in the voice of a pirate and then end with a parrot sound.";
-
     private const string JokerName = "Joker";
     private const string JokerInstructions = "You are good at telling jokes.";
 
@@ -59,12 +56,7 @@ public sealed class Step01_Running : AgentSample, IAsyncLifetime
         using var chatClient = this._assistantClient.AsIChatClient(this._assistantId!);
 
         // Define the agent
-        ChatClientAgent agent =
-            new(chatClient, new()
-            {
-                Name = JokerName,
-                Instructions = JokerInstructions,
-            });
+        ChatClientAgent agent = new(chatClient);
 
         // Start a new thread for the agent conversation.
         AgentThread thread = agent.GetNewThread();
@@ -98,12 +90,7 @@ public sealed class Step01_Running : AgentSample, IAsyncLifetime
         using var chatClient = this._assistantClient.AsIChatClient(this._assistantId!);
 
         // Define the agent
-        ChatClientAgent agent =
-            new(chatClient, new()
-            {
-                Name = ParrotName,
-                Instructions = ParrotInstructions,
-            });
+        ChatClientAgent agent = new(chatClient);
 
         // Start a new thread for the agent conversation.
         AgentThread thread = agent.GetNewThread();
