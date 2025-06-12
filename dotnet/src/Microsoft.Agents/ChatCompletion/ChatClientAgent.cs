@@ -123,7 +123,7 @@ public sealed class ChatClientAgent : Agent
         // Ensure we start the streaming request
         var hasUpdates = await responseUpdatesEnumerator.MoveNextAsync().ConfigureAwait(false);
 
-        // To avoid inconsistent state we only notify the thread of the input messages if not error occurs after the initial request.
+        // To avoid inconsistent state we only notify the thread of the input messages if no error occurs after the initial request.
         await this.NotifyThreadOfNewMessagesAsync(chatClientThread, messages, cancellationToken).ConfigureAwait(false);
 
         while (hasUpdates)
