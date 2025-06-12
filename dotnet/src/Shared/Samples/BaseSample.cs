@@ -1,13 +1,13 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.IO;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using Xunit.Abstractions;
+using Microsoft.Shared.Samples;
+using OpenAI;
 
 namespace Microsoft.Shared.SampleUtilities;
 
@@ -22,7 +22,7 @@ namespace Microsoft.Shared.SampleUtilities;
 /// the <see cref="Output"/> property for writing test output and the <see cref="LoggerFactory"/> property for creating
 /// loggers.
 /// </remarks>
-public abstract class BaseTest : TextWriter
+public abstract class BaseSample : TextWriter
 {
     /// <summary>
     /// Gets the output helper used for logging test results and diagnostic messages.
@@ -37,13 +37,13 @@ public abstract class BaseTest : TextWriter
     /// <summary>
     /// This property makes the samples Console friendly. Allowing them to be copied and pasted into a Console app, with minimal changes.
     /// </summary>
-    public BaseTest Console => this;
+    public BaseSample Console => this;
 
     /// <inheritdoc />
     public override Encoding Encoding => System.Text.Encoding.UTF8;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="BaseTest"/> class, setting up logging, configuration, and
+    /// Initializes a new instance of the <see cref="BaseSample"/> class, setting up logging, configuration, and
     /// optionally redirecting <see cref="System.Console"/> output to the test output.
     /// </summary>
     /// <remarks>This constructor initializes logging using an <see cref="XunitLogger"/> and sets up
@@ -55,7 +55,7 @@ public abstract class BaseTest : TextWriter
     /// <param name="redirectSystemConsoleOutput">
     /// A value indicating whether <see cref="System.Console"/> output should be redirected to the test output. <see langword="true"/> to redirect; otherwise, <see langword="false"/>.
     /// </param>
-    protected BaseTest(ITestOutputHelper output, bool redirectSystemConsoleOutput = true)
+    protected BaseSample(ITestOutputHelper output, bool redirectSystemConsoleOutput = true)
     {
         this.Output = output;
         this.LoggerFactory = new XunitLogger(output);
@@ -194,4 +194,47 @@ public abstract class BaseTest : TextWriter
     /// </remarks>
     public override void Write(char[]? buffer)
         => this.Output.WriteLine(new string(buffer));
+
+    /// <summary>
+    /// Specifies the type of chat client used for interacting with AI services.
+    /// </summary>
+    /// <remarks>This enumeration is used to differentiate between various AI service providers, such as
+    /// OpenAI and Azure OpenAI. It allows the caller to select the appropriate client type for their
+    /// application.</remarks>
+    public enum ChatClientType
+    {
+        /// <summary>Uses OpenAI's services.</summary>
+        OpenAI,
+
+        /// <summary>Uses Azure OpenAI services.</summary>
+        AzureOpenAI
+    }
+
+    /// <summary>
+    /// Retrieves an instance of an <see cref="IChatClient"/> based on the specified chat client type.
+    /// </summary>
+    /// <param name="chatClientType">The type of chat client to retrieve. Must be one of the defined values in <see cref="ChatClientType"/>.</param>
+    /// <returns>An instance of <see cref="IChatClient"/> corresponding to the specified <paramref name="chatClientType"/>.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown if the specified <paramref name="chatClientType"/> is not a recognized value.</exception>
+    protected IChatClient GetChatClient(ChatClientType chatClientType)
+    {
+        return chatClientType switch
+        {
+            ChatClientType.OpenAI => GetOpenAIChatClient(),
+            ChatClientType.AzureOpenAI => GetAzureOpenAIChatClient(),
+            _ => throw new ArgumentOutOfRangeException(nameof(chatClientType), chatClientType, null)
+        };
+    }
+
+    private IChatClient GetOpenAIChatClient()
+    {
+        return new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
+            .GetChatClient(TestConfiguration.OpenAI.ChatModelId)
+            .AsIChatClient();
+    }
+
+    private IChatClient GetAzureOpenAIChatClient()
+    {
+        throw new NotImplementedException();
+    }
 }

@@ -1,19 +1,16 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Threading.Tasks;
 using Microsoft.Agents;
-using Microsoft.Extensions.AI;
-using Microsoft.Shared.SampleUtilities;
-using OpenAI;
-using Xunit.Abstractions;
 
 namespace GettingStarted;
 
-#pragma warning disable  // Identifiers should not contain underscores
-
-/// <summary>TBD</summary>
-public sealed class Step01_Agent(ITestOutputHelper output) : BaseTest(output)
-#pragma warning restore CA1707 // Identifiers should not contain underscores
+/// <summary>
+/// Provides test methods to demonstrate the usage of chat agents with different interaction models.
+/// </summary>
+/// <remarks>This class contains examples of using <see cref="ChatClientAgent"/> to showcase scenarios with and without conversation history.
+/// Each test method demonstrates how to configure and interact with the agents, including handling user input and displaying responses.
+/// </remarks>
+public sealed class Step01_Invoking(ITestOutputHelper output) : BaseSample(output)
 {
     private const string ParrotName = "Parrot";
     private const string ParrotInstructions = "Repeat the user message in the voice of a pirate and then end with a parrot sound.";
@@ -26,9 +23,10 @@ public sealed class Step01_Agent(ITestOutputHelper output) : BaseTest(output)
     /// a unique interaction with no conversation history between them.
     /// </summary>
     [Fact]
-    public async Task UseChatClientAgentWithNoThread()
+    public async Task UsingAgentWithNoThread()
     {
-        using var chatClient = GetChatClient();
+        using var chatClient = base.GetChatClient(ChatClientType.OpenAI);
+
         // Define the agent
         ChatClientAgent agent =
             new(chatClient, new()
@@ -55,12 +53,12 @@ public sealed class Step01_Agent(ITestOutputHelper output) : BaseTest(output)
     }
 
     /// <summary>
-    /// Demonstrate the usage of <see cref="ChatCompletionAgent"/> where a conversation history is maintained.
+    /// Demonstrate the usage of <see cref="ChatClientAgent"/> where a conversation history is maintained.
     /// </summary>
     [Fact]
-    public async Task UseChatClientAgentWithConversationThread()
+    public async Task UsingAgentWithConversationThread()
     {
-        using var chatClient = GetChatClient();
+        using var chatClient = base.GetChatClient(ChatClientType.OpenAI);
 
         // Define the agent
         ChatClientAgent agent =
@@ -86,12 +84,5 @@ public sealed class Step01_Agent(ITestOutputHelper output) : BaseTest(output)
 
             this.WriteAgentChatMessage(response);
         }
-    }
-
-    private IChatClient GetChatClient()
-    {
-        return new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
-            .GetChatClient(TestConfiguration.OpenAI.ChatModelId)
-            .AsIChatClient();
     }
 }

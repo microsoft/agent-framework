@@ -1,8 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using Microsoft.Extensions.Logging;
-using Xunit.Abstractions;
 
 namespace Microsoft.Shared.SampleUtilities;
 

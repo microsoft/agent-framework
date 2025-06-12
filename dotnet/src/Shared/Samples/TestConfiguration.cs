@@ -1,10 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Configuration;
 
-namespace Microsoft.Shared.SampleUtilities;
+namespace Microsoft.Shared.Samples;
 
 // Copyright (c) Microsoft. All rights reserved.
 
