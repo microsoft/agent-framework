@@ -127,9 +127,6 @@ public sealed class ChatClientAgent : Agent
         // Ensure we start the streaming request
         var hasUpdates = await responseUpdatesEnumerator.MoveNextAsync().ConfigureAwait(false);
 
-        // To avoid inconsistent state we only notify the thread of the input messages if no error occurs after the initial request.
-        await this.NotifyThreadOfNewMessagesAsync(chatClientThread, messages, cancellationToken).ConfigureAwait(false);
-
         while (hasUpdates)
         {
             var update = responseUpdatesEnumerator.Current;
@@ -145,6 +142,13 @@ public sealed class ChatClientAgent : Agent
 
         var chatResponse = responseUpdates.ToChatResponse();
         var chatResponseMessages = chatResponse.Messages as IReadOnlyCollection<ChatMessage> ?? chatResponse.Messages.ToArray();
+
+        // We can derive the type of supported thread from whether we have a conversation id,
+        // so let's update it and set the conversation id for the service thread case.
+        this.UpdateThreadWithTypeAndConversationId(chatClientThread, chatResponse.ConversationId);
+
+        // To avoid inconsistent state we only notify the thread of the input messages if no error occurs after the initial request.
+        await this.NotifyThreadOfNewMessagesAsync(chatClientThread, messages, cancellationToken).ConfigureAwait(false);
 
         await this.NotifyThreadOfNewMessagesAsync(chatClientThread, chatResponseMessages, cancellationToken).ConfigureAwait(false);
         if (options?.OnIntermediateMessages is not null)
@@ -217,8 +221,8 @@ public sealed class ChatClientAgent : Agent
         if (chatClientThread.StorageLocation is null)
         {
             chatClientThread.StorageLocation = string.IsNullOrWhiteSpace(responseConversationId)
-                ? ChatClientAgentThreadType.ConversationId
-                : ChatClientAgentThreadType.InMemoryMessages;
+                ? ChatClientAgentThreadType.InMemoryMessages
+                : ChatClientAgentThreadType.ConversationId;
         }
 
         // If we got a conversation id back from the chat client, it means that the service supports server side thread storage
