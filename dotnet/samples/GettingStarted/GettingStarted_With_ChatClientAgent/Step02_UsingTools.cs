@@ -4,7 +4,7 @@ using System.ComponentModel;
 using Microsoft.Agents;
 using Microsoft.Extensions.AI;
 
-namespace GettingStarted.OpenAIChatClientAgent;
+namespace GettingStarted.GettingStarted_With_ChatClientAgent;
 
 public sealed class Step02_UsingTools(ITestOutputHelper output) : AgentSample(output)
 {

@@ -2,7 +2,7 @@
 
 using Microsoft.Agents;
 
-namespace GettingStarted.OpenAIChatClientAgent;
+namespace GettingStarted.GettingStarted_With_ChatClientAgent;
 
 /// <summary>
 /// Provides test methods to demonstrate the usage of chat agents with different interaction models.
