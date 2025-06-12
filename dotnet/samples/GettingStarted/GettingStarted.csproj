@@ -34,7 +34,8 @@
   </ItemGroup>
 
     <ItemGroup>
-    <Using Include="Xunit.Abstractions" />
+		<Using Include="GettingStarted" />
+		<Using Include="Xunit.Abstractions" />
     <Using Include="Microsoft.Shared.SampleUtilities" />
     </ItemGroup>
 </Project>

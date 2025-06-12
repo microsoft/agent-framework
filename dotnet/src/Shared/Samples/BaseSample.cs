@@ -7,7 +7,6 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Samples;
-using OpenAI;
 
 namespace Microsoft.Shared.SampleUtilities;
 
@@ -99,9 +98,7 @@ public abstract class BaseSample : TextWriter
     protected void WriteAgentOutput(ChatResponse chatResponse, bool? printUsage = true)
     {
         var message = chatResponse.Messages[^1];
-        // Include ChatMessage.AuthorName in output, if present.
         string authorExpression = message.Role == ChatRole.User ? string.Empty : FormatAuthor();
-        // Include TextContent (via ChatMessage.Text), if present.
         string contentExpression = string.IsNullOrWhiteSpace(chatResponse.Text) ? string.Empty : chatResponse.Text;
         bool isCode = false; //message.AdditionalProperties?.ContainsKey(OpenAIAssistantAgent.CodeInterpreterMetadataKey) ?? false;
         string codeMarker = isCode ? "\n  [CODE]\n" : " ";
@@ -110,32 +107,6 @@ public abstract class BaseSample : TextWriter
         // Provide visibility for inner content (that isn't TextContent).
         foreach (AIContent item in message.Contents)
         {
-            /*
-            if (item is AI annotation)
-            {
-                if (annotation.Kind == AnnotationKind.UrlCitation)
-                {
-                    Console.WriteLine($"  [{item.GetType().Name}] {annotation.Label}: {annotation.ReferenceId} - {annotation.Title}");
-                }
-                else
-                {
-                    Console.WriteLine($"  [{item.GetType().Name}] {annotation.Label}: File #{annotation.ReferenceId}");
-                }
-            }
-            else if (item is ActionContent action)
-            {
-                Console.WriteLine($"  [{item.GetType().Name}] {action.Text}");
-            }
-            else if (item is ReasoningContent reasoning)
-            {
-                Console.WriteLine($"  [{item.GetType().Name}] {reasoning.Text.DefaultIfEmpty("Thinking...")}");
-            }
-            else if (item is FileReferenceContent fileReference)
-            {
-                Console.WriteLine($"  [{item.GetType().Name}] File #{fileReference.FileId}");
-            }
-            else */
-
             if (item is DataContent image && image.HasTopLevelMediaType("image"))
             {
                 Console.WriteLine($"  [{item.GetType().Name}] {image.Uri?.ToString() ?? image.Uri ?? $"{image.Data.Length} bytes"}");
@@ -178,9 +149,7 @@ public abstract class BaseSample : TextWriter
             return;
         }
 
-        // Include ChatMessage.AuthorName in output, if present.
         string authorExpression = update.Role == ChatRole.User ? string.Empty : FormatAuthor();
-        // Include TextContent (via ChatMessage.Text), if present.
         string contentExpression = string.IsNullOrWhiteSpace(update.Text) ? string.Empty : update.Text;
         bool isCode = false; //message.AdditionalProperties?.ContainsKey(OpenAIAssistantAgent.CodeInterpreterMetadataKey) ?? false;
         string codeMarker = isCode ? "\n  [CODE]\n" : " ";
@@ -189,32 +158,6 @@ public abstract class BaseSample : TextWriter
         // Provide visibility for inner content (that isn't TextContent).
         foreach (AIContent item in update.Contents)
         {
-            /*
-            if (item is AI annotation)
-            {
-                if (annotation.Kind == AnnotationKind.UrlCitation)
-                {
-                    Console.WriteLine($"  [{item.GetType().Name}] {annotation.Label}: {annotation.ReferenceId} - {annotation.Title}");
-                }
-                else
-                {
-                    Console.WriteLine($"  [{item.GetType().Name}] {annotation.Label}: File #{annotation.ReferenceId}");
-                }
-            }
-            else if (item is ActionContent action)
-            {
-                Console.WriteLine($"  [{item.GetType().Name}] {action.Text}");
-            }
-            else if (item is ReasoningContent reasoning)
-            {
-                Console.WriteLine($"  [{item.GetType().Name}] {reasoning.Text.DefaultIfEmpty("Thinking...")}");
-            }
-            else if (item is FileReferenceContent fileReference)
-            {
-                Console.WriteLine($"  [{item.GetType().Name}] File #{fileReference.FileId}");
-            }
-            else */
-
             if (item is DataContent image && image.HasTopLevelMediaType("image"))
             {
                 Console.WriteLine($"  [{item.GetType().Name}] {image.Uri?.ToString() ?? image.Uri ?? $"{image.Data.Length} bytes"}");
@@ -306,15 +249,31 @@ public abstract class BaseSample : TextWriter
         };
     }
 
-    private IChatClient GetOpenAIChatClient()
+    /// <summary>
+    /// Creates and returns an instance of an OpenAI chat client.
+    /// </summary>
+    /// <remarks>This method is intended to be overridden in derived classes to provide a specific
+    /// implementation for creating an OpenAI chat client. The default implementation throws a <see
+    /// cref="NotImplementedException"/>.</remarks>
+    /// <returns>An instance of a class implementing <see cref="IChatClient"/> that interacts with OpenAI's chat services.</returns>
+    /// <exception cref="NotImplementedException">Thrown if the method is not overridden in a derived class.</exception>
+    protected virtual IChatClient GetOpenAIChatClient()
     {
-        return new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
-            .GetChatClient(TestConfiguration.OpenAI.ChatModelId)
-            .AsIChatClient();
+        throw new NotImplementedException(NotImplementedMessage);
     }
 
-    private IChatClient GetAzureOpenAIChatClient()
+    /// <summary>
+    /// Creates and returns an instance of an Azure OpenAI chat client.
+    /// </summary>
+    /// <remarks>This method is intended to be overridden in derived classes to provide a specific
+    /// implementation  for creating an Azure OpenAI chat client. The default implementation throws a  <see
+    /// cref="NotImplementedException"/>.</remarks>
+    /// <returns>An instance of <see cref="IChatClient"/> configured for Azure OpenAI chat functionality.</returns>
+    /// <exception cref="NotImplementedException">Thrown if the method is not overridden in a derived class.</exception>
+    protected virtual IChatClient GetAzureOpenAIChatClient()
     {
-        throw new NotImplementedException();
+        throw new NotImplementedException(NotImplementedMessage);
     }
+
+    private const string NotImplementedMessage = "This method should be overridden in a derived class to provide the specific chat client implementation.";
 }

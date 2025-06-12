@@ -10,7 +10,7 @@ namespace ChatCompletionAgent;
 /// <remarks>This class contains examples of using <see cref="ChatClientAgent"/> to showcase scenarios with and without conversation history.
 /// Each test method demonstrates how to configure and interact with the agents, including handling user input and displaying responses.
 /// </remarks>
-public sealed class Step01_Running(ITestOutputHelper output) : BaseSample(output)
+public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(output)
 {
     private const string ParrotName = "Parrot";
     private const string ParrotInstructions = "Repeat the user message in the voice of a pirate and then end with a parrot sound.";

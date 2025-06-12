@@ -6,7 +6,7 @@ using Microsoft.Extensions.AI;
 
 namespace ChatCompletionAgent;
 
-public sealed class Step02_UsingTools(ITestOutputHelper output) : BaseSample(output)
+public sealed class Step02_UsingTools(ITestOutputHelper output) : AgentSample(output)
 {
     [Fact]
     public async Task RunningWithTools()
