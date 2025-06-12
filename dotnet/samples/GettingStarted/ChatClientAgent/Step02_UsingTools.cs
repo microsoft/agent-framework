@@ -4,12 +4,12 @@ using System.ComponentModel;
 using Microsoft.Agents;
 using Microsoft.Extensions.AI;
 
-namespace GettingStarted;
+namespace ChatCompletionAgent;
 
 public sealed class Step02_UsingTools(ITestOutputHelper output) : BaseSample(output)
 {
     [Fact]
-    public async Task UsingTool()
+    public async Task RunningWithTools()
     {
         using var chatClient = base.GetChatClient(ChatClientType.OpenAI);
 
@@ -42,9 +42,51 @@ public sealed class Step02_UsingTools(ITestOutputHelper output) : BaseSample(out
 
         async Task InvokeAgentAsync(string input)
         {
-            this.WriteAgentChatMessage(input);
+            this.WriteUserMessage(input);
             var response = await agent.RunAsync(input, thread, chatOptions: chatOptions);
-            this.WriteAgentChatMessage(response);
+            this.WriteAgentOutput(response);
+        }
+    }
+
+    [Fact]
+    public async Task StreamingRunWithTools()
+    {
+        using var chatClient = base.GetChatClient(ChatClientType.OpenAI);
+
+        // Define the agent
+        ChatClientAgent agent =
+            new(chatClient, new()
+            {
+                Name = "Host",
+                Instructions = "Answer questions about the menu.",
+            });
+
+        var menuTools = new MenuTools();
+        var chatOptions = new ChatOptions
+        {
+            Tools = [
+                AIFunctionFactory.Create(menuTools.GetMenu),
+                AIFunctionFactory.Create(menuTools.GetSpecials),
+                AIFunctionFactory.Create(menuTools.GetItemPrice),
+            ],
+        };
+
+        // Create the chat history thread to capture the agent interaction.
+        var thread = agent.GetNewThread();
+
+        // Respond to user input, invoking functions where appropriate.
+        await InvokeAgentAsync("Hello");
+        await InvokeAgentAsync("What is the special soup and its price?");
+        await InvokeAgentAsync("What is the special drink and its price?");
+        await InvokeAgentAsync("Thank you");
+
+        async Task InvokeAgentAsync(string input)
+        {
+            this.WriteUserMessage(input);
+            await foreach (var update in agent.RunStreamingAsync(input, thread, chatOptions: chatOptions))
+            {
+                this.WriteAgentOutput(update);
+            }
         }
     }
 

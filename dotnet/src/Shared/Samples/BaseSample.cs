@@ -82,9 +82,9 @@ public abstract class BaseSample : TextWriter
     /// system. Ensure the <paramref name="message"/> parameter contains meaningful content, as empty or null values may
     /// result in an error.</remarks>
     /// <param name="message">The text of the message to be sent. Cannot be null or empty.</param>
-    protected void WriteAgentChatMessage(string message)
+    protected void WriteUserMessage(string message)
     {
-        this.WriteAgentChatMessage(new ChatResponse(new ChatMessage(ChatRole.User, message)));
+        this.WriteAgentOutput(new ChatResponse(new ChatMessage(ChatRole.User, message)), printUsage: false);
     }
 
     /// <summary>
@@ -95,7 +95,8 @@ public abstract class BaseSample : TextWriter
     /// additional content such as images, function calls, and function results. Usage statistics, including token
     /// counts, are also displayed.</remarks>
     /// <param name="chatResponse">The <see cref="ChatResponse"/> object containing the chat messages and usage data.</param>
-    protected void WriteAgentChatMessage(ChatResponse chatResponse)
+    /// <param name="printUsage">The flag to indicate whether to print usage information. Defaults to <see langword="true"/>.</param>
+    protected void WriteAgentOutput(ChatResponse chatResponse, bool? printUsage = true)
     {
         var message = chatResponse.Messages[^1];
         // Include ChatMessage.AuthorName in output, if present.
@@ -149,14 +150,93 @@ public abstract class BaseSample : TextWriter
             }
         }
 
-        WriteUsage(chatResponse.Usage?.TotalTokenCount ?? 0, chatResponse.Usage?.InputTokenCount ?? 0, chatResponse.Usage?.OutputTokenCount ?? 0);
+        WriteUsage(chatResponse.Usage);
 
         string FormatAuthor() => message.AuthorName is not null ? $" - {message.AuthorName ?? " * "}" : string.Empty;
 
-        void WriteUsage(long totalTokens, long inputTokens, long outputTokens)
+        void WriteUsage(UsageDetails? usageDetails)
         {
-            Console.WriteLine($"  [Usage] Tokens: {totalTokens}, Input: {inputTokens}, Output: {outputTokens}");
+            if (!(printUsage ?? true) || usageDetails is null) { return; }
+
+            Console.WriteLine($"  [Usage] Tokens: {usageDetails.TotalTokenCount}, Input: {usageDetails.InputTokenCount}, Output: {usageDetails.OutputTokenCount}");
         }
+    }
+
+    /// <summary>
+    /// Processes and writes the latest agent chat message to the console, including metadata and content details.
+    /// </summary>
+    /// <remarks>This method formats and outputs the most recent message from the provided <see
+    /// cref="ChatResponse"/> object. It includes the message role, author name (if available), text content, and
+    /// additional content such as images, function calls, and function results. Usage statistics, including token
+    /// counts, are also displayed.</remarks>
+    /// <param name="update">The <see cref="ChatResponse"/> object containing the chat messages and usage data.</param>
+    protected void WriteAgentOutput(ChatResponseUpdate update)
+    {
+        if (update.Contents.Count == 0)
+        {
+            // If there are no contents, we can skip writing the message.
+            return;
+        }
+
+        // Include ChatMessage.AuthorName in output, if present.
+        string authorExpression = update.Role == ChatRole.User ? string.Empty : FormatAuthor();
+        // Include TextContent (via ChatMessage.Text), if present.
+        string contentExpression = string.IsNullOrWhiteSpace(update.Text) ? string.Empty : update.Text;
+        bool isCode = false; //message.AdditionalProperties?.ContainsKey(OpenAIAssistantAgent.CodeInterpreterMetadataKey) ?? false;
+        string codeMarker = isCode ? "\n  [CODE]\n" : " ";
+        Console.WriteLine($"\n# {update.Role}{authorExpression}:{codeMarker}{contentExpression}");
+
+        // Provide visibility for inner content (that isn't TextContent).
+        foreach (AIContent item in update.Contents)
+        {
+            /*
+            if (item is AI annotation)
+            {
+                if (annotation.Kind == AnnotationKind.UrlCitation)
+                {
+                    Console.WriteLine($"  [{item.GetType().Name}] {annotation.Label}: {annotation.ReferenceId} - {annotation.Title}");
+                }
+                else
+                {
+                    Console.WriteLine($"  [{item.GetType().Name}] {annotation.Label}: File #{annotation.ReferenceId}");
+                }
+            }
+            else if (item is ActionContent action)
+            {
+                Console.WriteLine($"  [{item.GetType().Name}] {action.Text}");
+            }
+            else if (item is ReasoningContent reasoning)
+            {
+                Console.WriteLine($"  [{item.GetType().Name}] {reasoning.Text.DefaultIfEmpty("Thinking...")}");
+            }
+            else if (item is FileReferenceContent fileReference)
+            {
+                Console.WriteLine($"  [{item.GetType().Name}] File #{fileReference.FileId}");
+            }
+            else */
+
+            if (item is DataContent image && image.HasTopLevelMediaType("image"))
+            {
+                Console.WriteLine($"  [{item.GetType().Name}] {image.Uri?.ToString() ?? image.Uri ?? $"{image.Data.Length} bytes"}");
+            }
+            else if (item is FunctionCallContent functionCall)
+            {
+                Console.WriteLine($"  [{item.GetType().Name}] {functionCall.CallId}");
+            }
+            else if (item is FunctionResultContent functionResult)
+            {
+                Console.WriteLine($"  [{item.GetType().Name}] {functionResult.CallId} - {AsJson(functionResult.Result) ?? "*"}");
+            }
+            else if (item is UsageContent usage)
+            {
+                Console.Console.WriteLine("  [Usage] Tokens: {0}, Input: {1}, Output: {2}",
+                usage?.Details?.TotalTokenCount ?? 0,
+                usage?.Details?.InputTokenCount ?? 0,
+                usage?.Details?.OutputTokenCount ?? 0);
+            }
+        }
+
+        string FormatAuthor() => update.AuthorName is not null ? $" - {update.AuthorName ?? " * "}" : string.Empty;
     }
 
     private static readonly JsonSerializerOptions s_jsonOptionsCache = new() { WriteIndented = true };
