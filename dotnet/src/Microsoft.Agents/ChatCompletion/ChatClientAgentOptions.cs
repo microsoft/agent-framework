@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Microsoft.Extensions.AI;
+
 namespace Microsoft.Agents;
 
 /// <summary>
@@ -30,4 +32,22 @@ public class ChatClientAgentOptions
     /// Gets or sets the agent description.
     /// </summary>
     public string? Description { get; set; }
+
+    /// <summary>
+    /// Gets or sets the default chatOptions to use.
+    /// </summary>
+    public ChatOptions? ChatOptions { get; set; }
+
+    /// <summary>
+    /// Creates a new instance of <see cref="ChatClientAgentOptions"/> with the same values as this instance.
+    /// </summary>
+    internal ChatClientAgentOptions Clone()
+        => new()
+        {
+            Id = this.Id,
+            Name = this.Name,
+            Instructions = this.Instructions,
+            Description = this.Description,
+            ChatOptions = this.ChatOptions?.Clone()
+        };
 }

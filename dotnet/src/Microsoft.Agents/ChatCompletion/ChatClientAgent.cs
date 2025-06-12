@@ -32,9 +32,14 @@ public sealed class ChatClientAgent : Agent
     {
         Throw.IfNull(chatClient);
 
+        // Options once provided are copied and immutable.
+        this._agentOptions = options?.Clone();
+
+        // Get the type of the chat client before wrapping it as an agent invoking chat client.
         this._chatClientType = chatClient.GetType();
+
         this.ChatClient = chatClient.AsAgentInvokingChatClient();
-        this._agentOptions = options;
+
         this._logger = (loggerFactory ?? chatClient.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance).CreateLogger<ChatClientAgent>();
     }
 
@@ -54,6 +59,11 @@ public sealed class ChatClientAgent : Agent
 
     /// <inheritdoc/>
     public override string? Instructions => this._agentOptions?.Instructions;
+
+    /// <summary>
+    /// Gets a copy of the default <see cref="Microsoft.Extensions.AI.ChatOptions"/> used by the agent.
+    /// </summary>
+    public ChatOptions? ChatOptions => this._agentOptions?.ChatOptions?.Clone();
 
     /// <inheritdoc/>
     public override async Task<ChatResponse> RunAsync(
@@ -155,6 +165,70 @@ public sealed class ChatClientAgent : Agent
     #region Private
 
     /// <summary>
+    /// Configures and returns chat options by merging the provided run options with the agent's default chat options.
+    /// </summary>
+    /// <remarks>This method prioritizes the chat options provided in <paramref name="runOptions"/> over the
+    /// agent's default chat options. Any unset properties in the run options will be filled using the agent's chat
+    /// options. If both are <see langword="null"/>, the method returns <see langword="null"/>.</remarks>
+    /// <param name="runOptions">Optional run options that may include specific chat configuration settings.</param>
+    /// <returns>A <see cref="ChatOptions"/> object representing the merged chat configuration, or <see langword="null"/> if
+    /// neither the run options nor the agent's chat options are available.</returns>
+    private ChatOptions? ConfigureChatOptions(AgentRunOptions? runOptions)
+    {
+        ChatOptions? requestChatOptions = (runOptions as ChatClientAgentRunOptions)?.ChatOptions;
+
+        // If no chat options were provided for either request and agent, return null.
+        if (this._agentOptions?.ChatOptions is null && requestChatOptions is null)
+        {
+            return null;
+        }
+
+        // If no request chat options were provided, use the agent's chat options.
+        if (requestChatOptions is null)
+        {
+            return this._agentOptions?.ChatOptions;
+        }
+
+        // If the agent options have chat options, merge them into the requested chat options.
+        if (this._agentOptions?.ChatOptions is not null)
+        {
+            // The merge strategy will prioritize the request options over the agent options,
+            // and will fill the blanks with agent options where the request options were not set.
+            requestChatOptions.Temperature ??= this._agentOptions.ChatOptions.Temperature;
+            requestChatOptions.MaxOutputTokens ??= this._agentOptions.ChatOptions.MaxOutputTokens;
+            requestChatOptions.TopP ??= this._agentOptions.ChatOptions.TopP;
+            requestChatOptions.StopSequences ??= this._agentOptions.ChatOptions.StopSequences?.ToArray();
+            requestChatOptions.TopK ??= this._agentOptions.ChatOptions.TopK;
+            requestChatOptions.PresencePenalty ??= this._agentOptions.ChatOptions.PresencePenalty;
+            requestChatOptions.FrequencyPenalty ??= this._agentOptions.ChatOptions.FrequencyPenalty;
+            requestChatOptions.ResponseFormat ??= this._agentOptions.ChatOptions.ResponseFormat;
+            requestChatOptions.ModelId ??= this._agentOptions.ChatOptions.ModelId;
+            requestChatOptions.Seed ??= this._agentOptions.ChatOptions.Seed;
+            requestChatOptions.ConversationId ??= this._agentOptions.ChatOptions.ConversationId;
+            requestChatOptions.RawRepresentationFactory ??= this._agentOptions.ChatOptions.RawRepresentationFactory;
+
+            // For tools, we concatenate the request tools with the agent's tools.
+            requestChatOptions.Tools ??= requestChatOptions.Tools?.Concat(this._agentOptions.ChatOptions.Tools ?? []).ToArray();
+
+            requestChatOptions.AllowMultipleToolCalls ??= this._agentOptions.ChatOptions.AllowMultipleToolCalls;
+            requestChatOptions.ToolMode ??= this._agentOptions.ChatOptions.ToolMode;
+
+            // Merge only the additional properties from the agent if they are not already set in the request options.
+            if (requestChatOptions.AdditionalProperties is not null && this._agentOptions.ChatOptions.AdditionalProperties is not null)
+            {
+                foreach (var property in this._agentOptions.ChatOptions.AdditionalProperties.Keys)
+                {
+                    requestChatOptions.AdditionalProperties.TryAdd(property, this._agentOptions.ChatOptions.AdditionalProperties[property]);
+                }
+            }
+
+            requestChatOptions.AdditionalProperties ??= this._agentOptions.ChatOptions.AdditionalProperties;
+        }
+
+        return requestChatOptions;
+    }
+
+    /// <summary>
     /// Prepares the thread, chat options, and messages for agent execution.
     /// </summary>
     /// <param name="thread">The conversation thread to use or create.</param>
@@ -162,14 +236,13 @@ public sealed class ChatClientAgent : Agent
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A tuple containing the thread, chat options, and thread messages.</returns>
-    private async Task<(ChatClientAgentThread thread, ChatOptions? chatOptions, List<ChatMessage> threadMessages)> PrepareThreadAndMessagesAsync(
+    private async Task<(ChatClientAgentThread, ChatOptions?, List<ChatMessage>)> PrepareThreadAndMessagesAsync(
         AgentThread? thread,
         IReadOnlyCollection<ChatMessage> inputMessages,
         AgentRunOptions? options,
         CancellationToken cancellationToken)
     {
-        // Retrieve chat options from the provided AgentRunOptions if available.
-        ChatOptions? chatOptions = (options as ChatClientAgentRunOptions)?.ChatOptions;
+        ChatOptions? chatOptions = this.ConfigureChatOptions(options);
 
         var chatClientThread = this.ValidateOrCreateThreadType<ChatClientAgentThread>(thread, () => new());
 

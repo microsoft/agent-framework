@@ -15,22 +15,21 @@ public sealed class Step02_UsingTools(ITestOutputHelper output) : AgentSample(ou
         using var chatClient = base.GetOpenAIChatClient();
 
         // Define the agent
+        var menuTools = new MenuTools();
         ChatClientAgent agent =
             new(chatClient, new()
             {
                 Name = "Host",
                 Instructions = "Answer questions about the menu.",
+                ChatOptions = new()
+                {
+                    Tools = [
+                        AIFunctionFactory.Create(menuTools.GetMenu),
+                        AIFunctionFactory.Create(menuTools.GetSpecials),
+                        AIFunctionFactory.Create(menuTools.GetItemPrice)
+                    ]
+                }
             });
-
-        var menuTools = new MenuTools();
-        var chatOptions = new ChatOptions
-        {
-            Tools = [
-                AIFunctionFactory.Create(menuTools.GetMenu),
-                AIFunctionFactory.Create(menuTools.GetSpecials),
-                AIFunctionFactory.Create(menuTools.GetItemPrice),
-            ],
-        };
 
         // Create the chat history thread to capture the agent interaction.
         var thread = agent.GetNewThread();
@@ -44,7 +43,7 @@ public sealed class Step02_UsingTools(ITestOutputHelper output) : AgentSample(ou
         async Task InvokeAgentAsync(string input)
         {
             this.WriteUserMessage(input);
-            var response = await agent.RunAsync(input, thread, chatOptions: chatOptions);
+            var response = await agent.RunAsync(input, thread);
             this.WriteResponseOutput(response);
         }
     }
@@ -56,22 +55,21 @@ public sealed class Step02_UsingTools(ITestOutputHelper output) : AgentSample(ou
         using var chatClient = base.GetOpenAIChatClient();
 
         // Define the agent
+        var menuTools = new MenuTools();
         ChatClientAgent agent =
             new(chatClient, new()
             {
                 Name = "Host",
                 Instructions = "Answer questions about the menu.",
+                ChatOptions = new()
+                {
+                    Tools = [
+                        AIFunctionFactory.Create(menuTools.GetMenu),
+                        AIFunctionFactory.Create(menuTools.GetSpecials),
+                        AIFunctionFactory.Create(menuTools.GetItemPrice)
+                    ]
+                }
             });
-
-        var menuTools = new MenuTools();
-        var chatOptions = new ChatOptions
-        {
-            Tools = [
-                AIFunctionFactory.Create(menuTools.GetMenu),
-                AIFunctionFactory.Create(menuTools.GetSpecials),
-                AIFunctionFactory.Create(menuTools.GetItemPrice),
-            ],
-        };
 
         // Create the chat history thread to capture the agent interaction.
         var thread = agent.GetNewThread();
@@ -85,7 +83,7 @@ public sealed class Step02_UsingTools(ITestOutputHelper output) : AgentSample(ou
         async Task InvokeAgentAsync(string input)
         {
             this.WriteUserMessage(input);
-            await foreach (var update in agent.RunStreamingAsync(input, thread, chatOptions: chatOptions))
+            await foreach (var update in agent.RunStreamingAsync(input, thread))
             {
                 this.WriteAgentOutput(update);
             }

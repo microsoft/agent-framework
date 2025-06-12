@@ -30,10 +30,6 @@
     <ProjectReference Include="..\..\src\Microsoft.Agents\Microsoft.Agents.csproj" />
   </ItemGroup>
 
-  <PropertyGroup>
-    <InjectSharedThrow>true</InjectSharedThrow>
-  </PropertyGroup>
-
   <ItemGroup>
   	<Using Include="GettingStarted" />
     <Using Include="Microsoft.Shared.SampleUtilities" />
