@@ -6,7 +6,7 @@
   </Configurations>
   <Folder Name="/Samples/">
     <Project Path="samples/GettingStarted/GettingStarted.csproj">
-      <BuildType Solution="Publish|*" Project="Release" />
+      <BuildType Solution="Publish|*" Project="Debug" />
     </Project>
   </Folder>
   <Folder Name="/Solution Items/">
