@@ -5,8 +5,6 @@ using Microsoft.Extensions.AI;
 using Microsoft.Shared.Samples;
 using OpenAI;
 
-#pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-
 namespace GettingStarted.Providers;
 
 /// <summary>
