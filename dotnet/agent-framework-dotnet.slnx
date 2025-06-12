@@ -37,7 +37,10 @@
     <File Path="src/Shared/Throw/README.md" />
     <File Path="src/Shared/Throw/Throw.cs" />
   </Folder>
-  <Folder Name="/Solution Items/samples/" />
+  <Folder Name="/Solution Items/samples/">
+    <File Path="samples/.editorconfig" />
+    <File Path="samples/Directory.Build.props" />
+  </Folder>
   <Folder Name="/Solution Items/src/" />
   <Folder Name="/Solution Items/src/LegacySupport/">
     <File Path="src/LegacySupport/README.md" />

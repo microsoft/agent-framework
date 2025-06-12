@@ -97,7 +97,13 @@ public abstract class BaseSample : TextWriter
     /// <param name="printUsage">The flag to indicate whether to print usage information. Defaults to <see langword="true"/>.</param>
     protected void WriteAgentOutput(ChatResponse chatResponse, bool? printUsage = true)
     {
-        var message = chatResponse.Messages[^1];
+        if (chatResponse.Messages.Count == 0)
+        {
+            // If there are no messages, we can skip writing the message.
+            return;
+        }
+
+        var message = chatResponse.Messages.Last();
         string authorExpression = message.Role == ChatRole.User ? string.Empty : FormatAuthor();
         string contentExpression = string.IsNullOrWhiteSpace(chatResponse.Text) ? string.Empty : chatResponse.Text;
         bool isCode = false; //message.AdditionalProperties?.ContainsKey(OpenAIAssistantAgent.CodeInterpreterMetadataKey) ?? false;
