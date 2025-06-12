@@ -217,13 +217,13 @@ public sealed class ChatClientAgent : Agent
         if (chatClientThread.StorageLocation is null)
         {
             chatClientThread.StorageLocation = string.IsNullOrWhiteSpace(responseConversationId)
-                ? ChatClientAgentThreadStorageLocation.InService
-                : ChatClientAgentThreadStorageLocation.LocalInMemory;
+                ? ChatClientAgentThreadType.ConversationId
+                : ChatClientAgentThreadType.InMemoryMessages;
         }
 
         // If we got a conversation id back from the chat client, it means that the service supports server side thread storage
         // so we should capture the id and update the thread with the new id.
-        if (chatClientThread.StorageLocation == ChatClientAgentThreadStorageLocation.InService)
+        if (chatClientThread.StorageLocation == ChatClientAgentThreadType.ConversationId)
         {
             if (string.IsNullOrWhiteSpace(responseConversationId))
             {

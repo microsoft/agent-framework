@@ -36,7 +36,7 @@ public sealed class ChatClientAgentThread : AgentThread, IMessagesRetrievableThr
         Throw.IfNullOrWhitespace(id);
 
         this.Id = id;
-        this.StorageLocation = ChatClientAgentThreadStorageLocation.InService;
+        this.StorageLocation = ChatClientAgentThreadType.ConversationId;
     }
 
     /// <summary>
@@ -51,13 +51,13 @@ public sealed class ChatClientAgentThread : AgentThread, IMessagesRetrievableThr
         Throw.IfNull(messages);
 
         this._chatMessages.AddRange(messages);
-        this.StorageLocation = ChatClientAgentThreadStorageLocation.LocalInMemory;
+        this.StorageLocation = ChatClientAgentThreadType.InMemoryMessages;
     }
 
     /// <summary>
     /// Gets the location of the thread contents.
     /// </summary>
-    public ChatClientAgentThreadStorageLocation? StorageLocation { get; internal set; }
+    internal ChatClientAgentThreadType? StorageLocation { get; set; }
 
 #pragma warning disable CS1998 // Async method lacks 'await' operators and will run synchronously
     /// <inheritdoc/>
@@ -76,10 +76,10 @@ public sealed class ChatClientAgentThread : AgentThread, IMessagesRetrievableThr
     {
         switch (this.StorageLocation)
         {
-            case ChatClientAgentThreadStorageLocation.LocalInMemory:
+            case ChatClientAgentThreadType.InMemoryMessages:
                 this._chatMessages.AddRange(newMessages);
                 break;
-            case ChatClientAgentThreadStorageLocation.InService:
+            case ChatClientAgentThreadType.ConversationId:
                 // If the thread messages are stored in the service
                 // there is nothing to do here, since invoking the
                 // service should already update the thread.
