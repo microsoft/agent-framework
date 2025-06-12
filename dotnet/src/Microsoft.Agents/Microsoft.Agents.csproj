@@ -27,4 +27,8 @@
     <Description>Contains the Microsoft Agent Framework core functionality.</Description>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.UnitTests" />
+  </ItemGroup>
+
 </Project>
