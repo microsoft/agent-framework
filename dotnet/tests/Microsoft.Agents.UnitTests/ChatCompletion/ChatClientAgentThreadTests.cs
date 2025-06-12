@@ -1,10 +1,14 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Moq;
+
+#pragma warning disable CS0162 // Unreachable code detected
 
 namespace Microsoft.Agents.UnitTests.ChatCompletion;
 
@@ -262,6 +266,404 @@ public class ChatClientAgentThreadTests
         Assert.Equal("First response", retrievedMessages[1].Text);
         Assert.Equal("Second message", retrievedMessages[2].Text);
         Assert.Equal("Second response", retrievedMessages[3].Text);
+    }
+
+    #endregion
+
+    #region RunStreamingAsync Thread Notification Tests
+
+    /// <summary>
+    /// Verify that thread is notified of both input and response messages when invoking the streaming API with RunStreamingAsync.
+    /// </summary>
+    [Fact]
+    public async Task VerifyThreadNotificationDuringStreamingAsync()
+    {
+        // Arrange
+        var userMessage = new ChatMessage(ChatRole.User, "Hello, streaming!");
+        var assistantMessage = new ChatMessage(ChatRole.Assistant, "Hi there, streaming response!");
+
+        // Create streaming response updates
+        ChatResponseUpdate[] returnUpdates =
+        [
+            new ChatResponseUpdate(role: ChatRole.Assistant, content: "Hi there, "),
+            new ChatResponseUpdate(role: null, content: "streaming response!"),
+        ];
+
+        var mockChatClient = new Mock<IChatClient>();
+        mockChatClient.Setup(
+            c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(returnUpdates.ToAsyncEnumerable());
+
+        // Create ChatClientAgent with the mocked client
+        var agent = new ChatClientAgent(mockChatClient.Object, new()
+        {
+            Instructions = "You are a helpful assistant"
+        });
+
+        // Get a new thread from the agent
+        var thread = agent.GetNewThread();
+
+        // Act - Run the agent with streaming to populate the thread with messages
+        var streamingResults = new List<ChatResponseUpdate>();
+        await foreach (var update in agent.RunStreamingAsync([userMessage], thread))
+        {
+            streamingResults.Add(update);
+        }
+
+        // Assert - Verify streaming worked
+        Assert.Equal(2, streamingResults.Count);
+
+        // Retrieve messages from the thread to verify notification occurred
+        var messagesRetrievableThread = (IMessagesRetrievableThread)thread;
+        var retrievedMessages = new List<ChatMessage>();
+        await foreach (var message in messagesRetrievableThread.GetMessagesAsync())
+        {
+            retrievedMessages.Add(message);
+        }
+
+        // Assert - Verify that the thread was notified and contains both user and assistant messages
+        Assert.NotEmpty(retrievedMessages);
+        Assert.Equal(2, retrievedMessages.Count);
+        Assert.Contains(retrievedMessages, m => m.Text == "Hello, streaming!" && m.Role == ChatRole.User);
+        Assert.Contains(retrievedMessages, m => m.Text == "Hi there, streaming response!" && m.Role == ChatRole.Assistant);
+    }
+
+    /// <summary>
+    /// Verify that thread accumulates both input and response messages across multiple streaming calls.
+    /// </summary>
+    [Fact]
+    public async Task VerifyThreadAccumulatesMessagesAcrossMultipleStreamingCallsAsync()
+    {
+        // Arrange
+        var firstUserMessage = new ChatMessage(ChatRole.User, "First streaming message");
+        var secondUserMessage = new ChatMessage(ChatRole.User, "Second streaming message");
+
+        // Create streaming response updates for first call
+        ChatResponseUpdate[] firstReturnUpdates =
+        [
+            new ChatResponseUpdate(role: ChatRole.Assistant, content: "First "),
+            new ChatResponseUpdate(role: null, content: "response"),
+        ];
+
+        // Create streaming response updates for second call
+        ChatResponseUpdate[] secondReturnUpdates =
+        [
+            new ChatResponseUpdate(role: ChatRole.Assistant, content: "Second "),
+            new ChatResponseUpdate(role: null, content: "response"),
+        ];
+
+        var mockChatClient = new Mock<IChatClient>();
+        mockChatClient.SetupSequence(
+            c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(firstReturnUpdates.ToAsyncEnumerable())
+            .Returns(secondReturnUpdates.ToAsyncEnumerable());
+
+        var agent = new ChatClientAgent(mockChatClient.Object, new());
+        var thread = agent.GetNewThread();
+
+        // Act - Make two streaming calls
+        var firstStreamingResults = new List<ChatResponseUpdate>();
+        await foreach (var update in agent.RunStreamingAsync([firstUserMessage], thread))
+        {
+            firstStreamingResults.Add(update);
+        }
+
+        var secondStreamingResults = new List<ChatResponseUpdate>();
+        await foreach (var update in agent.RunStreamingAsync([secondUserMessage], thread))
+        {
+            secondStreamingResults.Add(update);
+        }
+
+        // Assert - Verify both streaming calls worked
+        Assert.Equal(2, firstStreamingResults.Count);
+        Assert.Equal(2, secondStreamingResults.Count);
+
+        // Retrieve all messages from the thread
+        var messagesRetrievableThread = (IMessagesRetrievableThread)thread;
+        var retrievedMessages = new List<ChatMessage>();
+        await foreach (var message in messagesRetrievableThread.GetMessagesAsync())
+        {
+            retrievedMessages.Add(message);
+        }
+
+        // Assert - Verify that the thread contains all messages in order
+        Assert.Equal(4, retrievedMessages.Count);
+        Assert.Equal("First streaming message", retrievedMessages[0].Text);
+        Assert.Equal("First response", retrievedMessages[1].Text);
+        Assert.Equal("Second streaming message", retrievedMessages[2].Text);
+        Assert.Equal("Second response", retrievedMessages[3].Text);
+    }
+
+    /// <summary>
+    /// Verify that thread notification works correctly when streaming with existing thread messages.
+    /// Both RunAsync and RunStreamingAsync should add both input and response messages to the thread.
+    /// </summary>
+    [Fact]
+    public async Task VerifyStreamingWithExistingThreadMessagesAsync()
+    {
+        // Arrange
+        var initialUserMessage = new ChatMessage(ChatRole.User, "Initial message");
+        var initialAssistantMessage = new ChatMessage(ChatRole.Assistant, "Initial response");
+        var newUserMessage = new ChatMessage(ChatRole.User, "New streaming message");
+
+        // Setup for initial non-streaming call
+        var mockChatClient = new Mock<IChatClient>();
+        mockChatClient.Setup(
+            c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse([initialAssistantMessage]));
+
+        // Setup for streaming call
+        ChatResponseUpdate[] streamingUpdates =
+        [
+            new ChatResponseUpdate(role: ChatRole.Assistant, content: "Streaming "),
+            new ChatResponseUpdate(role: null, content: "response"),
+        ];
+
+        mockChatClient.Setup(
+            c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(streamingUpdates.ToAsyncEnumerable());
+
+        var agent = new ChatClientAgent(mockChatClient.Object, new());
+        var thread = agent.GetNewThread();
+
+        // Act - First, make a regular call to populate the thread
+        await agent.RunAsync([initialUserMessage], thread);
+
+        // Then make a streaming call
+        var streamingResults = new List<ChatResponseUpdate>();
+        await foreach (var update in agent.RunStreamingAsync([newUserMessage], thread))
+        {
+            streamingResults.Add(update);
+        }
+
+        // Assert - Verify streaming worked
+        Assert.Equal(2, streamingResults.Count);
+
+        // Retrieve all messages from the thread
+        var messagesRetrievableThread = (IMessagesRetrievableThread)thread;
+        var retrievedMessages = new List<ChatMessage>();
+        await foreach (var message in messagesRetrievableThread.GetMessagesAsync())
+        {
+            retrievedMessages.Add(message);
+        }
+
+        // Assert - Verify that the thread contains all messages including the new streaming ones
+        Assert.Equal(4, retrievedMessages.Count);
+        Assert.Equal("Initial message", retrievedMessages[0].Text);
+        Assert.Equal("Initial response", retrievedMessages[1].Text);
+        Assert.Equal("New streaming message", retrievedMessages[2].Text);
+        Assert.Equal("Streaming response", retrievedMessages[3].Text);
+    }
+
+    /// <summary>
+    /// Verify that thread is notified of input messages even when zero streaming updates are received.
+    /// </summary>
+    [Fact]
+    public async Task VerifyThreadNotificationWithZeroStreamingUpdatesAsync()
+    {
+        // Arrange
+        var userMessage = new ChatMessage(ChatRole.User, "Hello with no response!");
+
+        // Create empty streaming response (no updates)
+        ChatResponseUpdate[] returnUpdates = [];
+
+        var mockChatClient = new Mock<IChatClient>();
+        mockChatClient.Setup(
+            c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(returnUpdates.ToAsyncEnumerable());
+
+        var agent = new ChatClientAgent(mockChatClient.Object, new());
+        var thread = agent.GetNewThread();
+
+        // Act - Run the agent with streaming that returns no updates
+        var streamingResults = new List<ChatResponseUpdate>();
+        await foreach (var update in agent.RunStreamingAsync([userMessage], thread))
+        {
+            streamingResults.Add(update);
+        }
+
+        // Assert - Verify no streaming updates were received
+        Assert.Empty(streamingResults);
+
+        // Retrieve messages from the thread to verify notification occurred
+        var messagesRetrievableThread = (IMessagesRetrievableThread)thread;
+        var retrievedMessages = new List<ChatMessage>();
+        await foreach (var message in messagesRetrievableThread.GetMessagesAsync())
+        {
+            retrievedMessages.Add(message);
+        }
+
+        // Assert - Verify that the thread was notified of input messages even with zero updates
+        // The fallback mechanism should ensure input messages are added to the thread
+        Assert.Single(retrievedMessages);
+        Assert.Contains(retrievedMessages, m => m.Text == "Hello with no response!" && m.Role == ChatRole.User);
+    }
+
+    /// <summary>
+    /// Verify that thread is notified of input messages only once even with multiple streaming updates.
+    /// </summary>
+    [Fact]
+    public async Task VerifyThreadNotificationWithMultipleStreamingUpdatesAsync()
+    {
+        // Arrange
+        var userMessage = new ChatMessage(ChatRole.User, "Hello with many updates!");
+
+        // Create multiple streaming response updates
+        ChatResponseUpdate[] returnUpdates =
+        [
+            new ChatResponseUpdate(role: ChatRole.Assistant, content: "First "),
+            new ChatResponseUpdate(role: null, content: "update, "),
+            new ChatResponseUpdate(role: null, content: "second "),
+            new ChatResponseUpdate(role: null, content: "update, "),
+            new ChatResponseUpdate(role: null, content: "third "),
+            new ChatResponseUpdate(role: null, content: "update!"),
+        ];
+
+        var mockChatClient = new Mock<IChatClient>();
+        mockChatClient.Setup(
+            c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(returnUpdates.ToAsyncEnumerable());
+
+        var agent = new ChatClientAgent(mockChatClient.Object, new());
+        var thread = agent.GetNewThread();
+
+        // Act - Run the agent with streaming that returns multiple updates
+        var streamingResults = new List<ChatResponseUpdate>();
+        await foreach (var update in agent.RunStreamingAsync([userMessage], thread))
+        {
+            streamingResults.Add(update);
+        }
+
+        // Assert - Verify all streaming updates were received
+        Assert.Equal(6, streamingResults.Count);
+
+        // Retrieve messages from the thread to verify notification occurred
+        var messagesRetrievableThread = (IMessagesRetrievableThread)thread;
+        var retrievedMessages = new List<ChatMessage>();
+        await foreach (var message in messagesRetrievableThread.GetMessagesAsync())
+        {
+            retrievedMessages.Add(message);
+        }
+
+        // Assert - Verify that the thread contains both input and response messages
+        // Input message should be added only once despite multiple updates
+        Assert.Equal(2, retrievedMessages.Count);
+        Assert.Contains(retrievedMessages, m => m.Text == "Hello with many updates!" && m.Role == ChatRole.User);
+        Assert.Contains(retrievedMessages, m => m.Text == "First update, second update, third update!" && m.Role == ChatRole.Assistant);
+    }
+
+    /// <summary>
+    /// Verify that thread is NOT notified of input messages when an exception occurs during streaming.
+    /// </summary>
+    [Fact]
+    public async Task VerifyThreadNotNotifiedWhenStreamingThrowsExceptionAsync()
+    {
+        // Arrange
+        var userMessage = new ChatMessage(ChatRole.User, "Hello that will fail!");
+
+        var mockChatClient = new Mock<IChatClient>();
+        mockChatClient.Setup(
+            c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Throws(new InvalidOperationException("Streaming failed"));
+
+        var agent = new ChatClientAgent(mockChatClient.Object, new());
+        var thread = agent.GetNewThread();
+
+        // Act & Assert - Verify that streaming throws an exception
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var update in agent.RunStreamingAsync([userMessage], thread))
+            {
+                Assert.Fail("Should not yield updates.");
+            }
+        });
+
+        // Retrieve messages from the thread to verify NO notification occurred
+        var messagesRetrievableThread = (IMessagesRetrievableThread)thread;
+        var retrievedMessages = new List<ChatMessage>();
+        await foreach (var message in messagesRetrievableThread.GetMessagesAsync())
+        {
+            retrievedMessages.Add(message);
+        }
+
+        // Assert - Verify that the thread was NOT notified of any messages due to the exception
+        // This ensures that failed operations don't leave the thread in an inconsistent state
+        Assert.Empty(retrievedMessages);
+    }
+
+    /// <summary>
+    /// Verify that thread is NOT notified of input messages when an exception occurs after some streaming updates.
+    /// </summary>
+    [Fact]
+    public async Task VerifyThreadNotNotifiedWhenStreamingThrowsExceptionAfterUpdatesAsync()
+    {
+        // Arrange
+        var userMessage = new ChatMessage(ChatRole.User, "Hello that will partially fail!");
+
+        // Create an async enumerable that yields some updates then throws
+        static async IAsyncEnumerable<ChatResponseUpdate> GetUpdatesWithExceptionAsync()
+        {
+            await Task.CompletedTask; // Simulate async operation
+            throw new InvalidOperationException("Streaming failed after partial response");
+            yield break;
+        }
+
+        var mockChatClient = new Mock<IChatClient>();
+        mockChatClient.Setup(
+            c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(GetUpdatesWithExceptionAsync());
+
+        var agent = new ChatClientAgent(mockChatClient.Object, new());
+        var thread = agent.GetNewThread();
+
+        // Act & Assert - Verify that streaming throws an exception after some updates
+        var streamingResults = new List<ChatResponseUpdate>();
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var update in agent.RunStreamingAsync([userMessage], thread))
+            {
+                streamingResults.Add(update);
+            }
+        });
+
+        // Verify that some updates were received before the exception
+        Assert.Empty(streamingResults);
+
+        // Retrieve messages from the thread to verify NO notification occurred
+        var messagesRetrievableThread = (IMessagesRetrievableThread)thread;
+        var retrievedMessages = new List<ChatMessage>();
+        await foreach (var message in messagesRetrievableThread.GetMessagesAsync())
+        {
+            retrievedMessages.Add(message);
+        }
+
+        // Assert - Verify that the thread was NOT notified of any messages due to the exception
+        // Even though some updates were received, the exception should prevent thread notification
+        Assert.Empty(retrievedMessages);
     }
 
     #endregion

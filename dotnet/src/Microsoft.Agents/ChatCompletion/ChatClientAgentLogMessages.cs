@@ -23,13 +23,13 @@ internal static partial class ChatClientAgentLogMessages
     [LoggerMessage(
         EventId = 0,
         Level = LogLevel.Debug,
-        Message = "[{MethodName}] Agent {AgentId}/{AgentName} Invoking service {ServiceType}.")]
+        Message = "[{MethodName}] Agent {AgentId}/{AgentName} Invoking client {ClientType}.")]
     public static partial void LogAgentChatClientInvokingAgent(
         this ILogger logger,
         string methodName,
         string agentId,
         string agentName,
-        Type serviceType);
+        Type clientType);
 
     /// <summary>
     /// Logs <see cref="ChatClientAgent"/> invoked agent (complete).
@@ -37,13 +37,13 @@ internal static partial class ChatClientAgentLogMessages
     [LoggerMessage(
         EventId = 0,
         Level = LogLevel.Information,
-        Message = "[{MethodName}] Agent {AgentId}/{AgentName} Invoked service {ServiceType} with message count: {MessageCount}.")]
+        Message = "[{MethodName}] Agent {AgentId}/{AgentName} Invoked client {ClientType} with message count: {MessageCount}.")]
     public static partial void LogAgentChatClientInvokedAgent(
         this ILogger logger,
         string methodName,
         string agentId,
         string agentName,
-        Type serviceType,
+        Type clientType,
         int messageCount);
 
     /// <summary>
@@ -52,11 +52,11 @@ internal static partial class ChatClientAgentLogMessages
     [LoggerMessage(
         EventId = 0,
         Level = LogLevel.Information,
-        Message = "[{MethodName}] Agent {AgentId}/{AgentName} Invoked service {ServiceType}.")]
+        Message = "[{MethodName}] Agent {AgentId}/{AgentName} Invoked client {ClientType}.")]
     public static partial void LogAgentChatClientInvokedStreamingAgent(
         this ILogger logger,
         string methodName,
         string agentId,
         string agentName,
-        Type serviceType);
+        Type clientType);
 }

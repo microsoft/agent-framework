@@ -16,7 +16,7 @@ public class ChatClientAgentTests
     /// Verify the invocation and response of <see cref="ChatClientAgent"/>.
     /// </summary>
     [Fact]
-    public void VerifyChatCompletionAgentDefinition()
+    public void VerifyChatClientAgentDefinition()
     {
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
@@ -38,42 +38,6 @@ public class ChatClientAgentTests
         Assert.Equal("test instructions", agent.Instructions);
         Assert.NotNull(agent.ChatClient);
         Assert.Equal("AgentInvokingChatClient", agent.ChatClient.GetType().Name);
-        Assert.Equal(ChatRole.System, agent.InstructionsRole);
-    }
-
-    /// <summary>
-    /// Verify the invocation and response of <see cref="ChatClientAgent"/>.
-    /// </summary>
-    [Fact]
-    public async Task VerifyChatCompletionAgentInvocationAsync()
-    {
-        // Arrange
-        Mock<IChatClient> mockService = new();
-        mockService.Setup(
-            s => s.GetResponseAsync(
-                It.IsAny<IEnumerable<ChatMessage>>(),
-                It.IsAny<ChatOptions>(),
-                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "what?")]));
-
-        ChatClientAgent agent =
-            new(mockService.Object, new()
-            {
-                Instructions = "test instructions"
-            });
-
-        // Act
-        ChatResponse result = await agent.RunAsync([]);
-
-        // Assert
-        Assert.Single(result.Messages);
-
-        mockService.Verify(
-            x =>
-                x.GetResponseAsync(
-                    It.IsAny<IEnumerable<ChatMessage>>(),
-                    It.IsAny<ChatOptions>(),
-                    It.IsAny<CancellationToken>()),
-            Times.Once);
     }
 
     /// <summary>
@@ -117,47 +81,6 @@ public class ChatClientAgentTests
                 Assert.Equal(ChatRole.Assistant, message.Role);
                 Assert.Equal("I'm here!", message.Text);
             });
-    }
-
-    /// <summary>
-    /// Verify the streaming invocation and response of <see cref="ChatClientAgent"/>.
-    /// </summary>
-    [Fact(Skip = "Not implemented yet")]
-    public async Task VerifyChatClientAgentStreamingAsync()
-    {
-        // Arrange
-        ChatResponseUpdate[] returnUpdates =
-        [
-            new ChatResponseUpdate(role: ChatRole.Assistant, content: "wh"),
-            new ChatResponseUpdate(role: null, content: "at?"),
-        ];
-
-        Mock<IChatClient> mockService = new();
-        mockService.Setup(
-            s => s.GetStreamingResponseAsync(
-                It.IsAny<IEnumerable<ChatMessage>>(),
-                It.IsAny<ChatOptions>(),
-                It.IsAny<CancellationToken>())).Returns(returnUpdates.ToAsyncEnumerable());
-
-        ChatClientAgent agent =
-            new(mockService.Object, new()
-            {
-                Instructions = "test instructions"
-            });
-
-        // Act
-        ChatResponseUpdate[] result = await agent.RunStreamingAsync([]).ToArrayAsync();
-
-        // Assert
-        Assert.Equal(2, result.Length);
-
-        mockService.Verify(
-            x =>
-                x.GetStreamingResponseAsync(
-                    It.IsAny<IEnumerable<ChatMessage>>(),
-                    It.IsAny<ChatOptions>(),
-                    It.IsAny<CancellationToken>()),
-            Times.Once);
     }
 
     /// <summary>
@@ -607,77 +530,51 @@ public class ChatClientAgentTests
         Assert.Null(agent.Instructions);
     }
 
-    /// <summary>
-    /// Verify that InstructionsRole property has default value of System.
-    /// </summary>
-    [Fact]
-    public void InstructionsRoleHasDefaultValueOfSystem()
-    {
-        // Arrange
-        var chatClient = new Mock<IChatClient>().Object;
-        ChatClientAgent agent = new(chatClient, new());
-
-        // Act & Assert
-        Assert.Equal(ChatRole.System, agent.InstructionsRole);
-    }
-
-    /// <summary>
-    /// Verify that InstructionsRole property can be set to custom values.
-    /// </summary>
-    [Fact]
-    public void InstructionsRoleCanBeSetToCustomValue()
-    {
-        // Arrange
-        var chatClient = new Mock<IChatClient>().Object;
-        ChatClientAgent agent = new(chatClient, new());
-
-        // Act
-        agent.InstructionsRole = ChatRole.User;
-
-        // Assert
-        Assert.Equal(ChatRole.User, agent.InstructionsRole);
-    }
-
     #endregion
 
     #region RunStreamingAsync Tests
 
     /// <summary>
-    /// Verify that RunStreamingAsync throws NotImplementedException.
+    /// Verify the streaming invocation and response of <see cref="ChatClientAgent"/>.
     /// </summary>
     [Fact]
-    public void RunStreamingAsyncThrowsNotImplementedException()
+    public async Task VerifyChatClientAgentStreamingAsync()
     {
         // Arrange
-        var chatClient = new Mock<IChatClient>().Object;
-        ChatClientAgent agent = new(chatClient, new() { Instructions = "test instructions" });
+        ChatResponseUpdate[] returnUpdates =
+            [
+                new ChatResponseUpdate(role: ChatRole.Assistant, content: "wh"),
+                new ChatResponseUpdate(role: ChatRole.Assistant, content: "at?"),
+            ];
 
-        // Act & Assert
-        Assert.Throws<NotImplementedException>(() =>
-        {
-            var result = agent.RunStreamingAsync([new(ChatRole.User, "test")]);
-            // Force enumeration to trigger the exception
-            result.GetAsyncEnumerator();
-        });
-    }
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>())).Returns(returnUpdates.ToAsyncEnumerable());
 
-    /// <summary>
-    /// Verify that RunStreamingAsync with string message throws NotImplementedException.
-    /// </summary>
-    [Fact]
-    public void RunStreamingAsyncWithStringMessageThrowsNotImplementedException()
-    {
-        // Arrange
-        var chatClient = new Mock<IChatClient>().Object;
-        ChatClientAgent agent = new(chatClient, new() { Instructions = "test instructions" });
+        ChatClientAgent agent =
+            new(mockService.Object, new()
+            {
+                Instructions = "test instructions"
+            });
 
-        // Act & Assert
-        Assert.Throws<NotImplementedException>(() =>
-        {
-            var result = agent.RunStreamingAsync("test message");
-            // Force enumeration to trigger the exception
-            result.GetAsyncEnumerator();
-        });
+        // Act
+        ChatResponseUpdate[] result = await agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "Hello")]).ToArrayAsync();
+
+        // Assert
+        Assert.Equal(2, result.Length);
+        Assert.Equal("wh", result[0].Text);
+        Assert.Equal("at?", result[1].Text);
+
+        mockService.Verify(
+            x =>
+                x.GetStreamingResponseAsync(
+                    It.IsAny<IEnumerable<ChatMessage>>(),
+                    It.IsAny<ChatOptions>(),
+                    It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     #endregion
