@@ -178,7 +178,7 @@ public abstract class BaseSample : TextWriter
             }
             else if (item is UsageContent usage)
             {
-                Console.Console.WriteLine("  [Usage] Tokens: {0}, Input: {1}, Output: {2}",
+                Console.WriteLine("  [Usage] Tokens: {0}, Input: {1}, Output: {2}",
                 usage?.Details?.TotalTokenCount ?? 0,
                 usage?.Details?.InputTokenCount ?? 0,
                 usage?.Details?.OutputTokenCount ?? 0);
