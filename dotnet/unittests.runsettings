@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <!-- Test execution settings -->
+  <RunConfiguration>
+    <!-- Timeout in milliseconds -->
+    <TestSessionTimeout>600000</TestSessionTimeout>
+
+    <!-- Maximum number of cores to use for parallel execution -->
+    <MaxCpuCount>0</MaxCpuCount>
+    <!-- Filter to run only tests from unit test assemblies -->
+    <TestCaseFilter>FullyQualifiedName~UnitTests</TestCaseFilter>
+  </RunConfiguration>
+
+  <!-- Logger configuration -->
+  <LoggerRunSettings>
+    <Loggers>
+      <Logger friendlyName="console" enabled="True">
+        <Configuration>
+          <Verbosity>normal</Verbosity>
+        </Configuration>
+      </Logger>
+    </Loggers>
+  </LoggerRunSettings>
+</RunSettings>
