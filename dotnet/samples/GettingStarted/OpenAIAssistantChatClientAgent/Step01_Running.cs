@@ -16,7 +16,7 @@ namespace GettingStarted.OpenAIAssistantChatClientAgent;
 /// <remarks>
 /// Each test method demonstrates how to configure and interact with the agents, including handling user input and displaying responses.
 /// </remarks>
-public class Step01_Running : AgentSample, IAsyncLifetime
+public sealed class Step01_Running : AgentSample, IAsyncLifetime
 {
     private const string ParrotName = "Parrot";
     private const string ParrotInstructions = "Repeat the user message in the voice of a pirate and then end with a parrot sound.";
