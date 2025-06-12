@@ -5,15 +5,9 @@ using Microsoft.Extensions.Configuration;
 
 namespace Microsoft.Shared.Samples;
 
-// Copyright (c) Microsoft. All rights reserved.
-
 /// <summary>
 /// Provides a centralized configuration management system for accessing application settings.
 /// </summary>
-/// <remarks>The <see cref="TestConfiguration"/> class is designed to manage application configuration settings
-/// using an <see cref="IConfigurationRoot"/> instance. It must be initialized by calling  <see
-/// cref="Initialize(IConfigurationRoot)"/> before accessing any configuration values.  This class supports retrieving
-/// configuration sections and strongly-typed configuration objects.</remarks>
 public sealed class TestConfiguration
 {
     private readonly IConfigurationRoot _configRoot;
@@ -27,9 +21,6 @@ public sealed class TestConfiguration
     /// <summary>
     /// Initializes the configuration system with the specified configuration root.
     /// </summary>
-    /// <remarks>This method sets up the configuration system by creating a new instance of  <see
-    /// cref="TestConfiguration"/> using the provided <paramref name="configRoot"/>. Subsequent calls to access
-    /// configuration settings will use this initialized instance.</remarks>
     /// <param name="configRoot">The root of the configuration hierarchy used to initialize the system. Must not be <see langword="null"/>.</param>
     public static void Initialize(IConfigurationRoot configRoot)
     {
@@ -78,10 +69,7 @@ public sealed class TestConfiguration
     /// <summary>Represents the configuration settings required to interact with the OpenAI service.</summary>
     public class OpenAIConfig
     {
-        /// <summary>Gets or sets the identifier for the model.</summary>
-        public string? ModelId { get; set; }
-
-        /// <summary>Gets or sets the identifier for the chat model used in the application.</summary>
+        /// <summary>Gets or sets the identifier for the chat completion model used in the application.</summary>
         public string? ChatModelId { get; set; }
 
         /// <summary>Gets or sets the identifier for the embedding model used in the application.</summary>

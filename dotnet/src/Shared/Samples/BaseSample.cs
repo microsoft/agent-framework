@@ -75,19 +75,16 @@ public abstract class BaseSample : TextWriter
     }
 
     /// <summary>
-    /// Sends a chat message from the agent to the user in the chat system.
+    /// Writes a user message to the console.
     /// </summary>
-    /// <remarks>This method formats the provided message as a user role chat message and sends it to the chat
-    /// system. Ensure the <paramref name="message"/> parameter contains meaningful content, as empty or null values may
-    /// result in an error.</remarks>
     /// <param name="message">The text of the message to be sent. Cannot be null or empty.</param>
     protected void WriteUserMessage(string message)
     {
-        this.WriteAgentOutput(new ChatResponse(new ChatMessage(ChatRole.User, message)), printUsage: false);
+        this.WriteResponseOutput(new ChatResponse(new ChatMessage(ChatRole.User, message)), printUsage: false);
     }
 
     /// <summary>
-    /// Processes and writes the latest agent chat message to the console, including metadata and content details.
+    /// Processes and writes the latest agent chat response to the console, including metadata and content details.
     /// </summary>
     /// <remarks>This method formats and outputs the most recent message from the provided <see
     /// cref="ChatResponse"/> object. It includes the message role, author name (if available), text content, and
@@ -95,7 +92,7 @@ public abstract class BaseSample : TextWriter
     /// counts, are also displayed.</remarks>
     /// <param name="chatResponse">The <see cref="ChatResponse"/> object containing the chat messages and usage data.</param>
     /// <param name="printUsage">The flag to indicate whether to print usage information. Defaults to <see langword="true"/>.</param>
-    protected void WriteAgentOutput(ChatResponse chatResponse, bool? printUsage = true)
+    protected void WriteResponseOutput(ChatResponse chatResponse, bool? printUsage = true)
     {
         if (chatResponse.Messages.Count == 0)
         {
@@ -140,13 +137,13 @@ public abstract class BaseSample : TextWriter
     }
 
     /// <summary>
-    /// Processes and writes the latest agent chat message to the console, including metadata and content details.
+    /// Writes the streaming agent response updates to the console.
     /// </summary>
     /// <remarks>This method formats and outputs the most recent message from the provided <see
-    /// cref="ChatResponse"/> object. It includes the message role, author name (if available), text content, and
+    /// cref="ChatResponseUpdate"/> object. It includes the message role, author name (if available), text content, and
     /// additional content such as images, function calls, and function results. Usage statistics, including token
     /// counts, are also displayed.</remarks>
-    /// <param name="update">The <see cref="ChatResponse"/> object containing the chat messages and usage data.</param>
+    /// <param name="update">The <see cref="ChatResponseUpdate"/> object containing the chat messages and usage data.</param>
     protected void WriteAgentOutput(ChatResponseUpdate update)
     {
         if (update.Contents.Count == 0)
@@ -209,33 +206,10 @@ public abstract class BaseSample : TextWriter
         => this.Output.WriteLine(value ?? string.Empty);
 
     /// <inheritdoc/>
-    /// <remarks>
-    /// <see cref="ITestOutputHelper"/> only supports output that ends with a newline.
-    /// User this method will resolve in a call to <see cref="WriteLine(string?)"/>.
-    /// </remarks>
     public override void Write(object? value = null)
         => this.Output.WriteLine(value ?? string.Empty);
 
     /// <inheritdoc/>
-    /// <remarks>
-    /// <see cref="ITestOutputHelper"/> only supports output that ends with a newline.
-    /// User this method will resolve in a call to <see cref="WriteLine(string?)"/>.
-    /// </remarks>
     public override void Write(char[]? buffer)
         => this.Output.WriteLine(new string(buffer));
-
-    /// <summary>
-    /// Specifies the type of chat client used for interacting with AI services.
-    /// </summary>
-    /// <remarks>This enumeration is used to differentiate between various AI service providers, such as
-    /// OpenAI and Azure OpenAI. It allows the caller to select the appropriate client type for their
-    /// application.</remarks>
-    public enum ChatClientProvider
-    {
-        /// <summary>Uses OpenAI's services.</summary>
-        OpenAI,
-
-        /// <summary>Uses Azure OpenAI services.</summary>
-        AzureOpenAI
-    }
 }

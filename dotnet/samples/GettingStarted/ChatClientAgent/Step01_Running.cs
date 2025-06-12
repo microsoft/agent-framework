@@ -41,15 +41,13 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
         await InvokeAgentAsync("I came, I saw, I conquered.");
         await InvokeAgentAsync("Practice makes perfect.");
 
-        chatClient?.Dispose();
-
         // Local function to invoke agent and display the conversation messages.
         async Task InvokeAgentAsync(string input)
         {
             this.WriteUserMessage(input);
 
             var response = await agent.RunAsync(input);
-            this.WriteAgentOutput(response);
+            this.WriteResponseOutput(response);
         }
     }
 
@@ -84,7 +82,7 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
 
             var response = await agent.RunAsync(input, thread);
 
-            this.WriteAgentOutput(response);
+            this.WriteResponseOutput(response);
         }
     }
 

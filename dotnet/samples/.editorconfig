@@ -1,4 +1,4 @@
-# Suppressing errors for Test projects under dotnet folder
+# Suppressing errors for Sample projects under dotnet/samples folder
 [*.cs]
 dotnet_diagnostic.CA2007.severity = none # Do not directly await a Task
 dotnet_diagnostic.CS1591.severity = none # Missing XML comment for publicly visible type or member

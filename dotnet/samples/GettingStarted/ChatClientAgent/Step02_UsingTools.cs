@@ -45,7 +45,7 @@ public sealed class Step02_UsingTools(ITestOutputHelper output) : AgentSample(ou
         {
             this.WriteUserMessage(input);
             var response = await agent.RunAsync(input, thread, chatOptions: chatOptions);
-            this.WriteAgentOutput(response);
+            this.WriteResponseOutput(response);
         }
     }
 

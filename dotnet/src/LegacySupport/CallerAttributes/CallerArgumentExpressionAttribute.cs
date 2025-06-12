@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics.CodeAnalysis;
 
@@ -17,7 +17,7 @@ internal sealed class CallerArgumentExpressionAttribute : Attribute
     /// <param name="parameterName">Function parameter to take the name from.</param>
     public CallerArgumentExpressionAttribute(string parameterName)
     {
-        this.ParameterName = parameterName;
+        ParameterName = parameterName;
     }
 
     /// <summary>

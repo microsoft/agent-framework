@@ -1,8 +1,6 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <ProjectsTargetFrameworks>net472;net9.0</ProjectsTargetFrameworks>
-    <ProjectsDebugTargetFrameworks>net9.0</ProjectsDebugTargetFrameworks>
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
   </PropertyGroup>
 
@@ -12,9 +10,6 @@
 
   <PropertyGroup>
     <RootNamespace>GettingStarted</RootNamespace>
-    <IsTestProject>true</IsTestProject>
-    <IsPackable>false</IsPackable>
-    <IsAotCompatible>false</IsAotCompatible>
     <OutputType>Library</OutputType>
     <UserSecretsId>5ee045b0-aea3-4f08-8d31-32d1a6f8fed0</UserSecretsId>
     <NoWarn>$(NoWarn);CA1707;CA1716;IDE0009;IDE1006;</NoWarn>
