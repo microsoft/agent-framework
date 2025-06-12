@@ -25,7 +25,8 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
     [Fact]
     public async Task RunWithoutThread()
     {
-        using var chatClient = base.GetChatClient(ChatClientType.OpenAI);
+        // Get the chat client to use for the agent.
+        using var chatClient = base.GetOpenAIChatClient();
 
         // Define the agent
         ChatClientAgent agent =
@@ -58,7 +59,8 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
     [Fact]
     public async Task RunWithConversationThread()
     {
-        using var chatClient = base.GetChatClient(ChatClientType.OpenAI);
+        // Get the chat client to use for the agent.
+        using var chatClient = base.GetOpenAIChatClient();
 
         // Define the agent
         ChatClientAgent agent =
@@ -93,7 +95,8 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
     [Fact]
     public async Task StreamingRunWithConversationThread()
     {
-        using var chatClient = base.GetChatClient(ChatClientType.OpenAI);
+        // Get the chat client to use for the agent.
+        using var chatClient = base.GetOpenAIChatClient();
 
         // Define the agent
         ChatClientAgent agent =

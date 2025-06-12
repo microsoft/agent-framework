@@ -8,7 +8,7 @@ namespace GettingStarted;
 
 public class AgentSample(ITestOutputHelper output) : BaseSample(output)
 {
-    protected override IChatClient GetOpenAIChatClient()
+    protected IChatClient GetOpenAIChatClient()
         => new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
             .GetChatClient(TestConfiguration.OpenAI.ChatModelId)
             .AsIChatClient();

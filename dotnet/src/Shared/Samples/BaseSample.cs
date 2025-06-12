@@ -230,7 +230,7 @@ public abstract class BaseSample : TextWriter
     /// <remarks>This enumeration is used to differentiate between various AI service providers, such as
     /// OpenAI and Azure OpenAI. It allows the caller to select the appropriate client type for their
     /// application.</remarks>
-    public enum ChatClientType
+    public enum ChatClientProvider
     {
         /// <summary>Uses OpenAI's services.</summary>
         OpenAI,
@@ -238,48 +238,4 @@ public abstract class BaseSample : TextWriter
         /// <summary>Uses Azure OpenAI services.</summary>
         AzureOpenAI
     }
-
-    /// <summary>
-    /// Retrieves an instance of an <see cref="IChatClient"/> based on the specified chat client type.
-    /// </summary>
-    /// <param name="chatClientType">The type of chat client to retrieve. Must be one of the defined values in <see cref="ChatClientType"/>.</param>
-    /// <returns>An instance of <see cref="IChatClient"/> corresponding to the specified <paramref name="chatClientType"/>.</returns>
-    /// <exception cref="ArgumentOutOfRangeException">Thrown if the specified <paramref name="chatClientType"/> is not a recognized value.</exception>
-    protected IChatClient GetChatClient(ChatClientType chatClientType)
-    {
-        return chatClientType switch
-        {
-            ChatClientType.OpenAI => GetOpenAIChatClient(),
-            ChatClientType.AzureOpenAI => GetAzureOpenAIChatClient(),
-            _ => throw new ArgumentOutOfRangeException(nameof(chatClientType), chatClientType, null)
-        };
-    }
-
-    /// <summary>
-    /// Creates and returns an instance of an OpenAI chat client.
-    /// </summary>
-    /// <remarks>This method is intended to be overridden in derived classes to provide a specific
-    /// implementation for creating an OpenAI chat client. The default implementation throws a <see
-    /// cref="NotImplementedException"/>.</remarks>
-    /// <returns>An instance of a class implementing <see cref="IChatClient"/> that interacts with OpenAI's chat services.</returns>
-    /// <exception cref="NotImplementedException">Thrown if the method is not overridden in a derived class.</exception>
-    protected virtual IChatClient GetOpenAIChatClient()
-    {
-        throw new NotImplementedException(NotImplementedMessage);
-    }
-
-    /// <summary>
-    /// Creates and returns an instance of an Azure OpenAI chat client.
-    /// </summary>
-    /// <remarks>This method is intended to be overridden in derived classes to provide a specific
-    /// implementation  for creating an Azure OpenAI chat client. The default implementation throws a  <see
-    /// cref="NotImplementedException"/>.</remarks>
-    /// <returns>An instance of <see cref="IChatClient"/> configured for Azure OpenAI chat functionality.</returns>
-    /// <exception cref="NotImplementedException">Thrown if the method is not overridden in a derived class.</exception>
-    protected virtual IChatClient GetAzureOpenAIChatClient()
-    {
-        throw new NotImplementedException(NotImplementedMessage);
-    }
-
-    private const string NotImplementedMessage = "This method should be overridden in a derived class to provide the specific chat client implementation.";
 }

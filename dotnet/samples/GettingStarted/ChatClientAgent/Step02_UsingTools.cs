@@ -11,7 +11,8 @@ public sealed class Step02_UsingTools(ITestOutputHelper output) : AgentSample(ou
     [Fact]
     public async Task RunningWithTools()
     {
-        using var chatClient = base.GetChatClient(ChatClientType.OpenAI);
+        // Get the chat client to use for the agent.
+        using var chatClient = base.GetOpenAIChatClient();
 
         // Define the agent
         ChatClientAgent agent =
@@ -51,7 +52,8 @@ public sealed class Step02_UsingTools(ITestOutputHelper output) : AgentSample(ou
     [Fact]
     public async Task StreamingRunWithTools()
     {
-        using var chatClient = base.GetChatClient(ChatClientType.OpenAI);
+        // Get the chat client to use for the agent.
+        using var chatClient = base.GetOpenAIChatClient();
 
         // Define the agent
         ChatClientAgent agent =
