@@ -23,7 +23,7 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
     /// a unique interaction with no conversation history between them.
     /// </summary>
     [Fact]
-    public async Task RunningWithoutThread()
+    public async Task RunWithoutThread()
     {
         using var chatClient = base.GetChatClient(ChatClientType.OpenAI);
 
@@ -49,75 +49,6 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
 
             var response = await agent.RunAsync(input);
             this.WriteAgentOutput(response);
-        }
-    }
-
-    /// <summary>
-    /// Demonstrate the usage of <see cref="ChatClientAgent"/> where a conversation is maintained by the <see cref="AgentThread"/>.
-    /// </summary>
-    [Fact]
-    public async Task RunningWithConversationThread()
-    {
-        using var chatClient = base.GetChatClient(ChatClientType.OpenAI);
-
-        // Define the agent
-        ChatClientAgent agent =
-            new(chatClient, new()
-            {
-                Name = ParrotName,
-                Instructions = ParrotInstructions,
-            });
-
-        // Respond to user input
-        await InvokeAgentAsync("Fortune favors the bold.");
-        await InvokeAgentAsync("I came, I saw, I conquered.");
-        await InvokeAgentAsync("Practice makes perfect.");
-
-        chatClient?.Dispose();
-
-        // Local function to invoke agent and display the conversation messages.
-        async Task InvokeAgentAsync(string input)
-        {
-            this.WriteUserMessage(input);
-
-            var response = await agent.RunAsync(input);
-            this.WriteAgentOutput(response);
-        }
-    }
-
-    /// <summary>
-    /// Demonstrate the usage of <see cref="ChatClientAgent"/> in streaming mode,
-    /// where a conversation is maintained by the <see cref="AgentThread"/>.
-    /// </summary>
-    [Fact]
-    public async Task StreamingRunWithConversationThread()
-    {
-        using var chatClient = base.GetChatClient(ChatClientType.OpenAI);
-
-        // Define the agent
-        ChatClientAgent agent =
-            new(chatClient, new()
-            {
-                Name = ParrotName,
-                Instructions = ParrotInstructions,
-            });
-
-        // Respond to user input
-        await InvokeAgentAsync("Fortune favors the bold.");
-        await InvokeAgentAsync("I came, I saw, I conquered.");
-        await InvokeAgentAsync("Practice makes perfect.");
-
-        chatClient?.Dispose();
-
-        // Local function to invoke agent and display the conversation messages.
-        async Task InvokeAgentAsync(string input)
-        {
-            this.WriteUserMessage(input);
-
-            await foreach (var update in agent.RunStreamingAsync(input))
-            {
-                this.WriteAgentOutput(update);
-            }
         }
     }
 
@@ -125,7 +56,7 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
     /// Demonstrate the usage of <see cref="ChatClientAgent"/> where a conversation history is maintained.
     /// </summary>
     [Fact]
-    public async Task UsingAgentWithConversationThread()
+    public async Task RunWithConversationThread()
     {
         using var chatClient = base.GetChatClient(ChatClientType.OpenAI);
 
@@ -152,6 +83,42 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
             var response = await agent.RunAsync(input, thread);
 
             this.WriteAgentOutput(response);
+        }
+    }
+
+    /// <summary>
+    /// Demonstrate the usage of <see cref="ChatClientAgent"/> in streaming mode,
+    /// where a conversation is maintained by the <see cref="AgentThread"/>.
+    /// </summary>
+    [Fact]
+    public async Task StreamingRunWithConversationThread()
+    {
+        using var chatClient = base.GetChatClient(ChatClientType.OpenAI);
+
+        // Define the agent
+        ChatClientAgent agent =
+            new(chatClient, new()
+            {
+                Name = ParrotName,
+                Instructions = ParrotInstructions,
+            });
+
+        // Start a new thread for the agent conversation.
+        AgentThread thread = agent.GetNewThread();
+
+        // Respond to user input
+        await InvokeAgentAsync("Tell me a joke about a pirate.");
+        await InvokeAgentAsync("Now add some emojis to the joke.");
+
+        // Local function to invoke agent and display the conversation messages.
+        async Task InvokeAgentAsync(string input)
+        {
+            this.WriteUserMessage(input);
+
+            await foreach (var update in agent.RunStreamingAsync(input, thread))
+            {
+                this.WriteAgentOutput(update);
+            }
         }
     }
 }
