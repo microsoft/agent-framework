@@ -4,12 +4,18 @@
     <BuildType Name="Publish" />
     <BuildType Name="Release" />
   </Configurations>
+  <Folder Name="/Samples/">
+    <Project Path="samples/GettingStarted/GettingStarted.csproj">
+      <BuildType Solution="Publish|*" Project="Debug" />
+    </Project>
+  </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
     <File Path=".gitignore" />
     <File Path="Directory.Build.props" />
     <File Path="Directory.Build.targets" />
     <File Path="Directory.Packages.props" />
+    <File Path="unittests.runsettings" />
   </Folder>
   <Folder Name="/Solution Items/nuget/">
     <File Path="nuget/icon.png" />
@@ -20,15 +26,22 @@
     <File Path="tests/.editorconfig" />
     <File Path="tests/Directory.Build.props" />
   </Folder>
+  <Folder Name="/Solution Items/eng/" />
   <Folder Name="/Solution Items/eng/MSBuild/">
     <File Path="eng/MSBuild/LegacySupport.props" />
     <File Path="eng/MSBuild/Shared.props" />
     <File Path="eng/MSBuild/Shared.targets" />
   </Folder>
+  <Folder Name="/Solution Items/src/Shared/" />
   <Folder Name="/Solution Items/src/Shared/Throw/">
     <File Path="src/Shared/Throw/README.md" />
     <File Path="src/Shared/Throw/Throw.cs" />
   </Folder>
+  <Folder Name="/Solution Items/samples/">
+    <File Path="samples/.editorconfig" />
+    <File Path="samples/Directory.Build.props" />
+  </Folder>
+  <Folder Name="/Solution Items/src/" />
   <Folder Name="/Solution Items/src/LegacySupport/">
     <File Path="src/LegacySupport/README.md" />
   </Folder>
