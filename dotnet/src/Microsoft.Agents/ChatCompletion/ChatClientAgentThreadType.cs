@@ -8,12 +8,12 @@ namespace Microsoft.Agents;
 internal enum ChatClientAgentThreadType
 {
     /// <summary>
-    /// Messages are stored in memory inside the thread object.
+    /// Messages are stored by the thread object in the location of its choice.
     /// </summary>
-    InMemoryMessages,
+    AgentThreadManaged,
 
     /// <summary>
-    /// Messages are stored in the service and the thread object just has an id reference the service storage.
+    /// Messages are stored in the agent service and the thread object just has an id reference to the service storage.
     /// </summary>
     ConversationId
 }

@@ -15,25 +15,10 @@ namespace Microsoft.Agents.UnitTests.ChatCompletion;
 public class ChatClientAgentThreadTests
 {
     /// <summary>
-    /// Verify that <see cref="ChatClientAgentThread"/> implements <see cref="IMessagesRetrievableThread"/>.
+    /// Verify that <see cref="ChatClientAgentThread"/> can retrieve messages when empty.
     /// </summary>
     [Fact]
-    public void VerifyChatClientAgentThreadImplementsIMessagesRetrievableThread()
-    {
-        // Arrange & Act
-        var thread = new ChatClientAgentThread();
-
-        // Assert
-        Assert.IsAssignableFrom<IMessagesRetrievableThread>(thread);
-        Assert.IsAssignableFrom<AgentThread>(thread);
-    }
-
-    /// <summary>
-    /// Verify that <see cref="ChatClientAgentThread"/> can retrieve messages through <see cref="IMessagesRetrievableThread.GetMessagesAsync"/>.
-    /// This test verifies the interface works correctly when no messages have been added.
-    /// </summary>
-    [Fact]
-    public async Task VerifyIMessagesRetrievableThreadGetMessagesAsyncWhenEmptyAsync()
+    public async Task VerifyChatClientAgentThreadGetMessagesAsyncWhenEmptyAsync()
     {
         // Arrange
         var thread = new ChatClientAgentThread();
@@ -50,11 +35,10 @@ public class ChatClientAgentThreadTests
     }
 
     /// <summary>
-    /// Verify that <see cref="ChatClientAgentThread"/> can retrieve messages through <see cref="IMessagesRetrievableThread.GetMessagesAsync"/>.
-    /// This test verifies the interface works correctly when messages have been added via ChatClientAgent.
+    /// Verify that <see cref="ChatClientAgentThread"/> can retrieve messages when not empty.
     /// </summary>
     [Fact]
-    public async Task VerifyIMessagesRetrievableThreadGetMessagesAsyncWhenNotEmptyAsync()
+    public async Task VerifyChatClientAgentThreadGetMessagesAsyncWhenNotEmptyAsync()
     {
         // Arrange
         var userMessage = new ChatMessage(ChatRole.User, "Hello, how are you?");
@@ -80,11 +64,11 @@ public class ChatClientAgentThreadTests
 
         // Run the agent again with the thread to populate it with messages
         var responseWithThread = await agent.RunAsync([userMessage], thread);
-        var messagesRetrievableThread = (IMessagesRetrievableThread)thread;
+        var chatClientAgentThread = (ChatClientAgentThread)thread;
 
         // Retrieve messages through the interface
         var retrievedMessages = new List<ChatMessage>();
-        await foreach (var message in messagesRetrievableThread.GetMessagesAsync())
+        await foreach (var message in chatClientAgentThread.GetMessagesAsync())
         {
             retrievedMessages.Add(message);
         }
@@ -151,7 +135,7 @@ public class ChatClientAgentThreadTests
 
         // Assert
         Assert.Null(thread.Id); // Id should be null when we add messages, since it's a local thread.
-        Assert.Equal(ChatClientAgentThreadType.InMemoryMessages, thread.StorageLocation); // StorageLocation should be set to local since we are adding messages already.
+        Assert.Equal(ChatClientAgentThreadType.AgentThreadManaged, thread.StorageLocation); // StorageLocation should be set to local since we are adding messages already.
 
         var messages = await thread.GetMessagesAsync().ToListAsync();
         Assert.Contains(message, messages);
@@ -253,7 +237,7 @@ public class ChatClientAgentThreadTests
 
         // Retrieve messages from the thread
         var retrievedMessages = new List<ChatMessage>();
-        await foreach (var message in ((IMessagesRetrievableThread)thread).GetMessagesAsync())
+        await foreach (var message in ((ChatClientAgentThread)thread).GetMessagesAsync())
         {
             retrievedMessages.Add(message);
         }
@@ -270,7 +254,7 @@ public class ChatClientAgentThreadTests
         Assert.Equal(responseConversationId, thread.Id);  // Id should match the returned conversation id.
         Assert.Equal(
             messagesStored
-                ? ChatClientAgentThreadType.InMemoryMessages
+                ? ChatClientAgentThreadType.AgentThreadManaged
                 : ChatClientAgentThreadType.ConversationId,
             chatClientAgentThread.StorageLocation);       // StorageLocation should be based on whether we got back a conversation id
     }
@@ -308,7 +292,7 @@ public class ChatClientAgentThreadTests
 
         // Assert - Verify all messages are stored in order
         var retrievedMessages = new List<ChatMessage>();
-        await foreach (var message in ((IMessagesRetrievableThread)thread).GetMessagesAsync())
+        await foreach (var message in ((ChatClientAgentThread)thread).GetMessagesAsync())
         {
             retrievedMessages.Add(message);
         }
@@ -369,7 +353,7 @@ public class ChatClientAgentThreadTests
         Assert.Equal(2, streamingResults.Count);
 
         // Retrieve messages from the thread to verify notification occurred
-        var messagesRetrievableThread = (IMessagesRetrievableThread)thread;
+        var messagesRetrievableThread = (ChatClientAgentThread)thread;
         var retrievedMessages = new List<ChatMessage>();
         await foreach (var message in messagesRetrievableThread.GetMessagesAsync())
         {
@@ -437,7 +421,7 @@ public class ChatClientAgentThreadTests
         Assert.Equal(2, secondStreamingResults.Count);
 
         // Retrieve all messages from the thread
-        var messagesRetrievableThread = (IMessagesRetrievableThread)thread;
+        var messagesRetrievableThread = (ChatClientAgentThread)thread;
         var retrievedMessages = new List<ChatMessage>();
         await foreach (var message in messagesRetrievableThread.GetMessagesAsync())
         {
@@ -504,7 +488,7 @@ public class ChatClientAgentThreadTests
         Assert.Equal(2, streamingResults.Count);
 
         // Retrieve all messages from the thread
-        var messagesRetrievableThread = (IMessagesRetrievableThread)thread;
+        var messagesRetrievableThread = (ChatClientAgentThread)thread;
         var retrievedMessages = new List<ChatMessage>();
         await foreach (var message in messagesRetrievableThread.GetMessagesAsync())
         {
@@ -553,7 +537,7 @@ public class ChatClientAgentThreadTests
         Assert.Empty(streamingResults);
 
         // Retrieve messages from the thread to verify notification occurred
-        var messagesRetrievableThread = (IMessagesRetrievableThread)thread;
+        var messagesRetrievableThread = (ChatClientAgentThread)thread;
         var retrievedMessages = new List<ChatMessage>();
         await foreach (var message in messagesRetrievableThread.GetMessagesAsync())
         {
@@ -608,7 +592,7 @@ public class ChatClientAgentThreadTests
         Assert.Equal(6, streamingResults.Count);
 
         // Retrieve messages from the thread to verify notification occurred
-        var messagesRetrievableThread = (IMessagesRetrievableThread)thread;
+        var messagesRetrievableThread = (ChatClientAgentThread)thread;
         var retrievedMessages = new List<ChatMessage>();
         await foreach (var message in messagesRetrievableThread.GetMessagesAsync())
         {
@@ -652,7 +636,7 @@ public class ChatClientAgentThreadTests
         });
 
         // Retrieve messages from the thread to verify NO notification occurred
-        var messagesRetrievableThread = (IMessagesRetrievableThread)thread;
+        var messagesRetrievableThread = (ChatClientAgentThread)thread;
         var retrievedMessages = new List<ChatMessage>();
         await foreach (var message in messagesRetrievableThread.GetMessagesAsync())
         {
@@ -706,7 +690,7 @@ public class ChatClientAgentThreadTests
         Assert.Empty(streamingResults);
 
         // Retrieve messages from the thread to verify NO notification occurred
-        var messagesRetrievableThread = (IMessagesRetrievableThread)thread;
+        var messagesRetrievableThread = (ChatClientAgentThread)thread;
         var retrievedMessages = new List<ChatMessage>();
         await foreach (var message in messagesRetrievableThread.GetMessagesAsync())
         {

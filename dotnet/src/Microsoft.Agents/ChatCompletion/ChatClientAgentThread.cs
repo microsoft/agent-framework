@@ -13,7 +13,7 @@ namespace Microsoft.Agents;
 /// <summary>
 /// Chat client agent thread.
 /// </summary>
-public sealed class ChatClientAgentThread : AgentThread, IMessagesRetrievableThread
+public class ChatClientAgentThread : AgentThread
 {
     private readonly List<ChatMessage> _chatMessages = [];
 
@@ -51,17 +51,17 @@ public sealed class ChatClientAgentThread : AgentThread, IMessagesRetrievableThr
         Throw.IfNull(messages);
 
         this._chatMessages.AddRange(messages);
-        this.StorageLocation = ChatClientAgentThreadType.InMemoryMessages;
+        this.StorageLocation = ChatClientAgentThreadType.AgentThreadManaged;
     }
 
     /// <summary>
     /// Gets the location of the thread contents.
     /// </summary>
-    internal ChatClientAgentThreadType? StorageLocation { get; set; }
+    internal virtual ChatClientAgentThreadType? StorageLocation { get; set; }
 
 #pragma warning disable CS1998 // Async method lacks 'await' operators and will run synchronously
     /// <inheritdoc/>
-    public async IAsyncEnumerable<ChatMessage> GetMessagesAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
+    internal virtual async IAsyncEnumerable<ChatMessage> GetMessagesAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         foreach (var message in this._chatMessages)
         {
@@ -71,12 +71,20 @@ public sealed class ChatClientAgentThread : AgentThread, IMessagesRetrievableThr
 
 #pragma warning restore CS1998 // Async method lacks 'await' operators and will run synchronously
 
-    /// <inheritdoc/>
-    protected override Task OnNewMessagesAsync(IReadOnlyCollection<ChatMessage> newMessages, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// This method is called when new messages have been contributed to the chat by any participant.
+    /// </summary>
+    /// <remarks>
+    /// Inheritors can use this method to update their context based on the new message.
+    /// </remarks>
+    /// <param name="newMessages">The new messages.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A task that completes when the context has been updated.</returns>
+    internal virtual Task OnNewMessagesAsync(IReadOnlyCollection<ChatMessage> newMessages, CancellationToken cancellationToken = default)
     {
         switch (this.StorageLocation)
         {
-            case ChatClientAgentThreadType.InMemoryMessages:
+            case ChatClientAgentThreadType.AgentThreadManaged:
                 this._chatMessages.AddRange(newMessages);
                 break;
             case ChatClientAgentThreadType.ConversationId:

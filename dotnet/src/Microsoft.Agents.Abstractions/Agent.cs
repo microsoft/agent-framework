@@ -214,36 +214,4 @@ public abstract class Agent
 
         return concreteThreadType;
     }
-
-    /// <summary>
-    /// Notfiy the given thread that new messages are available.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// Note that while all agents should notify their threads of new messages,
-    /// not all threads will necessarily take action. For some treads, this may be
-    /// the only way that they would know that a new message is available to be added
-    /// to their history.
-    /// </para>
-    /// <para>
-    /// For other thread types, where history is managed by the service, the thread may
-    /// not need to take any action.
-    /// </para>
-    /// <para>
-    /// Where threads manage other memory components that need access to new messages,
-    /// notifying the thread will be important, even if the thread itself does not
-    /// require the message.
-    /// </para>
-    /// </remarks>
-    /// <param name="thread">The thread to notify of the new messages.</param>
-    /// <param name="messages">The messages to pass to the thread.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>An async task that completes once the notification is complete.</returns>
-    protected async Task NotifyThreadOfNewMessagesAsync(AgentThread thread, IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken)
-    {
-        if (messages.Count > 0)
-        {
-            await thread.OnNewMessagesAsync(messages, cancellationToken).ConfigureAwait(false);
-        }
-    }
 }

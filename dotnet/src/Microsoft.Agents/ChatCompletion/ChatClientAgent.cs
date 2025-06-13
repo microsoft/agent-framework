@@ -183,12 +183,9 @@ public sealed class ChatClientAgent : Agent
 
         // Add any existing messages from the thread to the messages to be sent to the chat client.
         List<ChatMessage> threadMessages = [];
-        if (chatClientThread is IMessagesRetrievableThread messagesRetrievableThread)
+        await foreach (ChatMessage message in chatClientThread.GetMessagesAsync(cancellationToken).ConfigureAwait(false))
         {
-            await foreach (ChatMessage message in messagesRetrievableThread.GetMessagesAsync(cancellationToken).ConfigureAwait(false))
-            {
-                threadMessages.Add(message);
-            }
+            threadMessages.Add(message);
         }
 
         // Update the messages with agent instructions.
@@ -221,7 +218,7 @@ public sealed class ChatClientAgent : Agent
         if (chatClientThread.StorageLocation is null)
         {
             chatClientThread.StorageLocation = string.IsNullOrWhiteSpace(responseConversationId)
-                ? ChatClientAgentThreadType.InMemoryMessages
+                ? ChatClientAgentThreadType.AgentThreadManaged
                 : ChatClientAgentThreadType.ConversationId;
         }
 
@@ -248,6 +245,38 @@ public sealed class ChatClientAgent : Agent
         if (!string.IsNullOrWhiteSpace(this.Instructions))
         {
             threadMessages.Insert(0, new(ChatRole.System, this.Instructions) { AuthorName = this.Name });
+        }
+    }
+
+    /// <summary>
+    /// Notfiy the given thread that new messages are available.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Note that while we should always notify threads of new messages,
+    /// not all threads will necessarily take action. For treads that store messages
+    /// locally in-memory, this may be the only way that they would know that a new
+    /// message is available to be added to their history.
+    /// </para>
+    /// <para>
+    /// For threads where messages are stored in the service, the thread may
+    /// not need to take any action.
+    /// </para>
+    /// <para>
+    /// Where threads manage other context providers that need access to new messages,
+    /// notifying the thread will be important, even if the thread itself does not
+    /// require the message.
+    /// </para>
+    /// </remarks>
+    /// <param name="thread">The thread to notify of the new messages.</param>
+    /// <param name="messages">The messages to pass to the thread.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>An async task that completes once the notification is complete.</returns>
+    private async Task NotifyThreadOfNewMessagesAsync(ChatClientAgentThread thread, IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken)
+    {
+        if (messages.Count > 0)
+        {
+            await thread.OnNewMessagesAsync(messages, cancellationToken).ConfigureAwait(false);
         }
     }
 

@@ -7,7 +7,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Moq;
-using Moq.Protected;
 
 namespace Microsoft.Agents.Abstractions.UnitTests;
 
@@ -228,21 +227,6 @@ public class AgentTests
         Assert.Throws<NotSupportedException>(() => agent.ValidateOrCreateThreadType<TestAgentThread>(wrongThread, () => threadMock.Object));
     }
 
-    [Fact]
-    public async Task NotifyThreadOfNewMessagesNotifiesThreadAsync()
-    {
-        var cancellationToken = new CancellationToken();
-
-        var messages = new[] { new ChatMessage(ChatRole.User, "msg1"), new ChatMessage(ChatRole.User, "msg2") };
-
-        var threadMock = new Mock<TestAgentThread>() { CallBase = true };
-        var agent = new MockAgent();
-
-        await agent.NotifyThreadOfNewMessagesAsync(threadMock.Object, messages, cancellationToken);
-
-        threadMock.Protected().Verify("OnNewMessagesAsync", Times.Once(), messages, cancellationToken);
-    }
-
     /// <summary>
     /// Typed mock thread.
     /// </summary>
@@ -263,11 +247,6 @@ public class AgentTests
             return base.ValidateOrCreateThreadType<TThreadType>(
                 thread,
                 constructThread);
-        }
-
-        public new Task NotifyThreadOfNewMessagesAsync(AgentThread thread, IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken)
-        {
-            return base.NotifyThreadOfNewMessagesAsync(thread, messages, cancellationToken);
         }
 
         public override AgentThread GetNewThread()
