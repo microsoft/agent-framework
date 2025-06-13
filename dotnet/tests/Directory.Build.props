@@ -8,18 +8,21 @@
     <IsAotCompatible>false</IsAotCompatible>
     <ProjectsTargetFrameworks>net472;net9.0</ProjectsTargetFrameworks>
     <ProjectsDebugTargetFrameworks>net9.0</ProjectsDebugTargetFrameworks>
+    <UserSecretsId>b7762d10-e29b-4bb1-8b74-b6d69a667dd4</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="Moq" />
+    <PackageReference Include="xRetry" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="System.Linq.Async" />
   </ItemGroup>
 
   <ItemGroup>
+    <Using Include="xRetry" />
     <Using Include="Xunit" />
   </ItemGroup>
 
