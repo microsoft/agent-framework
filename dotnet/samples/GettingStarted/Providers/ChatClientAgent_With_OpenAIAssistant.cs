@@ -7,7 +7,7 @@ using OpenAI;
 
 #pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
-namespace GettingStarted.Providers;
+namespace Providers;
 
 /// <summary>
 /// Shows how to use <see cref="ChatClientAgent"/> with Open AI Assistants.

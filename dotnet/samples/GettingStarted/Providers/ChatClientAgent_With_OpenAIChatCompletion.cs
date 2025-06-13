@@ -5,7 +5,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Shared.Samples;
 using OpenAI;
 
-namespace GettingStarted.Providers;
+namespace Providers;
 
 /// <summary>
 /// Shows how to use <see cref="ChatClientAgent"/> with Open AI Chat Completion.
