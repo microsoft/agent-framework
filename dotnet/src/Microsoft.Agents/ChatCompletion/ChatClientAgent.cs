@@ -275,7 +275,7 @@ public sealed class ChatClientAgent : Agent
         if (!string.IsNullOrWhiteSpace(chatClientThread.Id) && !string.IsNullOrWhiteSpace(chatOptions?.ConversationId) && chatClientThread.Id != chatOptions.ConversationId)
         {
             throw new InvalidOperationException(
-                $"The {nameof(ChatOptions.ConversationId)} provided via {nameof(ChatOptions)} is different to the id of the provided {nameof(AgentThread)}. Only one thread id can be used for a run.");
+                $"The {nameof(this.ChatOptions.ConversationId)} provided via {nameof(this.ChatOptions)} is different to the id of the provided {nameof(AgentThread)}. Only one thread id can be used for a run.");
         }
 
         // Only clone and update ChatOptions if we have an id on the thread and we don't have the same one already in ChatOptions.
