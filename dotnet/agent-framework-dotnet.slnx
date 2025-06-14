@@ -53,6 +53,10 @@
     <File Path="src/LegacySupport/DiagnosticAttributes/NullableAttributes.cs" />
     <File Path="src/LegacySupport/DiagnosticAttributes/README.md" />
   </Folder>
+  <Folder Name="/Solution Items/src/LegacySupport/DiagnosticClasses/">
+    <File Path="src/LegacySupport/DiagnosticClasses/UnreachableException.cs" />
+    <File Path="src/LegacySupport/DiagnosticClasses/README.md" />
+  </Folder>
   <Folder Name="/Solution Items/src/LegacySupport/ExperimentalAttribute/">
     <File Path="src/LegacySupport/ExperimentalAttribute/ExperimentalAttribute.cs" />
     <File Path="src/LegacySupport/ExperimentalAttribute/README.md" />

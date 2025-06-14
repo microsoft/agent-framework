@@ -346,6 +346,97 @@ public class ChatClientAgentTests
         Assert.Equal(ChatRole.System, capturedMessages[0].Role);
     }
 
+    /// <summary>
+    /// Verify that RunAsync does not throw when providing a thread with a ThreadId and a Conversationid
+    /// via ChatOptions and the two are the same.
+    /// </summary>
+    [Fact]
+    public async Task RunAsyncDoesNotThrowWhenSpecifyingTwoSameThreadIdsAsync()
+    {
+        // Arrange
+        var chatOptions = new ChatOptions { ConversationId = "ConvId" };
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.Is<ChatOptions>(opts => opts.ConversationId == "ConvId"),
+                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]) { ConversationId = "ConvId" });
+
+        ChatClientAgent agent = new(mockService.Object, new() { Instructions = "test instructions" });
+
+        ChatClientAgentThread thread = new("ConvId");
+
+        // Act & Assert
+        await agent.RunAsync([new(ChatRole.User, "test")], thread, chatOptions: chatOptions);
+    }
+
+    /// <summary>
+    /// Verify that RunAsync throws when providing a thread with a ThreadId and a Conversationid
+    /// via ChatOptions and the two are different.
+    /// </summary>
+    [Fact]
+    public async Task RunAsyncThrowsWhenSpecifyingTwoDifferentThreadIdsAsync()
+    {
+        // Arrange
+        var chatOptions = new ChatOptions { ConversationId = "ConvId" };
+        Mock<IChatClient> mockService = new();
+
+        ChatClientAgent agent = new(mockService.Object, new() { Instructions = "test instructions" });
+
+        ChatClientAgentThread thread = new("ThreadId");
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([new(ChatRole.User, "test")], thread, chatOptions: chatOptions));
+    }
+
+    /// <summary>
+    /// Verify that RunAsync clones the ChatOptions when providing a thread with a ThreadId and a ChatOptions.
+    /// </summary>
+    [Fact]
+    public async Task RunAsyncClonesChatOptionsToAddThreadIdAsync()
+    {
+        // Arrange
+        var chatOptions = new ChatOptions { MaxOutputTokens = 100 };
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.Is<ChatOptions>(opts => opts.MaxOutputTokens == 100 && opts.ConversationId == "ConvId"),
+                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]) { ConversationId = "ConvId" });
+
+        ChatClientAgent agent = new(mockService.Object, new() { Instructions = "test instructions" });
+
+        ChatClientAgentThread thread = new("ConvId");
+
+        // Act
+        await agent.RunAsync([new(ChatRole.User, "test")], thread, chatOptions: chatOptions);
+
+        // Assert
+        Assert.Null(chatOptions.ConversationId);
+    }
+
+    /// <summary>
+    /// Verify that RunAsync throws if a thread is provided that uses a conversation id already, but the service does not return one on invoke.
+    /// </summary>
+    [Fact]
+    public async Task RunAsyncThrowsForMissingConversationIdWithConversationIdThreadAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        ChatClientAgent agent = new(mockService.Object, new() { Instructions = "test instructions" });
+
+        ChatClientAgentThread thread = new("ConvId");
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([new(ChatRole.User, "test")], thread));
+    }
+
     #region Property Override Tests
 
     /// <summary>

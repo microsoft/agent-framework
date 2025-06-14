@@ -133,7 +133,45 @@ public class ChatClientAgentThreadTests
         var thread = new ChatClientAgentThread();
 
         // Assert
-        Assert.Null(thread.Id); // Id should be null until created
+        Assert.Null(thread.Id); // Id should be null until created on first use.
+        Assert.Null(thread.StorageLocation); // StorageLocation should be null until first use
+    }
+
+    /// <summary>
+    /// Verify that <see cref="ChatClientAgentThread"/> initializes with expected default values.
+    /// </summary>
+    [Fact]
+    public async Task VerifyThreadWithMessagesInitialStateAsync()
+    {
+        // Arrange
+        var message = new ChatMessage(ChatRole.User, "Hello");
+
+        // Act
+        var thread = new ChatClientAgentThread([message]);
+
+        // Assert
+        Assert.Null(thread.Id); // Id should be null when we add messages, since it's a local thread.
+        Assert.Equal(ChatClientAgentThreadType.InMemoryMessages, thread.StorageLocation); // StorageLocation should be set to local since we are adding messages already.
+
+        var messages = await thread.GetMessagesAsync().ToListAsync();
+        Assert.Contains(message, messages);
+    }
+
+    /// <summary>
+    /// Verify that <see cref="ChatClientAgentThread"/> initializes with expected default values.
+    /// </summary>
+    [Fact]
+    public async Task VerifyThreadWithIdInitialStateAsync()
+    {
+        // Act
+        var thread = new ChatClientAgentThread("TestConvId");
+
+        // Assert
+        Assert.Equal("TestConvId", thread.Id);
+        Assert.Equal(ChatClientAgentThreadType.ConversationId, thread.StorageLocation);
+
+        var messages = await thread.GetMessagesAsync().ToListAsync();
+        Assert.Empty(messages);
     }
 
     #region Core Override Method Tests
@@ -160,8 +198,9 @@ public class ChatClientAgentThreadTests
 
         // Assert
         Assert.NotNull(thread);
-        Assert.IsType<ChatClientAgentThread>(thread);
-        Assert.Null(thread.Id); // Id should be null until the thread is actually used
+        var chatClientAgentThread = Assert.IsType<ChatClientAgentThread>(thread);
+        Assert.Null(thread.Id); // Id should be null until created on first use.
+        Assert.Null(chatClientAgentThread.StorageLocation); // StorageLocation should be null until first use
     }
 
     /// <summary>
@@ -187,8 +226,10 @@ public class ChatClientAgentThreadTests
     /// <summary>
     /// Verify that messages are properly stored and retrieved through the thread lifecycle.
     /// </summary>
-    [Fact]
-    public async Task ThreadLifecycleStoresAndRetrievesMessagesAsync()
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("TestConvid", false)]
+    public async Task ThreadLifecycleStoresAndRetrievesMessagesAsync(string? responseConversationId, bool messagesStored)
     {
         // Arrange
         var userMessage = new ChatMessage(ChatRole.User, "Hello");
@@ -200,7 +241,7 @@ public class ChatClientAgentThreadTests
                 It.IsAny<IEnumerable<ChatMessage>>(),
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ChatResponse([assistantMessage]));
+            .ReturnsAsync(new ChatResponse([assistantMessage]) { ConversationId = responseConversationId });
 
         var agent = new ChatClientAgent(mockChatClient.Object, new() { Instructions = "Test instructions" });
 
@@ -218,9 +259,20 @@ public class ChatClientAgentThreadTests
         }
 
         // Assert
-        Assert.Equal(2, retrievedMessages.Count);
-        Assert.Contains(retrievedMessages, m => m.Text == "Hello" && m.Role == ChatRole.User);
-        Assert.Contains(retrievedMessages, m => m.Text == "Hi there!" && m.Role == ChatRole.Assistant);
+        Assert.Equal(messagesStored ? 2 : 0, retrievedMessages.Count);
+        if (messagesStored)
+        {
+            Assert.Contains(retrievedMessages, m => m.Text == "Hello" && m.Role == ChatRole.User);
+            Assert.Contains(retrievedMessages, m => m.Text == "Hi there!" && m.Role == ChatRole.Assistant);
+        }
+
+        var chatClientAgentThread = Assert.IsType<ChatClientAgentThread>(thread);
+        Assert.Equal(responseConversationId, thread.Id);  // Id should match the returned conversation id.
+        Assert.Equal(
+            messagesStored
+                ? ChatClientAgentThreadType.InMemoryMessages
+                : ChatClientAgentThreadType.ConversationId,
+            chatClientAgentThread.StorageLocation);       // StorageLocation should be based on whether we got back a conversation id
     }
 
     /// <summary>

@@ -1,4 +1,8 @@
 <Project>
+  <ItemGroup Condition="'$(InjectDiagnosticClassesOnLegacy)' == 'true' AND !$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">
+    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\LegacySupport\DiagnosticClasses\UnreachableException.cs" LinkBase="LegacySupport\DiagnosticClasses" />
+  </ItemGroup>
+
   <ItemGroup Condition="'$(InjectDiagnosticAttributesOnLegacy)' == 'true' AND !$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\LegacySupport\DiagnosticAttributes\*.cs" LinkBase="LegacySupport\DiagnosticAttributes" />
   </ItemGroup>

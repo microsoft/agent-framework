@@ -2,7 +2,7 @@
 
 using Microsoft.Agents;
 
-namespace ChatCompletionAgent;
+namespace Steps;
 
 /// <summary>
 /// Provides test methods to demonstrate the usage of chat agents with different interaction models.
