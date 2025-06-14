@@ -215,8 +215,20 @@ public sealed class ChatClientAgent : Agent
             requestChatOptions.ConversationId ??= this._agentOptions.ChatOptions.ConversationId;
             requestChatOptions.RawRepresentationFactory ??= this._agentOptions.ChatOptions.RawRepresentationFactory;
 
-            // For tools, we concatenate the request tools with the agent's tools.
-            requestChatOptions.Tools ??= requestChatOptions.Tools?.Concat(this._agentOptions.ChatOptions.Tools ?? []).ToArray();
+            // We concatenate the request tools with the agent's tools when available.
+            if (this._agentOptions.ChatOptions.Tools is { Count: not 0 })
+            {
+                if (requestChatOptions.Tools is null || requestChatOptions.Tools.Count == 0)
+                {
+                    // If the request tools are not set or empty, we use the agent's tools directly.
+                    requestChatOptions.Tools = this._agentOptions.ChatOptions.Tools;
+                }
+                else
+                {
+                    // If the both agent's and request's tools are set, we concatenate all tools.
+                    requestChatOptions.Tools = [.. requestChatOptions.Tools, .. this._agentOptions.ChatOptions.Tools];
+                }
+            }
 
             requestChatOptions.AllowMultipleToolCalls ??= this._agentOptions.ChatOptions.AllowMultipleToolCalls;
             requestChatOptions.ToolMode ??= this._agentOptions.ChatOptions.ToolMode;
