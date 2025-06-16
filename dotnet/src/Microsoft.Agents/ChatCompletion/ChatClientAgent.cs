@@ -61,7 +61,7 @@ public sealed class ChatClientAgent : Agent
     public override string? Instructions => this._agentOptions?.Instructions;
 
     /// <summary>
-    /// Gets  of the default <see cref="Microsoft.Extensions.AI.ChatOptions"/> used by the agent.
+    /// Gets of the default <see cref="Microsoft.Extensions.AI.ChatOptions"/> used by the agent.
     /// </summary>
     internal ChatOptions? ChatOptions => this._agentOptions?.ChatOptions;
 
