@@ -676,28 +676,6 @@ public class ChatClientAgentTests
         Assert.Equal(originalChatOptions.Temperature, returnedChatOptions.Temperature);
     }
 
-    /// <summary>
-    /// Verify that modifying the returned ChatOptions doesn't affect the agent's internal options (immutability).
-    /// </summary>
-    [Fact]
-    public void ChatOptionsIsImmutableAndDoesNotAffectAgentInternalOptions()
-    {
-        // Arrange
-        var chatClient = new Mock<IChatClient>().Object;
-        var originalChatOptions = new ChatOptions { MaxOutputTokens = 100 };
-        var agentOptions = new ChatClientAgentOptions { ChatOptions = originalChatOptions };
-        ChatClientAgent agent = new(chatClient, agentOptions);
-
-        // Act
-        var returnedChatOptions = agent.ChatOptions;
-        returnedChatOptions!.MaxOutputTokens = 200; // Modify the returned copy
-
-        // Assert
-        var secondReturnedChatOptions = agent.ChatOptions;
-        Assert.Equal(100, secondReturnedChatOptions!.MaxOutputTokens); // Should still be original value
-        Assert.Equal(100, originalChatOptions.MaxOutputTokens); // Original should be unchanged
-    }
-
     #endregion
 
     #region ChatOptions Merging Tests
@@ -764,7 +742,7 @@ public class ChatClientAgentTests
 
         // Assert
         Assert.NotNull(capturedChatOptions);
-        Assert.Same(requestChatOptions, capturedChatOptions); // Should be the same instance since no merging needed
+        Assert.Equivalent(requestChatOptions, capturedChatOptions); // Should be the same instance since no merging needed
         Assert.Equal(200, capturedChatOptions.MaxOutputTokens);
         Assert.Equal(0.3f, capturedChatOptions.Temperature);
     }
@@ -788,6 +766,13 @@ public class ChatClientAgentTests
             MaxOutputTokens = 200,
             Temperature = 0.3f
             // TopP and ModelId not set, should use agent values
+        };
+        var expectedChatOptionsMerge = new ChatOptions
+        {
+            MaxOutputTokens = 200, // Request value takes priority
+            Temperature = 0.3f, // Request value takes priority
+            TopP = 0.9f, // Agent value used when request doesn't specify
+            ModelId = "agent-model" // Agent value used when request doesn't specify
         };
 
         Mock<IChatClient> mockService = new();
@@ -813,7 +798,7 @@ public class ChatClientAgentTests
 
         // Assert
         Assert.NotNull(capturedChatOptions);
-        Assert.Same(requestChatOptions, capturedChatOptions); // Should be the same instance (modified in place)
+        Assert.Equivalent(expectedChatOptionsMerge, capturedChatOptions); // Should be the same instance (modified in place)
         Assert.Equal(200, capturedChatOptions.MaxOutputTokens); // Request value takes priority
         Assert.Equal(0.3f, capturedChatOptions.Temperature); // Request value takes priority
         Assert.Equal(0.9f, capturedChatOptions.TopP); // Agent value used when request doesn't specify
@@ -973,6 +958,25 @@ public class ChatClientAgentTests
             StopSequences = ["request-stop"]
         };
 
+        var expectedChatOptionsMerge = new ChatOptions
+        {
+            MaxOutputTokens = 200,
+            Temperature = 0.3f,
+
+            // Agent value used when request doesn't specify
+            TopP = 0.9f,
+            TopK = 50,
+            PresencePenalty = 0.1f,
+            FrequencyPenalty = 0.2f,
+            ModelId = "agent-model",
+            Seed = 12345,
+            ConversationId = "agent-conversation",
+            AllowMultipleToolCalls = true,
+
+            // Merged StopSequences
+            StopSequences = ["request-stop", "agent-stop"]
+        };
+
         Mock<IChatClient> mockService = new();
         ChatOptions? capturedChatOptions = null;
         mockService.Setup(
@@ -996,12 +1000,14 @@ public class ChatClientAgentTests
 
         // Assert
         Assert.NotNull(capturedChatOptions);
-        Assert.Same(requestChatOptions, capturedChatOptions); // Should be the same instance (modified in place)
+        Assert.Equivalent(expectedChatOptionsMerge, capturedChatOptions); // Should be the equivalent instance (modified in place)
 
         // Request values should take priority
         Assert.Equal(200, capturedChatOptions.MaxOutputTokens);
         Assert.Equal(0.3f, capturedChatOptions.Temperature);
-        Assert.Equal(["request-stop"], capturedChatOptions.StopSequences);
+
+        // Merge StopSequences
+        Assert.Equal(["request-stop", "agent-stop"], capturedChatOptions.StopSequences);
 
         // Agent values should be used when request doesn't specify
         Assert.Equal(0.9f, capturedChatOptions.TopP);

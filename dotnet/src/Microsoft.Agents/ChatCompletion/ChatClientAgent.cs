@@ -32,7 +32,7 @@ public sealed class ChatClientAgent : Agent
     {
         Throw.IfNull(chatClient);
 
-        // Options once provided are copied and immutable.
+        // Options must be cloned since ChatClientAgentOptions is mutable.
         this._agentOptions = options?.Clone();
 
         // Get the type of the chat client before wrapping it as an agent invoking chat client.
@@ -61,9 +61,9 @@ public sealed class ChatClientAgent : Agent
     public override string? Instructions => this._agentOptions?.Instructions;
 
     /// <summary>
-    /// Gets a copy of the default <see cref="Microsoft.Extensions.AI.ChatOptions"/> used by the agent.
+    /// Gets  of the default <see cref="Microsoft.Extensions.AI.ChatOptions"/> used by the agent.
     /// </summary>
-    public ChatOptions? ChatOptions => this._agentOptions?.ChatOptions?.Clone();
+    internal ChatOptions? ChatOptions => this._agentOptions?.ChatOptions;
 
     /// <inheritdoc/>
     public override async Task<ChatResponse> RunAsync(
@@ -181,68 +181,90 @@ public sealed class ChatClientAgent : Agent
     /// <param name="runOptions">Optional run options that may include specific chat configuration settings.</param>
     /// <returns>A <see cref="ChatOptions"/> object representing the merged chat configuration, or <see langword="null"/> if
     /// neither the run options nor the agent's chat options are available.</returns>
-    private ChatOptions? ConfigureChatOptions(AgentRunOptions? runOptions)
+    private ChatOptions? CreateConfiguredChatOptions(AgentRunOptions? runOptions)
     {
-        ChatOptions? requestChatOptions = (runOptions as ChatClientAgentRunOptions)?.ChatOptions;
+        ChatOptions? requestChatOptions = (runOptions as ChatClientAgentRunOptions)?.ChatOptions?.Clone();
 
-        // If no chat options were provided for either request and agent, return null.
-        if (this._agentOptions?.ChatOptions is null && requestChatOptions is null)
+        // If no agent chat options were provided, return the request chat options as is.
+        if (this._agentOptions?.ChatOptions is null)
         {
-            return null;
+            return requestChatOptions;
         }
 
-        // If no request chat options were provided, use the agent's chat options.
+        // If no request chat options were provided, use the agent's chat options clone.
         if (requestChatOptions is null)
         {
-            return this._agentOptions?.ChatOptions;
+            return this._agentOptions?.ChatOptions?.Clone();
         }
 
-        // If the agent options have chat options, merge them into the requested chat options.
-        if (this._agentOptions?.ChatOptions is not null)
+        // If both are present, we need to merge them.
+
+        // The merge strategy will prioritize the request options over the agent options,
+        // and will fill the blanks with agent options where the request options were not set.
+
+        // Merge only the additional properties from the agent if they are not already set in the request options.
+        if (requestChatOptions.AdditionalProperties is not null && this._agentOptions.ChatOptions.AdditionalProperties is not null)
         {
-            // The merge strategy will prioritize the request options over the agent options,
-            // and will fill the blanks with agent options where the request options were not set.
-            requestChatOptions.Temperature ??= this._agentOptions.ChatOptions.Temperature;
-            requestChatOptions.MaxOutputTokens ??= this._agentOptions.ChatOptions.MaxOutputTokens;
-            requestChatOptions.TopP ??= this._agentOptions.ChatOptions.TopP;
-            requestChatOptions.StopSequences ??= this._agentOptions.ChatOptions.StopSequences?.ToArray();
-            requestChatOptions.TopK ??= this._agentOptions.ChatOptions.TopK;
-            requestChatOptions.PresencePenalty ??= this._agentOptions.ChatOptions.PresencePenalty;
-            requestChatOptions.FrequencyPenalty ??= this._agentOptions.ChatOptions.FrequencyPenalty;
-            requestChatOptions.ResponseFormat ??= this._agentOptions.ChatOptions.ResponseFormat;
-            requestChatOptions.ModelId ??= this._agentOptions.ChatOptions.ModelId;
-            requestChatOptions.Seed ??= this._agentOptions.ChatOptions.Seed;
-            requestChatOptions.ConversationId ??= this._agentOptions.ChatOptions.ConversationId;
-            requestChatOptions.RawRepresentationFactory ??= this._agentOptions.ChatOptions.RawRepresentationFactory;
-
-            // We concatenate the request tools with the agent's tools when available.
-            if (this._agentOptions.ChatOptions.Tools is { Count: not 0 })
+            foreach (var property in this._agentOptions.ChatOptions.AdditionalProperties.Keys)
             {
-                if (requestChatOptions.Tools is null || requestChatOptions.Tools.Count == 0)
-                {
-                    // If the request tools are not set or empty, we use the agent's tools directly.
-                    requestChatOptions.Tools = this._agentOptions.ChatOptions.Tools;
-                }
-                else
-                {
-                    // If the both agent's and request's tools are set, we concatenate all tools.
-                    requestChatOptions.Tools = [.. requestChatOptions.Tools, .. this._agentOptions.ChatOptions.Tools];
-                }
+                requestChatOptions.AdditionalProperties.TryAdd(property, this._agentOptions.ChatOptions.AdditionalProperties[property]);
             }
-
-            requestChatOptions.AllowMultipleToolCalls ??= this._agentOptions.ChatOptions.AllowMultipleToolCalls;
-            requestChatOptions.ToolMode ??= this._agentOptions.ChatOptions.ToolMode;
-
-            // Merge only the additional properties from the agent if they are not already set in the request options.
-            if (requestChatOptions.AdditionalProperties is not null && this._agentOptions.ChatOptions.AdditionalProperties is not null)
-            {
-                foreach (var property in this._agentOptions.ChatOptions.AdditionalProperties.Keys)
-                {
-                    requestChatOptions.AdditionalProperties.TryAdd(property, this._agentOptions.ChatOptions.AdditionalProperties[property]);
-                }
-            }
-
+        }
+        else
+        {
             requestChatOptions.AdditionalProperties ??= this._agentOptions.ChatOptions.AdditionalProperties;
+        }
+        requestChatOptions.AllowMultipleToolCalls ??= this._agentOptions.ChatOptions.AllowMultipleToolCalls;
+        requestChatOptions.ConversationId ??= this._agentOptions.ChatOptions.ConversationId;
+        requestChatOptions.FrequencyPenalty ??= this._agentOptions.ChatOptions.FrequencyPenalty;
+        requestChatOptions.MaxOutputTokens ??= this._agentOptions.ChatOptions.MaxOutputTokens;
+        requestChatOptions.ModelId ??= this._agentOptions.ChatOptions.ModelId;
+        requestChatOptions.PresencePenalty ??= this._agentOptions.ChatOptions.PresencePenalty;
+
+        // Chain the raw representation factory from the request options with the agent's factory if available.
+        if (this._agentOptions.ChatOptions.RawRepresentationFactory is { } agentFactory)
+        {
+            requestChatOptions.RawRepresentationFactory = requestChatOptions.RawRepresentationFactory is { } requestFactory
+                ? chatClient => requestFactory(chatClient) ?? agentFactory(chatClient)
+                : agentFactory;
+        }
+
+        requestChatOptions.ResponseFormat ??= this._agentOptions.ChatOptions.ResponseFormat;
+        requestChatOptions.Seed ??= this._agentOptions.ChatOptions.Seed;
+
+        // We concatenate the request stop sequences with the agent's stop sequences when available.
+        if (this._agentOptions.ChatOptions.StopSequences is { Count: not 0 })
+        {
+            if (requestChatOptions.StopSequences is null || requestChatOptions.StopSequences.Count == 0)
+            {
+                // If the request stop sequences are not set or empty, we use the agent's stop sequences directly.
+                requestChatOptions.StopSequences = this._agentOptions.ChatOptions.StopSequences.ToArray();
+            }
+            else
+            {
+                // If both agent's and request's stop sequences are set, we concatenate them.
+                requestChatOptions.StopSequences = [.. requestChatOptions.StopSequences, .. this._agentOptions.ChatOptions.StopSequences];
+            }
+        }
+
+        requestChatOptions.Temperature ??= this._agentOptions.ChatOptions.Temperature;
+        requestChatOptions.TopP ??= this._agentOptions.ChatOptions.TopP;
+        requestChatOptions.TopK ??= this._agentOptions.ChatOptions.TopK;
+        requestChatOptions.ToolMode ??= this._agentOptions.ChatOptions.ToolMode;
+
+        // We concatenate the request tools with the agent's tools when available.
+        if (this._agentOptions.ChatOptions.Tools is { Count: not 0 })
+        {
+            if (requestChatOptions.Tools is not { Count: > 0 })
+            {
+                // If the request tools are not set or empty, we use the agent's tools directly.
+                requestChatOptions.Tools = this._agentOptions.ChatOptions.Tools;
+            }
+            else
+            {
+                // If the both agent's and request's tools are set, we concatenate all tools.
+                requestChatOptions.Tools = [.. requestChatOptions.Tools, .. this._agentOptions.ChatOptions.Tools];
+            }
         }
 
         return requestChatOptions;
@@ -253,16 +275,16 @@ public sealed class ChatClientAgent : Agent
     /// </summary>
     /// <param name="thread">The conversation thread to use or create.</param>
     /// <param name="inputMessages">The input messages to use.</param>
-    /// <param name="options">Optional parameters for agent invocation.</param>
+    /// <param name="runOptions">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A tuple containing the thread, chat options, and thread messages.</returns>
     private async Task<(ChatClientAgentThread, ChatOptions?, List<ChatMessage>)> PrepareThreadAndMessagesAsync(
         AgentThread? thread,
         IReadOnlyCollection<ChatMessage> inputMessages,
-        AgentRunOptions? options,
+        AgentRunOptions? runOptions,
         CancellationToken cancellationToken)
     {
-        ChatOptions? chatOptions = this.ConfigureChatOptions(options);
+        ChatOptions? chatOptions = this.CreateConfiguredChatOptions(runOptions);
 
         var chatClientThread = this.ValidateOrCreateThreadType<ChatClientAgentThread>(thread, () => new());
 
@@ -277,7 +299,7 @@ public sealed class ChatClientAgent : Agent
         }
 
         // Update the messages with agent instructions.
-        this.UpdateThreadMessagesWithAgentInstructions(threadMessages, options);
+        this.UpdateThreadMessagesWithAgentInstructions(threadMessages, runOptions);
 
         // Add the input messages to the end of thread messages.
         threadMessages.AddRange(inputMessages);
@@ -287,13 +309,13 @@ public sealed class ChatClientAgent : Agent
         if (!string.IsNullOrWhiteSpace(chatClientThread.Id) && !string.IsNullOrWhiteSpace(chatOptions?.ConversationId) && chatClientThread.Id != chatOptions.ConversationId)
         {
             throw new InvalidOperationException(
-                $"The {nameof(this.ChatOptions.ConversationId)} provided via {nameof(this.ChatOptions)} is different to the id of the provided {nameof(AgentThread)}. Only one thread id can be used for a run.");
+                $"The {nameof(chatOptions.ConversationId)} provided via {nameof(Microsoft.Extensions.AI.ChatOptions)} is different to the id of the provided {nameof(AgentThread)}. Only one thread id can be used for a run.");
         }
 
         // Only clone and update ChatOptions if we have an id on the thread and we don't have the same one already in ChatOptions.
         if (!string.IsNullOrWhiteSpace(chatClientThread.Id) && chatClientThread.Id != chatOptions?.ConversationId)
         {
-            chatOptions = chatOptions is null ? new ChatOptions() : chatOptions.Clone();
+            chatOptions ??= new();
             chatOptions.ConversationId = chatClientThread.Id;
         }
 
