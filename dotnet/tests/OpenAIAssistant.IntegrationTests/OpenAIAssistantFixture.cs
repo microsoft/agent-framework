@@ -11,7 +11,7 @@ using OpenAI;
 using OpenAI.Assistants;
 using Shared.IntegrationTests;
 
-namespace OpenAIChatCompletion.IntegrationTests;
+namespace OpenAIAssistant.IntegrationTests;
 
 #pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 

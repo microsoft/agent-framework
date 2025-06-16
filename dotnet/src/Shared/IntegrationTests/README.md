@@ -1,6 +1,6 @@
 # Integration Tests
 
-Common Integration tess files.
+Common Integration test files.
 
 To use this in your project, add the following to your `.csproj` file:
 

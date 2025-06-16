@@ -34,7 +34,7 @@ public class OpenAIChatCompletionFixture : AgentFixture
 
     public override Task DeleteThreadAsync(AgentThread thread)
     {
-        // Chat Copmletion does not require/support deleting threads, so this is a no-op.
+        // Chat Completion does not require/support deleting threads, so this is a no-op.
         return Task.CompletedTask;
     }
 

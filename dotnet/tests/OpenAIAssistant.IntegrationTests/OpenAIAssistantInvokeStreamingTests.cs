@@ -2,7 +2,7 @@
 
 using AgentConformance.IntegrationTests;
 
-namespace OpenAIChatCompletion.IntegrationTests;
+namespace OpenAIAssistant.IntegrationTests;
 
 public class OpenAIAssistantInvokeStreamingTests() : RunStreamingAsyncTests<OpenAIAssistantFixture>(() => new())
 {
