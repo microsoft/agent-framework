@@ -8,6 +8,9 @@
     <Project Path="tests/AgentConformance.IntegrationTests/AgentConformance.IntegrationTests.csproj">
       <BuildType Solution="Publish|*" Project="Release" />
     </Project>
+    <Project Path="tests/OpenAIAssistant.IntegrationTests/OpenAIAssistant.IntegrationTests.csproj" Id="a35b6971-6f27-4904-a168-8e12b229cced">
+      <BuildType Solution="Publish|*" Project="Release" />
+    </Project>
     <Project Path="tests/OpenAIChatCompletion.IntegrationTests/OpenAIChatCompletion.IntegrationTests.csproj">
       <BuildType Solution="Publish|*" Project="Release" />
     </Project>
@@ -44,6 +47,10 @@
   <Folder Name="/Solution Items/src/Shared/Throw/">
     <File Path="src/Shared/Throw/README.md" />
     <File Path="src/Shared/Throw/Throw.cs" />
+  </Folder>
+  <Folder Name="/Solution Items/src/Shared/IntegrationTests/">
+    <File Path="src/Shared/IntegrationTests/OpenAIConfiguration.cs" />
+    <File Path="src/Shared/IntegrationTests/README.md" />
   </Folder>
   <Folder Name="/Solution Items/src/Shared/Samples/">
     <File Path="src/Shared/Samples/README.md" />
