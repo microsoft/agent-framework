@@ -4,6 +4,14 @@
     <BuildType Name="Publish" />
     <BuildType Name="Release" />
   </Configurations>
+  <Folder Name="/ConformanceTests/">
+    <Project Path="tests/AgentConformance.IntegrationTests/AgentConformance.IntegrationTests.csproj">
+      <BuildType Solution="Publish|*" Project="Release" />
+    </Project>
+    <Project Path="tests/OpenAIChatCompletion.IntegrationTests/OpenAIChatCompletion.IntegrationTests.csproj">
+      <BuildType Solution="Publish|*" Project="Release" />
+    </Project>
+  </Folder>
   <Folder Name="/Samples/">
     <Project Path="samples/GettingStarted/GettingStarted.csproj">
       <BuildType Solution="Publish|*" Project="Debug" />
@@ -36,6 +44,13 @@
   <Folder Name="/Solution Items/src/Shared/Throw/">
     <File Path="src/Shared/Throw/README.md" />
     <File Path="src/Shared/Throw/Throw.cs" />
+  </Folder>
+  <Folder Name="/Solution Items/src/Shared/Samples/">
+    <File Path="src/Shared/Samples/README.md" />
+    <File Path="src/Shared/Samples/BaseSample.cs" />
+    <File Path="src/Shared/Samples/TestConfiguration.cs" />
+    <File Path="src/Shared/Samples/TextOutputHelperExtensions.cs" />
+    <File Path="src/Shared/Samples/XunitLogger.cs" />
   </Folder>
   <Folder Name="/Solution Items/samples/">
     <File Path="samples/.editorconfig" />
