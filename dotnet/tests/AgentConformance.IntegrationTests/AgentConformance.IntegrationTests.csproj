@@ -2,9 +2,6 @@
 
   <PropertyGroup>
     <IsTestProject>false</IsTestProject>
-  </PropertyGroup>
-
-  <PropertyGroup>
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
   </PropertyGroup>
 

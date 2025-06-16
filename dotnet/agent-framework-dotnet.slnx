@@ -8,7 +8,7 @@
     <Project Path="tests/AgentConformance.IntegrationTests/AgentConformance.IntegrationTests.csproj">
       <BuildType Solution="Publish|*" Project="Release" />
     </Project>
-    <Project Path="tests/AgentConformance.OpenAIChatCompletion.IntegrationTests/AgentConformance.OpenAIChatCompletion.IntegrationTests.csproj" Id="36865274-adbe-4994-b875-d994bba577dd">
+    <Project Path="tests/OpenAIChatCompletion.IntegrationTests/OpenAIChatCompletion.IntegrationTests.csproj">
       <BuildType Solution="Publish|*" Project="Release" />
     </Project>
   </Folder>

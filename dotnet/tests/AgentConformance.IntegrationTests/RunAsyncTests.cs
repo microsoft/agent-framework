@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Linq;
 using System.Threading.Tasks;
 using AgentConformanceTests;
 using Microsoft.Extensions.AI;
@@ -29,6 +28,6 @@ public abstract class RunAsyncTests<TAgentFixture>(Func<TAgentFixture> createAge
         // Assert
         Assert.NotNull(chatResponse);
         Assert.Single(chatResponse.Messages);
-        Assert.Contains("Paris", chatResponse.Messages.First().Text);
+        Assert.Contains("Paris", chatResponse.Text);
     }
 }

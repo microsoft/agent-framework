@@ -8,7 +8,7 @@ using Microsoft.Agents;
 using Microsoft.Extensions.AI;
 using OpenAI;
 
-namespace AgentConformance.OpenAIChatCompletion.IntegrationTests;
+namespace OpenAIChatCompletion.IntegrationTests;
 
 public class OpenAIChatCompletionFixture : AgentFixture
 {
@@ -27,9 +27,7 @@ public class OpenAIChatCompletionFixture : AgentFixture
         throw new System.NotImplementedException();
     }
 
-#pragma warning disable CS1998 // Async method lacks 'await' operators and will run synchronously
-    public override async Task InitializeAsync()
-#pragma warning restore CS1998 // Async method lacks 'await' operators and will run synchronously
+    public override Task InitializeAsync()
     {
         var config = TestConfiguration.LoadSection<OpenAIConfiguration>();
 
@@ -45,6 +43,8 @@ public class OpenAIChatCompletionFixture : AgentFixture
                 Name = "HelpfulAssistant",
                 Instructions = "You are a helpful assistant.",
             });
+
+        return Task.CompletedTask;
     }
 
     public override Task DisposeAsync()
