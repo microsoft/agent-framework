@@ -22,11 +22,13 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
     /// Demonstrate the usage of <see cref="ChatClientAgent"/> where each invocation is
     /// a unique interaction with no conversation history between them.
     /// </summary>
-    [Fact]
-    public async Task RunWithoutThread()
+    [Theory]
+    [InlineData(ChatClientProviders.OpenAI)]
+    [InlineData(ChatClientProviders.AzureOpenAI)]
+    public async Task RunWithoutThread(ChatClientProviders provider)
     {
         // Get the chat client to use for the agent.
-        using var chatClient = base.GetOpenAIChatClient();
+        using var chatClient = base.GetChatClient(provider);
 
         // Define the agent
         ChatClientAgent agent =
@@ -54,11 +56,13 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
     /// <summary>
     /// Demonstrate the usage of <see cref="ChatClientAgent"/> where a conversation history is maintained.
     /// </summary>
-    [Fact]
-    public async Task RunWithConversationThread()
+    [Theory]
+    [InlineData(ChatClientProviders.OpenAI)]
+    [InlineData(ChatClientProviders.AzureOpenAI)]
+    public async Task RunWithConversationThread(ChatClientProviders provider)
     {
         // Get the chat client to use for the agent.
-        using var chatClient = base.GetOpenAIChatClient();
+        using var chatClient = base.GetChatClient(provider);
 
         // Define the agent
         ChatClientAgent agent =
@@ -90,11 +94,13 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
     /// Demonstrate the usage of <see cref="ChatClientAgent"/> in streaming mode,
     /// where a conversation is maintained by the <see cref="AgentThread"/>.
     /// </summary>
-    [Fact]
-    public async Task StreamingRunWithConversationThread()
+    [Theory]
+    [InlineData(ChatClientProviders.OpenAI)]
+    [InlineData(ChatClientProviders.AzureOpenAI)]
+    public async Task StreamingRunWithConversationThread(ChatClientProviders provider)
     {
         // Get the chat client to use for the agent.
-        using var chatClient = base.GetOpenAIChatClient();
+        using var chatClient = base.GetChatClient(provider);
 
         // Define the agent
         ChatClientAgent agent =

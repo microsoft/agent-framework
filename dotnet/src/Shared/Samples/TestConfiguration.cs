@@ -5,17 +5,42 @@ using Microsoft.Extensions.Configuration;
 
 namespace Microsoft.Shared.Samples;
 
+#pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
+
 /// <summary>
-/// Provides a centralized configuration management system for accessing application settings.
+/// Provides access to application configuration settings.
 /// </summary>
 public sealed class TestConfiguration
 {
-    private readonly IConfigurationRoot _configRoot;
-    private static TestConfiguration? s_instance;
+    /// <summary>Gets the configuration settings for the OpenAI integration.</summary>
+    public static OpenAIConfig OpenAI => LoadSection<OpenAIConfig>();
 
-    private TestConfiguration(IConfigurationRoot configRoot)
+    /// <summary>Gets the configuration settings for the Azure OpenAI integration.</summary>
+    public static AzureOpenAIConfig AzureOpenAI => LoadSection<AzureOpenAIConfig>();
+
+    /// <summary>Represents the configuration settings required to interact with the OpenAI service.</summary>
+    public class OpenAIConfig
     {
-        this._configRoot = configRoot;
+        /// <summary>Gets or sets the identifier for the chat completion model used in the application.</summary>
+        public string ChatModelId { get; set; }
+
+        /// <summary>Gets or sets the API key used for authentication with the OpenAI service.</summary>
+        public string ApiKey { get; set; }
+    }
+
+    /// <summary>
+    /// Represents the configuration settings required to interact with the Azure OpenAI service.
+    /// </summary>
+    public class AzureOpenAIConfig
+    {
+        /// <summary>Gets the URI endpoint used to connect to the service.</summary>
+        public Uri Endpoint { get; set; }
+
+        /// <summary>Gets or sets the name of the deployment.</summary>
+        public string DeploymentName { get; set; }
+
+        /// <summary>Gets or sets the API key used for authentication with the OpenAI service.</summary>
+        public string? ApiKey { get; set; }
     }
 
     /// <summary>
@@ -27,15 +52,19 @@ public sealed class TestConfiguration
         s_instance = new TestConfiguration(configRoot);
     }
 
+    #region Private Members
+    private readonly IConfigurationRoot _configRoot;
+    private static TestConfiguration? s_instance;
+
+    private TestConfiguration(IConfigurationRoot configRoot)
+    {
+        this._configRoot = configRoot;
+    }
+
     /// <summary>
     /// Provides access to the configuration root for the application.
     /// </summary>
-    public static IConfigurationRoot? ConfigurationRoot => s_instance?._configRoot;
-
-    /// <summary>
-    /// Gets the configuration settings for the OpenAI integration.
-    /// </summary>
-    public static OpenAIConfig OpenAI => LoadSection<OpenAIConfig>();
+    private static IConfigurationRoot? ConfigurationRoot => s_instance?._configRoot;
 
     /// <summary>
     /// Retrieves a configuration section based on the specified key.
@@ -43,7 +72,7 @@ public sealed class TestConfiguration
     /// <param name="caller">The key identifying the configuration section to retrieve. Cannot be null or empty.</param>
     /// <returns>The <see cref="IConfigurationSection"/> corresponding to the specified key.</returns>
     /// <exception cref="InvalidOperationException">Thrown if the configuration root is not initialized or the specified key does not correspond to a valid section.</exception>
-    public static IConfigurationSection GetSection(string caller)
+    private static IConfigurationSection GetSection(string caller)
     {
         return s_instance?._configRoot.GetSection(caller) ??
                throw new InvalidOperationException(caller);
@@ -66,16 +95,5 @@ public sealed class TestConfiguration
                throw new InvalidOperationException(caller);
     }
 
-    /// <summary>Represents the configuration settings required to interact with the OpenAI service.</summary>
-    public class OpenAIConfig
-    {
-        /// <summary>Gets or sets the identifier for the chat completion model used in the application.</summary>
-        public string? ChatModelId { get; set; }
-
-        /// <summary>Gets or sets the identifier for the embedding model used in the application.</summary>
-        public string? EmbeddingModelId { get; set; }
-
-        /// <summary>Gets or sets the API key used for authentication with the OpenAI service.</summary>
-        public string? ApiKey { get; set; }
-    }
+    #endregion
 }
