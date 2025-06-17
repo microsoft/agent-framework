@@ -4,7 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using AgentConformance.IntegrationTests;
+using AgentConformance.IntegrationTests.Support;
 using AgentConformanceTests;
 using Microsoft.Agents;
 using Microsoft.Extensions.AI;
@@ -22,7 +22,7 @@ public class OpenAIChatCompletionFixture : AgentFixture
 
     public override Agent Agent => this._agent;
 
-    public override async Task<List<ChatMessage>> GetChatHistory(AgentThread thread)
+    public override async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
     {
         if (thread is not ChatClientAgentThread chatClientThread)
         {

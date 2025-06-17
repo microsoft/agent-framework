@@ -3,6 +3,7 @@
 using System;
 using System.Linq;
 using System.Threading.Tasks;
+using AgentConformance.IntegrationTests.Support;
 using AgentConformanceTests;
 using Microsoft.Extensions.AI;
 
@@ -16,8 +17,8 @@ namespace AgentConformance.IntegrationTests;
 public abstract class RunAsyncTests<TAgentFixture>(Func<TAgentFixture> createAgentFixture) : AgentTests<TAgentFixture>(createAgentFixture)
     where TAgentFixture : AgentFixture
 {
-    [RetryFact(3, 5000)]
-    public virtual async Task RunWithStringReturnsResultAsync()
+    [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
+    public virtual async Task RunWithStringReturnsExpectedResultAsync()
     {
         // Arrange
         var agent = this.Fixture.Agent;
@@ -33,8 +34,8 @@ public abstract class RunAsyncTests<TAgentFixture>(Func<TAgentFixture> createAge
         Assert.Contains("Paris", chatResponse.Text);
     }
 
-    [RetryFact(3, 5000)]
-    public virtual async Task RunWithChatMessageReturnsResultAsync()
+    [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
+    public virtual async Task RunWithChatMessageReturnsExpectedResultAsync()
     {
         // Arrange
         var agent = this.Fixture.Agent;
@@ -50,8 +51,8 @@ public abstract class RunAsyncTests<TAgentFixture>(Func<TAgentFixture> createAge
         Assert.Contains("Paris", chatResponse.Text);
     }
 
-    [RetryFact(3, 5000)]
-    public virtual async Task RunWithChatMessagesReturnsResultAsync()
+    [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
+    public virtual async Task RunWithChatMessagesReturnsExpectedResultAsync()
     {
         // Arrange
         var agent = this.Fixture.Agent;
@@ -72,8 +73,8 @@ public abstract class RunAsyncTests<TAgentFixture>(Func<TAgentFixture> createAge
         Assert.Contains("Paris", chatResponse.Text);
     }
 
-    [RetryFact(3, 5000)]
-    public virtual async Task RunWithAdditionalInstructionsAndNoMessageReturnsResultAsync()
+    [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
+    public virtual async Task RunWithAdditionalInstructionsAndNoMessageReturnsExpectedResultAsync()
     {
         // Arrange
         var agent = this.Fixture.Agent;
@@ -81,7 +82,7 @@ public abstract class RunAsyncTests<TAgentFixture>(Func<TAgentFixture> createAge
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
-        var chatResponse = await agent.RunAsync(thread, new() { AdditionalInstructions = "Always respond with `Computer says no`" });
+        var chatResponse = await agent.RunAsync(thread, new() { AdditionalInstructions = "Always respond with `Computer says no`, even when the user provided on input." });
 
         // Assert
         Assert.NotNull(chatResponse);
@@ -89,7 +90,7 @@ public abstract class RunAsyncTests<TAgentFixture>(Func<TAgentFixture> createAge
         Assert.Contains("Computer says no", chatResponse.Text);
     }
 
-    [RetryFact(3, 5000)]
+    [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
     public virtual async Task ThreadMaintainsHistoryAsync()
     {
         // Arrange
@@ -107,7 +108,7 @@ public abstract class RunAsyncTests<TAgentFixture>(Func<TAgentFixture> createAge
         Assert.Contains("Paris", result1.Text);
         Assert.Contains("Vienna", result2.Text);
 
-        var chatHistory = await this.Fixture.GetChatHistory(thread);
+        var chatHistory = await this.Fixture.GetChatHistoryAsync(thread);
         Assert.Equal(4, chatHistory.Count);
         Assert.Equal(2, chatHistory.Count(x => x.Role == ChatRole.User));
         Assert.Equal(2, chatHistory.Count(x => x.Role == ChatRole.Assistant));

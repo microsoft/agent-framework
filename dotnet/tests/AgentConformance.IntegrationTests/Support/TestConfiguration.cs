@@ -3,7 +3,7 @@
 using System;
 using Microsoft.Extensions.Configuration;
 
-namespace AgentConformance.IntegrationTests;
+namespace AgentConformance.IntegrationTests.Support;
 
 /// <summary>
 /// Helper for loading test configuration settings.

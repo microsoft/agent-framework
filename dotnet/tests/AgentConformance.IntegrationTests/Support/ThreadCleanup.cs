@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 using AgentConformanceTests;
 using Microsoft.Agents;
 
-namespace AgentConformance.IntegrationTests;
+namespace AgentConformance.IntegrationTests.Support;
 
 /// <summary>
 /// Helper class to delete threads after tests.
@@ -16,9 +16,6 @@ internal sealed class ThreadCleanup(AgentThread thread, AgentFixture fixture) : 
 {
     public async ValueTask DisposeAsync()
     {
-        if (thread != null)
-        {
-            await fixture.DeleteThreadAsync(thread);
-        }
+        await fixture.DeleteThreadAsync(thread);
     }
 }
