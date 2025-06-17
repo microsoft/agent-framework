@@ -117,10 +117,10 @@ public sealed class ChatClientAgent : Agent
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        Throw.IfNull(messages);
+        var inputMessages = Throw.IfNull(messages);
 
         (ChatClientAgentThread chatClientThread, ChatOptions? chatOptions, List<ChatMessage> threadMessages) =
-            await this.PrepareThreadAndMessagesAsync(thread, messages, options, cancellationToken).ConfigureAwait(false);
+            await this.PrepareThreadAndMessagesAsync(thread, inputMessages, options, cancellationToken).ConfigureAwait(false);
 
         int messageCount = threadMessages.Count;
         var agentName = this.GetAgentName();
@@ -158,7 +158,7 @@ public sealed class ChatClientAgent : Agent
         this.UpdateThreadWithTypeAndConversationId(chatClientThread, chatResponse.ConversationId);
 
         // To avoid inconsistent state we only notify the thread of the input messages if no error occurs after the initial request.
-        await this.NotifyThreadOfNewMessagesAsync(chatClientThread, messages, cancellationToken).ConfigureAwait(false);
+        await this.NotifyThreadOfNewMessagesAsync(chatClientThread, inputMessages, cancellationToken).ConfigureAwait(false);
 
         await this.NotifyThreadOfNewMessagesAsync(chatClientThread, chatResponseMessages, cancellationToken).ConfigureAwait(false);
         if (options?.OnIntermediateMessages is not null)

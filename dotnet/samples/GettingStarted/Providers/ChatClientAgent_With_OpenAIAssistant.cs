@@ -10,7 +10,7 @@ using OpenAI;
 namespace Providers;
 
 /// <summary>
-/// Shows how to use <see cref="ChatClientAgent"/> with Open AI Assistants.
+/// End-to-end sample showing how to use <see cref="ChatClientAgent"/> with OpenAI Assistants.
 /// </summary>
 public sealed class ChatClientAgent_With_OpenAIAssistant(ITestOutputHelper output) : AgentSample(output)
 {

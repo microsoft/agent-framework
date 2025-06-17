@@ -36,21 +36,10 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
             .AsIChatClient();
 
     private IChatClient GetAzureOpenAIChatClient()
-    {
-        AzureOpenAIClient client;
-
-        if (TestConfiguration.AzureOpenAI.ApiKey is null)
-        {
-            client = new AzureOpenAIClient(TestConfiguration.AzureOpenAI.Endpoint,
-                new AzureCliCredential());
-        }
-        else
-        {
-            client = new AzureOpenAIClient(TestConfiguration.AzureOpenAI.Endpoint,
-                new ApiKeyCredential(TestConfiguration.AzureOpenAI.ApiKey));
-        }
-
-        return client.GetChatClient(TestConfiguration.AzureOpenAI.DeploymentName)
-            .AsIChatClient();
-    }
+        => ((TestConfiguration.AzureOpenAI.ApiKey is null)
+            // Use Azure CLI credentials if API key is not provided.
+            ? new AzureOpenAIClient(TestConfiguration.AzureOpenAI.Endpoint, new AzureCliCredential())
+            : new AzureOpenAIClient(TestConfiguration.AzureOpenAI.Endpoint, new ApiKeyCredential(TestConfiguration.AzureOpenAI.ApiKey)))
+                .GetChatClient(TestConfiguration.AzureOpenAI.DeploymentName)
+                .AsIChatClient();
 }
