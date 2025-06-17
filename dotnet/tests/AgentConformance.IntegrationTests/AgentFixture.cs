@@ -15,9 +15,9 @@ public abstract class AgentFixture : IAsyncLifetime
 {
     public abstract Agent Agent { get; }
 
-    public abstract AgentThread AgentThread { get; }
+    public abstract Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread);
 
-    public abstract Task<List<ChatMessage>> GetChatHistory();
+    public abstract Task DeleteThreadAsync(AgentThread thread);
 
     public abstract Task DisposeAsync();
 
