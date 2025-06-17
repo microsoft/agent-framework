@@ -96,6 +96,7 @@
     <File Path="src/LegacySupport/TrimAttributes/UnconditionalSuppressMessageAttribute.cs" />
   </Folder>
   <Project Path="src/Microsoft.Agents.Abstractions/Microsoft.Agents.Abstractions.csproj" />
+  <Project Path="src/Microsoft.Agents.AzureAIAgentsPersistent/Microsoft.Agents.AzureAIAgentsPersistent.csproj" />
   <Project Path="src/Microsoft.Agents/Microsoft.Agents.csproj" />
   <Project Path="tests/Microsoft.Agents.Abstractions.UnitTests/Microsoft.Agents.Abstractions.UnitTests.csproj">
     <BuildType Solution="Publish|*" Project="Debug" />

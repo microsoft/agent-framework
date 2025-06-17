@@ -5,6 +5,8 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Azure -->
+    <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.1.0-beta.2" />
     <!-- System.* -->
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="9.0.6" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Abstractions" Version="9.0.6" />
