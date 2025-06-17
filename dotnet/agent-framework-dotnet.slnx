@@ -52,7 +52,7 @@
     <File Path="src/Shared/Throw/Throw.cs" />
   </Folder>
   <Folder Name="/Solution Items/src/Shared/IntegrationTests/">
-    <File Path="src/Shared/IntegrationTests/AzureConfiguration.cs" />
+    <File Path="src/Shared/IntegrationTests/AzureAIConfiguration.cs" />
     <File Path="src/Shared/IntegrationTests/OpenAIConfiguration.cs" />
     <File Path="src/Shared/IntegrationTests/README.md" />
   </Folder>

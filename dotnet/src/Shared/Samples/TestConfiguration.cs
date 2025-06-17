@@ -38,6 +38,11 @@ public sealed class TestConfiguration
     public static OpenAIConfig OpenAI => LoadSection<OpenAIConfig>();
 
     /// <summary>
+    /// Gets the configuration settings for the AzureAI integration.
+    /// </summary>
+    public static AzureAIConfig AzureAI => LoadSection<AzureAIConfig>();
+
+    /// <summary>
     /// Retrieves a configuration section based on the specified key.
     /// </summary>
     /// <param name="caller">The key identifying the configuration section to retrieve. Cannot be null or empty.</param>
@@ -77,5 +82,15 @@ public sealed class TestConfiguration
 
         /// <summary>Gets or sets the API key used for authentication with the OpenAI service.</summary>
         public string? ApiKey { get; set; }
+    }
+
+    /// <summary>Represents the configuration settings required to interact with the Azure AI service.</summary>
+    public sealed class AzureAIConfig
+    {
+        /// <summary>Gets or sets the endpoint of Azure AI Foundry project.</summary>
+        public string? Endpoint { get; set; }
+
+        /// <summary>Gets or sets the name of the model deployment.</summary>
+        public string? DeploymentName { get; set; }
     }
 }

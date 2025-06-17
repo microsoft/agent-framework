@@ -11,6 +11,7 @@ using Azure.Identity;
 using Microsoft.Agents;
 using Microsoft.Agents.AzureAIAgentsPersistent;
 using Microsoft.Extensions.AI;
+using Shared.IntegrationTests;
 
 namespace AzureAIAgentsPersistent.IntegrationTests;
 
@@ -78,7 +79,7 @@ public class AzureAIAgentsPersistentFixture : AgentFixture
 
     public override async Task InitializeAsync()
     {
-        var config = TestConfiguration.LoadSection<AzureConfiguration>();
+        var config = TestConfiguration.LoadSection<AzureAIConfiguration>();
 
         this._persistentAgentsClient = new(config.Endpoint, new AzureCliCredential());
 
