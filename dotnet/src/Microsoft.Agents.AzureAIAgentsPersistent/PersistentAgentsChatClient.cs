@@ -314,6 +314,9 @@ public sealed partial class PersistentAgentsChatClient : IChatClient
         // and everything else as user messages.
         StringBuilder? instructions = null;
         List<FunctionResultContent>? functionResults = null;
+
+        runOptions.ThreadOptions ??= new();
+
         foreach (var chatMessage in messages)
         {
             List<MessageInputContentBlock> messageContents = [];
@@ -361,7 +364,6 @@ public sealed partial class PersistentAgentsChatClient : IChatClient
 
             if (messageContents.Count > 0)
             {
-                runOptions.ThreadOptions ??= new();
                 runOptions.ThreadOptions.Messages.Add(new ThreadMessageOptions(
                     chatMessage.Role == ChatRole.Assistant ? MessageRole.Agent : MessageRole.User,
                     messageContents));

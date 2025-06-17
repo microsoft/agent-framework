@@ -4,6 +4,7 @@
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
     <IsTestProject>false</IsTestProject>
+    <UserSecretsId>a9dd46f8-61ad-43bf-901b-77e7d5f6d446</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>

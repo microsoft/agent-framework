@@ -4,6 +4,6 @@ using AgentConformance.IntegrationTests;
 
 namespace AzureAIAgentsPersistent.IntegrationTests;
 
-public class OpenAIAssistantInvokeStreamingTests() : RunStreamingAsyncTests<AzureAIAgentsPersistentFixture>(() => new())
+public class AzureAIAgentsPersistentInvokeStreamingTests() : RunStreamingAsyncTests<AzureAIAgentsPersistentFixture>(() => new())
 {
 }
