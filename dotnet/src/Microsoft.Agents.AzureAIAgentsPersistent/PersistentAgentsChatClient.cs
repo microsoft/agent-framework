@@ -245,6 +245,8 @@ public sealed partial class PersistentAgentsChatClient : IChatClient
             runOptions.ParallelToolCalls ??= options.AllowMultipleToolCalls;
             // Ignored: options.TopK, options.FrequencyPenalty, options.Seed, options.StopSequences
 
+            // TODO: When moved to Azure.AI.Agents.Persistent, merge agent tools with override tools, in similar way like here:
+            // https://github.com/dotnet/extensions/blob/694b95ef75c6bd9de00ef761dadae4e70ee8739f/src/Libraries/Microsoft.Extensions.AI.OpenAI/OpenAIAssistantChatClient.cs#L263-L279
             if (options.Tools is { Count: > 0 } tools)
             {
                 // The caller can provide tools in the supplied ThreadAndRunOptions. Augment it with any supplied via ChatOptions.Tools.
