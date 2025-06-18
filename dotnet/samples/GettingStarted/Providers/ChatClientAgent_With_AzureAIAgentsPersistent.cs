@@ -44,11 +44,11 @@ public sealed class ChatClientAgent_With_AzureAIAgentsPersistent(ITestOutputHelp
         AgentThread thread = agent.GetNewThread();
 
         // Respond to user input
-        await InvokeAgentAsync("Tell me a joke about a pirate.");
-        await InvokeAgentAsync("Now add some emojis to the joke.");
+        await RunAgentAsync("Tell me a joke about a pirate.");
+        await RunAgentAsync("Now add some emojis to the joke.");
 
-        // Local function to invoke agent and display the conversation messages for the thread.
-        async Task InvokeAgentAsync(string input)
+        // Local function to run agent and display the conversation messages for the thread.
+        async Task RunAgentAsync(string input)
         {
             this.WriteUserMessage(input);
 
