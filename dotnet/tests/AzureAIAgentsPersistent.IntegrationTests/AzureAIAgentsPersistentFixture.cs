@@ -9,7 +9,7 @@ using Azure;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
 using Microsoft.Agents;
-using Microsoft.Agents.AzureAIAgentsPersistent;
+using Microsoft.Extensions.AI.AzureAIAgentsPersistent;
 using Microsoft.Extensions.AI;
 using Shared.IntegrationTests;
 

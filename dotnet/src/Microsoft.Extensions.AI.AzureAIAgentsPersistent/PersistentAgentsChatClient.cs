@@ -13,7 +13,7 @@ using System.Threading.Tasks;
 using Azure.AI.Agents.Persistent;
 using Microsoft.Extensions.AI;
 
-namespace Microsoft.Agents.AzureAIAgentsPersistent;
+namespace Microsoft.Extensions.AI.AzureAIAgentsPersistent;
 
 /// <summary>Represents an <see cref="IChatClient"/> for an Azure.AI.Agents.Persistent <see cref="PersistentAgentsClient"/>.</summary>
 public sealed partial class PersistentAgentsChatClient : IChatClient

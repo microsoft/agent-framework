@@ -3,7 +3,7 @@
 using Azure.AI.Agents.Persistent;
 using Microsoft.Extensions.AI;
 
-namespace Microsoft.Agents.AzureAIAgentsPersistent;
+namespace Microsoft.Extensions.AI.AzureAIAgentsPersistent;
 
 /// <summary>
 /// Provides extension methods for <see cref="PersistentAgentsClient"/>.

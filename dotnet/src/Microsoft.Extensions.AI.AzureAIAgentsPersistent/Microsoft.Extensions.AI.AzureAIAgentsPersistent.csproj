@@ -15,7 +15,7 @@
 
   <PropertyGroup>
     <!-- NuGet Package Settings -->
-    <Title>Microsoft.Agents.AzureAIAgentsPersistent</Title>
+    <Title>Microsoft.Extensions.AI.AzureAIAgentsPersistent</Title>
     <Description>Implementation of generative AI abstractions for Azure AI Persistent Agents.</Description>
   </PropertyGroup>
 
