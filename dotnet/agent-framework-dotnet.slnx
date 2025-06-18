@@ -14,6 +14,9 @@
     <Project Path="tests/OpenAIChatCompletion.IntegrationTests/OpenAIChatCompletion.IntegrationTests.csproj">
       <BuildType Solution="Publish|*" Project="Release" />
     </Project>
+    <Project Path="tests/OpenAIResponse.IntegrationTests/OpenAIResponse.IntegrationTests.csproj">
+      <BuildType Solution="Publish|*" Project="Release" />
+    </Project>
   </Folder>
   <Folder Name="/Samples/">
     <Project Path="samples/GettingStarted/GettingStarted.csproj">
