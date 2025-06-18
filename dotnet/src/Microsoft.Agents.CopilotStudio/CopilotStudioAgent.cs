@@ -74,6 +74,8 @@ public class CopilotStudioAgent : Agent
         }
 
         // TODO: Review list of ChatResponse properties to ensure we set all availble values.
+        // Setting ResponseId and MessageId end up being particularly important for streaming consumers
+        // so that they can tell things like response boundaries.
         return new ChatResponse(responseMessagesList)
         {
             ResponseId = responseMessagesList.LastOrDefault()?.MessageId,
@@ -105,6 +107,8 @@ public class CopilotStudioAgent : Agent
         await foreach (ChatMessage message in responseMessages.ConfigureAwait(false))
         {
             // TODO: Review list of ChatResponse properties to ensure we set all availble values.
+            // Setting ResponseId and MessageId end up being particularly important for streaming consumers
+            // so that they can tell things like response boundaries.
             yield return new ChatResponseUpdate(message.Role, message.Contents)
             {
                 ResponseId = message.MessageId,
