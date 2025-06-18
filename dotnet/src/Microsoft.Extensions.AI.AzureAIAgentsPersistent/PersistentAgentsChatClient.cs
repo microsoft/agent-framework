@@ -11,7 +11,6 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.Agents.Persistent;
-using Microsoft.Extensions.AI;
 
 namespace Microsoft.Extensions.AI.AzureAIAgentsPersistent;
 
