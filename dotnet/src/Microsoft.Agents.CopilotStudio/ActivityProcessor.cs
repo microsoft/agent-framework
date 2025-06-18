@@ -20,18 +20,10 @@ internal static class ActivityProcessor
             switch (activity.Type)
             {
                 case "message":
-                    yield return
-                        new(ChatRole.Assistant, contents: [.. GetMessageItems(activity)])
-                        {
-                            RawRepresentation = activity,
-                        };
+                    yield return CreateChatMessageFromActivity(activity, GetMessageItems(activity));
                     break;
                 case "typing" when streaming:
-                    yield return
-                        new(ChatRole.Assistant, contents: [new TextReasoningContent(activity.Text)])
-                        {
-                            RawRepresentation = activity,
-                        };
+                    yield return CreateChatMessageFromActivity(activity, [new TextReasoningContent(activity.Text)]);
                     break;
                 case "event":
                     break;
@@ -42,14 +34,24 @@ internal static class ActivityProcessor
         }
     }
 
+    private static ChatMessage CreateChatMessageFromActivity(IActivity activity, IEnumerable<AIContent> messageContent)
+    {
+        return new ChatMessage(ChatRole.Assistant, [.. messageContent])
+        {
+            AuthorName = activity.From?.Name,
+            MessageId = activity.Id,
+            RawRepresentation = activity
+        };
+    }
+
     private static IEnumerable<AIContent> GetMessageItems(IActivity activity)
     {
-        yield return new TextContent(activity.Text);
-
-        // TODO: figure out how we want to support CardActions publicly on the abstraction.
-        foreach (CardAction action in activity.SuggestedActions?.Actions ?? [])
+        yield return new TextContent(activity.Text)
         {
-            yield return new TextContent(action.Title);
-        }
+            // TODO: figure out if/how we want to support CardActions publicly on the abstraction.
+            // The activity text doesn't make sense without the actions, as the message
+            // is typically instructing the user to pick from the provided list of actions.
+            RawRepresentation = activity,
+        };
     }
 }

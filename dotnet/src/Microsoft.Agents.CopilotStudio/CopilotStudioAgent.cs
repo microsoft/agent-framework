@@ -10,6 +10,7 @@ using Microsoft.Agents.Core.Models;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.CopilotStudio;
 
@@ -50,10 +51,7 @@ public class CopilotStudioAgent : Agent
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        if (messages is not { Count: > 0 })
-        {
-            return new([new ChatMessage(ChatRole.Assistant, string.Empty)]);
-        }
+        Throw.IfNull(messages);
 
         // Ensure that we have a valid thread to work with.
         CopilotStudioAgentThread copilotStudioAgentThread = base.ValidateOrCreateThreadType(thread, () => new CopilotStudioAgentThread());
@@ -75,7 +73,11 @@ public class CopilotStudioAgent : Agent
             responseMessagesList.Add(message);
         }
 
-        return new ChatResponse(responseMessagesList);
+        // TODO: Review list of ChatResponse properties to ensure we set all availble values.
+        return new ChatResponse(responseMessagesList)
+        {
+            ResponseId = responseMessagesList.LastOrDefault()?.MessageId,
+        };
     }
 
     /// <inheritdoc/>
@@ -85,11 +87,7 @@ public class CopilotStudioAgent : Agent
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        if (messages is not { Count: > 0 })
-        {
-            yield return new(ChatRole.Assistant, string.Empty);
-            yield break;
-        }
+        Throw.IfNull(messages);
 
         // Ensure that we have a valid thread to work with.
         CopilotStudioAgentThread copilotStudioAgentThread = base.ValidateOrCreateThreadType(thread, () => new CopilotStudioAgentThread());
@@ -106,7 +104,11 @@ public class CopilotStudioAgent : Agent
         // Enumerate the response messages
         await foreach (ChatMessage message in responseMessages.ConfigureAwait(false))
         {
-            yield return new ChatResponseUpdate(message.Role, message.Contents);
+            // TODO: Review list of ChatResponse properties to ensure we set all availble values.
+            yield return new ChatResponseUpdate(message.Role, message.Contents)
+            {
+                ResponseId = message.MessageId,
+            };
         }
     }
 
