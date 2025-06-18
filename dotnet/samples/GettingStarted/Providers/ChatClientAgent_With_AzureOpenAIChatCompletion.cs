@@ -1,16 +1,18 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.ClientModel;
+using Azure.AI.OpenAI;
+using Azure.Identity;
 using Microsoft.Agents;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Samples;
-using OpenAI;
 
 namespace Providers;
 
 /// <summary>
-/// End-to-end sample showing how to use <see cref="ChatClientAgent"/> with OpenAI Chat Completion.
+/// End-to-end sample showing how to use <see cref="ChatClientAgent"/> with Azure OpenAI Chat Completion.
 /// </summary>
-public sealed class ChatClientAgent_With_OpenAIChatCompletion(ITestOutputHelper output) : AgentSample(output)
+public sealed class ChatClientAgent_With_AzureOpenAIChatCompletion(ITestOutputHelper output) : AgentSample(output)
 {
     private const string JokerName = "Joker";
     private const string JokerInstructions = "You are good at telling jokes.";
@@ -19,9 +21,12 @@ public sealed class ChatClientAgent_With_OpenAIChatCompletion(ITestOutputHelper 
     public async Task RunWithChatCompletion()
     {
         // Get the chat client to use for the agent.
-        using var chatClient = new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
-            .GetChatClient(TestConfiguration.OpenAI.ChatModelId)
-            .AsIChatClient();
+        using var chatClient = ((TestConfiguration.AzureOpenAI.ApiKey is null)
+            // Use Azure CLI credentials if API key is not provided.
+            ? new AzureOpenAIClient(TestConfiguration.AzureOpenAI.Endpoint, new AzureCliCredential())
+            : new AzureOpenAIClient(TestConfiguration.AzureOpenAI.Endpoint, new ApiKeyCredential(TestConfiguration.AzureOpenAI.ApiKey)))
+                .GetChatClient(TestConfiguration.AzureOpenAI.DeploymentName)
+                .AsIChatClient();
 
         // Define the agent
         ChatClientAgent agent =

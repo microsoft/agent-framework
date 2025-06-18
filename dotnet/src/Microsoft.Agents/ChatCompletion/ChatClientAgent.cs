@@ -117,10 +117,10 @@ public sealed class ChatClientAgent : Agent
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        Throw.IfNull(messages);
+        var inputMessages = Throw.IfNull(messages);
 
         (ChatClientAgentThread chatClientThread, ChatOptions? chatOptions, List<ChatMessage> threadMessages) =
-            await this.PrepareThreadAndMessagesAsync(thread, messages, options, cancellationToken).ConfigureAwait(false);
+            await this.PrepareThreadAndMessagesAsync(thread, inputMessages, options, cancellationToken).ConfigureAwait(false);
 
         int messageCount = threadMessages.Count;
         var agentName = this.GetAgentName();
@@ -158,7 +158,7 @@ public sealed class ChatClientAgent : Agent
         this.UpdateThreadWithTypeAndConversationId(chatClientThread, chatResponse.ConversationId);
 
         // To avoid inconsistent state we only notify the thread of the input messages if no error occurs after the initial request.
-        await this.NotifyThreadOfNewMessagesAsync(chatClientThread, messages, cancellationToken).ConfigureAwait(false);
+        await this.NotifyThreadOfNewMessagesAsync(chatClientThread, inputMessages, cancellationToken).ConfigureAwait(false);
 
         await this.NotifyThreadOfNewMessagesAsync(chatClientThread, chatResponseMessages, cancellationToken).ConfigureAwait(false);
         if (options?.OnIntermediateMessages is not null)
@@ -198,28 +198,33 @@ public sealed class ChatClientAgent : Agent
         }
 
         // If both are present, we need to merge them.
-
         // The merge strategy will prioritize the request options over the agent options,
         // and will fill the blanks with agent options where the request options were not set.
-
-        // Merge only the additional properties from the agent if they are not already set in the request options.
-        if (requestChatOptions.AdditionalProperties is not null && this._agentOptions.ChatOptions.AdditionalProperties is not null)
-        {
-            foreach (var property in this._agentOptions.ChatOptions.AdditionalProperties.Keys)
-            {
-                requestChatOptions.AdditionalProperties.TryAdd(property, this._agentOptions.ChatOptions.AdditionalProperties[property]);
-            }
-        }
-        else
-        {
-            requestChatOptions.AdditionalProperties ??= this._agentOptions.ChatOptions.AdditionalProperties;
-        }
         requestChatOptions.AllowMultipleToolCalls ??= this._agentOptions.ChatOptions.AllowMultipleToolCalls;
         requestChatOptions.ConversationId ??= this._agentOptions.ChatOptions.ConversationId;
         requestChatOptions.FrequencyPenalty ??= this._agentOptions.ChatOptions.FrequencyPenalty;
         requestChatOptions.MaxOutputTokens ??= this._agentOptions.ChatOptions.MaxOutputTokens;
         requestChatOptions.ModelId ??= this._agentOptions.ChatOptions.ModelId;
         requestChatOptions.PresencePenalty ??= this._agentOptions.ChatOptions.PresencePenalty;
+        requestChatOptions.ResponseFormat ??= this._agentOptions.ChatOptions.ResponseFormat;
+        requestChatOptions.Seed ??= this._agentOptions.ChatOptions.Seed;
+        requestChatOptions.Temperature ??= this._agentOptions.ChatOptions.Temperature;
+        requestChatOptions.TopP ??= this._agentOptions.ChatOptions.TopP;
+        requestChatOptions.TopK ??= this._agentOptions.ChatOptions.TopK;
+        requestChatOptions.ToolMode ??= this._agentOptions.ChatOptions.ToolMode;
+
+        // Merge only the additional properties from the agent if they are not already set in the request options.
+        if (requestChatOptions.AdditionalProperties is not null && this._agentOptions.ChatOptions.AdditionalProperties is not null)
+        {
+            foreach (var propertyKey in this._agentOptions.ChatOptions.AdditionalProperties.Keys)
+            {
+                requestChatOptions.AdditionalProperties.TryAdd(propertyKey, this._agentOptions.ChatOptions.AdditionalProperties[propertyKey]);
+            }
+        }
+        else
+        {
+            requestChatOptions.AdditionalProperties ??= this._agentOptions.ChatOptions.AdditionalProperties?.Clone();
+        }
 
         // Chain the raw representation factory from the request options with the agent's factory if available.
         if (this._agentOptions.ChatOptions.RawRepresentationFactory is { } agentFactory)
@@ -229,41 +234,52 @@ public sealed class ChatClientAgent : Agent
                 : agentFactory;
         }
 
-        requestChatOptions.ResponseFormat ??= this._agentOptions.ChatOptions.ResponseFormat;
-        requestChatOptions.Seed ??= this._agentOptions.ChatOptions.Seed;
-
         // We concatenate the request stop sequences with the agent's stop sequences when available.
         if (this._agentOptions.ChatOptions.StopSequences is { Count: not 0 })
         {
             if (requestChatOptions.StopSequences is null || requestChatOptions.StopSequences.Count == 0)
             {
                 // If the request stop sequences are not set or empty, we use the agent's stop sequences directly.
-                requestChatOptions.StopSequences = this._agentOptions.ChatOptions.StopSequences.ToArray();
+                requestChatOptions.StopSequences = [.. this._agentOptions.ChatOptions.StopSequences];
+            }
+            else if (requestChatOptions.StopSequences is List<string> requestStopSequences)
+            {
+                // If the request stop sequences are set, we concatenate them with the agent's stop sequences.
+                requestStopSequences.AddRange(this._agentOptions.ChatOptions.StopSequences);
             }
             else
             {
                 // If both agent's and request's stop sequences are set, we concatenate them.
-                requestChatOptions.StopSequences = [.. requestChatOptions.StopSequences, .. this._agentOptions.ChatOptions.StopSequences];
+                foreach (string stopSequence in this._agentOptions.ChatOptions.StopSequences)
+                {
+                    requestChatOptions.StopSequences.Add(stopSequence);
+                }
             }
         }
-
-        requestChatOptions.Temperature ??= this._agentOptions.ChatOptions.Temperature;
-        requestChatOptions.TopP ??= this._agentOptions.ChatOptions.TopP;
-        requestChatOptions.TopK ??= this._agentOptions.ChatOptions.TopK;
-        requestChatOptions.ToolMode ??= this._agentOptions.ChatOptions.ToolMode;
 
         // We concatenate the request tools with the agent's tools when available.
         if (this._agentOptions.ChatOptions.Tools is { Count: not 0 })
         {
             if (requestChatOptions.Tools is not { Count: > 0 })
             {
-                // If the request tools are not set or empty, we use the agent's tools directly.
-                requestChatOptions.Tools = this._agentOptions.ChatOptions.Tools;
+                // If the request tools are not set or empty, we use the agent's tools.
+                requestChatOptions.Tools = [.. this._agentOptions.ChatOptions.Tools];
             }
             else
             {
-                // If the both agent's and request's tools are set, we concatenate all tools.
-                requestChatOptions.Tools = [.. requestChatOptions.Tools, .. this._agentOptions.ChatOptions.Tools];
+                if (requestChatOptions.Tools is List<AITool> requestTools)
+                {
+                    // If the request tools are set, we concatenate them with the agent's tools.
+                    requestTools.AddRange(this._agentOptions.ChatOptions.Tools);
+                }
+                else
+                {
+                    // If the both agent's and request's tools are set, we concatenate all tools.
+                    foreach (var tool in this._agentOptions.ChatOptions.Tools)
+                    {
+                        requestChatOptions.Tools.Add(tool);
+                    }
+                }
             }
         }
 
