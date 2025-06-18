@@ -43,7 +43,7 @@ public sealed class TestConfiguration
         public string? ApiKey { get; set; }
     }
 
-      /// <summary>Represents the configuration settings required to interact with the Azure AI service.</summary>
+    /// <summary>Represents the configuration settings required to interact with the Azure AI service.</summary>
     public sealed class AzureAIConfig
     {
         /// <summary>Gets or sets the endpoint of Azure AI Foundry project.</summary>
