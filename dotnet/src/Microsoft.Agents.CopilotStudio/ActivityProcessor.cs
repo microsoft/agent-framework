@@ -23,6 +23,8 @@ internal static class ActivityProcessor
                     yield return CreateChatMessageFromActivity(activity, GetMessageItems(activity));
                     break;
                 case "typing" when streaming:
+                    // TODO: Review returning of these messages as TextReasoningContent.
+                    // If we want to simulate streaming, we should return TextMessages for typing events that contain text.
                     yield return CreateChatMessageFromActivity(activity, [new TextReasoningContent(activity.Text) { RawRepresentation = activity }]);
                     break;
                 case "event":
