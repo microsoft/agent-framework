@@ -39,12 +39,12 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
             });
 
         // Respond to user input
-        await InvokeAgentAsync("Fortune favors the bold.");
-        await InvokeAgentAsync("I came, I saw, I conquered.");
-        await InvokeAgentAsync("Practice makes perfect.");
+        await RunAgentAsync("Fortune favors the bold.");
+        await RunAgentAsync("I came, I saw, I conquered.");
+        await RunAgentAsync("Practice makes perfect.");
 
         // Local function to invoke agent and display the conversation messages.
-        async Task InvokeAgentAsync(string input)
+        async Task RunAgentAsync(string input)
         {
             this.WriteUserMessage(input);
 
@@ -76,11 +76,11 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
         AgentThread thread = agent.GetNewThread();
 
         // Respond to user input
-        await InvokeAgentAsync("Tell me a joke about a pirate.");
-        await InvokeAgentAsync("Now add some emojis to the joke.");
+        await RunAgentAsync("Tell me a joke about a pirate.");
+        await RunAgentAsync("Now add some emojis to the joke.");
 
         // Local function to invoke agent and display the conversation messages for the thread.
-        async Task InvokeAgentAsync(string input)
+        async Task RunAgentAsync(string input)
         {
             this.WriteUserMessage(input);
 
@@ -114,11 +114,11 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
         AgentThread thread = agent.GetNewThread();
 
         // Respond to user input
-        await InvokeAgentAsync("Tell me a joke about a pirate.");
-        await InvokeAgentAsync("Now add some emojis to the joke.");
+        await RunAgentAsync("Tell me a joke about a pirate.");
+        await RunAgentAsync("Now add some emojis to the joke.");
 
         // Local function to invoke agent and display the conversation messages.
-        async Task InvokeAgentAsync(string input)
+        async Task RunAgentAsync(string input)
         {
             this.WriteUserMessage(input);
 

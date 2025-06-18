@@ -37,12 +37,12 @@ public sealed class Step02_UsingTools(ITestOutputHelper output) : AgentSample(ou
         var thread = agent.GetNewThread();
 
         // Respond to user input, invoking functions where appropriate.
-        await InvokeAgentAsync("Hello");
-        await InvokeAgentAsync("What is the special soup and its price?");
-        await InvokeAgentAsync("What is the special drink and its price?");
-        await InvokeAgentAsync("Thank you");
+        await RunAgentAsync("Hello");
+        await RunAgentAsync("What is the special soup and its price?");
+        await RunAgentAsync("What is the special drink and its price?");
+        await RunAgentAsync("Thank you");
 
-        async Task InvokeAgentAsync(string input)
+        async Task RunAgentAsync(string input)
         {
             this.WriteUserMessage(input);
             var response = await agent.RunAsync(input, thread);
@@ -79,12 +79,12 @@ public sealed class Step02_UsingTools(ITestOutputHelper output) : AgentSample(ou
         var thread = agent.GetNewThread();
 
         // Respond to user input, invoking functions where appropriate.
-        await InvokeAgentAsync("Hello");
-        await InvokeAgentAsync("What is the special soup and its price?");
-        await InvokeAgentAsync("What is the special drink and its price?");
-        await InvokeAgentAsync("Thank you");
+        await RunAgentAsync("Hello");
+        await RunAgentAsync("What is the special soup and its price?");
+        await RunAgentAsync("What is the special drink and its price?");
+        await RunAgentAsync("Thank you");
 
-        async Task InvokeAgentAsync(string input)
+        async Task RunAgentAsync(string input)
         {
             this.WriteUserMessage(input);
             await foreach (var update in agent.RunStreamingAsync(input, thread))
