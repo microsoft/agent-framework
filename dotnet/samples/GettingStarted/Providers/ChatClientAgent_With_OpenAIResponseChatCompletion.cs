@@ -57,10 +57,4 @@ public sealed class ChatClientAgent_With_OpenAIResponsesChatCompletion(ITestOutp
             this.WriteResponseOutput(response);
         }
     }
-
-    public enum ChatClientThreadType
-    {
-        InMemoryMessages,
-        ConversationId
-    }
 }
