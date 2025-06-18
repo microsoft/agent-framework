@@ -19,36 +19,30 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
     {
         OpenAI,
         AzureOpenAI,
-        OpenAIResponses
-    }
-
-    public enum ThreadStoreType
-    {
-        InMemoryMessage,
-        ConversationId
+        OpenAIResponses,
+        OpenAIResponses_InMemoryMessage,
+        OpenAIResponses_ConversationId
     }
 
     protected IChatClient GetChatClient(ChatClientProviders provider)
-    {
-        return provider switch
+        => provider switch
         {
             ChatClientProviders.OpenAI => GetOpenAIChatClient(),
             ChatClientProviders.AzureOpenAI => GetAzureOpenAIChatClient(),
-            ChatClientProviders.OpenAIResponses => GetOpenAIResponsesClient(),
+            ChatClientProviders.OpenAIResponses or
+            ChatClientProviders.OpenAIResponses_InMemoryMessage or
+            ChatClientProviders.OpenAIResponses_ConversationId
+            => GetOpenAIResponsesClient(),
             _ => throw new NotSupportedException($"Provider {provider} is not supported.")
         };
-    }
 
-    protected ChatOptions? GetChatOptions(ThreadStoreType? provider)
-    {
-        // Create chat options based on the provider.
-        return provider switch
+    protected ChatOptions? GetChatOptions(ChatClientProviders? provider)
+        => provider switch
         {
-            ThreadStoreType.InMemoryMessage => new ChatOptions() { RawRepresentationFactory = static (_) => new ResponseCreationOptions() { StoredOutputEnabled = false } },
-            ThreadStoreType.ConversationId => new ChatOptions() { RawRepresentationFactory = static (_) => new ResponseCreationOptions() { StoredOutputEnabled = true } },
+            ChatClientProviders.OpenAIResponses_InMemoryMessage => new() { RawRepresentationFactory = static (_) => new ResponseCreationOptions() { StoredOutputEnabled = false } },
+            ChatClientProviders.OpenAIResponses_ConversationId => new() { RawRepresentationFactory = static (_) => new ResponseCreationOptions() { StoredOutputEnabled = true } },
             _ => null
         };
-    }
 
     private IChatClient GetOpenAIChatClient()
         => new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
@@ -64,10 +58,7 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
                 .AsIChatClient();
 
     private IChatClient GetOpenAIResponsesClient()
-    {
-        // Create a client to get responses from OpenAI.
-        return new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
+        => new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
             .GetOpenAIResponseClient(TestConfiguration.OpenAI.ChatModelId)
             .AsIChatClient();
-    }
 }

@@ -58,17 +58,17 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
     /// Demonstrate the usage of <see cref="ChatClientAgent"/> where a conversation history is maintained.
     /// </summary>
     [Theory]
-    [InlineData(ChatClientProviders.OpenAI, null)]
-    [InlineData(ChatClientProviders.AzureOpenAI, null)]
-    [InlineData(ChatClientProviders.OpenAIResponses, ThreadStoreType.InMemoryMessage)]
-    [InlineData(ChatClientProviders.OpenAIResponses, ThreadStoreType.ConversationId)]
-    public async Task RunWithThread(ChatClientProviders provider, ThreadStoreType? storeType)
+    [InlineData(ChatClientProviders.OpenAI)]
+    [InlineData(ChatClientProviders.AzureOpenAI)]
+    [InlineData(ChatClientProviders.OpenAIResponses_InMemoryMessage)]
+    [InlineData(ChatClientProviders.OpenAIResponses_ConversationId)]
+    public async Task RunWithThread(ChatClientProviders provider)
     {
         // Get the chat client to use for the agent.
         using var chatClient = base.GetChatClient(provider);
 
         // Get chat options based on the store type, if needed.
-        var chatOptions = base.GetChatOptions(storeType);
+        var chatOptions = base.GetChatOptions(provider);
 
         // Define the agent
         ChatClientAgent agent =
@@ -102,17 +102,17 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
     /// where a conversation is maintained by the <see cref="AgentThread"/>.
     /// </summary>
     [Theory]
-    [InlineData(ChatClientProviders.OpenAI, null)]
-    [InlineData(ChatClientProviders.AzureOpenAI, null)]
-    [InlineData(ChatClientProviders.OpenAIResponses, ThreadStoreType.InMemoryMessage)]
-    [InlineData(ChatClientProviders.OpenAIResponses, ThreadStoreType.ConversationId)]
-    public async Task RunStreamingWithThread(ChatClientProviders provider, ThreadStoreType? storeType)
+    [InlineData(ChatClientProviders.OpenAI)]
+    [InlineData(ChatClientProviders.AzureOpenAI)]
+    [InlineData(ChatClientProviders.OpenAIResponses_InMemoryMessage)]
+    [InlineData(ChatClientProviders.OpenAIResponses_ConversationId)]
+    public async Task RunStreamingWithThread(ChatClientProviders provider)
     {
         // Get the chat client to use for the agent.
         using var chatClient = base.GetChatClient(provider);
 
         // Get chat options based on the store type, if needed.
-        var chatOptions = base.GetChatOptions(storeType);
+        var chatOptions = base.GetChatOptions(provider);
 
         // Define the agent
         ChatClientAgent agent =
