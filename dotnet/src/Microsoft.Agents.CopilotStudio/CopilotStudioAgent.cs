@@ -126,6 +126,6 @@ public class CopilotStudioAgent : Agent
             throw new System.InvalidOperationException("Failed to start a new conversation.");
         }
 
-        return conversationId;
+        return conversationId!;
     }
 }

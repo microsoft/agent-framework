@@ -32,7 +32,7 @@ internal sealed class CopilotStudioConnectionSettings : ConnectionSettings
     /// Use interactive or service connection for authentication.
     /// Defaults to true, meaning interactive authentication will be used.
     /// </summary>
-    public bool UseInteractiveAuthentication { get; init; } = true;
+    public bool UseInteractiveAuthentication { get; set; } = true;
 
     /// <summary>
     /// Instantiate a new instance of the <see cref="CopilotStudioConnectionSettings"/> from provided settings.
