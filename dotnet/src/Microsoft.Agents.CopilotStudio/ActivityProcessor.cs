@@ -13,7 +13,7 @@ namespace Microsoft.Agents.CopilotStudio;
 /// </summary>
 internal static class ActivityProcessor
 {
-    public static async IAsyncEnumerable<ChatMessage> ProcessActivityAsync(IAsyncEnumerable<IActivity> activities, ILogger logger)
+    public static async IAsyncEnumerable<ChatMessage> ProcessActivityAsync(IAsyncEnumerable<IActivity> activities, bool streaming, ILogger logger)
     {
         await foreach (IActivity activity in activities.ConfigureAwait(false))
         {
@@ -26,7 +26,7 @@ internal static class ActivityProcessor
                             RawRepresentation = activity,
                         };
                     break;
-                case "typing":
+                case "typing" when streaming:
                     yield return
                         new(ChatRole.Assistant, contents: [new TextReasoningContent(activity.Text)])
                         {
@@ -45,6 +45,8 @@ internal static class ActivityProcessor
     private static IEnumerable<AIContent> GetMessageItems(IActivity activity)
     {
         yield return new TextContent(activity.Text);
+
+        // TODO: figure out how we want to support CardActions publicly on the abstraction.
         foreach (CardAction action in activity.SuggestedActions?.Actions ?? [])
         {
             yield return new TextContent(action.Title);

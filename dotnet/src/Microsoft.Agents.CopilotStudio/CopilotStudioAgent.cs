@@ -50,6 +50,11 @@ public class CopilotStudioAgent : Agent
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
+        if (messages is not { Count: > 0 })
+        {
+            return new([new ChatMessage(ChatRole.Assistant, string.Empty)]);
+        }
+
         // Ensure that we have a valid thread to work with.
         CopilotStudioAgentThread copilotStudioAgentThread = base.ValidateOrCreateThreadType(thread, () => new CopilotStudioAgentThread());
         if (copilotStudioAgentThread.Id is null)
@@ -60,7 +65,7 @@ public class CopilotStudioAgent : Agent
 
         // Invoke the Copilot Studio agent with the provided messages.
         string question = string.Join("\n", messages.Select(m => m.Text));
-        var reponseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, copilotStudioAgentThread.Id, cancellationToken), this._logger);
+        var reponseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, copilotStudioAgentThread.Id, cancellationToken), streaming: false, this._logger);
 
         // Enumerate the response messages
         var reponseMessagesList = new List<ChatMessage>();
@@ -80,6 +85,12 @@ public class CopilotStudioAgent : Agent
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        if (messages is not { Count: > 0 })
+        {
+            yield return new(ChatRole.Assistant, string.Empty);
+            yield break;
+        }
+
         // Ensure that we have a valid thread to work with.
         CopilotStudioAgentThread copilotStudioAgentThread = base.ValidateOrCreateThreadType(thread, () => new CopilotStudioAgentThread());
         if (copilotStudioAgentThread.Id is null)
@@ -90,7 +101,7 @@ public class CopilotStudioAgent : Agent
 
         // Invoke the Copilot Studio agent with the provided messages.
         string question = string.Join("\n", messages.Select(m => m.Text));
-        var reponseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, copilotStudioAgentThread.Id, cancellationToken), this._logger);
+        var reponseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, copilotStudioAgentThread.Id, cancellationToken), streaming: true, this._logger);
 
         // Enumerate the response messages
         await foreach (ChatMessage message in reponseMessages.ConfigureAwait(false))

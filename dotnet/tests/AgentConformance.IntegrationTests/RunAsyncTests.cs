@@ -18,6 +18,21 @@ public abstract class RunAsyncTests<TAgentFixture>(Func<TAgentFixture> createAge
     where TAgentFixture : AgentFixture
 {
     [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
+    public virtual async Task RunWithNoMessageDoesNotFailAsync()
+    {
+        // Arrange
+        var agent = this.Fixture.Agent;
+        var thread = agent.GetNewThread();
+        await using var cleanup = new ThreadCleanup(thread, this.Fixture);
+
+        // Act
+        var chatResponse = await agent.RunAsync(thread);
+
+        // Assert
+        Assert.NotNull(chatResponse);
+    }
+
+    [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
     public virtual async Task RunWithStringReturnsExpectedResultAsync()
     {
         // Arrange
