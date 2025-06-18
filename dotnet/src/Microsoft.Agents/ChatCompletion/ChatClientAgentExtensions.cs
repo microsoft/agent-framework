@@ -18,7 +18,7 @@ public static class ChatClientAgentExtensions
     /// </summary>
     /// <param name="agent">Target agent to run.</param>
     /// <param name="messages">The messages to pass to the agent.</param>
-    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent reponse.</param>
+    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
     /// <param name="agentRunOptions">Optional parameters for agent invocation.</param>
     /// <param name="chatOptions">Optional chat options.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
@@ -42,7 +42,7 @@ public static class ChatClientAgentExtensions
     /// </summary>
     /// <param name="agent">Target agent to run.</param>
     /// <param name="prompt">The prompt to pass to the agent.</param>
-    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent reponse.</param>
+    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
     /// <param name="agentRunOptions">Optional parameters for agent invocation.</param>
     /// <param name="chatOptions">Optional chat options.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
@@ -66,7 +66,7 @@ public static class ChatClientAgentExtensions
     /// </summary>
     /// <param name="agent">Target agent to run.</param>
     /// <param name="messages">The messages to pass to the agent.</param>
-    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent reponse.</param>
+    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
     /// <param name="agentRunOptions">Optional parameters for agent invocation.</param>
     /// <param name="chatOptions">Optional chat options.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
@@ -89,7 +89,7 @@ public static class ChatClientAgentExtensions
     /// </summary>
     /// <param name="agent">Target agent to run.</param>
     /// <param name="prompt">The prompt to pass to the agent.</param>
-    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent reponse.</param>
+    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
     /// <param name="agentRunOptions">Optional parameters for agent invocation.</param>
     /// <param name="chatOptions">Optional chat options.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>

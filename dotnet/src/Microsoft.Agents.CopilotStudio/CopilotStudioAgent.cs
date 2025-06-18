@@ -65,17 +65,17 @@ public class CopilotStudioAgent : Agent
 
         // Invoke the Copilot Studio agent with the provided messages.
         string question = string.Join("\n", messages.Select(m => m.Text));
-        var reponseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, copilotStudioAgentThread.Id, cancellationToken), streaming: false, this._logger);
+        var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, copilotStudioAgentThread.Id, cancellationToken), streaming: false, this._logger);
 
         // Enumerate the response messages
-        var reponseMessagesList = new List<ChatMessage>();
-        await foreach (ChatMessage message in reponseMessages.ConfigureAwait(false))
+        var responseMessagesList = new List<ChatMessage>();
+        await foreach (ChatMessage message in responseMessages.ConfigureAwait(false))
         {
             // Add the message to the list
-            reponseMessagesList.Add(message);
+            responseMessagesList.Add(message);
         }
 
-        return new ChatResponse(reponseMessagesList);
+        return new ChatResponse(responseMessagesList);
     }
 
     /// <inheritdoc/>
@@ -101,10 +101,10 @@ public class CopilotStudioAgent : Agent
 
         // Invoke the Copilot Studio agent with the provided messages.
         string question = string.Join("\n", messages.Select(m => m.Text));
-        var reponseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, copilotStudioAgentThread.Id, cancellationToken), streaming: true, this._logger);
+        var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, copilotStudioAgentThread.Id, cancellationToken), streaming: true, this._logger);
 
         // Enumerate the response messages
-        await foreach (ChatMessage message in reponseMessages.ConfigureAwait(false))
+        await foreach (ChatMessage message in responseMessages.ConfigureAwait(false))
         {
             yield return new ChatResponseUpdate(message.Role, message.Contents);
         }

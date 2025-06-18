@@ -60,10 +60,7 @@ public class CopilotStudioFixture : AgentFixture
 
         CopilotClient client = new(settings, httpClientFactory, NullLogger.Instance, CopilotStudioHttpClientName);
 
-        CopilotStudioAgent agent = new(client);
-
-        this._agent =
-            new CopilotStudioAgent(client);
+        this._agent = new CopilotStudioAgent(client);
 
         return Task.CompletedTask;
     }

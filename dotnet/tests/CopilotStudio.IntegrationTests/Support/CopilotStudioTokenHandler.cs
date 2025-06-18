@@ -37,7 +37,7 @@ internal sealed class CopilotStudioTokenHandler : DelegatingHandler
     private IConfidentialClientApplication? _clientApplication;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="CopilotStudioTokenHandler"/> class with the specified connection settings.`
+    /// Initializes a new instance of the <see cref="CopilotStudioTokenHandler"/> class with the specified connection settings.
     /// </summary>
     /// <param name="settings">The connection settings for Copilot Studio.</param>
     public CopilotStudioTokenHandler(CopilotStudioConnectionSettings settings)
