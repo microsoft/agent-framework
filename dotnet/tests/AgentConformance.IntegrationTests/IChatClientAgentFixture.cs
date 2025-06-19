@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Threading.Tasks;
-using AgentConformanceTests;
 using Microsoft.Agents;
 using Microsoft.Extensions.AI;
 

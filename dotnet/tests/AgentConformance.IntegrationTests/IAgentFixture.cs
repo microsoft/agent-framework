@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 using Microsoft.Agents;
 using Microsoft.Extensions.AI;
 
-namespace AgentConformanceTests;
+namespace AgentConformance.IntegrationTests;
 
 /// <summary>
 /// Interface for setting up and tearing down agents, to be used in tests.

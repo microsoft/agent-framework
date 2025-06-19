@@ -2,7 +2,6 @@
 
 using System;
 using System.Threading.Tasks;
-using AgentConformanceTests;
 using Microsoft.Agents;
 
 namespace AgentConformance.IntegrationTests.Support;

@@ -4,7 +4,6 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests.Support;
-using AgentConformanceTests;
 using Microsoft.Extensions.AI;
 
 namespace AgentConformance.IntegrationTests;
