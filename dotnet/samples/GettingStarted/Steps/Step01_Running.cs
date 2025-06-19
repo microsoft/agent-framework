@@ -25,6 +25,7 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
     [Theory]
     [InlineData(ChatClientProviders.OpenAI)]
     [InlineData(ChatClientProviders.AzureOpenAI)]
+    [InlineData(ChatClientProviders.OpenAIResponses)]
     public async Task RunWithoutThread(ChatClientProviders provider)
     {
         // Get the chat client to use for the agent.
@@ -59,10 +60,15 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
     [Theory]
     [InlineData(ChatClientProviders.OpenAI)]
     [InlineData(ChatClientProviders.AzureOpenAI)]
-    public async Task RunWithConversationThread(ChatClientProviders provider)
+    [InlineData(ChatClientProviders.OpenAIResponses_InMemoryMessage)]
+    [InlineData(ChatClientProviders.OpenAIResponses_ConversationId)]
+    public async Task RunWithThread(ChatClientProviders provider)
     {
         // Get the chat client to use for the agent.
         using var chatClient = base.GetChatClient(provider);
+
+        // Get chat options based on the store type, if needed.
+        var chatOptions = base.GetChatOptions(provider);
 
         // Define the agent
         ChatClientAgent agent =
@@ -70,6 +76,7 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
             {
                 Name = JokerName,
                 Instructions = JokerInstructions,
+                ChatOptions = chatOptions,
             });
 
         // Start a new thread for the agent conversation.
@@ -97,10 +104,15 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
     [Theory]
     [InlineData(ChatClientProviders.OpenAI)]
     [InlineData(ChatClientProviders.AzureOpenAI)]
-    public async Task StreamingRunWithConversationThread(ChatClientProviders provider)
+    [InlineData(ChatClientProviders.OpenAIResponses_InMemoryMessage)]
+    [InlineData(ChatClientProviders.OpenAIResponses_ConversationId)]
+    public async Task RunStreamingWithThread(ChatClientProviders provider)
     {
         // Get the chat client to use for the agent.
         using var chatClient = base.GetChatClient(provider);
+
+        // Get chat options based on the store type, if needed.
+        var chatOptions = base.GetChatOptions(provider);
 
         // Define the agent
         ChatClientAgent agent =
@@ -108,6 +120,7 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
             {
                 Name = ParrotName,
                 Instructions = ParrotInstructions,
+                ChatOptions = chatOptions,
             });
 
         // Start a new thread for the agent conversation.
