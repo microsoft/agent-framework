@@ -91,6 +91,7 @@ public class CopilotStudioAgent : Agent
         return new ChatResponse(responseMessagesList)
         {
             ResponseId = responseMessagesList.LastOrDefault()?.MessageId,
+            ConversationId = copilotStudioAgentThread.Id,
         };
     }
 
@@ -133,6 +134,8 @@ public class CopilotStudioAgent : Agent
                 AuthorName = message.AuthorName,
                 RawRepresentation = message.RawRepresentation,
                 ResponseId = message.MessageId,
+                MessageId = message.MessageId,
+                ConversationId = copilotStudioAgentThread.Id,
             };
         }
     }
