@@ -71,23 +71,6 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
     }
 
     [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
-    public virtual async Task RunWithAdditionalInstructionsAndNoMessageReturnsExpectedResultAsync()
-    {
-        // Arrange
-        var agent = this.Fixture.Agent;
-        var thread = agent.GetNewThread();
-        await using var cleanup = new ThreadCleanup(thread, this.Fixture);
-
-        // Act
-        var chatResponses = await agent.RunStreamingAsync(thread, new()).ToListAsync();
-
-        // Assert
-        var chatResponseText = string.Join("", chatResponses.Select(x => x.Text));
-        // The following assertion is removed because AdditionalInstructions is no longer supported
-        // Assert.Contains("Computer says no", chatResponseText);
-    }
-
-    [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
     public virtual async Task ThreadMaintainsHistoryAsync()
     {
         // Arrange

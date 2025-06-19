@@ -159,7 +159,7 @@ public class ChatClientAgentTests
     /// Verify that RunAsync includes base instructions in messages.
     /// </summary>
     [Fact]
-    public async Task RunAsyncIncludesBaseIntsructionsAsync()
+    public async Task RunAsyncIncludesBaseInstructionsAsync()
     {
         // Arrange
         Mock<IChatClient> mockService = new();
