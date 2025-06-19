@@ -14,8 +14,8 @@ namespace AgentConformance.IntegrationTests;
 /// </summary>
 /// <typeparam name="TAgentFixture">The type of test fixture used by the concrete test implementation.</typeparam>
 /// <param name="createAgentFixture">Function to create the test fixture with.</param>
-public abstract class RunAsyncTests<TAgentFixture>(Func<TAgentFixture> createAgentFixture) : AgentTests<TAgentFixture>(createAgentFixture)
-    where TAgentFixture : AgentFixture
+public abstract class RunTests<TAgentFixture>(Func<TAgentFixture> createAgentFixture) : AgentTests<TAgentFixture>(createAgentFixture)
+    where TAgentFixture : IAgentFixture
 {
     [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
     public virtual async Task RunWithStringReturnsExpectedResultAsync()
@@ -71,23 +71,6 @@ public abstract class RunAsyncTests<TAgentFixture>(Func<TAgentFixture> createAge
         Assert.NotNull(chatResponse);
         Assert.Single(chatResponse.Messages);
         Assert.Contains("Paris", chatResponse.Text);
-    }
-
-    [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
-    public virtual async Task RunWithAdditionalInstructionsAndNoMessageReturnsExpectedResultAsync()
-    {
-        // Arrange
-        var agent = this.Fixture.Agent;
-        var thread = agent.GetNewThread();
-        await using var cleanup = new ThreadCleanup(thread, this.Fixture);
-
-        // Act
-        var chatResponse = await agent.RunAsync(thread, new() { AdditionalInstructions = "Always respond with `Computer says no`, even when the user provided on input." });
-
-        // Assert
-        Assert.NotNull(chatResponse);
-        Assert.Single(chatResponse.Messages);
-        Assert.Contains("Computer says no", chatResponse.Text);
     }
 
     [RetryFact(Constants.RetryCount, Constants.RetryDelay)]

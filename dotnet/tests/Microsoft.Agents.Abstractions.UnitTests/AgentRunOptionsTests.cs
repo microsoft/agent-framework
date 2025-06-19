@@ -16,7 +16,6 @@ public class AgentRunOptionsTests
         // Arrange
         var options = new AgentRunOptions
         {
-            AdditionalInstructions = "Test instructions",
             OnIntermediateMessages = msg => Task.CompletedTask
         };
 
@@ -24,7 +23,6 @@ public class AgentRunOptionsTests
         var clone = new AgentRunOptions(options);
 
         // Assert
-        Assert.Equal(options.AdditionalInstructions, clone.AdditionalInstructions);
         Assert.Equal(options.OnIntermediateMessages, clone.OnIntermediateMessages);
     }
 

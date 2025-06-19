@@ -156,10 +156,10 @@ public class ChatClientAgentTests
     }
 
     /// <summary>
-    /// Verify that RunAsync includes additional instructions when provided in options.
+    /// Verify that RunAsync includes base instructions in messages.
     /// </summary>
     [Fact]
-    public async Task RunAsyncIncludesAdditionalInstructionsWhenProvidedInOptionsAsync()
+    public async Task RunAsyncIncludesBaseIntsructionsAsync()
     {
         // Arrange
         Mock<IChatClient> mockService = new();
@@ -174,14 +174,13 @@ public class ChatClientAgentTests
             .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
         ChatClientAgent agent = new(mockService.Object, new() { Instructions = "base instructions" });
-        var runOptions = new AgentRunOptions { AdditionalInstructions = "additional instructions" };
+        var runOptions = new AgentRunOptions();
 
         // Act
         await agent.RunAsync([new(ChatRole.User, "test")], options: runOptions);
 
         // Assert
         Assert.Contains(capturedMessages, m => m.Text == "base instructions" && m.Role == ChatRole.System);
-        Assert.Contains(capturedMessages, m => m.Text == "additional instructions" && m.Role == ChatRole.System);
         Assert.Contains(capturedMessages, m => m.Text == "test" && m.Role == ChatRole.User);
     }
 

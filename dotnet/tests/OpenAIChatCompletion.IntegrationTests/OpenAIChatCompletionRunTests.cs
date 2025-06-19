@@ -4,6 +4,6 @@ using AgentConformance.IntegrationTests;
 
 namespace OpenAIChatCompletion.IntegrationTests;
 
-public class OpenAIChatCompletionInvokeTests() : RunAsyncTests<OpenAIChatCompletionFixture>(() => new())
+public class OpenAIChatCompletionRunTests() : RunTests<OpenAIChatCompletionFixture>(() => new())
 {
 }

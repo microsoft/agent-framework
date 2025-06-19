@@ -14,8 +14,8 @@ namespace AgentConformance.IntegrationTests;
 /// </summary>
 /// <typeparam name="TAgentFixture">The type of test fixture used by the concrete test implementation.</typeparam>
 /// <param name="createAgentFixture">Function to create the test fixture with.</param>
-public abstract class RunStreamingAsyncTests<TAgentFixture>(Func<TAgentFixture> createAgentFixture) : AgentTests<TAgentFixture>(createAgentFixture)
-    where TAgentFixture : AgentFixture
+public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> createAgentFixture) : AgentTests<TAgentFixture>(createAgentFixture)
+    where TAgentFixture : IAgentFixture
 {
     [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
     public virtual async Task RunWithStringReturnsExpectedResultAsync()
@@ -79,11 +79,12 @@ public abstract class RunStreamingAsyncTests<TAgentFixture>(Func<TAgentFixture> 
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
-        var chatResponses = await agent.RunStreamingAsync(thread, new() { AdditionalInstructions = "Always respond with `Computer says no`" }).ToListAsync();
+        var chatResponses = await agent.RunStreamingAsync(thread, new()).ToListAsync();
 
         // Assert
         var chatResponseText = string.Join("", chatResponses.Select(x => x.Text));
-        Assert.Contains("Computer says no", chatResponseText);
+        // The following assertion is removed because AdditionalInstructions is no longer supported
+        // Assert.Contains("Computer says no", chatResponseText);
     }
 
     [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
