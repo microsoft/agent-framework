@@ -758,18 +758,21 @@ public class ChatClientAgentTests
             MaxOutputTokens = 100,
             Temperature = 0.7f,
             TopP = 0.9f,
-            ModelId = "agent-model"
+            ModelId = "agent-model",
+            AdditionalProperties = new AdditionalPropertiesDictionary() { ["key"] = "agent-value" }
         };
         var requestChatOptions = new ChatOptions
         {
             MaxOutputTokens = 200,
-            Temperature = 0.3f
+            Temperature = 0.3f,
+            AdditionalProperties = new AdditionalPropertiesDictionary() { ["key"] = "request-value" }
             // TopP and ModelId not set, should use agent values
         };
         var expectedChatOptionsMerge = new ChatOptions
         {
             MaxOutputTokens = 200, // Request value takes priority
             Temperature = 0.3f, // Request value takes priority
+            AdditionalProperties = new AdditionalPropertiesDictionary() { ["key"] = "request-value" }, // Request value takes priority
             TopP = 0.9f, // Agent value used when request doesn't specify
             ModelId = "agent-model" // Agent value used when request doesn't specify
         };
@@ -800,6 +803,8 @@ public class ChatClientAgentTests
         Assert.Equivalent(expectedChatOptionsMerge, capturedChatOptions); // Should be the same instance (modified in place)
         Assert.Equal(200, capturedChatOptions.MaxOutputTokens); // Request value takes priority
         Assert.Equal(0.3f, capturedChatOptions.Temperature); // Request value takes priority
+        Assert.NotNull(capturedChatOptions.AdditionalProperties);
+        Assert.Equal("request-value", capturedChatOptions.AdditionalProperties["key"]); // Request value takes priority
         Assert.Equal(0.9f, capturedChatOptions.TopP); // Agent value used when request doesn't specify
         Assert.Equal("agent-model", capturedChatOptions.ModelId); // Agent value used when request doesn't specify
     }
