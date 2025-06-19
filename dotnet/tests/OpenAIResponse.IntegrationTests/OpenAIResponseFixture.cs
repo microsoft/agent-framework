@@ -37,8 +37,21 @@ public class OpenAIResponseFixture(bool store) : AgentFixture
             var response = await this._openAIResponseClient.GetResponseAsync(chatClientThread.Id);
             var responseItem = response.Value.OutputItems.FirstOrDefault()!;
 
-            // Remove instructions from the chat history and concat the chat history with the last response item.
-            return inputItems.Select(ConvertToChatMessage).Where(x => x.Text != "You are a helpful assistant.").Reverse().Concat([ConvertToChatMessage(responseItem)]).ToList();
+            // Take the messages that were the chat history leading up to the current response
+            // remove the instruction messages, and reverse the order so that the most recent message is last.
+            var previousMessages = inputItems
+                .Select(ConvertToChatMessage)
+                .Where(x => x.Text != "You are a helpful assistant.")
+                .Reverse();
+
+            // Convert the response item to a chat message.
+            var responseMessage = ConvertToChatMessage(responseItem);
+
+            // Concatenate the previous messages with the response message to get a full chat history
+            // that includes the current response.
+            return previousMessages
+                .Concat([ConvertToChatMessage(responseItem)])
+                .ToList();
         }
 
         return await chatClientThread.GetMessagesAsync().ToListAsync();
