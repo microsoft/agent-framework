@@ -19,12 +19,12 @@ namespace CopilotStudio.IntegrationTests.Support;
 #pragma warning disable CA1812 // Internal class that is apparently never instantiated.
 
 /// <summary>
-/// A <see cref="DelegatingHandler"/> that adds an authentication token to the request headers for Copilot Studio API calls.
+/// A <see cref="HttpClientHandler"/> that adds an authentication token to the request headers for Copilot Studio API calls.
 /// </summary>
 /// <remarks>
 ///  For more information on how to setup various authentication flows, see the Microsoft Identity documentation at https://aka.ms/msal.
 /// </remarks>
-internal sealed class CopilotStudioTokenHandler : DelegatingHandler
+internal sealed class CopilotStudioTokenHandler : HttpClientHandler
 {
     private const string AuthenticationHeader = "Bearer";
     private const string CacheFolderName = "mcs_client_console";
@@ -46,7 +46,6 @@ internal sealed class CopilotStudioTokenHandler : DelegatingHandler
 
         this._settings = settings;
         this._scopes = [CopilotClient.ScopeFromSettings(this._settings)];
-        this.InnerHandler = new HttpClientHandler();
     }
 
     /// <inheritdoc/>

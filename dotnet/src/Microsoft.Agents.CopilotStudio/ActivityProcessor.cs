@@ -13,21 +13,25 @@ namespace Microsoft.Agents.CopilotStudio;
 /// </summary>
 internal static class ActivityProcessor
 {
-    public static async IAsyncEnumerable<ChatMessage> ProcessActivityAsync(IAsyncEnumerable<IActivity> activities, bool streaming, ILogger logger)
+    public static async IAsyncEnumerable<(ChatMessage message, bool reasoning)> ProcessActivityAsync(IAsyncEnumerable<IActivity> activities, bool streaming, ILogger logger)
     {
         await foreach (IActivity activity in activities.ConfigureAwait(false))
         {
             switch (activity.Type)
             {
                 case "message":
-                    yield return CreateChatMessageFromActivity(activity, GetMessageItems(activity));
+                    // For streaming scenarios, we sometimes receive intermediate text via "typing" activities, but not always.
+                    // In some cases the respnose is also returned multiple times via "typing" activities, so the only reliable
+                    // way to get the final response is to wait for a "message" activity.
+
+                    // TODO: figure out if/how we want to support CardActions publicly on the abstraction.
+                    // The activity text doesn't make sense without the actions, as the message
+                    // is typically instructing the user to pick from the provided list of actions.
+                    yield return (CreateChatMessageFromActivity(activity, [new TextContent(activity.Text)]), false);
                     break;
-                case "typing" when streaming:
-                    // TODO: Review returning of these messages as TextReasoningContent.
-                    // If we want to simulate streaming, we should return TextMessages for typing events that contain text.
-                    yield return CreateChatMessageFromActivity(activity, [new TextReasoningContent(activity.Text) { RawRepresentation = activity }]);
-                    break;
+                case "typing":
                 case "event":
+                    yield return (CreateChatMessageFromActivity(activity, [new TextReasoningContent(activity.Text)]), true);
                     break;
                 default:
                     logger.LogWarning("Unknown activity type '{ActivityType}' received.", activity.Type);
@@ -43,17 +47,6 @@ internal static class ActivityProcessor
             AuthorName = activity.From?.Name,
             MessageId = activity.Id,
             RawRepresentation = activity
-        };
-    }
-
-    private static IEnumerable<AIContent> GetMessageItems(IActivity activity)
-    {
-        yield return new TextContent(activity.Text)
-        {
-            // TODO: figure out if/how we want to support CardActions publicly on the abstraction.
-            // The activity text doesn't make sense without the actions, as the message
-            // is typically instructing the user to pick from the provided list of actions.
-            RawRepresentation = activity,
         };
     }
 }

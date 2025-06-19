@@ -67,8 +67,20 @@ public class CopilotStudioAgent : Agent
 
         // Enumerate the response messages
         var responseMessagesList = new List<ChatMessage>();
-        await foreach (ChatMessage message in responseMessages.ConfigureAwait(false))
+        await foreach ((ChatMessage message, bool reasoning) in responseMessages.ConfigureAwait(false))
         {
+            // If the message is a reasoning message, return it as part of the intermediate messages
+            // instead of the final response.
+            if (reasoning)
+            {
+                if (options?.OnIntermediateMessages is not null)
+                {
+                    await options.OnIntermediateMessages.Invoke([message]).ConfigureAwait(false);
+                }
+
+                continue;
+            }
+
             // Add the message to the list
             responseMessagesList.Add(message);
         }
@@ -104,13 +116,22 @@ public class CopilotStudioAgent : Agent
         var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, copilotStudioAgentThread.Id, cancellationToken), streaming: true, this._logger);
 
         // Enumerate the response messages
-        await foreach (ChatMessage message in responseMessages.ConfigureAwait(false))
+        await foreach ((ChatMessage message, bool reasoning) in responseMessages.ConfigureAwait(false))
         {
+            // If the message is a reasoning message, return it as part of the intermediate messages.
+            if (reasoning && options?.OnIntermediateMessages is not null)
+            {
+                await options.OnIntermediateMessages.Invoke([message]).ConfigureAwait(false);
+            }
+
             // TODO: Review list of ChatResponse properties to ensure we set all availble values.
             // Setting ResponseId and MessageId end up being particularly important for streaming consumers
             // so that they can tell things like response boundaries.
             yield return new ChatResponseUpdate(message.Role, message.Contents)
             {
+                AdditionalProperties = message.AdditionalProperties,
+                AuthorName = message.AuthorName,
+                RawRepresentation = message.RawRepresentation,
                 ResponseId = message.MessageId,
             };
         }
