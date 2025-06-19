@@ -32,7 +32,6 @@
     <File Path="Directory.Build.props" />
     <File Path="Directory.Build.targets" />
     <File Path="Directory.Packages.props" />
-    <File Path="unittests.runsettings" />
   </Folder>
   <Folder Name="/Solution Items/nuget/">
     <File Path="nuget/icon.png" />
@@ -103,10 +102,26 @@
     <File Path="src/LegacySupport/TrimAttributes/UnconditionalSuppressMessageAttribute.cs" />
   </Folder>
   <Project Path="src/Microsoft.Agents.Abstractions/Microsoft.Agents.Abstractions.csproj" />
+  <Project Path="src/Microsoft.Agents.Orchestration/Microsoft.Agents.Orchestration.csproj" />
+  <Project Path="src/Microsoft.Agents.Runtime.Abstractions/Microsoft.Agents.Runtime.Abstractions.csproj" />
+  <Project Path="src/Microsoft.Agents.Runtime.Core/Microsoft.Agents.Runtime.Core.csproj" />
+  <Project Path="src/Microsoft.Agents.Runtime.InProcess/Microsoft.Agents.Runtime.InProcess.csproj" />
   <Project Path="src/Microsoft.Agents/Microsoft.Agents.csproj" />
   <Project Path="src/Microsoft.Extensions.AI.AzureAIAgentsPersistent/Microsoft.Extensions.AI.AzureAIAgentsPersistent.csproj" />
   <Project Path="tests/Microsoft.Agents.Abstractions.UnitTests/Microsoft.Agents.Abstractions.UnitTests.csproj">
     <BuildType Solution="Publish|*" Project="Debug" />
+  </Project>
+  <Project Path="tests/Microsoft.Agents.Runtime.Abstractions.UnitTests/Microsoft.Agents.Runtime.Abstractions.UnitTests.csproj">
+    <BuildType Solution="Publish|*" Project="Release" />
+  </Project>
+  <Project Path="tests/Microsoft.Agents.Runtime.Core.UnitTests/Microsoft.Agents.Runtime.Core.UnitTests.csproj">
+    <BuildType Solution="Publish|*" Project="Release" />
+  </Project>
+  <Project Path="tests/Microsoft.Agents.Runtime.InProcess.UnitTests/Microsoft.Agents.Runtime.InProcess.UnitTests.csproj">
+    <BuildType Solution="Publish|*" Project="Release" />
+  </Project>
+  <Project Path="tests/Microsoft.Agents.Runtime.Orchestration.UnitTests/Microsoft.Agents.Orchestration.UnitTests.csproj">
+    <BuildType Solution="Publish|*" Project="Release" />
   </Project>
   <Project Path="tests/Microsoft.Agents.UnitTests/Microsoft.Agents.UnitTests.csproj">
     <BuildType Solution="Publish|*" Project="Debug" />

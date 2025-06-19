@@ -1,0 +1,32 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
+    <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
+    <RootNamespace>Microsoft.Agents.Orchestration</RootNamespace>
+    <VersionSuffix>alpha</VersionSuffix>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <InjectSharedThrow>true</InjectSharedThrow>
+  </PropertyGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <PropertyGroup>
+    <!-- NuGet Package Settings -->
+    <Title>Microsoft Agent Orchestration Framework</Title>
+    <Description>Contains the Microsoft Agent Orchestration Framework.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.Abstractions\Microsoft.Agents.Abstractions.csproj" />
+    <ProjectReference Include="..\Microsoft.Agents.Runtime.Abstractions\Microsoft.Agents.Runtime.Abstractions.csproj" />
+    <ProjectReference Include="..\Microsoft.Agents.Runtime.Core\Microsoft.Agents.Runtime.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.Orchestration.UnitTests" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
+    <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Microsoft.Agents\Microsoft.Agents.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Agents.Orchestration\Microsoft.Agents.Orchestration.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Agents.Runtime.InProcess\Microsoft.Agents.Runtime.InProcess.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FluentAssertions" />
+  </ItemGroup>
+
+</Project>
