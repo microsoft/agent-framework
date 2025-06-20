@@ -4,6 +4,6 @@ using AgentConformance.IntegrationTests;
 
 namespace OpenAIAssistant.IntegrationTests;
 
-public class OpenAIAssistantInvokeStreamingTests() : RunStreamingAsyncTests<OpenAIAssistantFixture>(() => new())
+public class OpenAIAssistantRunStreamingTests() : RunStreamingTests<OpenAIAssistantFixture>(() => new())
 {
 }

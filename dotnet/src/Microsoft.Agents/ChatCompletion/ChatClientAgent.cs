@@ -363,11 +363,6 @@ public sealed class ChatClientAgent : Agent
 
     private void UpdateThreadMessagesWithAgentInstructions(List<ChatMessage> threadMessages, AgentRunOptions? options)
     {
-        if (!string.IsNullOrWhiteSpace(options?.AdditionalInstructions))
-        {
-            threadMessages.Insert(0, new(ChatRole.System, options?.AdditionalInstructions) { AuthorName = this.Name });
-        }
-
         if (!string.IsNullOrWhiteSpace(this.Instructions))
         {
             threadMessages.Insert(0, new(ChatRole.System, this.Instructions) { AuthorName = this.Name });

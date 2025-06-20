@@ -4,8 +4,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using AgentConformance.IntegrationTests;
 using AgentConformance.IntegrationTests.Support;
-using AgentConformanceTests;
 using Microsoft.Agents;
 using Microsoft.Extensions.AI;
 using OpenAI;
@@ -14,17 +14,21 @@ using Shared.IntegrationTests;
 
 namespace OpenAIResponse.IntegrationTests;
 
-public class OpenAIResponseFixture(bool store) : AgentFixture
+public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
 {
+    private static readonly OpenAIConfiguration s_config = TestConfiguration.LoadSection<OpenAIConfiguration>();
+
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
     private OpenAIResponseClient _openAIResponseClient;
     private IChatClient _chatClient;
     private Agent _agent;
 #pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
 
-    public override Agent Agent => this._agent;
+    public Agent Agent => this._agent;
 
-    public override async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
+    public IChatClient ChatClient => this._chatClient;
+
+    public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
     {
         if (thread is not ChatClientAgentThread chatClientThread)
         {
@@ -68,18 +72,37 @@ public class OpenAIResponseFixture(bool store) : AgentFixture
         throw new NotSupportedException("This test currently only supports text messages");
     }
 
-    public override Task DeleteThreadAsync(AgentThread thread)
+    public Task<ChatClientAgent> CreateAgentWithInstructionsAsync(string instructions)
+    {
+        var options = new ChatClientAgentOptions
+        {
+            Name = "HelpfulAssistant",
+            Instructions = instructions,
+            ChatOptions = new ChatOptions
+            {
+                RawRepresentationFactory = new Func<IChatClient, object>((_) => new ResponseCreationOptions() { StoredOutputEnabled = store })
+            },
+        };
+
+        return Task.FromResult(new ChatClientAgent(this._chatClient, options));
+    }
+
+    public Task DeleteAgentAsync(ChatClientAgent agent)
+    {
+        // Chat Completion does not require/support deleting agents, so this is a no-op.
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteThreadAsync(AgentThread thread)
     {
         // Chat Completion does not require/support deleting threads, so this is a no-op.
         return Task.CompletedTask;
     }
 
-    public override Task InitializeAsync()
+    public Task InitializeAsync()
     {
-        var config = TestConfiguration.LoadSection<OpenAIConfiguration>();
-
-        this._openAIResponseClient = new OpenAIClient(config.ApiKey)
-            .GetOpenAIResponseClient(config.ChatModelId);
+        this._openAIResponseClient = new OpenAIClient(s_config.ApiKey)
+            .GetOpenAIResponseClient(s_config.ChatModelId);
         this._chatClient = this._openAIResponseClient
             .AsIChatClient();
 
@@ -99,7 +122,7 @@ public class OpenAIResponseFixture(bool store) : AgentFixture
         return Task.CompletedTask;
     }
 
-    public override Task DisposeAsync()
+    public Task DisposeAsync()
     {
         this._chatClient.Dispose();
         return Task.CompletedTask;

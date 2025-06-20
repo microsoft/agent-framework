@@ -18,7 +18,6 @@ public class ChatClientAgentRunOptionsTests
 
         // Assert
         Assert.Null(runOptions.OnIntermediateMessages);
-        Assert.Null(runOptions.AdditionalInstructions);
         Assert.Null(runOptions.ChatOptions);
     }
 
@@ -36,7 +35,6 @@ public class ChatClientAgentRunOptionsTests
 
         // Assert
         Assert.Null(runOptions.OnIntermediateMessages);
-        Assert.Null(runOptions.AdditionalInstructions);
         Assert.Same(chatOptions, runOptions.ChatOptions);
     }
 
@@ -49,7 +47,6 @@ public class ChatClientAgentRunOptionsTests
         // Arrange
         var sourceRunOptions = new AgentRunOptions
         {
-            AdditionalInstructions = "additional instructions",
             OnIntermediateMessages = messages => Task.CompletedTask
         };
         var chatOptions = new ChatOptions { MaxOutputTokens = 200 };
@@ -59,7 +56,6 @@ public class ChatClientAgentRunOptionsTests
 
         // Assert
         Assert.Same(sourceRunOptions.OnIntermediateMessages, runOptions.OnIntermediateMessages);
-        Assert.Equal("additional instructions", runOptions.AdditionalInstructions);
         Assert.Same(chatOptions, runOptions.ChatOptions);
     }
 
@@ -72,14 +68,14 @@ public class ChatClientAgentRunOptionsTests
         // Arrange
         var sourceRunOptions = new AgentRunOptions
         {
-            AdditionalInstructions = "test instructions"
+            OnIntermediateMessages = messages => Task.CompletedTask
         };
 
         // Act
         var runOptions = new ChatClientAgentRunOptions(sourceRunOptions, null);
 
         // Assert
-        Assert.Equal("test instructions", runOptions.AdditionalInstructions);
+        Assert.Same(sourceRunOptions.OnIntermediateMessages, runOptions.OnIntermediateMessages);
         Assert.Null(runOptions.ChatOptions);
     }
 
