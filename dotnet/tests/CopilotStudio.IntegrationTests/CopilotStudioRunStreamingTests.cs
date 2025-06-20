@@ -5,14 +5,8 @@ using AgentConformance.IntegrationTests;
 
 namespace CopilotStudio.IntegrationTests;
 
-public class CopilotStudioInvokeStreamingTests() : RunStreamingAsyncTests<CopilotStudioFixture>(() => new())
+public class CopilotStudioRunStreamingTests() : RunStreamingTests<CopilotStudioFixture>(() => new())
 {
-    [Fact(Skip = "Copilot Studio does not support additional instructions, so this test is not applicable.")]
-    public override Task RunWithAdditionalInstructionsAndNoMessageReturnsExpectedResultAsync()
-    {
-        return Task.CompletedTask;
-    }
-
     [Fact(Skip = "Copilot Studio does not support thread history retrieval, so this test is not applicable.")]
     public override Task ThreadMaintainsHistoryAsync()
     {

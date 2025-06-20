@@ -4,8 +4,8 @@ using System;
 using System.Collections.Generic;
 using System.Net.Http;
 using System.Threading.Tasks;
+using AgentConformance.IntegrationTests;
 using AgentConformance.IntegrationTests.Support;
-using AgentConformanceTests;
 using CopilotStudio.IntegrationTests.Support;
 using Microsoft.Agents;
 using Microsoft.Agents.CopilotStudio;
@@ -16,26 +16,26 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace CopilotStudio.IntegrationTests;
 
-public class CopilotStudioFixture : AgentFixture
+public class CopilotStudioFixture : IAgentFixture
 {
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
     private Agent _agent;
 #pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
 
-    public override Agent Agent => this._agent;
+    public Agent Agent => this._agent;
 
-    public override Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
+    public Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
     {
         throw new NotSupportedException("CopilotStudio doesn't allow retrieval of chat history.");
     }
 
-    public override Task DeleteThreadAsync(AgentThread thread)
+    public Task DeleteThreadAsync(AgentThread thread)
     {
         // Chat Completion does not require/support deleting threads, so this is a no-op.
         return Task.CompletedTask;
     }
 
-    public override Task InitializeAsync()
+    public Task InitializeAsync()
     {
         const string CopilotStudioHttpClientName = nameof(CopilotStudioAgent);
 
@@ -65,7 +65,7 @@ public class CopilotStudioFixture : AgentFixture
         return Task.CompletedTask;
     }
 
-    public override Task DisposeAsync()
+    public Task DisposeAsync()
     {
         return Task.CompletedTask;
     }
