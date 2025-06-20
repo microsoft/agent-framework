@@ -21,14 +21,12 @@ public class OpenAIAssistantFixture : IChatClientAgentFixture
 
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
     private AssistantClient? _assistantClient;
-    private Assistant? _assistant;
-    private IChatClient _chatClient;
-    private Agent _agent;
+    private ChatClientAgent _agent;
 #pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
 
     public Agent Agent => this._agent;
 
-    public IChatClient ChatClient => this._chatClient;
+    public IChatClient ChatClient => this._agent.ChatClient;
 
     public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
     {
@@ -53,18 +51,27 @@ public class OpenAIAssistantFixture : IChatClientAgentFixture
         return messages;
     }
 
-    public async Task<ChatClientAgent> CreateAgentWithInstructionsAsync(string instructions)
+    public async Task<ChatClientAgent> CreateChatClientAgentAsync(
+        string name = "HelpfulAssistant",
+        string instructions = "You are a helpful assistant.",
+        IList<AITool>? aiTools = null)
     {
         var assistant =
             await this._assistantClient!.CreateAssistantAsync(
                 s_config.ChatModelId!,
                 new AssistantCreationOptions()
                 {
-                    Name = "HelpfulAssistant",
+                    Name = name,
                     Instructions = instructions
                 });
 
-        return new ChatClientAgent(this._assistantClient.AsIChatClient(assistant.Value.Id), new() { Id = assistant.Value.Id });
+        return new ChatClientAgent(
+            this._assistantClient.AsIChatClient(assistant.Value.Id),
+            new()
+            {
+                Id = assistant.Value.Id,
+                ChatOptions = new() { Tools = aiTools }
+            });
     }
 
     public Task DeleteAgentAsync(ChatClientAgent agent)
@@ -87,25 +94,14 @@ public class OpenAIAssistantFixture : IChatClientAgentFixture
         var client = new OpenAIClient(s_config.ApiKey);
         this._assistantClient = client.GetAssistantClient();
 
-        this._assistant =
-            await this._assistantClient.CreateAssistantAsync(
-                s_config.ChatModelId!,
-                new AssistantCreationOptions()
-                {
-                    Name = "HelpfulAssistant",
-                    Instructions = "You are a helpful assistant."
-                });
-
-        this._chatClient = this._assistantClient.AsIChatClient(this._assistant.Id);
-
-        this._agent = new ChatClientAgent(this._chatClient);
+        this._agent = await this.CreateChatClientAgentAsync();
     }
 
     public Task DisposeAsync()
     {
-        if (this._assistantClient is not null && this._assistant is not null)
+        if (this._assistantClient is not null && this._agent is not null)
         {
-            return this._assistantClient.DeleteAssistantAsync(this._assistant.Id);
+            return this._assistantClient.DeleteAssistantAsync(this._agent.Id);
         }
 
         return Task.CompletedTask;

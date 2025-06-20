@@ -20,13 +20,11 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
     private static readonly AzureAIConfiguration s_config = TestConfiguration.LoadSection<AzureAIConfiguration>();
 
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
-    private Agent _agent;
+    private ChatClientAgent _agent;
     private PersistentAgentsClient _persistentAgentsClient;
-    private IChatClient _chatClient;
-    private PersistentAgent _persistentAgent;
 #pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
 
-    public IChatClient ChatClient => this._chatClient;
+    public IChatClient ChatClient => this._agent.ChatClient;
 
     public Agent Agent => this._agent;
 
@@ -62,18 +60,25 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
         return messages;
     }
 
-    public async Task<ChatClientAgent> CreateAgentWithInstructionsAsync(string instructions)
+    public async Task<ChatClientAgent> CreateChatClientAgentAsync(
+        string name = "HelpfulAssistant",
+        string instructions = "You are a helpful assistant.",
+        IList<AITool>? aiTools = null)
     {
         var persistentAgentResponse = await this._persistentAgentsClient.Administration.CreateAgentAsync(
             model: s_config.DeploymentName,
-            name: "HelpfulAssistant",
-            instructions: "You are a helpful assistant.");
+            name: name,
+            instructions: instructions);
 
         var persistentAgent = persistentAgentResponse.Value;
 
-        var chatClient = this._persistentAgentsClient.AsIChatClient(persistentAgent.Id);
-
-        return new ChatClientAgent(chatClient, new() { Id = persistentAgent.Id });
+        return new ChatClientAgent(
+            this._persistentAgentsClient.AsIChatClient(persistentAgent.Id),
+            new()
+            {
+                Id = persistentAgent.Id,
+                ChatOptions = new() { Tools = aiTools }
+            });
     }
 
     public Task DeleteAgentAsync(ChatClientAgent agent)
@@ -93,9 +98,9 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
 
     public Task DisposeAsync()
     {
-        if (this._persistentAgentsClient is not null && this._persistentAgent is not null)
+        if (this._persistentAgentsClient is not null && this._agent is not null)
         {
-            return this._persistentAgentsClient.Administration.DeleteAgentAsync(this._persistentAgent.Id);
+            return this._persistentAgentsClient.Administration.DeleteAgentAsync(this._agent.Id);
         }
 
         return Task.CompletedTask;
@@ -104,16 +109,6 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
     public async Task InitializeAsync()
     {
         this._persistentAgentsClient = new(s_config.Endpoint, new AzureCliCredential());
-
-        var persistentAgentResponse = await this._persistentAgentsClient.Administration.CreateAgentAsync(
-            model: s_config.DeploymentName,
-            name: "HelpfulAssistant",
-            instructions: "You are a helpful assistant.");
-
-        this._persistentAgent = persistentAgentResponse.Value;
-
-        this._chatClient = this._persistentAgentsClient.AsIChatClient(this._persistentAgent.Id);
-
-        this._agent = new ChatClientAgent(this._chatClient);
+        this._agent = await this.CreateChatClientAgentAsync();
     }
 }

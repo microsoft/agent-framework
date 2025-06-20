@@ -20,13 +20,12 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
 
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
     private OpenAIResponseClient _openAIResponseClient;
-    private IChatClient _chatClient;
-    private Agent _agent;
+    private ChatClientAgent _agent;
 #pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
 
     public Agent Agent => this._agent;
 
-    public IChatClient ChatClient => this._chatClient;
+    public IChatClient ChatClient => this._agent.ChatClient;
 
     public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
     {
@@ -72,19 +71,23 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
         throw new NotSupportedException("This test currently only supports text messages");
     }
 
-    public Task<ChatClientAgent> CreateAgentWithInstructionsAsync(string instructions)
+    public Task<ChatClientAgent> CreateChatClientAgentAsync(
+        string name = "HelpfulAssistant",
+        string instructions = "You are a helpful assistant.",
+        IList<AITool>? aiTools = null)
     {
-        var options = new ChatClientAgentOptions
-        {
-            Name = "HelpfulAssistant",
-            Instructions = instructions,
-            ChatOptions = new ChatOptions
+        return Task.FromResult(new ChatClientAgent(
+            this._openAIResponseClient.AsIChatClient(),
+            new()
             {
-                RawRepresentationFactory = new Func<IChatClient, object>((_) => new ResponseCreationOptions() { StoredOutputEnabled = store })
-            },
-        };
-
-        return Task.FromResult(new ChatClientAgent(this._chatClient, options));
+                Name = name,
+                Instructions = instructions,
+                ChatOptions = new ChatOptions
+                {
+                    Tools = aiTools,
+                    RawRepresentationFactory = new Func<IChatClient, object>((_) => new ResponseCreationOptions() { StoredOutputEnabled = store })
+                },
+            }));
     }
 
     public Task DeleteAgentAsync(ChatClientAgent agent)
@@ -99,32 +102,16 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
         return Task.CompletedTask;
     }
 
-    public Task InitializeAsync()
+    public async Task InitializeAsync()
     {
         this._openAIResponseClient = new OpenAIClient(s_config.ApiKey)
             .GetOpenAIResponseClient(s_config.ChatModelId);
-        this._chatClient = this._openAIResponseClient
-            .AsIChatClient();
 
-        var options = new ChatClientAgentOptions
-        {
-            Name = "HelpfulAssistant",
-            Instructions = "You are a helpful assistant.",
-            ChatOptions = new ChatOptions
-            {
-                RawRepresentationFactory = new Func<IChatClient, object>((_) => new ResponseCreationOptions() { StoredOutputEnabled = store })
-            },
-        };
-
-        this._agent =
-            new ChatClientAgent(this._chatClient, options);
-
-        return Task.CompletedTask;
+        this._agent = await this.CreateChatClientAgentAsync();
     }
 
     public Task DisposeAsync()
     {
-        this._chatClient.Dispose();
         return Task.CompletedTask;
     }
 }

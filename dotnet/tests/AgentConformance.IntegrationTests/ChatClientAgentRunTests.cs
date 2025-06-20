@@ -4,6 +4,7 @@ using System;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests.Support;
 using Microsoft.Agents;
+using Microsoft.Extensions.AI;
 
 namespace AgentConformance.IntegrationTests;
 
@@ -19,7 +20,7 @@ public abstract class ChatClientAgentRunTests<TAgentFixture>(Func<TAgentFixture>
     public virtual async Task RunWithInstructionsAndNoMessageReturnsExpectedResultAsync()
     {
         // Arrange
-        var agent = await this.Fixture.CreateAgentWithInstructionsAsync("Always respond with 'Computer says no', even if there was no user input.");
+        var agent = await this.Fixture.CreateChatClientAgentAsync(instructions: "Always respond with 'Computer says no', even if there was no user input.");
         var thread = agent.GetNewThread();
         await using var agentCleanup = new AgentCleanup(agent, this.Fixture);
         await using var threadCleanup = new ThreadCleanup(thread, this.Fixture);
@@ -31,5 +32,35 @@ public abstract class ChatClientAgentRunTests<TAgentFixture>(Func<TAgentFixture>
         Assert.NotNull(chatResponse);
         Assert.Single(chatResponse.Messages);
         Assert.Contains("Computer says no", chatResponse.Text, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
+    public virtual async Task RunWithFunctionsInvokesFunctionsAndReturnsExpectedResultsAsync()
+    {
+        // Arrange
+        var questionsAndAnswers = new[]
+        {
+            (Question: "Hello", ExpectedAnswer: string.Empty),
+            (Question: "What is the special soup?", ExpectedAnswer: "Clam Chowder"),
+            (Question: "What is the special drink?", ExpectedAnswer: "Chai Tea"),
+            (Question: "What is the special salad?", ExpectedAnswer: "Cobb Salad"),
+            (Question: "Thank you", ExpectedAnswer: string.Empty)
+        };
+
+        AIFunction[] aiFunctions = [AIFunctionFactory.Create(MenuPlugin.GetSpecials), AIFunctionFactory.Create(MenuPlugin.GetItemPrice)];
+        var agent = await this.Fixture.CreateChatClientAgentAsync(aiTools: aiFunctions);
+        var thread = agent.GetNewThread();
+
+        foreach (var questionAndAnswer in questionsAndAnswers)
+        {
+            // Act
+            var result = await agent.RunAsync(
+                new ChatMessage(ChatRole.User, questionAndAnswer.Question),
+                thread);
+
+            // Assert
+            Assert.NotNull(result);
+            Assert.Contains(questionAndAnswer.ExpectedAnswer, result.Text);
+        }
     }
 }
