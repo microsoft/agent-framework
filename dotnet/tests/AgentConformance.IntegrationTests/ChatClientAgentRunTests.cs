@@ -47,8 +47,12 @@ public abstract class ChatClientAgentRunTests<TAgentFixture>(Func<TAgentFixture>
             (Question: "Thank you", ExpectedAnswer: string.Empty)
         };
 
-        AIFunction[] aiFunctions = [AIFunctionFactory.Create(MenuPlugin.GetSpecials), AIFunctionFactory.Create(MenuPlugin.GetItemPrice)];
-        var agent = await this.Fixture.CreateChatClientAgentAsync(aiTools: aiFunctions);
+        var agent = await this.Fixture.CreateChatClientAgentAsync(
+            aiTools:
+            [
+                AIFunctionFactory.Create(MenuPlugin.GetSpecials),
+                AIFunctionFactory.Create(MenuPlugin.GetItemPrice)
+            ]);
         var thread = agent.GetNewThread();
 
         foreach (var questionAndAnswer in questionsAndAnswers)
