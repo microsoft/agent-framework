@@ -7,14 +7,14 @@ using Microsoft.Agents;
 namespace AgentConformance.IntegrationTests.Support;
 
 /// <summary>
-/// Helper class to delete threads after tests.
+/// Helper class to delete agents after tests.
 /// </summary>
-/// <param name="thread">The thread to delete.</param>
+/// <param name="agent">The agent to delete.</param>
 /// <param name="fixture">The fixture that provides agent specific capabilities.</param>
-internal sealed class ThreadCleanup(AgentThread thread, IAgentFixture fixture) : IAsyncDisposable
+internal sealed class AgentCleanup(ChatClientAgent agent, IChatClientAgentFixture fixture) : IAsyncDisposable
 {
     public async ValueTask DisposeAsync()
     {
-        await fixture.DeleteThreadAsync(thread);
+        await fixture.DeleteAgentAsync(agent);
     }
 }

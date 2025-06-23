@@ -95,10 +95,10 @@ public class ChatClientAgentExtensionsTests
     }
 
     /// <summary>
-    /// Verify that RunAsync extension method with messages passes AgentRunOptions correctly.
+    /// Verify that RunAsync extension method with messages passes Instructions correctly.
     /// </summary>
     [Fact]
-    public async Task RunAsyncWithMessagesPassesAgentRunOptionsCorrectlyAsync()
+    public async Task RunAsyncWithMessagesPassesInstructionsCorrectlyAsync()
     {
         // Arrange
         Mock<IChatClient> mockService = new();
@@ -118,14 +118,13 @@ public class ChatClientAgentExtensionsTests
 
         ChatClientAgent agent = new(mockService.Object, new() { Instructions = "base instructions" });
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
-        var runOptions = new AgentRunOptions { AdditionalInstructions = "additional instructions" };
+        var runOptions = new AgentRunOptions();
 
         // Act
         await ChatClientAgentExtensions.RunAsync(agent, messages, agentRunOptions: runOptions);
 
         // Assert
         Assert.Contains(capturedMessages, m => m.Text == "base instructions" && m.Role == ChatRole.System);
-        Assert.Contains(capturedMessages, m => m.Text == "additional instructions" && m.Role == ChatRole.System);
         Assert.Contains(capturedMessages, m => m.Text == "test" && m.Role == ChatRole.User);
         Assert.All(capturedChatOptions, Assert.Null);
     }
@@ -349,14 +348,13 @@ public class ChatClientAgentExtensionsTests
 
         ChatClientAgent agent = new(mockService.Object, new() { Instructions = "base instructions" });
         const string TestPrompt = "test prompt";
-        var runOptions = new AgentRunOptions { AdditionalInstructions = "additional instructions" };
+        var runOptions = new AgentRunOptions();
 
         // Act
         await ChatClientAgentExtensions.RunAsync(agent, TestPrompt, agentRunOptions: runOptions);
 
         // Assert
         Assert.Contains(capturedMessages, m => m.Text == "base instructions" && m.Role == ChatRole.System);
-        Assert.Contains(capturedMessages, m => m.Text == "additional instructions" && m.Role == ChatRole.System);
         Assert.Contains(capturedMessages, m => m.Text == "test prompt" && m.Role == ChatRole.User);
     }
 

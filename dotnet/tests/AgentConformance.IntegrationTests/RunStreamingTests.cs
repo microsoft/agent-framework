@@ -4,7 +4,6 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests.Support;
-using AgentConformanceTests;
 using Microsoft.Extensions.AI;
 
 namespace AgentConformance.IntegrationTests;
@@ -14,8 +13,8 @@ namespace AgentConformance.IntegrationTests;
 /// </summary>
 /// <typeparam name="TAgentFixture">The type of test fixture used by the concrete test implementation.</typeparam>
 /// <param name="createAgentFixture">Function to create the test fixture with.</param>
-public abstract class RunAsyncTests<TAgentFixture>(Func<TAgentFixture> createAgentFixture) : AgentTests<TAgentFixture>(createAgentFixture)
-    where TAgentFixture : AgentFixture
+public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> createAgentFixture) : AgentTests<TAgentFixture>(createAgentFixture)
+    where TAgentFixture : IAgentFixture
 {
     [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
     public virtual async Task RunWithStringReturnsExpectedResultAsync()
@@ -26,12 +25,11 @@ public abstract class RunAsyncTests<TAgentFixture>(Func<TAgentFixture> createAge
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
-        var chatResponse = await agent.RunAsync("What is the capital of France.", thread);
+        var chatResponses = await agent.RunStreamingAsync("What is the capital of France.", thread).ToListAsync();
 
         // Assert
-        Assert.NotNull(chatResponse);
-        Assert.Single(chatResponse.Messages);
-        Assert.Contains("Paris", chatResponse.Text);
+        var chatResponseText = string.Join("", chatResponses.Select(x => x.Text));
+        Assert.Contains("Paris", chatResponseText);
     }
 
     [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
@@ -43,12 +41,11 @@ public abstract class RunAsyncTests<TAgentFixture>(Func<TAgentFixture> createAge
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
-        var chatResponse = await agent.RunAsync(new ChatMessage(ChatRole.User, "What is the capital of France."), thread);
+        var chatResponses = await agent.RunStreamingAsync(new ChatMessage(ChatRole.User, "What is the capital of France."), thread).ToListAsync();
 
         // Assert
-        Assert.NotNull(chatResponse);
-        Assert.Single(chatResponse.Messages);
-        Assert.Contains("Paris", chatResponse.Text);
+        var chatResponseText = string.Join("", chatResponses.Select(x => x.Text));
+        Assert.Contains("Paris", chatResponseText);
     }
 
     [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
@@ -60,34 +57,16 @@ public abstract class RunAsyncTests<TAgentFixture>(Func<TAgentFixture> createAge
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
-        var chatResponse = await agent.RunAsync(
+        var chatResponses = await agent.RunStreamingAsync(
             [
                 new ChatMessage(ChatRole.User, "Hello."),
                 new ChatMessage(ChatRole.User, "What is the capital of France.")
             ],
-            thread);
+            thread).ToListAsync();
 
         // Assert
-        Assert.NotNull(chatResponse);
-        Assert.Single(chatResponse.Messages);
-        Assert.Contains("Paris", chatResponse.Text);
-    }
-
-    [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
-    public virtual async Task RunWithAdditionalInstructionsAndNoMessageReturnsExpectedResultAsync()
-    {
-        // Arrange
-        var agent = this.Fixture.Agent;
-        var thread = agent.GetNewThread();
-        await using var cleanup = new ThreadCleanup(thread, this.Fixture);
-
-        // Act
-        var chatResponse = await agent.RunAsync(thread, new() { AdditionalInstructions = "Always respond with `Computer says no`, even when the user provided on input." });
-
-        // Assert
-        Assert.NotNull(chatResponse);
-        Assert.Single(chatResponse.Messages);
-        Assert.Contains("Computer says no", chatResponse.Text);
+        var chatResponseText = string.Join("", chatResponses.Select(x => x.Text));
+        Assert.Contains("Paris", chatResponseText);
     }
 
     [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
@@ -101,12 +80,14 @@ public abstract class RunAsyncTests<TAgentFixture>(Func<TAgentFixture> createAge
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
-        var result1 = await agent.RunAsync(q1, thread);
-        var result2 = await agent.RunAsync(q2, thread);
+        var chatResponses1 = await agent.RunStreamingAsync(q1, thread).ToListAsync();
+        var chatResponses2 = await agent.RunStreamingAsync(q2, thread).ToListAsync();
 
         // Assert
-        Assert.Contains("Paris", result1.Text);
-        Assert.Contains("Vienna", result2.Text);
+        var chatResponse1Text = string.Join("", chatResponses1.Select(x => x.Text));
+        var chatResponse2Text = string.Join("", chatResponses2.Select(x => x.Text));
+        Assert.Contains("Paris", chatResponse1Text);
+        Assert.Contains("Vienna", chatResponse2Text);
 
         var chatHistory = await this.Fixture.GetChatHistoryAsync(thread);
         Assert.Equal(4, chatHistory.Count);

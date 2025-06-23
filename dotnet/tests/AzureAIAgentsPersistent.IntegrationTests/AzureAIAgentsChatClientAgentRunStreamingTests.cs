@@ -4,6 +4,6 @@ using AgentConformance.IntegrationTests;
 
 namespace AzureAIAgentsPersistent.IntegrationTests;
 
-public class AzureAIAgentsPersistentInvokeStreamingTests() : RunStreamingAsyncTests<AzureAIAgentsPersistentFixture>(() => new())
+public class AzureAIAgentsChatClientAgentRunStreamingTests() : ChatClientAgentRunStreamingTests<AzureAIAgentsPersistentFixture>(() => new())
 {
 }

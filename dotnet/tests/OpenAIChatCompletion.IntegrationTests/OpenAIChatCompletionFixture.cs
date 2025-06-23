@@ -4,8 +4,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using AgentConformance.IntegrationTests;
 using AgentConformance.IntegrationTests.Support;
-using AgentConformanceTests;
 using Microsoft.Agents;
 using Microsoft.Extensions.AI;
 using OpenAI;
@@ -13,16 +13,19 @@ using Shared.IntegrationTests;
 
 namespace OpenAIChatCompletion.IntegrationTests;
 
-public class OpenAIChatCompletionFixture : AgentFixture
+public class OpenAIChatCompletionFixture : IChatClientAgentFixture
 {
+    private static readonly OpenAIConfiguration s_config = TestConfiguration.LoadSection<OpenAIConfiguration>();
+
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
-    private IChatClient _chatClient;
-    private Agent _agent;
+    private ChatClientAgent _agent;
 #pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
 
-    public override Agent Agent => this._agent;
+    public Agent Agent => this._agent;
 
-    public override async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
+    public IChatClient ChatClient => this._agent.ChatClient;
+
+    public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
     {
         if (thread is not ChatClientAgentThread chatClientThread)
         {
@@ -32,33 +35,42 @@ public class OpenAIChatCompletionFixture : AgentFixture
         return await chatClientThread.GetMessagesAsync().ToListAsync();
     }
 
-    public override Task DeleteThreadAsync(AgentThread thread)
+    public Task<ChatClientAgent> CreateChatClientAgentAsync(
+        string name = "HelpfulAssistant",
+        string instructions = "You are a helpful assistant.",
+        IList<AITool>? aiTools = null)
+    {
+        var chatClient = new OpenAIClient(s_config.ApiKey)
+            .GetChatClient(s_config.ChatModelId)
+            .AsIChatClient();
+
+        return Task.FromResult(new ChatClientAgent(chatClient, new()
+        {
+            Name = name,
+            Instructions = instructions,
+            ChatOptions = new() { Tools = aiTools }
+        }));
+    }
+
+    public Task DeleteAgentAsync(ChatClientAgent agent)
+    {
+        // Chat Completion does not require/support deleting agents, so this is a no-op.
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteThreadAsync(AgentThread thread)
     {
         // Chat Completion does not require/support deleting threads, so this is a no-op.
         return Task.CompletedTask;
     }
 
-    public override Task InitializeAsync()
+    public async Task InitializeAsync()
     {
-        var config = TestConfiguration.LoadSection<OpenAIConfiguration>();
-
-        this._chatClient = new OpenAIClient(config.ApiKey)
-            .GetChatClient(config.ChatModelId)
-            .AsIChatClient();
-
-        this._agent =
-            new ChatClientAgent(this._chatClient, new()
-            {
-                Name = "HelpfulAssistant",
-                Instructions = "You are a helpful assistant.",
-            });
-
-        return Task.CompletedTask;
+        this._agent = await this.CreateChatClientAgentAsync();
     }
 
-    public override Task DisposeAsync()
+    public Task DisposeAsync()
     {
-        this._chatClient.Dispose();
         return Task.CompletedTask;
     }
 }
