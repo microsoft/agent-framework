@@ -390,7 +390,7 @@ Image Generation | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | Generates or edits 
   ```
 </details>
 
-##### Commonalities
+#### Commonalities
 
 - **Standardized Tool Definition**: All providers use a JSON-based structure for defining tools, including a `type` field (commonly "function") and a `function` object with `name`, `description`, and `parameters` (often following JSON Schema).
 - **Tool Call Response Structure**: Responses typically include a list of tool calls with an `id`, `type`, and details about the function called (e.g., `name` and `arguments`), enabling consistent handling of function invocations.
@@ -680,7 +680,7 @@ Image Generation | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | Generates or edits 
   ```
 </details>
 
-##### Commonalities
+#### Commonalities
 
 - **Tool Type Specification**: Providers consistently define a `code_interpreter` tool type within the `tools` array, indicating support for code execution capabilities.
 - **Input and Output Handling**: Requests include mechanisms to specify code input (e.g., `input` or `code` fields), and responses return execution outputs, such as logs or files, in a structured format.
@@ -1054,7 +1054,7 @@ Image Generation | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | Generates or edits 
   ```
 </details>
 
-##### Commonalities
+#### Commonalities
 
 - **Vector Store Integration**: Providers like Azure and OpenAI use `vector_store_ids` or similar constructs to reference vector stores for file search, suggesting a common approach to retrieval-augmented generation.
 - **Search Configuration**: Requests include configurations for search (e.g., `vectorSearchConfiguration`, `ranking_options`), allowing customization of retrieval parameters like result count or ranking.
@@ -1336,7 +1336,7 @@ Image Generation | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | Generates or edits 
   ```
 </details>
 
-##### Commonalities
+#### Commonalities
 
 - **Tool-Based Activation**: Providers define web search as a tool (e.g., `web_search`, `bing_grounding`, `googleSearch`), typically within a `tools` array, allowing standardized activation of search capabilities.
 - **Query Input**: Requests support passing a search query (e.g., via `input`, `content`, or `query`), enabling a unified interface for initiating searches.
@@ -1469,7 +1469,7 @@ Image Generation | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | Generates or edits 
   ```
 </details>
 
-##### Commonalities
+#### Commonalities
 
 - **Server Configuration**: Providers specify remote servers via URL and metadata (e.g., `server_url`, `url`, `name`), enabling a standardized way to connect to external MCP services.
 - **Tool Integration**: MCP tools are integrated into the `tools` or `mcp_servers` array, allowing agents to interact with remote tools in a consistent manner.
@@ -1600,7 +1600,7 @@ Image Generation | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | Generates or edits 
   ```
 </details>
 
-##### Commonalities
+#### Commonalities
 
 - **Tool Type Definition**: Providers define a computer use tool (e.g., `computer_use_preview`, `computer_20250124`, `ANTHROPIC.Computer`) within the `tools` array, indicating support for computer interaction capabilities.
 - **Action Specification**: Responses include actions (e.g., `click`, `keypress`, `type`) with associated parameters, enabling standardized interaction with computer environments.
@@ -1683,7 +1683,7 @@ Image Generation | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | Generates or edits 
   ```
 </details>
 
-##### Commonalities
+#### Commonalities
 
 - **OpenAPI Specification**: Both providers support defining tools using OpenAPI specifications, either as a JSON/YAML payload or a structured `spec` object, enabling standardized API integration.
 - **Tool Type Identification**: The tool is identified as `openapi` or via an `apiSchema`, providing a clear entry point for OpenAPI-based tool usage.
@@ -1766,7 +1766,7 @@ Image Generation | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | Generates or edits 
   ```
 </details>
 
-##### Commonalities
+#### Commonalities
 
 - **API-Driven Interaction**: Both providers use API-based structures (e.g., `apiSchema`, `azure_function`) to define stateful functions, enabling integration with external services.
 - **Parameter Specification**: Requests include parameter definitions (e.g., `parameters`, `JSON Schema object`), supporting standardized input handling.
