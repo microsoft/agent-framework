@@ -1538,6 +1538,7 @@ Image Generation | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | Generates or edits 
     "parentActionGroupSignature": "ANTHROPIC.Computer",
     "actionGroupState": "ENABLED"
   }
+  ```
 
   Tool Call Response:
   ```json
