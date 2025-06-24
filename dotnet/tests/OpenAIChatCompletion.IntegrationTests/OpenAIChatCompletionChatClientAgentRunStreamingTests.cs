@@ -4,6 +4,12 @@ using AgentConformance.IntegrationTests;
 
 namespace OpenAIChatCompletion.IntegrationTests;
 
-public class OpenAIChatCompletionChatClientAgentRunStreamingTests() : ChatClientAgentRunStreamingTests<OpenAIChatCompletionFixture>(() => new())
+public class OpenAIChatCompletionChatClientAgentRunStreamingTests()
+    : ChatClientAgentRunStreamingTests<OpenAIChatCompletionFixture>(() => new(useReasoningChatModel: false))
+{
+}
+
+public class OpenAIChatCompletionChatClientAgentReasoningRunStreamingTests()
+    : ChatClientAgentRunStreamingTests<OpenAIChatCompletionFixture>(() => new(useReasoningChatModel: true))
 {
 }
