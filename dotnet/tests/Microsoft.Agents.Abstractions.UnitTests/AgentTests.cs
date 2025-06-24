@@ -212,6 +212,16 @@ public class AgentTests
     }
 
     [Fact]
+    public void ValidateAgentIDIsIdempotent()
+    {
+        var agent = new MockAgent();
+
+        string id = agent.Id;
+        Assert.NotNull(id);
+        Assert.Equal(id, agent.Id);
+    }
+
+    [Fact]
     public void ValidateOrCreateThreadTypeVerifiesAndCreatesThread()
     {
         // Custom thread type for type checking

@@ -21,7 +21,7 @@ public abstract class Agent
     /// <value>
     /// The identifier of the agent. The default is a random GUID value, but for service agents, it will match the id of the agent in the service.
     /// </value>
-    public virtual string Id => Guid.NewGuid().ToString();
+    public virtual string Id { get; } = Guid.NewGuid().ToString();
 
     /// <summary>
     /// Gets the name of the agent (optional).
@@ -60,7 +60,7 @@ public abstract class Agent
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
-    public virtual Task<ChatResponse> RunAsync(
+    public Task<ChatResponse> RunAsync(
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
@@ -79,7 +79,7 @@ public abstract class Agent
     /// <remarks>
     /// The provided message string will be treated as a user message.
     /// </remarks>
-    public virtual Task<ChatResponse> RunAsync(
+    public Task<ChatResponse> RunAsync(
         string message,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -98,7 +98,7 @@ public abstract class Agent
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
-    public virtual Task<ChatResponse> RunAsync(
+    public Task<ChatResponse> RunAsync(
         ChatMessage message,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -130,7 +130,7 @@ public abstract class Agent
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An async list of response items that each contain a <see cref="ChatResponseUpdate"/>.</returns>
-    public virtual IAsyncEnumerable<ChatResponseUpdate> RunStreamingAsync(
+    public IAsyncEnumerable<ChatResponseUpdate> RunStreamingAsync(
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
@@ -149,7 +149,7 @@ public abstract class Agent
     /// <remarks>
     /// The provided message string will be treated as a user message.
     /// </remarks>
-    public virtual IAsyncEnumerable<ChatResponseUpdate> RunStreamingAsync(
+    public IAsyncEnumerable<ChatResponseUpdate> RunStreamingAsync(
         string message,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -168,7 +168,7 @@ public abstract class Agent
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An async list of response items that each contain a <see cref="ChatResponseUpdate"/>.</returns>
-    public virtual IAsyncEnumerable<ChatResponseUpdate> RunStreamingAsync(
+    public IAsyncEnumerable<ChatResponseUpdate> RunStreamingAsync(
         ChatMessage message,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -241,6 +241,9 @@ public abstract class Agent
     /// <returns>An async task that completes once the notification is complete.</returns>
     protected async Task NotifyThreadOfNewMessagesAsync(AgentThread thread, IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken)
     {
+        _ = Throw.IfNull(thread);
+        _ = Throw.IfNull(messages);
+
         if (messages.Count > 0)
         {
             await thread.OnNewMessagesAsync(messages, cancellationToken).ConfigureAwait(false);
