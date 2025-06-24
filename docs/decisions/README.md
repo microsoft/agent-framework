@@ -4,7 +4,7 @@ An Architectural Decision (AD) is a justified software design choice that addres
 
 For more information [see](https://adr.github.io/)
 
-## How are we using ADR's to track technical decisions?
+## How are we using ADRs to track technical decisions?
 
 1. Copy docs/decisions/adr-template.md to docs/decisions/NNNN-title-with-dashes.md, where NNNN indicates the next number in sequence.
     1. Check for existing PR's to make sure you use the correct sequence number.
