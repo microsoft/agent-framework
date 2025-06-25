@@ -4,6 +4,6 @@ using AgentConformance.IntegrationTests;
 
 namespace AzureAIAgentsPersistent.IntegrationTests;
 
-public class AzureAIAgentsPersistentInvokeTests() : RunAsyncTests<AzureAIAgentsPersistentFixture>(() => new())
+public class AzureAIAgentsPersistentRunTests() : RunTests<AzureAIAgentsPersistentFixture>(() => new())
 {
 }

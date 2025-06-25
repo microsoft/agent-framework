@@ -2,7 +2,6 @@
 
 using System;
 using System.Threading.Tasks;
-using AgentConformanceTests;
 
 namespace AgentConformance.IntegrationTests;
 
@@ -12,7 +11,7 @@ namespace AgentConformance.IntegrationTests;
 /// <typeparam name="TAgentFixture">The type of the agent fixture used in these tests.</typeparam>
 /// <param name="createAgentFixture">Used to create a new fixture for this test suite.</param>
 public abstract class AgentTests<TAgentFixture>(Func<TAgentFixture> createAgentFixture) : IAsyncLifetime
-    where TAgentFixture : AgentFixture
+    where TAgentFixture : IAgentFixture
 {
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
     protected TAgentFixture Fixture { get; private set; }

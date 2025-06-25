@@ -156,10 +156,10 @@ public class ChatClientAgentTests
     }
 
     /// <summary>
-    /// Verify that RunAsync includes additional instructions when provided in options.
+    /// Verify that RunAsync includes base instructions in messages.
     /// </summary>
     [Fact]
-    public async Task RunAsyncIncludesAdditionalInstructionsWhenProvidedInOptionsAsync()
+    public async Task RunAsyncIncludesBaseInstructionsAsync()
     {
         // Arrange
         Mock<IChatClient> mockService = new();
@@ -174,14 +174,13 @@ public class ChatClientAgentTests
             .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
         ChatClientAgent agent = new(mockService.Object, new() { Instructions = "base instructions" });
-        var runOptions = new AgentRunOptions { AdditionalInstructions = "additional instructions" };
+        var runOptions = new AgentRunOptions();
 
         // Act
         await agent.RunAsync([new(ChatRole.User, "test")], options: runOptions);
 
         // Assert
         Assert.Contains(capturedMessages, m => m.Text == "base instructions" && m.Role == ChatRole.System);
-        Assert.Contains(capturedMessages, m => m.Text == "additional instructions" && m.Role == ChatRole.System);
         Assert.Contains(capturedMessages, m => m.Text == "test" && m.Role == ChatRole.User);
     }
 
@@ -759,18 +758,21 @@ public class ChatClientAgentTests
             MaxOutputTokens = 100,
             Temperature = 0.7f,
             TopP = 0.9f,
-            ModelId = "agent-model"
+            ModelId = "agent-model",
+            AdditionalProperties = new AdditionalPropertiesDictionary() { ["key"] = "agent-value" }
         };
         var requestChatOptions = new ChatOptions
         {
             MaxOutputTokens = 200,
-            Temperature = 0.3f
+            Temperature = 0.3f,
+            AdditionalProperties = new AdditionalPropertiesDictionary() { ["key"] = "request-value" }
             // TopP and ModelId not set, should use agent values
         };
         var expectedChatOptionsMerge = new ChatOptions
         {
             MaxOutputTokens = 200, // Request value takes priority
             Temperature = 0.3f, // Request value takes priority
+            AdditionalProperties = new AdditionalPropertiesDictionary() { ["key"] = "request-value" }, // Request value takes priority
             TopP = 0.9f, // Agent value used when request doesn't specify
             ModelId = "agent-model" // Agent value used when request doesn't specify
         };
@@ -801,6 +803,8 @@ public class ChatClientAgentTests
         Assert.Equivalent(expectedChatOptionsMerge, capturedChatOptions); // Should be the same instance (modified in place)
         Assert.Equal(200, capturedChatOptions.MaxOutputTokens); // Request value takes priority
         Assert.Equal(0.3f, capturedChatOptions.Temperature); // Request value takes priority
+        Assert.NotNull(capturedChatOptions.AdditionalProperties);
+        Assert.Equal("request-value", capturedChatOptions.AdditionalProperties["key"]); // Request value takes priority
         Assert.Equal(0.9f, capturedChatOptions.TopP); // Agent value used when request doesn't specify
         Assert.Equal("agent-model", capturedChatOptions.ModelId); // Agent value used when request doesn't specify
     }

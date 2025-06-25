@@ -17,7 +17,6 @@ internal sealed class ChatClientAgentRunOptions : AgentRunOptions
     internal ChatClientAgentRunOptions(AgentRunOptions? source = null, ChatOptions? chatOptions = null)
     {
         this.OnIntermediateMessages = source?.OnIntermediateMessages;
-        this.AdditionalInstructions = source?.AdditionalInstructions;
         this.ChatOptions = chatOptions;
     }
 
