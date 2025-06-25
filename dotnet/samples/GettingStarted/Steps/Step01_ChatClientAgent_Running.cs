@@ -53,8 +53,8 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
             this.WriteResponseOutput(response);
         }
 
-        // 
-        await base.AgentCleanUpAsync(provider, agent, null);
+        // Clean up the agent after use when applicable.
+        await base.AgentCleanUpAsync(provider, agent);
     }
 
     /// <summary>
@@ -100,6 +100,9 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
 
             this.WriteResponseOutput(response);
         }
+
+        // Clean up the agent and thread after use when applicable.
+        await base.AgentCleanUpAsync(provider, agent, thread);
     }
 
     /// <summary>
@@ -147,5 +150,8 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
                 this.WriteAgentOutput(update);
             }
         }
+
+        // Clean up the agent and thread after use when applicable.
+        await base.AgentCleanUpAsync(provider, agent, thread);
     }
 }
