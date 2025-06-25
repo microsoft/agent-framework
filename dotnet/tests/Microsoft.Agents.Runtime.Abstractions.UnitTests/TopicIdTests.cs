@@ -122,10 +122,10 @@ public class TopicIdTests
     {
         // Arrange
         TopicId topicId = new("testtype", "customsource");
-        const string differentType = "not-a-topic-id";
+        const string DifferentType = "not-a-topic-id";
 
         // Act & Assert
-        Assert.False(topicId.Equals(differentType));
+        Assert.False(topicId.Equals(DifferentType));
     }
 
     [Fact]
