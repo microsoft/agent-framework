@@ -18,7 +18,7 @@ internal static class KeyValueParserExtensions
     /// <summary>
     /// The compiled regex used for extracting key-value pairs from a string.
     /// </summary>
-    private static readonly Regex KVPairRegex = new(KVPairPattern, RegexOptions.Compiled);
+    private static readonly Regex s_kvpPairRegex = new(KVPairPattern, RegexOptions.Compiled);
 
     /// <summary>
     /// Parses a string in the format "key/value" into a tuple containing the key and value.
@@ -41,7 +41,7 @@ internal static class KeyValueParserExtensions
     /// </example>
     public static (string, string) ToKeyValuePair(this string inputPair, string keyName, string valueName)
     {
-        Match match = KVPairRegex.Match(inputPair);
+        Match match = s_kvpPairRegex.Match(inputPair);
         if (match.Success)
         {
             return (match.Groups["key"].Value, match.Groups["value"].Value);

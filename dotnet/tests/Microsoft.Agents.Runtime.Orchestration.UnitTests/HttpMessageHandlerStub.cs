@@ -3,11 +3,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
-using System.Net.Mime;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -15,11 +12,6 @@ namespace Microsoft.Agents.Orchestration.UnitTest;
 
 internal sealed class HttpMessageHandlerStub : HttpMessageHandler
 {
-    private static readonly HttpResponseMessage s_defaultResponse = new(HttpStatusCode.OK)
-    {
-        Content = new StringContent("{}", Encoding.UTF8, MediaTypeNames.Application.Json),
-    };
-
     public HttpRequestHeaders? RequestHeaders { get; private set; }
 
     public HttpContentHeaders? ContentHeaders { get; private set; }
@@ -53,9 +45,6 @@ internal sealed class HttpMessageHandlerStub : HttpMessageHandler
 
         this.ContentHeaders = request.Content?.Headers;
 
-        return
-            //(this.ResponseQueue.Count == 0) ?
-            //    s_defaultResponse :
-                this.ResponseQueue.Dequeue();
+        return this.ResponseQueue.Dequeue();
     }
 }
