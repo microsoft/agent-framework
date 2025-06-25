@@ -6,9 +6,9 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.Runtime.Core.Internal;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Agents.Runtime.Core.Internal;
 
 namespace Microsoft.Agents.Runtime.Core;
 
