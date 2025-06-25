@@ -24,7 +24,7 @@ public struct AgentId : IEquatable<AgentId>
     /// </summary>
     public const string DefaultKey = "default";
 
-    private static readonly Regex KeyRegex = new(@"^[\x20-\x7E]+$", RegexOptions.Compiled); // ASCII 32-126
+    private static readonly Regex s_keyRegex = new(@"^[\x20-\x7E]+$", RegexOptions.Compiled); // ASCII 32-126
 
     /// <summary>
     /// An identifier that associates an agent with a specific factory function.
@@ -40,7 +40,7 @@ public struct AgentId : IEquatable<AgentId>
 
     internal static Regex KeyRegex1 => KeyRegex2;
 
-    internal static Regex KeyRegex2 => KeyRegex;
+    internal static Regex KeyRegex2 => s_keyRegex;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentId"/> struct.
@@ -51,7 +51,7 @@ public struct AgentId : IEquatable<AgentId>
     {
         AgentType.Validate(type);
 
-        if (string.IsNullOrWhiteSpace(key) || !KeyRegex.IsMatch(key))
+        if (string.IsNullOrWhiteSpace(key) || !s_keyRegex.IsMatch(key))
         {
             throw new ArgumentException($"Invalid AgentId key: '{key}'. Must only contain ASCII characters 32-126.");
         }
