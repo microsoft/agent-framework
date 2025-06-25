@@ -39,7 +39,7 @@ public class AgentProxyTests
     }
 
     [Fact]
-    public async Task SendMessageResponseTest()
+    public async Task SendMessageResponseTestAsync()
     {
         // Arrange
         object message = new { Content = "Hello" };
@@ -57,7 +57,7 @@ public class AgentProxyTests
     }
 
     [Fact]
-    public async Task LoadStateTest()
+    public async Task LoadStateTestAsync()
     {
         // Arrange
         JsonElement state = JsonDocument.Parse("{\"key\":\"value\"}").RootElement;
@@ -73,7 +73,7 @@ public class AgentProxyTests
     }
 
     [Fact]
-    public async Task SaveStateTest()
+    public async Task SaveStateTestAsync()
     {
         // Arrange
         JsonElement expectedState = JsonDocument.Parse("{\"key\":\"value\"}").RootElement;
