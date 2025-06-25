@@ -47,10 +47,10 @@ public class TopicIdTests
     public void ConvertFromStringTest()
     {
         // Arrange
-        const string topicIdStr = "testtype/customsource";
+        const string TopicIdStr = "testtype/customsource";
 
         // Act
-        TopicId topicId = TopicId.FromStr(topicIdStr);
+        TopicId topicId = TopicId.FromStr(TopicIdStr);
 
         // Assert
         Assert.Equal("testtype", topicId.Type);

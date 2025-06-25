@@ -69,8 +69,8 @@ public class BaseAgentTests
         MessageContext context = new(CancellationToken.None);
 
         // Act
-        const string message = "This is a TestMessage";
-        object? result = await agent.OnMessageAsync(message, context);
+        const string Message = "This is a TestMessage";
+        object? result = await agent.OnMessageAsync(Message, context);
 
         // Assert
         result.Should().BeNull();

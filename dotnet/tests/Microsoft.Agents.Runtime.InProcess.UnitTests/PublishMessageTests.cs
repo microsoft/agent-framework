@@ -15,8 +15,8 @@ public class PublishMessageTests
     {
         MessagingTestFixture fixture = new();
 
-        await fixture.RegisterReceiverAgent(topicTypes: "TestTopic");
-        await fixture.RegisterReceiverAgent("2", topicTypes: "TestTopic");
+        await fixture.RegisterReceiverAgentAsync(topicTypes: "TestTopic");
+        await fixture.RegisterReceiverAgentAsync("2", topicTypes: "TestTopic");
 
         await fixture.RunPublishTestAsync(new TopicId("TestTopic"), new BasicMessage { Content = "1" });
 
@@ -33,7 +33,7 @@ public class PublishMessageTests
     {
         MessagingTestFixture fixture = new();
 
-        await fixture.RegisterErrorAgent(topicTypes: "TestTopic");
+        await fixture.RegisterErrorAgentAsync(topicTypes: "TestTopic");
 
         Func<Task> publishTask = async () => await fixture.RunPublishTestAsync(new TopicId("TestTopic"), new BasicMessage { Content = "1" });
 
@@ -49,8 +49,8 @@ public class PublishMessageTests
     {
         MessagingTestFixture fixture = new();
 
-        await fixture.RegisterErrorAgent(topicTypes: "TestTopic");
-        await fixture.RegisterErrorAgent("2", topicTypes: "TestTopic");
+        await fixture.RegisterErrorAgentAsync(topicTypes: "TestTopic");
+        await fixture.RegisterErrorAgentAsync("2", topicTypes: "TestTopic");
 
         Func<Task> publishTask = async () => await fixture.RunPublishTestAsync(new TopicId("TestTopic"), new BasicMessage { Content = "1" });
 
@@ -71,11 +71,11 @@ public class PublishMessageTests
     {
         MessagingTestFixture fixture = new();
 
-        await fixture.RegisterReceiverAgent(topicTypes: "TestTopic");
-        await fixture.RegisterReceiverAgent("2", topicTypes: "TestTopic");
+        await fixture.RegisterReceiverAgentAsync(topicTypes: "TestTopic");
+        await fixture.RegisterReceiverAgentAsync("2", topicTypes: "TestTopic");
 
-        await fixture.RegisterErrorAgent(topicTypes: "TestTopic");
-        await fixture.RegisterErrorAgent("2", topicTypes: "TestTopic");
+        await fixture.RegisterErrorAgentAsync(topicTypes: "TestTopic");
+        await fixture.RegisterErrorAgentAsync("2", topicTypes: "TestTopic");
 
         Func<Task> publicTask = async () => await fixture.RunPublishTestAsync(new TopicId("TestTopic"), new BasicMessage { Content = "1" });
 
@@ -110,8 +110,8 @@ public class PublishMessageTests
 
         await fixture.Runtime.AddSubscriptionAsync(new TestSubscription("RunTest", nameof(PublisherAgent)));
 
-        await fixture.RegisterReceiverAgent(topicTypes: "TestTopic");
-        await fixture.RegisterReceiverAgent("2", topicTypes: "TestTopic");
+        await fixture.RegisterReceiverAgentAsync(topicTypes: "TestTopic");
+        await fixture.RegisterReceiverAgentAsync("2", topicTypes: "TestTopic");
 
         await fixture.RunPublishTestAsync(new TopicId("RunTest"), new BasicMessage { Content = "1" });
 

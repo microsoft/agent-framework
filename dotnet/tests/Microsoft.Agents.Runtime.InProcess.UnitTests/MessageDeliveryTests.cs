@@ -9,7 +9,7 @@ namespace Microsoft.Agents.Runtime.InProcess.Tests;
 [Trait("Category", "Unit")]
 public class MessageDeliveryTests
 {
-    private static readonly Func<MessageEnvelope, CancellationToken, ValueTask> s_EmptyServicer = (_, _) => new ValueTask();
+    private static readonly Func<MessageEnvelope, CancellationToken, ValueTask> s_emptyServicer = (_, _) => new ValueTask();
 
     [Fact]
     public void ConstructorInitializesProperties()
@@ -19,11 +19,11 @@ public class MessageDeliveryTests
         ResultSink<object?> resultSink = new();
 
         // Act
-        MessageDelivery delivery = new(message, s_EmptyServicer, resultSink);
+        MessageDelivery delivery = new(message, s_emptyServicer, resultSink);
 
         // Assert
         Assert.Same(message, delivery.Message);
-        Assert.Same(s_EmptyServicer, delivery.Servicer);
+        Assert.Same(s_emptyServicer, delivery.Servicer);
         Assert.Same(resultSink, delivery.ResultSink);
     }
 
@@ -38,7 +38,7 @@ public class MessageDeliveryTests
         resultSink.SetResult(expectedResult);
 
         // Act
-        MessageDelivery delivery = new(message, s_EmptyServicer, resultSink);
+        MessageDelivery delivery = new(message, s_emptyServicer, resultSink);
         object? result = await delivery.ResultSink.Future;
 
         // Assert

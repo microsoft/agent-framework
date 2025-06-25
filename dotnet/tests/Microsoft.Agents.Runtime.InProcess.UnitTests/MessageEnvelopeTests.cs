@@ -14,15 +14,15 @@ public class MessageEnvelopeTests
     {
         // Arrange
         object message = new { Content = "Test message" };
-        const string messageId = "testid";
+        const string MessageId = "testid";
         CancellationToken cancellation = new();
 
         // Act
-        MessageEnvelope envelope = new(message, messageId, cancellation);
+        MessageEnvelope envelope = new(message, MessageId, cancellation);
 
         // Assert
         Assert.Same(message, envelope.Message);
-        Assert.Equal(messageId, envelope.MessageId);
+        Assert.Equal(MessageId, envelope.MessageId);
         Assert.Equal(cancellation, envelope.Cancellation);
         Assert.Null(envelope.Sender);
         Assert.Null(envelope.Receiver);
@@ -58,7 +58,7 @@ public class MessageEnvelopeTests
     }
 
     [Fact]
-    public async Task ForSendTest()
+    public async Task ForSendTestAsync()
     {
         // Arrange
         MessageEnvelope envelope = new("test");

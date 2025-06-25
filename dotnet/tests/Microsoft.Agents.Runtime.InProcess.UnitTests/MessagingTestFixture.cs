@@ -19,18 +19,18 @@ public sealed class TestException : Exception { }
 
 public sealed class PublisherAgent : TestAgent, IHandle<BasicMessage>
 {
-    private readonly IList<TopicId> targetTopics;
+    private readonly IList<TopicId> _targetTopics;
 
     public PublisherAgent(AgentId id, IAgentRuntime runtime, string description, IList<TopicId> targetTopics)
         : base(id, runtime, description)
     {
-        this.targetTopics = targetTopics;
+        this._targetTopics = targetTopics;
     }
 
     public async ValueTask HandleAsync(BasicMessage item, MessageContext messageContext)
     {
         this.ReceivedMessages.Add(item);
-        foreach (TopicId targetTopic in this.targetTopics)
+        foreach (TopicId targetTopic in this._targetTopics)
         {
             await this.PublishMessageAsync(
                 new BasicMessage { Content = $"@{targetTopic}: {item.Content}" },
@@ -41,17 +41,17 @@ public sealed class PublisherAgent : TestAgent, IHandle<BasicMessage>
 
 public sealed class SendOnAgent : TestAgent, IHandle<BasicMessage>
 {
-    private readonly IList<Guid> targetKeys;
+    private readonly IList<Guid> _targetKeys;
 
     public SendOnAgent(AgentId id, IAgentRuntime runtime, string description, IList<Guid> targetKeys)
         : base(id, runtime, description)
     {
-        this.targetKeys = targetKeys;
+        this._targetKeys = targetKeys;
     }
 
     public async ValueTask HandleAsync(BasicMessage item, MessageContext messageContext)
     {
-        foreach (Guid targetKey in this.targetKeys)
+        foreach (Guid targetKey in this._targetKeys)
         {
             AgentId targetId = new(nameof(ReceiverAgent), targetKey.ToString());
             BasicMessage response = new() { Content = $"@{targetKey}: {item.Content}" };
@@ -155,7 +155,7 @@ public sealed class MessagingTestFixture
 
         return result;
     }
-    public async ValueTask RegisterReceiverAgent(string? agentNameSuffix = null, params string[] topicTypes)
+    public async ValueTask RegisterReceiverAgentAsync(string? agentNameSuffix = null, params string[] topicTypes)
     {
         await this.RegisterFactoryMapInstances(
             $"{nameof(ReceiverAgent)}{agentNameSuffix ?? string.Empty}",
@@ -167,7 +167,7 @@ public sealed class MessagingTestFixture
         }
     }
 
-    public async ValueTask RegisterErrorAgent(string? agentNameSuffix = null, params string[] topicTypes)
+    public async ValueTask RegisterErrorAgentAsync(string? agentNameSuffix = null, params string[] topicTypes)
     {
         await this.RegisterFactoryMapInstances(
             $"{nameof(ErrorAgent)}{agentNameSuffix ?? string.Empty}",

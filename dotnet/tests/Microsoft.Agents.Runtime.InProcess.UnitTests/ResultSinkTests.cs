@@ -14,35 +14,35 @@ public class ResultSinkTests
     {
         // Arrange
         ResultSink<int> sink = new();
-        const int expectedResult = 42;
+        const int ExpectedResult = 42;
 
         // Act
-        sink.SetResult(expectedResult);
+        sink.SetResult(ExpectedResult);
         int result = sink.GetResult(0);
 
         // Assert
-        Assert.Equal(expectedResult, result);
+        Assert.Equal(ExpectedResult, result);
         Assert.Equal(ValueTaskSourceStatus.Succeeded, sink.GetStatus(0));
     }
 
     [Fact]
-    public async Task FutureResultTest()
+    public async Task FutureResultTestAsync()
     {
         // Arrange
         ResultSink<string> sink = new();
-        const string expectedResult = "test";
+        const string ExpectedResult = "test";
 
         // Act
-        sink.SetResult(expectedResult);
+        sink.SetResult(ExpectedResult);
         string result = await sink.Future;
 
         // Assert
-        Assert.Equal(expectedResult, result);
+        Assert.Equal(ExpectedResult, result);
         Assert.Equal(ValueTaskSourceStatus.Succeeded, sink.GetStatus(0));
     }
 
     [Fact]
-    public async Task SetExceptionTest()
+    public async Task SetExceptionTestAsync()
     {
         // Arrange
         ResultSink<int> sink = new();
@@ -60,7 +60,7 @@ public class ResultSinkTests
     }
 
     [Fact]
-    public async Task SetCancelledTest()
+    public async Task SetCancelledTestAsync()
     {
         // Arrange
         ResultSink<int> sink = new();
@@ -81,7 +81,7 @@ public class ResultSinkTests
         // Arrange
         ResultSink<int> sink = new();
         bool continuationCalled = false;
-        const int expectedResult = 42;
+        const int ExpectedResult = 42;
 
         // Register the continuation
         sink.OnCompleted(
@@ -94,10 +94,10 @@ public class ResultSinkTests
         Assert.False(continuationCalled, "Continuation should have been called");
 
         // Act
-        sink.SetResult(expectedResult);
+        sink.SetResult(ExpectedResult);
 
         // Assert
-        Assert.Equal(expectedResult, sink.GetResult(0));
+        Assert.Equal(ExpectedResult, sink.GetResult(0));
         Assert.Equal(ValueTaskSourceStatus.Succeeded, sink.GetStatus(0));
         Assert.True(continuationCalled, "Continuation should have been called");
     }
