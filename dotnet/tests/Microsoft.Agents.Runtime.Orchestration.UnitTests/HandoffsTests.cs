@@ -2,6 +2,8 @@
 
 using System;
 using Microsoft.Agents.Orchestration.Handoff;
+using Microsoft.Extensions.AI;
+using Moq;
 
 namespace Microsoft.Agents.Orchestration.UnitTest;
 
@@ -219,16 +221,15 @@ public class HandoffsTests
 
     private static ChatClientAgent CreateAgent(string id, string? description = null, string? name = null)
     {
-        // %%% HACK
-        throw new NotImplementedException();
-        //ChatClientAgent mockAgent =
-        //    new()
-        //    {
-        //        Id = id,
-        //        Description = description,
-        //        Name = name,
-        //    };
-
-        //return mockAgent;
+        Mock<IChatClient> mockClient = new(MockBehavior.Loose);
+        ChatClientAgentOptions options =
+            new()
+            {
+                Id = id,
+                Name = name,
+                Description = description,
+            };
+        ChatClientAgent mockAgent = new(mockClient.Object, options);
+        return mockAgent;
     }
 }

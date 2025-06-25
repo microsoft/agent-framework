@@ -5,6 +5,7 @@
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
     <RootNamespace>Microsoft.Agents.Runtime.InProcess</RootNamespace>
     <VersionSuffix>alpha</VersionSuffix>
+    <IsAotCompatible>false</IsAotCompatible>
   </PropertyGroup>
 
   <PropertyGroup>

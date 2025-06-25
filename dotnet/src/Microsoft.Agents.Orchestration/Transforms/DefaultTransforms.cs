@@ -49,7 +49,7 @@ internal static class DefaultTransforms
 
             try
             {
-                return JsonSerializer.Deserialize<TOutput>(result[0].Text ?? string.Empty);
+                return JsonSerializer.Deserialize<TOutput>(result[0].Text);
             }
             catch (JsonException)
             {

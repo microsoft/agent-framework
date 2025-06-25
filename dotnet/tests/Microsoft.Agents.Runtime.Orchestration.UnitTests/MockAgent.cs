@@ -12,11 +12,11 @@ namespace Microsoft.Agents.Orchestration.UnitTest;
 /// <summary>
 /// Mock definition of <see cref="Agent"/>.
 /// </summary>
-internal sealed class MockAgent(string? description = null) : Agent
+internal sealed class MockAgent(int index) : Agent
 {
     public static MockAgent CreateWithResponse(int index, string response)
     {
-        return new($"test {index}")
+        return new(index)
         {
             Response = [new(ChatRole.Assistant, response)]
         };
@@ -26,13 +26,13 @@ internal sealed class MockAgent(string? description = null) : Agent
 
     public IReadOnlyList<ChatMessage> Response { get; set; } = [];
 
-    public override string? Name => "testagent";
+    public override string? Name => $"testagent{index}";
 
-    public override string? Description => description;
+    public override string? Description => $"test {index}";
 
     public override AgentThread GetNewThread()
     {
-        throw new NotImplementedException();
+        return new AgentThread() { Id = Guid.NewGuid().ToString() };
     }
 
     public override async Task<ChatResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)

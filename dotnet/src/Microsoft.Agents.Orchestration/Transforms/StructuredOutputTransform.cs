@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -18,20 +17,19 @@ public sealed class StructuredOutputTransform<TOutput>
     internal const string DefaultInstructions = "Respond with JSON that is populated by using the information in this conversation.";
 
     private readonly IChatClient _client;
-    private readonly ChatOptions _options;
+    private readonly ChatOptions? _options;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StructuredOutputTransform{TOutput}"/> class.
     /// </summary>
     /// <param name="client">The chat completion service to use for generating responses.</param>
-    /// <param name="executionSettings">The prompt execution settings to use for the chat completion service.</param>
-    public StructuredOutputTransform(IChatClient client, ChatOptions executionSettings)
+    /// <param name="chatOptions">The prompt execution settings to use for the chat completion service.</param>
+    public StructuredOutputTransform(IChatClient client, ChatOptions? chatOptions = null)
     {
         ArgumentNullException.ThrowIfNull(client, nameof(client));
-        ArgumentNullException.ThrowIfNull(executionSettings, nameof(executionSettings));
 
         this._client = client;
-        this._options = executionSettings;
+        this._options = chatOptions;
     }
 
     /// <summary>
@@ -53,9 +51,7 @@ public sealed class StructuredOutputTransform<TOutput>
                 new ChatMessage(ChatRole.System, this.Instructions),
                 .. messages,
             ];
-        ChatResponse response = await this._client.GetResponseAsync(input, this._options, cancellationToken).ConfigureAwait(false);
-        return
-            JsonSerializer.Deserialize<TOutput>(response.Messages[^1].Text) ??
-            throw new InvalidOperationException($"Unable to transform result into {typeof(TOutput).Name}");
+        ChatResponse<TOutput> response = await this._client.GetResponseAsync<TOutput>(input, this._options, useJsonSchemaResponseFormat: true, cancellationToken).ConfigureAwait(false);
+        return response.Result;
     }
 }

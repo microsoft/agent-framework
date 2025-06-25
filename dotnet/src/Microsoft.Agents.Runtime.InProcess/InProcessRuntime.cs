@@ -381,7 +381,9 @@ public sealed class InProcessRuntime : IAgentRuntime, IAsyncDisposable
                 // TODO: Cancellation propagation!
                 await agent.OnMessageAsync(envelope.Message, messageContext).ConfigureAwait(false);
             }
-            catch (Exception ex) when (ex is not null) // %%% HACK
+#pragma warning disable CA1031 // Do not catch general exception types
+            catch (Exception ex)
+#pragma warning restore CA1031 // Do not catch general exception types
             {
                 exceptions.Add(ex);
             }
@@ -447,18 +449,22 @@ public sealed class InProcessRuntime : IAgentRuntime, IAsyncDisposable
     }
 
 #pragma warning disable CA1822 // Mark members as static
-    private ValueTask<T> ExecuteTracedAsync<T>(Func<ValueTask<T>> func)
+    private async ValueTask<T> ExecuteTracedAsync<T>(Func<ValueTask<T>> func)
 #pragma warning restore CA1822 // Mark members as static
     {
         // TODO: Bind tracing
-        return func();
+        ValueTask<T> task = func.Invoke();
+        await Task.Yield();
+        return await task.ConfigureAwait(false);
     }
 
 #pragma warning disable CA1822 // Mark members as static
-    private ValueTask ExecuteTracedAsync(Func<ValueTask> func)
+    private async ValueTask ExecuteTracedAsync(Func<ValueTask> func)
 #pragma warning restore CA1822 // Mark members as static
     {
         // TODO: Bind tracing
-        return func();
+        ValueTask task = func.Invoke();
+        await Task.Yield();
+        await task.ConfigureAwait(false); // %%% NOT CORRECT
     }
 }

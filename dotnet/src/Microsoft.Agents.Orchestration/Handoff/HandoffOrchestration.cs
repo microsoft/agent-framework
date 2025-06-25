@@ -77,7 +77,7 @@ public class HandoffOrchestration<TInput, TOutput> : AgentOrchestration<TInput, 
                     (agentId, runtime) =>
                     {
                         HandoffActor actor =
-                            new(agentId, runtime, context, agent, map, outputType, context.LoggerFactory.CreateLogger<HandoffActor>())
+                            new(agentId, runtime, context, (ChatClientAgent)agent, map, outputType, context.LoggerFactory.CreateLogger<HandoffActor>())
                             {
                                 InteractiveCallback = this.InteractiveCallback
                             };

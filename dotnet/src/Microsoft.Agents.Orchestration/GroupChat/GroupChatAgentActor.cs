@@ -47,10 +47,11 @@ internal sealed class GroupChatAgentActor :
     }
 
     /// <inheritdoc/>
-    public async ValueTask HandleAsync(GroupChatMessages.Reset item, MessageContext messageContext)
+    public ValueTask HandleAsync(GroupChatMessages.Reset item, MessageContext messageContext)
     {
-        // %%% HACK
-        //await this.DeleteThreadAsync(messageContext.CancellationToken).ConfigureAwait(false);
+        this.ResetThread();
+
+        return ValueTask.CompletedTask;
     }
 
     /// <inheritdoc/>

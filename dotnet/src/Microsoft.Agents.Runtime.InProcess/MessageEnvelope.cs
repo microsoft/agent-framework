@@ -47,7 +47,9 @@ internal sealed class MessageEnvelope
             {
                 resultSink.SetCancelled(exception);
             }
-            catch (Exception exception) when (exception is not null) // %%% HACK
+#pragma warning disable CA1031 // Do not catch general exception types
+            catch (Exception exception)
+#pragma warning restore CA1031 // Do not catch general exception types
             {
                 resultSink.SetException(exception);
             }
@@ -67,7 +69,9 @@ internal sealed class MessageEnvelope
                 await servicer(envelope, cancellation).ConfigureAwait(false);
                 waitForPublish.SetResult(null);
             }
-            catch (Exception exception) when (exception is not null) // %%% HACK
+#pragma warning disable CA1031 // Do not catch general exception types
+            catch (Exception exception)
+#pragma warning restore CA1031 // Do not catch general exception types
             {
                 waitForPublish.SetException(exception);
             }

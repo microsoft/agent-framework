@@ -5,6 +5,7 @@
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
     <RootNamespace>Microsoft.Agents.Orchestration</RootNamespace>
     <VersionSuffix>alpha</VersionSuffix>
+    <IsAotCompatible>false</IsAotCompatible>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -20,6 +21,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents\Microsoft.Agents.csproj" />
     <ProjectReference Include="..\Microsoft.Agents.Abstractions\Microsoft.Agents.Abstractions.csproj" />
     <ProjectReference Include="..\Microsoft.Agents.Runtime.Abstractions\Microsoft.Agents.Runtime.Abstractions.csproj" />
     <ProjectReference Include="..\Microsoft.Agents.Runtime.Core\Microsoft.Agents.Runtime.Core.csproj" />

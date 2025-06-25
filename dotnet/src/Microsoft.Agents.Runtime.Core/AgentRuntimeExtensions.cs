@@ -123,7 +123,9 @@ public static class AgentRuntimeExtensions
             return ValueTask.FromResult(agent);
 #endif
         }
-        catch (Exception e) when (e is not null) // %%% HACK
+#pragma warning disable CA1031 // Do not catch general exception types
+        catch (Exception e)
+#pragma warning restore CA1031 // Do not catch general exception types
         {
 #if !NETCOREAPP
             return e.AsValueTask<IHostableAgent>();
