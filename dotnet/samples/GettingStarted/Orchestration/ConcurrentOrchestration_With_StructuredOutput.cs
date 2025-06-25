@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json;
-using System.Threading;
 using Microsoft.Agents;
 using Microsoft.Agents.Orchestration;
 using Microsoft.Agents.Orchestration.Concurrent;
