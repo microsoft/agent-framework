@@ -2,33 +2,33 @@
 
 using System;
 using System.Threading.Tasks;
-using Microsoft.Agents.Orchestration.Concurrent;
-using Microsoft.Agents.Runtime.InProcess;
+using Microsoft.Agents.Orchestration.GroupChat;
+using Microsoft.SemanticKernel.Agents.Runtime.InProcess;
 
 namespace Microsoft.Agents.Orchestration.UnitTest;
 
 /// <summary>
-/// Tests for the <see cref="ConcurrentOrchestration"/> class.
+/// Tests for the <see cref="GroupChatOrchestration"/> class.
 /// </summary>
-public class ConcurrentOrchestrationTests
+public class GroupChatOrchestrationTests
 {
     [Fact]
-    public async Task ConcurrentOrchestrationWithSingleAgentAsync()
+    public async Task GroupChatOrchestrationWithSingleAgentAsync()
     {
         // Arrange
         await using InProcessRuntime runtime = new();
-        MockAgent mockAgent1 = MockAgent.CreateWithResponse(1, "xyz");
+        MockAgent mockAgent1 = MockAgent.CreateWithResponse(2, "xyz");
 
         // Act: Create and execute the orchestration
-        string[] response = await ExecuteOrchestrationAsync(runtime, mockAgent1);
+        string response = await ExecuteOrchestrationAsync(runtime, mockAgent1);
 
         // Assert
         Assert.Equal(1, mockAgent1.InvokeCount);
-        Assert.Contains("xyz", response);
+        Assert.Equal("xyz", response);
     }
 
     [Fact]
-    public async Task ConcurrentOrchestrationWithMultipleAgentsAsync()
+    public async Task GroupChatOrchestrationWithMultipleAgentsAsync()
     {
         // Arrange
         await using InProcessRuntime runtime = new();
@@ -38,32 +38,30 @@ public class ConcurrentOrchestrationTests
         MockAgent mockAgent3 = MockAgent.CreateWithResponse(3, "lmn");
 
         // Act: Create and execute the orchestration
-        string[] response = await ExecuteOrchestrationAsync(runtime, mockAgent1, mockAgent2, mockAgent3);
+        string response = await ExecuteOrchestrationAsync(runtime, mockAgent1, mockAgent2, mockAgent3);
 
         // Assert
         Assert.Equal(1, mockAgent1.InvokeCount);
         Assert.Equal(1, mockAgent2.InvokeCount);
         Assert.Equal(1, mockAgent3.InvokeCount);
-        Assert.Contains("lmn", response);
-        Assert.Contains("xyz", response);
-        Assert.Contains("abc", response);
+        Assert.Equal("lmn", response);
     }
 
-    private static async Task<string[]> ExecuteOrchestrationAsync(InProcessRuntime runtime, params Agent[] mockAgents)
+    private static async Task<string> ExecuteOrchestrationAsync(InProcessRuntime runtime, params Agent[] mockAgents)
     {
         // Act
         await runtime.StartAsync();
 
-        ConcurrentOrchestration orchestration = new(mockAgents);
+        GroupChatOrchestration orchestration = new(new RoundRobinGroupChatManager() { MaximumInvocationCount = mockAgents.Length }, mockAgents);
 
         const string InitialInput = "123";
-        OrchestrationResult<string[]> result = await orchestration.InvokeAsync(InitialInput, runtime);
+        OrchestrationResult<string> result = await orchestration.InvokeAsync(InitialInput, runtime);
 
         // Assert
         Assert.NotNull(result);
 
         // Act
-        string[] response = await result.GetValueAsync(TimeSpan.FromSeconds(20));
+        string response = await result.GetValueAsync(TimeSpan.FromSeconds(20));
 
         await runtime.RunUntilIdleAsync();
 

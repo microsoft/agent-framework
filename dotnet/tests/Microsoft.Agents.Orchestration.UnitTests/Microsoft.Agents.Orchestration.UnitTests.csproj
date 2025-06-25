@@ -8,7 +8,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Microsoft.Agents\Microsoft.Agents.csproj" />
     <ProjectReference Include="..\..\src\Microsoft.Agents.Orchestration\Microsoft.Agents.Orchestration.csproj" />
-    <ProjectReference Include="..\..\src\Microsoft.Agents.Runtime.InProcess\Microsoft.Agents.Runtime.InProcess.csproj" />
+    <!--<ProjectReference Include="..\..\src\Microsoft.Agents.Runtime.InProcess\Microsoft.Agents.Runtime.InProcess.csproj" />-->
   </ItemGroup>
 
   <ItemGroup>

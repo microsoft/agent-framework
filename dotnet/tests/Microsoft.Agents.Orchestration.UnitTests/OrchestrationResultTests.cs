@@ -3,7 +3,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.Runtime;
+using Microsoft.SemanticKernel.Agents.Runtime;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Microsoft.Agents.Orchestration.UnitTest;

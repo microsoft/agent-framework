@@ -4,7 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.Agents.Orchestration.Extensions;
-using Microsoft.Agents.Runtime;
+using Microsoft.SemanticKernel.Agents.Runtime;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 

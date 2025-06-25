@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Threading;
-using Microsoft.Agents.Runtime;
+using Microsoft.SemanticKernel.Agents.Runtime;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.Orchestration;

@@ -3,7 +3,7 @@
 using System;
 using System.Threading.Tasks;
 using Microsoft.Agents.Orchestration.Sequential;
-using Microsoft.Agents.Runtime.InProcess;
+using Microsoft.SemanticKernel.Agents.Runtime.InProcess;
 
 namespace Microsoft.Agents.Orchestration.UnitTest;
 

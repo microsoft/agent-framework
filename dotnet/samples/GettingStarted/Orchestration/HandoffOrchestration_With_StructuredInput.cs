@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 using Microsoft.Agents;
 using Microsoft.Agents.Orchestration;
 using Microsoft.Agents.Orchestration.Handoff;
-using Microsoft.Agents.Runtime.InProcess;
+using Microsoft.SemanticKernel.Agents.Runtime.InProcess;
 using Microsoft.Extensions.AI;
 
 namespace Orchestration;

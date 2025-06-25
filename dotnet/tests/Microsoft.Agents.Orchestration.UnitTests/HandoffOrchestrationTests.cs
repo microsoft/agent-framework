@@ -10,7 +10,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Orchestration.Handoff;
-using Microsoft.Agents.Runtime.InProcess;
+using Microsoft.SemanticKernel.Agents.Runtime.InProcess;
 using Microsoft.Extensions.AI;
 using OpenAI;
 

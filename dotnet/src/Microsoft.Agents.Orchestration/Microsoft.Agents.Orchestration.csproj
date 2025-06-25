@@ -22,9 +22,15 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Microsoft.Agents\Microsoft.Agents.csproj" />
-    <ProjectReference Include="..\Microsoft.Agents.Abstractions\Microsoft.Agents.Abstractions.csproj" />
+    <!--<ProjectReference Include="..\Microsoft.Agents.Abstractions\Microsoft.Agents.Abstractions.csproj" />
     <ProjectReference Include="..\Microsoft.Agents.Runtime.Abstractions\Microsoft.Agents.Runtime.Abstractions.csproj" />
-    <ProjectReference Include="..\Microsoft.Agents.Runtime.Core\Microsoft.Agents.Runtime.Core.csproj" />
+    <ProjectReference Include="..\Microsoft.Agents.Runtime.Core\Microsoft.Agents.Runtime.Core.csproj" />-->
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SemanticKernel.Agents.Runtime.Abstractions" />
+    <PackageReference Include="Microsoft.SemanticKernel.Agents.Runtime.Core" />
+    <PackageReference Include="Microsoft.SemanticKernel.Agents.Runtime.InProcess" />
   </ItemGroup>
 
   <ItemGroup>

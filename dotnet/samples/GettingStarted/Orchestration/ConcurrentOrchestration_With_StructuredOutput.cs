@@ -5,7 +5,7 @@ using Microsoft.Agents;
 using Microsoft.Agents.Orchestration;
 using Microsoft.Agents.Orchestration.Concurrent;
 using Microsoft.Agents.Orchestration.Transforms;
-using Microsoft.Agents.Runtime.InProcess;
+using Microsoft.SemanticKernel.Agents.Runtime.InProcess;
 using Microsoft.Shared.Samples;
 
 namespace Orchestration;
