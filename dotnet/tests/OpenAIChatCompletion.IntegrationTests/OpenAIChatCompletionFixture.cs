@@ -16,9 +16,15 @@ namespace OpenAIChatCompletion.IntegrationTests;
 public class OpenAIChatCompletionFixture : IChatClientAgentFixture
 {
     private static readonly OpenAIConfiguration s_config = TestConfiguration.LoadSection<OpenAIConfiguration>();
+    private readonly bool _useReasoningModel;
 
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
     private ChatClientAgent _agent;
+
+    public OpenAIChatCompletionFixture(bool useReasoningChatModel)
+    {
+        this._useReasoningModel = useReasoningChatModel;
+    }
 #pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
 
     public Agent Agent => this._agent;
@@ -41,7 +47,7 @@ public class OpenAIChatCompletionFixture : IChatClientAgentFixture
         IList<AITool>? aiTools = null)
     {
         var chatClient = new OpenAIClient(s_config.ApiKey)
-            .GetChatClient(s_config.ChatModelId)
+            .GetChatClient(this._useReasoningModel ? s_config.ChatReasoningModelId : s_config.ChatModelId)
             .AsIChatClient();
 
         return Task.FromResult(new ChatClientAgent(chatClient, new()

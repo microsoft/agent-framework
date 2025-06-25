@@ -5,8 +5,6 @@ using System.ClientModel;
 using System.ClientModel.Primitives;
 using System.Collections.Generic;
 using System.Net.Http;
-using System.Net.Mime;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Orchestration.Handoff;
@@ -129,11 +127,12 @@ public sealed class HandoffOrchestrationTests : IDisposable
                     Content = new StringContent(response),
                 };
             messageHandlerStub.ResponseQueue.Enqueue(responseMessage);
+            this._disposables.Add(responseMessage);
         }
         HttpClient httpClient = new(messageHandlerStub, disposeHandler: false);
 
-        //this._disposables.Add(messageHandlerStub);
-        //this._disposables.Add(httpClient);
+        this._disposables.Add(messageHandlerStub);
+        this._disposables.Add(httpClient);
 
         OpenAIClientOptions clientOptions =
             new()
