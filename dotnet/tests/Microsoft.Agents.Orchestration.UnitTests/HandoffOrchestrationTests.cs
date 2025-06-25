@@ -8,8 +8,8 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Orchestration.Handoff;
-using Microsoft.SemanticKernel.Agents.Runtime.InProcess;
 using Microsoft.Extensions.AI;
+using Microsoft.SemanticKernel.Agents.Runtime.InProcess;
 using OpenAI;
 
 namespace Microsoft.Agents.Orchestration.UnitTest;
