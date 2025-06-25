@@ -13,7 +13,7 @@ public sealed class Step02_ChatClientAgent_UsingTools(ITestOutputHelper output) 
     [InlineData(ChatClientProviders.AzureOpenAI)]
     public async Task RunningWithTools(ChatClientProviders provider)
     {
-        // Creating a Menu Tools to be used by the agent
+        // Creating a Menu Tools to be used by the agent.
         var menuTools = new MenuTools();
 
         // Define the options for the chat client agent.
@@ -61,7 +61,7 @@ public sealed class Step02_ChatClientAgent_UsingTools(ITestOutputHelper output) 
     [InlineData(ChatClientProviders.AzureOpenAI)]
     public async Task StreamingRunWithTools(ChatClientProviders provider)
     {
-        // Creating a Menu Tools to be used by the agent
+        // Creating a Menu Tools to be used by the agent.
         var menuTools = new MenuTools();
 
         // Define the options for the chat client agent.
