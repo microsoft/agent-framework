@@ -82,6 +82,7 @@ Approaches observed from the compared SDKs:
   - **Option 2.1** Response types extend MEAI types
   - **Option 2.2** New Response types
 - **Option 3** Run: Primary-only, RunStreaming: Stream of Primary + Secondary
+- **Option 4** Remove Run API and retain RunStreaming API only, which returns a Stream of Primary + Secondary.
 
 Since the suggested options vary only for the non-streaming case, the following detailed explanations for each
 focuses on the non-streaming case.
@@ -270,6 +271,26 @@ Console.WriteLine(response.Text);
 
 // Callers cannot get access to all updates, since only the final message is in messages.
 var finalMessage = response.Messages.FirstOrDefault();
+```
+
+### Option 4: Remove Run API and retain RunStreaming API only, which returns a Stream of Primary + Secondary.
+
+With this option, we remove the `RunAsync` method and only retain the `RunStreamingAsync` method, but
+we add helpers to process the streaming responses and extract information from it.
+
+```csharp
+// User can get the final response through an extenion method on the async enumerable stream.
+var responses = agent.RunStreamingAsync("Do Something");
+// E.g. an extendion method that builds the final result text.
+Console.WriteLine(await responses.AggregateFinalResult());
+// Or an extention method that builds a result message from the updates.
+Console.WriteLine(await responses.BuildMessage().Text);
+
+// Callers can also iterate through all updates if needed
+await foreach (var update in responses)
+{
+    Console.WriteLine(update.Contents.FirstOrDefault()?.GetType().Name);
+}
 ```
 
 ## Long Running Processes Options
