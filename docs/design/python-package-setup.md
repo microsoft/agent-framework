@@ -1,11 +1,10 @@
 # Python Package design for Agent Framework
 
-
 ## Design goals
 * Developer experience is key
     * the components needed for a basic agent with tools and a runtime should be importable from `agent_framework` without having to import from subpackages. This will be referred to as _tier 0_ components.
     * for more complex pieces, a developer should never have to import from more than 2 levels deep for connectors and 1 level deep for everything else
-        * i.e.: `from agent_framework.connectors.openai import OpenAIClient` or `from agent_framework import Tool`
+        * i.e.: `from agent_framework.connectors.openai import OpenAIClient` or `from agent_framework.exceptions import ToolCallError`
         * this will be referred to as _tier 1_ components.
     * if a single file becomes too cumbersome (files can easily be 1k+ lines) it should be split into a folder with an `__init__.py` that exposes the public interface and a `_files.py` that contains the implementation details, with a `__all__` in the init to expose the right things.
     * as much as possible, related things are in a single file which makes understanding the code easier.
@@ -27,10 +26,10 @@
 ### Sample getting started code
 ```python
 from typing import Annotated
-from agent_framework import Agent, tool
+from agent_framework import Agent, ai_tool
 from agent_framework.connectors.openai import OpenAIChatClient
 
-@tool(description="Get the current weather in a given location")
+@ai_tool(description="Get the current weather in a given location")
 async def get_weather(location: Annotated[str, "The location as a city name"]) -> str:
     """Get the current weather in a given location."""
     # Implementation of the tool to get weather
@@ -44,7 +43,6 @@ agent = Agent(
 )
 response = await agent.run("What is the weather in Amsterdam?")
 print(response)
-
 ```
 
 ## Global Package structure
@@ -246,13 +244,16 @@ The logging will be simplified, there will be three loggers in the base package:
 * `agent_framework.connectors.openai`: for connector-specific logging
 * `agent_framework.connectors.azure`: for connector-specific logging
 Each of the other subpackages for connectors will have a similar single logger.
+
 This means that when a logger is needed, it should be created like this:
 ```python
 from agent_framework.logging import get_logger
 
 logger = get_logger("agent_framework")
 ```
-This will ensure that the logger is created with the correct name and configuration, and it will be consistent across the package, so this will not be allowed:
+This will ensure that the logger is created with the correct name and configuration, and it will be consistent across the package. 
+
+This will not be allowed in random files:
 ```python
 import logging
 
@@ -277,7 +278,8 @@ This means that we will use the following conventions:
 * what should be included when doing just `pip install agent-framework`, how can we minimize external dependencies?
     * in other words, which batteries should be included?
 * What versioning scheme do we want to use, SemVer or CalVer?
-* Style question: What do we prefer, when the parameters are the same except for one, a Subclass or a Parameter, take: 
+* Do we want to have a single logger for all AF, or should we have separate loggers for each component?
+* What do we prefer, when the parameters are the same except for one, a Subclass or a Parameter, take: 
     ```python
     from autogen.models import UserMessage, AssistantMessage
     user_msg = UserMessage(
