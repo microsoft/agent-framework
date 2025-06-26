@@ -45,7 +45,7 @@ public sealed class OrchestrationHandoffs : Dictionary<string, AgentHandoffs>
     /// <param name="firstAgentName">The name of the first agent to be invoked (prior to any handoff).</param>
     public OrchestrationHandoffs(string firstAgentName)
     {
-        Throw.IfNull(firstAgentName, nameof(firstAgentName));
+        Throw.IfNullOrWhitespace(firstAgentName, nameof(firstAgentName));
         this.FirstAgentName = firstAgentName;
     }
 
