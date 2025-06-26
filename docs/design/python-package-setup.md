@@ -66,7 +66,7 @@ Overall the following structure is proposed:
         * utils (optional)
         * telemetry (could also be observability or monitoring)
         * workflows (includes multi-agent orchestration)
-    * connectors (namespace packages), with these two built-in/always installed:
+    * connectors (namespace packages), with these two potentially always installed:
         * openai
         * azure
         * will be exposed through i.e. `agent_framework.connectors.openai` and `agent_framework.connectors.azure`
@@ -85,6 +85,22 @@ The file structure will be as follows:
 ```plaintext
 packages/
     redis/
+        ...
+    openai/
+        src/
+            agent_framework/
+                connectors/
+                    openai/
+                        __init__.py
+                        _chat.py
+                        _embeddings.py
+                        ...
+        tests/
+            ...
+        samples/ (optional)
+            ...
+        pyproject.toml
+        README.md
         ...
     google/
         src/
@@ -110,9 +126,7 @@ src/
         _agents.py
         connectors/
             __init__.py
-            __init__.pyi
-            openai.py
-            azure.py
+            README.md       
         context_providers.py
         guardrails.py
         exceptions.py
@@ -136,7 +150,7 @@ tests/
     integration/
         test_openai.py
         test_azure.py
-        test_google.py (will run with google connector installed)
+        test_google.py
         ...
 samples/
     ...
@@ -186,6 +200,8 @@ This means that we will use the following conventions:
 * Do we need filters? and what about filters vs guardrails?
 * What do we want to do with templates? Or is context providers the new way of making "instructions" dynamic?
 * Do we want to separate other packages out into subpackages, like maybe telemetry, workflows, multi-agent orchestration, etc?
+* what should be included when doing just `pip install agent-framework`, how can we minimize external dependencies?
+    * in other words, which batteries should be included?
 * What versioning scheme do we want to use, SemVer or CalVer?
 * Style question: What do we prefer, when the parameters are the same except for one, a Subclass or a Parameter, take: 
     ```python
