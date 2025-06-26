@@ -4,6 +4,8 @@ using System.Linq;
 
 #if NETCOREAPP
 using System.Threading.Tasks;
+#else
+using Microsoft.SemanticKernel.Agents.Runtime;
 #endif
 
 namespace Microsoft.Agents.Orchestration.Concurrent;
