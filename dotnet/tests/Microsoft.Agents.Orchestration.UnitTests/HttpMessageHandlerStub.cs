@@ -26,7 +26,7 @@ internal sealed class HttpMessageHandlerStub : HttpMessageHandler
 
     public byte[]? FirstMultipartContent { get; private set; }
 
-    protected async override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         this.Method = request.Method;
         this.RequestUri = request.RequestUri;
