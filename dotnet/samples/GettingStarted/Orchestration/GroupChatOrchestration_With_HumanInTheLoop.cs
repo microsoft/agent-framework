@@ -97,17 +97,23 @@ public class GroupChatOrchestration_With_HumanInTheLoop(ITestOutputHelper output
         {
             string? lastAgent = history.LastOrDefault()?.AuthorName;
 
+            GroupChatManagerResult<bool> result;
+
             if (lastAgent is null)
             {
-                return ValueTask.FromResult(new GroupChatManagerResult<bool>(false) { Reason = "No agents have spoken yet." });
+                result = new GroupChatManagerResult<bool>(false) { Reason = "No agents have spoken yet." };
             }
 
             if (lastAgent == "Reviewer")
             {
-                return ValueTask.FromResult(new GroupChatManagerResult<bool>(true) { Reason = "User input is needed after the reviewer's message." });
+                result = new GroupChatManagerResult<bool>(true) { Reason = "User input is needed after the reviewer's message." };
+            }
+            else
+            {
+                result = new GroupChatManagerResult<bool>(false) { Reason = "User input is not needed until the reviewer's message." };
             }
 
-            return ValueTask.FromResult(new GroupChatManagerResult<bool>(false) { Reason = "User input is not needed until the reviewer's message." });
+            return new ValueTask<GroupChatManagerResult<bool>>(result);
         }
     }
 }
