@@ -3,9 +3,6 @@
 using System.Linq;
 
 using System.Threading.Tasks;
-#if !NETCOREAPP
-using Microsoft.SemanticKernel.Agents.Runtime;
-#endif
 
 namespace Microsoft.Agents.Orchestration.Concurrent;
 
@@ -26,7 +23,7 @@ public sealed class ConcurrentOrchestration : ConcurrentOrchestration<string, st
             {
                 string[] result = [.. response.Select(r => r.Text)];
 #if !NETCOREAPP
-                return new ValueTask<IHostableAgent>(result);
+                return new ValueTask<string[]>(result);
 #else
                 return ValueTask.FromResult(result);
 #endif
