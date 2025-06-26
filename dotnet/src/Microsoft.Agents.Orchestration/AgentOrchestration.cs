@@ -11,6 +11,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.SemanticKernel.Agents.Runtime;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Orchestration;
 
@@ -109,7 +110,7 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
         IAgentRuntime runtime,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(input, nameof(input));
+        Throw.IfNull(input, nameof(input));
 
         TopicId topic = new($"{this.OrchestrationLabel}_{Guid.NewGuid().ToString().Replace("-", string.Empty)}");
 

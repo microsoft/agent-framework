@@ -7,6 +7,7 @@ using Microsoft.Agents.Orchestration.Extensions;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.SemanticKernel.Agents.Runtime;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Orchestration.GroupChat;
 
@@ -28,7 +29,7 @@ public class GroupChatOrchestration<TInput, TOutput> :
     public GroupChatOrchestration(GroupChatManager manager, params Agent[] agents)
         : base(agents)
     {
-        ArgumentNullException.ThrowIfNull(manager, nameof(manager));
+        Throw.IfNull(manager, nameof(manager));
 
         this._manager = manager;
     }

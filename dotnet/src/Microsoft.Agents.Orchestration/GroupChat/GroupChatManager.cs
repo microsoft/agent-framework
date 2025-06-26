@@ -98,7 +98,7 @@ public abstract class GroupChatManager
         GroupChatManagerResult<bool> result = new(resultValue) { Reason = reason };
 
 #if !NETCOREAPP
-        return new ValueTask(result);
+        return new ValueTask<GroupChatManagerResult<bool>>(result);
 #else
         return ValueTask.FromResult(result);
 #endif

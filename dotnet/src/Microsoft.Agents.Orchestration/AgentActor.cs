@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -140,7 +141,7 @@ public abstract class AgentActor : OrchestrationActor
             await HandleStreamedMessage(lastStreamedResponse, isFinal: true).ConfigureAwait(false);
         }
 
-        return response.Messages[^1];
+        return response.Messages.Last();
 
         async Task HandleMessage(IReadOnlyCollection<ChatMessage> messages)
         {

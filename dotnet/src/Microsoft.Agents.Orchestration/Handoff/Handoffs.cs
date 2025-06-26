@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using Microsoft.SemanticKernel.Agents.Runtime;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Orchestration.Handoff;
 
@@ -44,7 +45,7 @@ public sealed class OrchestrationHandoffs : Dictionary<string, AgentHandoffs>
     /// <param name="firstAgentName">The name of the first agent to be invoked (prior to any handoff).</param>
     public OrchestrationHandoffs(string firstAgentName)
     {
-        ArgumentNullException.ThrowIfNullOrWhiteSpace(firstAgentName, nameof(firstAgentName));
+        Throw.IfNull(firstAgentName, nameof(firstAgentName));
         this.FirstAgentName = firstAgentName;
     }
 

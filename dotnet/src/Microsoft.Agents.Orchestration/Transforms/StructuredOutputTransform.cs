@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Orchestration.Transforms;
 
@@ -26,7 +27,7 @@ public sealed class StructuredOutputTransform<TOutput>
     /// <param name="chatOptions">The prompt execution settings to use for the chat completion service.</param>
     public StructuredOutputTransform(IChatClient client, ChatOptions? chatOptions = null)
     {
-        ArgumentNullException.ThrowIfNull(client, nameof(client));
+        Throw.IfNull(client, nameof(client));
 
         this._client = client;
         this._options = chatOptions;

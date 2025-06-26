@@ -51,7 +51,11 @@ internal sealed class GroupChatAgentActor :
     {
         this.ResetThread();
 
+#if !NETCOREAPP
+        return new ValueTask();
+#else
         return ValueTask.CompletedTask;
+#endif
     }
 
     /// <inheritdoc/>
