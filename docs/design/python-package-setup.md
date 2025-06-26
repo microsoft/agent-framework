@@ -3,9 +3,11 @@
 
 ### Design goals
 * Developer experience is key
-    * this means shallow imports natively, a developer should never have to import from more than 2 levels deep for connectors and 1 level deep for everything else
-    * i.e.: `from agent_framework.connectors.openai import OpenAIClient` or `from agent_framework.tools import Tool`
+    * the components needed for a basic agent with tools and a runtime should be importable from `agent_framework` without having to import from subpackages. 
+    * for more complex pieces, a developer should never have to import from more than 2 levels deep for connectors and 1 level deep for everything else
+        * i.e.: `from agent_framework.connectors.openai import OpenAIClient` or `from agent_framework import Tool`
     * if a single file becomes too cumbersome (files can easily be 1k+ lines) it should be split into a folder with an `__init__.py` that exposes the public interface and a `_files.py` that contains the implementation details, with a `__all__` in the init to expose the right things.
+    * as much as possible, related things are in a single file which makes understanding the code easier.
     * simple and straightforward logging and telemetry setup, so developers can easily add logging and telemetry to their code without having to worry about the details.
 * Namespace packages for connectors
     * To allow connectors to be treated as independent packages, we will use namespace packages for connectors, in principle this only includes the packages that we will develop in our repo, since that is easier to manage and maintain.
@@ -21,12 +23,12 @@
         ```
     * this means developers can install the main package with `pip install agent-framework[google]` to get all Google connectors, as well as manually installing the subpackage with `pip install agent-framework-google`.
 
-Overall the following structure is proposed:
+Overall the following structure is proposed (each of the underscored parts are imported directly):
 * packages
     * google
     * ...
 * agent-framework
-    * agents
+    * _agents
     * connectors (namespace packages), with these two built-in/always installed:
         * openai
         * azure
@@ -35,18 +37,19 @@ Overall the following structure is proposed:
     * data (vector stores, text search and other MEVD pieces)
     * exceptions
     * evaluation
-    * tools (includes MCP and OpenAPI)
-    * models/types (name tbd, will include the equivalent of MEAI for dotnet; content types and client abstractions)
+    * _tools (includes MCP and OpenAPI)
+    * _models/types (name tbd, will include the equivalent of MEAI for dotnet; content types and client abstractions)
     * utils (optional)
     * templates (maybe part of Tool)
     * telemetry (could also be observability or monitoring)
-    * logging
+    * _logging
     * workflows
 * tests
 * samples
 
 ## Telemetry and logging
-Telemetry and logging are handled by the `agent_framework.telemetry` and `agent_framework.logging` packages.
+Telemetry and logging are handled by the `agent_framework.telemetry` and `agent_framework._logging` packages.
+Logging is considered as part of the basic setup, while telemetry is a advanced concept.
 The telemetry package will use OpenTelemetry to provide a consistent way to collect and export telemetry data, similar to how we do this now in SK.
 The logging will be simplified, there will be three loggers in the base package:
 * `agent_framework`: for general logging
@@ -92,8 +95,9 @@ packages/
 src/
     agent_framework/
         __init__.py
+        __init__.pyi
         py.typed
-        agents.py
+        _agents.py
         connectors/
             __init__.py
             __init__.pyi
@@ -101,15 +105,16 @@ src/
             azure.py
         context_providers.py
         guardrails.py
-        data.py
         exceptions.py
         evaluation.py
-        tools.py
+        _tools.py
         models.py
         telemetry.py
-        logging.py
+        _logging.py
         utils.py
         templates.py
+        text_search.py
+        vector_data.py
         workflows.py
 tests/
     __init__.py
