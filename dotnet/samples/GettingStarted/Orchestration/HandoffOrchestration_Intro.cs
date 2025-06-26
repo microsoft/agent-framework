@@ -77,7 +77,7 @@ public class HandoffOrchestration_Intro(ITestOutputHelper output) : Orchestratio
                     ChatMessage input = new(ChatRole.User, text);
                     monitor.History.Add(input);
                     Console.WriteLine($"\n# INPUT: {input.Text}\n");
-                    return ValueTask.FromResult(input);
+                    return new(input);
                 },
                 LoggerFactory = this.LoggerFactory,
                 ResponseCallback = monitor.ResponseCallback,
