@@ -9,12 +9,12 @@ namespace Steps;
 public sealed class Step02_UsingTools(ITestOutputHelper output) : AgentSample(output)
 {
     [Theory]
-    [InlineData(ChatClientProviders.OpenAI)]
     [InlineData(ChatClientProviders.AzureOpenAI)]
+    [InlineData(ChatClientProviders.OpenAIChatCompletion)]
     public async Task RunningWithTools(ChatClientProviders provider)
     {
         // Get the chat client to use for the agent.
-        using var chatClient = base.GetChatClient(provider);
+        using var chatClient = await base.GetChatClientAsync(provider);
 
         // Define the agent
         var menuTools = new MenuTools();
@@ -51,12 +51,12 @@ public sealed class Step02_UsingTools(ITestOutputHelper output) : AgentSample(ou
     }
 
     [Theory]
-    [InlineData(ChatClientProviders.OpenAI)]
     [InlineData(ChatClientProviders.AzureOpenAI)]
+    [InlineData(ChatClientProviders.OpenAIChatCompletion)]
     public async Task StreamingRunWithTools(ChatClientProviders provider)
     {
         // Get the chat client to use for the agent.
-        using var chatClient = base.GetChatClient(provider);
+        using var chatClient = await base.GetChatClientAsync(provider);
 
         // Define the agent
         var menuTools = new MenuTools();
