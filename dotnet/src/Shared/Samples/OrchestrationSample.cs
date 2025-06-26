@@ -138,7 +138,7 @@ public abstract class OrchestrationSample : BaseSample
         {
             this.History.AddRange(response);
             WriteResponse(response);
-            return ValueTask.CompletedTask;
+            return new ValueTask();
         }
 
         /// <summary>
@@ -157,7 +157,7 @@ public abstract class OrchestrationSample : BaseSample
                 this.StreamedResponses.Clear();
             }
 
-            return ValueTask.CompletedTask;
+            return new ValueTask();
         }
     }
 

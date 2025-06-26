@@ -185,7 +185,7 @@ public class GroupChatOrchestration_With_AIManager(ITestOutputHelper output) : O
 
         /// <inheritdoc/>
         public override ValueTask<GroupChatManagerResult<bool>> ShouldRequestUserInput(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default) =>
-            ValueTask.FromResult(new GroupChatManagerResult<bool>(false) { Reason = "The AI group chat manager does not request user input." });
+            new(new GroupChatManagerResult<bool>(false) { Reason = "The AI group chat manager does not request user input." });
 
         /// <inheritdoc/>
         public override async ValueTask<GroupChatManagerResult<bool>> ShouldTerminate(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default)

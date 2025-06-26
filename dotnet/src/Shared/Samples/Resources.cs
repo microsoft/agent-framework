@@ -9,7 +9,5 @@ internal static class Resources
 {
     private const string ResourceFolder = "Resources";
 
-    internal static string Read(string fileName) => File.ReadAllText($"{ResourceFolder}/{fileName}");
-
-    internal static Task<string> ReadAsync(string fileName) => File.ReadAllTextAsync($"{ResourceFolder}/{fileName}");
+    public static string Read(string fileName) => File.ReadAllText($"{ResourceFolder}/{fileName}");
 }

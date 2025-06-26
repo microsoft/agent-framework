@@ -58,7 +58,7 @@ public class GroupChatOrchestration_With_HumanInTheLoop(ITestOutputHelper output
                         ChatMessage input = new(ChatRole.User, "I like it");
                         monitor.History.Add(input);
                         Console.WriteLine($"\n# INPUT: {input.Text}\n");
-                        return ValueTask.FromResult(input);
+                        return new ValueTask<ChatMessage>(input);
                     }
                 },
                 writer,
