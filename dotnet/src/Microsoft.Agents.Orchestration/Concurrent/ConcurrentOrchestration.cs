@@ -47,7 +47,7 @@ public class ConcurrentOrchestration<TInput, TOutput>
             {
                 ConcurrentResultActor actor = new(agentId, runtime, context, outputType, this.Members.Count, context.LoggerFactory.CreateLogger<ConcurrentResultActor>());
 #if !NETCOREAPP
-                return actor.AsValueTask<IHostableAgent>();
+                return new ValueTask<IHostableAgent>(actor);
 #else
                 return ValueTask.FromResult<IHostableAgent>(actor);
 #endif
@@ -67,7 +67,7 @@ public class ConcurrentOrchestration<TInput, TOutput>
                     {
                         ConcurrentActor actor = new(agentId, runtime, context, agent, resultType, context.LoggerFactory.CreateLogger<ConcurrentActor>());
 #if !NETCOREAPP
-                        return actor.AsValueTask<IHostableAgent>();
+                        return new ValueTask<IHostableAgent>(actor);
 #else
                         return ValueTask.FromResult<IHostableAgent>(actor);
 #endif

@@ -14,7 +14,7 @@ internal static class DefaultTransforms
     public static ValueTask<IEnumerable<ChatMessage>> FromInput<TInput>(TInput input, CancellationToken cancellationToken = default)
     {
 #if !NETCOREAPP
-        return TransformInput().AsValueTask();
+        new ValueTask(TransformInput());
 #else
         return ValueTask.FromResult(TransformInput());
 #endif

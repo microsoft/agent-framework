@@ -25,7 +25,7 @@ public sealed class ConcurrentOrchestration : ConcurrentOrchestration<string, st
             {
                 string[] result = [.. response.Select(r => r.Text)];
 #if !NETCOREAPP
-                return result.AsValueTask();
+                return new ValueTask<IHostableAgent>(result);
 #else
                 return ValueTask.FromResult(result);
 #endif

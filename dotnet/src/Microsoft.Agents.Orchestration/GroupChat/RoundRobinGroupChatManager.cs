@@ -23,7 +23,7 @@ public class RoundRobinGroupChatManager : GroupChatManager
     {
         GroupChatManagerResult<string> result = new(history.LastOrDefault()?.Text ?? string.Empty) { Reason = "Default result filter provides the final chat message." };
 #if !NETCOREAPP
-        return result.AsValueTask();
+        return new ValueTask(result);
 #else
         return ValueTask.FromResult(result);
 #endif
@@ -36,7 +36,7 @@ public class RoundRobinGroupChatManager : GroupChatManager
         this._currentAgentIndex = (this._currentAgentIndex + 1) % team.Count;
         GroupChatManagerResult<string> result = new(nextAgent) { Reason = $"Selected agent at index: {this._currentAgentIndex}" };
 #if !NETCOREAPP
-        return result.AsValueTask();
+        return new ValueTask(result);
 #else
         return ValueTask.FromResult(result);
 #endif
@@ -47,7 +47,7 @@ public class RoundRobinGroupChatManager : GroupChatManager
     {
         GroupChatManagerResult<bool> result = new(false) { Reason = "The default round-robin group chat manager does not request user input." };
 #if !NETCOREAPP
-        return result.AsValueTask();
+        return new ValueTask(result);
 #else
         return ValueTask.FromResult(result);
 #endif

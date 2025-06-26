@@ -92,7 +92,7 @@ internal sealed class HandoffActor :
         this._cache.AddRange(item.Messages);
 
 #if !NETCOREAPP
-        return Task.CompletedTask.AsValueTask();
+        return new ValueTask();
 #else
         return ValueTask.CompletedTask;
 #endif
@@ -104,7 +104,7 @@ internal sealed class HandoffActor :
         this._cache.Add(item.Message);
 
 #if !NETCOREAPP
-        return Task.CompletedTask.AsValueTask();
+        return new ValueTask();
 #else
         return ValueTask.CompletedTask;
 #endif

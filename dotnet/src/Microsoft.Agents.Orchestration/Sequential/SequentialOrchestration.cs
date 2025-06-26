@@ -60,7 +60,7 @@ public class SequentialOrchestration<TInput, TOutput> : AgentOrchestration<TInpu
                     SequentialActor actor = new(agentId, runtime, context, agent, nextAgent, context.LoggerFactory.CreateLogger<SequentialActor>());
 
 #if !NETCOREAPP
-                    return actor.AsValueTask<IHostableAgent>();
+                    return new ValueTask<IHostableAgent>(actor);
 #else
                     return ValueTask.FromResult<IHostableAgent>(actor);
 #endif

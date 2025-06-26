@@ -82,7 +82,7 @@ public class HandoffOrchestration<TInput, TOutput> : AgentOrchestration<TInput, 
                                 InteractiveCallback = this.InteractiveCallback
                             };
 #if !NETCOREAPP
-                        return actor.AsValueTask<IHostableAgent>();
+                        return new ValueTask<IHostableAgent>(actor);
 #else
                         return ValueTask.FromResult<IHostableAgent>(actor);
 #endif

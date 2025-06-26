@@ -40,7 +40,7 @@ internal sealed class GroupChatAgentActor :
         this._cache.AddRange(item.Messages);
 
 #if !NETCOREAPP
-        return Task.CompletedTask.AsValueTask();
+        return new ValueTask();
 #else
         return ValueTask.CompletedTask;
 #endif

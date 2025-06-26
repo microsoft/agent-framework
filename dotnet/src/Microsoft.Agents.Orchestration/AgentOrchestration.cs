@@ -200,7 +200,7 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
                                 StartAsync,
                                 context.LoggerFactory.CreateLogger<RequestActor>());
 #if !NETCOREAPP
-                        return actor.AsValueTask<IHostableAgent>();
+                        return new ValueTask<IHostableAgent>(actor);
 #else
                         return ValueTask.FromResult<IHostableAgent>(actor);
 #endif
@@ -243,7 +243,7 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
                                 completion,
                                 context.LoggerFactory.CreateLogger<ResultActor<TResult>>());
 #if !NETCOREAPP
-                        return actor.AsValueTask<IHostableAgent>();
+                        return new ValueTask<IHostableAgent>(actor);
 #else
                         return ValueTask.FromResult<IHostableAgent>(actor);
 #endif

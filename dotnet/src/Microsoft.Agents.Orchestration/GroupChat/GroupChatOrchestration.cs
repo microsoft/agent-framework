@@ -71,7 +71,7 @@ public class GroupChatOrchestration<TInput, TOutput> :
                 {
                     GroupChatManagerActor actor = new(agentId, runtime, context, this._manager, team, outputType, context.LoggerFactory.CreateLogger<GroupChatManagerActor>());
 #if !NETCOREAPP
-                    return actor.AsValueTask<IHostableAgent>();
+                    return new ValueTask<IHostableAgent>(actor);
 #else
                     return ValueTask.FromResult<IHostableAgent>(actor);
 #endif
@@ -89,7 +89,7 @@ public class GroupChatOrchestration<TInput, TOutput> :
                 {
                     GroupChatAgentActor actor = new(agentId, runtime, context, agent, context.LoggerFactory.CreateLogger<GroupChatAgentActor>());
 #if !NETCOREAPP
-                    return actor.AsValueTask<IHostableAgent>();
+                    return new ValueTask<IHostableAgent>(actor);
 #else
                     return ValueTask.FromResult<IHostableAgent>(actor);
 #endif
