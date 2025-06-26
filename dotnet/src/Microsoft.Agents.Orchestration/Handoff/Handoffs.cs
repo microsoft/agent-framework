@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using Microsoft.SemanticKernel.Agents.Runtime;
 using Microsoft.Shared.Diagnostics;
