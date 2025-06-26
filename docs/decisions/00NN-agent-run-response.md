@@ -77,8 +77,9 @@ Approaches observed from the compared SDKs:
 
 - **Option 1** Run: Messages List contains mix of Primary and Secondary content, RunStreaming: Stream of Primary + Secondary
   - **Option 1.1** Updates do not use `TextContent`
-  - **Option 1.2** Use ChatClient response types
-  - **Option 1.3** Return derived ChatClient response types
+  - **Option 1.2** Presence of Secondary Content is determined by a runtime parameter
+  - **Option 1.3** Use ChatClient response types
+  - **Option 1.4** Return derived ChatClient response types
 - **Option 2** Run: Container with Primary and Secondary Properties, RunStreaming: Stream of Primary + Secondary
   - **Option 2.1** Response types extend MEAI types
   - **Option 2.2** New Response types
@@ -96,8 +97,8 @@ The last message should be considered the final response.
 
 `ChatResponse.Text` automatically aggregates all text from any `TextContent` items in all `ChatMessage` items in the response.
 If we can ensure that no updates ever contain `TextContent`, this will mean that `ChatResponse.Text` will always contain
-the final response text. See option 1.1
-If we cannot ensure this, either the solution or usage becomes more complex, see 1.2 and 1.3.
+the final response text. See option 1.1.
+If we cannot ensure this, either the solution or usage becomes more complex, see 1.3 and 1.4.
 
 #### Option 1.1 Updates do not use `TextContent`
 
@@ -116,7 +117,27 @@ foreach (var update in response.Messages)
 }
 ```
 
-#### Option 1.2 Use ChatClient response types
+#### Option 1.2 Presence of Secondary Content is determined by a runtime parameter
+
+We can allow callers to optionally include secondary content in the list of messages.
+Open Question: Do we allow secondary content to use `TextContent` types?
+
+```csharp
+// By default the response only has the final response messages, so text
+// contains the final response, and it's a good starting experience.
+var response = agent.RunAsync("Do Something");
+Console.WriteLine(response.Text);
+
+// we can also optionally include updates via an option.
+var response = agent.RunAsync("Do Something", options: new() { IncludeUpdates = true });
+// Callers can now access all updates.
+foreach (var update in response.Messages)
+{
+    Console.WriteLine(update.Contents.FirstOrDefault()?.GetType().Name);
+}
+```
+
+#### Option 1.3 Use ChatClient response types
 
 ```csharp
 // Since text contains the aggregate output of everything that happened, the following
@@ -134,7 +155,7 @@ foreach (var message in response.Messages)
 }
 ```
 
-#### Option 1.3 Return derived ChatClient response types
+#### Option 1.4 Return derived ChatClient response types
 
 ```csharp
 public class AgentChatResponse
