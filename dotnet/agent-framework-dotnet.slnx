@@ -43,6 +43,12 @@
     <File Path="tests/.editorconfig" />
     <File Path="tests/Directory.Build.props" />
   </Folder>
+  <Folder Name="/Solution Items/.github/" />
+  <Folder Name="/Solution Items/.github/workflows/">
+    <File Path="../.github/workflows/dotnet-build-and-test.yml" />
+    <File Path="../.github/workflows/dotnet-check-coverage.ps1" />
+    <File Path="../.github/workflows/dotnet-format.yml" />
+  </Folder>
   <Folder Name="/Solution Items/eng/" />
   <Folder Name="/Solution Items/eng/MSBuild/">
     <File Path="eng/MSBuild/LegacySupport.props" />

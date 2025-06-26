@@ -11,5 +11,7 @@ internal sealed class OpenAIConfiguration
 
     public string ChatModelId { get; set; }
 
+    public string ChatReasoningModelId { get; set; }
+
     public string ApiKey { get; set; }
 }
