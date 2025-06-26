@@ -47,7 +47,7 @@ print(response)
 
 ```
 
-## Package structure
+## Global Package structure
 Overall the following structure is proposed:
 
 * agent-framework
@@ -73,7 +73,8 @@ Overall the following structure is proposed:
 * tests
 * samples
 * packages
-    * google
+    * openai
+    * azure
     * ...
 
 All the init's will use lazy loading so avoid importing the entire package when importing a single component.
@@ -118,6 +119,7 @@ packages/
         pyproject.toml
         README.md
         ...
+    ...
 src/
     agent_framework/
         __init__.py
@@ -162,6 +164,78 @@ uv.lock
 ```
 
 ## Coding standards
+
+* We use google docstyles for docstrings. 
+* We use the following setup for ruff:
+```toml
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+include = ["*.py", "*.pyi", "**/pyproject.toml", "*.ipynb"]
+preview = true
+
+[tool.ruff.lint]
+fixable = ["ALL"]
+unfixable = []
+select = [
+    "ASYNC", # async checks
+    "B", # bugbear checks
+    "CPY", #copyright
+    "D", #pydocstyle checks
+    "E", #error checks
+    "ERA", #remove connected out code
+    "F", #pyflakes checks
+    "FIX", #fixme checks
+    "I", #isort
+    "INP", #implicit namespace package
+    "ISC", #implicit string concat
+    "Q", # flake8-quotes checks
+    "RET", #flake8-return check
+    "RSE", #raise exception parantheses check
+    "RUF", # RUF specific rules
+    "SIM", #flake8-simplify check
+    "T100", # Debugger,
+    "TD", #todos
+    "W", # pycodestyle warning checks
+]
+ignore = [
+    "D100", #allow missing docstring in public module
+    "D104", #allow missing docstring in public package
+    "TD003", #allow missing link to todo issue
+    "FIX002" #allow todo
+]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# Ignore all directories named `tests` and `samples`.
+"tests/**" = ["D", "INP", "TD", "ERA001", "RUF"]
+"samples/**" = ["D", "INP", "ERA001", "RUF"]
+# Ignore all files that end in `_test.py`.
+"*_test.py" = ["D"]
+"*.ipynb" = ["CPY", "E501"]
+
+[tool.ruff.lint.flake8-copyright]
+notice-rgx = "^# Copyright \\(c\\) Microsoft\\. All rights reserved\\."
+min-file-size = 1
+```
+
+### Tooling
+uv and ruff are the main tools, for package management and code formatting/linting respectively.
+
+#### Type checking
+We currently can choose between mypy, pyright, ty and pyrefly for static type checking.
+I propose we start using `ty` as it is the fastest and can therefore be used in pre-commit hooks.
+
+#### Task runner
+AG already has experience with poe the poet, so let's start there, removing the MAKE file setup that SK uses.
+
+### Unit test coverage
+The goal is to have at least 80% unit test coverage for all code under both the main package and the subpackages.
 
 ### Telemetry and logging
 Telemetry and logging are handled by the `agent_framework.telemetry` and `agent_framework._logging` packages.
