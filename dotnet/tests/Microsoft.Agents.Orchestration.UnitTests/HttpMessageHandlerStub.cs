@@ -26,11 +26,6 @@ internal sealed class HttpMessageHandlerStub : HttpMessageHandler
 
     public byte[]? FirstMultipartContent { get; private set; }
 
-#pragma warning disable VSTHRD002 // Avoid problematic synchronous waits
-    protected override HttpResponseMessage Send(HttpRequestMessage request, CancellationToken cancellationToken) =>
-        this.SendAsync(request, cancellationToken).GetAwaiter().GetResult();
-#pragma warning restore VSTHRD002 // Avoid problematic synchronous waits
-
     protected async override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         this.Method = request.Method;
