@@ -76,8 +76,9 @@ Approaches observed from the compared SDKs:
 ## Response Type Options
 
 - **Option 1** Run: Messages List contains mix of Primary and Secondary content, RunStreaming: Stream of Primary + Secondary
-  - **Option 1.1** Use ChatClient response types
-  - **Option 1.2** Return derived ChatClient response types
+  - **Option 1.1** Updates do not use `TextContent`
+  - **Option 1.2** Use ChatClient response types
+  - **Option 1.3** Return derived ChatClient response types
 - **Option 2** Run: Container with Primary and Secondary Properties, RunStreaming: Stream of Primary + Secondary
   - **Option 2.1** Response types extend MEAI types
   - **Option 2.2** New Response types
@@ -93,7 +94,29 @@ Run returns a `Task<ChatResponse>` and RunStreaming returns a `IAsyncEnumerable<
 For Run, the returned `ChatResponse.Messages` contains an ordered list of messages that contain both the updates and the final response.
 The last message should be considered the final response.
 
-#### Option 1.1 Use ChatClient response types
+`ChatResponse.Text` automatically aggregates all text from any `TextContent` items in all `ChatMessage` items in the response.
+If we can ensure that no updates ever contain `TextContent`, this will mean that `ChatResponse.Text` will always contain
+the final response text. See option 1.1
+If we cannot ensure this, either the solution or usage becomes more complex, see 1.2 and 1.3.
+
+#### Option 1.1 Updates do not use `TextContent`
+
+`ChatResponse.Text` aggregates all `TextContent` values, and no secondary updates use `TextContent`
+so `ChatResponse.Text` will always contain the final response.
+
+```csharp
+// Since text contains the final response, it's a good getting started experience.
+var response = agent.RunAsync("Do Something");
+Console.WriteLine(response.Text);
+
+// Callers can still get access to all updates too.
+foreach (var update in response.Messages)
+{
+    Console.WriteLine(update.Contents.FirstOrDefault()?.GetType().Name);
+}
+```
+
+#### Option 1.2 Use ChatClient response types
 
 ```csharp
 // Since text contains the aggregate output of everything that happened, the following
@@ -111,7 +134,7 @@ foreach (var message in response.Messages)
 }
 ```
 
-#### Option 1.2 Return derived ChatClient response types
+#### Option 1.3 Return derived ChatClient response types
 
 ```csharp
 public class AgentChatResponse
@@ -125,7 +148,7 @@ var response = agent.RunAsync("Do Something");
 Console.WriteLine(response.Text);
 
 // Callers can still get access to all updates too.
-foreach (var update in response.Updates)
+foreach (var update in response.Messages)
 {
     Console.WriteLine(update.Contents.FirstOrDefault()?.GetType().Name);
 }
