@@ -3,7 +3,7 @@
 
 ### Design goals
 * Developer experience is key
-    * this means shallow imports natively, a developer should never have to import from more then 2 levels deep for connectors and 1 level deep for everything else
+    * this means shallow imports natively, a developer should never have to import from more than 2 levels deep for connectors and 1 level deep for everything else
     * i.e.: `from agent_framework.connectors.openai import OpenAIClient` or `from agent_framework.tools import Tool`
     * if a single file becomes too cumbersome (files can easily be 1k+ lines) it should be split into a folder with an `__init__.py` that exposes the public interface and a `_files.py` that contains the implementation details, with a `__all__` in the init to expose the right things.
     * simple and straightforward logging and telemetry setup, so developers can easily add logging and telemetry to their code without having to worry about the details.
