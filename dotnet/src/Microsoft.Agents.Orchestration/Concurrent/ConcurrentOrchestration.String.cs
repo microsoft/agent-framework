@@ -2,9 +2,8 @@
 
 using System.Linq;
 
-#if NETCOREAPP
 using System.Threading.Tasks;
-#else
+#if !NETCOREAPP
 using Microsoft.SemanticKernel.Agents.Runtime;
 #endif
 
