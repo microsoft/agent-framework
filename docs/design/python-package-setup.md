@@ -278,6 +278,7 @@ This means that we will use the following conventions:
 * what should be included when doing just `pip install agent-framework`, how can we minimize external dependencies?
     * in other words, which batteries should be included?
 * What versioning scheme do we want to use, SemVer or CalVer?
+* How do we want to generate API docs?
 * Do we want to have a single logger for all AF, or should we have separate loggers for each component?
 * What do we prefer, when the parameters are the same except for one, a Subclass or a Parameter, take: 
     ```python
