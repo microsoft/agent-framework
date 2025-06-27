@@ -435,7 +435,34 @@ needing to break out of the abstraction.
 
 We need to consider abstractions for `AIContent` derived types for tool call results for common tool types beyond Function calls, e.g. CodeInterpreter, WebSearch, etc.
 
+## StructuredOutputs (Work in progress)
+
+Open Questions:
+
+1. Should our agent abstraction support Structured Outputs.
+2. If it does, it is the agent that decides what the output structure should be, or can either caller and agent decide?
+
 ## Decision Outcome
 
 Chosen option: "{title of option 1}", because
 {justification. e.g., only option, which meets k.o. criterion decision driver | which resolves force {force} | … | comes out best (see below)}.
+
+## Addendum 1: AIContext Derived Types for different response types / Gap Analysis (Work in progress)
+
+We need to decide what AIContent types, each agent response type will be mapped to.
+
+| Number | DataType | AIContent Type |
+|-|-|-|
+| 1. | General response messages to the user | TextContent + DataContent + UriContent |
+| 2. | Structured confirmation requests to the user | ? |
+| 3. | Function invocation activities executed (both local and remote). For information only. | FunctionCallContent + FunctionResultContent |
+| 4. | Tool invocation activities executed (both local and remote). For information only. | FunctionCallContent/FunctionResultContent/Custom ? |
+| 5. | Reasoning/Thinking output. For information only. | TextReasoningContent |
+| 6. | Handoffs / transitions from agent to agent. | ? |
+| 7. | An indication that the agent is responding (i.e. typing) as if it's a real human. | ? |
+| 8. | Complete messages in addition to updates, when streaming | TextContent |
+| 9. | Id for long running process that is launched | ? |
+| 10. | Memory storage / lookups (are these just traces?) | ? |
+| 11. | RAG indexing / lookups (are these just traces?) | ? |
+| 12. | General status updates for human consumption / Tracing | ? |
+| 13. | Unknown Type | AIContent |
