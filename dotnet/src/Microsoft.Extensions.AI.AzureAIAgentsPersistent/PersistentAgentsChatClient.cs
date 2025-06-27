@@ -21,13 +21,13 @@ public sealed partial class PersistentAgentsChatClient : IChatClient
     private const string ProviderName = "azure";
 
     /// <summary>The underlying <see cref="PersistentAgentsClient" />.</summary>
-    private readonly PersistentAgentsClient? _client;
+    private readonly PersistentAgentsClient _client;
 
     /// <summary>Metadata for the client.</summary>
     private readonly ChatClientMetadata? _metadata;
 
     /// <summary>The ID of the agent to use.</summary>
-    private readonly string? _agentId;
+    private readonly string _agentId;
 
     /// <summary>The thread ID to use if none is supplied in <see cref="ChatOptions.ConversationId"/>.</summary>
     private readonly string? _defaultThreadId;
@@ -93,7 +93,7 @@ public sealed partial class PersistentAgentsChatClient : IChatClient
         ThreadRun? threadRun = null;
         if (threadId is not null)
         {
-            await foreach (ThreadRun? run in this._client!.Runs.GetRunsAsync(threadId, limit: 1, ListSortOrder.Descending, cancellationToken: cancellationToken).ConfigureAwait(false))
+            await foreach (ThreadRun? run in this._client.Runs.GetRunsAsync(threadId, limit: 1, ListSortOrder.Descending, cancellationToken: cancellationToken).ConfigureAwait(false))
             {
                 if (run.Status != RunStatus.Completed && run.Status != RunStatus.Cancelled && run.Status != RunStatus.Failed && run.Status != RunStatus.Expired)
                 {
@@ -112,26 +112,26 @@ public sealed partial class PersistentAgentsChatClient : IChatClient
             // There's an active run and we have tool results to submit, so submit the results and continue streaming.
             // This is going to ignore any additional messages in the run options, as we are only submitting tool outputs,
             // but there doesn't appear to be a way to submit additional messages, and having such additional messages is rare.
-            updates = this._client!.Runs.SubmitToolOutputsToStreamAsync(threadRun, toolOutputs, cancellationToken);
+            updates = this._client.Runs.SubmitToolOutputsToStreamAsync(threadRun, toolOutputs, cancellationToken);
         }
         else
         {
             if (threadId is null)
             {
                 // No thread ID was provided, so create a new thread.
-                PersistentAgentThread thread = await this._client!.Threads.CreateThreadAsync(runOptions.ThreadOptions.Messages, runOptions.ToolResources, runOptions.Metadata, cancellationToken).ConfigureAwait(false);
+                PersistentAgentThread thread = await this._client.Threads.CreateThreadAsync(runOptions.ThreadOptions.Messages, runOptions.ToolResources, runOptions.Metadata, cancellationToken).ConfigureAwait(false);
                 runOptions.ThreadOptions.Messages.Clear();
                 threadId = thread.Id;
             }
             else if (threadRun is not null)
             {
                 // There was an active run; we need to cancel it before starting a new run.
-                await this._client!.Runs.CancelRunAsync(threadId, threadRun.Id, cancellationToken).ConfigureAwait(false);
+                await this._client.Runs.CancelRunAsync(threadId, threadRun.Id, cancellationToken).ConfigureAwait(false);
                 threadRun = null;
             }
 
             // Now create a new run and stream the results.
-            updates = this._client!.Runs.CreateRunStreamingAsync(
+            updates = this._client.Runs.CreateRunStreamingAsync(
                 threadId: threadId,
                 agentId: this._agentId,
                 overrideModelName: runOptions?.OverrideModelName,
@@ -260,7 +260,7 @@ public sealed partial class PersistentAgentsChatClient : IChatClient
                 {
                     if (this._agentTools is null)
                     {
-                        PersistentAgent agent = await this._client!.Administration.GetAgentAsync(this._agentId, cancellationToken).ConfigureAwait(false);
+                        PersistentAgent agent = await this._client.Administration.GetAgentAsync(this._agentId, cancellationToken).ConfigureAwait(false);
                         this._agentTools = agent.Tools;
                     }
 
