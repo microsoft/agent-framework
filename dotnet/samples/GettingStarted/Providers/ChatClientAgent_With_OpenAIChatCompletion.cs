@@ -34,7 +34,7 @@ public sealed class ChatClientAgent_With_OpenAIChatCompletion(ITestOutputHelper 
         // Start a new thread for the agent conversation.
         AgentThread thread = agent.GetNewThread();
 
-        // Respond to user input
+        // Respond to user input.
         await RunAgentAsync("Tell me a joke about a pirate.");
         await RunAgentAsync("Now add some emojis to the joke.");
 
