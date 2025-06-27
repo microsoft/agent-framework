@@ -4,7 +4,6 @@ using Azure.AI.Agents.Persistent;
 using Azure.Identity;
 using Microsoft.Agents;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.AzureAIAgentsPersistent;
 using Microsoft.Shared.Samples;
 
 namespace Providers;
@@ -37,7 +36,7 @@ public sealed class ChatClientAgent_With_AzureAIAgentsPersistent(ITestOutputHelp
         // Get the chat client to use for the agent.
         using var chatClient = persistentAgentsClient.AsIChatClient(persistentAgent.Id);
 
-        // Define the agent
+        // Define the agent.
         ChatClientAgent agent = new(chatClient);
 
         // Start a new thread for the agent conversation.

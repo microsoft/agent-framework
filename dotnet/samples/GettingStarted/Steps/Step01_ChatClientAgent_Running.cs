@@ -10,13 +10,10 @@ namespace Steps;
 /// <remarks>This class contains examples of using <see cref="ChatClientAgent"/> to showcase scenarios with and without conversation history.
 /// Each test method demonstrates how to configure and interact with the agents, including handling user input and displaying responses.
 /// </remarks>
-public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(output)
+public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : AgentSample(output)
 {
     private const string ParrotName = "Parrot";
     private const string ParrotInstructions = "Repeat the user message in the voice of a pirate and then end with a parrot sound.";
-
-    private const string JokerName = "Joker";
-    private const string JokerInstructions = "You are good at telling jokes.";
 
     /// <summary>
     /// Demonstrate the usage of <see cref="ChatClientAgent"/> where each invocation is
@@ -26,18 +23,21 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
     [InlineData(ChatClientProviders.OpenAI)]
     [InlineData(ChatClientProviders.AzureOpenAI)]
     [InlineData(ChatClientProviders.OpenAIResponses)]
+    [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
     public async Task RunWithoutThread(ChatClientProviders provider)
     {
+        // Define the options for the chat client agent.
+        var agentOptions = new ChatClientAgentOptions
+        {
+            Name = ParrotName,
+            Instructions = ParrotInstructions,
+        };
+
         // Get the chat client to use for the agent.
-        using var chatClient = base.GetChatClient(provider);
+        using var chatClient = await base.GetChatClientAsync(provider, agentOptions);
 
         // Define the agent
-        ChatClientAgent agent =
-            new(chatClient, new()
-            {
-                Name = ParrotName,
-                Instructions = ParrotInstructions,
-            });
+        var agent = new ChatClientAgent(chatClient, agentOptions);
 
         // Respond to user input
         await RunAgentAsync("Fortune favors the bold.");
@@ -52,6 +52,9 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
             var response = await agent.RunAsync(input);
             this.WriteResponseOutput(response);
         }
+
+        // Clean up the agent after use when applicable.
+        await base.AgentCleanUpAsync(provider, agent);
     }
 
     /// <summary>
@@ -60,24 +63,26 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
     [Theory]
     [InlineData(ChatClientProviders.OpenAI)]
     [InlineData(ChatClientProviders.AzureOpenAI)]
-    [InlineData(ChatClientProviders.OpenAIResponses_InMemoryMessage)]
-    [InlineData(ChatClientProviders.OpenAIResponses_ConversationId)]
+    [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
+    [InlineData(ChatClientProviders.OpenAIResponses_InMemoryMessageThread)]
+    [InlineData(ChatClientProviders.OpenAIResponses_ConversationIdThread)]
     public async Task RunWithThread(ChatClientProviders provider)
     {
-        // Get the chat client to use for the agent.
-        using var chatClient = base.GetChatClient(provider);
+        // Define the options for the chat client agent.
+        var agentOptions = new ChatClientAgentOptions
+        {
+            Name = ParrotName,
+            Instructions = ParrotInstructions,
 
-        // Get chat options based on the store type, if needed.
-        var chatOptions = base.GetChatOptions(provider);
+            // Get chat options based on the store type, if needed.
+            ChatOptions = base.GetChatOptions(provider),
+        };
+
+        // Get the chat client to use for the agent.
+        using var chatClient = await base.GetChatClientAsync(provider, agentOptions);
 
         // Define the agent
-        ChatClientAgent agent =
-            new(chatClient, new()
-            {
-                Name = JokerName,
-                Instructions = JokerInstructions,
-                ChatOptions = chatOptions,
-            });
+        var agent = new ChatClientAgent(chatClient, agentOptions);
 
         // Start a new thread for the agent conversation.
         AgentThread thread = agent.GetNewThread();
@@ -95,6 +100,9 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
 
             this.WriteResponseOutput(response);
         }
+
+        // Clean up the agent and thread after use when applicable.
+        await base.AgentCleanUpAsync(provider, agent, thread);
     }
 
     /// <summary>
@@ -104,24 +112,26 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
     [Theory]
     [InlineData(ChatClientProviders.OpenAI)]
     [InlineData(ChatClientProviders.AzureOpenAI)]
-    [InlineData(ChatClientProviders.OpenAIResponses_InMemoryMessage)]
-    [InlineData(ChatClientProviders.OpenAIResponses_ConversationId)]
+    [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
+    [InlineData(ChatClientProviders.OpenAIResponses_InMemoryMessageThread)]
+    [InlineData(ChatClientProviders.OpenAIResponses_ConversationIdThread)]
     public async Task RunStreamingWithThread(ChatClientProviders provider)
     {
-        // Get the chat client to use for the agent.
-        using var chatClient = base.GetChatClient(provider);
+        // Define the options for the chat client agent.
+        var agentOptions = new ChatClientAgentOptions
+        {
+            Name = ParrotName,
+            Instructions = ParrotInstructions,
 
-        // Get chat options based on the store type, if needed.
-        var chatOptions = base.GetChatOptions(provider);
+            // Get chat options based on the store type, if needed.
+            ChatOptions = base.GetChatOptions(provider),
+        };
+
+        // Get the chat client to use for the agent.
+        using var chatClient = await base.GetChatClientAsync(provider, agentOptions);
 
         // Define the agent
-        ChatClientAgent agent =
-            new(chatClient, new()
-            {
-                Name = ParrotName,
-                Instructions = ParrotInstructions,
-                ChatOptions = chatOptions,
-            });
+        var agent = new ChatClientAgent(chatClient, agentOptions);
 
         // Start a new thread for the agent conversation.
         AgentThread thread = agent.GetNewThread();
@@ -140,5 +150,8 @@ public sealed class Step01_Running(ITestOutputHelper output) : AgentSample(outpu
                 this.WriteAgentOutput(update);
             }
         }
+
+        // Clean up the agent and thread after use when applicable.
+        await base.AgentCleanUpAsync(provider, agent, thread);
     }
 }

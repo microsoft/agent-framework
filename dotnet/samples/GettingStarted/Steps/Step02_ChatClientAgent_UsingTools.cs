@@ -6,32 +6,38 @@ using Microsoft.Extensions.AI;
 
 namespace Steps;
 
-public sealed class Step02_UsingTools(ITestOutputHelper output) : AgentSample(output)
+public sealed class Step02_ChatClientAgent_UsingTools(ITestOutputHelper output) : AgentSample(output)
 {
     [Theory]
     [InlineData(ChatClientProviders.OpenAI)]
     [InlineData(ChatClientProviders.AzureOpenAI)]
     public async Task RunningWithTools(ChatClientProviders provider)
     {
+        // Creating a Menu Tools to be used by the agent.
+        var menuTools = new MenuTools();
+
+        // Define the options for the chat client agent.
+        var agentOptions = new ChatClientAgentOptions
+        {
+            Name = "Host",
+            Instructions = "Answer questions about the menu.",
+
+            // Provide the tools that are available to the agent
+            ChatOptions = new()
+            {
+                Tools = [
+                    AIFunctionFactory.Create(menuTools.GetMenu),
+                    AIFunctionFactory.Create(menuTools.GetSpecials),
+                    AIFunctionFactory.Create(menuTools.GetItemPrice)
+                ]
+            },
+        };
+
         // Get the chat client to use for the agent.
-        using var chatClient = base.GetChatClient(provider);
+        using var chatClient = await base.GetChatClientAsync(provider, agentOptions);
 
         // Define the agent
-        var menuTools = new MenuTools();
-        ChatClientAgent agent =
-            new(chatClient, new()
-            {
-                Name = "Host",
-                Instructions = "Answer questions about the menu.",
-                ChatOptions = new()
-                {
-                    Tools = [
-                        AIFunctionFactory.Create(menuTools.GetMenu),
-                        AIFunctionFactory.Create(menuTools.GetSpecials),
-                        AIFunctionFactory.Create(menuTools.GetItemPrice)
-                    ]
-                }
-            });
+        var agent = new ChatClientAgent(chatClient, agentOptions);
 
         // Create the chat history thread to capture the agent interaction.
         var thread = agent.GetNewThread();
@@ -55,25 +61,31 @@ public sealed class Step02_UsingTools(ITestOutputHelper output) : AgentSample(ou
     [InlineData(ChatClientProviders.AzureOpenAI)]
     public async Task StreamingRunWithTools(ChatClientProviders provider)
     {
+        // Creating a Menu Tools to be used by the agent.
+        var menuTools = new MenuTools();
+
+        // Define the options for the chat client agent.
+        var agentOptions = new ChatClientAgentOptions
+        {
+            Name = "Host",
+            Instructions = "Answer questions about the menu.",
+
+            // Provide the tools that are available to the agent
+            ChatOptions = new()
+            {
+                Tools = [
+                    AIFunctionFactory.Create(menuTools.GetMenu),
+                    AIFunctionFactory.Create(menuTools.GetSpecials),
+                    AIFunctionFactory.Create(menuTools.GetItemPrice)
+                ]
+            },
+        };
+
         // Get the chat client to use for the agent.
-        using var chatClient = base.GetChatClient(provider);
+        using var chatClient = await base.GetChatClientAsync(provider, agentOptions);
 
         // Define the agent
-        var menuTools = new MenuTools();
-        ChatClientAgent agent =
-            new(chatClient, new()
-            {
-                Name = "Host",
-                Instructions = "Answer questions about the menu.",
-                ChatOptions = new()
-                {
-                    Tools = [
-                        AIFunctionFactory.Create(menuTools.GetMenu),
-                        AIFunctionFactory.Create(menuTools.GetSpecials),
-                        AIFunctionFactory.Create(menuTools.GetItemPrice)
-                    ]
-                }
-            });
+        var agent = new ChatClientAgent(chatClient, agentOptions);
 
         // Create the chat history thread to capture the agent interaction.
         var thread = agent.GetNewThread();
