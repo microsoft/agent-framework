@@ -9,17 +9,33 @@ dependencies = [
     "pydantic>=2.11.5",
 ]
 
-[dependency-groups]
-dev = [
+[tool.uv]
+prerelease = "if-necessary-or-explicit"
+dev-dependencies = [
     "pre-commit >= 3.7",
-    "pyright>=1.1.401",
-    "mypy>=1.15.0",
     "ruff>=0.11.8",
+    "ty>=0.0.1a12",
+    "poethepoet>=0.35.0",
+    "pytest ~= 8.2",
+    "pytest-xdist[psutil] ~= 3.6",
+    "pytest-cov >= 5.0",
+    "pytest-asyncio ~= 0.24",
+    "pytest-timeout>=2.3.1",
+]
+environments = [
+    "sys_platform == 'darwin'",
+    "sys_platform == 'linux'",
+    "sys_platform == 'win32'"
 ]
 
-[build-system]
-requires = ["hatchling", "uv-dynamic-versioning"]
-build-backend = "hatchling.build"
+[tool.pytest.ini_options]
+testpaths = 'tests'
+addopts = "-ra -q -r fEX"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = [
+]
+timeout = 120
 
 
 [tool.uv-dynamic-versioning]
@@ -84,7 +100,7 @@ venv = ".venv"
 
 [tool.mypy]
 strict = true
-python_version = "3.9"
+python_version = "3.10"
 ignore_missing_imports = true
 
 disallow_untyped_defs = true
@@ -97,3 +113,14 @@ warn_unused_ignores = false
 disallow_incomplete_defs = true
 disallow_untyped_decorators = true
 disallow_any_unimported = true
+
+[tool.bandit]
+targets = ["src/agent_framework"]
+exclude_dirs = ["tests"]
+
+[tool.flit.module]
+name = "agent_framework"
+
+[build-system]
+requires = ["hatchling", "uv-dynamic-versioning"]
+build-backend = "hatchling.build"
