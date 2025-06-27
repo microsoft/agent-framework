@@ -117,8 +117,8 @@ foreach (var update in response.Messages)
 }
 ```
 
-**PROS**: Easy and familiar user experience, reuse response types from IChatClient.
-**CONS**: Requires all implementations to avoid using `TextContent` for anything but the final response.
+- **PROS**: Easy and familiar user experience, reuse response types from IChatClient.
+- **CONS**: Requires all implementations to avoid using `TextContent` for anything but the final response.
 
 #### Option 1.2 Presence of Secondary Content is determined by a runtime parameter
 
@@ -140,8 +140,8 @@ foreach (var update in response.Messages)
 }
 ```
 
-**PROS**: Easy getting started experience, reuse response types from IChatClient.
-**CONS**: May need either a derived ChatResponse or implementations to avoid using `TextContent` for anything but the final response similar to 1.1 or 1.4.
+- **PROS**: Easy getting started experience, reuse response types from IChatClient.
+- **CONS**: May need either a derived ChatResponse or implementations to avoid using `TextContent` for anything but the final response similar to 1.1 or 1.4.
 
 #### Option 1.3 Use ChatClient response types
 
@@ -161,8 +161,8 @@ foreach (var message in response.Messages)
 }
 ```
 
-**PROS**: Reuse response types from IChatClient.
-**CONS**: More complex getting started experience.
+- **PROS**: Reuse response types from IChatClient.
+- **CONS**: More complex getting started experience.
 
 #### Option 1.4 Return derived ChatClient response types
 
@@ -184,8 +184,8 @@ foreach (var update in response.Messages)
 }
 ```
 
-**PROS**: Easy getting started experience.
-**CONS**: Requires custom response types.
+- **PROS**: Easy getting started experience.
+- **CONS**: Requires custom response types.
 
 ### Option 2 Run: Container with Primary and Secondary Properties, RunStreaming: Stream of Primary + Secondary
 
@@ -234,8 +234,8 @@ public class AgentRunResponseUpdate : ChatResponseUpdate
 }
 ```
 
-**PROS**: Final response messages and Updates are categorised and therefore easy to distinguish and this design popular SDKs like AutoGen and OpenAI SDK.
-**CONS**: Requires custom response types and design differs significantly between streaming and non-streaming.
+- **PROS**: Final response messages and Updates are categorised and therefore easy to distinguish and this design popular SDKs like AutoGen and OpenAI SDK.
+- **CONS**: Requires custom response types and design differs significantly between streaming and non-streaming.
 
 #### Option 2.2 New Response types
 
@@ -317,8 +317,8 @@ public class AgentRunResponseReason // Compare with ChatFinishReason
 public static ChatFinishReason ToolCalls { get; } = new ChatFinishReason("tool_calls");
 ```
 
-**PROS**: Final response messages and Updates are categorised and therefore easy to distinguish and this design popular SDKs like AutoGen and OpenAI SDK. Properties that don't make that sense on the agent API surface, like ConversationId, can be removed.
-**CONS**: Requires custom response types and design differs significantly between streaming and non-streaming.
+- **PROS**: Final response messages and Updates are categorised and therefore easy to distinguish and this design popular SDKs like AutoGen and OpenAI SDK. Properties that don't make that sense on the agent API surface, like ConversationId, can be removed.
+- **CONS**: Requires custom response types and design differs significantly between streaming and non-streaming.
 
 ### Option 3 Run: Primary-only, RunStreaming: Stream of Primary + Secondary
 
@@ -335,8 +335,8 @@ Console.WriteLine(response.Text);
 var finalMessage = response.Messages.FirstOrDefault();
 ```
 
-**PROS**: Simple getting started experience, Reusing IChatClient response types.
-**CONS**: Intermediate updates are only availble in streaming mode.
+- **PROS**: Simple getting started experience, Reusing IChatClient response types.
+- **CONS**: Intermediate updates are only availble in streaming mode.
 
 ### Option 4: Remove Run API and retain RunStreaming API only, which returns a Stream of Primary + Secondary
 
@@ -358,8 +358,8 @@ await foreach (var update in responses)
 }
 ```
 
-**PROS**: Single API for streaming/non-streaming
-**CONS**: More complex to for inexperienced users.
+- **PROS**: Single API for streaming/non-streaming
+- **CONS**: More complex to for inexperienced users.
 
 ## Long Running Processes Options
 
@@ -389,8 +389,8 @@ public class ChatFinishReason
 }
 ```
 
-**PROS**: Fits well into existing `ChatResponse` design.
-**CONS**: More complex for users to extract the required long running result (can be mitigated with extenion methods)
+- **PROS**: Fits well into existing `ChatResponse` design.
+- **CONS**: More complex for users to extract the required long running result (can be mitigated with extenion methods)
 
 ### Option 2: Add another property on responses for AgentRun
 
@@ -422,8 +422,8 @@ public class AgentRun
 }
 ```
 
-**PROS**: Easy access to long running result values
-**CONS**: Requires custom response types.
+- **PROS**: Easy access to long running result values
+- **CONS**: Requires custom response types.
 
 ## Structured user input options (Work in progress)
 
