@@ -24,7 +24,7 @@ public sealed partial class PersistentAgentsChatClient : IChatClient
     private readonly PersistentAgentsClient _client;
 
     /// <summary>Metadata for the client.</summary>
-    private readonly ChatClientMetadata? _metadata;
+    private readonly ChatClientMetadata _metadata;
 
     /// <summary>The ID of the agent to use.</summary>
     private readonly string _agentId;
