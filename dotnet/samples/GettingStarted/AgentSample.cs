@@ -1,9 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.ClientModel;
+using Azure.AI.Agents.Persistent;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.AzureAIAgentsPersistent;
 using Microsoft.Shared.Samples;
 using OpenAI;
 using OpenAI.Assistants;
@@ -28,7 +30,8 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
         OpenAIAssistant,
         OpenAIResponses,
         OpenAIResponses_InMemoryMessage,
-        OpenAIResponses_ConversationId
+        OpenAIResponses_ConversationId,
+        AzureAIPersistentAgent
     }
 
     protected async Task<IChatClient> GetChatClientAsync(ChatClientProviders provider)
@@ -37,6 +40,7 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
             ChatClientProviders.AzureOpenAI => GetAzureOpenAIChatClient(),
             ChatClientProviders.OpenAIChatCompletion => GetOpenAIChatClient(),
             ChatClientProviders.OpenAIAssistant => await GetOpenAIAssistantChatClientAsync(),
+            ChatClientProviders.AzureAIPersistentAgent => await GetAzureAIPersistentAgentChatClientAsync(),
             ChatClientProviders.OpenAIResponses or
             ChatClientProviders.OpenAIResponses_InMemoryMessage or
             ChatClientProviders.OpenAIResponses_ConversationId
@@ -54,6 +58,8 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
 
     protected OpenAIClient OpenAIClient => new(TestConfiguration.OpenAI.ApiKey);
 
+    protected PersistentAgentsClient AzureAIPersistentAgentsClient => new(TestConfiguration.AzureAI.Endpoint, new AzureCliCredential());
+
     private async Task<IChatClient> GetOpenAIAssistantChatClientAsync()
     {
         var assistantClient = OpenAIClient.GetAssistantClient();
@@ -67,6 +73,18 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
             });
 
         return assistantClient.AsIChatClient(assistant.Id);
+    }
+
+    private async Task<IChatClient> GetAzureAIPersistentAgentChatClientAsync()
+    {
+        var persistentAgentsClient = new PersistentAgentsClient(TestConfiguration.AzureAI.Endpoint, new AzureCliCredential());
+
+        PersistentAgent persistentAgent = await persistentAgentsClient.Administration.CreateAgentAsync(
+            model: TestConfiguration.AzureAI.DeploymentName,
+            name: AgentName,
+            instructions: AgentInstructions);
+
+        return persistentAgentsClient.AsIChatClient(persistentAgent.Id);
     }
 
     private IChatClient GetOpenAIChatClient()

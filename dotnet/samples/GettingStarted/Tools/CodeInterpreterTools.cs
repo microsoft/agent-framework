@@ -1,11 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text;
+using Azure.AI.Agents.Persistent;
 using GettingStarted.Tools.Abstractions;
+using GettingStarted.Tools.Extensions;
 using Microsoft.Agents;
 using Microsoft.Extensions.AI;
 using OpenAI;
-using OpenAI.Assistants;
 using OpenAI.Files;
 
 #pragma warning disable OPENAI001
@@ -16,6 +17,7 @@ public sealed class CodeInterpreterTools(ITestOutputHelper output) : AgentSample
 {
     [Theory]
     [InlineData(ChatClientProviders.OpenAIAssistant)]
+    [InlineData(ChatClientProviders.AzureAIPersistentAgent)]
     public async Task RunningWithFileReferenceAsync(ChatClientProviders provider)
     {
         using var chatClient = await base.GetChatClientAsync(provider);
@@ -38,6 +40,7 @@ public sealed class CodeInterpreterTools(ITestOutputHelper output) : AgentSample
 
         var thread = agent.GetNewThread();
 
+        // Prompt which allows to verify that the data was processed from file correctly and current datetime is returned.
         const string Prompt = "Calculate the total number of items, identify the most frequently puchased item and return the result with today's datetime.";
 
         var assistantOutput = new StringBuilder();
@@ -71,41 +74,12 @@ public sealed class CodeInterpreterTools(ITestOutputHelper output) : AgentSample
     /// </summary>
     private static ChatOptions TransformChatOptions(ChatOptions chatOptions, ChatClientProviders provider)
     {
-        switch (provider)
+        return provider switch
         {
-            case ChatClientProviders.OpenAIAssistant:
-                // File references can be added on message attachment level only and not on code interpreter tool definition level.
-                // Message attachment content should be non-empty.
-                var threadInitializationMessage = new ThreadInitializationMessage(MessageRole.User, [MessageContent.FromText("attachments")]);
-                var toolDefinitions = new List<ToolDefinition>();
-
-                foreach (var tool in chatOptions.Tools!)
-                {
-                    if (tool is NewHostedCodeInterpreterTool codeInterpreterTool)
-                    {
-                        var codeInterpreterToolDefinition = new CodeInterpreterToolDefinition();
-                        toolDefinitions.Add(codeInterpreterToolDefinition);
-
-                        if (codeInterpreterTool.FileIds is { Count: > 0 })
-                        {
-                            foreach (var fileId in codeInterpreterTool.FileIds)
-                            {
-                                threadInitializationMessage.Attachments.Add(new(fileId, [codeInterpreterToolDefinition]));
-                            }
-                        }
-                    }
-                }
-
-                var runCreationOptions = new RunCreationOptions();
-
-                runCreationOptions.AdditionalMessages.Add(threadInitializationMessage);
-
-                chatOptions.RawRepresentationFactory = (_) => runCreationOptions;
-
-                break;
-        }
-
-        return chatOptions;
+            ChatClientProviders.OpenAIAssistant => chatOptions.ToOpenAIAssistantChatOptions(),
+            ChatClientProviders.AzureAIPersistentAgent => chatOptions.ToAzureAIPersistentAgentChatOptions(),
+            _ => chatOptions
+        };
     }
 
     private Task<string> UploadTestFileAsync(ChatClientProviders provider)
@@ -120,9 +94,14 @@ public sealed class CodeInterpreterTools(ITestOutputHelper output) : AgentSample
         {
             case ChatClientProviders.OpenAIAssistant:
                 var fileClient = GetOpenAIFileClient();
+                OpenAIFile openAIFileInfo = await fileClient.UploadFileAsync(filePath, FileUploadPurpose.Assistants);
 
-                OpenAIFile fileInfo = await fileClient.UploadFileAsync(filePath, FileUploadPurpose.Assistants);
-                return fileInfo.Id;
+                return openAIFileInfo.Id;
+            case ChatClientProviders.AzureAIPersistentAgent:
+                PersistentAgentFileInfo persistentAgentFileInfo = await AzureAIPersistentAgentsClient.Files.UploadFileAsync(filePath, PersistentAgentFilePurpose.Agents);
+
+                return persistentAgentFileInfo.Id;
+
             default:
                 throw new NotSupportedException($"Client provider {provider} is not supported.");
         }
@@ -133,15 +112,23 @@ public sealed class CodeInterpreterTools(ITestOutputHelper output) : AgentSample
         switch (provider)
         {
             case ChatClientProviders.OpenAIAssistant:
-                if (rawRepresentation is RunStepDetailsUpdate stepUpdate)
+                if (rawRepresentation is OpenAI.Assistants.RunStepDetailsUpdate openAIStepDetailsUpdate)
                 {
-                    builder.Append(stepUpdate.CodeInterpreterInput);
-                    builder.Append(string.Join("", stepUpdate.CodeInterpreterOutputs.SelectMany(l => l.Logs)));
+                    builder.Append(openAIStepDetailsUpdate.CodeInterpreterInput);
+                    builder.Append(string.Join(string.Empty, openAIStepDetailsUpdate.CodeInterpreterOutputs.SelectMany(l => l.Logs)));
                 }
 
                 break;
-            default:
-                throw new NotSupportedException($"Client provider {provider} is not supported.");
+            case ChatClientProviders.AzureAIPersistentAgent:
+                if (rawRepresentation is Azure.AI.Agents.Persistent.RunStepDetailsUpdate persistentAgentStepDetailsUpdate)
+                {
+                    builder.Append(persistentAgentStepDetailsUpdate.CodeInterpreterInput);
+                    builder.Append(string.Join(string.Empty, persistentAgentStepDetailsUpdate
+                        .CodeInterpreterOutputs
+                        .OfType<RunStepDeltaCodeInterpreterLogOutput>().SelectMany(l => l.Logs)));
+                }
+
+                break;
         }
     }
 
