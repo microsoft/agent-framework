@@ -18,6 +18,7 @@ public sealed class CodeInterpreterTools(ITestOutputHelper output) : AgentSample
     [Theory]
     [InlineData(ChatClientProviders.OpenAIAssistant)]
     [InlineData(ChatClientProviders.AzureAIPersistentAgent)]
+    // [InlineData(ChatClientProviders.OpenAIResponses)] - Code interpreter support is in progress: https://github.com/openai/openai-dotnet/issues/448
     public async Task RunningWithFileReferenceAsync(ChatClientProviders provider)
     {
         using var chatClient = await base.GetChatClientAsync(provider);
