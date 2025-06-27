@@ -17,12 +17,10 @@ public sealed class CodeInterpreterTools(ITestOutputHelper output) : AgentSample
 {
     [Theory]
     [InlineData(ChatClientProviders.OpenAIAssistant)]
-    [InlineData(ChatClientProviders.AzureAIPersistentAgent)]
+    [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
     // [InlineData(ChatClientProviders.OpenAIResponses)] - Code interpreter support is in progress: https://github.com/openai/openai-dotnet/issues/448
     public async Task RunningWithFileReferenceAsync(ChatClientProviders provider)
     {
-        using var chatClient = await base.GetChatClientAsync(provider);
-
         var fileId = await UploadTestFileAsync(provider);
 
         var chatOptions = new ChatOptions()
@@ -30,14 +28,18 @@ public sealed class CodeInterpreterTools(ITestOutputHelper output) : AgentSample
             Tools = [new NewHostedCodeInterpreterTool { FileIds = [fileId] }]
         };
 
-        ChatClientAgent agent = new(chatClient, new()
+        var agentOptions = new ChatClientAgentOptions
         {
             Name = "HelpfulAssistant",
             Instructions = "You are a helpful assistant.",
             // Transformation is required until the abstraction will be added to either SDK provider or M.E.AI and
             // implementations will handle new properties/classes.
             ChatOptions = TransformChatOptions(chatOptions, provider)
-        });
+        };
+
+        using var chatClient = await base.GetChatClientAsync(provider, agentOptions);
+
+        ChatClientAgent agent = new(chatClient, agentOptions);
 
         var thread = agent.GetNewThread();
 
@@ -78,7 +80,7 @@ public sealed class CodeInterpreterTools(ITestOutputHelper output) : AgentSample
         return provider switch
         {
             ChatClientProviders.OpenAIAssistant => chatOptions.ToOpenAIAssistantChatOptions(),
-            ChatClientProviders.AzureAIPersistentAgent => chatOptions.ToAzureAIPersistentAgentChatOptions(),
+            ChatClientProviders.AzureAIAgentsPersistent => chatOptions.ToAzureAIPersistentAgentChatOptions(),
             _ => chatOptions
         };
     }
@@ -98,7 +100,7 @@ public sealed class CodeInterpreterTools(ITestOutputHelper output) : AgentSample
                 OpenAIFile openAIFileInfo = await fileClient.UploadFileAsync(filePath, FileUploadPurpose.Assistants);
 
                 return openAIFileInfo.Id;
-            case ChatClientProviders.AzureAIPersistentAgent:
+            case ChatClientProviders.AzureAIAgentsPersistent:
                 PersistentAgentFileInfo persistentAgentFileInfo = await AzureAIPersistentAgentsClient.Files.UploadFileAsync(filePath, PersistentAgentFilePurpose.Agents);
 
                 return persistentAgentFileInfo.Id;
@@ -120,7 +122,7 @@ public sealed class CodeInterpreterTools(ITestOutputHelper output) : AgentSample
                 }
 
                 break;
-            case ChatClientProviders.AzureAIPersistentAgent:
+            case ChatClientProviders.AzureAIAgentsPersistent:
                 if (rawRepresentation is Azure.AI.Agents.Persistent.RunStepDetailsUpdate persistentAgentStepDetailsUpdate)
                 {
                     builder.Append(persistentAgentStepDetailsUpdate.CodeInterpreterInput);
@@ -133,8 +135,7 @@ public sealed class CodeInterpreterTools(ITestOutputHelper output) : AgentSample
         }
     }
 
-    private OpenAIFileClient GetOpenAIFileClient()
-        => OpenAIClient.GetOpenAIFileClient();
+    private OpenAIFileClient GetOpenAIFileClient() => OpenAIClient.GetOpenAIFileClient();
 
     #endregion
 }

@@ -6,7 +6,6 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.AzureAIAgentsPersistent;
 using Microsoft.Shared.Samples;
 using OpenAI;
 using OpenAI.Assistants;
@@ -35,8 +34,8 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
     protected Task<IChatClient> GetChatClientAsync(ChatClientProviders provider, ChatClientAgentOptions options, CancellationToken cancellationToken = default)
         => provider switch
         {
-            ChatClientProviders.OpenAI => GetOpenAIChatClientAsync(),
-            ChatClientProviders.OpenAIAssistant => GetOpenAIAssistantChatClientAsync(),
+            ChatClientProviders.OpenAIChatCompletion => GetOpenAIChatClientAsync(),
+            ChatClientProviders.OpenAIAssistant => GetOpenAIAssistantChatClientAsync(options, cancellationToken),
             ChatClientProviders.AzureOpenAI => GetAzureOpenAIChatClientAsync(),
             ChatClientProviders.AzureAIAgentsPersistent => GetAzureAIAgentPersistentClientAsync(options, cancellationToken),
             ChatClientProviders.OpenAIResponses or
