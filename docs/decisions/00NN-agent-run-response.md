@@ -117,6 +117,9 @@ foreach (var update in response.Messages)
 }
 ```
 
+**PROS**: Easy and familiar user experience, reuse response types from IChatClient.
+**CONS**: Requires all implementations to avoid using `TextContent` for anything but the final response.
+
 #### Option 1.2 Presence of Secondary Content is determined by a runtime parameter
 
 We can allow callers to optionally include secondary content in the list of messages.
@@ -137,6 +140,9 @@ foreach (var update in response.Messages)
 }
 ```
 
+**PROS**: Easy getting started experience, reuse response types from IChatClient.
+**CONS**: May need either a derived ChatResponse or implementations to avoid using `TextContent` for anything but the final response similar to 1.1 or 1.4.
+
 #### Option 1.3 Use ChatClient response types
 
 ```csharp
@@ -155,10 +161,13 @@ foreach (var message in response.Messages)
 }
 ```
 
+**PROS**: Reuse response types from IChatClient.
+**CONS**: More complex getting started experience.
+
 #### Option 1.4 Return derived ChatClient response types
 
 ```csharp
-public class AgentChatResponse
+public class AgentChatResponse : ChatResponse
 {
     // ChatResponse.Text would need to be made virtual.
     public override string Text => _messages.LastOrDefault()?.Text ?? string.Empty;
@@ -174,6 +183,9 @@ foreach (var update in response.Messages)
     Console.WriteLine(update.Contents.FirstOrDefault()?.GetType().Name);
 }
 ```
+
+**PROS**: Easy getting started experience.
+**CONS**: Requires custom response types.
 
 ### Option 2 Run: Container with Primary and Secondary Properties, RunStreaming: Stream of Primary + Secondary
 
@@ -221,6 +233,9 @@ public class AgentRunResponseUpdate : ChatResponseUpdate
 {
 }
 ```
+
+**PROS**: Final response messages and Updates are categorised and therefore easy to distinguish and this design popular SDKs like AutoGen and OpenAI SDK.
+**CONS**: Requires custom response types and design differs significantly between streaming and non-streaming.
 
 #### Option 2.2 New Response types
 
@@ -302,6 +317,9 @@ public class AgentRunResponseReason // Compare with ChatFinishReason
 public static ChatFinishReason ToolCalls { get; } = new ChatFinishReason("tool_calls");
 ```
 
+**PROS**: Final response messages and Updates are categorised and therefore easy to distinguish and this design popular SDKs like AutoGen and OpenAI SDK. Properties that don't make that sense on the agent API surface, like ConversationId, can be removed.
+**CONS**: Requires custom response types and design differs significantly between streaming and non-streaming.
+
 ### Option 3 Run: Primary-only, RunStreaming: Stream of Primary + Secondary
 
 Run returns a `Task<ChatResponse>` and RunStreaming returns a `IAsyncEnumerable<ChatResponseUpdate>`.
@@ -317,7 +335,10 @@ Console.WriteLine(response.Text);
 var finalMessage = response.Messages.FirstOrDefault();
 ```
 
-### Option 4: Remove Run API and retain RunStreaming API only, which returns a Stream of Primary + Secondary.
+**PROS**: Simple getting started experience, Reusing IChatClient response types.
+**CONS**: Intermediate updates are only availble in streaming mode.
+
+### Option 4: Remove Run API and retain RunStreaming API only, which returns a Stream of Primary + Secondary
 
 With this option, we remove the `RunAsync` method and only retain the `RunStreamingAsync` method, but
 we add helpers to process the streaming responses and extract information from it.
@@ -336,6 +357,9 @@ await foreach (var update in responses)
     Console.WriteLine(update.Contents.FirstOrDefault()?.GetType().Name);
 }
 ```
+
+**PROS**: Single API for streaming/non-streaming
+**CONS**: More complex to for inexperienced users.
 
 ## Long Running Processes Options
 
@@ -364,6 +388,9 @@ public class ChatFinishReason
     public static ChatFinishReason LongRunning { get; } = new ChatFinishReason("long_running");
 }
 ```
+
+**PROS**: Fits well into existing `ChatResponse` design.
+**CONS**: More complex for users to extract the required long running result (can be mitigated with extenion methods)
 
 ### Option 2: Add another property on responses for AgentRun
 
@@ -395,11 +422,18 @@ public class AgentRun
 }
 ```
 
-## Structured input options (Work in progress)
+**PROS**: Easy access to long running result values
+**CONS**: Requires custom response types.
+
+## Structured user input options (Work in progress)
 
 Some agent services may ask end users a question while also providing a list of options that the user can pick from or a template for the input required.
 We need to decide whether to maintain an abstraction for these, so that similar types of structured input from different agents can be used by callers without
 needing to break out of the abstraction.
+
+## Tool result options (Work in progress)
+
+We need to consider abstractions for `AIContent` derived types for tool call results for common tool types beyond Function calls, e.g. CodeInterpreter, WebSearch, etc.
 
 ## Decision Outcome
 
