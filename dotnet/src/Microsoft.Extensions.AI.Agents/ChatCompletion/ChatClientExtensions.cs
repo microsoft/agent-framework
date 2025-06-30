@@ -2,7 +2,7 @@
 
 using Microsoft.Extensions.AI;
 
-namespace Microsoft.Agents;
+namespace Microsoft.Extensions.AI.Agents;
 
 internal static class ChatClientExtensions
 {

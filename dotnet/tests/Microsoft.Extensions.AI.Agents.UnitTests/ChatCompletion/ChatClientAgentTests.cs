@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Moq;
 
-namespace Microsoft.Agents.UnitTests.ChatCompletion;
+namespace Microsoft.Extensions.AI.Agents.UnitTests.ChatCompletion;
 
 public class ChatClientAgentTests
 {

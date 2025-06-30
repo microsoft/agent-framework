@@ -4,7 +4,7 @@ using System.ClientModel;
 using Azure.AI.Agents.Persistent;
 using Azure.AI.OpenAI;
 using Azure.Identity;
-using Microsoft.Agents;
+using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Samples;
 using OpenAI;

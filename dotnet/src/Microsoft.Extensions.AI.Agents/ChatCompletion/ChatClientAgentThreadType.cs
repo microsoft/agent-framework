@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-namespace Microsoft.Agents;
+namespace Microsoft.Extensions.AI.Agents;
 
 /// <summary>
 /// Defines the different supported storage locations for <see cref="ChatClientAgentThread"/>.

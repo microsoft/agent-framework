@@ -9,7 +9,7 @@ using Microsoft.Extensions.AI;
 using Moq;
 using Moq.Protected;
 
-namespace Microsoft.Agents.Abstractions.UnitTests;
+namespace Microsoft.Extensions.AI.Agents.Abstractions.UnitTests;
 
 /// <summary>
 /// Unit tests for the <see cref="Agent"/> class.

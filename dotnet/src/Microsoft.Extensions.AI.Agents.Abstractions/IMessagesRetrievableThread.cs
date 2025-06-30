@@ -5,7 +5,7 @@ using System.Collections.Generic;
 using System.Threading;
 using Microsoft.Extensions.AI;
 
-namespace Microsoft.Agents;
+namespace Microsoft.Extensions.AI.Agents;
 
 /// <summary>
 /// An interface for agent threads that allow retrieval of messages in the thread for agent invocation.

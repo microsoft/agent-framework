@@ -2,7 +2,7 @@
 
 using Microsoft.Extensions.AI;
 
-namespace Microsoft.Agents;
+namespace Microsoft.Extensions.AI.Agents;
 
 /// <summary>
 /// Represents metadata for a chat client agent, including its identifier, name, instructions, and description.

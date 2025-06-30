@@ -2,7 +2,7 @@
 
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using Microsoft.Agents;
+using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI;
 
 namespace AgentConformance.IntegrationTests;

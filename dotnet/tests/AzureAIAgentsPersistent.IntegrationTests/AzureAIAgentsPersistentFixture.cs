@@ -8,7 +8,7 @@ using AgentConformance.IntegrationTests.Support;
 using Azure;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
-using Microsoft.Agents;
+using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI;
 using Shared.IntegrationTests;
 
