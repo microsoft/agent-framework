@@ -56,7 +56,7 @@ public sealed class HandoffOrchestrationTests : IDisposable
         Assert.Equal("Final response", response);
     }
 
-    [Fact(Skip = "// %%% TODO")]
+    [Fact(Skip = "Incomplete mock responses")]
     public async Task HandoffOrchestrationWithMultipleAgentsAsync()
     {
         // Arrange
@@ -69,10 +69,6 @@ public sealed class HandoffOrchestrationTests : IDisposable
             this.CreateMockAgent(
                 "Agent2",
                 "Test Agent",
-                Responses.Result("Final response"),
-                Responses.Result("Final response"),
-                Responses.Result("Final response"),
-                Responses.Result("Final response"),
                 Responses.Result("Final response"));
         Agent mockAgent3 =
             this.CreateMockAgent(
@@ -204,30 +200,6 @@ public sealed class HandoffOrchestrationTests : IDisposable
                         }
                       }
                     ]
-                  }
-                }
-              ],
-              "usage": {
-                "prompt_tokens": 52,
-                "completion_tokens": 1,
-                "total_tokens": 53
-              }
-            }      
-            """;
-
-        public static string ToolResponse => // %%% TEST
-            """            
-            {
-              "id": "chat-123",
-              "object": "chat.completion",
-              "created": 1699482945,
-              "model": "gpt-4.1",
-              "choices": [
-                {
-                  "index": 0,
-                  "message": {
-                    "role": "tool",
-                    "content": null
                   }
                 }
               ],
