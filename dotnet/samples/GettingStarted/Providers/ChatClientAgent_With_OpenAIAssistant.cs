@@ -38,7 +38,7 @@ public sealed class ChatClientAgent_With_OpenAIAssistant(ITestOutputHelper outpu
         // Get the chat client to use for the agent.
         using var chatClient = assistantClient.AsIChatClient(assistantId);
 
-        // Define the agent
+        // Define the agent.
         ChatClientAgent agent = new(chatClient);
 
         // Start a new thread for the agent conversation.
