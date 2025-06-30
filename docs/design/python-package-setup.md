@@ -227,8 +227,7 @@ uv and ruff are the main tools, for package management and code formatting/linti
 
 #### Type checking
 We currently can choose between mypy, pyright, ty and pyrefly for static type checking.
-I propose we run `mypy` and `pyright` in GHA, similar to what AG already does, and include `ty` in the pre-commit hooks.
-Once `ty` is more stable we can consider using it as the main type checker, but for now we will use `mypy` and `pyright` as the main type checkers.
+I propose we run `mypy` and `pyright` in GHA, similar to what AG already does. We might explore newer tools as a later date.
 
 #### Task runner
 AG already has experience with poe the poet, so let's start there, removing the MAKE file setup that SK uses.
