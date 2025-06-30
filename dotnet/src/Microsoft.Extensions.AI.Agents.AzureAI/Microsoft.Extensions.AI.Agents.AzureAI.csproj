@@ -6,26 +6,17 @@
     <VersionSuffix>alpha</VersionSuffix>
   </PropertyGroup>
 
-  <PropertyGroup>
-    <InjectSharedThrow>true</InjectSharedThrow>
-    <InjectDiagnosticClassesOnLegacy>true</InjectDiagnosticClassesOnLegacy>
-  </PropertyGroup>
-
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
 
   <ItemGroup>
-    <ProjectReference Include="..\Microsoft.Extensions.AI.Agents.Abstractions\Microsoft.Agents.Abstractions.csproj" />
+    <PackageReference Include="Azure.AI.Agents.Persistent" />
     <PackageReference Include="Microsoft.Extensions.AI" />
   </ItemGroup>
 
   <PropertyGroup>
     <!-- NuGet Package Settings -->
-    <Title>Microsoft Agent Framework</Title>
-    <Description>Contains the Microsoft Agent Framework core functionality.</Description>
+    <Title>Microsoft.Extensions.AI.Agents.AzureAI</Title>
+    <Description>Implementation of generative AI abstractions for Azure AI Persistent Agents.</Description>
   </PropertyGroup>
-
-  <ItemGroup>
-    <InternalsVisibleTo Include="Microsoft.Agents.UnitTests" />
-  </ItemGroup>
 
 </Project>
