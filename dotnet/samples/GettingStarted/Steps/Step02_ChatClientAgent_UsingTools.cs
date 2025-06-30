@@ -1,8 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.ComponentModel;
-using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
 
 namespace Steps;
 
