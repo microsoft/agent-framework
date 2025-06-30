@@ -10,9 +10,9 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
-using Azure.AI.Agents.Persistent;
+using Microsoft.Extensions.AI;
 
-namespace Microsoft.Extensions.AI.AzureAIAgentsPersistent;
+namespace Azure.AI.Agents.Persistent;
 
 /// <summary>Represents an <see cref="IChatClient"/> for an Azure.AI.Agents.Persistent <see cref="PersistentAgentsClient"/>.</summary>
 public sealed partial class PersistentAgentsChatClient : IChatClient

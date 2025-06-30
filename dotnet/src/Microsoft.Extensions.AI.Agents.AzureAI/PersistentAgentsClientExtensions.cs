@@ -1,9 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Azure.AI.Agents.Persistent;
-using Microsoft.Extensions.AI.AzureAIAgentsPersistent;
 
-namespace Microsoft.Extensions.AI;
+namespace Microsoft.Extensions.AI.Agents;
 
 /// <summary>
 /// Provides extension methods for <see cref="PersistentAgentsClient"/>.

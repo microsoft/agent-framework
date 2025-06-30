@@ -110,7 +110,7 @@
   </Folder>
   <Project Path="src/Microsoft.Extensions.AI.Agents.Abstractions/Microsoft.Extensions.AI.Agents.Abstractions.csproj" />
   <Project Path="src/Microsoft.Extensions.AI.Agents/Microsoft.Extensions.AI.Agents.csproj" />
-  <Project Path="src/Microsoft.Extensions.AI.AzureAIAgentsPersistent/Microsoft.Extensions.AI.AzureAIAgentsPersistent.csproj" />
+  <Project Path="src/Microsoft.Extensions.AI.Agents.AzureAI/Microsoft.Extensions.AI.Agents.AzureAI.csproj" />
   <Project Path="tests/Microsoft.Extensions.AI.Agents.Abstractions.UnitTests/Microsoft.Extensions.AI.Agents.Abstractions.UnitTests.csproj">
     <BuildType Solution="Publish|*" Project="Debug" />
   </Project>
