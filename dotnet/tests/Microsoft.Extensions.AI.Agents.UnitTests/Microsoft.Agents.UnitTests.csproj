@@ -6,7 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Microsoft.Agents\Microsoft.Agents.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Extensions.AI.Agents\Microsoft.Agents.csproj" />
   </ItemGroup>
 
 </Project>
