@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using Microsoft.Agents.Orchestration.GroupChat;
 
 namespace Microsoft.Agents.Orchestration.UnitTest;
@@ -68,13 +69,8 @@ public class ChatGroupExtensionsTests
         string result = group.FormatList();
 
         // Assert
-        const string Expected =
-            """
-            - AgentOne: First agent description
-            - AgentTwo: Second agent description
-            - AgentThree: Third agent description
-            """;
-        Assert.Equal(Expected, result);
+        string expected = $"- AgentOne: First agent description{Environment.NewLine}- AgentTwo: Second agent description{Environment.NewLine}- AgentThree: Third agent description";
+        Assert.Equal(expected, result);
     }
 
     [Fact]
