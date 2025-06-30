@@ -3,9 +3,7 @@ from dataclasses import dataclass
 import enum
 from typing import Generic, Sequence, TypeVar
 
-from agent_framework.graph import While, Switch, FlowBuilder, GraphBuilder, StepT
-from agent_framework.graph._graph_combinators import Flow
-from agent_framework.graph._graph_mid import runnable
+from agent_framework.graph import While, Switch, FlowCompiler, GraphBuilder, StepT, Flow, runnable, Executor, LogTracer
 
 TIn = TypeVar("TIn", contravariant=True)
 TInOut = TypeVar("TInOut", contravariant=False, covariant=False)
@@ -73,6 +71,27 @@ class InputSimulator:
         return user_input
 
 
+def newtype(name: str, base: type) -> type:
+    """Creates a new type with the given name and base class."""
+    return type(name, (base,), {"__new__": lambda cls, *args, **kwargs: base.__new__(cls, *args, **kwargs)})
+
+
+Ok = newtype("Ok", str)
+Ok: type[Ok]
+
+Err: type[Err] = newtype("Err", str)
+Err: type[Err]
+
+Result = Ok | Err
+
+
+class Error(str):
+    """A class to represent an error result in the workflow."""
+    def __new__(cls, *args, **kwargs):
+        """Creates a new Error instance."""
+        return str.__new__(cls, *args, **kwargs)
+
+
 def _sample():
     class RequestType(enum.Enum):
         PARENS = "parens"
@@ -131,8 +150,10 @@ def _sample():
         [
             get_user_request,
             Switch({
-              request_is(RequestType.PARENS): match_parens,
-              request_is(RequestType.QUIT): write_quit_response,
+                request_is(RequestType.PARENS):
+                    match_parens,
+                request_is(RequestType.QUIT):
+                    write_quit_response,
             })
         ]
     )
@@ -140,3 +161,27 @@ def _sample():
     def create_context(self, input: None) -> WorkflowContext:
         """Creates a new WorkflowContext with default values."""
         return WorkflowContext()
+
+    def extract_output(ctx: WorkflowContext) -> Result:
+        """Extracts the output from the WorkflowContext."""
+        if ctx.error:
+            return Err(ctx.error)
+        if ctx.result:
+            return Ok(ctx.result)
+
+        return Err("No result or error found in the context.")
+
+    flow = Sequence([
+      create_context,
+      loop,
+      extract_output
+    ])
+
+    executable_graph = FlowCompiler().compile(flow)
+    executor = Executor(executable_graph, tracer=LogTracer())
+
+    result = executor.run()
+    if isinstance(result, Ok):
+        print(f"Success: {result}")
+    elif isinstance(result, Err):
+        print(f"Error: {result}")

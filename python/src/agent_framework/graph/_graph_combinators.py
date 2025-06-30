@@ -55,7 +55,7 @@ def _merge_conditions(*conditions: StepT[TIn, bool]) -> StepT[TIn, bool]:
 class Flow(Protocol, Generic[TIn, TOut]):
     """A protocol for defining a flow in the graph."""
 
-    def ensure_nodes(self, builder: FlowBuilder) -> list[NodeId, bool]:
+    def ensure_nodes(self, builder: FlowCompiler) -> list[NodeId, bool]:
         """Ensures the nodes are created in the graph builder.
 
         Args:
@@ -123,7 +123,7 @@ class FlowBase(ABC, Flow[TIn, TOut], Generic[TIn, TOut]):
     """A base class for defining a flow in the graph."""
 
     @abstractmethod
-    def ensure_nodes(self, builder: FlowBuilder) -> list[NodeId, bool]:
+    def ensure_nodes(self, builder: FlowCompiler) -> list[NodeId, bool]:
         """Ensures the nodes are created in the graph builder.
 
         Args:
@@ -242,7 +242,7 @@ class StepFlow(InFlow[TIn, TOut], OutFlow[TIn, TOut], FlowBase[TIn, TOut]):
     def outputs(self) -> list[NodeId]:
         return [self.id]
 
-    def ensure_nodes(self, builder: FlowBuilder) -> list[Tuple[NodeId, bool]]:
+    def ensure_nodes(self, builder: FlowCompiler) -> list[Tuple[NodeId, bool]]:
         return builder.builder.ensure_node(self.step)
 
     def get_types(self) -> tuple[type[TIn], type[TOut]]:
@@ -308,7 +308,7 @@ class SequenceFlow(InFlow[TIn, TOut], OutFlow[TIn, TOut], FlowBase[TIn, TOut]):
     def outputs(self) -> list[NodeId]:
         return self.steps[-1].outputs
 
-    def ensure_nodes(self, builder: FlowBuilder) -> list[Tuple[NodeId, bool]]:
+    def ensure_nodes(self, builder: FlowCompiler) -> list[Tuple[NodeId, bool]]:
         nodes = []
 
         for step in self.steps:
@@ -373,7 +373,7 @@ class LoopFlow(InFlow[TInOut, TInOut], OutFlow[TInOut, TInOut], FlowBase[TInOut,
         """Returns the output nodes of the loop flow."""
         return self.steps.outputs
 
-    def ensure_nodes(self, builder: FlowBuilder) -> list[Tuple[NodeId, bool]]:
+    def ensure_nodes(self, builder: FlowCompiler) -> list[Tuple[NodeId, bool]]:
         nodes = self.steps.ensure_nodes(builder)
 
         # If any of the nodes has not been built, then this loop's ensure_nodes has not
@@ -424,6 +424,10 @@ class SwitchFlow(InFlow[TIn, TOut], OutFlow[TIn, TOut], FlowBase[TIn, TOut]):
         #    case("bar"): ...
         # }, map = lambda input: input.type)
         #
+        # If we want to support a default arm, we would need to interact better with the
+        # node epsilon functionality; the way to do this is to create a virtual node that
+        # is responsible for wiring up the conditional arms, and attach the epsilon to it
+        # when default is missing.
         if not branches:
             raise ValueError("SwitchFlow must have at least one branch.")
 
@@ -445,21 +449,18 @@ class SwitchFlow(InFlow[TIn, TOut], OutFlow[TIn, TOut], FlowBase[TIn, TOut]):
                 for output in branch.outputs
         ]
 
-    def ensure_nodes(self, builder: FlowBuilder) -> list[Tuple[NodeId, bool]]:
-        nodes = []
-
-        for condition, branch in self.branches.items():
-            # Ensure the branch nodes are created.
-            branch_nodes = branch.ensure_nodes(builder)
-
-            # For each node in the branch, create an edge from the condition to the node.
-            for node_id, _ in branch_nodes:
-                # Create an edge from the condition to the output node.
-                builder.builder.add_edge(condition, node_id, None)
-                nodes.append((node_id, True))
+    def ensure_nodes(self, builder: FlowCompiler) -> list[Tuple[NodeId, bool]]:
+        # We rely on the underlying flows to ensure their nodes are properly wired up.
+        # That means we never need to worry about edges, because the only control flow
+        # is across the input binding, which will get wired up by the parent.
+        return [
+            node_built
+            for branch in self.branches.values()
+                for node_built in branch.ensure_nodes(builder)
+        ]
 
 
-class FlowBuilder():
+class FlowCompiler():
     """A class for building flows in the graph."""
 
     @staticmethod
@@ -515,5 +516,15 @@ class FlowBuilder():
             return input
 
         _start.__annotations__ = {"input": ATIn, "return": TInOut}
+        self.builder: GraphBuilder[ATIn] = GraphBuilder[ATIn].start(_start)
 
-        self.
+        root.ensure_nodes(self)
+
+        if not isinstance(root, OutFlow):
+            raise TypeError("Root flow must be an OutFlow.")
+
+        outputs = root.outputs
+        if len(outputs) > 1:
+            raise ValueError("Root flow must have at most one output node.")
+
+        return self.builder.build(output_node=outputs[0] if outputs else None)
