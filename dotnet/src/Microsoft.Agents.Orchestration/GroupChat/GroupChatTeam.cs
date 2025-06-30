@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -27,5 +28,5 @@ public static class ChatGroupExtensions
     /// </summary>
     /// <param name="team">The agent team</param>
     /// <returns>A markdown list of agent names and descriptions.</returns>
-    public static string FormatList(this GroupChatTeam team) => string.Join("\n", team.Select(t => $"- {t.Key}: {t.Value.Description}"));
+    public static string FormatList(this GroupChatTeam team) => string.Join(Environment.NewLine, team.Select(t => $"- {t.Key}: {t.Value.Description}"));
 }
