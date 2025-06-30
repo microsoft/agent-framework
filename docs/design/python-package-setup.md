@@ -227,7 +227,8 @@ uv and ruff are the main tools, for package management and code formatting/linti
 
 #### Type checking
 We currently can choose between mypy, pyright, ty and pyrefly for static type checking.
-I propose we start using `ty` as it is the fastest and can therefore be used in pre-commit hooks.
+I propose we run `mypy` and `pyright` in GHA, similar to what AG already does, and include `ty` in the pre-commit hooks.
+Once `ty` is more stable we can consider using it as the main type checker, but for now we will use `mypy` and `pyright` as the main type checkers.
 
 #### Task runner
 AG already has experience with poe the poet, so let's start there, removing the MAKE file setup that SK uses.
@@ -270,10 +271,13 @@ This means that we will use the following conventions:
 * If we want to combine `kwargs` for multiple things, such as partly for a external client constructor, and partly for our own use, we will try to keep those separate, by adding a parameter, such as `client_kwargs` with type `dict[str, Any]`, and then use that to pass the kwargs to the client constructor (by using `Client(**client_kwargs)`), while using the `**kwargs` parameters for our own use.
 
 
+### Build and release
+The build step will be done in GHA, adding the package to the release and then we call into Azure DevOps to use the ESRP pipeline to publish to pypi. This is how SK already works, we will just have to adapt it to the new package structure.
+
 # Open questions
 
 * Do we need filters? and what about filters vs guardrails?
-* What do we want to do with templates? Or is context providers the new way of making "instructions" dynamic?
+* What do we want to do with Semantic Kernel templates? Or is context providers the new way of making "instructions" dynamic? And if we do want templates, do we need all three types currently in SK (SK, handlebars and jinja2) or just one, or even move to something like Prompty (already supported in .Net SK, not in python)?
 * Do we want to separate other packages out into subpackages, like maybe telemetry, workflows, multi-agent orchestration, etc?
 * what should be included when doing just `pip install agent-framework`, how can we minimize external dependencies?
     * in other words, which batteries should be included?
