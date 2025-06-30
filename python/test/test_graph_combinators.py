@@ -105,6 +105,10 @@ def _sample():
 
     input_ = InputSimulator(["((())", "q"])
 
+    def create_context(self, input: None = None) -> WorkflowContext:
+        """Creates a new WorkflowContext with default values."""
+        return WorkflowContext()
+
     def get_user_request(ctx: WorkflowContext) -> StepContext[UserRequest]:
         user_input = input_("Enter parentheses text (or 'q' to quit): ")
         if user_input.lower() in ["q", "quit"]:
@@ -144,6 +148,15 @@ def _sample():
         """Writes a response for quitting the workflow."""
         return ctx.workflow_context.with_result("Quitting the workflow as requested.")
 
+    def extract_output(ctx: WorkflowContext) -> Result:
+        """Extracts the output from the WorkflowContext."""
+        if ctx.error:
+            return Err(ctx.error)
+        if ctx.result:
+            return Ok(ctx.result)
+
+        return Err("No result or error found in the context.")
+
     # In a sequence, input some data from the user, then process it, and finally, output the result.
     loop = While(
         lambda ctx: ctx.remaining_retries > 0,
@@ -158,19 +171,6 @@ def _sample():
             })
         ]
     )
-
-    def create_context(self, input: None) -> WorkflowContext:
-        """Creates a new WorkflowContext with default values."""
-        return WorkflowContext()
-
-    def extract_output(ctx: WorkflowContext) -> Result:
-        """Extracts the output from the WorkflowContext."""
-        if ctx.error:
-            return Err(ctx.error)
-        if ctx.result:
-            return Ok(ctx.result)
-
-        return Err("No result or error found in the context.")
 
     flow = create_context + loop + extract_output
 
