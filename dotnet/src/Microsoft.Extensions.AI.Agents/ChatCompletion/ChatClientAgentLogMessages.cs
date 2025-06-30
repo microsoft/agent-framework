@@ -4,7 +4,7 @@ using System;
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.Logging;
 
-namespace Microsoft.Agents;
+namespace Microsoft.Extensions.AI.Agents;
 #pragma warning disable SYSLIB1006 // Multiple logging methods cannot use the same event id within a class
 
 /// <summary>

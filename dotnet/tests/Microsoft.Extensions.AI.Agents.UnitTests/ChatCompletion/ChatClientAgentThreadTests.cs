@@ -10,7 +10,7 @@ using Moq;
 
 #pragma warning disable CS0162 // Unreachable code detected
 
-namespace Microsoft.Agents.UnitTests.ChatCompletion;
+namespace Microsoft.Extensions.AI.Agents.UnitTests.ChatCompletion;
 
 public class ChatClientAgentThreadTests
 {

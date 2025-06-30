@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents;
+namespace Microsoft.Extensions.AI.Agents;
 
 /// <summary>
 /// Chat client agent thread.

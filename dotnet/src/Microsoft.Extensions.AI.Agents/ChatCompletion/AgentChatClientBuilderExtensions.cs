@@ -4,7 +4,7 @@ using System;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents;
+namespace Microsoft.Extensions.AI.Agents;
 
 /// <summary>Provides extensions for configuring <see cref="AgentInvokingChatClient"/> instances.</summary>
 public static class AgentChatClientBuilderExtensions

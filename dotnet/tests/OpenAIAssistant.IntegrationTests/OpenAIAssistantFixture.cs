@@ -5,7 +5,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests;
 using AgentConformance.IntegrationTests.Support;
-using Microsoft.Agents;
+using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI;
 using OpenAI;
 using OpenAI.Assistants;

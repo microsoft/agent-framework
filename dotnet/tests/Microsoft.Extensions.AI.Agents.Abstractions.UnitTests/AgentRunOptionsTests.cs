@@ -3,7 +3,7 @@
 using System;
 using System.Threading.Tasks;
 
-namespace Microsoft.Agents.Abstractions.UnitTests;
+namespace Microsoft.Extensions.AI.Agents.Abstractions.UnitTests;
 
 /// <summary>
 /// Unit tests for the <see cref="AgentRunOptions"/> class.
