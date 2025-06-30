@@ -115,7 +115,7 @@ def _sample():
 
         return ctx.wrap(UserRequest(type_=RequestType.PARENS, parens_text=user_input.strip()))
 
-    def request_is(request_type: RequestType) -> StepT[StepContext[UserRequest], bool]:
+    def case_(request_type: RequestType) -> StepT[StepContext[UserRequest], bool]:
         """Returns a condition that checks if the request type matches the given type."""
         def condition(request: StepContext[UserRequest]) -> bool:
             return request.value.type_ == request_type
@@ -148,11 +148,12 @@ def _sample():
     loop = While(
         lambda ctx: ctx.remaining_retries > 0,
         [
-            get_user_request,
+            get_user_request,  # since this is StepT, we could just as easily have it b an agent with .run() method
+                               # or a "built" ExecutableGraph instance
             Switch({
-                request_is(RequestType.PARENS):
+                case_(RequestType.PARENS):
                     match_parens,
-                request_is(RequestType.QUIT):
+                case_(RequestType.QUIT):
                     write_quit_response,
             })
         ]
@@ -171,16 +172,20 @@ def _sample():
 
         return Err("No result or error found in the context.")
 
-    flow = Sequence([
-      create_context,
-      loop,
-      extract_output
-    ])
+    flow = create_context + loop + extract_output
+
+    # This should be equivalent to the following via __add__ and __addr__ methods on FlowBase
+    # which is implemented by Loop(=LoopFlow), and Sequence(=SequenceFlow):
+    # flow = Sequence([
+    #   create_context,
+    #   loop,
+    #   extract_output
+    # ])
 
     executable_graph = FlowCompiler().compile(flow)
     executor = Executor(executable_graph, tracer=LogTracer())
 
-    result = executor.run()
+    result = executor.run(None)
     if isinstance(result, Ok):
         print(f"Success: {result}")
     elif isinstance(result, Err):
