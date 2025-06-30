@@ -27,6 +27,7 @@ from ._graph_low import (
 )
 from ._graph_mid import GraphBuilder, Identified, RunnableStep, runnable
 from ._graph_algebra import If, AlgebraicNode, GraphAlgebra
+from ._graph_combinators import SequenceFlow as Sequence, FlowBuilder, LoopFlow as While, SwitchFlow as Switch
 
 __ALL__ = [
   export.__name__ for export in [
@@ -59,5 +60,11 @@ __ALL__ = [
     If,
     AlgebraicNode,
     GraphAlgebra,
+
+    # _graph_combinators
+    FlowBuilder,
+    Sequence,
+    While,
+    Switch
   ]
 ] + ["DEFAULT_START_NAME", "REJECT_EPSILON"]
