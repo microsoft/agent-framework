@@ -13,7 +13,7 @@ namespace Microsoft.Agents.Orchestration.Handoff;
 
 /// <summary>
 /// An orchestration that provides the input message to the first agent
-/// and Handoffly passes each agent result to the next agent.
+/// and sequentially passes each agent result to the next agent.
 /// </summary>
 public class HandoffOrchestration<TInput, TOutput> : AgentOrchestration<TInput, TOutput>
 {
