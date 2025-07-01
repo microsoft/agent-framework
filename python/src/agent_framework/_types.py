@@ -21,10 +21,176 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self  # pragma: no cover
 
+# region: Constants and types
 _T = TypeVar("_T")
 TValue = TypeVar("TValue")
+TInput = TypeVar("TInput")
+TResponse = TypeVar("TResponse")
+TChatResponse = TypeVar("TChatResponse", bound="ChatResponse")
+TChatToolMode = TypeVar("TChatToolMode", bound="ChatToolMode")
 
 CreatedAtT = str  # Use a datetimeoffset type? Or a more specific type like datetime.datetime?
+
+
+URI_PATTERN = re.compile(r"^data:(?P<media_type>[^;]+);base64,(?P<base64_data>[A-Za-z0-9+/=]+)$")
+
+KNOWN_MEDIA_TYPES = [
+    "application/json",
+    "application/octet-stream",
+    "application/pdf",
+    "application/xml",
+    "audio/mpeg",
+    "audio/ogg",
+    "audio/wav",
+    "image/apng",
+    "image/avif",
+    "image/bmp",
+    "image/gif",
+    "image/jpeg",
+    "image/png",
+    "image/svg+xml",
+    "image/tiff",
+    "image/webp",
+    "text/css",
+    "text/csv",
+    "text/html",
+    "text/javascript",
+    "text/plain",
+    "text/plain;charset=UTF-8",
+    "text/xml",
+]
+
+
+class AdditionalCounts(TypedDict, total=False):
+    """Represents well-known additional counts for usage. This is not an exhaustive list.
+
+    Remarks:
+        To make it possible to avoid colisions between similarly-named, but unrelated, additional counts
+        between different AI services, any keys not explicitly defined here should be prefixed with the
+        name of the AI service, e.g., "openai." or "azure.". The separator "." was chosen because it cannot
+        be a legal character in a JSON key.
+
+        Over time additional counts may be added to this class.
+    """
+
+    thought_token_count: int
+    """The number of tokens used for thought processing."""
+    image_token_count: int
+    """The number of token equivalents used for image processing."""
+
+
+class UsageDetails(AFBaseModel):
+    """Provides usage details about a request/response."""
+
+    input_token_count: int | None = None
+    """The number of tokens in the input."""
+    output_token_count: int | None = None
+    """The number of tokens in the output."""
+    total_token_count: int | None = None
+    """The total number of tokens used to produce the response."""
+    additional_counts: AdditionalCounts | None = None
+    """A dictionary of additional usage counts."""
+
+    def __add__(self, other: "UsageDetails") -> "UsageDetails":
+        """Combines two `UsageDetails` instances."""
+        if not isinstance(other, UsageDetails):
+            return NotImplemented
+
+        additional_counts: AdditionalCounts = self.additional_counts or AdditionalCounts()
+        if other.additional_counts:
+            for key, value in other.additional_counts.items():
+                # Do our best to do the right thing here.
+                if isinstance(value, (int, str, float)):
+                    additional_counts[key] = int(additional_counts.get(key, 0)) + int(value or 0)
+
+        return UsageDetails(
+            input_token_count=(self.input_token_count or 0) + (other.input_token_count or 0),
+            output_token_count=(self.output_token_count or 0) + (other.output_token_count or 0),
+            total_token_count=(self.total_token_count or 0) + (other.total_token_count or 0),
+            additional_counts=additional_counts,
+        )
+
+
+def _process_update(response: "ChatResponse", update: "ChatResponseUpdate") -> None:
+    """Processes a single update and modifies the response in place."""
+    is_new_message = False
+    if not response.messages or (update.message_id and response.messages[-1].message_id != update.message_id):
+        is_new_message = True
+
+    if is_new_message:
+        message = ChatMessage(role=ChatRole.ASSISTANT, contents=[])
+        response.messages.append(message)
+    else:
+        message = response.messages[-1]
+    # Incorporate the update's properties into the message.
+    if update.author_name is not None:
+        message.author_name = update.author_name
+    if update.role is not None:
+        message.role = update.role
+    if update.message_id:
+        message.message_id = update.message_id
+    for content in update.contents:
+        if isinstance(content, UsageContent):
+            if response.usage_details is None:
+                response.usage_details = UsageDetails()
+            response.usage_details += content.details
+        else:
+            message.contents.append(content)
+    # Incorporate the update's properties into the response.
+    if update.response_id:
+        response.response_id = update.response_id
+    if update.conversation_id is not None:
+        response.conversation_id = update.conversation_id
+    if update.created_at is not None:
+        response.created_at = update.created_at
+    if update.finish_reason is not None:
+        response.finish_reason = update.finish_reason
+    if update.ai_model_id is not None:
+        response.ai_model_id = update.ai_model_id
+    if update.additional_properties is not None:
+        if response.additional_properties is None:
+            response.additional_properties = {}
+        response.additional_properties.update(update.additional_properties)
+
+
+def _coalesce_text_content(contents: list[AIContents], type: type[TextContent] | type[TextReasoningContent]) -> None:
+    """Take any subsequence Text or TextReasoningContent items and coalesce them into a single item."""
+    if not contents:
+        return
+    coalesced_contents = []
+    current_texts = []
+    first_new_content = None
+    for i, content in enumerate(contents):
+        if isinstance(content, type):
+            current_texts.append(content.text)
+            if first_new_content is None:
+                first_new_content = i
+        else:
+            if first_new_content is not None:
+                new_content = type(text="\n".join(current_texts))
+                new_content.raw_representation = contents[first_new_content].raw_representation
+                new_content.additional_properties = contents[first_new_content].additional_properties
+                # Store the replacement node. We inherit the properties of the first text node. We don't
+                # currently propagate additional properties from the subsequent nodes. If we ever need to,
+                # we can add that here.
+                coalesced_contents.append(new_content)
+                current_texts = []
+                first_new_content = None
+            coalesced_contents.append(content)
+    if current_texts:
+        coalesced_contents.append(type(text="\n".join(current_texts)))
+    contents.clear()
+    contents.extend(coalesced_contents)
+
+
+def _finalize_response(response: "ChatResponse") -> None:
+    """Finalizes the chat response by performing any necessary post-processing."""
+    for msg in response.messages:
+        _coalesce_text_content(msg.contents, TextContent)
+        _coalesce_text_content(msg.contents, TextReasoningContent)
+
+
+# region: AIContent
 
 
 class AIContent(AFBaseModel):
@@ -92,35 +258,6 @@ class TextReasoningContent(AIContent):
             raw_representation=raw_representation,
             additional_properties=additional_properties,
         )
-
-
-URI_PATTERN = re.compile(r"^data:(?P<media_type>[^;]+);base64,(?P<base64_data>[A-Za-z0-9+/=]+)$")
-
-KNOWN_MEDIA_TYPES = [
-    "application/json",
-    "application/octet-stream",
-    "application/pdf",
-    "application/xml",
-    "audio/mpeg",
-    "audio/ogg",
-    "audio/wav",
-    "image/apng",
-    "image/avif",
-    "image/bmp",
-    "image/gif",
-    "image/jpeg",
-    "image/png",
-    "image/svg+xml",
-    "image/tiff",
-    "image/webp",
-    "text/css",
-    "text/csv",
-    "text/html",
-    "text/javascript",
-    "text/plain",
-    "text/plain;charset=UTF-8",
-    "text/xml",
-]
 
 
 class DataContent(AIContent):
@@ -379,56 +516,6 @@ class FunctionResultContent(AIContent):
         )
 
 
-class AdditionalCounts(TypedDict, total=False):
-    """Represents well-known additional counts for usage. This is not an exhaustive list.
-
-    Remarks:
-        To make it possible to avoid colisions between similarly-named, but unrelated, additional counts
-        between different AI services, any keys not explicitly defined here should be prefixed with the
-        name of the AI service, e.g., "openai." or "azure.". The separator "." was chosen because it cannot
-        be a legal character in a JSON key.
-
-        Over time additional counts may be added to this class.
-    """
-
-    thought_token_count: int
-    """The number of tokens used for thought processing."""
-    image_token_count: int
-    """The number of token equivalents used for image processing."""
-
-
-class UsageDetails(AFBaseModel):
-    """Provides usage details about a request/response."""
-
-    input_token_count: int | None = None
-    """The number of tokens in the input."""
-    output_token_count: int | None = None
-    """The number of tokens in the output."""
-    total_token_count: int | None = None
-    """The total number of tokens used to produce the response."""
-    additional_counts: AdditionalCounts | None = None
-    """A dictionary of additional usage counts."""
-
-    def __add__(self, other: "UsageDetails") -> "UsageDetails":
-        """Combines two `UsageDetails` instances."""
-        if not isinstance(other, UsageDetails):
-            return NotImplemented
-
-        additional_counts: AdditionalCounts = self.additional_counts or AdditionalCounts()
-        if other.additional_counts:
-            for key, value in other.additional_counts.items():
-                # Do our best to do the right thing here.
-                if isinstance(value, (int, str, float)):
-                    additional_counts[key] = int(additional_counts.get(key, 0)) + int(value or 0)
-
-        return UsageDetails(
-            input_token_count=(self.input_token_count or 0) + (other.input_token_count or 0),
-            output_token_count=(self.output_token_count or 0) + (other.output_token_count or 0),
-            total_token_count=(self.total_token_count or 0) + (other.total_token_count or 0),
-            additional_counts=additional_counts,
-        )
-
-
 class UsageContent(AIContent):
     """Represents usage information associated with a chat request and response."""
 
@@ -458,6 +545,21 @@ class UsageContent(AIContent):
         )
 
 
+AIContents = Annotated[
+    TextContent
+    | DataContent
+    | TextReasoningContent
+    | UriContent
+    | FunctionCallContent
+    | FunctionResultContent
+    | ErrorContent
+    | UsageContent,
+    Field(discriminator="type"),
+]
+
+# region: Chat Response constants
+
+
 class ChatRole(AFBaseModel):
     """Describes the intended purpose of a message within a chat interaction."""
 
@@ -481,18 +583,6 @@ class ChatRole(AFBaseModel):
         return f"ChatRole(value={self.value!r})"
 
 
-AIContents = Annotated[
-    TextContent
-    | DataContent
-    | TextReasoningContent
-    | UriContent
-    | FunctionCallContent
-    | FunctionResultContent
-    | ErrorContent
-    | UsageContent,
-    Field(discriminator="type"),
-]
-
 # Note: ClassVar is used to indicate that these are class-level constants, not instance attributes.
 # The type: ignore[assignment] is used to suppress the type checker warning about assigning to a ClassVar,
 # it gets assigned immediately after the class definition.
@@ -500,6 +590,31 @@ ChatRole.SYSTEM = ChatRole(value="system")  # type: ignore[assignment]
 ChatRole.USER = ChatRole(value="user")  # type: ignore[assignment]
 ChatRole.ASSISTANT = ChatRole(value="assistant")  # type: ignore[assignment]
 ChatRole.TOOL = ChatRole(value="tool")  # type: ignore[assignment]
+
+
+class ChatFinishReason(AFBaseModel):
+    """Represents the reason a chat response completed."""
+
+    value: str
+
+    CONTENT_FILTER: ClassVar[Self]  # type: ignore[assignment]
+    """A ChatFinishReason representing the model filtering content, whether for safety, prohibited content,
+    sensitive content, or other such issues."""
+    LENGTH: ClassVar[Self]  # type: ignore[assignment]
+    """A ChatFinishReason representing the model reaching the maximum length allowed for the request and/or
+    response (typically in terms of tokens)."""
+    STOP: ClassVar[Self]  # type: ignore[assignment]
+    """A ChatFinishReason representing the model encountering a natural stop point or provided stop sequence."""
+    TOOL_CALLS: ClassVar[Self]  # type: ignore[assignment]
+    """A ChatFinishReason representing the model requesting the use of a tool that was defined in the request."""
+
+
+ChatFinishReason.CONTENT_FILTER = ChatFinishReason(value="content_filter")  # type: ignore[assignment]
+ChatFinishReason.LENGTH = ChatFinishReason(value="length")  # type: ignore[assignment]
+ChatFinishReason.STOP = ChatFinishReason(value="stop")  # type: ignore[assignment]
+ChatFinishReason.TOOL_CALLS = ChatFinishReason(value="tool_calls")  # type: ignore[assignment]
+
+# region: ChatMessage
 
 
 class ChatMessage(AFBaseModel):
@@ -598,108 +713,7 @@ class ChatMessage(AFBaseModel):
         )
 
 
-class ChatFinishReason(AFBaseModel):
-    """Represents the reason a chat response completed."""
-
-    value: str
-
-    CONTENT_FILTER: ClassVar[Self]  # type: ignore[assignment]
-    """A ChatFinishReason representing the model filtering content, whether for safety, prohibited content,
-    sensitive content, or other such issues."""
-    LENGTH: ClassVar[Self]  # type: ignore[assignment]
-    """A ChatFinishReason representing the model reaching the maximum length allowed for the request and/or
-    response (typically in terms of tokens)."""
-    STOP: ClassVar[Self]  # type: ignore[assignment]
-    """A ChatFinishReason representing the model encountering a natural stop point or provided stop sequence."""
-    TOOL_CALLS: ClassVar[Self]  # type: ignore[assignment]
-    """A ChatFinishReason representing the model requesting the use of a tool that was defined in the request."""
-
-
-ChatFinishReason.CONTENT_FILTER = ChatFinishReason(value="content_filter")  # type: ignore[assignment]
-ChatFinishReason.LENGTH = ChatFinishReason(value="length")  # type: ignore[assignment]
-ChatFinishReason.STOP = ChatFinishReason(value="stop")  # type: ignore[assignment]
-ChatFinishReason.TOOL_CALLS = ChatFinishReason(value="tool_calls")  # type: ignore[assignment]
-
-TChatResponse = TypeVar("TChatResponse", bound="ChatResponse")
-
-
-def _process_update(response: "ChatResponse", update: "ChatResponseUpdate") -> None:
-    """Processes a single update and modifies the response in place."""
-    is_new_message = False
-    if not response.messages or (update.message_id and response.messages[-1].message_id != update.message_id):
-        is_new_message = True
-
-    if is_new_message:
-        message = ChatMessage(role=ChatRole.ASSISTANT, contents=[])
-        response.messages.append(message)
-    else:
-        message = response.messages[-1]
-    # Incorporate the update's properties into the message.
-    if update.author_name is not None:
-        message.author_name = update.author_name
-    if update.role is not None:
-        message.role = update.role
-    if update.message_id:
-        message.message_id = update.message_id
-    for content in update.contents:
-        if isinstance(content, UsageContent):
-            if response.usage_details is None:
-                response.usage_details = UsageDetails()
-            response.usage_details += content.details
-        else:
-            message.contents.append(content)
-    # Incorporate the update's properties into the response.
-    if update.response_id:
-        response.response_id = update.response_id
-    if update.conversation_id is not None:
-        response.conversation_id = update.conversation_id
-    if update.created_at is not None:
-        response.created_at = update.created_at
-    if update.finish_reason is not None:
-        response.finish_reason = update.finish_reason
-    if update.ai_model_id is not None:
-        response.ai_model_id = update.ai_model_id
-    if update.additional_properties is not None:
-        if response.additional_properties is None:
-            response.additional_properties = {}
-        response.additional_properties.update(update.additional_properties)
-
-
-def _coalesce_text_content(contents: list[AIContents], type: type[TextContent] | type[TextReasoningContent]) -> None:
-    """Take any subsequence Text or TextReasoningContent items and coalesce them into a single item."""
-    if not contents:
-        return
-    coalesced_contents = []
-    current_texts = []
-    first_new_content = None
-    for i, content in enumerate(contents):
-        if isinstance(content, type):
-            current_texts.append(content.text)
-            if first_new_content is None:
-                first_new_content = i
-        else:
-            if first_new_content is not None:
-                new_content = type(text="\n".join(current_texts))
-                new_content.raw_representation = contents[first_new_content].raw_representation
-                new_content.additional_properties = contents[first_new_content].additional_properties
-                # Store the replacement node. We inherit the properties of the first text node. We don't
-                # currently propagate additional properties from the subsequent nodes. If we ever need to,
-                # we can add that here.
-                coalesced_contents.append(new_content)
-                current_texts = []
-                first_new_content = None
-            coalesced_contents.append(content)
-    if current_texts:
-        coalesced_contents.append(type(text="\n".join(current_texts)))
-    contents.clear()
-    contents.extend(coalesced_contents)
-
-
-def _finalize_response(response: "ChatResponse") -> None:
-    """Finalizes the chat response by performing any necessary post-processing."""
-    for msg in response.messages:
-        _coalesce_text_content(msg.contents, TextContent)
-        _coalesce_text_content(msg.contents, TextReasoningContent)
+# region: ChatResponse
 
 
 class ChatResponse(AFBaseModel):
@@ -947,6 +961,9 @@ class StructuredResponse(ChatResponse, Generic[TValue]):
         )
 
 
+# region: ChatResponseUpdate
+
+
 class ChatResponseUpdate(AFBaseModel):
     """Represents a single streaming response chunk from a `ModelClient`."""
 
@@ -1068,73 +1085,7 @@ class ChatResponseUpdate(AFBaseModel):
         )
 
 
-TInput = TypeVar("TInput")
-TResponse = TypeVar("TResponse")
-
-
-@runtime_checkable
-class ModelClient(Protocol, Generic[TInput, TResponse]):
-    """A protocol for a model client that can generate responses."""
-
-    async def get_response(
-        self,
-        messages: TInput | Sequence[TInput],
-        **kwargs: Any,
-    ) -> TResponse:
-        """Sends input and returns the response.
-
-        Args:
-            messages: The sequence of input messages to send.
-            **kwargs: Additional options for the request, such as ai_model_id, temperature, etc.
-                       See `ChatOptions` for more details.
-
-        Returns:
-            The response messages generated by the client.
-
-        Raises:
-            ValueError: If the input message sequence is `None`.
-        """
-        ...
-
-    async def get_streaming_response(
-        self,
-        messages: TInput | Sequence[TInput],
-        **kwargs: Any,  # kwargs?
-    ) -> AsyncIterable[TResponse]:
-        """Sends input messages and streams the response.
-
-        Args:
-            messages: The sequence of input messages to send.
-            **kwargs: Additional options for the request, such as ai_model_id, temperature, etc.
-                       See `ChatOptions` for more details.
-
-        Returns:
-            An async iterable of chat response updates containing the content of the response messages
-            generated by the client.
-
-        Raises:
-            ValueError: If the input message sequence is `None`.
-        """
-        ...
-
-    def add_input_guardrails(self, guardrails: list[InputGuardrail[TInput]]) -> None:
-        """Add input guardrails to the model client.
-
-        Args:
-            guardrails: The list of input guardrails to add.
-        """
-        ...
-
-    def add_output_guardrails(self, guardrails: list[OutputGuardrail[TResponse | Sequence[TResponse]]]) -> None:
-        """Add output guardrails to the model client.
-
-        Args:
-            guardrails: The list of output guardrails to add.
-        """
-        ...
-
-
-TChatToolMode = TypeVar("TChatToolMode", bound="ChatToolMode")
+# region: ChatOptions
 
 
 class ChatToolMode(AFBaseModel):
@@ -1219,3 +1170,68 @@ class ChatOptions(AFBaseModel):
         for key in merged_exclude:
             settings.pop(key, None)
         return settings
+
+
+# region: ModelClient Protocol
+
+
+@runtime_checkable
+class ModelClient(Protocol, Generic[TInput, TResponse]):
+    """A protocol for a model client that can generate responses."""
+
+    async def get_response(
+        self,
+        messages: TInput | Sequence[TInput],
+        **kwargs: Any,
+    ) -> TResponse:
+        """Sends input and returns the response.
+
+        Args:
+            messages: The sequence of input messages to send.
+            **kwargs: Additional options for the request, such as ai_model_id, temperature, etc.
+                       See `ChatOptions` for more details.
+
+        Returns:
+            The response messages generated by the client.
+
+        Raises:
+            ValueError: If the input message sequence is `None`.
+        """
+        ...
+
+    async def get_streaming_response(
+        self,
+        messages: TInput | Sequence[TInput],
+        **kwargs: Any,  # kwargs?
+    ) -> AsyncIterable[TResponse]:
+        """Sends input messages and streams the response.
+
+        Args:
+            messages: The sequence of input messages to send.
+            **kwargs: Additional options for the request, such as ai_model_id, temperature, etc.
+                       See `ChatOptions` for more details.
+
+        Returns:
+            An async iterable of chat response updates containing the content of the response messages
+            generated by the client.
+
+        Raises:
+            ValueError: If the input message sequence is `None`.
+        """
+        ...
+
+    def add_input_guardrails(self, guardrails: list[InputGuardrail[TInput]]) -> None:
+        """Add input guardrails to the model client.
+
+        Args:
+            guardrails: The list of input guardrails to add.
+        """
+        ...
+
+    def add_output_guardrails(self, guardrails: list[OutputGuardrail[TResponse | Sequence[TResponse]]]) -> None:
+        """Add output guardrails to the model client.
+
+        Args:
+            guardrails: The list of output guardrails to add.
+        """
+        ...

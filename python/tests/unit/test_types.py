@@ -12,6 +12,7 @@ from agent_framework import (
     ChatToolMode,
     DataContent,
     TextContent,
+    TextReasoningContent,
 )
 
 
@@ -128,6 +129,7 @@ def test_chat_response_updates_to_chat_response_one():
     assert len(chat_response.messages) == 1
     assert chat_response.text == "I'm doing well, \nthank you!"
     assert isinstance(chat_response.messages[0], ChatMessage)
+    assert len(chat_response.messages[0].contents) == 1
     assert chat_response.messages[0].message_id == "1"
 
 
@@ -153,6 +155,56 @@ def test_chat_response_updates_to_chat_response_two():
     assert chat_response.messages[0].message_id == "1"
     assert isinstance(chat_response.messages[1], ChatMessage)
     assert chat_response.messages[1].message_id == "2"
+
+
+def test_chat_response_updates_to_chat_response_multiple():
+    """Test converting ChatResponseUpdate to ChatResponse."""
+    # Create a ChatMessage
+    message1 = TextContent("I'm doing well, ")
+    message2 = TextContent("thank you!")
+
+    # Create a ChatResponseUpdate with the message
+    response_updates = [
+        ChatResponseUpdate(text=message1, message_id="1"),
+        ChatResponseUpdate(contents=[TextReasoningContent(text="Additional context")], message_id="1"),
+        ChatResponseUpdate(text=message2, message_id="1"),
+    ]
+
+    # Convert to ChatResponse
+    chat_response = ChatResponse.from_chat_response_updates(response_updates)
+
+    # Check the type and content
+    assert len(chat_response.messages) == 1
+    assert chat_response.text == "I'm doing well, \nthank you!"
+    assert isinstance(chat_response.messages[0], ChatMessage)
+    assert len(chat_response.messages[0].contents) == 3
+    assert chat_response.messages[0].message_id == "1"
+
+
+def test_chat_response_updates_to_chat_response_multiple_multiple():
+    """Test converting ChatResponseUpdate to ChatResponse."""
+    # Create a ChatMessage
+    message1 = TextContent("I'm doing well, ")
+    message2 = TextContent("thank you!")
+
+    # Create a ChatResponseUpdate with the message
+    response_updates = [
+        ChatResponseUpdate(text=message1, message_id="1"),
+        ChatResponseUpdate(text=message2, message_id="1"),
+        ChatResponseUpdate(contents=[TextReasoningContent(text="Additional context")], message_id="1"),
+        ChatResponseUpdate(contents=[TextContent(text="More context")], message_id="1"),
+        ChatResponseUpdate(text="Final part", message_id="1"),
+    ]
+
+    # Convert to ChatResponse
+    chat_response = ChatResponse.from_chat_response_updates(response_updates)
+
+    # Check the type and content
+    assert len(chat_response.messages) == 1
+    assert chat_response.text == "I'm doing well, \nthank you!\nMore context\nFinal part"
+    assert isinstance(chat_response.messages[0], ChatMessage)
+    assert len(chat_response.messages[0].contents) == 3
+    assert chat_response.messages[0].message_id == "1"
 
 
 def test_chat_tool_mode():
