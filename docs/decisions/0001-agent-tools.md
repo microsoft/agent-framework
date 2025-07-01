@@ -402,7 +402,9 @@ Image Generation | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | Generates or edits 
 #### Code Interpreter
 <details>
   <summary>Azure AI Foundry Agent Service</summary>
-  Source: <a href="https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/code-interpreter-samples?pivots=rest-api">https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/code-interpreter-samples?pivots=rest-api</a>
+  <p>Source: <a href="https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/code-interpreter-samples?pivots=rest-api">https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/code-interpreter-samples?pivots=rest-api</a></p>
+
+  <p>.NET Support: ✅</p>
 
   Message Request:
   ```json
@@ -456,7 +458,9 @@ Image Generation | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | Generates or edits 
 </details>
 <details>
   <summary>OpenAI Assistant API</summary>
-  Source: <a href="https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/code-interpreter-samples?pivots=rest-api">https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/code-interpreter-samples?pivots=rest-api</a>
+  <p>Source: <a href="https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/code-interpreter-samples?pivots=rest-api">https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/code-interpreter-samples?pivots=rest-api</a></p>
+
+  <p>.NET Support: ✅</p>
 
   Message Request:
   ```json
@@ -497,7 +501,9 @@ Image Generation | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | Generates or edits 
 </details>
 <details>
   <summary>OpenAI Responses API</summary>
-  Source: <a href="https://platform.openai.com/docs/guides/tools-code-interpreter">https://platform.openai.com/docs/guides/tools-code-interpreter</a>
+  <p>Source: <a href="https://platform.openai.com/docs/guides/tools-code-interpreter">https://platform.openai.com/docs/guides/tools-code-interpreter</a></p>
+
+  <p>.NET Support: ❌ (currently in development: <a href="https://github.com/openai/openai-dotnet/issues/448">GitHub issue</a>)</p>
 
   Message Request:
   ```json
@@ -541,7 +547,9 @@ Image Generation | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | Generates or edits 
 </details>
 <details>
   <summary>Amazon Bedrock Agents</summary>
-  Source: <a href="https://docs.aws.amazon.com/bedrock/latest/userguide/agents-enable-code-interpretation.html">https://docs.aws.amazon.com/bedrock/latest/userguide/agents-enable-code-interpretation.html</a>
+  <p>Source: <a href="https://docs.aws.amazon.com/bedrock/latest/userguide/agents-enable-code-interpretation.html">https://docs.aws.amazon.com/bedrock/latest/userguide/agents-enable-code-interpretation.html</a></p>
+
+  <p>.NET Support: ❌ (Amazon SDK has IChatClient implementation but lacks ChatOptions.RawRepresentationFactory)</p>
 
   CreateAgentActionGroup Request:
   ```json
@@ -590,7 +598,9 @@ Image Generation | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | Generates or edits 
 </details>
 <details>
   <summary>Google</summary>
-  Source: <a href="https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/code-execution#googlegenaisdk_tools_code_exec_with_txt-drest">https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/code-execution#googlegenaisdk_tools_code_exec_with_txt-drest</a>
+  <p>Source: <a href="https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/code-execution#googlegenaisdk_tools_code_exec_with_txt-drest">https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/code-execution#googlegenaisdk_tools_code_exec_with_txt-drest</a></p>
+
+  <p>.NET Support: ❌ (official SDK lacks IChatClient implementation.)</p>
 
   Message Request:
   ```json
@@ -634,7 +644,15 @@ Image Generation | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | Generates or edits 
 </details>
 <details>
   <summary>Anthropic</summary>
-  Source: <a href="https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/code-execution-tool">https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/code-execution-tool</a>
+  <p>Source: <a href="https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/code-execution-tool">https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/code-execution-tool</a></p>
+
+  <p>
+  .NET Support: ❌ <br>
+  <ul>
+    <li><a href="https://github.com/tghamm/Anthropic.SDK">Anthropic.SDK</a> - uses `code_interpreter` instead of `code_execution` and lacks a possibility to specify file id.</li>
+    <li><a href="https://github.com/tryAGI/Anthropic">Anthropic by tryAGI</a> - has `code_execution` implementation, but it's in beta and can't be used as a tool.</li>
+  </ul>
+  </p>
 
   Message Request:
   ```json
