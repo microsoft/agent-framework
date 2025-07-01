@@ -4,8 +4,8 @@ using System.Text;
 using Azure.AI.Agents.Persistent;
 using GettingStarted.Tools.Abstractions;
 using GettingStarted.Tools.Extensions;
-using Microsoft.Agents;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
 using OpenAI;
 using OpenAI.Files;
 
