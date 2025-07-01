@@ -3,14 +3,15 @@
 ## Design goals
 * Developer experience is key
     * the components needed for a basic agent with tools and a runtime should be importable from `agent_framework` without having to import from subpackages. This will be referred to as _tier 0_ components.
-    * for more complex pieces, a developer should never have to import from more than 2 levels deep for connectors and 1 level deep for everything else
-        * i.e.: `from agent_framework.connectors.openai import OpenAIClient` or `from agent_framework.exceptions import ToolCallError`
-        * this will be referred to as _tier 1_ components.
-    * if a single file becomes too cumbersome (files can easily be 1k+ lines) it should be split into a folder with an `__init__.py` that exposes the public interface and a `_files.py` that contains the implementation details, with a `__all__` in the init to expose the right things.
+    * for more advanced components, _tier 1_ components, such as context providers, guardrails, vector data, text search, exceptions, evaluation, utils, telemetry and workflows, they should be importable from `agent_framework.<component>`, so for instance `from agent_framework.vector_data import vectorstoremodel`.
+    * for connectors (_tier 2_), a developer should never have to import from more than 2 levels deep
+        * i.e.: `from agent_framework.connectors.openai import OpenAIClient`
+        * Question: should we shorten this even further: either `from agent_framework.openai import OpenAIClient` or maybe something like `from agent_framework.ext.openai import OpenAIClient`?
+    * if a single file becomes too cumbersome (files are allowed to be 1k+ lines) it should be split into a folder with an `__init__.py` that exposes the public interface and a `_files.py` that contains the implementation details, with a `__all__` in the init to expose the right things, if there are very large dependencies being loaded it can optionally using lazy loading to avoid loading the entire package when importing a single component.
     * as much as possible, related things are in a single file which makes understanding the code easier.
     * simple and straightforward logging and telemetry setup, so developers can easily add logging and telemetry to their code without having to worry about the details.
 * Independence of connectors
-    * To allow connectors to be treated as independent packages, we will use namespace packages for connectors, in principle this only includes the packages that we will develop in our repo, since that is easier to manage and maintain.
+    * To allow connectors to be treated as independent packages, we will use namespace packages for connectors, in principle this only includes the packages that we will develop in our repo, since that is easy to manage and maintain.
     * further advantages are that each package can have a independent lifecycle, versioning, and dependencies.
     * and this gives us insights into the usage, through pip install statistics, especially for connectors to services outside of Microsoft.
     * the goal is to group related connectors based on vendors, not on types, so for instance doing: `import agent_framework.connectors.google` will import connectors for all Google services, such as `GoogleChatClient` but also `BigQueryCollection`, etc.
@@ -57,14 +58,14 @@ Overall the following structure is proposed:
     * tier 1 components, will be exposed from `agent_framework.<component>`:
         * context_providers (tbd)
         * guardrails / filters
-        * vector_data (vector stores, text search and other MEVD pieces)
+        * vector_data (vector stores and other MEVD pieces)
         * text_search
         * exceptions
-        * evaluation
+        * evaluations
         * utils (optional)
         * telemetry (could also be observability or monitoring)
         * workflows (includes multi-agent orchestration)
-    * connectors (namespace packages), with these two potentially always installed:
+    * connectors (namespace package), with these two potentially always installed:
         * openai
         * azure
         * will be exposed through i.e. `agent_framework.connectors.openai` and `agent_framework.connectors.azure`
@@ -122,30 +123,30 @@ src/
     agent_framework/
         __init__.py
         __init__.pyi
-        py.typed
         _agents.py
+        _tools.py
+        _models.py
+        _logging.py
         connectors/
             __init__.py
             README.md       
         context_providers.py
         guardrails.py
         exceptions.py
-        evaluation.py
-        _tools.py
-        _models.py
-        _logging.py
+        evaluations.py
         utils.py
         telemetry.py
         templates.py
         text_search.py
         vector_data.py
         workflows.py
+        py.typed
 tests/
     __init__.py
     unit/
         conftest.py
         test_agents.py
-        test_connectors.py
+        test_types.py
         ...
     integration/
         test_openai.py
@@ -160,6 +161,8 @@ LICENSE
 uv.lock
 .pre-commit-config.yaml
 ```
+
+We might add a template subpackage as well, to make it easy to setup, this could be based on the first one that is added.
 
 ## Coding standards
 
@@ -239,21 +242,45 @@ The goal is to have at least 80% unit test coverage for all code under both the 
 Telemetry and logging are handled by the `agent_framework.telemetry` and `agent_framework._logging` packages.
 Logging is considered as part of the basic setup, while telemetry is a advanced concept.
 The telemetry package will use OpenTelemetry to provide a consistent way to collect and export telemetry data, similar to how we do this now in SK.
-The logging will be simplified, there will be three loggers in the base package:
+The logging will be simplified, there will be one logger in the base package:
 * `agent_framework`: for general logging
+
+Each of the other subpackages for connectors will have a similar single logger.
 * `agent_framework.connectors.openai`: for connector-specific logging
 * `agent_framework.connectors.azure`: for connector-specific logging
-Each of the other subpackages for connectors will have a similar single logger.
 
 This means that when a logger is needed, it should be created like this:
 ```python
-from agent_framework.logging import get_logger
+from agent_framework import get_logger
 
-logger = get_logger("agent_framework")
+logger = get_logger()
+#or in a subpackage:
+logger = get_logger('agent_framework.connectors.openai')
+```
+The implementation should be something like this:
+```python
+# in file _logging.py
+import logging
+
+def get_logger(name: str = "agent_framework") -> logging.Logger:
+    """
+    Get a logger with the specified name, defaulting to 'agent_framework'.
+    
+    Args:
+        name (str): The name of the logger. Defaults to 'agent_framework'.
+    
+    Returns:
+        logging.Logger: The configured logger instance.
+    """
+    logger = logging.getLogger(name)
+    # create the specifics for the logger, such as setting the level, handlers, etc.
+    return logger
 ```
 This will ensure that the logger is created with the correct name and configuration, and it will be consistent across the package. 
 
-This will not be allowed in random files:
+Further there should be a easy way to configure the log levels, either through a environment variable or with a similar function as the get_logger.
+
+This will not be allowed:
 ```python
 import logging
 
@@ -267,7 +294,7 @@ This means that we will use the following conventions:
 * All other parameters should be supplied as keyword parameters, this is especially important to configure correctly when using Pydantic or dataclasses.
 * If there are multiple required parameters, and they do not have a order that is common sense, then they will all use keyword parameters.
 * If we use `kwargs` we will document how and what we use them for, this might be a reference to a outside package's documentation or an explanation of what the `kwargs` are used for.
-* If we want to combine `kwargs` for multiple things, such as partly for a external client constructor, and partly for our own use, we will try to keep those separate, by adding a parameter, such as `client_kwargs` with type `dict[str, Any]`, and then use that to pass the kwargs to the client constructor (by using `Client(**client_kwargs)`), while using the `**kwargs` parameters for our own use.
+* If we want to combine `kwargs` for multiple things, such as partly for a external client constructor, and partly for our own use, we will try to keep those separate, by adding a parameter, such as `client_kwargs` with type `dict[str, Any]`, and then use that to pass the kwargs to the client constructor (by using `Client(**client_kwargs)`), while using the `**kwargs` parameters for other uses, which are then also well documented.
 
 
 ### Build and release
@@ -275,6 +302,7 @@ The build step will be done in GHA, adding the package to the release and then w
 
 # Open questions
 
+* Should we shorten this even further: either `from agent_framework.openai import OpenAIClient` or maybe something like `from agent_framework.ext.openai import OpenAIClient`?
 * Do we need filters? and what about filters vs guardrails?
 * What do we want to do with Semantic Kernel templates? Or is context providers the new way of making "instructions" dynamic? And if we do want templates, do we need all three types currently in SK (SK, handlebars and jinja2) or just one, or even move to something like Prompty (already supported in .Net SK, not in python)?
 * Do we want to separate other packages out into subpackages, like maybe telemetry, workflows, multi-agent orchestration, etc?
