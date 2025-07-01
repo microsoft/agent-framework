@@ -26,8 +26,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Microsoft.Agents\Microsoft.Agents.csproj" />
-    <ProjectReference Include="..\..\src\Microsoft.Extensions.AI.AzureAIAgentsPersistent\Microsoft.Extensions.AI.AzureAIAgentsPersistent.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Extensions.AI.Agents\Microsoft.Extensions.AI.Agents.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Extensions.AI.Agents.AzureAI\Microsoft.Extensions.AI.Agents.AzureAI.csproj" />
   </ItemGroup>
 
   <ItemGroup>

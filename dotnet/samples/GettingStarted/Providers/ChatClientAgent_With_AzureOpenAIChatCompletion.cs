@@ -3,8 +3,8 @@
 using System.ClientModel;
 using Azure.AI.OpenAI;
 using Azure.Identity;
-using Microsoft.Agents;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Samples;
 
 namespace Providers;

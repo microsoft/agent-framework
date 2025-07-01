@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Agents;
+using Microsoft.Extensions.AI.Agents;
 
 namespace Steps;
 
