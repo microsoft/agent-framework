@@ -282,6 +282,9 @@ The goal is to have at least 80% unit test coverage for all code under both the 
 
 ### Telemetry and logging
 Telemetry and logging are handled by the `agent_framework.telemetry` and `agent_framework._logging` packages.
+
+#### Logging
+
 Logging is considered as part of the basic setup, while telemetry is a advanced concept.
 The telemetry package will use OpenTelemetry to provide a consistent way to collect and export telemetry data, similar to how we do this now in SK.
 
@@ -336,6 +339,11 @@ import logging
 
 logger = logging.getLogger("agent_framework")
 ```
+
+#### Telemetry
+Telemetry will be based on OpenTelemetry (OTel), and will be implemented in the `agent_framework.telemetry` package.
+
+We should consider auto-instrumentation and provide an implementation of it to the OTel community.
 
 ### Function definitions
 To make the code easier to use, we will be very deliberate about the ordering and marking of function parameters.
