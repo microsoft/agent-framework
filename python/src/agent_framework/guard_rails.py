@@ -1,9 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 
-from typing import Generic, Protocol, runtime_checkable
+from typing import Generic, Protocol, TypeVar, runtime_checkable
 
-from ._types import TInput, TResponse
+TInput = TypeVar("TInput")
+TResponse = TypeVar("TResponse")
 
 
 @runtime_checkable

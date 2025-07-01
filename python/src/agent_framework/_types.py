@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import base64
+import re
 import sys
 from collections.abc import AsyncIterable, Sequence
 from typing import Annotated, Any, ClassVar, Generic, Literal, Protocol, TypeVar, overload, runtime_checkable
@@ -91,67 +93,161 @@ class TextReasoningContent(AIContent):
         )
 
 
+URI_PATTERN = re.compile(r"^data:(?P<media_type>[^;]+);base64,(?P<base64_data>[A-Za-z0-9+/=]+)$")
+
+KNOWN_MEDIA_TYPES = [
+    "application/json",
+    "application/octet-stream",
+    "application/pdf",
+    "application/xml",
+    "audio/mpeg",
+    "audio/ogg",
+    "audio/wav",
+    "image/apng",
+    "image/avif",
+    "image/bmp",
+    "image/gif",
+    "image/jpeg",
+    "image/png",
+    "image/svg+xml",
+    "image/tiff",
+    "image/webp",
+    "text/css",
+    "text/csv",
+    "text/html",
+    "text/javascript",
+    "text/plain",
+    "text/plain;charset=UTF-8",
+    "text/xml",
+]
+
+
 class DataContent(AIContent):
     """Represents binary data content with an associated media type (also known as a MIME type)."""
 
     type: Literal["data"] = "data"  # type: ignore[assignment]
-    data: bytes = Field(default=..., kw_only=False)
-    """The data represented by this instance."""
+    uri: str
 
-    media_type: str
-    """The media type of the data, e.g., 'image/png', 'application/json', etc."""
-
+    @overload
     def __init__(
         self,
-        data: bytes,
+        uri: str,
         *,
-        media_type: str,
         raw_representation: Any | None = None,
         additional_properties: dict[str, Any] | None = None,
     ) -> None:
-        """Initializes a DataContent instance.
+        """Initializes a DataContent instance with a URI.
+
+        Remarks:
+            This is for binary data that is represented as a data URI, not for online resources.
+            Use `UriContent` for online resources.
+
+        Args:
+            uri: The URI of the data represented by this instance.
+                Should be in the form: "data:{media_type};base64,{base64_data}".
+            raw_representation: Optional raw representation of the content.
+            additional_properties: Optional additional properties associated with the content.
+        """
+
+    @overload
+    def __init__(
+        self,
+        data: bytes,
+        media_type: str,
+        *,
+        raw_representation: Any | None = None,
+        additional_properties: dict[str, Any] | None = None,
+    ) -> None:
+        """Initializes a DataContent instance with binary data.
+
+        Remarks:
+            This is for binary data that is represented as a data URI, not for online resources.
+            Use `UriContent` for online resources.
 
         Args:
             data: The binary data represented by this instance.
+                The data is transformed into a base64-encoded data URI.
             media_type: The media type of the data.
             raw_representation: Optional raw representation of the content.
             additional_properties: Optional additional properties associated with the content.
         """
+
+    def __init__(
+        self,
+        uri=None,
+        data=None,
+        media_type=None,
+        *,
+        raw_representation=None,
+        additional_properties=None,
+    ) -> None:
+        """Initializes a DataContent instance.
+
+        Remarks:
+            This is for binary data that is represented as a data URI, not for online resources.
+            Use `UriContent` for online resources.
+        """
+        if uri is None:
+            if data is None or media_type is None:
+                raise ValueError("Either 'data' and 'media_type' or 'uri' must be provided.")
+            uri = f"data:{media_type};base64,{base64.b64encode(data).decode('utf-8')}"
         super().__init__(
-            data=data,
-            media_type=media_type,
+            uri=uri,
             raw_representation=raw_representation,
             additional_properties=additional_properties,
         )
 
-    @property
-    def base64_data(self) -> str:
-        """Returns the data represented by this instance encoded as a Base64 string."""
-        import base64
+    @field_validator("uri", mode="after")
+    @classmethod
+    def _validate_uri(cls, uri: str) -> str:
+        """Validates the URI format and extracts the media type.
 
-        return base64.b64encode(self.data).decode("utf-8")  # use ASCII instead? (Should be equivalent for base64)
-
-    # @base64_data.setter
-    # def base64_data(self, value: str) -> None:
-    #     """Sets the data from a base64 encoded string."""
-    #     import base64  # noqa: ERA001
-    #     self.data = base64.b64decode(value.encode("utf-8"))  # noqa: ERA001
-
-    @property
-    def uri(self) -> str:
-        """Returns the data as a data URI."""
-        return f"data:{self.media_type};base64,{self.base64_data}"
+        Minimal data URI parser based on RFC 2397: https://datatracker.ietf.org/doc/html/rfc2397.
+        """
+        match = URI_PATTERN.match(uri)
+        if not match:
+            raise ValueError(f"Invalid data URI format: {uri}")
+        media_type = match.group("media_type")
+        if media_type not in KNOWN_MEDIA_TYPES:
+            raise ValueError(f"Unknown media type: {media_type}")
+        return uri
 
 
-# @uri.setter
-# def uri(self, value: str) -> None:
-#     """Sets the data from a data URI."""
-#     import re  # noqa: ERA001
-#     match = re.match(r"^data:(?P<media_type>[^;]+);base64,(?P<base64_data>.+)$", value)  # noqa: ERA001
-#     if not match:
-#         raise ValueError("Invalid data URI format")  # noqa: ERA001
-#     self.media_type = match.group("media_type")  # noqa: ERA001
-#     self.base64_data = match.group("base64_data")  # noqa: ERA001
+class UriContent(AIContent):
+    """Represents a URI content."""
+
+    type: Literal["uri"] = "uri"  # type: ignore[assignment]
+    uri: str
+    """The URI of the content, e.g., 'https://example.com/image.png'."""
+    media_type: str
+    """The media type of the content, e.g., 'image/png', 'application/json', etc."""
+
+    def __init__(
+        self,
+        uri: str,
+        media_type: str,
+        *,
+        raw_representation: Any | None = None,
+        additional_properties: dict[str, Any] | None = None,
+    ) -> None:
+        """Initializes a UriContent instance.
+
+        Remarks:
+            This is used for content that is identified by a URI, such as an image or a file.
+            For (binary) data URIs, use `DataContent` instead.
+
+        Args:
+            uri: The URI of the content.
+            media_type: The media type of the content.
+            raw_representation: Optional raw representation of the content.
+            additional_properties: Optional additional properties associated with the content.
+        """
+        super().__init__(
+            uri=uri,
+            media_type=media_type,
+            raw_representation=raw_representation,
+            additional_properties=additional_properties,
+        )
 
 
 class ErrorContent(AIContent):
@@ -277,44 +373,6 @@ class FunctionResultContent(AIContent):
             call_id=call_id,
             result=result,
             exception=exception,
-            raw_representation=raw_representation,
-            additional_properties=additional_properties,
-        )
-
-
-class UriContent(AIContent):
-    """Represents a URI content.
-
-    Remarks:
-        This is used for content that is identified by a URI, such as an image or a file.
-        For data URIs, use `DataContent` instead.
-    """
-
-    type: Literal["uri"] = "uri"  # type: ignore[assignment]
-    uri: str
-    """The URI of the content, e.g., 'https://example.com/image.png'."""
-    media_type: str
-    """The media type of the content, e.g., 'image/png', 'application/json', etc."""
-
-    def __init__(
-        self,
-        uri: str,
-        *,
-        media_type: str,
-        raw_representation: Any | None = None,
-        additional_properties: dict[str, Any] | None = None,
-    ) -> None:
-        """Initializes a UriContent instance.
-
-        Args:
-            uri: The URI of the content.
-            media_type: The media type of the content.
-            raw_representation: Optional raw representation of the content.
-            additional_properties: Optional additional properties associated with the content.
-        """
-        super().__init__(
-            uri=uri,
-            media_type=media_type,
             raw_representation=raw_representation,
             additional_properties=additional_properties,
         )
@@ -578,7 +636,7 @@ class ChatResponse(AFBaseModel):
     """A timestamp for the chat response."""
     finish_reason: ChatFinishReason | None = None
     """The reason for the chat response."""
-    model_id: str | None = None
+    ai_model_id: str | None = None
     """The model ID used in the creation of the chat response."""
     raw_representation: Any | None = None
     """The raw representation of the chat response from an underlying implementation."""
@@ -601,7 +659,7 @@ class ChatResponse(AFBaseModel):
         conversation_id: str | None = None,
         created_at: CreatedAtT | None = None,
         finish_reason: ChatFinishReason | None = None,
-        model_id: str | None = None,
+        ai_model_id: str | None = None,
         raw_representation: Any | None = None,
         response_id: str | None = None,
         usage_details: UsageDetails | None = None,
@@ -613,7 +671,7 @@ class ChatResponse(AFBaseModel):
             conversation_id: Optional identifier for the state of the conversation.
             created_at: Optional timestamp for the chat response.
             finish_reason: Optional reason for the chat response.
-            model_id: Optional model ID used in the creation of the chat response.
+            ai_model_id: Optional model ID used in the creation of the chat response.
             raw_representation: Optional raw representation of the chat response from an underlying implementation.
             response_id: Optional ID of the chat response.
             usage_details: Optional usage details for the chat response.
@@ -629,7 +687,7 @@ class ChatResponse(AFBaseModel):
         conversation_id: str | None = None,
         created_at: CreatedAtT | None = None,
         finish_reason: ChatFinishReason | None = None,
-        model_id: str | None = None,
+        ai_model_id: str | None = None,
         raw_representation: Any | None = None,
         response_id: str | None = None,
         usage_details: UsageDetails | None = None,
@@ -642,7 +700,7 @@ class ChatResponse(AFBaseModel):
             conversation_id: Optional identifier for the state of the conversation.
             created_at: Optional timestamp for the chat response.
             finish_reason: Optional reason for the chat response.
-            model_id: Optional model ID used in the creation of the chat response.
+            ai_model_id: Optional model ID used in the creation of the chat response.
             raw_representation: Optional raw representation of the chat response from an underlying implementation.
             response_id: Optional ID of the chat response.
             usage_details: Optional usage details for the chat response.
@@ -658,7 +716,7 @@ class ChatResponse(AFBaseModel):
         conversation_id=None,
         created_at=None,
         finish_reason=None,
-        model_id=None,
+        ai_model_id=None,
         raw_representation=None,
         response_id=None,
         usage_details=None,
@@ -679,7 +737,7 @@ class ChatResponse(AFBaseModel):
             conversation_id=conversation_id,
             created_at=created_at,
             finish_reason=finish_reason,
-            model_id=model_id,
+            ai_model_id=ai_model_id,
             raw_representation=raw_representation,
             response_id=response_id,
             usage_details=usage_details,
@@ -710,7 +768,7 @@ class StructuredResponse(ChatResponse, Generic[TValue]):
         conversation_id: str | None = None,
         created_at: CreatedAtT | None = None,
         finish_reason: ChatFinishReason | None = None,
-        model_id: str | None = None,
+        ai_model_id: str | None = None,
         raw_representation: Any | None = None,
         response_id: str | None = None,
         usage_details: UsageDetails | None = None,
@@ -727,7 +785,7 @@ class StructuredResponse(ChatResponse, Generic[TValue]):
         conversation_id: str | None = None,
         created_at: CreatedAtT | None = None,
         finish_reason: ChatFinishReason | None = None,
-        model_id: str | None = None,
+        ai_model_id: str | None = None,
         raw_representation: Any | None = None,
         response_id: str | None = None,
         usage_details: UsageDetails | None = None,
@@ -744,7 +802,7 @@ class StructuredResponse(ChatResponse, Generic[TValue]):
         conversation_id: str | None = None,
         created_at: CreatedAtT | None = None,
         finish_reason: ChatFinishReason | None = None,
-        model_id: str | None = None,
+        ai_model_id: str | None = None,
         raw_representation: Any | None = None,
         response_id: str | None = None,
         usage_details: UsageDetails | None = None,
@@ -761,7 +819,7 @@ class StructuredResponse(ChatResponse, Generic[TValue]):
         conversation_id=None,
         created_at=None,
         finish_reason=None,
-        model_id=None,
+        ai_model_id=None,
         raw_representation=None,
         response_id=None,
         usage_details=None,
@@ -783,7 +841,7 @@ class StructuredResponse(ChatResponse, Generic[TValue]):
             conversation_id=conversation_id,
             created_at=created_at,
             finish_reason=finish_reason,
-            model_id=model_id,
+            ai_model_id=ai_model_id,
             raw_representation=raw_representation,
             response_id=response_id,
             usage_details=usage_details,
@@ -917,7 +975,7 @@ class ChatResponseUpdate(AFBaseModel):
         conversation_id: str | None = None
         created_at: CreatedAtT | None = None
         finish_reason: ChatFinishReason | None = None
-        model_id: str | None = None
+        ai_model_id: str | None = None
         raw_representation: list[Any | None] = []
         additional_properties: dict[str, Any] | None = None
         response_id: str | None = None
@@ -935,7 +993,7 @@ class ChatResponseUpdate(AFBaseModel):
             conversation_id = update.conversation_id or conversation_id
             created_at = update.created_at or created_at
             finish_reason = update.finish_reason or finish_reason
-            model_id = update.model_id or model_id
+            ai_model_id = update.ai_model_id or ai_model_id
             role = update.role or role  # Assuming the role is always the same for updates
 
             raw_representation += [update.raw_representation]  # Collect raw representations
@@ -947,7 +1005,7 @@ class ChatResponseUpdate(AFBaseModel):
             conversation_id=conversation_id,
             created_at=created_at,
             finish_reason=finish_reason,
-            model_id=model_id,
+            ai_model_id=ai_model_id,
             raw_representation=raw_representation,
             response_id=response_id,
             additional_properties=additional_properties,
@@ -971,7 +1029,7 @@ class ModelClient(Protocol, Generic[TInput, TResponse]):
 
         Args:
             messages: The sequence of input messages to send.
-            **kwargs: Additional options for the request, such as model_id, temperature, etc.
+            **kwargs: Additional options for the request, such as ai_model_id, temperature, etc.
                        See `ChatOptions` for more details.
 
         Returns:
@@ -991,7 +1049,7 @@ class ModelClient(Protocol, Generic[TInput, TResponse]):
 
         Args:
             messages: The sequence of input messages to send.
-            **kwargs: Additional options for the request, such as model_id, temperature, etc.
+            **kwargs: Additional options for the request, such as ai_model_id, temperature, etc.
                        See `ChatOptions` for more details.
 
         Returns:

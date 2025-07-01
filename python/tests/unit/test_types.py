@@ -10,6 +10,7 @@ from agent_framework import (
     ChatResponseUpdate,
     ChatRole,
     ChatToolMode,
+    DataContent,
     TextContent,
 )
 
@@ -164,3 +165,57 @@ def test_chat_tool_mode_from_dict():
 
     # Ensure the instance is of type ChatToolMode
     assert isinstance(mode, ChatToolMode)
+
+
+def test_data_content_bytes():
+    """Test the DataContent class to ensure it initializes correctly."""
+    # Create an instance of DataContent
+    content = DataContent(data=b"test", media_type="application/octet-stream", additional_properties={"version": 1})
+
+    # Check the type and content
+    assert content.type == "data"
+    assert content.uri == "data:application/octet-stream;base64,dGVzdA=="
+    assert content.additional_properties["version"] == 1
+
+    # Ensure the instance is of type AIContent
+    assert isinstance(content, AIContent)
+
+
+def test_data_content_uri():
+    """Test the DataContent class to ensure it initializes correctly with a URI."""
+    # Create an instance of DataContent with a URI
+    content = DataContent(uri="data:application/octet-stream;base64,dGVzdA==", additional_properties={"version": 1})
+
+    # Check the type and content
+    assert content.type == "data"
+    assert content.uri == "data:application/octet-stream;base64,dGVzdA=="
+    assert content.additional_properties["version"] == 1
+
+    # Ensure the instance is of type AIContent
+    assert isinstance(content, AIContent)
+
+
+def test_data_content_invalid():
+    """Test the DataContent class to ensure it raises an error for invalid initialization."""
+    # Attempt to create an instance of DataContent with invalid data
+    # not a proper uri
+    with pytest.raises(ValidationError):
+        DataContent(uri="invalid_uri")
+    # unknown media type
+    with pytest.raises(ValidationError):
+        DataContent(uri="data:application/random;base64,dGVzdA==")
+    # not valid base64 data
+
+    with pytest.raises(ValidationError):
+        DataContent(uri="data:application/json;base64,dGVzdA&")
+
+
+def test_data_content_empty():
+    """Test the DataContent class to ensure it raises an error for empty data."""
+    # Attempt to create an instance of DataContent with empty data
+    with pytest.raises(ValidationError):
+        DataContent(data=b"", media_type="application/octet-stream")
+
+    # Attempt to create an instance of DataContent with empty URI
+    with pytest.raises(ValidationError):
+        DataContent(uri="")
