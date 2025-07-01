@@ -50,12 +50,12 @@ print(response)
 Overall the following structure is proposed:
 
 * agent-framework
-    * tier 0 components, will be exposed directly from `agent_framework`:
+    * tier 0; components, will be exposed directly from `agent_framework`:
         * (single) agents (includes threads)
         * tools (includes MCP and OpenAPI)
         * models/types (name tbd, will include the equivalent of MEAI for dotnet; content types and client abstractions)
         * logging
-    * tier 1 components, will be exposed from `agent_framework.<component>`:
+    * tier 1; components, will be exposed from `agent_framework.<component>`:
         * context_providers (tbd)
         * guardrails / filters
         * vector_data (vector stores and other MEVD pieces)
@@ -65,13 +65,18 @@ Overall the following structure is proposed:
         * utils (optional)
         * telemetry (could also be observability or monitoring)
         * workflows (includes multi-agent orchestration)
-    * connectors (namespace package), with these two potentially always installed:
-        * openai
-        * azure
-        * will be exposed through i.e. `agent_framework.connectors.openai` and `agent_framework.connectors.azure`
+    * tier 2; extensions
+        * connectors (namespace package)
+            * openai
+            * azure
+            * will be exposed through i.e. `agent_framework.connectors.openai` and `agent_framework.connectors.azure`
+        * extensions (namespace package)
+            * anything other then a connector that we want to expose as a separate package, for instance:
+                * mem0 (memory management)
+                * would be exposed through i.e. `agent_framework.extensions.mem0`
 * tests
 * samples
-* packages
+* extensions
     * openai
     * azure
     * ...
@@ -80,78 +85,90 @@ All the init's will use lazy loading so avoid importing the entire package when 
 Internal imports will be done using relative imports, so that the package can be used as a namespace package.
 
 ### File structure
-The file structure will be as follows:
+The resulting file structure will be as follows:
 
 ```plaintext
-packages/
+agent_framework/
+    __init__.py
+    __init__.pyi
+    _agents.py
+    _tools.py
+    _models.py
+    _logging.py
+    extensions/
+        __init__.py
+        README.md
+    connectors/
+        __init__.py
+        README.md       
+    context_providers.py
+    guardrails.py
+    exceptions.py
+    evaluations.py
+    utils.py
+    telemetry.py
+    templates.py
+    text_search.py
+    vector_data.py
+    workflows.py
+    py.typed
+extensions/
+    mem0/
+        agent_framework/
+            extensions/
+                mem0/
+                    __init__.py
+                    _mem0.py
+                    ...
     redis/
         ...
     openai/
-        src/
-            agent_framework/
-                connectors/
-                    openai/
-                        __init__.py
-                        _chat.py
-                        _embeddings.py
-                        ...
+        agent_framework/
+            connectors/
+                openai/
+                    __init__.py
+                    _chat.py
+                    _embeddings.py
+                    ...
         tests/
-            ...
+            unit/
+                test_openai_client.py
+                test_openai_tools.py
+                ...
+            integration/
+                test_openai_integration.py
         samples/ (optional)
             ...
         pyproject.toml
         README.md
         ...
-    google/
-        src/
-            agent_framework/
-                connectors/
-                    google/
-                        __init__.py
-                        _chat.py
-                        _bigquery.py
-                        ...
+    google/        
+        agent_framework/
+            connectors/
+                google/
+                    __init__.py
+                    _chat.py
+                    _bigquery.py
+                    ...
         tests/
-            ...
+            unit/
+                test_google_client.py
+                test_google_tools.py
+                ...
+            integration/
+                test_google_integration.py
         samples/ (optional)
             ...
         pyproject.toml
         README.md
         ...
     ...
-src/
-    agent_framework/
-        __init__.py
-        __init__.pyi
-        _agents.py
-        _tools.py
-        _models.py
-        _logging.py
-        connectors/
-            __init__.py
-            README.md       
-        context_providers.py
-        guardrails.py
-        exceptions.py
-        evaluations.py
-        utils.py
-        telemetry.py
-        templates.py
-        text_search.py
-        vector_data.py
-        workflows.py
-        py.typed
 tests/
     __init__.py
     unit/
         conftest.py
         test_agents.py
         test_types.py
-        ...
-    integration/
-        test_openai.py
-        test_azure.py
-        test_google.py
         ...
 samples/
     ...
@@ -163,6 +180,31 @@ uv.lock
 ```
 
 We might add a template subpackage as well, to make it easy to setup, this could be based on the first one that is added.
+
+In the `DEV_SETUP.md` we will add instructions for how to deal with the path depth issues, especially on Windows, where the maximum path length can be a problem.
+
+#### Evolving the package structure
+For each of the tier 1 components, we have two reason why we may split them into a folder, with an `__init__.py` and optionally a `_files.py`:
+1. If the file becomes too large, we can split it into multiple `_files`, while still keeping the public interface in the `__init__.py` file, this is a non-breaking change
+2. If we want to partially or fully move that code into a separate package.
+In this case we do need to lazy load anything that was moved from the main package to the subpackage, so that existing code still works, and if the subpackage is not installed we can raise a meaningful error.
+
+> **Important**: This setup means that in a users machine, the code from the main package and the code from any installed subpackages will be put in the same folder in their python installation, this means there cannot be name clashes between the contents of `connectors/*` and `extensions/*`. So the first level inside of those folders should be unique, preferably based the same as the subpackage name. A subpackage can contain both connectors and extensions, in that case for i.e. Azure, that would mean the following structure:
+
+```plaintext
+<!-- inside the Azure subpackage: -->
+agent_framework/
+    connectors/
+        azure/
+            __init__.py
+            _chat.py
+            _embeddings.py
+            ...
+    extensions/
+        azure/
+            __init__.py
+            _context_safety.py
+```
 
 ## Coding standards
 
@@ -304,39 +346,31 @@ This means that we will use the following conventions:
 * If we use `kwargs` we will document how and what we use them for, this might be a reference to a outside package's documentation or an explanation of what the `kwargs` are used for.
 * If we want to combine `kwargs` for multiple things, such as partly for a external client constructor, and partly for our own use, we will try to keep those separate, by adding a parameter, such as `client_kwargs` with type `dict[str, Any]`, and then use that to pass the kwargs to the client constructor (by using `Client(**client_kwargs)`), while using the `**kwargs` parameters for other uses, which are then also well documented.
 
+### Attributes vs inheritance
+
+When the parameters are the same except for one, we will use attributes, instead of inheritance, to minimize the conceptual overhead of understanding the code. Off course there are exceptions and these things will be decided on a case by case basis, but the general rule is that if the parameters are the same, we will use attributes.
+```python
+# ✅ preferred
+from agent_framework import ChatMessage
+user_msg = ChatMessage(
+    role="user",
+    content="Hello, world!"
+)
+asst_msg = ChatMessage(
+    role="assistant",
+    content="Hello, world!"
+)
+# ❌ not preferred
+from agent_framework import UserMessage, AssistantMessage
+user_msg = UserMessage(
+    content="Hello, world!"
+)
+asst_msg = AssistantMessage(
+    content="Hello, world!"
+)
+```
 
 ### Build and release
 The build step will be done in GHA, adding the package to the release and then we call into Azure DevOps to use the ESRP pipeline to publish to pypi. This is how SK already works, we will just have to adapt it to the new package structure.
 
-# Open questions
-
-* Should we shorten this even further: either `from agent_framework.openai import OpenAIClient` or maybe something like `from agent_framework.ext.openai import OpenAIClient`?
-* Do we need filters? and what about filters vs guardrails?
-* What do we want to do with Semantic Kernel templates? Or is context providers the new way of making "instructions" dynamic? And if we do want templates, do we need all three types currently in SK (SK, handlebars and jinja2) or just one, or even move to something like Prompty (already supported in .Net SK, not in python)?
-* Do we want to separate other packages out into subpackages, like maybe telemetry, workflows, multi-agent orchestration, etc?
-* what should be included when doing just `pip install agent-framework`, how can we minimize external dependencies?
-    * in other words, which batteries should be included?
-* What versioning scheme do we want to use, SemVer or CalVer?
-* How do we want to generate API docs?
-* Do we want to have a single logger for all AF, or should we have separate loggers for each component?
-* What do we prefer, when the parameters are the same except for one, a Subclass or a Parameter, take: 
-    ```python
-    from autogen.models import UserMessage, AssistantMessage
-    user_msg = UserMessage(
-        content="Hello, world!"
-    )
-    asst_msg = AssistantMessage(
-        content="Hello, world!"
-    )
-    #vs
-    from semantic_kernel.contents import ChatMessageContent
-    user_msg = ChatMessageContent(
-        role="user",
-        content="Hello, world!"
-    )
-    asst_msg = ChatMessageContent(
-        role="assistant",
-        content="Hello, world!"
-    )
-    ```
-    There is no right or wrong here, it's a matter of preference but we need to be consistent. 
+For now we will stick to semantic versioning, and all preview release will be tagged as such.
