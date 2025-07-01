@@ -21,6 +21,7 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self  # pragma: no cover
 
+_T = TypeVar("_T")
 TValue = TypeVar("TValue")
 
 CreatedAtT = str  # Use a datetimeoffset type? Or a more specific type like datetime.datetime?
@@ -622,28 +623,107 @@ ChatFinishReason.TOOL_CALLS = ChatFinishReason(value="tool_calls")  # type: igno
 TChatResponse = TypeVar("TChatResponse", bound="ChatResponse")
 
 
+def _process_update(response: "ChatResponse", update: "ChatResponseUpdate") -> None:
+    """Processes a single update and modifies the response in place."""
+    is_new_message = False
+    if not response.messages or (update.message_id and response.messages[-1].message_id != update.message_id):
+        is_new_message = True
+
+    if is_new_message:
+        message = ChatMessage(role=ChatRole.ASSISTANT, contents=[])
+        response.messages.append(message)
+    else:
+        message = response.messages[-1]
+    # Incorporate the update's properties into the message.
+    if update.author_name is not None:
+        message.author_name = update.author_name
+    if update.role is not None:
+        message.role = update.role
+    if update.message_id:
+        message.message_id = update.message_id
+    for content in update.contents:
+        if isinstance(content, UsageContent):
+            if response.usage_details is None:
+                response.usage_details = UsageDetails()
+            response.usage_details += content.details
+        else:
+            message.contents.append(content)
+    # Incorporate the update's properties into the response.
+    if update.response_id:
+        response.response_id = update.response_id
+    if update.conversation_id is not None:
+        response.conversation_id = update.conversation_id
+    if update.created_at is not None:
+        response.created_at = update.created_at
+    if update.finish_reason is not None:
+        response.finish_reason = update.finish_reason
+    if update.ai_model_id is not None:
+        response.ai_model_id = update.ai_model_id
+    if update.additional_properties is not None:
+        if response.additional_properties is None:
+            response.additional_properties = {}
+        response.additional_properties.update(update.additional_properties)
+
+
+def _coalesce_text_content(contents: list[AIContents], type: type[TextContent] | type[TextReasoningContent]) -> None:
+    """Take any subsequence Text or TextReasoningContent items and coalesce them into a single item."""
+    if not contents:
+        return
+    coalesced_contents = []
+    current_texts = []
+    first_new_content = None
+    for i, content in enumerate(contents):
+        if isinstance(content, type):
+            current_texts.append(content.text)
+            if first_new_content is None:
+                first_new_content = i
+        else:
+            if first_new_content is not None:
+                new_content = type(text="\n".join(current_texts))
+                new_content.raw_representation = contents[first_new_content].raw_representation
+                new_content.additional_properties = contents[first_new_content].additional_properties
+                # Store the replacement node. We inherit the properties of the first text node. We don't
+                # currently propagate additional properties from the subsequent nodes. If we ever need to,
+                # we can add that here.
+                coalesced_contents.append(new_content)
+                current_texts = []
+                first_new_content = None
+            coalesced_contents.append(content)
+    if current_texts:
+        coalesced_contents.append(type(text="\n".join(current_texts)))
+    contents.clear()
+    contents.extend(coalesced_contents)
+
+
+def _finalize_response(response: "ChatResponse") -> None:
+    """Finalizes the chat response by performing any necessary post-processing."""
+    for msg in response.messages:
+        _coalesce_text_content(msg.contents, TextContent)
+        _coalesce_text_content(msg.contents, TextReasoningContent)
+
+
 class ChatResponse(AFBaseModel):
     """Represents the response to a chat request."""
 
     messages: list[ChatMessage]
     """The chat response messages."""
 
-    additional_properties: dict[str, Any] | None = None
-    """Any additional properties associated with the chat response."""
+    response_id: str | None = None
+    """The ID of the chat response."""
     conversation_id: str | None = None
     """An identifier for the state of the conversation."""
+    ai_model_id: str | None = Field(default=None, alias="model_id")
+    """The model ID used in the creation of the chat response."""
     created_at: CreatedAtT | None = None  # use a datetimeoffset type?
     """A timestamp for the chat response."""
     finish_reason: ChatFinishReason | None = None
     """The reason for the chat response."""
-    ai_model_id: str | None = None
-    """The model ID used in the creation of the chat response."""
-    raw_representation: Any | None = None
-    """The raw representation of the chat response from an underlying implementation."""
-    response_id: str | None = None
-    """The ID of the chat response."""
     usage_details: UsageDetails | None = None
     """The usage details for the chat response."""
+    additional_properties: dict[str, Any] | None = None
+    """Any additional properties associated with the chat response."""
+    raw_representation: Any | None = None
+    """The raw representation of the chat response from an underlying implementation."""
 
     @property
     def text(self) -> str:
@@ -655,26 +735,27 @@ class ChatResponse(AFBaseModel):
         self,
         messages: ChatMessage | Sequence[ChatMessage],
         *,
-        additional_properties: dict[str, Any] | None = None,
+        response_id: str | None = None,
         conversation_id: str | None = None,
+        model_id: str | None = None,
         created_at: CreatedAtT | None = None,
         finish_reason: ChatFinishReason | None = None,
-        ai_model_id: str | None = None,
-        raw_representation: Any | None = None,
-        response_id: str | None = None,
         usage_details: UsageDetails | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
     ) -> None:
         """Initializes a ChatResponse with the provided parameters.
 
         Args:
-            messages: List of ChatMessage objects to include in the response.            additional_properties: Optional additional properties associated with the chat response.
+            response_id: Optional ID of the chat response.
             conversation_id: Optional identifier for the state of the conversation.
+            model_id: Optional model ID used in the creation of the chat response.
             created_at: Optional timestamp for the chat response.
             finish_reason: Optional reason for the chat response.
-            ai_model_id: Optional model ID used in the creation of the chat response.
-            raw_representation: Optional raw representation of the chat response from an underlying implementation.
-            response_id: Optional ID of the chat response.
             usage_details: Optional usage details for the chat response.
+            messages: List of ChatMessage objects to include in the response.
+            additional_properties: Optional additional properties associated with the chat response.
+            raw_representation: Optional raw representation of the chat response from an underlying implementation.
 
         """
 
@@ -683,27 +764,27 @@ class ChatResponse(AFBaseModel):
         self,
         text: TextContent | str,
         *,
-        additional_properties: dict[str, Any] | None = None,
+        response_id: str | None = None,
         conversation_id: str | None = None,
+        model_id: str | None = None,
         created_at: CreatedAtT | None = None,
         finish_reason: ChatFinishReason | None = None,
-        ai_model_id: str | None = None,
-        raw_representation: Any | None = None,
-        response_id: str | None = None,
         usage_details: UsageDetails | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
     ) -> None:
         """Initializes a ChatResponse with the provided parameters.
 
         Args:
             text: The text content to include in the response. If provided, it will be added as a ChatMessage.
-            additional_properties: Optional additional properties associated with the chat response.
+            response_id: Optional ID of the chat response.
             conversation_id: Optional identifier for the state of the conversation.
+            ai_model_id: Optional model ID used in the creation of the chat response.
             created_at: Optional timestamp for the chat response.
             finish_reason: Optional reason for the chat response.
-            ai_model_id: Optional model ID used in the creation of the chat response.
-            raw_representation: Optional raw representation of the chat response from an underlying implementation.
-            response_id: Optional ID of the chat response.
             usage_details: Optional usage details for the chat response.
+            additional_properties: Optional additional properties associated with the chat response.
+            raw_representation: Optional raw representation of the chat response from an underlying implementation.
 
         """
 
@@ -712,14 +793,14 @@ class ChatResponse(AFBaseModel):
         messages=None,
         text=None,
         *,
-        additional_properties=None,
+        response_id=None,
         conversation_id=None,
+        model_id=None,
         created_at=None,
         finish_reason=None,
-        ai_model_id=None,
-        raw_representation=None,
-        response_id=None,
         usage_details=None,
+        additional_properties=None,
+        raw_representation=None,
     ) -> None:
         """Initializes a ChatResponse with the provided parameters."""
         if messages is None:
@@ -733,15 +814,33 @@ class ChatResponse(AFBaseModel):
 
         super().__init__(
             messages=messages,
-            additional_properties=additional_properties,
+            response_id=response_id,
             conversation_id=conversation_id,
+            ai_model_id=model_id,
             created_at=created_at,
             finish_reason=finish_reason,
-            ai_model_id=ai_model_id,
-            raw_representation=raw_representation,
-            response_id=response_id,
             usage_details=usage_details,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
         )
+
+    @classmethod
+    def from_chat_response_updates(cls: type[_T], updates: Sequence["ChatResponseUpdate"]) -> _T:
+        """Joins multiple updates into a single ChatResponse."""
+        msg = cls(messages=[])
+        for update in updates:
+            _process_update(msg, update)
+        _finalize_response(msg)
+        return msg
+
+    @classmethod
+    async def from_chat_response_generator(cls: type[_T], updates: AsyncIterable["ChatResponseUpdate"]) -> _T:
+        """Joins multiple updates into a single ChatResponse."""
+        msg = cls(messages=[])
+        async for update in updates:
+            _process_update(msg, update)
+        _finalize_response(msg)
+        return msg
 
 
 class StructuredResponse(ChatResponse, Generic[TValue]):
@@ -764,14 +863,14 @@ class StructuredResponse(ChatResponse, Generic[TValue]):
         self,
         value: TValue,
         *,
-        additional_properties: dict[str, Any] | None = None,
+        response_id: str | None = None,
         conversation_id: str | None = None,
+        model_id: str | None = None,
         created_at: CreatedAtT | None = None,
         finish_reason: ChatFinishReason | None = None,
-        ai_model_id: str | None = None,
-        raw_representation: Any | None = None,
-        response_id: str | None = None,
         usage_details: UsageDetails | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
     ) -> None:
         """Initializes a StructuredResponse with the provided parameters."""
 
@@ -781,14 +880,14 @@ class StructuredResponse(ChatResponse, Generic[TValue]):
         text: TextContent | str,
         value: TValue,
         *,
-        additional_properties: dict[str, Any] | None = None,
+        response_id: str | None = None,
         conversation_id: str | None = None,
+        model_id: str | None = None,
         created_at: CreatedAtT | None = None,
         finish_reason: ChatFinishReason | None = None,
-        ai_model_id: str | None = None,
-        raw_representation: Any | None = None,
-        response_id: str | None = None,
         usage_details: UsageDetails | None = None,
+        raw_representation: Any | None = None,
+        additional_properties: dict[str, Any] | None = None,
     ) -> None:
         """Initializes a StructuredResponse with the provided parameters."""
 
@@ -798,14 +897,14 @@ class StructuredResponse(ChatResponse, Generic[TValue]):
         messages: Sequence[ChatMessage],
         value: TValue,
         *,
-        additional_properties: dict[str, Any] | None = None,
+        response_id: str | None = None,
         conversation_id: str | None = None,
+        model_id: str | None = None,
         created_at: CreatedAtT | None = None,
         finish_reason: ChatFinishReason | None = None,
-        ai_model_id: str | None = None,
-        raw_representation: Any | None = None,
-        response_id: str | None = None,
         usage_details: UsageDetails | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
     ) -> None:
         """Initializes a StructuredResponse with the provided parameters."""
 
@@ -815,14 +914,14 @@ class StructuredResponse(ChatResponse, Generic[TValue]):
         text=None,
         value=None,
         *,
-        additional_properties=None,
+        response_id=None,
         conversation_id=None,
+        model_id=None,
         created_at=None,
         finish_reason=None,
-        ai_model_id=None,
-        raw_representation=None,
-        response_id=None,
         usage_details=None,
+        additional_properties=None,
+        raw_representation=None,
     ) -> None:
         """Initializes a StructuredResponse with the provided parameters."""
         if messages is None:
@@ -841,7 +940,7 @@ class StructuredResponse(ChatResponse, Generic[TValue]):
             conversation_id=conversation_id,
             created_at=created_at,
             finish_reason=finish_reason,
-            ai_model_id=ai_model_id,
+            ai_model_id=model_id,
             raw_representation=raw_representation,
             response_id=response_id,
             usage_details=usage_details,
@@ -854,26 +953,28 @@ class ChatResponseUpdate(AFBaseModel):
     contents: list[AIContents]
     """The chat response update content items."""
 
-    additional_properties: dict[str, Any] | None = None
-    """Any additional properties associated with the chat response update."""
+    role: ChatRole | None = None
+    """The role of the author of the response update."""
     author_name: str | None = None
     """The name of the author of the response update."""
+    response_id: str | None = None
+    """The ID of the response of which this update is a part."""
+    message_id: str | None = None
+    """The ID of the message of which this update is a part."""
+
     conversation_id: str | None = None
     """An identifier for the state of the conversation of which this update is a part."""
+    ai_model_id: str | None = Field(default=None, alias="model_id")
+    """The model ID associated with this response update."""
     created_at: CreatedAtT | None = None  # use a datetimeoffset type?
     """A timestamp for the chat response update."""
     finish_reason: ChatFinishReason | None = None
     """The finish reason for the operation."""
-    message_id: str | None = None
-    """The ID of the message of which this update is a part."""
-    ai_model_id: str | None = None
-    """The model ID associated with this response update."""
+
+    additional_properties: dict[str, Any] | None = None
+    """Any additional properties associated with the chat response update."""
     raw_representation: Any | None = None
     """The raw representation of the chat response update from an underlying implementation."""
-    response_id: str | None = None
-    """The ID of the response of which this update is a part."""
-    role: ChatRole | None = None
-    """The role of the author of the response update."""
 
     @overload
     def __init__(
@@ -964,51 +1065,6 @@ class ChatResponseUpdate(AFBaseModel):
                 "contents": self.contents + contents,
                 "message_id": message_id or self.message_id,
             }
-        )
-
-    @staticmethod
-    def to_chat_response(updates: Sequence["ChatResponseUpdate"]) -> ChatResponse:
-        """Joins multiple updates into a single ChatResponse."""
-        if not updates:
-            return ChatResponse(messages=[])
-
-        conversation_id: str | None = None
-        created_at: CreatedAtT | None = None
-        finish_reason: ChatFinishReason | None = None
-        ai_model_id: str | None = None
-        raw_representation: list[Any | None] = []
-        additional_properties: dict[str, Any] | None = None
-        response_id: str | None = None
-        role: ChatRole | None = None
-
-        messages: list[ChatMessage] = []
-        for update in updates:
-            message = ChatMessage(
-                role=ChatRole.ASSISTANT,  # Assuming the role is always ASSISTANT for updates
-                contents=update.contents,
-                author_name=update.author_name,
-                message_id=update.message_id,
-            )
-            messages.append(message)
-            conversation_id = update.conversation_id or conversation_id
-            created_at = update.created_at or created_at
-            finish_reason = update.finish_reason or finish_reason
-            ai_model_id = update.ai_model_id or ai_model_id
-            role = update.role or role  # Assuming the role is always the same for updates
-
-            raw_representation += [update.raw_representation]  # Collect raw representations
-            # Do we really need to merge additional_properties? Should we do more than flat-merge?
-            additional_properties = (additional_properties or {}) | (update.additional_properties or {})
-
-        return ChatResponse(
-            messages=messages,
-            conversation_id=conversation_id,
-            created_at=created_at,
-            finish_reason=finish_reason,
-            ai_model_id=ai_model_id,
-            raw_representation=raw_representation,
-            response_id=response_id,
-            additional_properties=additional_properties,
         )
 
 

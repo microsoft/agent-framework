@@ -109,22 +109,50 @@ def test_chat_response_update():
     assert isinstance(response_update.contents[0], TextContent)
 
 
-def test_chat_response_updates_to_chat_response():
+def test_chat_response_updates_to_chat_response_one():
     """Test converting ChatResponseUpdate to ChatResponse."""
     # Create a ChatMessage
     message1 = TextContent("I'm doing well, ")
     message2 = TextContent("thank you!")
 
     # Create a ChatResponseUpdate with the message
-    response_updates = [ChatResponseUpdate(text=message1), ChatResponseUpdate(text=message2)]
+    response_updates = [
+        ChatResponseUpdate(text=message1, message_id="1"),
+        ChatResponseUpdate(text=message2, message_id="1"),
+    ]
 
     # Convert to ChatResponse
-    chat_response = ChatResponseUpdate.to_chat_response(response_updates)
+    chat_response = ChatResponse.from_chat_response_updates(response_updates)
+
+    # Check the type and content
+    assert len(chat_response.messages) == 1
+    assert chat_response.text == "I'm doing well, \nthank you!"
+    assert isinstance(chat_response.messages[0], ChatMessage)
+    assert chat_response.messages[0].message_id == "1"
+
+
+def test_chat_response_updates_to_chat_response_two():
+    """Test converting ChatResponseUpdate to ChatResponse."""
+    # Create a ChatMessage
+    message1 = TextContent("I'm doing well, ")
+    message2 = TextContent("thank you!")
+
+    # Create a ChatResponseUpdate with the message
+    response_updates = [
+        ChatResponseUpdate(text=message1, message_id="1"),
+        ChatResponseUpdate(text=message2, message_id="2"),
+    ]
+
+    # Convert to ChatResponse
+    chat_response = ChatResponse.from_chat_response_updates(response_updates)
 
     # Check the type and content
     assert len(chat_response.messages) == 2
     assert chat_response.text == "I'm doing well, \nthank you!"
     assert isinstance(chat_response.messages[0], ChatMessage)
+    assert chat_response.messages[0].message_id == "1"
+    assert isinstance(chat_response.messages[1], ChatMessage)
+    assert chat_response.messages[1].message_id == "2"
 
 
 def test_chat_tool_mode():
