@@ -242,12 +242,13 @@ The goal is to have at least 80% unit test coverage for all code under both the 
 Telemetry and logging are handled by the `agent_framework.telemetry` and `agent_framework._logging` packages.
 Logging is considered as part of the basic setup, while telemetry is a advanced concept.
 The telemetry package will use OpenTelemetry to provide a consistent way to collect and export telemetry data, similar to how we do this now in SK.
+
 The logging will be simplified, there will be one logger in the base package:
-* `agent_framework`: for general logging
+* name: `agent_framework` - used for all logging in the abstractions and base components
 
 Each of the other subpackages for connectors will have a similar single logger.
-* `agent_framework.connectors.openai`: for connector-specific logging
-* `agent_framework.connectors.azure`: for connector-specific logging
+* name: `agent_framework.connectors.openai` 
+* name: `agent_framework.connectors.azure` 
 
 This means that when a logger is needed, it should be created like this:
 ```python
@@ -286,6 +287,13 @@ import logging
 
 logger = logging.getLogger(__name__)
 ``` 
+
+This is allowed but discouraged, if the get_logger function has been called at least once then this will return the same logger as the get_logger function, however that might not have happened and then the logging experience (in terms of formats and handlers, etc) is not consistent across the package:
+```python
+import logging
+
+logger = logging.getLogger("agent_framework")
+```
 
 ### Function definitions
 To make the code easier to use, we will be very deliberate about the ordering and marking of function parameters.
