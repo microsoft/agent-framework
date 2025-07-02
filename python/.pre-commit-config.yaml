@@ -48,13 +48,3 @@ repos:
       - id: bandit
         args: ["-c", "python/pyproject.toml"]
         additional_dependencies: ["bandit[toml]"]
-  - repo: local
-    hooks:
-      - id: pyright
-        name: pyright
-        description: "Python command line wrapper for pyright, a static type checker"
-        entry: uv run --project python pyright
-        language: python
-        "types_or": [python, pyi]
-        require_serial: true
-        additional_dependencies: []

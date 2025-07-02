@@ -51,8 +51,7 @@ testpaths = 'tests'
 addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-filterwarnings = [
-]
+filterwarnings = []
 timeout = 120
 
 [tool.uv.workspace]
@@ -127,8 +126,6 @@ include = ["agent_framework", "tests", "samples"]
 typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
 reportMissingTypeStubs = false
-venvPath = "python"
-venv = ".venv"
 
 [tool.mypy]
 strict = true

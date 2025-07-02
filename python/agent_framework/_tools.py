@@ -120,7 +120,7 @@ def ai_function(
     name: str | None = None,
     description: str | None = None,
     additional_properties: dict[str, Any] | None = None,
-) -> AIFunction[Any, ReturnT] | Callable[Callable[..., ReturnT | Awaitable[ReturnT]], AIFunction[Any, ReturnT]]:
+) -> AIFunction[Any, ReturnT]:
     """Create a AIFunction from a function and return the callable tool object."""
 
     def wrapper(f: Callable[..., ReturnT | Awaitable[ReturnT]]) -> AIFunction[Any, ReturnT]:
