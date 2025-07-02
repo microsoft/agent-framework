@@ -2,7 +2,8 @@
 
 import functools
 import inspect
-from typing import Any, Awaitable, Callable, Generic, Protocol, TypeVar, runtime_checkable
+from collections.abc import Awaitable, Callable
+from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
 
 from pydantic import BaseModel, create_model
 
@@ -32,7 +33,7 @@ class AIFunction(Generic[ArgsT, ReturnT]):
 
     def __init__(
         self,
-        func: Callable[..., Awaitable[ReturnT]] | Callable[..., ReturnT],
+        func: Callable[..., Awaitable[ReturnT] | ReturnT],
         name: str,
         description: str,
         input_model: type[ArgsT],

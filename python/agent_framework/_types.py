@@ -153,7 +153,9 @@ def _process_update(response: "ChatResponse", update: "ChatResponseUpdate") -> N
         response.additional_properties.update(update.additional_properties)
 
 
-def _coalesce_text_content(contents: list[AIContents], type: type[TextContent] | type[TextReasoningContent]) -> None:
+def _coalesce_text_content(
+    contents: list["AIContents"], type: type["TextContent"] | type["TextReasoningContent"]
+) -> None:
     """Take any subsequence Text or TextReasoningContent items and coalesce them into a single item."""
     if not contents:
         return
@@ -761,6 +763,7 @@ class ChatResponse(AFBaseModel):
         """Initializes a ChatResponse with the provided parameters.
 
         Args:
+            messages: A single ChatMessage or a sequence of ChatMessage objects to include in the response.
             response_id: Optional ID of the chat response.
             conversation_id: Optional identifier for the state of the conversation.
             model_id: Optional model ID used in the creation of the chat response.
@@ -793,7 +796,7 @@ class ChatResponse(AFBaseModel):
             text: The text content to include in the response. If provided, it will be added as a ChatMessage.
             response_id: Optional ID of the chat response.
             conversation_id: Optional identifier for the state of the conversation.
-            ai_model_id: Optional model ID used in the creation of the chat response.
+            model_id: Optional model ID used in the creation of the chat response.
             created_at: Optional timestamp for the chat response.
             finish_reason: Optional reason for the chat response.
             usage_details: Optional usage details for the chat response.
