@@ -4,9 +4,9 @@
 * Developer experience is key
     * the components needed for a basic agent with tools and a runtime should be importable from `agent_framework` without having to import from subpackages. This will be referred to as _tier 0_ components.
     * for more advanced components, _tier 1_ components, such as context providers, guardrails, vector data, text search, exceptions, evaluation, utils, telemetry and workflows, they should be importable from `agent_framework.<component>`, so for instance `from agent_framework.vector_data import vectorstoremodel`.
-    * for connectors (_tier 2_), a developer should never have to import from more than 2 levels deep
-        * i.e.: `from agent_framework.connectors.openai import OpenAIClient`
-        * Question: should we shorten this even further: either `from agent_framework.openai import OpenAIClient` or maybe something like `from agent_framework.ext.openai import OpenAIClient`?
+    * for parts of the package that are either additional functionality or integrations with other services (connectors) (_tier 2_), we use the term _tier 2_, however they should also be importable from `agent_framework.<component>`, so for instance `from agent_framework.openai import OpenAIClient`.
+        * this means that the package structure is flat, and the components are grouped by functionality, not by type, so for instance `from agent_framework.openai import OpenAIChatClient` will import the OpenAI chat client, but also the OpenAI tools, and any other OpenAI related functionality.
+        * There should not be a need for deeper imports from those packages, unless a good case is made for that, so the internals of the extensions packages should always be a folder with the name of the package, a `__init__.py` and one or more `_files.py` file, where the `_files.py` file contains the implementation details, and the `__init__.py` file exposes the public interface.
     * if a single file becomes too cumbersome (files are allowed to be 1k+ lines) it should be split into a folder with an `__init__.py` that exposes the public interface and a `_files.py` that contains the implementation details, with a `__all__` in the init to expose the right things, if there are very large dependencies being loaded it can optionally using lazy loading to avoid loading the entire package when importing a single component.
     * as much as possible, related things are in a single file which makes understanding the code easier.
     * simple and straightforward logging and telemetry setup, so developers can easily add logging and telemetry to their code without having to worry about the details.
@@ -14,7 +14,7 @@
     * To allow connectors to be treated as independent packages, we will use namespace packages for connectors, in principle this only includes the packages that we will develop in our repo, since that is easy to manage and maintain.
     * further advantages are that each package can have a independent lifecycle, versioning, and dependencies.
     * and this gives us insights into the usage, through pip install statistics, especially for connectors to services outside of Microsoft.
-    * the goal is to group related connectors based on vendors, not on types, so for instance doing: `import agent_framework.connectors.google` will import connectors for all Google services, such as `GoogleChatClient` but also `BigQueryCollection`, etc.
+    * the goal is to group related connectors based on vendors, not on types, so for instance doing: `import agent_framework.google` will import connectors for all Google services, such as `GoogleChatClient` but also `BigQueryCollection`, etc.
     * All dependencies for a subpackage should be required dependencies in that package, and that package becomes a optional dependency in the main package as an _extra_ with the same name, so in the main `pyproject.toml` we will have:
         ```toml
         [project.optional-dependencies]
@@ -28,7 +28,7 @@
 ```python
 from typing import Annotated
 from agent_framework import Agent, ai_tool
-from agent_framework.connectors.openai import OpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 
 @ai_tool(description="Get the current weather in a given location")
 async def get_weather(location: Annotated[str, "The location as a city name"]) -> str:
@@ -65,15 +65,17 @@ Overall the following structure is proposed:
         * utils (optional)
         * telemetry (could also be observability or monitoring)
         * workflows (includes multi-agent orchestration)
-    * tier 2; extensions
-        * connectors (namespace package)
+    * tier 2; extensions 
+        * Extensions are any additional functionality that is useful for a user, to reduce friction they will imported in a similar way as tier 1, however the code for them will be in a separate package, so that they can be installed separately, they must have everything in a folder with the same name as the package, and without a `__init__.py` file in the root, so that they can be used as a namespace package.
+        * Some examples are:
             * openai
             * azure
-            * will be exposed through i.e. `agent_framework.connectors.openai` and `agent_framework.connectors.azure`
-        * extensions (namespace package)
+            * will be exposed through i.e. `agent_framework.openai` and `agent_framework.azure`
             * anything other then a connector that we want to expose as a separate package, for instance:
                 * mem0 (memory management)
-                * would be exposed through i.e. `agent_framework.extensions.mem0`
+                * would be exposed through i.e. `agent_framework.mem0`
+        * A package name cannot overlap with each other or with components in the main package, so `guardrails` cannot be used as a package name, since it is already used in the main package.
+            * A package can implement additional guardrails functionality, but that would become something like `from agent_framework.azure import ContentSafetyGuardrail`, which would contain a guardrail implementation using Azure Content Safety, but it is not the same as the `agent_framework.guardrails` component.
 * tests
 * samples
 * extensions
@@ -95,12 +97,6 @@ agent_framework/
     _tools.py
     _models.py
     _logging.py
-    extensions/
-        __init__.py
-        README.md
-    connectors/
-        __init__.py
-        README.md       
     context_providers.py
     guardrails.py
     exceptions.py
@@ -115,21 +111,19 @@ agent_framework/
 extensions/
     mem0/
         agent_framework/
-            extensions/
-                mem0/
-                    __init__.py
-                    _mem0.py
-                    ...
+            mem0/
+                __init__.py
+                _mem0.py
+                ...
     redis/
         ...
     openai/
         agent_framework/
-            connectors/
-                openai/
-                    __init__.py
-                    _chat.py
-                    _embeddings.py
-                    ...
+            openai/
+                __init__.py
+                _chat.py
+                _embeddings.py
+                ...
         tests/
             unit/
                 test_openai_client.py
@@ -144,12 +138,11 @@ extensions/
         ...
     google/        
         agent_framework/
-            connectors/
-                google/
-                    __init__.py
-                    _chat.py
-                    _bigquery.py
-                    ...
+            google/
+                __init__.py
+                _chat.py
+                _bigquery.py
+                ...
         tests/
             unit/
                 test_google_client.py
@@ -189,21 +182,17 @@ For each of the tier 1 components, we have two reason why we may split them into
 2. If we want to partially or fully move that code into a separate package.
 In this case we do need to lazy load anything that was moved from the main package to the subpackage, so that existing code still works, and if the subpackage is not installed we can raise a meaningful error.
 
-> **Important**: This setup means that in a users machine, the code from the main package and the code from any installed subpackages will be put in the same folder in their python installation, this means there cannot be name clashes between the contents of `connectors/*` and `extensions/*`. So the first level inside of those folders should be unique, preferably based the same as the subpackage name. A subpackage can contain both connectors and extensions, in that case for i.e. Azure, that would mean the following structure:
+> **Important**: This setup means that in a users machine, the code from the main package and the code from any installed subpackages will be put in the same folder in their python installation, this means there cannot be name clashes between the contents of a subpackage with each other, or with the main package. So the first level inside of those subpackages should be unique, preferably the same as the subpackage name. A subpackage can contain anything that is useful and related to Agent Framework, in that case for i.e. Azure, that would mean the following structure:
 
 ```plaintext
 <!-- inside the Azure subpackage: -->
 agent_framework/
-    connectors/
-        azure/
-            __init__.py
-            _chat.py
-            _embeddings.py
-            ...
-    extensions/
-        azure/
-            __init__.py
-            _context_safety.py
+    azure/
+        __init__.py
+        _chat.py
+        _embeddings.py
+        _context_safety.py
+        ...
 ```
 
 ## Coding standards
