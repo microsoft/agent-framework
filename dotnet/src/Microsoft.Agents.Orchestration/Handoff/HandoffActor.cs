@@ -26,7 +26,7 @@ internal sealed class HandoffActor :
     private readonly List<ChatMessage> _cache;
     private readonly ChatOptions _options;
 
-    private string? _handoffAgent;
+    private Agent? _handoffAgent;
     private string? _taskSummary;
 
     /// <summary>
@@ -42,7 +42,7 @@ internal sealed class HandoffActor :
     public HandoffActor(AgentId id, IAgentRuntime runtime, OrchestrationContext context, ChatClientAgent agent, HandoffLookup handoffs, AgentType resultHandoff, ILogger<HandoffActor>? logger = null)
         : base(id, runtime, context, agent, logger)
     {
-        if (handoffs.ContainsKey(agent.Name ?? agent.Id))
+        if (handoffs.ContainsKey(agent))
         {
             throw new ArgumentException($"The agent {agent.Name ?? agent.Id} cannot have a handoff to itself.", nameof(handoffs));
         }
@@ -176,22 +176,22 @@ internal sealed class HandoffActor :
             name: "end_task",
             description: "Complete the task with a summary when no further requests are given.");
 
-        foreach (KeyValuePair<string, (AgentType _, string Description)> handoff in this._handoffs)
+        foreach (KeyValuePair<Agent, (AgentType _, string Description)> handoff in this._handoffs)
         {
             AIFunction handoffFunction =
                 AIFunctionFactory.Create(
                     () => this.Handoff(handoff.Key),
-                    name: $"transfer_to_{handoff.Key}",
+                    name: $"transfer_to_{handoff.Key.Name}",
                     description: handoff.Value.Description);
 
             yield return handoffFunction;
         }
     }
 
-    private void Handoff(string agentName)
+    private void Handoff(Agent agent)
     {
-        this.Logger.LogHandoffFunctionCall(this.Id, agentName);
-        this._handoffAgent = agentName;
+        this.Logger.LogHandoffFunctionCall(this.Id, agent.Name ?? string.Empty);
+        this._handoffAgent = agent;
 
         FunctionInvokingChatClient.CurrentContext!.Terminate = true;
     }

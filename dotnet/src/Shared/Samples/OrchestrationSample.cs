@@ -71,7 +71,15 @@ public abstract class OrchestrationSample : BaseSample
 #pragma warning restore CA2000 // Dispose objects before losing scope
 
         // Create the agent.
-        return new ChatClientAgent(chatClient, new() { Name = name, Description = description, Instructions = instructions, ChatOptions = new() { Tools = functions, ToolMode = ChatToolMode.Auto } });
+        return new ChatClientAgent(
+            chatClient,
+            new()
+            {
+                Name = name,
+                Description = description,
+                Instructions = instructions,
+                ChatOptions = new() { Tools = functions, ToolMode = ChatToolMode.Auto }
+            });
     }
 
     /// <summary>
@@ -98,7 +106,9 @@ public abstract class OrchestrationSample : BaseSample
             Instructions = instructions,
             ChatOptions = new ChatOptions
             {
-                RawRepresentationFactory = (_) => new ResponseCreationOptions() { StoredOutputEnabled = stored }
+                RawRepresentationFactory = (_) => new ResponseCreationOptions() { StoredOutputEnabled = stored },
+                Tools = functions,
+                ToolMode = ChatToolMode.Auto
             }
         });
     }

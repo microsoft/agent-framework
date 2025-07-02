@@ -113,25 +113,25 @@ public class OrchestrationDemo(ITestOutputHelper output) : OrchestrationSample(o
     public async Task RunHandoffOrchestrationAsync()
     {
         // Define the agents & tools
-        ChatClientAgent triageAgent =
+        Agent triageAgent =
             this.CreateAgent(
                 instructions: "A customer support agent that triages issues.",
                 name: "TriageAgent",
                 description: "Handle customer requests.");
-        ChatClientAgent statusAgent =
-            this.CreateAgent(
+        Agent statusAgent =
+            this.CreateResponsesAgent(
                 name: "OrderStatusAgent",
                 instructions: "Handle order status requests.",
                 description: "A customer support agent that checks order status.",
                 functions: AIFunctionFactory.Create(OrderFunctions.CheckOrderStatus));
-        ChatClientAgent returnAgent =
+        Agent returnAgent =
             this.CreateAgent(
                 name: "OrderReturnAgent",
                 instructions: "Handle order return requests.",
                 description: "A customer support agent that handles order returns.",
                 functions: AIFunctionFactory.Create(OrderFunctions.ProcessReturn));
-        ChatClientAgent refundAgent =
-            this.CreateAgent(
+        Agent refundAgent =
+            this.CreateResponsesAgent(
                 name: "OrderRefundAgent",
                 instructions: "Handle order refund requests.",
                 description: "A customer support agent that handles order refund.",
@@ -140,15 +140,11 @@ public class OrchestrationDemo(ITestOutputHelper output) : OrchestrationSample(o
         // Define the orchestration
         HandoffOrchestration orchestration =
             new(OrchestrationHandoffs
-                    .StartWith(triageAgent)
-                    .Add(triageAgent, statusAgent, returnAgent, refundAgent)
-                    .Add(statusAgent, triageAgent, "Transfer to this agent if the issue is not status related")
-                    .Add(returnAgent, triageAgent, "Transfer to this agent if the issue is not return related")
-                    .Add(refundAgent, triageAgent, "Transfer to this agent if the issue is not refund related"),
-                triageAgent,
-                statusAgent,
-                returnAgent,
-                refundAgent)
+                .StartWith(triageAgent)
+                .Add(triageAgent, statusAgent, returnAgent, refundAgent)
+                .Add(statusAgent, triageAgent, "Transfer to this agent if the issue is not status related")
+                .Add(returnAgent, triageAgent, "Transfer to this agent if the issue is not return related")
+                .Add(refundAgent, triageAgent, "Transfer to this agent if the issue is not refund related"))
             {
                 ResponseCallback = this.WriteUpdatesToConsole
             };
@@ -172,7 +168,7 @@ public class OrchestrationDemo(ITestOutputHelper output) : OrchestrationSample(o
     private ValueTask WriteUpdatesToConsole(IEnumerable<ChatMessage> messages)
     {
         Console.WriteLine(string.Join(string.Empty, Enumerable.Repeat("-", 100)) + "\n# Update\n");
-        Console.WriteLine(string.Join("\n\n", messages.Select((x, i) => $"## {x.AuthorName}:\n\n{x.Text}")));
+        Console.WriteLine(string.Join("\n\n", messages.Select((x, i) => $"## {x.AuthorName}:\n\n{x.Text}{x.Contents.Where(x => x is FunctionCallContent).Cast<FunctionCallContent>().FirstOrDefault()?.Name}")));
         return ValueTask.CompletedTask;
     }
 }

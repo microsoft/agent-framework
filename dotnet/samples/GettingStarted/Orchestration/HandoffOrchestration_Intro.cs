@@ -65,11 +65,7 @@ public class HandoffOrchestration_Intro(ITestOutputHelper output) : Orchestratio
                     .Add(triageAgent, statusAgent, returnAgent, refundAgent)
                     .Add(statusAgent, triageAgent, "Transfer to this agent if the issue is not status related")
                     .Add(returnAgent, triageAgent, "Transfer to this agent if the issue is not return related")
-                    .Add(refundAgent, triageAgent, "Transfer to this agent if the issue is not refund related"),
-                triageAgent,
-                statusAgent,
-                returnAgent,
-                refundAgent)
+                    .Add(refundAgent, triageAgent, "Transfer to this agent if the issue is not refund related"))
             {
                 InteractiveCallback = () =>
                 {

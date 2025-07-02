@@ -23,21 +23,9 @@ public class HandoffOrchestration<TInput, TOutput> : AgentOrchestration<TInput, 
     /// Initializes a new instance of the <see cref="HandoffOrchestration{TInput, TOutput}"/> class.
     /// </summary>
     /// <param name="handoffs">Defines the handoff connections for each agent.</param>
-    /// <param name="agents">The agents participating in the orchestration.</param>
-    public HandoffOrchestration(OrchestrationHandoffs handoffs, params Agent[] agents)
-        : base(agents)
+    public HandoffOrchestration(OrchestrationHandoffs handoffs)
+        : base([.. handoffs.Keys.Concat(handoffs.Values.SelectMany(h => h.Keys))])
     {
-        // Create list of distinct agent names
-        HashSet<string> agentNames = new(agents.Select(a => a.Name ?? a.Id), StringComparer.Ordinal);
-        agentNames.Add(handoffs.FirstAgentName);
-        // Extract names from handoffs that don't align with a member agent.
-        string[] badNames = [.. handoffs.Keys.Concat(handoffs.Values.SelectMany(h => h.Keys)).Where(name => !agentNames.Contains(name))];
-        // Fail fast if invalid names are present.
-        if (badNames.Length > 0)
-        {
-            throw new ArgumentException($"The following agents are not defined in the orchestration: {string.Join(", ", badNames)}", nameof(handoffs));
-        }
-
         this._handoffs = handoffs;
     }
 
@@ -63,14 +51,14 @@ public class HandoffOrchestration<TInput, TOutput> : AgentOrchestration<TInput, 
         AgentType outputType = await registrar.RegisterResultTypeAsync<HandoffMessages.Result>(response => [response.Message]).ConfigureAwait(false);
 
         // Each agent handsoff its result to the next agent.
-        Dictionary<string, AgentType> agentMap = [];
-        Dictionary<string, HandoffLookup> handoffMap = [];
+        Dictionary<Agent, AgentType> agentMap = [];
+        Dictionary<Agent, HandoffLookup> handoffMap = [];
         AgentType agentType = outputType;
         for (int index = this.Members.Count - 1; index >= 0; --index)
         {
             Agent agent = this.Members[index];
             HandoffLookup map = [];
-            handoffMap[agent.Name ?? agent.Id] = map;
+            handoffMap[agent] = map;
             agentType =
                 await runtime.RegisterOrchestrationAgentAsync(
                     this.GetAgentType(context.Topic, index),
@@ -87,7 +75,7 @@ public class HandoffOrchestration<TInput, TOutput> : AgentOrchestration<TInput, 
                         return ValueTask.FromResult<IHostableAgent>(actor);
 #endif
                     }).ConfigureAwait(false);
-            agentMap[agent.Name ?? agent.Id] = agentType;
+            agentMap[agent] = agentType;
 
             await runtime.SubscribeAsync(agentType, context.Topic).ConfigureAwait(false);
 
@@ -95,18 +83,18 @@ public class HandoffOrchestration<TInput, TOutput> : AgentOrchestration<TInput, 
         }
 
         // Complete the handoff model
-        foreach (KeyValuePair<string, AgentHandoffs> handoffs in this._handoffs)
+        foreach (KeyValuePair<Agent, AgentHandoffs> handoffs in this._handoffs)
         {
             // Retrieve the map for the agent (every agent had an empty map created)
             HandoffLookup agentHandoffs = handoffMap[handoffs.Key];
-            foreach (KeyValuePair<string, string> handoff in handoffs.Value)
+            foreach (KeyValuePair<Agent, string> handoff in handoffs.Value)
             {
                 // name = (type,description)
                 agentHandoffs[handoff.Key] = (agentMap[handoff.Key], handoff.Value);
             }
         }
 
-        return agentMap[this._handoffs.FirstAgentName];
+        return agentMap[this._handoffs.FirstAgent];
     }
 
     private AgentType GetAgentType(TopicId topic, int index) => this.FormatAgentType(topic, $"Agent_{index + 1}");

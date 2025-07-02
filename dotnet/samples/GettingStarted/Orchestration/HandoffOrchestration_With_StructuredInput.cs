@@ -49,10 +49,7 @@ public class HandoffOrchestration_With_StructuredInput(ITestOutputHelper output)
         HandoffOrchestration<GithubIssue, string> orchestration =
             new(OrchestrationHandoffs
                     .StartWith(triageAgent)
-                    .Add(triageAgent, dotnetAgent, pythonAgent),
-                triageAgent,
-                pythonAgent,
-                dotnetAgent)
+                    .Add(triageAgent, dotnetAgent, pythonAgent))
             {
                 LoggerFactory = this.LoggerFactory,
                 ResponseCallback = monitor.ResponseCallback,
