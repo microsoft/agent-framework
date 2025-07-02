@@ -19,7 +19,7 @@ jobs:
     continue-on-error: true
     defaults:
       run:
-        working-directory: python
+        working-directory: ./python
     env:
       # Configure a constant location for the uv cache
       UV_CACHE_DIR: /tmp/.uv-cache
@@ -40,4 +40,4 @@ jobs:
         with:
           extra_args: --config python/.pre-commit-config.yaml --all-files
       - name: Run Mypy
-        run: uv run --directory python mypy -p agent_framework
+        run: uv run mypy -p agent_framework
