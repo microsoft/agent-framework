@@ -5,7 +5,7 @@ using Microsoft.Extensions.AI;
 
 namespace GettingStarted;
 
-internal class TerminationStringGroupChatManager(string approvalString) : RoundRobinGroupChatManager
+internal sealed class TerminationStringGroupChatManager(string approvalString) : RoundRobinGroupChatManager
 {
     public override async ValueTask<GroupChatManagerResult<bool>> ShouldTerminate(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default)
     {
