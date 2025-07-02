@@ -1,11 +1,31 @@
 [project]
 name = "agent-framework"
+description = "Microsoft Agent Framework for building AI Agents with Python."
+authors = [{ name = "Microsoft", email = "SK-Support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "0.0.0"
+version = "0.1.0b1"
 license = {file = "LICENSE"}
+urls.homepage = "https://learn.microsoft.com/en-us/semantic-kernel/overview/"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
+urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=tag%3Apython-1&expanded=true"
+urls.issues = "https://github.com/microsoft/agent-framework/issues"
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Development Status :: 5 - Production/Stable",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Framework :: Pydantic :: 2",
+  "Typing :: Typed",
+]
 dependencies = [
+    "azure",
+    "openai",
+    "pydantic>=2.11.7",
 ]
 
 [dependency-groups]
@@ -14,12 +34,23 @@ dev = [
     "pyright>=1.1.400",
     "mypy>=1.15.0",
     "ruff>=0.11.8",
+    "poethepoet>=0.36.0",
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.0.0",
+    "pytest-cov>=6.2.1",
+    "pytest-xdist>=3.8.0",
 ]
 
 [build-system]
 requires = ["hatchling", "uv-dynamic-versioning"]
 build-backend = "hatchling.build"
 
+[tool.uv.workspace]
+members = ["extensions/*"]
+
+[tool.uv.sources]
+openai = { workspace = true }
+azure = { workspace = true }
 
 [tool.uv-dynamic-versioning]
 fallback-version = "0.0.0"
@@ -27,6 +58,7 @@ fallback-version = "0.0.0"
 [tool.ruff]
 line-length = 120
 target-version = "py310"
+fix = true
 include = ["*.py", "*.pyi", "**/pyproject.toml", "*.ipynb"]
 preview = true
 
@@ -74,7 +106,7 @@ notice-rgx = "^# Copyright \\(c\\) Microsoft\\. All rights reserved\\."
 min-file-size = 1
 
 [tool.pyright]
-include = ["src", "tests", "samples"]
+include = ["agent_framework", "tests", "samples"]
 typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
 reportMissingTypeStubs = false
@@ -83,16 +115,14 @@ venv = ".venv"
 
 [tool.mypy]
 strict = true
-python_version = "3.9"
+python_version = "3.10"
 ignore_missing_imports = true
-
 disallow_untyped_defs = true
 no_implicit_optional = true
 check_untyped_defs = true
 warn_return_any = true
 show_error_codes = true
 warn_unused_ignores = false
-
 disallow_incomplete_defs = true
 disallow_untyped_decorators = true
 disallow_any_unimported = true

@@ -1,0 +1,21 @@
+[project]
+name = "azure"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "eavanvalkenburg", email = "github@vanvalkenburg.eu" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "agent-framework",
+    "openai",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv.sources]
+openai = { workspace = true }
+agent-framework = { workspace = true }
