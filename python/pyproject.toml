@@ -95,6 +95,12 @@ ignore = [
     "FIX002" # allow todo
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# Ignore all directories named `tests` and `samples`.
+"tests/**" = ["D", "INP", "TD", "ERA001", "RUF"]
+"samples/**" = ["D", "INP", "ERA001", "RUF"]
+"*.ipynb" = ["CPY", "E501"]
+
 [tool.ruff.format]
 docstring-code-format = true
 
