@@ -4,6 +4,8 @@ on:
   workflow_dispatch:
   pull_request:
     branches: ["main"]
+    paths:
+      - "python/**"
 
 jobs:
   pre-commit:
@@ -38,4 +40,4 @@ jobs:
         with:
           extra_args: --config python/.pre-commit-config.yaml --all-files
       - name: Run Mypy
-        run: uv run mypy -p agent-framework --config-file python/pyproject.toml
+        run: uv run mypy -p agent_framework --config-file python/pyproject.toml
