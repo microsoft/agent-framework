@@ -21,5 +21,4 @@ def get_logger(name: str = "agent_framework") -> logging.Logger:
     """
     if not name.startswith("agent_framework"):
         raise AgentFrameworkException("Logger name must start with 'agent_framework'.")
-    logger = logging.getLogger(name)
-    return logger
+    return logging.getLogger(name)
