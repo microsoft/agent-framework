@@ -7,7 +7,7 @@ on:
 
 jobs:
   pre-commit:
-    name: Code Quality Checks
+    name: Checks
     if: "!cancelled()"
     strategy:
       fail-fast: false
