@@ -1,2 +1,1 @@
-def hello() -> str:
-    return "Hello from openai!"
+# Copyright (c) Microsoft. All rights reserved.

@@ -1,2 +1,1 @@
-def hello() -> str:
-    return "Hello from azure!"
+# Copyright (c) Microsoft. All rights reserved.
