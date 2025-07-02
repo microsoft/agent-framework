@@ -5,7 +5,7 @@ import logging
 from .exceptions import AgentFrameworkException
 
 logging.basicConfig(
-    format="[%(asctime)s - %(name)s:%(lineno)d - %(levelname)s] %(message)s",
+    format="[%(asctime)s - %(pathname)s:%(lineno)d - %(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 

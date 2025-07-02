@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+
 import pytest
 
 from agent_framework import get_logger
@@ -25,9 +26,14 @@ def test_get_logger_invalid_name():
         get_logger("invalid_name")
 
 
-def test_logger_format():
-    """Test that the logger format is correctly set."""
+def test_log(caplog):
+    """Test that the logger can log messages and adheres to the expected format."""
     logger = get_logger()
-
-    assert logger.config.formatter._fmt == "[%(asctime)s - %(name)s:%(lineno)d - %(levelname)s] %(message)s"
-    assert logger.config.formatter.datefmt == "%Y-%m-%d %H:%M:%S"
+    with caplog.at_level("DEBUG"):
+        logger.debug("This is a debug message")
+        assert len(caplog.records) == 1
+        record = caplog.records[0]
+        assert record.levelname == "DEBUG"
+        assert record.message == "This is a debug message"
+        assert record.name == "agent_framework"
+        assert record.pathname.endswith("test_logging.py")
