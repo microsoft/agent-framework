@@ -13,6 +13,11 @@
     <PackageReference Include="Microsoft.Extensions.AI" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.Abstractions\Microsoft.Agents.Abstractions.csproj" />
+    <ProjectReference Include="..\Microsoft.Agents\Microsoft.Agents.csproj" />
+  </ItemGroup>
+
   <PropertyGroup>
     <!-- NuGet Package Settings -->
     <Title>Microsoft.Extensions.AI.AzureAIAgentsPersistent</Title>

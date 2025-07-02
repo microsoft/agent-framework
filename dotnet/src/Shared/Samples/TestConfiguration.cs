@@ -53,6 +53,22 @@ public sealed class TestConfiguration
         public string? DeploymentName { get; set; }
     }
 
+    /// <summary>Represents the configuration settings required to interact with Google services.</summary>
+    public class GoogleAIConfig
+    {
+        /// <summary>Gets or sets the api key for Google Gemini.</summary>
+        public string ApiKey { get; set; }
+
+        public GeminiConfig Gemini { get; set; }
+
+        /// <summary>Represents the configuration settings required to interact with the Google Gemini service.</summary>
+        public class GeminiConfig
+        {
+            /// <summary>Gets or sets the name of the model to use from Google Gemini.</summary>
+            public string ModelId { get; set; }
+        }
+    }
+
     /// <summary>
     /// Initializes the configuration system with the specified configuration root.
     /// </summary>
@@ -81,6 +97,11 @@ public sealed class TestConfiguration
     /// Gets the configuration settings for the AzureAI integration.
     /// </summary>
     public static AzureAIConfig AzureAI => LoadSection<AzureAIConfig>();
+
+    /// <summary>
+    /// Gets the configuration settings for Google integration.
+    /// </summary>
+    public static GoogleAIConfig GoogleAI => LoadSection<GoogleAIConfig>();
 
     /// <summary>
     /// Retrieves a configuration section based on the specified key.
