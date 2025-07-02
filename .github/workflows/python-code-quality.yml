@@ -7,6 +7,7 @@ on:
 
 jobs:
   pre-commit:
+    name: Python - Pre-Commit Hooks
     if: "!cancelled()"
     strategy:
       fail-fast: false
@@ -36,3 +37,5 @@ jobs:
         name: Run Pre-Commit Hooks
         with:
           extra_args: --config python/.pre-commit-config.yaml --all-files
+      - name: Run Mypy
+        run: uv run mypy -p agent-framework
