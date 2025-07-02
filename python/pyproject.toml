@@ -28,22 +28,32 @@ dependencies = [
     "pydantic>=2.11.7",
 ]
 
-[dependency-groups]
-dev = [
+[tool.uv]
+prerelease = "if-necessary-or-explicit"
+dev-dependencies = [
     "pre-commit >= 3.7",
-    "pyright>=1.1.401",
-    "mypy>=1.15.0",
     "ruff>=0.11.8",
     "poethepoet>=0.36.0",
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
     "pytest-cov>=6.2.1",
-    "pytest-xdist>=3.8.0",
+    "pytest-xdist[psutil]>=3.8.0",
+    "pytest-timeout>=2.3.1",
+]
+environments = [
+    "sys_platform == 'darwin'",
+    "sys_platform == 'linux'",
+    "sys_platform == 'win32'"
 ]
 
-[build-system]
-requires = ["hatchling", "uv-dynamic-versioning"]
-build-backend = "hatchling.build"
+[tool.pytest.ini_options]
+testpaths = 'tests'
+addopts = "-ra -q -r fEX"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = [
+]
+timeout = 120
 
 [tool.uv.workspace]
 members = ["extensions/*"]

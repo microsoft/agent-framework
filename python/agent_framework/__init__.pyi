@@ -4,7 +4,25 @@ import importlib.metadata
 
 from ._guard_rails import InputGuardrail, OutputGuardrail
 from ._logging import get_logger
-from ._tool import AITool
+from ._tools import AITool
+from ._types import (
+    AIContent,
+    ChatFinishReason,
+    ChatMessage,
+    ChatOptions,
+    ChatResponse,
+    ChatResponseUpdate,
+    ChatRole,
+    ChatToolMode,
+    DataContent,
+    ErrorContent,
+    FunctionCallContent,
+    FunctionResultContent,
+    ModelClient,
+    TextContent,
+    TextReasoningContent,
+    UriContent,
+)
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -20,5 +38,21 @@ __ALL__ = [
         OutputGuardrail,
         get_logger,
         AITool,
+        AIContent,
+        TextContent,
+        TextReasoningContent,
+        DataContent,
+        UriContent,
+        FunctionCallContent,
+        FunctionResultContent,
+        ChatFinishReason,
+        ChatMessage,
+        ChatResponse,
+        ChatResponseUpdate,
+        ChatRole,
+        ErrorContent,
+        ModelClient,
+        ChatOptions,
+        ChatToolMode,
     ]
 ]
