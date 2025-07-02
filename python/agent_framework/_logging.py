@@ -4,6 +4,11 @@ import logging
 
 from .exceptions import AgentFrameworkException
 
+logging.basicConfig(
+    format="[%(asctime)s - %(name)s:%(lineno)d - %(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
 
 def get_logger(name: str = "agent_framework") -> logging.Logger:
     """Get a logger with the specified name, defaulting to 'agent_framework'.
@@ -16,9 +21,5 @@ def get_logger(name: str = "agent_framework") -> logging.Logger:
     """
     if not name.startswith("agent_framework"):
         raise AgentFrameworkException("Logger name must start with 'agent_framework'.")
-    logging.basicConfig(
-        format="[%(asctime)s - %(name)s:%(lineno)d - %(levelname)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
     logger = logging.getLogger(name)
     return logger
