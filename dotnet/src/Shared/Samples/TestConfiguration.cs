@@ -59,6 +59,7 @@ public sealed class TestConfiguration
         /// <summary>Gets or sets the api key for Google Gemini.</summary>
         public string ApiKey { get; set; }
 
+        /// <summary>Gets or sets the configuration settings required to interact with the Google Gemini service.</summary>
         public GeminiConfig Gemini { get; set; }
 
         /// <summary>Represents the configuration settings required to interact with the Google Gemini service.</summary>

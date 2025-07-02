@@ -2,9 +2,13 @@
 
 using System.Text;
 using System.Text.Json;
+using Azure.AI.Agents.Persistent;
+using Azure.Identity;
+using GenerativeAI.Microsoft;
 using Microsoft.Agents;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Samples;
+using OpenAI.Responses;
 using OpenAIClient = OpenAI.OpenAIClient;
 
 namespace Microsoft.Shared.SampleUtilities;
@@ -19,7 +23,12 @@ public abstract class OrchestrationSample : BaseSample
     /// <summary>
     /// This constant defines the timeout duration for result retrieval, measured in seconds.
     /// </summary>
-    protected const int ResultTimeoutInSeconds = 30;
+    protected const int ResultTimeoutInSeconds = 120;
+
+    /// <summary>
+    /// This static readonly property defines the timeout duration for result retrieval.
+    /// </summary>
+    protected static readonly TimeSpan ResultTimeout = TimeSpan.FromSeconds(ResultTimeoutInSeconds);
 
     /// <summary>
     /// Creates a new <see cref="ChatClientAgent"/> instance using the specified instructions, description, name, and functions.
@@ -44,6 +53,92 @@ public abstract class OrchestrationSample : BaseSample
             };
 
         return new ChatClientAgent(chatClient, options);
+    }
+
+    /// <summary>
+    /// Creates a new Gemini based <see cref="ChatClientAgent"/> instance using the specified instructions, description, name, and functions.
+    /// </summary>
+    /// <param name="instructions">The instructions to provide to the agent.</param>
+    /// <param name="description">An optional description for the agent.</param>
+    /// <param name="name">An optional name for the agent.</param>
+    /// <param name="functions">A set of <see cref="AIFunction"/> instances to be used as tools by the agent.</param>
+    /// <returns>A new <see cref="ChatClientAgent"/> instance configured with the provided parameters.</returns>
+    protected ChatClientAgent CreateGeminiAgent(string instructions, string? description = null, string? name = null, params AIFunction[] functions)
+    {
+        // Get a chat client.
+#pragma warning disable CA2000 // Dispose objects before losing scope
+        GenerativeAIChatClient chatClient = new(TestConfiguration.GoogleAI.ApiKey, TestConfiguration.GoogleAI.Gemini.ModelId);
+#pragma warning restore CA2000 // Dispose objects before losing scope
+
+        // Create the agent.
+        return new ChatClientAgent(chatClient, new() { Name = name, Description = description, Instructions = instructions, ChatOptions = new() { Tools = functions, ToolMode = ChatToolMode.Auto } });
+    }
+
+    /// <summary>
+    /// Creates a new Gemini based <see cref="ChatClientAgent"/> instance using the specified instructions, description, name, and functions.
+    /// </summary>
+    /// <param name="instructions">The instructions to provide to the agent.</param>
+    /// <param name="description">An optional description for the agent.</param>
+    /// <param name="name">An optional name for the agent.</param>
+    /// <param name="stored">A value indicating whether the conversation thread should be stored in the service.</param>
+    /// <param name="functions">A set of <see cref="AIFunction"/> instances to be used as tools by the agent.</param>
+    /// <returns>A new <see cref="ChatClientAgent"/> instance configured with the provided parameters.</returns>
+    protected ChatClientAgent CreateResponsesAgent(string instructions, string? description = null, string? name = null, bool? stored = false, params AIFunction[] functions)
+    {
+        // Get the chat client to use for the agent.
+        using var chatClient = new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
+            .GetOpenAIResponseClient(TestConfiguration.OpenAI.ChatModelId)
+            .AsIChatClient();
+
+        // Define the agent
+        return new(chatClient, new()
+        {
+            Name = name,
+            Description = description,
+            Instructions = instructions,
+            ChatOptions = new ChatOptions
+            {
+                RawRepresentationFactory = (_) => new ResponseCreationOptions() { StoredOutputEnabled = stored }
+            }
+        });
+    }
+
+    /// <summary>
+    /// Creates a new Foundry based <see cref="ChatClientAgent"/> instance using the specified instructions, description, name, and functions.
+    /// </summary>
+    /// <param name="instructions">The instructions to provide to the agent.</param>
+    /// <param name="description">An optional description for the agent.</param>
+    /// <param name="name">An optional name for the agent.</param>
+    /// <param name="functions">A set of <see cref="AIFunction"/> instances to be used as tools by the agent.</param>
+    /// <returns>A new <see cref="ChatClientAgent"/> instance configured with the provided parameters.</returns>
+    protected async Task<ChatClientAgent> CreateFoundryAgent(string instructions, string? description = null, string? name = null, params AIFunction[] functions)
+    {
+        // Get a client for creating server side agents.
+        PersistentAgentsClient persistentAgentsClient = new(TestConfiguration.AzureAI.Endpoint, new AzureCliCredential());
+
+        // Create a server side agent.
+        var persistentAgentResponse = await persistentAgentsClient.Administration.CreateAgentAsync(
+            model: TestConfiguration.AzureAI.DeploymentName,
+            name: name,
+            description: description,
+            instructions: instructions).ConfigureAwait(false);
+
+        // Create a ChatClientAgent from the service call result.
+        return persistentAgentsClient.GetChatClientAgent(persistentAgentResponse.Value.Id, new() { Tools = functions, ToolMode = ChatToolMode.Auto }, name, description, instructions);
+    }
+
+    /// <summary>
+    /// Deletes a foundry agent with the specified identifier.
+    /// </summary>
+    /// <param name="agentId">The unique identifier of the agent to delete. This value cannot be null or empty.</param>
+    /// <returns>A task that completes when the agent is deleted.</returns>
+    protected async Task DeleteFoundryAgent(string agentId)
+    {
+        // Get a client for creating server side agents.
+        PersistentAgentsClient persistentAgentsClient = new(TestConfiguration.AzureAI.Endpoint, new AzureCliCredential());
+
+        // Delete the agent.
+        await persistentAgentsClient.Administration.DeleteAgentAsync(agentId).ConfigureAwait(false);
     }
 
     /// <summary>

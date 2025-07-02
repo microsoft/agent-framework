@@ -100,6 +100,24 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
     protected string OrchestrationLabel { get; }
 
     /// <summary>
+    /// Runs the orchestration to completion, returning the final output.
+    /// </summary>
+    /// <param name="input">The input message.</param>
+    /// <param name="runtime">The runtime associated with the orchestration.</param>
+    /// <param name="timeout">The maximum amount of time to wait for the orchestration to complete.</param>
+    /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
+    /// <returns>The final output of the orchestration.</returns>
+    public async ValueTask<TOutput> RunToCompletionAsync(
+        TInput input,
+        IAgentRuntime runtime,
+        TimeSpan? timeout = null,
+        CancellationToken cancellationToken = default)
+    {
+        var orchestrationResult = await this.InvokeAsync(input, runtime, cancellationToken).ConfigureAwait(false);
+        return await orchestrationResult.GetValueAsync(timeout, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Initiates processing of the orchestration.
     /// </summary>
     /// <param name="input">The input message.</param>

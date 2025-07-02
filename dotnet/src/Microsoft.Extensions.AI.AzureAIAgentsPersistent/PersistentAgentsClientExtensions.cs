@@ -100,12 +100,15 @@ public static class PersistentAgentsClientExtensions
     /// <returns>A <see cref="ChatClientAgent"/> for the created persistent agent.</returns>
     /// <param name="agentId"> The ID of the server side agent to create a <see cref="ChatClientAgent"/> for.</param>
     /// <param name="chatOptions">Options that should apply to all runs of the agent.</param>
-    public static ChatClientAgent GetChatClientAgent(this PersistentAgentsClient persistentAgentsClient, string agentId, ChatOptions? chatOptions = null)
+    /// <param name="name">An optional name for the agent.</param>
+    /// <param name="description">An optional description for the agent.</param>
+    /// <param name="instructions">The instructions to provide to the agent.</param>
+    public static ChatClientAgent GetChatClientAgent(this PersistentAgentsClient persistentAgentsClient, string agentId, ChatOptions? chatOptions = null, string? name = null, string? description = null, string? instructions = null)
     {
         // Get the chat client to use for the agent.
         using var chatClient = persistentAgentsClient.AsIChatClient(agentId);
 
         // Create the ChatClientAgent.
-        return new(chatClient, new() { Id = agentId, ChatOptions = chatOptions });
+        return new(chatClient, new() { Id = agentId, ChatOptions = chatOptions, Name = name, Description = description, Instructions = instructions });
     }
 }
