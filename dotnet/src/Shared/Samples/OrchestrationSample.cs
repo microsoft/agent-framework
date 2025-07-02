@@ -114,6 +114,33 @@ public abstract class OrchestrationSample : BaseSample
     }
 
     /// <summary>
+    /// Gets a new Foundry based <see cref="ChatClientAgent"/> instance using the specified id.
+    /// </summary>
+    /// <param name="id">The id of the agent to get.</param>
+    /// <param name="functions">A set of <see cref="AIFunction"/> instances to be used as tools by the agent.</param>
+    /// <returns>A new <see cref="ChatClientAgent"/> instance configured with the provided parameters.</returns>
+    protected async Task<ChatClientAgent> GetFoundryAgent(string id, params AIFunction[] functions)
+    {
+        // Get a client for creating server side agents.
+        PersistentAgentsClient persistentAgentsClient = new(TestConfiguration.AzureAI.Endpoint, new AzureCliCredential());
+
+        // Get an existing server side agent.
+        var persistentAgentResponse = await persistentAgentsClient.Administration.GetAgentAsync(id).ConfigureAwait(false);
+
+        // Create a ChatClientAgent from the service call result.
+        return persistentAgentsClient.GetChatClientAgent(
+            persistentAgentResponse.Value.Id,
+            new()
+            {
+                Tools = functions,
+                ToolMode = ChatToolMode.Auto
+            },
+            persistentAgentResponse.Value.Name,
+            persistentAgentResponse.Value.Description,
+            persistentAgentResponse.Value.Instructions);
+    }
+
+    /// <summary>
     /// Creates a new Foundry based <see cref="ChatClientAgent"/> instance using the specified instructions, description, name, and functions.
     /// </summary>
     /// <param name="instructions">The instructions to provide to the agent.</param>

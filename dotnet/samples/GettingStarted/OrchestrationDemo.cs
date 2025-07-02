@@ -18,10 +18,11 @@ public class OrchestrationDemo(ITestOutputHelper output) : OrchestrationSample(o
             this.CreateResponsesAgent(
                 instructions: "You are an expert in physics. You answer questions from a physics perspective.",
                 description: "An expert in physics");
-        Agent chemist =
-            await this.CreateFoundryAgent(
-                instructions: "You are an expert in chemistry. You answer questions from a chemistry perspective.",
-                description: "An expert in chemistry");
+
+        // Chemist expert
+        // instructions: "You are an expert in chemistry. You answer questions from a chemistry perspective."
+        // description: "An expert in chemistry"
+        Agent chemist = await this.GetFoundryAgent("asst_q9b3dF09osKmDbowC1Rp81MP");
 
         // Define the orchestration
         ConcurrentOrchestration orchestration = new(physicist, chemist);
@@ -29,9 +30,6 @@ public class OrchestrationDemo(ITestOutputHelper output) : OrchestrationSample(o
         // Run the orchestration
         string[] output = await orchestration.RunToCompletionAsync("What is temperature?");
         Console.WriteLine(string.Join("\n\n", output.Select((x, i) => $"# RESULT[{i}]:\n\n{x}")));
-
-        // Demo cleanup.
-        await this.DeleteFoundryAgent(chemist.Id);
     }
 
     [Fact]
@@ -86,11 +84,11 @@ public class OrchestrationDemo(ITestOutputHelper output) : OrchestrationSample(o
                 name: "Small Business Owner",
                 instructions: "You are a small business owner trying to come up with ideas for improving your business.",
                 description: "An expert in small business development");
-        Agent reviewer =
-            await this.CreateFoundryAgent(
-                name: "Business Consultant",
-                instructions: "You are an expert business consultant. You review business proposals and provide feedback to the owner based on your review. Provide specific suggestions for improvement. When you are happy with the proposal written by the owner reply with 'Approved' and output the Approved proposal.",
-                description: "An expert business consultant");
+
+        // Business Consultant
+        // instructions: "You are an expert business consultant. You review business proposals and provide feedback to the owner based on your review. Provide specific suggestions for improvement. When you are happy with the proposal written by the owner reply with 'Approved' and output the Approved proposal."
+        // description: "An expert business consultant"
+        Agent reviewer = await this.GetFoundryAgent("asst_irxGG8s8kPVsN1ttcsdJViM3");
 
         // Define the orchestration
         GroupChatOrchestration orchestration = new(
@@ -104,9 +102,6 @@ public class OrchestrationDemo(ITestOutputHelper output) : OrchestrationSample(o
         // Run the orchestration
         string output = await orchestration.RunToCompletionAsync("Produce a business proposal for a new type of chocolate that is low in sugar without compromising on taste.");
         Console.WriteLine($"# RESULT:\n\n{output}");
-
-        // Demo cleanup.
-        await this.DeleteFoundryAgent(reviewer.Id);
     }
 
     [Fact]
