@@ -1,8 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Shared.Samples;
 using GenerativeAI.Microsoft;
 using Microsoft.Agents;
+using Microsoft.Shared.Samples;
 
 namespace GettingStarted;
 

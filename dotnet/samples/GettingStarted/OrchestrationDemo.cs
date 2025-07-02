@@ -5,7 +5,6 @@ using Microsoft.Agents.Orchestration.Concurrent;
 using Microsoft.Agents.Orchestration.GroupChat;
 using Microsoft.Agents.Orchestration.Handoff;
 using Microsoft.Extensions.AI;
-using Microsoft.SemanticKernel.Agents.Runtime.InProcess;
 
 namespace GettingStarted;
 
