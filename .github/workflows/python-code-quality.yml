@@ -7,7 +7,7 @@ on:
 
 jobs:
   pre-commit:
-    name: Python - Pre-Commit Hooks
+    name: Code Quality Checks
     if: "!cancelled()"
     strategy:
       fail-fast: false
