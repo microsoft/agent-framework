@@ -41,10 +41,7 @@ repos:
       - id: uv-lock
         files: python/pyproject.toml
         args: [--project, python]
-  - repo: https://github.com/RobertCraigie/pyright-python
-    rev: v1.1.402
-    hooks:
-      - id: pyright
+    # TODO: add pyright through poe like in AG
   - repo: https://github.com/PyCQA/bandit
     rev: 1.8.5
     hooks:

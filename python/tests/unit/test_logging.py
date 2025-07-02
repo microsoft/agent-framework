@@ -23,3 +23,11 @@ def test_get_logger_invalid_name():
     """Test that an exception is raised for an invalid logger name."""
     with pytest.raises(AgentFrameworkException, match="Logger name must start with 'agent_framework'."):
         get_logger("invalid_name")
+
+
+def test_logger_format():
+    """Test that the logger format is correctly set."""
+    logger = get_logger()
+
+    assert logger.config.formatter._fmt == "[%(asctime)s - %(name)s:%(lineno)d - %(levelname)s] %(message)s"
+    assert logger.config.formatter.datefmt == "%Y-%m-%d %H:%M:%S"
