@@ -3,6 +3,8 @@
 using Microsoft.Agents;
 using Microsoft.Agents.Orchestration.Concurrent;
 using Microsoft.Agents.Orchestration.GroupChat;
+using Microsoft.Agents.Orchestration.Handoff;
+using Microsoft.Extensions.AI;
 using Microsoft.SemanticKernel.Agents.Runtime.InProcess;
 
 namespace GettingStarted;
@@ -25,12 +27,8 @@ public class OrchestrationDemo(ITestOutputHelper output) : OrchestrationSample(o
         // Define the orchestration
         ConcurrentOrchestration orchestration = new(physicist, chemist);
 
-        // Start the runtime
-        await using InProcessRuntime runtime = new();
-        await runtime.StartAsync();
-
         // Run the orchestration
-        string[] output = await orchestration.RunToCompletionAsync("What is temperature?", runtime, ResultTimeout);
+        string[] output = await orchestration.RunToCompletionAsync("What is temperature?");
         Console.WriteLine(string.Join("\n\n", output.Select((x, i) => $"# RESULT[{i}]:\n\n{x}")));
 
         // Demo cleanup.
@@ -57,10 +55,6 @@ public class OrchestrationDemo(ITestOutputHelper output) : OrchestrationSample(o
         // Define the orchestration
         ConcurrentOrchestration orchestration = new(softwareDesigner, styleCop, tester);
 
-        // Start the runtime
-        await using InProcessRuntime runtime = new();
-        await runtime.StartAsync();
-
         // Run the orchestration
         var input = """
             ```csharp
@@ -77,7 +71,7 @@ public class OrchestrationDemo(ITestOutputHelper output) : OrchestrationSample(o
                                 }
             ```
             """;
-        string[] output = await orchestration.RunToCompletionAsync($"Review the following code and output an improved version:\n{input}", runtime, ResultTimeout);
+        string[] output = await orchestration.RunToCompletionAsync($"Review the following code and output an improved version:\n{input}");
         Console.WriteLine(string.Join("\n\n", output.Select((x, i) => $"# RESULT[{i}]:\n\n{x}")));
 
         // Demo cleanup.
@@ -105,23 +99,81 @@ public class OrchestrationDemo(ITestOutputHelper output) : OrchestrationSample(o
             developer,
             reviewer)
         {
-            ResponseCallback = (messages) =>
-            {
-                Console.WriteLine(string.Join(string.Empty, Enumerable.Repeat("-", 100)) + "\n# Update\n");
-                Console.WriteLine(string.Join("\n\n", messages.Select((x, i) => $"## {x.AuthorName}:\n\n{x.Text}")));
-                return ValueTask.CompletedTask;
-            }
+            ResponseCallback = this.WriteUpdatesToConsole
         };
 
-        // Start the runtime
-        await using InProcessRuntime runtime = new();
-        await runtime.StartAsync();
-
         // Run the orchestration
-        string output = await orchestration.RunToCompletionAsync("Produce a business proposal for a new type of chocolate that is low in sugar without compromising on taste.", runtime, ResultTimeout);
+        string output = await orchestration.RunToCompletionAsync("Produce a business proposal for a new type of chocolate that is low in sugar without compromising on taste.");
         Console.WriteLine($"# RESULT:\n\n{output}");
 
         // Demo cleanup.
         await this.DeleteFoundryAgent(reviewer.Id);
+    }
+
+    [Fact]
+    public async Task RunHandoffOrchestrationAsync()
+    {
+        // Define the agents & tools
+        ChatClientAgent triageAgent =
+            this.CreateAgent(
+                instructions: "A customer support agent that triages issues.",
+                name: "TriageAgent",
+                description: "Handle customer requests.");
+        ChatClientAgent statusAgent =
+            this.CreateAgent(
+                name: "OrderStatusAgent",
+                instructions: "Handle order status requests.",
+                description: "A customer support agent that checks order status.",
+                functions: AIFunctionFactory.Create(OrderFunctions.CheckOrderStatus));
+        ChatClientAgent returnAgent =
+            this.CreateAgent(
+                name: "OrderReturnAgent",
+                instructions: "Handle order return requests.",
+                description: "A customer support agent that handles order returns.",
+                functions: AIFunctionFactory.Create(OrderFunctions.ProcessReturn));
+        ChatClientAgent refundAgent =
+            this.CreateAgent(
+                name: "OrderRefundAgent",
+                instructions: "Handle order refund requests.",
+                description: "A customer support agent that handles order refund.",
+                functions: AIFunctionFactory.Create(OrderFunctions.ProcessRefund));
+
+        // Define the orchestration
+        HandoffOrchestration orchestration =
+            new(OrchestrationHandoffs
+                    .StartWith(triageAgent)
+                    .Add(triageAgent, statusAgent, returnAgent, refundAgent)
+                    .Add(statusAgent, triageAgent, "Transfer to this agent if the issue is not status related")
+                    .Add(returnAgent, triageAgent, "Transfer to this agent if the issue is not return related")
+                    .Add(refundAgent, triageAgent, "Transfer to this agent if the issue is not refund related"),
+                triageAgent,
+                statusAgent,
+                returnAgent,
+                refundAgent)
+            {
+                ResponseCallback = this.WriteUpdatesToConsole
+            };
+
+        // Run the orchestration
+        string result = await orchestration.RunToCompletionAsync("I'd like to track the status of order 123 please");
+        Console.WriteLine($"\n# RESULT: {result}");
+
+        // Run the orchestration
+        result = await orchestration.RunToCompletionAsync("I'd like to get a refund for order 123 please, since it arrived broken");
+        Console.WriteLine($"\n# RESULT: {result}");
+    }
+
+    private static class OrderFunctions
+    {
+        public static string CheckOrderStatus(string orderId) => $"Order {orderId} is shipped and will arrive in 2-3 days.";
+        public static string ProcessReturn(string orderId, string reason) => $"Return for order {orderId} has been processed successfully.";
+        public static string ProcessRefund(string orderId, string reason) => $"Refund for order {orderId} has been processed successfully.";
+    }
+
+    private ValueTask WriteUpdatesToConsole(IEnumerable<ChatMessage> messages)
+    {
+        Console.WriteLine(string.Join(string.Empty, Enumerable.Repeat("-", 100)) + "\n# Update\n");
+        Console.WriteLine(string.Join("\n\n", messages.Select((x, i) => $"## {x.AuthorName}:\n\n{x.Text}")));
+        return ValueTask.CompletedTask;
     }
 }

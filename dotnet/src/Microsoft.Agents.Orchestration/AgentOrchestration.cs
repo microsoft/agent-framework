@@ -11,6 +11,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.SemanticKernel.Agents.Runtime;
+using Microsoft.SemanticKernel.Agents.Runtime.InProcess;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Orchestration;
@@ -109,12 +110,32 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
     /// <returns>The final output of the orchestration.</returns>
     public async ValueTask<TOutput> RunToCompletionAsync(
         TInput input,
-        IAgentRuntime runtime,
+        IAgentRuntime? runtime = null,
         TimeSpan? timeout = null,
         CancellationToken cancellationToken = default)
     {
-        var orchestrationResult = await this.InvokeAsync(input, runtime, cancellationToken).ConfigureAwait(false);
-        return await orchestrationResult.GetValueAsync(timeout, cancellationToken).ConfigureAwait(false);
+        bool ownsRuntime = runtime is null;
+
+        try
+        {
+            if (runtime is null)
+            {
+#pragma warning disable CA2000 // Dispose objects before losing scope - Disposed in finally block
+                runtime = new InProcessRuntime();
+#pragma warning restore CA2000 // Dispose objects before losing scope
+                await runtime.StartAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            var orchestrationResult = await this.InvokeAsync(input, runtime, cancellationToken).ConfigureAwait(false);
+            return await orchestrationResult.GetValueAsync(timeout, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (ownsRuntime && runtime is IAsyncDisposable asyncDisposable)
+            {
+                await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+            }
+        }
     }
 
     /// <summary>
