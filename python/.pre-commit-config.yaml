@@ -9,6 +9,7 @@ repos:
         files: \.yaml$
       - id: check-json
         files: \.json$
+        exclude: ^python\/\.vscode\/.*
       - id: end-of-file-fixer
         files: \.py$
       - id: mixed-line-ending
