@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from typing import Any, ClassVar, Literal, TypeVar
-from xml.etree.ElementTree import Element  # noqa: S405
 
 from pydantic import Field, field_serializer
 
@@ -12,9 +11,6 @@ from agent_framework.contents.const import (
     TEXT_CONTENT_TAG,
 )
 from agent_framework.contents.hashing import make_hashable
-from agent_framework.exceptions import (
-    ContentInitializationError,
-)
 
 TAG_CONTENT_MAP = {
     TEXT_CONTENT_TAG: TextContent,
@@ -96,23 +92,6 @@ class FunctionResultContent(BaseContent):
     def __str__(self) -> str:
         """Return the text of the response."""
         return str(self.result)
-
-    def to_element(self) -> Element:
-        """Convert the instance to an Element."""
-        element = Element(self.tag)
-        if self.id:
-            element.set("id", self.id)
-        if self.name:
-            element.set("name", self.name)
-        element.text = str(self.result)
-        return element
-
-    @classmethod
-    def from_element(cls: type[_T], element: Element) -> _T:
-        """Create an instance from an Element."""
-        if element.tag != cls.tag:
-            raise ContentInitializationError(f"Element tag is not {cls.tag}")  # pragma: no cover
-        return cls(id=element.get("id", ""), result=element.text, name=element.get("name", None))
 
     def to_dict(self) -> dict[str, str | Any]:
         """Convert the instance to a dictionary."""

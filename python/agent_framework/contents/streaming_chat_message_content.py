@@ -1,8 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from enum import Enum
 from typing import Annotated, Any, overload
-from xml.etree.ElementTree import Element  # noqa: S405
 
 from pydantic import Field
 
@@ -187,29 +185,6 @@ class StreamingChatMessageContent(ChatMessageContent, StreamingContentMixin):
             function_invoke_attempt=self.function_invoke_attempt,
             name=self.name or other.name,
         )
-
-    def to_element(self) -> "Element":
-        """Convert the StreamingChatMessageContent to an XML Element.
-
-        Args:
-            root_key: str - The key to use for the root of the XML Element.
-
-        Returns:
-            Element - The XML Element representing the StreamingChatMessageContent.
-        """
-        root = Element(self.tag)
-        for field in self.model_fields_set:
-            if field not in ["role", "name", "encoding", "finish_reason", "ai_model_id", "choice_index"]:
-                continue
-            value = getattr(self, field)
-            if isinstance(value, Enum):
-                value = value.value
-            if isinstance(value, int):
-                value = str(value)
-            root.set(field, value)
-        for index, item in enumerate(self.items):
-            root.insert(index, item.to_element())
-        return root
 
     def __hash__(self) -> int:
         """Return the hash of the streaming chat message content."""

@@ -5,7 +5,6 @@ import logging
 import re
 from collections.abc import Mapping
 from typing import Any, ClassVar, Final, Literal, TypeVar
-from xml.etree.ElementTree import Element  # noqa: S405
 
 from pydantic import Field
 
@@ -13,7 +12,6 @@ from agent_framework import BaseContent, ContentTypes
 from agent_framework.contents.const import DEFAULT_FULLY_QUALIFIED_NAME_SEPARATOR, FUNCTION_CALL_CONTENT_TAG
 from agent_framework.exceptions import (
     ContentAdditionException,
-    ContentInitializationError,
     FunctionCallInvalidArgumentsException,
 )
 
@@ -181,25 +179,6 @@ class FunctionCallContent(BaseContent):
             The fully qualified name of the function with a custom separator.
         """
         return f"{self.plugin_name}{separator}{self.function_name}" if self.plugin_name else self.function_name
-
-    def to_element(self) -> Element:
-        """Convert the function call to an Element."""
-        element = Element(self.tag)
-        if self.id:
-            element.set("id", self.id)
-        if self.name:
-            element.set("name", self.name)
-        if self.arguments:
-            element.text = json.dumps(self.arguments) if isinstance(self.arguments, Mapping) else self.arguments
-        return element
-
-    @classmethod
-    def from_element(cls: type[_T], element: Element) -> _T:
-        """Create an instance from an Element."""
-        if element.tag != cls.tag:
-            raise ContentInitializationError(f"Element tag is not {cls.tag}")  # pragma: no cover
-
-        return cls(name=element.get("name"), id=element.get("id"), arguments=element.text or "")
 
     def to_dict(self) -> dict[str, str | Any]:
         """Convert the instance to a dictionary."""

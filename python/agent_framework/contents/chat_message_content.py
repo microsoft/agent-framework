@@ -1,11 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from enum import Enum
-from html import unescape
 from typing import Annotated, Any, ClassVar, Literal, overload
-from xml.etree.ElementTree import Element  # noqa: S405
 
-from defusedxml import ElementTree
 from pydantic import Field
 
 from agent_framework import (
@@ -26,7 +22,6 @@ from agent_framework.contents.const import (
     TEXT_CONTENT_TAG,
 )
 from agent_framework.contents.hashing import make_hashable
-from agent_framework.exceptions import ContentInitializationError
 
 # TODO (dmytrostruk): Add more content types
 TAG_CONTENT_MAP = {TEXT_CONTENT_TAG: TextContent, FUNCTION_CALL_CONTENT_TAG: FunctionCallContent}
@@ -195,74 +190,6 @@ class ChatMessageContent(BaseContent):
     def __str__(self) -> str:
         """Get the content of the response as a string."""
         return self.content or ""
-
-    def to_element(self) -> "Element":
-        """Convert the ChatMessageContent to an XML Element.
-
-        Args:
-            root_key: str - The key to use for the root of the XML Element.
-
-        Returns:
-            Element - The XML Element representing the ChatMessageContent.
-        """
-        root = Element(self.tag)
-        for field in self.model_fields_set:
-            if field not in ["role", "name", "encoding", "finish_reason", "ai_model_id"]:
-                continue
-            value = getattr(self, field)
-            if isinstance(value, Enum):
-                value = value.value
-            root.set(field, value)
-        for index, item in enumerate(self.items):
-            root.insert(index, item.to_element())
-        return root
-
-    @classmethod
-    def from_element(cls, element: Element) -> "ChatMessageContent":
-        """Create a new instance of ChatMessageContent from an XML element.
-
-        Args:
-            element: Element - The XML Element to create the ChatMessageContent from.
-
-        Returns:
-            ChatMessageContent - The new instance of ChatMessageContent or a subclass.
-        """
-        if element.tag != cls.tag:
-            raise ContentInitializationError(f"Element tag is not {cls.tag}")  # pragma: no cover
-        kwargs: dict[str, Any] = {key: value for key, value in element.items()}
-        items: list[BaseContent] = []
-        if element.text:
-            items.append(TextContent(text=unescape(element.text)))
-        for child in element:
-            if child.tag not in TAG_CONTENT_MAP:
-                logger.warning('Unknown tag "%s" in ChatMessageContent, treating as text', child.tag)
-                text = ElementTree.tostring(child, encoding="unicode", short_empty_elements=False)
-                items.append(TextContent(text=unescape(text) or ""))
-            else:
-                items.append(TAG_CONTENT_MAP[child.tag].from_element(child))  # type: ignore
-        if len(items) == 1 and isinstance(items[0], TextContent):
-            kwargs["content"] = items[0].text
-        elif all(isinstance(item, TextContent) for item in items):
-            kwargs["content"] = "".join(item.text for item in items)  # type: ignore
-        else:
-            kwargs["items"] = items
-        if "choice_index" in kwargs and cls is ChatMessageContent:
-            logger.info(
-                "Seems like you are trying to create a StreamingChatMessageContent, "
-                "use StreamingChatMessageContent.from_element instead, ignoring that field "
-                "and creating a ChatMessageContent instance."
-            )
-            kwargs.pop("choice_index")
-        return cls(**kwargs)
-
-    def to_prompt(self) -> str:
-        """Convert the ChatMessageContent to a prompt.
-
-        Returns:
-            str - The prompt from the ChatMessageContent.
-        """
-        root = self.to_element()
-        return ElementTree.tostring(root, encoding=self.encoding or "unicode", short_empty_elements=False)
 
     def to_dict(self, role_key: str = "role", content_key: str = "content") -> dict[str, Any]:
         """Serialize the ChatMessageContent to a dictionary.

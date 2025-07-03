@@ -1,14 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from html import unescape
 from typing import ClassVar, Literal, TypeVar
-from xml.etree.ElementTree import Element  # noqa: S405
 
 from pydantic import Field
 
 from agent_framework import BaseContent, ContentTypes
 from agent_framework.contents.const import TEXT_CONTENT_TAG
-from agent_framework.exceptions import ContentInitializationError
 
 _T = TypeVar("_T", bound="TextContent")
 
@@ -37,22 +34,6 @@ class TextContent(BaseContent):
     def __str__(self) -> str:
         """Return the text of the response."""
         return self.text
-
-    def to_element(self) -> Element:
-        """Convert the instance to an Element."""
-        element = Element(self.tag)
-        element.text = self.text
-        if self.encoding:
-            element.set("encoding", self.encoding)
-        return element
-
-    @classmethod
-    def from_element(cls: type[_T], element: Element) -> _T:
-        """Create an instance from an Element."""
-        if element.tag != cls.tag:
-            raise ContentInitializationError(f"Element tag is not {cls.tag}")  # pragma: no cover
-
-        return cls(text=unescape(element.text) if element.text else "", encoding=element.get("encoding", None))
 
     def to_dict(self) -> dict[str, str]:
         """Convert the instance to a dictionary."""
