@@ -165,7 +165,7 @@ class FunctionCallContent(BaseContent):
                 ) from exc
 
     def to_arguments(self) -> dict[str, Any]:
-        """Return the arguments as a KernelArguments instance."""
+        """Return the arguments as a dict[str, Any] instance."""
         args = self.parse_arguments()
         if not args:
             return {}
