@@ -108,6 +108,7 @@
     <File Path="src/LegacySupport/TrimAttributes/UnconditionalSuppressMessageAttribute.cs" />
   </Folder>
   <Project Path="src/Microsoft.Agents.Abstractions/Microsoft.Agents.Abstractions.csproj" />
+  <Project Path="src/Microsoft.Agents.CopilotStudio/Microsoft.Agents.CopilotStudio.csproj" />
   <Project Path="src/Microsoft.Agents.Orchestration/Microsoft.Agents.Orchestration.csproj" />
   <Project Path="src/Microsoft.Agents/Microsoft.Agents.csproj" />
   <Project Path="src/Microsoft.Extensions.AI.AzureAIAgentsPersistent/Microsoft.Extensions.AI.AzureAIAgentsPersistent.csproj" />

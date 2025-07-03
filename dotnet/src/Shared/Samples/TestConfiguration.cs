@@ -6,6 +6,7 @@ using Microsoft.Extensions.Configuration;
 namespace Microsoft.Shared.Samples;
 
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
+#pragma warning disable CA1056 // URI-like properties should not be strings
 
 /// <summary>
 /// Provides access to application configuration settings.
@@ -70,6 +71,19 @@ public sealed class TestConfiguration
         }
     }
 
+    /// <summary>Represents the configuration settings required to interact with Copilot Studio agents.</summary>
+    public sealed class CopilotStudioAgentConfig
+    {
+        /// <summary>Gets or sets the url to the Copilot Studio service.</summary>
+        public string DirectConnectUrl { get; set; }
+
+        /// <summary>Gets or sets the id of the entra tenant containing the Copilot Studio service.</summary>
+        public string TenantId { get; set; }
+
+        /// <summary>Gets or sets the application client id used to authenticate with the Copilot Studio service.</summary>
+        public string AppClientId { get; set; }
+    }
+
     /// <summary>
     /// Initializes the configuration system with the specified configuration root.
     /// </summary>
@@ -103,6 +117,11 @@ public sealed class TestConfiguration
     /// Gets the configuration settings for Google integration.
     /// </summary>
     public static GoogleAIConfig GoogleAI => LoadSection<GoogleAIConfig>();
+
+    /// <summary>
+    /// Gets the configuration settings for Copilot Studio agents.
+    /// </summary>
+    public static CopilotStudioAgentConfig CopilotStudio => LoadSection<CopilotStudioAgentConfig>();
 
     /// <summary>
     /// Retrieves a configuration section based on the specified key.

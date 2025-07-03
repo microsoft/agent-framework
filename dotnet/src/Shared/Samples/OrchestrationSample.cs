@@ -5,8 +5,13 @@ using System.Text.Json;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
 using GenerativeAI.Microsoft;
+using GettingStarted.Providers;
 using Microsoft.Agents;
+using Microsoft.Agents.CopilotStudio;
+using Microsoft.Agents.CopilotStudio.Client;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.Samples;
 using OpenAI.Responses;
 using OpenAIClient = OpenAI.OpenAIClient;
@@ -53,6 +58,38 @@ public abstract class OrchestrationSample : BaseSample
             };
 
         return new ChatClientAgent(chatClient, options);
+    }
+
+    /// <summary>
+    /// Creates a new <see cref="CopilotStudioAgent"/>.
+    /// </summary>
+    /// <returns>A new <see cref="CopilotStudioAgent"/> instance.</returns>
+    protected CopilotStudioAgent GetCopilotStudioAgent()
+    {
+        const string CopilotStudioHttpClientName = nameof(CopilotStudioAgentRun);
+
+        var config = TestConfiguration.CopilotStudio;
+        var settings = new CopilotStudioConnectionSettings(config.TenantId, config.AppClientId)
+        {
+            DirectConnectUrl = config.DirectConnectUrl,
+        };
+
+        ServiceCollection services = new();
+
+        services
+            .AddSingleton(settings)
+            .AddSingleton<CopilotStudioTokenHandler>()
+            .AddHttpClient(CopilotStudioHttpClientName)
+            .ConfigurePrimaryHttpMessageHandler<CopilotStudioTokenHandler>();
+
+        IHttpClientFactory httpClientFactory =
+            services
+                .BuildServiceProvider()
+                .GetRequiredService<IHttpClientFactory>();
+
+        CopilotClient client = new(settings, httpClientFactory, NullLogger.Instance, CopilotStudioHttpClientName);
+
+        return new CopilotStudioAgent(client);
     }
 
     /// <summary>
