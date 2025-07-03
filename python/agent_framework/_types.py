@@ -3,19 +3,17 @@
 import base64
 import re
 import sys
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncIterable, MutableSequence, Sequence
 from typing import Annotated, Any, ClassVar, Generic, Literal, Protocol, TypeVar, overload, runtime_checkable
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ._pydantic import AFBaseModel
 from ._tools import AITool
 from .guard_rails import InputGuardrail, OutputGuardrail
 
 if sys.version_info >= (3, 12):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict
+    pass  # pragma: no cover
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
 else:
@@ -30,7 +28,6 @@ TChatResponse = TypeVar("TChatResponse", bound="ChatResponse")
 TChatToolMode = TypeVar("TChatToolMode", bound="ChatToolMode")
 
 CreatedAtT = str  # Use a datetimeoffset type? Or a more specific type like datetime.datetime?
-
 
 URI_PATTERN = re.compile(r"^data:(?P<media_type>[^;]+);base64,(?P<base64_data>[A-Za-z0-9+/=]+)$")
 
@@ -61,26 +58,21 @@ KNOWN_MEDIA_TYPES = [
 ]
 
 
-class AdditionalCounts(TypedDict, total=False):
-    """Represents well-known additional counts for usage. This is not an exhaustive list.
+class UsageDetails(AFBaseModel):
+    """Provides usage details about a request/response.
 
-    Remarks:
-        To make it possible to avoid colisions between similarly-named, but unrelated, additional counts
-        between different AI services, any keys not explicitly defined here should be prefixed with the
-        name of the AI service, e.g., "openai." or "azure.". The separator "." was chosen because it cannot
-        be a legal character in a JSON key.
-
-        Over time additional counts may be added to this class.
+    Attributes:
+        input_token_count: The number of tokens in the input.
+        output_token_count: The number of tokens in the output.
+        total_token_count: The total number of tokens used to produce the response.
+        additional_counts: A dictionary of additional token counts, can be set by passing kwargs.
     """
 
-    thought_token_count: int
-    """The number of tokens used for thought processing."""
-    image_token_count: int
-    """The number of token equivalents used for image processing."""
-
-
-class UsageDetails(AFBaseModel):
-    """Provides usage details about a request/response."""
+    model_config = ConfigDict(
+        populate_by_name=True, arbitrary_types_allowed=True, validate_assignment=True, extra="allow"
+    )
+    __pydantic_extra__: dict[str, int]
+    """Overriding the default extras type, to make sure all extras are integers."""
 
     input_token_count: int | None = None
     """The number of tokens in the input."""
@@ -88,26 +80,59 @@ class UsageDetails(AFBaseModel):
     """The number of tokens in the output."""
     total_token_count: int | None = None
     """The total number of tokens used to produce the response."""
-    additional_counts: AdditionalCounts | None = None
-    """A dictionary of additional usage counts."""
+
+    @property
+    def additional_counts(self) -> dict[str, int]:
+        """Represents well-known additional counts for usage. This is not an exhaustive list.
+
+        Remarks:
+            To make it possible to avoid collisions between similarly-named, but unrelated, additional counts
+            between different AI services, any keys not explicitly defined here should be prefixed with the
+            name of the AI service, e.g., "openai." or "azure.". The separator "." was chosen because it cannot
+            be a legal character in a JSON key.
+
+            Over time additional counts may be added to the base class.
+        """
+        return self.model_extra or {}
 
     def __add__(self, other: "UsageDetails") -> "UsageDetails":
         """Combines two `UsageDetails` instances."""
         if not isinstance(other, UsageDetails):
-            return NotImplemented
+            raise ValueError("Can only add two usage details objects together.")
 
-        additional_counts: AdditionalCounts = self.additional_counts or AdditionalCounts()
+        additional_counts = self.additional_counts or {}
         if other.additional_counts:
             for key, value in other.additional_counts.items():
-                # Do our best to do the right thing here.
-                if isinstance(value, (int, str, float)):
-                    additional_counts[key] = int(additional_counts.get(key, 0)) + int(value or 0)
+                additional_counts[key] = additional_counts.get(key, 0) + (value or 0)
 
         return UsageDetails(
             input_token_count=(self.input_token_count or 0) + (other.input_token_count or 0),
             output_token_count=(self.output_token_count or 0) + (other.output_token_count or 0),
             total_token_count=(self.total_token_count or 0) + (other.total_token_count or 0),
-            additional_counts=additional_counts,
+            **additional_counts,
+        )
+
+    def __init__(
+        self,
+        input_token_count: int | None = None,
+        output_token_count: int | None = None,
+        total_token_count: int | None = None,
+        **kwargs: int,
+    ) -> None:
+        """Initializes the UsageDetails instance.
+
+        Args:
+            input_token_count: The number of tokens in the input.
+            output_token_count: The number of tokens in the output.
+            total_token_count: The total number of tokens used to produce the response.
+            **kwargs: Additional token counts, can be set by passing keyword arguments.
+                They can be retrieved through the `additional_counts` property.
+        """
+        super().__init__(
+            input_token_count=input_token_count,
+            output_token_count=output_token_count,
+            total_token_count=total_token_count,
+            **kwargs,
         )
 
 
@@ -154,22 +179,22 @@ def _process_update(response: "ChatResponse", update: "ChatResponseUpdate") -> N
 
 
 def _coalesce_text_content(
-    contents: list["AIContents"], type: type["TextContent"] | type["TextReasoningContent"]
+    contents: list["AIContents"], type_: type["TextContent"] | type["TextReasoningContent"]
 ) -> None:
     """Take any subsequence Text or TextReasoningContent items and coalesce them into a single item."""
     if not contents:
         return
-    coalesced_contents = []
+    coalesced_contents: list["AIContents"] = []
     current_texts = []
     first_new_content = None
     for i, content in enumerate(contents):
-        if isinstance(content, type):
-            current_texts.append(content.text)
+        if isinstance(content, type_):
+            current_texts.append(content.text)  # type: ignore[union-attr]
             if first_new_content is None:
                 first_new_content = i
         else:
             if first_new_content is not None:
-                new_content = type(text="\n".join(current_texts))
+                new_content = type_(text="\n".join(current_texts))
                 new_content.raw_representation = contents[first_new_content].raw_representation
                 new_content.additional_properties = contents[first_new_content].additional_properties
                 # Store the replacement node. We inherit the properties of the first text node. We don't
@@ -180,7 +205,7 @@ def _coalesce_text_content(
                 first_new_content = None
             coalesced_contents.append(content)
     if current_texts:
-        coalesced_contents.append(type(text="\n".join(current_texts)))
+        coalesced_contents.append(type_(text="\n".join(current_texts)))
     contents.clear()
     contents.extend(coalesced_contents)
 
@@ -218,27 +243,34 @@ class TextContent(AIContent):
     Attributes:
         text: The text content represented by this instance.
         type: The type of content, which is always "text" for this class.
-        raw_representation: Optional raw representation of the content.
         additional_properties: Optional additional properties associated with the content.
+        raw_representation: Optional raw representation of the content.
     """
 
     text: str
     type: Literal["text"] = "text"  # type: ignore[assignment]
 
     def __init__(
-        self, text: str, *, raw_representation: Any | None = None, additional_properties: dict[str, Any] | None = None
+        self,
+        text: str,
+        *,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
     ):
         """Initializes a TextContent instance.
 
         Args:
             text: The text content represented by this instance.
-            raw_representation: Optional raw representation of the content.
             additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
         """
         super().__init__(
             text=text,
             raw_representation=raw_representation,
             additional_properties=additional_properties,
+            **kwargs,
         )
 
 
@@ -261,19 +293,26 @@ class TextReasoningContent(AIContent):
     type: Literal["text_reasoning"] = "text_reasoning"  # type: ignore[assignment]
 
     def __init__(
-        self, text: str, *, raw_representation: Any | None = None, additional_properties: dict[str, Any] | None = None
+        self,
+        text: str,
+        *,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
     ):
         """Initializes a TextReasoningContent instance.
 
         Args:
             text: The text content represented by this instance.
-            raw_representation: Optional raw representation of the content.
             additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
         """
         super().__init__(
             text=text,
             raw_representation=raw_representation,
             additional_properties=additional_properties,
+            **kwargs,
         )
 
 
@@ -295,10 +334,11 @@ class DataContent(AIContent):
     @overload
     def __init__(
         self,
-        uri: str,
         *,
-        raw_representation: Any | None = None,
+        uri: str,
         additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initializes a DataContent instance with a URI.
 
@@ -309,18 +349,20 @@ class DataContent(AIContent):
         Args:
             uri: The URI of the data represented by this instance.
                 Should be in the form: "data:{media_type};base64,{base64_data}".
-            raw_representation: Optional raw representation of the content.
             additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
         """
 
     @overload
     def __init__(
         self,
+        *,
         data: bytes,
         media_type: str,
-        *,
-        raw_representation: Any | None = None,
         additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initializes a DataContent instance with binary data.
 
@@ -332,24 +374,36 @@ class DataContent(AIContent):
             data: The binary data represented by this instance.
                 The data is transformed into a base64-encoded data URI.
             media_type: The media type of the data.
-            raw_representation: Optional raw representation of the content.
             additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
         """
 
     def __init__(
         self,
-        uri=None,
-        data=None,
-        media_type=None,
         *,
-        raw_representation=None,
-        additional_properties=None,
+        uri: str | None = None,
+        data: bytes | None = None,
+        media_type: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initializes a DataContent instance.
 
         Remarks:
             This is for binary data that is represented as a data URI, not for online resources.
             Use `UriContent` for online resources.
+
+        Args:
+            uri: The URI of the data represented by this instance.
+                Should be in the form: "data:{media_type};base64,{base64_data}".
+            data: The binary data represented by this instance.
+                The data is transformed into a base64-encoded data URI.
+            media_type: The media type of the data.
+            additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
         """
         if uri is None:
             if data is None or media_type is None:
@@ -359,6 +413,7 @@ class DataContent(AIContent):
             uri=uri,
             raw_representation=raw_representation,
             additional_properties=additional_properties,
+            **kwargs,
         )
 
     @field_validator("uri", mode="after")
@@ -404,8 +459,9 @@ class UriContent(AIContent):
         uri: str,
         media_type: str,
         *,
-        raw_representation: Any | None = None,
         additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initializes a UriContent instance.
 
@@ -416,14 +472,16 @@ class UriContent(AIContent):
         Args:
             uri: The URI of the content.
             media_type: The media type of the content.
-            raw_representation: Optional raw representation of the content.
             additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
         """
         super().__init__(
             uri=uri,
             media_type=media_type,
-            raw_representation=raw_representation,
             additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
         )
 
 
@@ -459,8 +517,9 @@ class ErrorContent(AIContent):
         message: str | None = None,
         error_code: str | None = None,
         details: str | None = None,
-        raw_representation: Any | None = None,
         additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initializes an ErrorContent instance.
 
@@ -468,15 +527,17 @@ class ErrorContent(AIContent):
             message: The error message.
             error_code: The error code associated with the error.
             details: Additional details about the error.
-            raw_representation: Optional raw representation of the content.
             additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
         """
         super().__init__(
             message=message,
             error_code=error_code,
             details=details,
-            raw_representation=raw_representation,
             additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
         )
 
     def __str__(self) -> str:
@@ -515,8 +576,9 @@ class FunctionCallContent(AIContent):
         name: str,
         arguments: dict[str, Any | None] | None = None,
         exception: Exception | None = None,
-        raw_representation: Any | None = None,
         additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initializes a FunctionCallContent instance.
 
@@ -525,8 +587,9 @@ class FunctionCallContent(AIContent):
             name: The name of the function requested.
             arguments: The arguments requested to be provided to the function.
             exception: Any exception that occurred while mapping the original function call data to this representation.
-            raw_representation: Optional raw representation of the content.
             additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
         """
         super().__init__(
             call_id=call_id,
@@ -535,6 +598,7 @@ class FunctionCallContent(AIContent):
             exception=exception,
             raw_representation=raw_representation,
             additional_properties=additional_properties,
+            **kwargs,
         )
 
 
@@ -565,8 +629,9 @@ class FunctionResultContent(AIContent):
         call_id: str,
         result: Any | None = None,
         exception: Exception | None = None,
-        raw_representation: Any | None = None,
         additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initializes a FunctionResultContent instance.
 
@@ -574,8 +639,9 @@ class FunctionResultContent(AIContent):
             call_id: The identifier of the function call for which this is the result.
             result: The result of the function call, or a generic error message if the function call failed.
             exception: An exception that occurred if the function call failed.
-            raw_representation: Optional raw representation of the content.
             additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
         """
         super().__init__(
             call_id=call_id,
@@ -583,6 +649,7 @@ class FunctionResultContent(AIContent):
             exception=exception,
             raw_representation=raw_representation,
             additional_properties=additional_properties,
+            **kwargs,
         )
 
 
@@ -605,21 +672,24 @@ class UsageContent(AIContent):
         self,
         details: UsageDetails,
         *,
-        raw_representation: Any | None = None,
         additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initializes a UsageContent instance.
 
         Args:
             details: The usage information.
-            raw_representation: Optional raw representation of the content.
             additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
         """
         super().__init__(
             type=self.type,
             details=details,
             raw_representation=raw_representation,
             additional_properties=additional_properties,
+            **kwargs,
         )
 
 
@@ -726,8 +796,8 @@ class ChatMessage(AFBaseModel):
         contents: The chat message content items.
         author_name: The name of the author of the message.
         message_id: The ID of the chat message.
-        raw_representation: The raw representation of the chat message from an underlying implementation.
         additional_properties: Any additional properties associated with the chat message.
+        raw_representation: The raw representation of the chat message from an underlying implementation.
 
     """
 
@@ -739,10 +809,10 @@ class ChatMessage(AFBaseModel):
     """The name of the author of the message."""
     message_id: str | None
     """The ID of the chat message."""
-    raw_representation: Any | None = None
-    """The raw representation of the chat message from an underlying implementation."""
     additional_properties: dict[str, Any] | None = None
     """Any additional properties associated with the chat message."""
+    raw_representation: Any | None = None
+    """The raw representation of the chat message from an underlying implementation."""
 
     @property
     def text(self) -> str:
@@ -757,12 +827,12 @@ class ChatMessage(AFBaseModel):
     def __init__(
         self,
         role: ChatRole | Literal["system", "user", "assistant", "tool"],
-        text: str,
         *,
+        text: str,
         author_name: str | None = None,
         message_id: str | None = None,
-        raw_representation: Any | None = None,
         additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
     ) -> None:
         """Initializes a ChatMessage with a role and text content.
 
@@ -771,20 +841,20 @@ class ChatMessage(AFBaseModel):
             text: The text content of the message.
             author_name: Optional name of the author of the message.
             message_id: Optional ID of the chat message.
-            raw_representation: Optional raw representation of the chat message.
             additional_properties: Optional additional properties associated with the chat message.
+            raw_representation: Optional raw representation of the chat message.
         """
 
     @overload
     def __init__(
         self,
         role: ChatRole | Literal["system", "user", "assistant", "tool"],
-        contents: list[AIContents],
         *,
+        contents: list[AIContents],
         author_name: str | None = None,
         message_id: str | None = None,
-        raw_representation: Any | None = None,
         additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
     ) -> None:
         """Initializes a ChatMessage with a role and optional contents.
 
@@ -793,23 +863,23 @@ class ChatMessage(AFBaseModel):
             contents: Optional list of AIContent items to include in the message.
             author_name: Optional name of the author of the message.
             message_id: Optional ID of the chat message.
-            raw_representation: Optional raw representation of the chat message.
             additional_properties: Optional additional properties associated with the chat message.
+            raw_representation: Optional raw representation of the chat message.
         """
 
     def __init__(
         self,
-        role,
-        text=None,
-        contents=None,
+        role: ChatRole | Literal["system", "user", "assistant", "tool"],
         *,
-        author_name=None,
-        message_id=None,
-        raw_representation=None,
-        additional_properties=None,
+        text: str | None = None,
+        contents: list[AIContents] | None = None,
+        author_name: str | None = None,
+        message_id: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
     ) -> None:
         if contents is None:
-            contents: list[AIContents] = []
+            contents = []
         if text is not None:
             contents.append(TextContent(text=text))
         if isinstance(role, str):
@@ -819,8 +889,8 @@ class ChatMessage(AFBaseModel):
             contents=contents,
             author_name=author_name,
             message_id=message_id,
-            raw_representation=raw_representation,
             additional_properties=additional_properties,
+            raw_representation=raw_representation,
         )
 
 
@@ -864,16 +934,11 @@ class ChatResponse(AFBaseModel):
     raw_representation: Any | None = None
     """The raw representation of the chat response from an underlying implementation."""
 
-    @property
-    def text(self) -> str:
-        """Returns the concatenated text of all messages in the response."""
-        return "\n".join(message.text for message in self.messages if isinstance(message, ChatMessage))
-
     @overload
     def __init__(
         self,
-        messages: ChatMessage | Sequence[ChatMessage],
         *,
+        messages: ChatMessage | MutableSequence[ChatMessage],
         response_id: str | None = None,
         conversation_id: str | None = None,
         model_id: str | None = None,
@@ -882,6 +947,7 @@ class ChatResponse(AFBaseModel):
         usage_details: UsageDetails | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initializes a ChatResponse with the provided parameters.
 
@@ -896,14 +962,14 @@ class ChatResponse(AFBaseModel):
             messages: List of ChatMessage objects to include in the response.
             additional_properties: Optional additional properties associated with the chat response.
             raw_representation: Optional raw representation of the chat response from an underlying implementation.
-
+            **kwargs: Any additional keyword arguments.
         """
 
     @overload
     def __init__(
         self,
-        text: TextContent | str,
         *,
+        text: TextContent | str,
         response_id: str | None = None,
         conversation_id: str | None = None,
         model_id: str | None = None,
@@ -912,6 +978,7 @@ class ChatResponse(AFBaseModel):
         usage_details: UsageDetails | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initializes a ChatResponse with the provided parameters.
 
@@ -925,27 +992,29 @@ class ChatResponse(AFBaseModel):
             usage_details: Optional usage details for the chat response.
             additional_properties: Optional additional properties associated with the chat response.
             raw_representation: Optional raw representation of the chat response from an underlying implementation.
+            **kwargs: Any additional keyword arguments.
 
         """
 
     def __init__(
         self,
-        messages=None,
-        text=None,
         *,
-        response_id=None,
-        conversation_id=None,
-        model_id=None,
-        created_at=None,
-        finish_reason=None,
-        usage_details=None,
-        additional_properties=None,
-        raw_representation=None,
+        messages: ChatMessage | MutableSequence[ChatMessage] | None = None,
+        text: TextContent | str | None = None,
+        response_id: str | None = None,
+        conversation_id: str | None = None,
+        model_id: str | None = None,
+        created_at: CreatedAtT | None = None,
+        finish_reason: ChatFinishReason | None = None,
+        usage_details: UsageDetails | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initializes a ChatResponse with the provided parameters."""
         if messages is None:
             messages = []
-        if isinstance(messages, ChatMessage):
+        elif not isinstance(messages, MutableSequence):
             messages = [messages]
         if text is not None:
             if isinstance(text, str):
@@ -962,10 +1031,11 @@ class ChatResponse(AFBaseModel):
             usage_details=usage_details,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
+            **kwargs,
         )
 
     @classmethod
-    def from_chat_response_updates(cls: type[_T], updates: Sequence["ChatResponseUpdate"]) -> _T:
+    def from_chat_response_updates(cls: type[TChatResponse], updates: Sequence["ChatResponseUpdate"]) -> TChatResponse:
         """Joins multiple updates into a single ChatResponse."""
         msg = cls(messages=[])
         for update in updates:
@@ -974,13 +1044,20 @@ class ChatResponse(AFBaseModel):
         return msg
 
     @classmethod
-    async def from_chat_response_generator(cls: type[_T], updates: AsyncIterable["ChatResponseUpdate"]) -> _T:
+    async def from_chat_response_generator(
+        cls: type[TChatResponse], updates: AsyncIterable["ChatResponseUpdate"]
+    ) -> TChatResponse:
         """Joins multiple updates into a single ChatResponse."""
         msg = cls(messages=[])
         async for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
         return msg
+
+    @property
+    def text(self) -> str:
+        """Returns the concatenated text of all messages in the response."""
+        return "\n".join(message.text for message in self.messages if isinstance(message, ChatMessage))
 
 
 class StructuredResponse(ChatResponse, Generic[TValue]):
@@ -1003,6 +1080,7 @@ class StructuredResponse(ChatResponse, Generic[TValue]):
         self,
         value: TValue,
         *,
+        messages: ChatMessage | MutableSequence[ChatMessage],
         response_id: str | None = None,
         conversation_id: str | None = None,
         model_id: str | None = None,
@@ -1011,15 +1089,16 @@ class StructuredResponse(ChatResponse, Generic[TValue]):
         usage_details: UsageDetails | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initializes a StructuredResponse with the provided parameters."""
 
     @overload
     def __init__(
         self,
+        value: TValue,
+        *,
         text: TextContent | str,
-        value: TValue,
-        *,
         response_id: str | None = None,
         conversation_id: str | None = None,
         model_id: str | None = None,
@@ -1028,15 +1107,16 @@ class StructuredResponse(ChatResponse, Generic[TValue]):
         usage_details: UsageDetails | None = None,
         raw_representation: Any | None = None,
         additional_properties: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initializes a StructuredResponse with the provided parameters."""
 
-    @overload
     def __init__(
         self,
-        messages: Sequence[ChatMessage],
         value: TValue,
         *,
+        messages: ChatMessage | MutableSequence[ChatMessage] | None = None,
+        text: TextContent | str | None = None,
         response_id: str | None = None,
         conversation_id: str | None = None,
         model_id: str | None = None,
@@ -1045,45 +1125,30 @@ class StructuredResponse(ChatResponse, Generic[TValue]):
         usage_details: UsageDetails | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
-    ) -> None:
-        """Initializes a StructuredResponse with the provided parameters."""
-
-    def __init__(
-        self,
-        messages=None,
-        text=None,
-        value=None,
-        *,
-        response_id=None,
-        conversation_id=None,
-        model_id=None,
-        created_at=None,
-        finish_reason=None,
-        usage_details=None,
-        additional_properties=None,
-        raw_representation=None,
+        **kwargs: Any,
     ) -> None:
         """Initializes a StructuredResponse with the provided parameters."""
         if messages is None:
             messages = []
+        elif isinstance(messages, ChatMessage):
+            messages = [messages]
         if text is not None:
             if isinstance(text, str):
                 text = TextContent(text=text)
             messages.append(ChatMessage(role=ChatRole.ASSISTANT, contents=[text]))
 
-        if value is None:
-            raise ValueError("value must be provided for StructuredResponse")
         super().__init__(
             value=value,
             messages=messages,
-            additional_properties=additional_properties,
             conversation_id=conversation_id,
             created_at=created_at,
             finish_reason=finish_reason,
-            ai_model_id=model_id,
-            raw_representation=raw_representation,
+            model_id=model_id,
             response_id=response_id,
             usage_details=usage_details,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
         )
 
 
@@ -1137,54 +1202,54 @@ class ChatResponseUpdate(AFBaseModel):
     @overload
     def __init__(
         self,
-        contents: list[AIContent],
         *,
-        additional_properties: dict[str, Any] | None = None,
+        contents: list[AIContent],
+        role: ChatRole | None = None,
         author_name: str | None = None,
+        response_id: str | None = None,
+        message_id: str | None = None,
         conversation_id: str | None = None,
+        ai_model_id: str | None = None,
         created_at: CreatedAtT | None = None,
         finish_reason: ChatFinishReason | None = None,
-        message_id: str | None = None,
-        ai_model_id: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
-        response_id: str | None = None,
-        role: ChatRole | None = None,
     ) -> None:
         """Initializes a ChatResponseUpdate with the provided parameters."""
 
     @overload
     def __init__(
         self,
-        text: TextContent | str,
         *,
-        additional_properties: dict[str, Any] | None = None,
+        text: TextContent | str,
+        role: ChatRole | None = None,
         author_name: str | None = None,
+        response_id: str | None = None,
+        message_id: str | None = None,
         conversation_id: str | None = None,
+        ai_model_id: str | None = None,
         created_at: CreatedAtT | None = None,
         finish_reason: ChatFinishReason | None = None,
-        message_id: str | None = None,
-        ai_model_id: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
-        response_id: str | None = None,
-        role: ChatRole | None = None,
     ) -> None:
         """Initializes a ChatResponseUpdate with the provided parameters."""
 
     def __init__(
         self,
-        contents=None,
-        text=None,
         *,
-        additional_properties=None,
-        author_name=None,
-        conversation_id=None,
-        created_at=None,
-        finish_reason=None,
-        message_id=None,
-        ai_model_id=None,
-        raw_representation=None,
-        response_id=None,
-        role=None,
+        contents: list[AIContent] | None = None,
+        text: TextContent | str | None = None,
+        role: ChatRole | None = None,
+        author_name: str | None = None,
+        response_id: str | None = None,
+        message_id: str | None = None,
+        conversation_id: str | None = None,
+        ai_model_id: str | None = None,
+        created_at: CreatedAtT | None = None,
+        finish_reason: ChatFinishReason | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
     ) -> None:
         """Initializes a ChatResponseUpdate with the provided parameters."""
         if contents is None:

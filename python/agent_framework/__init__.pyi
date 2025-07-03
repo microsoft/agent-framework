@@ -1,10 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from . import __version__
+from . import __version__  # type: ignore[attr-defined]
 from ._logging import get_logger
 from ._tools import AITool
 from ._types import (
     AIContent,
+    AIContents,
     ChatFinishReason,
     ChatMessage,
     ChatOptions,
@@ -17,14 +18,18 @@ from ._types import (
     FunctionCallContent,
     FunctionResultContent,
     ModelClient,
+    StructuredResponse,
     TextContent,
     TextReasoningContent,
     UriContent,
+    UsageContent,
+    UsageDetails,
 )
 from .guard_rails import InputGuardrail, OutputGuardrail
 
 __all__ = [
     "AIContent",
+    "AIContents",
     "AITool",
     "ChatFinishReason",
     "ChatMessage",
@@ -40,9 +45,12 @@ __all__ = [
     "InputGuardrail",
     "ModelClient",
     "OutputGuardrail",
+    "StructuredResponse",
     "TextContent",
     "TextReasoningContent",
     "UriContent",
+    "UsageContent",
+    "UsageDetails",
     "__version__",
     "get_logger",
 ]

@@ -1,0 +1,122 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Run Checks",
+            "type": "shell",
+            "command": "uv",
+            "args": [
+                "run",
+                "pre-commit",
+                "run",
+                "-a"
+            ],
+            "problemMatcher": {
+                "owner": "python",
+                "fileLocation": [
+                    "relative",
+                    "${workspaceFolder}"
+                ],
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "column": 3,
+                    "message": 4
+                }
+            },
+            "presentation": {
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Mypy",
+            "type": "shell",
+            "command": "uv",
+            "args": [
+                "run",
+                "mypy",
+                "-p",
+                "agent_framework",
+            ],
+            "problemMatcher": {
+                "owner": "python",
+                "fileLocation": [
+                    "relative",
+                    "${workspaceFolder}"
+                ],
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "column": 3,
+                    "message": 4
+                }
+            },
+            "presentation": {
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Tests - Code Coverage",
+            "type": "shell",
+            "command": "uv",
+            "args": [
+                "run",
+                "pytest",
+                "--cov=semantic_kernel",
+                "--cov-report=term-missing:skip-covered",
+                "tests/unit/"
+            ],
+            "group": "test",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Create Venv",
+            "type": "shell",
+            "command": "uv venv PYTHON=${input:py_version}",
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Install all dependencies",
+            "type": "shell",
+            "command": "uv",
+            "args": [
+                "sync",
+                "--all-extras",
+                "--dev",
+                "-U",
+                "--prerelease=if-necessary-or-explicit"
+            ],
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            },
+            "problemMatcher": []
+        }
+    ],
+    "inputs": [
+        {
+            "type": "pickString",
+            "options": [
+                "3.10",
+                "3.11",
+                "3.12",
+                "3.13"
+            ],
+            "id": "py_version",
+            "description": "Python version",
+            "default": "3.10"
+        }
+    ]
+}

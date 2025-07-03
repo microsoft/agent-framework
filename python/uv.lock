@@ -27,6 +27,7 @@ dependencies = [
     { name = "azure", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "openai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [package.dev-dependencies]
@@ -47,6 +48,7 @@ requires-dist = [
     { name = "azure", editable = "extensions/azure" },
     { name = "openai", editable = "extensions/openai" },
     { name = "pydantic", specifier = ">=2.11.7" },
+    { name = "typing-extensions", specifier = ">=4.14.0" },
 ]
 
 [package.metadata.requires-dev]

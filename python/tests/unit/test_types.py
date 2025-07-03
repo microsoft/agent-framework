@@ -1,19 +1,27 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
+from pytest import mark, raises
 
 from agent_framework import (
     AIContent,
+    AIContents,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
     ChatRole,
     ChatToolMode,
     DataContent,
+    FunctionCallContent,
+    FunctionResultContent,
+    StructuredResponse,
     TextContent,
     TextReasoningContent,
+    UriContent,
+    UsageDetails,
 )
+
+# region: TextContent
 
 
 def test_text_content_positional():
@@ -28,7 +36,7 @@ def test_text_content_positional():
     assert content.additional_properties["version"] == 1
     # Ensure the instance is of type AIContent
     assert isinstance(content, AIContent)
-    with pytest.raises(ValidationError):
+    with raises(ValidationError):
         content.type = "ai"
 
 
@@ -46,8 +54,189 @@ def test_text_content_keyword():
     assert content.additional_properties["version"] == 1
     # Ensure the instance is of type AIContent
     assert isinstance(content, AIContent)
-    with pytest.raises(ValidationError):
+    with raises(ValidationError):
         content.type = "ai"
+
+
+# region: DataContent
+
+
+def test_data_content_bytes():
+    """Test the DataContent class to ensure it initializes correctly."""
+    # Create an instance of DataContent
+    content = DataContent(data=b"test", media_type="application/octet-stream", additional_properties={"version": 1})
+
+    # Check the type and content
+    assert content.type == "data"
+    assert content.uri == "data:application/octet-stream;base64,dGVzdA=="
+    assert content.additional_properties["version"] == 1
+
+    # Ensure the instance is of type AIContent
+    assert isinstance(content, AIContent)
+
+
+def test_data_content_uri():
+    """Test the DataContent class to ensure it initializes correctly with a URI."""
+    # Create an instance of DataContent with a URI
+    content = DataContent(uri="data:application/octet-stream;base64,dGVzdA==", additional_properties={"version": 1})
+
+    # Check the type and content
+    assert content.type == "data"
+    assert content.uri == "data:application/octet-stream;base64,dGVzdA=="
+    assert content.additional_properties["version"] == 1
+
+    # Ensure the instance is of type AIContent
+    assert isinstance(content, AIContent)
+
+
+def test_data_content_invalid():
+    """Test the DataContent class to ensure it raises an error for invalid initialization."""
+    # Attempt to create an instance of DataContent with invalid data
+    # not a proper uri
+    with raises(ValidationError):
+        DataContent(uri="invalid_uri")
+    # unknown media type
+    with raises(ValidationError):
+        DataContent(uri="data:application/random;base64,dGVzdA==")
+    # not valid base64 data
+
+    with raises(ValidationError):
+        DataContent(uri="data:application/json;base64,dGVzdA&")
+
+
+def test_data_content_empty():
+    """Test the DataContent class to ensure it raises an error for empty data."""
+    # Attempt to create an instance of DataContent with empty data
+    with raises(ValidationError):
+        DataContent(data=b"", media_type="application/octet-stream")
+
+    # Attempt to create an instance of DataContent with empty URI
+    with raises(ValidationError):
+        DataContent(uri="")
+
+
+# region: UriContent
+
+
+def test_uri_content():
+    """Test the UriContent class to ensure it initializes correctly."""
+    content = UriContent(uri="http://example.com", additional_properties={"version": 1})
+
+    # Check the type and content
+    assert content.type == "uri"
+    assert content.uri == "http://example.com"
+    assert content.additional_properties["version"] == 1
+
+    # Ensure the instance is of type AIContent
+    assert isinstance(content, AIContent)
+
+
+# region: FunctionCallContent
+
+
+def test_function_call_content():
+    """Test the FunctionCallContent class to ensure it initializes correctly."""
+    content = FunctionCallContent(name="example_function", arguments={"param1": "value1"})
+
+    # Check the type and content
+    assert content.type == "function_call"
+    assert content.name == "example_function"
+    assert content.arguments == {"param1": "value1"}
+
+    # Ensure the instance is of type AIContent
+    assert isinstance(content, AIContent)
+
+
+# region: FunctionResultContent
+
+
+def test_function_result_content():
+    """Test the FunctionResultContent class to ensure it initializes correctly."""
+    content = FunctionResultContent(name="example_function", result={"param1": "value1"})
+
+    # Check the type and content
+    assert content.type == "function_result"
+    assert content.name == "example_function"
+    assert content.result == {"param1": "value1"}
+
+    # Ensure the instance is of type AIContent
+    assert isinstance(content, AIContent)
+
+
+# region: UsageDetails
+
+
+def test_usage_details():
+    usage = UsageDetails(input_token_count=5, output_token_count=10, total_token_count=15)
+    assert usage.input_token_count == 5
+    assert usage.output_token_count == 10
+    assert usage.total_token_count == 15
+    assert usage.additional_counts == {}
+
+
+def test_usage_details_addition():
+    usage1 = UsageDetails(
+        input_token_count=5,
+        output_token_count=10,
+        total_token_count=15,
+        test1=10,
+        test2=20,
+    )
+    usage2 = UsageDetails(
+        input_token_count=3,
+        output_token_count=6,
+        total_token_count=9,
+        test1=10,
+        test3=30,
+    )
+
+    combined_usage = usage1 + usage2
+    assert combined_usage.input_token_count == 8
+    assert combined_usage.output_token_count == 16
+    assert combined_usage.total_token_count == 24
+    assert combined_usage.additional_counts["test1"] == 20
+    assert combined_usage.additional_counts["test2"] == 20
+    assert combined_usage.additional_counts["test3"] == 30
+
+
+def test_usage_details_fail():
+    with raises(ValidationError):
+        UsageDetails(input_token_count=5, output_token_count=10, total_token_count=15, wrong_type="42.923")
+
+
+def test_usage_details_additional_counts():
+    usage = UsageDetails(input_token_count=5, output_token_count=10, total_token_count=15, **{"test": 1})
+    assert usage.additional_counts["test"] == 1
+
+
+# region: AIContent Serialization
+
+
+@mark.parametrize(
+    "content_type, args",
+    [
+        (TextContent, {"text": "Hello, world!"}),
+        (DataContent, {"data": b"Hello, world!", "media_type": "text/plain"}),
+        (UriContent, {"uri": "http://example.com", "media_type": "text/html"}),
+        (FunctionCallContent, {"call_id": "1", "name": "example_function", "arguments": {}}),
+        (FunctionResultContent, {"call_id": "1", "result": {}}),
+    ],
+)
+def test_ai_content_serialization(content_type: type[AIContent], args: dict):
+    content = content_type(**args)
+    serialized = content.model_dump()
+    deserialized = content_type.model_validate(serialized)
+    assert deserialized == content
+
+    class TestModel(BaseModel):
+        content: AIContents
+
+    test_item = TestModel.model_validate({"content": serialized})
+
+    assert isinstance(test_item.content, content_type)
+
+
+# region: ChatMessage
 
 
 def test_chat_message_text():
@@ -83,6 +272,9 @@ def test_chat_message_contents():
     assert message.text == "Hello, how are you?\nI'm fine, thank you!"
 
 
+# region: ChatResponse
+
+
 def test_chat_response():
     """Test the ChatResponse class to ensure it initializes correctly with a message."""
     # Create a ChatMessage
@@ -95,6 +287,30 @@ def test_chat_response():
     assert response.messages[0].role == ChatRole.ASSISTANT
     assert response.messages[0].text == "I'm doing well, thank you!"
     assert isinstance(response.messages[0], ChatMessage)
+
+
+# region: StructuredResponse
+
+
+def test_structured_response():
+    """Test the StructuredResponse class to ensure it initializes correctly with a value."""
+
+    class ResponseModel(BaseModel):
+        content: str
+        action: str
+
+    # Create a StructuredResponse with a value
+    response = StructuredResponse[ResponseModel](
+        value=ResponseModel(content="Hello, world!", action="test"),
+        text="{'content': 'Hello, world!', 'action': 'test'}",
+    )
+
+    # Check the type and content
+    assert response.value == ResponseModel(content="Hello, world!", action="test")
+    assert isinstance(response, StructuredResponse)
+
+
+# region: ChatResponseUpdate
 
 
 def test_chat_response_update():
@@ -207,6 +423,9 @@ def test_chat_response_updates_to_chat_response_multiple_multiple():
     assert chat_response.messages[0].message_id == "1"
 
 
+# region: ChatToolMode
+
+
 def test_chat_tool_mode():
     """Test the ChatToolMode class to ensure it initializes correctly."""
     # Create instances of ChatToolMode
@@ -245,57 +464,3 @@ def test_chat_tool_mode_from_dict():
 
     # Ensure the instance is of type ChatToolMode
     assert isinstance(mode, ChatToolMode)
-
-
-def test_data_content_bytes():
-    """Test the DataContent class to ensure it initializes correctly."""
-    # Create an instance of DataContent
-    content = DataContent(data=b"test", media_type="application/octet-stream", additional_properties={"version": 1})
-
-    # Check the type and content
-    assert content.type == "data"
-    assert content.uri == "data:application/octet-stream;base64,dGVzdA=="
-    assert content.additional_properties["version"] == 1
-
-    # Ensure the instance is of type AIContent
-    assert isinstance(content, AIContent)
-
-
-def test_data_content_uri():
-    """Test the DataContent class to ensure it initializes correctly with a URI."""
-    # Create an instance of DataContent with a URI
-    content = DataContent(uri="data:application/octet-stream;base64,dGVzdA==", additional_properties={"version": 1})
-
-    # Check the type and content
-    assert content.type == "data"
-    assert content.uri == "data:application/octet-stream;base64,dGVzdA=="
-    assert content.additional_properties["version"] == 1
-
-    # Ensure the instance is of type AIContent
-    assert isinstance(content, AIContent)
-
-
-def test_data_content_invalid():
-    """Test the DataContent class to ensure it raises an error for invalid initialization."""
-    # Attempt to create an instance of DataContent with invalid data
-    # not a proper uri
-    with pytest.raises(ValidationError):
-        DataContent(uri="invalid_uri")
-    # unknown media type
-    with pytest.raises(ValidationError):
-        DataContent(uri="data:application/random;base64,dGVzdA==")
-    # not valid base64 data
-
-    with pytest.raises(ValidationError):
-        DataContent(uri="data:application/json;base64,dGVzdA&")
-
-
-def test_data_content_empty():
-    """Test the DataContent class to ensure it raises an error for empty data."""
-    # Attempt to create an instance of DataContent with empty data
-    with pytest.raises(ValidationError):
-        DataContent(data=b"", media_type="application/octet-stream")
-
-    # Attempt to create an instance of DataContent with empty URI
-    with pytest.raises(ValidationError):
-        DataContent(uri="")

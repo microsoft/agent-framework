@@ -26,6 +26,7 @@ dependencies = [
     "azure",
     "openai",
     "pydantic>=2.11.7",
+    "typing-extensions>=4.14.0",
 ]
 
 [tool.uv]
@@ -129,6 +130,7 @@ reportUnnecessaryIsInstance = false
 reportMissingTypeStubs = false
 
 [tool.mypy]
+plugins = ['pydantic.mypy']
 strict = true
 python_version = "3.10"
 ignore_missing_imports = true
