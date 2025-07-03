@@ -55,42 +55,13 @@ class AIFunction(Generic[ArgsT, ReturnT]):
         self.additional_properties: dict[str, Any] | None = kwargs
         self._func = func
 
-    def model_json_schema(self):
+    def model_json_schema(self) -> dict[str, Any]:
         """Return the JSON schema of the input model."""
         return self.input_model.model_json_schema()
 
     def __call__(self, *args: Any, **kwargs: Any) -> ReturnT | Awaitable[ReturnT]:
         """Call the wrapped function with the provided arguments."""
-        if not inspect.iscoroutinefunction(self._func):
-            return self._func(*args, **kwargs)
-
-        async def _async_wrapper():
-            """Wrapper to handle async function calls."""
-            return await self._func(*args, **kwargs)
-
-        return _async_wrapper()
-
-    def __get__(self, obj: object, objtype: type | None = None):
-        """Support binding the function tool to an object, allowing it to be called as a method."""
-        if obj is None:
-            return self
-
-        def _bound(*args, **kwargs) -> ReturnT | Awaitable[ReturnT]:
-            if inspect.iscoroutinefunction(self._func):
-
-                async def _async_wrapper():
-                    """Wrapper to handle async function calls."""
-                    return await self._func(obj, *args, **kwargs)
-
-                return _async_wrapper()
-            return self._func(obj, *args, **kwargs)
-
-        return AIFunction(
-            func=_bound,
-            name=self.name,
-            description=self.description,
-            input_model=self.input_model,
-        )
+        return self._func(*args, **kwargs)
 
     async def invoke(
         self,
@@ -120,12 +91,12 @@ def ai_function(
     name: str | None = None,
     description: str | None = None,
     additional_properties: dict[str, Any] | None = None,
-) -> AIFunction[Any, ReturnT]:
+) -> AIFunction[Any, ReturnT] | Callable[[Callable[..., ReturnT | Awaitable[ReturnT]]], AIFunction[Any, ReturnT]]:
     """Create a AIFunction from a function and return the callable tool object."""
 
     def wrapper(f: Callable[..., ReturnT | Awaitable[ReturnT]]) -> AIFunction[Any, ReturnT]:
-        tool_name = name or getattr(f, "__name__", "unknown_function")
-        tool_desc = description or (f.__doc__ or "")
+        tool_name: str = name or getattr(f, "__name__", "unknown_function")  # type: ignore[assignment]
+        tool_desc: str = description or (f.__doc__ or "")
         sig = inspect.signature(f)
         fields = {
             pname: (
@@ -135,9 +106,9 @@ def ai_function(
             for pname, param in sig.parameters.items()
             if pname not in {"self", "cls"}
         }
-        input_model = create_model(f"{tool_name}_input", **fields)
+        input_model = create_model(f"{tool_name}_input", **fields)  # type: ignore[call-overload]
 
-        return functools.update_wrapper(
+        return functools.update_wrapper(  # type: ignore[return-value]
             AIFunction[Any, ReturnT](
                 func=f,
                 name=tool_name,

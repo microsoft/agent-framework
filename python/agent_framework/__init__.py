@@ -11,6 +11,7 @@ except importlib.metadata.PackageNotFoundError:
 _IMPORTS = {
     "get_logger": "._logging",
     "AITool": "._tools",
+    "ai_function": "._tools",
     "AIContent": "._types",
     "AIContents": "._types",
     "TextContent": "._types",

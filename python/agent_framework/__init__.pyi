@@ -2,7 +2,7 @@
 
 from . import __version__  # type: ignore[attr-defined]
 from ._logging import get_logger
-from ._tools import AITool
+from ._tools import AITool, ai_function
 from ._types import (
     AIContent,
     AIContents,
@@ -52,5 +52,6 @@ __all__ = [
     "UsageContent",
     "UsageDetails",
     "__version__",
+    "ai_function",
     "get_logger",
 ]
