@@ -120,11 +120,12 @@ def test_data_content_empty():
 
 def test_uri_content():
     """Test the UriContent class to ensure it initializes correctly."""
-    content = UriContent(uri="http://example.com", additional_properties={"version": 1})
+    content = UriContent(uri="http://example.com", media_type="image/jpg", additional_properties={"version": 1})
 
     # Check the type and content
     assert content.type == "uri"
     assert content.uri == "http://example.com"
+    assert content.media_type == "image/jpg"
     assert content.additional_properties["version"] == 1
 
     # Ensure the instance is of type AIContent
@@ -136,7 +137,7 @@ def test_uri_content():
 
 def test_function_call_content():
     """Test the FunctionCallContent class to ensure it initializes correctly."""
-    content = FunctionCallContent(name="example_function", arguments={"param1": "value1"})
+    content = FunctionCallContent(call_id="1", name="example_function", arguments={"param1": "value1"})
 
     # Check the type and content
     assert content.type == "function_call"
@@ -152,11 +153,10 @@ def test_function_call_content():
 
 def test_function_result_content():
     """Test the FunctionResultContent class to ensure it initializes correctly."""
-    content = FunctionResultContent(name="example_function", result={"param1": "value1"})
+    content = FunctionResultContent(call_id="1", result={"param1": "value1"})
 
     # Check the type and content
     assert content.type == "function_result"
-    assert content.name == "example_function"
     assert content.result == {"param1": "value1"}
 
     # Ensure the instance is of type AIContent
