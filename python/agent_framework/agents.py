@@ -3,7 +3,7 @@
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from typing import Any, Callable, Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 from pydantic import Field
 
