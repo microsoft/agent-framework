@@ -111,4 +111,30 @@ public static class PersistentAgentsClientExtensions
         // Create the ChatClientAgent.
         return new(chatClient, new() { Id = agentId, ChatOptions = chatOptions, Name = name, Description = description, Instructions = instructions });
     }
+
+    /// <summary>
+    /// Retrieves an existing server side agent, wrapped as a <see cref="FoundryAgent"/> using the provided <see cref="PersistentAgentsClient"/>.
+    /// </summary>
+    /// <param name="persistentAgentsClient">The <see cref="PersistentAgentsClient"/> to create the <see cref="FoundryAgent"/> with.</param>
+    /// <param name="agentId"> The ID of the server side agent to create a <see cref="ChatClientAgent"/> for.</param>
+    /// <returns>A <see cref="FoundryAgent"/> for the created persistent agent.</returns>
+    public static async Task<FoundryAgent> GetFoundryAgentAsync(this PersistentAgentsClient persistentAgentsClient, string agentId)
+    {
+        return await FoundryAgent.GetAsync(persistentAgentsClient, agentId).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Creates a new instance of <see cref="FoundryAgent"/> asynchronously using the specified options.
+    /// </summary>
+    /// <param name="persistentAgentsClient">The <see cref="PersistentAgentsClient"/> instance used to manage persistent agents.</param>
+    /// <param name="createOptions">The options specifying the configuration and parameters for creating the <see cref="FoundryAgent"/>.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests. Defaults to <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A task representing the asynchronous operation. The task result contains the created <see cref="FoundryAgent"/>.</returns>
+    public static async Task<FoundryAgent> CreateFoundryAgentAsync(
+        this PersistentAgentsClient persistentAgentsClient,
+        FoundryAgentCreateOptions createOptions,
+        CancellationToken cancellationToken = default)
+    {
+        return await FoundryAgent.CreateAsync(persistentAgentsClient, createOptions, cancellationToken).ConfigureAwait(false);
+    }
 }

@@ -41,7 +41,7 @@ public class OrchestrationDemo(ITestOutputHelper output) : OrchestrationSample(o
     public async Task RunGroupChatBusinessProposalOrchestrationAsync()
     {
         // Define the agents
-        Agent developer =
+        Agent businesOwner =
             this.CreateResponsesAgent(
                 name: "Small Business Owner",
                 instructions: "You are a small business owner trying to come up with ideas for improving your business.",
@@ -55,7 +55,7 @@ public class OrchestrationDemo(ITestOutputHelper output) : OrchestrationSample(o
         // Define the orchestration
         GroupChatOrchestration orchestration = new(
             new TerminationStringGroupChatManager("Approved") { MaximumInvocationCount = 8 },
-            developer,
+            businesOwner,
             reviewer)
         {
             ResponseCallback = this.WriteUpdatesToConsole

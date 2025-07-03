@@ -8,6 +8,10 @@
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
 
+  <PropertyGroup>
+    <InjectSharedThrow>true</InjectSharedThrow>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="Azure.AI.Agents.Persistent" />
     <PackageReference Include="Microsoft.Extensions.AI" />
