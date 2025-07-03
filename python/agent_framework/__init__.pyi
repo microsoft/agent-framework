@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import importlib.metadata
-
+from . import __version__
 from ._logging import get_logger
 from ._tools import AITool
 from ._types import (
@@ -23,11 +22,6 @@ from ._types import (
     UriContent,
 )
 from .guard_rails import InputGuardrail, OutputGuardrail
-
-try:
-    __version__ = importlib.metadata.version(__name__)
-except importlib.metadata.PackageNotFoundError:
-    __version__ = "0.0.0"  # Fallback for development mode
 
 __all__ = [
     "AIContent",

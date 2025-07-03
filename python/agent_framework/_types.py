@@ -196,13 +196,20 @@ def _finalize_response(response: "ChatResponse") -> None:
 
 
 class AIContent(AFBaseModel):
-    """Represents content used by AI services."""
+    """Represents content used by AI services.
+
+    Attributes:
+        type: The type of content, which is always "ai" for this class.
+        additional_properties: Optional additional properties associated with the content.
+        raw_representation: Optional raw representation of the content from an underlying implementation.
+
+    """
 
     type: Literal["ai"] = "ai"
-    raw_representation: Any | None = Field(default=None, repr=False)
-    """The raw representation of the content from an underlying implementation."""
     additional_properties: dict[str, Any] | None = None
     """Additional properties for the content."""
+    raw_representation: Any | None = Field(default=None, repr=False)
+    """The raw representation of the content from an underlying implementation."""
 
 
 class TextContent(AIContent):
@@ -240,10 +247,18 @@ class TextReasoningContent(AIContent):
 
     Remarks:
         This class and `TextContent` are superficially similar, but distinct.
+
+    Attributes:
+        text: The text content represented by this instance.
+        type: The type of content, which is always "text_reasoning" for this class.
+        additional_properties: Optional additional properties associated with the content.
+        raw_representation: Optional raw representation of the content.
+
+
     """  # TODO(): Should we merge these two classes, and use a property to distinguish them?
 
-    type: Literal["text_reasoning"] = "text_reasoning"  # type: ignore[assignment]
     text: str
+    type: Literal["text_reasoning"] = "text_reasoning"  # type: ignore[assignment]
 
     def __init__(
         self, text: str, *, raw_representation: Any | None = None, additional_properties: dict[str, Any] | None = None
@@ -263,7 +278,16 @@ class TextReasoningContent(AIContent):
 
 
 class DataContent(AIContent):
-    """Represents binary data content with an associated media type (also known as a MIME type)."""
+    """Represents binary data content with an associated media type (also known as a MIME type).
+
+    Attributes:
+        uri: The URI of the data represented by this instance, typically in the form of a data URI.
+            Should be in the form: "data:{media_type};base64,{base64_data}".
+        type: The type of content, which is always "data" for this class.
+        additional_properties: Optional additional properties associated with the content.
+        raw_representation: Optional raw representation of the content.
+
+    """
 
     type: Literal["data"] = "data"  # type: ignore[assignment]
     uri: str
@@ -354,7 +378,20 @@ class DataContent(AIContent):
 
 
 class UriContent(AIContent):
-    """Represents a URI content."""
+    """Represents a URI content.
+
+    Remarks:
+        This is used for content that is identified by a URI, such as an image or a file.
+        For (binary) data URIs, use `DataContent` instead.
+
+    Attributes:
+        uri: The URI of the content, e.g., 'https://example.com/image.png'.
+        media_type: The media type of the content, e.g., 'image/png', 'application/json', etc.
+        type: The type of content, which is always "uri" for this class.
+        additional_properties: Optional additional properties associated with the content.
+        raw_representation: Optional raw representation of the content.
+
+    """
 
     type: Literal["uri"] = "uri"  # type: ignore[assignment]
     uri: str
@@ -396,6 +433,16 @@ class ErrorContent(AIContent):
     Remarks:
         Typically used for non-fatal errors, where something went wrong as part of the operation,
         but the operation was still able to continue.
+
+    Attributes:
+        type: The type of content, which is always "error" for this class.
+        error_code: The error code associated with the error.
+        details: Additional details about the error.
+        message: The error message.
+        additional_properties: Optional additional properties associated with the content.
+        raw_representation: Optional raw representation of the content.
+
+
     """
 
     type: Literal["error"] = "error"  # type: ignore[assignment]
@@ -438,7 +485,18 @@ class ErrorContent(AIContent):
 
 
 class FunctionCallContent(AIContent):
-    """Represents a function call request."""
+    """Represents a function call request.
+
+    Attributes:
+        type: The type of content, which is always "function_call" for this class.
+        call_id: The function call identifier.
+        name: The name of the function requested.
+        arguments: The arguments requested to be provided to the function.
+        exception: Any exception that occurred while mapping the original function call data to this representation.
+        additional_properties: Optional additional properties associated with the content.
+        raw_representation: Optional raw representation of the content.
+
+    """
 
     type: Literal["function_call"] = "function_call"  # type: ignore[assignment]
     call_id: str
@@ -481,7 +539,17 @@ class FunctionCallContent(AIContent):
 
 
 class FunctionResultContent(AIContent):
-    """Represents the result of a function call."""
+    """Represents the result of a function call.
+
+    Attributes:
+        type: The type of content, which is always "function_result" for this class.
+        call_id: The identifier of the function call for which this is the result.
+        result: The result of the function call, or a generic error message if the function call failed.
+        exception: An exception that occurred if the function call failed.
+        additional_properties: Optional additional properties associated with the content.
+        raw_representation: Optional raw representation of the content.
+
+    """
 
     type: Literal["function_result"] = "function_result"  # type: ignore[assignment]
     call_id: str
@@ -519,7 +587,15 @@ class FunctionResultContent(AIContent):
 
 
 class UsageContent(AIContent):
-    """Represents usage information associated with a chat request and response."""
+    """Represents usage information associated with a chat request and response.
+
+    Attributes:
+        type: The type of content, which is always "usage" for this class.
+        details: The usage information, including input and output token counts, and any additional counts.
+        additional_properties: Optional additional properties associated with the content.
+        raw_representation: Optional raw representation of the content.
+
+    """
 
     type: Literal["usage"] = "usage"  # type: ignore[assignment]
     details: UsageDetails
@@ -563,7 +639,17 @@ AIContents = Annotated[
 
 
 class ChatRole(AFBaseModel):
-    """Describes the intended purpose of a message within a chat interaction."""
+    """Describes the intended purpose of a message within a chat interaction.
+
+    Attributes:
+        value: The string representation of the role.
+
+    Properties:
+        SYSTEM: The role that instructs or sets the behaviour of the AI system.
+        USER: The role that provides user input for chat interactions.
+        ASSISTANT: The role that provides responses to system-instructed, user-prompted input.
+        TOOL: The role that provides additional information and references in response to tool use requests.
+    """
 
     value: str
 
@@ -595,7 +681,20 @@ ChatRole.TOOL = ChatRole(value="tool")  # type: ignore[assignment]
 
 
 class ChatFinishReason(AFBaseModel):
-    """Represents the reason a chat response completed."""
+    """Represents the reason a chat response completed.
+
+    Attributes:
+        value: The string representation of the finish reason.
+
+    Properties:
+        CONTENT_FILTER: The model filtered content, whether for safety, prohibited content, sensitive content,
+            or other such issues.
+        LENGTH: The model reached the maximum length allowed for the request and/or response (typically in
+            terms of tokens).
+        STOP: The model encountered a natural stop point or provided stop sequence.
+        TOOL_CALLS: The model requested the use of a tool that was defined in the request.
+
+    """
 
     value: str
 
@@ -620,7 +719,17 @@ ChatFinishReason.TOOL_CALLS = ChatFinishReason(value="tool_calls")  # type: igno
 
 
 class ChatMessage(AFBaseModel):
-    """Represents a chat message used by a `ModelClient`."""
+    """Represents a chat message used by a `ModelClient`.
+
+    Attributes:
+        role: The role of the author of the message.
+        contents: The chat message content items.
+        author_name: The name of the author of the message.
+        message_id: The ID of the chat message.
+        raw_representation: The raw representation of the chat message from an underlying implementation.
+        additional_properties: Any additional properties associated with the chat message.
+
+    """
 
     role: ChatRole
     """The role of the author of the message."""
@@ -719,7 +828,21 @@ class ChatMessage(AFBaseModel):
 
 
 class ChatResponse(AFBaseModel):
-    """Represents the response to a chat request."""
+    """Represents the response to a chat request.
+
+    Attributes:
+        messages: The list of chat messages in the response.
+        response_id: The ID of the chat response.
+        conversation_id: An identifier for the state of the conversation.
+        ai_model_id: The model ID used in the creation of the chat response.
+        created_at: A timestamp for the chat response.
+        finish_reason: The reason for the chat response.
+        usage_details: The usage details for the chat response.
+        additional_properties: Any additional properties associated with the chat response.
+        raw_representation: The raw representation of the chat response from an underlying implementation.
+
+
+    """
 
     messages: list[ChatMessage]
     """The chat response messages."""
@@ -968,7 +1091,22 @@ class StructuredResponse(ChatResponse, Generic[TValue]):
 
 
 class ChatResponseUpdate(AFBaseModel):
-    """Represents a single streaming response chunk from a `ModelClient`."""
+    """Represents a single streaming response chunk from a `ModelClient`.
+
+    Attributes:
+        contents: The chat response update content items.
+        role: The role of the author of the response update.
+        author_name: The name of the author of the response update.
+        response_id: The ID of the response of which this update is a part.
+        message_id: The ID of the message of which this update is a part.
+        conversation_id: An identifier for the state of the conversation of which this update is a part.
+        ai_model_id: The model ID associated with this response update.
+        created_at: A timestamp for the chat response update.
+        finish_reason: The finish reason for the operation.
+        additional_properties: Any additional properties associated with the chat response update.
+        raw_representation: The raw representation of the chat response update from an underlying implementation.
+
+    """
 
     contents: list[AIContents]
     """The chat response update content items."""
@@ -1092,6 +1230,8 @@ class ChatResponseUpdate(AFBaseModel):
 
 
 class ChatToolMode(AFBaseModel):
+    """Defines if and how tools are used in a chat request."""
+
     mode: Literal["auto", "required", "none"] = "none"
     required_function_name: str | None = None
 

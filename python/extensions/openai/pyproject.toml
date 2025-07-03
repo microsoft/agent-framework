@@ -11,6 +11,9 @@ dependencies = [
     "agent-framework",
 ]
 
+[tool.ruff]
+extend = "../../pyproject.toml"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
