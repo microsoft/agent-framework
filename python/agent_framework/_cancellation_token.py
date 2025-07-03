@@ -2,7 +2,8 @@
 
 import threading
 from asyncio import Future
-from typing import Any, Callable, List
+from collections.abc import Callable
+from typing import Any
 
 
 # from https://github.com/microsoft/autogen/blob/main/python/packages/autogen-core/src/autogen_core/_cancellation_token.py
@@ -12,7 +13,7 @@ class CancellationToken:
     def __init__(self) -> None:
         self._cancelled: bool = False
         self._lock: threading.Lock = threading.Lock()
-        self._callbacks: List[Callable[[], None]] = []
+        self._callbacks: list[Callable[[], None]] = []
 
     def cancel(self) -> None:
         """Cancel pending async calls linked to this cancellation token."""
