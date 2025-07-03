@@ -22,7 +22,7 @@ members = [
 [[package]]
 name = "agent-framework"
 version = "0.1.0b1"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "azure", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "openai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -80,7 +80,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agent-framework", virtual = "." },
+    { name = "agent-framework", editable = "." },
     { name = "openai", editable = "extensions/openai" },
 ]
 
@@ -246,7 +246,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "agent-framework", virtual = "." }]
+requires-dist = [{ name = "agent-framework", editable = "." }]
 
 [[package]]
 name = "packaging"

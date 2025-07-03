@@ -144,3 +144,11 @@ disallow_any_unimported = true
 [tool.bandit]
 targets = ["agent_framework"]
 exclude_dirs = ["tests"]
+
+[tool.uv.build-backend]
+module-name = "agent_framework"
+module-root = ""
+
+[build-system]
+requires = ["uv_build>=0.7.19,<0.8.0"]
+build-backend = "uv_build"
