@@ -205,7 +205,8 @@ class ChatMessageContent(BaseContent):
         else:
             ret[content_key] = self._parse_items()
         if self.role == AuthorRole.TOOL:
-            assert isinstance(self.items[0], FunctionResultContent)  # noqa: S101
+            if not isinstance(self.items[0], FunctionResultContent):
+                raise ValueError("When role is tool, first item should be FunctionResultContent.")
             ret["tool_call_id"] = self.items[0].id or ""
         if self.role != AuthorRole.TOOL and self.name:
             ret["name"] = self.name
