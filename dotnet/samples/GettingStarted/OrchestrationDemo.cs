@@ -4,6 +4,7 @@ using Microsoft.Agents;
 using Microsoft.Agents.Orchestration.Concurrent;
 using Microsoft.Agents.Orchestration.GroupChat;
 using Microsoft.Agents.Orchestration.Handoff;
+using Microsoft.Agents.Orchestration.Sequential;
 using Microsoft.Extensions.AI;
 
 namespace GettingStarted;
@@ -11,68 +12,29 @@ namespace GettingStarted;
 public class OrchestrationDemo(ITestOutputHelper output) : OrchestrationSample(output)
 {
     [Fact]
-    public async Task RunConcurrentOrchestrationAsync()
+    public async Task RunSequentialOrchestrationAsync()
     {
         // Define the agents
-        Agent physicist =
-            this.CreateResponsesAgent(
-                instructions: "You are an expert in physics. You answer questions from a physics perspective.",
-                description: "An expert in physics");
-
-        // Chemist expert
-        // instructions: "You are an expert in chemistry. You answer questions from a chemistry perspective."
-        // description: "An expert in chemistry"
-        Agent chemist = await this.GetFoundryAgent("asst_q9b3dF09osKmDbowC1Rp81MP");
-
-        // Define the orchestration
-        ConcurrentOrchestration orchestration = new(physicist, chemist);
-
-        // Run the orchestration
-        string[] output = await orchestration.RunToCompletionAsync("What is temperature?");
-        Console.WriteLine(string.Join("\n\n", output.Select((x, i) => $"# RESULT[{i}]:\n\n{x}")));
-    }
-
-    [Fact]
-    public async Task RunConcurrentCodeReviewOrchestrationAsync()
-    {
-        // Define the agents
-        Agent softwareDesigner =
-            this.CreateResponsesAgent(
-                instructions: "You are an expert in software design patterns. Your focus is improving software design.",
-                description: "An expert in software design patterns");
-        Agent styleCop =
-            this.CreateGeminiAgent(
-                instructions: "You are an expert in code style. Your focus is improving code formatting and styling.",
-                description: "An expert in code style");
-        Agent tester =
-            await this.CreateFoundryAgent(
-                instructions: "You are an expert software tester. Your focus is finding bugs in software.",
-                description: "An expert software tester");
+        Agent messageWriterAgent =
+            this.CreateAgent(
+                name: "MessageWriter",
+                instructions: """
+                You are a message writer. Given some instructions, you will write a professional message that has this format:
+                Recipient: [Recipient email address]
+                Body: [Body of the messge]
+                """,
+                description: "An agent that writes professional emails.");
+        Agent messageSenderAgent = this.GetCopilotStudioAgent();
 
         // Define the orchestration
-        ConcurrentOrchestration orchestration = new(softwareDesigner, styleCop, tester);
+        SequentialOrchestration orchestration = new(messageWriterAgent, messageSenderAgent)
+        {
+            ResponseCallback = this.WriteUpdatesToConsole
+        };
 
         // Run the orchestration
-        var input = """
-            ```csharp
-            public class Stuff
-            {
-                public int Add(int x, int y) { return x + y;
-                }
-
-                public double Add2(double x, double y) { return x + y;
-                }
-            
-                public double Multiply(double x, double y) { return x + y;
-                }
-                                }
-            ```
-            """;
-        string[] output = await orchestration.RunToCompletionAsync($"Review the following code and output an improved version:\n{input}");
-        Console.WriteLine(string.Join("\n\n", output.Select((x, i) => $"# RESULT[{i}]:\n\n{x}")));
-
-        // Demo cleanup.
-        await this.DeleteFoundryAgent(tester.Id);
+        string result = await orchestration.RunToCompletionAsync("Write and post a message in Teams Chat to testuser saying that I'll be late for our meeting at 3 PM today.");
+        Console.WriteLine($"\n# RESULT: {result}");
     }
 
     [Fact]
@@ -158,6 +120,71 @@ public class OrchestrationDemo(ITestOutputHelper output) : OrchestrationSample(o
         public static string CheckOrderStatus(string orderId) => $"Order {orderId} is shipped and will arrive in 2-3 days.";
         public static string ProcessReturn(string orderId, string reason) => $"Return for order {orderId} has been processed successfully.";
         public static string ProcessRefund(string orderId, string reason) => $"Refund for order {orderId} has been processed successfully.";
+    }
+
+    [Fact]
+    public async Task RunConcurrentOrchestrationAsync()
+    {
+        // Define the agents
+        Agent physicist =
+            this.CreateResponsesAgent(
+                instructions: "You are an expert in physics. You answer questions from a physics perspective.",
+                description: "An expert in physics");
+
+        // Chemist expert
+        // instructions: "You are an expert in chemistry. You answer questions from a chemistry perspective."
+        // description: "An expert in chemistry"
+        Agent chemist = await this.GetFoundryAgent("asst_q9b3dF09osKmDbowC1Rp81MP");
+
+        // Define the orchestration
+        ConcurrentOrchestration orchestration = new(physicist, chemist);
+
+        // Run the orchestration
+        string[] output = await orchestration.RunToCompletionAsync("What is temperature?");
+        Console.WriteLine(string.Join("\n\n", output.Select((x, i) => $"# RESULT[{i}]:\n\n{x}")));
+    }
+
+    [Fact]
+    public async Task RunConcurrentCodeReviewOrchestrationAsync()
+    {
+        // Define the agents
+        Agent softwareDesigner =
+            this.CreateResponsesAgent(
+                instructions: "You are an expert in software design patterns. Your focus is improving software design.",
+                description: "An expert in software design patterns");
+        Agent styleCop =
+            this.CreateGeminiAgent(
+                instructions: "You are an expert in code style. Your focus is improving code formatting and styling.",
+                description: "An expert in code style");
+        Agent tester =
+            await this.CreateFoundryAgent(
+                instructions: "You are an expert software tester. Your focus is finding bugs in software.",
+                description: "An expert software tester");
+
+        // Define the orchestration
+        ConcurrentOrchestration orchestration = new(softwareDesigner, styleCop, tester);
+
+        // Run the orchestration
+        var input = """
+            ```csharp
+            public class Stuff
+            {
+                public int Add(int x, int y) { return x + y;
+                }
+
+                public double Add2(double x, double y) { return x + y;
+                }
+            
+                public double Multiply(double x, double y) { return x + y;
+                }
+                                }
+            ```
+            """;
+        string[] output = await orchestration.RunToCompletionAsync($"Review the following code and output an improved version:\n{input}");
+        Console.WriteLine(string.Join("\n\n", output.Select((x, i) => $"# RESULT[{i}]:\n\n{x}")));
+
+        // Demo cleanup.
+        await this.DeleteFoundryAgent(tester.Id);
     }
 
     private ValueTask WriteUpdatesToConsole(IEnumerable<ChatMessage> messages)

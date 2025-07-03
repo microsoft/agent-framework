@@ -20,6 +20,14 @@ namespace Microsoft.Agents.CopilotStudio;
 public class CopilotStudioAgent : Agent
 {
     private readonly ILogger _logger;
+    private readonly string _name;
+    private readonly string _description;
+
+    /// <inheritdoc/>
+    public override string? Name => this._name;
+
+    /// <inheritdoc/>
+    public override string? Description => this._description;
 
     /// <summary>
     /// The client used to interact with the Copilot Agent service.
@@ -30,12 +38,17 @@ public class CopilotStudioAgent : Agent
     /// Initializes a new instance of the <see cref="CopilotStudioAgent"/> class.
     /// </summary>
     /// <param name="client">A client used to interact with the Copilot Agent service.</param>
+    /// <param name="name">The name of the agent.</param>
+    /// <param name="description">The description of the agent.</param>
     /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
-    public CopilotStudioAgent(CopilotClient client, ILoggerFactory? loggerFactory = null)
+    public CopilotStudioAgent(CopilotClient client, string name, string description, ILoggerFactory? loggerFactory = null)
     {
         this.Client = client;
 
         this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<CopilotStudioAgent>();
+
+        this._name = name;
+        this._description = description;
     }
 
     /// <inheritdoc/>

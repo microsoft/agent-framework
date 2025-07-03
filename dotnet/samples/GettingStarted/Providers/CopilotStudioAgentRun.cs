@@ -37,7 +37,7 @@ public class CopilotStudioAgentRun(ITestOutputHelper output) : AgentSample(outpu
 
         CopilotClient client = new(settings, httpClientFactory, NullLogger.Instance, CopilotStudioHttpClientName);
 
-        Agent agent = new CopilotStudioAgent(client);
+        Agent agent = new CopilotStudioAgent(client, "FriendlyAssistant", "Friendly Assistant");
 
         // Start a new thread for the agent conversation.
         AgentThread thread = agent.GetNewThread();

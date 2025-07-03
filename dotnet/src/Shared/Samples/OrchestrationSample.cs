@@ -89,7 +89,7 @@ public abstract class OrchestrationSample : BaseSample
 
         CopilotClient client = new(settings, httpClientFactory, NullLogger.Instance, CopilotStudioHttpClientName);
 
-        return new CopilotStudioAgent(client);
+        return new CopilotStudioAgent(client, "FriendlyAssistant", "Friendly Assistant");
     }
 
     /// <summary>
