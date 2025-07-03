@@ -10,6 +10,16 @@ except importlib.metadata.PackageNotFoundError:
 
 _IMPORTS = {
     "get_logger": "._logging",
+    "BaseContent": ".contents.base_content",
+    "TextContent": ".contents.text_content",
+    "FunctionCallContent": ".contents.function_call_content",
+    "FunctionResultContent": ".contents.function_result_content",
+    "StreamingContentMixin": ".contents.streaming_content_mixin",
+    "StreamingTextContent": ".contents.streaming_text_content",
+    "Status": ".contents.status",
+    "FinishReason": ".contents.finish_reason",
+    "AuthorRole": ".contents.author_role",
+    "ContentTypes": ".contents.const",
 }
 
 
