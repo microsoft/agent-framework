@@ -18,7 +18,7 @@ public class GroupChatOrchestration_With_HumanInTheLoop(ITestOutputHelper output
     {
         // Define the agents
         ChatClientAgent writer =
-            this.CreateAgent(
+            this.CreateOpenAIChatCompletionAgent(
                 name: "CopyWriter",
                 description: "A copy writer",
                 instructions:
@@ -31,7 +31,7 @@ public class GroupChatOrchestration_With_HumanInTheLoop(ITestOutputHelper output
                 Consider suggestions when refining an idea.
                 """);
         ChatClientAgent editor =
-            this.CreateAgent(
+            this.CreateOpenAIChatCompletionAgent(
                 name: "Reviewer",
                 description: "An editor.",
                 instructions:

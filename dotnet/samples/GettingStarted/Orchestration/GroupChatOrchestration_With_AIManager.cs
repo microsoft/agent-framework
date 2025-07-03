@@ -20,7 +20,7 @@ public class GroupChatOrchestration_With_AIManager(ITestOutputHelper output) : O
     {
         // Define the agents
         ChatClientAgent farmer =
-            this.CreateAgent(
+            this.CreateOpenAIChatCompletionAgent(
                 name: "Farmer",
                 description: "A rural farmer from Southeast Asia.",
                 instructions:
@@ -31,7 +31,7 @@ public class GroupChatOrchestration_With_AIManager(ITestOutputHelper output) : O
                 You are in a debate. Feel free to challenge the other participants with respect.
                 """);
         ChatClientAgent developer =
-            this.CreateAgent(
+            this.CreateOpenAIChatCompletionAgent(
                 name: "Developer",
                 description: "An urban software developer from the United States.",
                 instructions:
@@ -42,7 +42,7 @@ public class GroupChatOrchestration_With_AIManager(ITestOutputHelper output) : O
                 You are in a debate. Feel free to challenge the other participants with respect.
                 """);
         ChatClientAgent teacher =
-            this.CreateAgent(
+            this.CreateOpenAIChatCompletionAgent(
                 name: "Teacher",
                 description: "A retired history teacher from Eastern Europe",
                 instructions:
@@ -53,7 +53,7 @@ public class GroupChatOrchestration_With_AIManager(ITestOutputHelper output) : O
                 You are in a debate. Feel free to challenge the other participants with respect.
                 """);
         ChatClientAgent activist =
-            this.CreateAgent(
+            this.CreateOpenAIChatCompletionAgent(
                 name: "Activist",
                 description: "A young activist from South America.",
                 instructions:
@@ -63,7 +63,7 @@ public class GroupChatOrchestration_With_AIManager(ITestOutputHelper output) : O
                 You are in a debate. Feel free to challenge the other participants with respect.
                 """);
         ChatClientAgent spiritual =
-            this.CreateAgent(
+            this.CreateOpenAIChatCompletionAgent(
                 name: "SpiritualLeader",
                 description: "A spiritual leader from the Middle East.",
                 instructions:
@@ -73,7 +73,7 @@ public class GroupChatOrchestration_With_AIManager(ITestOutputHelper output) : O
                 You are in a debate. Feel free to challenge the other participants with respect.
                 """);
         ChatClientAgent artist =
-            this.CreateAgent(
+            this.CreateOpenAIChatCompletionAgent(
                 name: "Artist",
                 description: "An artist from Africa.",
                 instructions:
@@ -83,7 +83,7 @@ public class GroupChatOrchestration_With_AIManager(ITestOutputHelper output) : O
                 You are in a debate. Feel free to challenge the other participants with respect.
                 """);
         ChatClientAgent immigrant =
-            this.CreateAgent(
+            this.CreateOpenAIChatCompletionAgent(
                 name: "Immigrant",
                 description: "An immigrant entrepreneur from Asia living in Canada.",
                 instructions:
@@ -94,7 +94,7 @@ public class GroupChatOrchestration_With_AIManager(ITestOutputHelper output) : O
                 You are in a debate. Feel free to challenge the other participants with respect.
                 """);
         ChatClientAgent doctor =
-            this.CreateAgent(
+            this.CreateOpenAIChatCompletionAgent(
                 name: "Doctor",
                 description: "A doctor from Scandinavia.",
                 instructions:

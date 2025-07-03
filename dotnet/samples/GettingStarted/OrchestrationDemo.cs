@@ -16,7 +16,7 @@ public class OrchestrationDemo(ITestOutputHelper output) : OrchestrationSample(o
     {
         // Define the agents
         Agent messageWriterAgent =
-            this.CreateAgent(
+            this.CreateOpenAIChatCompletionAgent(
                 name: "MessageWriter",
                 instructions: """
                 You are a message writer. Given some instructions, you will write a professional message that has this format:
@@ -33,7 +33,7 @@ public class OrchestrationDemo(ITestOutputHelper output) : OrchestrationSample(o
         };
 
         // Run the orchestration
-        string result = await orchestration.RunToCompletionAsync("Write and post a message in Teams Chat to testuser saying that I'll be late for our meeting at 3 PM today.");
+        string result = await orchestration.RunToCompletionAsync("Write and post a message in Teams Chat to testuser saying that I'll be late for our meeting at 3 PM today. Sign off as Johnny.");
         Console.WriteLine($"\n# RESULT: {result}");
     }
 
@@ -71,7 +71,7 @@ public class OrchestrationDemo(ITestOutputHelper output) : OrchestrationSample(o
     {
         // Define the agents & tools
         Agent triageAgent =
-            this.CreateAgent(
+            this.CreateOpenAIChatCompletionAgent(
                 instructions: "A customer support agent that triages issues.",
                 name: "TriageAgent",
                 description: "Handle customer requests.");
@@ -82,7 +82,7 @@ public class OrchestrationDemo(ITestOutputHelper output) : OrchestrationSample(o
                 description: "A customer support agent that checks order status.",
                 functions: AIFunctionFactory.Create(OrderFunctions.CheckOrderStatus));
         Agent returnAgent =
-            this.CreateAgent(
+            this.CreateOpenAIChatCompletionAgent(
                 name: "OrderReturnAgent",
                 instructions: "Handle order return requests.",
                 description: "A customer support agent that handles order returns.",

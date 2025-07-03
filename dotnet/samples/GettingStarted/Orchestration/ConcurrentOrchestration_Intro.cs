@@ -20,11 +20,11 @@ public class ConcurrentOrchestration_Intro(ITestOutputHelper output) : Orchestra
     {
         // Define the agents
         ChatClientAgent physicist =
-            this.CreateAgent(
+            this.CreateOpenAIChatCompletionAgent(
                 instructions: "You are an expert in physics. You answer questions from a physics perspective.",
                 description: "An expert in physics");
         ChatClientAgent chemist =
-            this.CreateAgent(
+            this.CreateOpenAIChatCompletionAgent(
                 instructions: "You are an expert in chemistry. You answer questions from a chemistry perspective.",
                 description: "An expert in chemistry");
 

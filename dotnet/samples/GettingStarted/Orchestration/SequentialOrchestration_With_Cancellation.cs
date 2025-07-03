@@ -17,7 +17,7 @@ public class SequentialOrchestration_With_Cancellation(ITestOutputHelper output)
     {
         // Define the agents
         ChatClientAgent agent =
-            this.CreateAgent(
+            this.CreateOpenAIChatCompletionAgent(
                 """
                 If the input message is a number, return the number incremented by one.
                 """,

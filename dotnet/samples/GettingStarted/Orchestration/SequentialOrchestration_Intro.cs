@@ -21,7 +21,7 @@ public class SequentialOrchestration_Intro(ITestOutputHelper output) : Orchestra
     {
         // Define the agents
         ChatClientAgent analystAgent =
-            this.CreateAgent(
+            this.CreateOpenAIChatCompletionAgent(
                 name: "Analyst",
                 instructions:
                 """
@@ -32,7 +32,7 @@ public class SequentialOrchestration_Intro(ITestOutputHelper output) : Orchestra
                 """,
                 description: "A agent that extracts key concepts from a product description.");
         ChatClientAgent writerAgent =
-            this.CreateAgent(
+            this.CreateOpenAIChatCompletionAgent(
                 name: "copywriter",
                 instructions:
                 """
@@ -42,7 +42,7 @@ public class SequentialOrchestration_Intro(ITestOutputHelper output) : Orchestra
                 """,
                 description: "An agent that writes a marketing copy based on the extracted concepts.");
         ChatClientAgent editorAgent =
-            this.CreateAgent(
+            this.CreateOpenAIChatCompletionAgent(
                 name: "editor",
                 instructions:
                 """

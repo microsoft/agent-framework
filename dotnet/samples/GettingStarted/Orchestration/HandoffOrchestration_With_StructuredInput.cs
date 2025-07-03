@@ -23,18 +23,18 @@ public class HandoffOrchestration_With_StructuredInput(ITestOutputHelper output)
 
         // Define the agents
         ChatClientAgent triageAgent =
-            this.CreateAgent(
+            this.CreateOpenAIChatCompletionAgent(
                 instructions: "Given a GitHub issue, triage it.",
                 name: "TriageAgent",
                 description: "An agent that triages GitHub issues");
         ChatClientAgent pythonAgent =
-            this.CreateAgent(
+            this.CreateOpenAIChatCompletionAgent(
                 instructions: "You are an agent that handles Python related GitHub issues.",
                 name: "PythonAgent",
                 description: "An agent that handles Python related issues",
                 functions: githubAddLabelFunction);
         ChatClientAgent dotnetAgent =
-            this.CreateAgent(
+            this.CreateOpenAIChatCompletionAgent(
                 instructions: "You are an agent that handles .NET related GitHub issues.",
                 name: "DotNetAgent",
                 description: "An agent that handles .NET related issues",

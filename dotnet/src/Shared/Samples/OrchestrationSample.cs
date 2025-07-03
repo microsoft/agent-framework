@@ -43,7 +43,7 @@ public abstract class OrchestrationSample : BaseSample
     /// <param name="name">An optional name for the agent.</param>
     /// <param name="functions">A set of <see cref="AIFunction"/> instances to be used as tools by the agent.</param>
     /// <returns>A new <see cref="ChatClientAgent"/> instance configured with the provided parameters.</returns>
-    protected ChatClientAgent CreateAgent(string instructions, string? description = null, string? name = null, params AIFunction[] functions)
+    protected ChatClientAgent CreateOpenAIChatCompletionAgent(string instructions, string? description = null, string? name = null, params AIFunction[] functions)
     {
         // Get the chat client to use for the agent.
         using IChatClient chatClient = CreateChatClient();

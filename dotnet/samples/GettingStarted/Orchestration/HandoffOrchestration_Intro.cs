@@ -22,24 +22,24 @@ public class HandoffOrchestration_Intro(ITestOutputHelper output) : Orchestratio
     {
         // Define the agents & tools
         ChatClientAgent triageAgent =
-            this.CreateAgent(
+            this.CreateOpenAIChatCompletionAgent(
                 instructions: "A customer support agent that triages issues.",
                 name: "TriageAgent",
                 description: "Handle customer requests.");
         ChatClientAgent statusAgent =
-            this.CreateAgent(
+            this.CreateOpenAIChatCompletionAgent(
                 name: "OrderStatusAgent",
                 instructions: "Handle order status requests.",
                 description: "A customer support agent that checks order status.",
                 functions: AIFunctionFactory.Create(OrderFunctions.CheckOrderStatus));
         ChatClientAgent returnAgent =
-            this.CreateAgent(
+            this.CreateOpenAIChatCompletionAgent(
                 name: "OrderReturnAgent",
                 instructions: "Handle order return requests.",
                 description: "A customer support agent that handles order returns.",
                 functions: AIFunctionFactory.Create(OrderFunctions.ProcessReturn));
         ChatClientAgent refundAgent =
-            this.CreateAgent(
+            this.CreateOpenAIChatCompletionAgent(
                 name: "OrderRefundAgent",
                 instructions: "Handle order refund requests.",
                 description: "A customer support agent that handles order refund.",
