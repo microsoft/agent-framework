@@ -71,7 +71,7 @@ class UsageDetails(AFBaseModel):
     model_config = ConfigDict(
         populate_by_name=True, arbitrary_types_allowed=True, validate_assignment=True, extra="allow"
     )
-    __pydantic_extra__: dict[str, int]
+    __pydantic_extra__: dict[str, int]  # type: ignore[reportIncompatibleVariableOverride]
     """Overriding the default extras type, to make sure all extras are integers."""
 
     input_token_count: int | None = None
@@ -80,6 +80,29 @@ class UsageDetails(AFBaseModel):
     """The number of tokens in the output."""
     total_token_count: int | None = None
     """The total number of tokens used to produce the response."""
+
+    def __init__(
+        self,
+        input_token_count: int | None = None,
+        output_token_count: int | None = None,
+        total_token_count: int | None = None,
+        **kwargs: int,
+    ) -> None:
+        """Initializes the UsageDetails instance.
+
+        Args:
+            input_token_count: The number of tokens in the input.
+            output_token_count: The number of tokens in the output.
+            total_token_count: The total number of tokens used to produce the response.
+            **kwargs: Additional token counts, can be set by passing keyword arguments.
+                They can be retrieved through the `additional_counts` property.
+        """
+        super().__init__(
+            input_token_count=input_token_count,  # type: ignore[reportCallIssue]
+            output_token_count=output_token_count,  # type: ignore[reportCallIssue]
+            total_token_count=total_token_count,  # type: ignore[reportCallIssue]
+            **kwargs,
+        )
 
     @property
     def additional_counts(self) -> dict[str, int]:
@@ -110,29 +133,6 @@ class UsageDetails(AFBaseModel):
             output_token_count=(self.output_token_count or 0) + (other.output_token_count or 0),
             total_token_count=(self.total_token_count or 0) + (other.total_token_count or 0),
             **additional_counts,
-        )
-
-    def __init__(
-        self,
-        input_token_count: int | None = None,
-        output_token_count: int | None = None,
-        total_token_count: int | None = None,
-        **kwargs: int,
-    ) -> None:
-        """Initializes the UsageDetails instance.
-
-        Args:
-            input_token_count: The number of tokens in the input.
-            output_token_count: The number of tokens in the output.
-            total_token_count: The total number of tokens used to produce the response.
-            **kwargs: Additional token counts, can be set by passing keyword arguments.
-                They can be retrieved through the `additional_counts` property.
-        """
-        super().__init__(
-            input_token_count=input_token_count,
-            output_token_count=output_token_count,
-            total_token_count=total_token_count,
-            **kwargs,
         )
 
 
@@ -185,7 +185,7 @@ def _coalesce_text_content(
     if not contents:
         return
     coalesced_contents: list["AIContents"] = []
-    current_texts = []
+    current_texts: list[str] = []
     first_new_content = None
     for i, content in enumerate(contents):
         if isinstance(content, type_):
@@ -267,7 +267,7 @@ class TextContent(AIContent):
             **kwargs: Any additional keyword arguments.
         """
         super().__init__(
-            text=text,
+            text=text,  # type: ignore[reportCallIssue]
             raw_representation=raw_representation,
             additional_properties=additional_properties,
             **kwargs,
@@ -309,7 +309,7 @@ class TextReasoningContent(AIContent):
             **kwargs: Any additional keyword arguments.
         """
         super().__init__(
-            text=text,
+            text=text,  # type: ignore[reportCallIssue]
             raw_representation=raw_representation,
             additional_properties=additional_properties,
             **kwargs,
@@ -410,7 +410,7 @@ class DataContent(AIContent):
                 raise ValueError("Either 'data' and 'media_type' or 'uri' must be provided.")
             uri = f"data:{media_type};base64,{base64.b64encode(data).decode('utf-8')}"
         super().__init__(
-            uri=uri,
+            uri=uri,  # type: ignore[reportCallIssue]
             raw_representation=raw_representation,
             additional_properties=additional_properties,
             **kwargs,
@@ -477,8 +477,8 @@ class UriContent(AIContent):
             **kwargs: Any additional keyword arguments.
         """
         super().__init__(
-            uri=uri,
-            media_type=media_type,
+            uri=uri,  # type: ignore[reportCallIssue]
+            media_type=media_type,  # type: ignore[reportCallIssue]
             additional_properties=additional_properties,
             raw_representation=raw_representation,
             **kwargs,
@@ -532,9 +532,9 @@ class ErrorContent(AIContent):
             **kwargs: Any additional keyword arguments.
         """
         super().__init__(
-            message=message,
-            error_code=error_code,
-            details=details,
+            message=message,  # type: ignore[reportCallIssue]
+            error_code=error_code,  # type: ignore[reportCallIssue]
+            details=details,  # type: ignore[reportCallIssue]
             additional_properties=additional_properties,
             raw_representation=raw_representation,
             **kwargs,
@@ -592,10 +592,10 @@ class FunctionCallContent(AIContent):
             **kwargs: Any additional keyword arguments.
         """
         super().__init__(
-            call_id=call_id,
-            name=name,
-            arguments=arguments,
-            exception=exception,
+            call_id=call_id,  # type: ignore[reportCallIssue]
+            name=name,  # type: ignore[reportCallIssue]
+            arguments=arguments,  # type: ignore[reportCallIssue]
+            exception=exception,  # type: ignore[reportCallIssue]
             raw_representation=raw_representation,
             additional_properties=additional_properties,
             **kwargs,
@@ -644,9 +644,9 @@ class FunctionResultContent(AIContent):
             **kwargs: Any additional keyword arguments.
         """
         super().__init__(
-            call_id=call_id,
-            result=result,
-            exception=exception,
+            call_id=call_id,  # type: ignore[reportCallIssue]
+            result=result,  # type: ignore[reportCallIssue]
+            exception=exception,  # type: ignore[reportCallIssue]
             raw_representation=raw_representation,
             additional_properties=additional_properties,
             **kwargs,
@@ -685,8 +685,7 @@ class UsageContent(AIContent):
             **kwargs: Any additional keyword arguments.
         """
         super().__init__(
-            type=self.type,
-            details=details,
+            details=details,  # type: ignore[reportCallIssue]
             raw_representation=raw_representation,
             additional_properties=additional_properties,
             **kwargs,
@@ -885,12 +884,12 @@ class ChatMessage(AFBaseModel):
         if isinstance(role, str):
             role = ChatRole(value=role)
         super().__init__(
-            role=role,
-            contents=contents,
-            author_name=author_name,
-            message_id=message_id,
-            additional_properties=additional_properties,
-            raw_representation=raw_representation,
+            role=role,  # type: ignore[reportCallIssue]
+            contents=contents,  # type: ignore[reportCallIssue]
+            author_name=author_name,  # type: ignore[reportCallIssue]
+            message_id=message_id,  # type: ignore[reportCallIssue]
+            additional_properties=additional_properties,  # type: ignore[reportCallIssue]
+            raw_representation=raw_representation,  # type: ignore[reportCallIssue]
         )
 
 
@@ -1022,15 +1021,15 @@ class ChatResponse(AFBaseModel):
             messages.append(ChatMessage(role=ChatRole.ASSISTANT, contents=[text]))
 
         super().__init__(
-            messages=messages,
-            response_id=response_id,
-            conversation_id=conversation_id,
-            ai_model_id=model_id,
-            created_at=created_at,
-            finish_reason=finish_reason,
-            usage_details=usage_details,
-            additional_properties=additional_properties,
-            raw_representation=raw_representation,
+            messages=messages,  # type: ignore[reportCallIssue]
+            response_id=response_id,  # type: ignore[reportCallIssue]
+            conversation_id=conversation_id,  # type: ignore[reportCallIssue]
+            ai_model_id=model_id,  # type: ignore[reportCallIssue]
+            created_at=created_at,  # type: ignore[reportCallIssue]
+            finish_reason=finish_reason,  # type: ignore[reportCallIssue]
+            usage_details=usage_details,  # type: ignore[reportCallIssue]
+            additional_properties=additional_properties,  # type: ignore[reportCallIssue]
+            raw_representation=raw_representation,  # type: ignore[reportCallIssue]
             **kwargs,
         )
 
@@ -1260,17 +1259,17 @@ class ChatResponseUpdate(AFBaseModel):
             contents.append(text)
 
         super().__init__(
-            contents=contents,
-            additional_properties=additional_properties,
-            author_name=author_name,
-            conversation_id=conversation_id,
-            created_at=created_at,
-            finish_reason=finish_reason,
-            message_id=message_id,
-            ai_model_id=ai_model_id,
-            raw_representation=raw_representation,
-            response_id=response_id,
-            role=role,
+            contents=contents,  # type: ignore[reportCallIssue]
+            additional_properties=additional_properties,  # type: ignore[reportCallIssue]
+            author_name=author_name,  # type: ignore[reportCallIssue]
+            conversation_id=conversation_id,  # type: ignore[reportCallIssue]
+            created_at=created_at,  # type: ignore[reportCallIssue]
+            finish_reason=finish_reason,  # type: ignore[reportCallIssue]
+            message_id=message_id,  # type: ignore[reportCallIssue]
+            ai_model_id=ai_model_id,  # type: ignore[reportCallIssue]
+            raw_representation=raw_representation,  # type: ignore[reportCallIssue]
+            response_id=response_id,  # type: ignore[reportCallIssue]
+            role=role,  # type: ignore[reportCallIssue]
         )
 
     @property
