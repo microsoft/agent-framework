@@ -170,7 +170,8 @@ disallow_any_unimported = true
 
 [tool.bandit]
 targets = ["agent_framework"]
-exclude_dirs = ["tests", "."]
+exclude_dirs = ["tests"]
+exclude = [ "run_tasks_in_extensions_if_exists.py", "check_md_code_blocks.py" ]
 
 [tool.poe.tasks]
 fmt = "python run_tasks_in_extensions_if_exists.py fmt"
