@@ -181,7 +181,6 @@ docs-serve = "sphinx-autobuild --watch src docs/agent-framework docs/build --por
 docs-check = "sphinx-build --fail-on-warning docs/agent-framework docs/build"
 docs-check-examples = "sphinx-build -b code_lint docs/agent-framework docs/build"
 pre-commit-install = "uv run pre-commit install --install-hooks --overwrite"
-uv-update = "uv self update"
 install = "uv sync --all-extras --dev -U --prerelease=if-necessary-or-explicit"
 format.ref = "fmt"
 check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint", "samples-code-check"]
