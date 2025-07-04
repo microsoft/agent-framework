@@ -2,11 +2,11 @@
 
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
-using GenerativeAI.Microsoft;
 using Microsoft.Agents;
 using Microsoft.Agents.CopilotStudio;
 using Microsoft.Agents.CopilotStudio.Client;
 using Microsoft.Extensions.AI.AzureAIAgentsPersistent;
+using Microsoft.ML.OnnxRuntimeGenAI;
 using Microsoft.Shared.Samples;
 
 namespace GettingStarted;
@@ -19,20 +19,18 @@ public class AgentTypesDemo(ITestOutputHelper output) : OrchestrationSample(outp
         // Get a client for using server side agents.
         PersistentAgentsClient persistentAgentsClient = new(TestConfiguration.AzureAI.Endpoint, new AzureCliCredential());
 
-        // Create a new server side agent and expose it via the FoundryAgent class.
-        FoundryAgent foundryAgent = await FoundryAgent.CreateAsync(persistentAgentsClient, new()
-        {
-            Name = "Joker",
-            Description = "An agent that tells jokes.",
-            Instructions = "You are good at telling jokes.",
-            Model = TestConfiguration.AzureAI.DeploymentName!,
-            // We can configure foundry specific options like grounding tools.
-            Tools = [new BingGroundingToolDefinition(new([new(TestConfiguration.BingGrounding.ConnectionId) { Count = 5, Freshness = "Week" }]))],
-            Temperature = 0.1f,
-        });
+        // Create a new server side agent and expose it as a FoundryAgent.
+        var createPersistentAgentResponse = await persistentAgentsClient.Administration.CreateAgentAsync(
+            name: "Joker",
+            description: "An agent that tells jokes.",
+            instructions: "You are good at telling jokes.",
+            model: TestConfiguration.AzureAI.DeploymentName!);
+        FoundryAgent foundryAgent = createPersistentAgentResponse.AsRunnableAgent(persistentAgentsClient);
 
         // We can invoke the agent with foundry specific parameters.
-        var result = await foundryAgent.RunAsync("Search the web for good jokes and list them to me, then tell me a variation of one of the jokes", options: new ThreadAndRunOptions() { Temperature = 0.9f });
+        var result = await foundryAgent.RunAsync(
+            "Search the web for good jokes and list them to me, then tell me a variation of one of the jokes",
+            options: new ThreadAndRunOptions() { OverrideTools = [new BingGroundingToolDefinition(new([new(TestConfiguration.BingGrounding.ConnectionId) { Count = 5, Freshness = "Week" }]))] });
         Console.WriteLine(result.Text);
 
         // FoundryAgent inherits from the base Agent abstraction, so it can also be used as such.
@@ -43,10 +41,10 @@ public class AgentTypesDemo(ITestOutputHelper output) : OrchestrationSample(outp
         Console.WriteLine(result.Text);
 
         // We can also retrieve an existing agent using its ID.
-        var secondFoundryAgent = await FoundryAgent.GetAsync(persistentAgentsClient, foundryAgent.Id);
+        FoundryAgent existingFoundryAgent = (await persistentAgentsClient.Administration.GetAgentAsync(foundryAgent.Id)).AsRunnableAgent(persistentAgentsClient);
 
         // We can add useful helper methods to the FoundryAgent class like Delete.
-        await secondFoundryAgent.EnsureAgentDeletedAsync();
+        await existingFoundryAgent.EnsureAgentDeletedAsync();
     }
 
     [Fact]
@@ -67,10 +65,10 @@ public class AgentTypesDemo(ITestOutputHelper output) : OrchestrationSample(outp
     public async Task ChatClientAgentAsync()
     {
         // Get a chat client for Gemini.
-        using GenerativeAIChatClient chatClient = new(TestConfiguration.GoogleAI.ApiKey, TestConfiguration.GoogleAI.Gemini.ModelId);
+        using OnnxRuntimeGenAIChatClient chatClient = new(@"C:\GR\huggingface\microsoft\Phi-4-mini-instruct-onnx\cpu_and_mobile\cpu-int4-rtn-block-32-acc-level-4");
 
         // Create a ChatClientAgent using the chat client. This supports any IChatClient implementation, including
-        // OpenAI Chat Completion, OpenAI Responses, OpenAI Assistants, Ollama, ONNX, AzureAI Inference, Amazon Bedrock, and more.
+        // OpenAI Chat Completion, OpenAI Responses, OpenAI Assistants, Ollama, ONNX, AzureAI Inference, Amazon Bedrock, Google Gemini, and more.
         Agent agent = new ChatClientAgent(chatClient, new() { Name = "Joker", Instructions = "You are good at telling jokes." });
 
         // Invoke using the base Agent abstraction.

@@ -32,6 +32,7 @@
     <PackageVersion Include="Microsoft.SemanticKernel.Agents.Runtime.InProcess" Version="1.58.0-preview" />
     <!-- Inference SDKs -->
     <PackageVersion Include="Google_GenerativeAI.Microsoft" Version="2.6.0" />
+    <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.8.3" />
     <!-- Agent Service SDKs -->
     <PackageVersion Include="Microsoft.Agents.CopilotStudio.Client" Version="1.0.1" />
     <!-- Test -->
