@@ -84,6 +84,13 @@ public sealed class TestConfiguration
         public string AppClientId { get; set; }
     }
 
+    /// <summary>Represents the configuration settings required to connec to Bing grounding.</summary>
+    public sealed class BingGroundingConfig
+    {
+        /// <summary>Gets or sets the connection id for Bing grounding.</summary>
+        public string ConnectionId { get; set; }
+    }
+
     /// <summary>
     /// Initializes the configuration system with the specified configuration root.
     /// </summary>
@@ -122,6 +129,11 @@ public sealed class TestConfiguration
     /// Gets the configuration settings for Copilot Studio agents.
     /// </summary>
     public static CopilotStudioAgentConfig CopilotStudio => LoadSection<CopilotStudioAgentConfig>();
+
+    /// <summary>
+    /// Gets the configuration settings for Bing grounding.
+    /// </summary>
+    public static BingGroundingConfig BingGrounding => LoadSection<BingGroundingConfig>();
 
     /// <summary>
     /// Retrieves a configuration section based on the specified key.

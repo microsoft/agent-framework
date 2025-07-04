@@ -61,10 +61,10 @@ public abstract class OrchestrationSample : BaseSample
     }
 
     /// <summary>
-    /// Creates a new <see cref="CopilotStudioAgent"/>.
+    /// Creates a new <see cref="CopilotClient"/> instance configured for Copilot Studio.
     /// </summary>
-    /// <returns>A new <see cref="CopilotStudioAgent"/> instance.</returns>
-    protected CopilotStudioAgent GetCopilotStudioAgent()
+    /// <returns>The new <see cref="CopilotClient"/>.</returns>
+    protected CopilotClient GetCopilotClient()
     {
         const string CopilotStudioHttpClientName = nameof(CopilotStudioAgentRun);
 
@@ -87,8 +87,16 @@ public abstract class OrchestrationSample : BaseSample
                 .BuildServiceProvider()
                 .GetRequiredService<IHttpClientFactory>();
 
-        CopilotClient client = new(settings, httpClientFactory, NullLogger.Instance, CopilotStudioHttpClientName);
+        return new(settings, httpClientFactory, NullLogger.Instance, CopilotStudioHttpClientName);
+    }
 
+    /// <summary>
+    /// Creates a new <see cref="CopilotStudioAgent"/>.
+    /// </summary>
+    /// <returns>A new <see cref="CopilotStudioAgent"/> instance.</returns>
+    protected CopilotStudioAgent GetCopilotStudioAgent()
+    {
+        CopilotClient client = this.GetCopilotClient();
         return new CopilotStudioAgent(client, "FriendlyAssistant", "Friendly Assistant");
     }
 

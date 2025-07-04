@@ -87,11 +87,12 @@ public class OrchestrationDemo(ITestOutputHelper output) : OrchestrationSample(o
                 instructions: "Handle order return requests.",
                 description: "A customer support agent that handles order returns.",
                 functions: AIFunctionFactory.Create(OrderFunctions.ProcessReturn));
+        // OrderRefundAgent
+        // instructions: "Handle order refund requests."
+        // description: "A customer support agent that handles order refunds."
         Agent refundAgent =
-            this.CreateResponsesAgent(
-                name: "OrderRefundAgent",
-                instructions: "Handle order refund requests.",
-                description: "A customer support agent that handles order refund.",
+            await this.GetFoundryAgent(
+                "asst_OX5JwvewrW82VmTjfHOtF5OC",
                 functions: AIFunctionFactory.Create(OrderFunctions.ProcessRefund));
 
         // Define the orchestration
