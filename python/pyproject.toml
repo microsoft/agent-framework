@@ -170,7 +170,7 @@ disallow_any_unimported = true
 
 [tool.bandit]
 targets = ["agent_framework"]
-exclude_dirs = ["tests", "./run_tasks_in_extensions_if_exists.py", "./check_md_code_blocks.py"]
+exclude_dirs = ["tests", "./run_tasks_in_extensions_if_exists.py", "./check_md_code_blocks.py", "docs"]
 
 [tool.poe.tasks]
 markdown-code-lint = """python check_md_code_blocks.py ../README.md ./docs/agent-framework/**/*.md README.md"""
