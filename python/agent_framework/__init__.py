@@ -10,6 +10,8 @@ except importlib.metadata.PackageNotFoundError:
 
 _IMPORTS = {
     "get_logger": "._logging",
+    "Agent": "._agents",
+    "AgentThread": "._agents",
     "AITool": "._tools",
     "ai_function": "._tools",
     "AIContent": "._types",
