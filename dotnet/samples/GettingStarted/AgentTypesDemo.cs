@@ -69,10 +69,10 @@ public class AgentTypesDemo(ITestOutputHelper output) : OrchestrationSample(outp
 
         // Create a ChatClientAgent using the chat client. This supports any IChatClient implementation, including
         // OpenAI Chat Completion, OpenAI Responses, OpenAI Assistants, Ollama, ONNX, AzureAI Inference, Amazon Bedrock, Google Gemini, and more.
-        Agent agent = new ChatClientAgent(chatClient, new() { Name = "Joker", Instructions = "You are good at telling jokes." });
+        Agent agent = new ChatClientAgent(chatClient, new() { Name = "FriendlyAssistant", Instructions = "You are a friendly assistant." });
 
         // Invoke using the base Agent abstraction.
-        var response = await agent.RunAsync("Tell me a joke about a pirate.");
+        var response = await agent.RunAsync("What is the capital of France?");
         Console.WriteLine(response.Text);
     }
 }
