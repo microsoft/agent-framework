@@ -138,7 +138,7 @@ public class FoundryAgent : Agent
             throw new InvalidOperationException("The agent has been deleted.");
         }
 
-        return await this._chatClientAgent.RunAsync(message, thread, chatOptions: new() { RawRepresentationFactory = _ => options }, cancellationToken: cancellationToken).ConfigureAwait(false);
+        return await this._chatClientAgent.RunAsync(message, thread, chatOptions: new() { RawRepresentationFactory = _ => CloneThreadAndRunOptions(options) }, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
@@ -166,7 +166,7 @@ public class FoundryAgent : Agent
             throw new InvalidOperationException("The agent has been deleted.");
         }
 
-        await foreach (var update in this._chatClientAgent.RunStreamingAsync(message, thread, chatOptions: new() { RawRepresentationFactory = _ => options }, cancellationToken: cancellationToken).ConfigureAwait(false))
+        await foreach (var update in this._chatClientAgent.RunStreamingAsync(message, thread, chatOptions: new() { RawRepresentationFactory = _ => CloneThreadAndRunOptions(options) }, cancellationToken: cancellationToken).ConfigureAwait(false))
         {
             yield return update;
         }
@@ -184,5 +184,27 @@ public class FoundryAgent : Agent
         {
             yield return update;
         }
+    }
+
+    private static ThreadAndRunOptions? CloneThreadAndRunOptions(ThreadAndRunOptions? options)
+    {
+        return options == null ? null : new ThreadAndRunOptions
+        {
+            ThreadOptions = options.ThreadOptions,
+            OverrideModelName = options.OverrideModelName,
+            OverrideInstructions = options.OverrideInstructions,
+            OverrideTools = options.OverrideTools,
+            ToolResources = options.ToolResources,
+            Stream = options.Stream,
+            Temperature = options.Temperature,
+            TopP = options.TopP,
+            MaxPromptTokens = options.MaxPromptTokens,
+            MaxCompletionTokens = options.MaxCompletionTokens,
+            TruncationStrategy = options.TruncationStrategy,
+            ToolChoice = options.ToolChoice,
+            ResponseFormat = options.ResponseFormat,
+            ParallelToolCalls = options.ParallelToolCalls,
+            Metadata = options.Metadata
+        };
     }
 }
