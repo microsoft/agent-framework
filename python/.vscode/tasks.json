@@ -181,11 +181,10 @@
             "type": "shell",
             "command": "uv",
             "args": [
-                "sync",
-                "--all-extras",
-                "--dev",
-                "-U",
-                "--prerelease=if-necessary-or-explicit"
+                "run",
+                "poe",
+                "uv-setup",
+                "--python=${input:py_version}"
             ],
             "presentation": {
                 "reveal": "always",

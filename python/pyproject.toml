@@ -170,37 +170,63 @@ disallow_any_unimported = true
 
 [tool.bandit]
 targets = ["agent_framework"]
-exclude_dirs = ["tests"]
-exclude = [ "run_tasks_in_extensions_if_exists.py", "check_md_code_blocks.py" ]
+exclude_dirs = ["tests", "./run_tasks_in_extensions_if_exists.py", "./check_md_code_blocks.py"]
 
 [tool.poe.tasks]
-fmt = "python run_tasks_in_extensions_if_exists.py fmt"
-format.ref = "fmt"
-lint = "python run_tasks_in_extensions_if_exists.py lint"
-pyright-extensions = "python run_tasks_in_extensions_if_exists.py pyright"
-pyright-main = "pyright"
-pyright = ["pyright-extensions", "pyright-main"]
-mypy-extensions = "python run_tasks_in_extensions_if_exists.py mypy"
-mypy-main = "mypy --config-file pyproject.toml agent_framework"
-mypy = ["mypy-extensions", "mypy-main"]
-test-extensions = "python run_tasks_in_extensions_if_exists.py test"
-test-main = "pytest --cov=agent_framework --cov-report=term-missing:skip-covered tests/unit/"
-test = ["test-extensions", "test-main"]
-markdown-code-lint = """python check_md_code_blocks.py ../README.md ./packages/agent-framework/docs/agent_framework/**/*.md README.md"""
+markdown-code-lint = """python check_md_code_blocks.py ../README.md ./docs/agent-framework/**/*.md README.md"""
 samples-code-check = """pyright ./samples"""
-
-check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint", "samples-code-check"]
-
-# Docs
 docs-clean = "rm -rf docs/build"
-
 docs-build = "sphinx-build docs/agent-framework docs/build"
-
 docs-serve = "sphinx-autobuild --watch src docs/agent-framework docs/build --port 8000 --jobs auto"
-
 docs-check = "sphinx-build --fail-on-warning docs/agent-framework docs/build"
-
 docs-check-examples = "sphinx-build -b code_lint docs/agent-framework docs/build"
+pre-commit-install = "uv run pre-commit install --install-hooks --overwrite"
+uv-update = "uv self update"
+install = "uv sync --all-extras --dev -U --prerelease=if-necessary-or-explicit"
+format.ref = "fmt"
+check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint", "samples-code-check"]
+pre-commit-check = ["fmt", "lint", "pyright", "test", "markdown-code-lint", "samples-code-check"]
+
+[tool.poe.tasks.fmt]
+sequence = [
+    { cmd = "python run_tasks_in_extensions_if_exists.py fmt"},
+    { cmd = "ruff format agent_framework tests samples" }
+]
+[tool.poe.tasks.lint]
+sequence = [
+    { cmd = "python run_tasks_in_extensions_if_exists.py lint" },
+    { cmd = "ruff check --fix --exit-non-zero-on-fix agent_framework tests samples" }
+]
+[tool.poe.tasks.pyright]
+sequence = [
+    { cmd = "python run_tasks_in_extensions_if_exists.py pyright" },
+    { cmd = "pyright" }
+]
+[tool.poe.tasks.mypy]
+sequence = [
+    { cmd = "python run_tasks_in_extensions_if_exists.py mypy" },
+    { cmd = "mypy --config-file pyproject.toml agent_framework" }
+]
+[tool.poe.tasks.test]
+sequence = [
+    { cmd = "python run_tasks_in_extensions_if_exists.py test" },
+    { cmd = "pytest --cov=agent_framework --cov-report=term-missing:skip-covered tests/unit/" }
+]
+[tool.poe.tasks.build]
+sequence = [
+    { cmd = "python run_tasks_in_extensions_if_exists.py build" },
+    { cmd = "uv build" }
+]
+[tool.poe.tasks.venv]
+cmd = "uv venv --python $python"
+args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
+[tool.poe.tasks.setup]
+sequence = [
+    { ref = "venv --python $python"},
+    { ref = "install" },
+    { ref = "pre-commit-install" }
+]
+args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
 
 [tool.uv.build-backend]
 module-name = "agent_framework"

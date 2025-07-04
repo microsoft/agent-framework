@@ -49,10 +49,10 @@ def check_code_blocks(markdown_file_paths: list[str]) -> None:
             markdown_file_path_with_line_no = f"{markdown_file_path}:{line_no}"
             logger.info("Checking a code block in %s...", markdown_file_path_with_line_no)
 
-            # Skip blocks that don't import autogen_agentchat, autogen_core, or autogen_ext
+            # Skip blocks that don't import agent_framework modules
             if all(
                 all(import_code not in code_block for import_code in [f"import {module}", f"from {module}"])
-                for module in ["autogen_agentchat", "autogen_core", "autogen_ext"]
+                for module in ["agent_framework"]
             ):
                 logger.info(" " + darkgreen("OK[ignored]"))
                 continue
@@ -62,9 +62,9 @@ def check_code_blocks(markdown_file_paths: list[str]) -> None:
                 temp_file.flush()
 
                 # Run pyright on the temporary file using subprocess.run
-                import subprocess
+                import subprocess  # nosec
 
-                result = subprocess.run(["pyright", temp_file.name], capture_output=True, text=True)
+                result = subprocess.run(["pyright", temp_file.name], capture_output=True, text=True)  # nosec
                 if result.returncode != 0:
                     logger.info(" " + darkred("FAIL"))
                     highlighted_code = highlight(code_block, PythonLexer(), TerminalFormatter())  # type: ignore

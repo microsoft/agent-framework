@@ -1,3 +1,4 @@
+files: ^python/
 fail_fast: true
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -28,12 +29,14 @@ repos:
     hooks:
       - id: pyupgrade
         args: [--py310-plus]
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.12.1
+  - repo: local
     hooks:
-      - id: ruff
-        args: [--fix, --exit-non-zero-on-fix]
-      - id: ruff-format
+      - id: poe-check
+        name: Run checks
+        entry: uv --directory ./python run poe pre-commit-check
+        language: system
+        files: ^python/
+        pass_filenames: false
   - repo: https://github.com/astral-sh/uv-pre-commit
     # uv version.
     rev: 0.7.18
