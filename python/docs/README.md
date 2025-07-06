@@ -4,7 +4,7 @@ Agent Framework documentation is based on the sphinx documentation system and us
 
 ### Prerequisites
 
-Ensure you have all of the dev dependencies for the `agent-framework` package installed. You can install them by running the following command from the root of the python repository:
+Ensure you have all of the dev dependencies for the `agent-framework` package installed. You can install them by running the following command from the root of the `python` directory:
 
 ```bash
 uv sync
@@ -26,7 +26,7 @@ poe --directory ./packages/autogen-core/ docs-serve
 ```
 
 [!NOTE]
-Sphinx will only rebuild files that have changed since the last build. If you want to force a full rebuild, you can delete the `./packages/autogen-core/docs/build` directory before running the `docs-build` command.
+Sphinx will only rebuild files that have changed since the last build. If you want to force a full rebuild, you can run `poe docs-clean` before running the `docs-build` command.
 
 ## Versioning the Documentation
 
