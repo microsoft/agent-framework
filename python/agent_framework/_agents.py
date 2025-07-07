@@ -14,24 +14,15 @@ class AgentThread(ABC):
 
     def __init__(self) -> None:
         """Initialize the agent thread."""
-        self._is_deleted: bool = False  # type: ignore
         self._id: str | None = None  # type: ignore
 
     @property
     def id(self) -> str | None:
         """Returns the ID of the current thread (if any)."""
-        if self._is_deleted:
-            raise RuntimeError(
-                "Thread has been deleted; Create a new AgentThread instance and call `create()` to recreate it."
-            )
         return self._id
 
     async def create(self) -> str | None:
         """Starts the thread and returns the thread ID."""
-        # A thread should not be recreated after it has been deleted.
-        if self._is_deleted:
-            raise RuntimeError("Thread has already been deleted. For new thread, create a new AgentThread instance.")
-
         # If the thread ID is already set, we're done, just return the Id.
         if self.id is not None:
             return self.id
@@ -42,19 +33,8 @@ class AgentThread(ABC):
 
     async def delete(self) -> None:
         """Ends the current thread."""
-        # A thread should not be deleted if it has already been deleted.
-        if self._is_deleted:
-            return
-
-        # If the thread ID is not set, we're done, just return.
-        if self.id is None:
-            self._is_deleted = True
-            return
-
-        # Otherwise, delete the thread.
         await self._delete()
         self._id = None
-        self._is_deleted = True
 
     async def on_new_message(
         self,

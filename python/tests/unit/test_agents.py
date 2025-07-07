@@ -4,7 +4,7 @@ import uuid
 from collections.abc import AsyncIterable, Awaitable, Callable
 from typing import Any, TypeVar, cast
 
-from pytest import fixture, raises
+from pytest import fixture
 
 from agent_framework import Agent, AgentThread, ChatMessage, ChatResponse, ChatResponseUpdate, ChatRole, TextContent
 
@@ -95,18 +95,6 @@ async def test_agent_thread_on_new_message_creates_thread(agent_thread: MockAgen
     message = ChatMessage(role=ChatRole.USER, contents=[TextContent("Hello")])
     await agent_thread.on_new_message(message)
     assert agent_thread.id is not None
-
-
-async def test_agent_thread_create_after_delete_raises(agent_thread: MockAgentThread) -> None:
-    await agent_thread.delete()
-    with raises(RuntimeError, match="Thread has already been deleted"):
-        await agent_thread.create()
-
-
-async def test_agent_thread_id_after_delete_raises(agent_thread: MockAgentThread) -> None:
-    await agent_thread.delete()
-    with raises(RuntimeError, match="Thread has been deleted"):
-        _ = agent_thread.id
 
 
 def test_agent_type(agent: MockAgent) -> None:
