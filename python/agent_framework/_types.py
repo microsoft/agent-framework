@@ -1431,18 +1431,18 @@ class GeneratedEmbeddings(AFBaseModel, MutableSequence[TEmbedding], Generic[TEmb
     def __getitem__(self, index: int, /) -> TEmbedding: ...
 
     @overload
-    def __getitem__(self, slice: slice[Any, Any, Any], /) -> MutableSequence[TEmbedding]: ...
+    def __getitem__(self, slice: slice, /) -> MutableSequence[TEmbedding]: ...
 
-    def __getitem__(self, index: int | slice[Any, Any, Any], /) -> TEmbedding | MutableSequence[TEmbedding]:
+    def __getitem__(self, index: int | slice, /) -> TEmbedding | MutableSequence[TEmbedding]:
         return self.embeddings[index]
 
     @overload
     def __setitem__(self, index: int, value: TEmbedding, /) -> None: ...
 
     @overload
-    def __setitem__(self, slice: slice[Any, Any, Any], value: Iterable[TEmbedding], /) -> None: ...
+    def __setitem__(self, slice: slice, value: Iterable[TEmbedding], /) -> None: ...
 
-    def __setitem__(self, index: int | slice[Any, Any, Any], value: TEmbedding | Iterable[TEmbedding], /) -> None:
+    def __setitem__(self, index: int | slice, value: TEmbedding | Iterable[TEmbedding], /) -> None:
         if isinstance(index, int):
             if isinstance(value, Iterable):
                 raise TypeError("Value must be an iterable when setting a slice.")
@@ -1456,9 +1456,9 @@ class GeneratedEmbeddings(AFBaseModel, MutableSequence[TEmbedding], Generic[TEmb
     def __delitem__(self, index: int, /) -> None: ...
 
     @overload
-    def __delitem__(self, index: slice[Any, Any, Any], /) -> None: ...
+    def __delitem__(self, index: slice, /) -> None: ...
 
-    def __delitem__(self, index: int | slice[Any, Any, Any], /) -> None:
+    def __delitem__(self, index: int | slice, /) -> None:
         del self.embeddings[index]
 
     def insert(self, index: int, value: TEmbedding) -> None:
