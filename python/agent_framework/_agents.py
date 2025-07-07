@@ -1,15 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from typing import Any, TypeVar
-from uuid import uuid4
+from collections.abc import AsyncIterable, Awaitable, Callable
+from typing import Any, Protocol, TypeVar, runtime_checkable
 
-from pydantic import Field
-
-from ._pydantic import AFBaseModel
-from ._types import ChatMessage, ChatResponse, ChatResponseUpdate, ChatRole, TextContent
-from .exceptions import AgentExecutionException
+from ._types import ChatMessage, ChatResponse, ChatResponseUpdate
 
 TThreadType = TypeVar("TThreadType", bound="AgentThread")
 
@@ -91,40 +86,18 @@ class AgentThread(ABC):
         raise NotImplementedError
 
 
-class Agent(AFBaseModel, ABC):
-    """Base abstraction for all agents.
+@runtime_checkable
+class Agent(Protocol):
+    """A protocol for an agent that can be invoked."""
 
-    An agent instance may participate in one or more conversations.
-    A conversation may include one or more agents.
-    In addition to identity and descriptive meta-data, an Agent
-    must define its communication protocol.
-
-    Attributes:
-        arguments: The arguments for the agent
-        description: The description of the agent
-        id: The unique identifier of the agent  If no id is provided,
-            a new UUID will be generated.
-        instructions: The instructions for the agent (optional)
-        name: The name of the agent
-    """
-
-    arguments: dict[str, Any] | None = None
-    description: str | None = None
-    id: str = Field(default_factory=lambda: str(uuid4()))
-    instructions: str | None = None
-    name: str = "UnnamedAgent"
-
-    # region Invocation Methods
-
-    @abstractmethod
-    def get_response(
+    async def get_response(
         self,
         messages: str | ChatMessage | list[str | ChatMessage] | None = None,
         *,
         arguments: dict[str, Any] | None = None,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> Awaitable[ChatResponse]:
+    ) -> ChatResponse:
         """Get a response from the agent.
 
         This method returns the final result of the agent's execution
@@ -146,10 +119,9 @@ class Agent(AFBaseModel, ABC):
         Returns:
             An agent response item.
         """
-        pass
+        ...
 
-    @abstractmethod
-    def invoke(
+    async def invoke(
         self,
         messages: str | ChatMessage | list[str | ChatMessage] | None = None,
         *,
@@ -179,10 +151,9 @@ class Agent(AFBaseModel, ABC):
         Yields:
             An agent response item.
         """
-        pass
+        ...
 
-    @abstractmethod
-    def invoke_stream(
+    async def invoke_stream(
         self,
         messages: str | ChatMessage | list[str | ChatMessage] | None = None,
         *,
@@ -212,62 +183,4 @@ class Agent(AFBaseModel, ABC):
         Yields:
             An agent response item.
         """
-        pass
-
-    async def _ensure_thread_exists_with_messages(
-        self,
-        *,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
-        thread: TThreadType | None,
-        construct_thread: Callable[[], TThreadType],
-        expected_type: type[TThreadType],
-    ) -> TThreadType:
-        """Ensure the thread exists with the provided message(s)."""
-        if messages is None:
-            messages = []
-
-        if isinstance(messages, (str, ChatMessage)):
-            messages = [messages]
-
-        normalized_messages = [
-            ChatMessage(role=ChatRole.USER, contents=[TextContent(msg)]) if isinstance(msg, str) else msg
-            for msg in messages
-        ]
-
-        if thread is None:
-            thread = construct_thread()
-            await thread.create()
-
-        if not isinstance(thread, expected_type):
-            raise AgentExecutionException(
-                f"{self.__class__.__name__} currently only supports agent threads of type {expected_type.__name__}."
-            )
-
-        # Notify the thread that new messages are available.
-        for msg in normalized_messages:
-            await self._notify_thread_of_new_message(thread, msg)
-
-        return thread
-
-    async def _notify_thread_of_new_message(
-        self,
-        thread: AgentThread,
-        new_message: ChatMessage,
-    ) -> None:
-        """Notify the thread of a new message."""
-        await thread.on_new_message(new_message)
-
-    def __eq__(self, other: Any) -> bool:
-        """Check if two agents are equal."""
-        if isinstance(other, Agent):
-            return (
-                self.id == other.id
-                and self.name == other.name
-                and self.description == other.description
-                and self.instructions == other.instructions
-            )
-        return False
-
-    def __hash__(self) -> int:
-        """Get the hash of the agent."""
-        return hash((self.id, self.name, self.description, self.instructions))
+        ...
