@@ -1,18 +1,24 @@
+files: ^python/
 fail_fast: true
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
       - id: check-toml
+        name: Check TOML files
         files: \.toml$
       - id: check-yaml
+        name: Check YAML files
         files: \.yaml$
       - id: check-json
+        name: Check JSON files
         files: \.json$
         exclude: ^python\/\.vscode\/.*
       - id: end-of-file-fixer
+        name: Fix End of File
         files: \.py$
       - id: mixed-line-ending
+        name: Check Mixed Line Endings
         files: \.py$
       - id: check-ast
         name: Check Valid Python Samples
@@ -27,25 +33,29 @@ repos:
     rev: v3.20.0
     hooks:
       - id: pyupgrade
+        name: Upgrade Python syntax
         args: [--py310-plus]
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.12.1
+  - repo: local
     hooks:
-      - id: ruff
-        args: [--fix, --exit-non-zero-on-fix]
-      - id: ruff-format
+      - id: poe-check
+        name: Run checks through Poe
+        entry: uv --directory ./python run poe pre-commit-check
+        language: system
+        files: ^python/
+        pass_filenames: false
   - repo: https://github.com/astral-sh/uv-pre-commit
     # uv version.
     rev: 0.7.18
     hooks:
       # Update the uv lockfile
       - id: uv-lock
+        name: Update uv lockfile
         files: python/pyproject.toml
         args: [--project, python]
-    # TODO: add pyright through poe like in AG
   - repo: https://github.com/PyCQA/bandit
     rev: 1.8.5
     hooks:
       - id: bandit
+        name: Bandit Security Checks
         args: ["-c", "python/pyproject.toml"]
         additional_dependencies: ["bandit[toml]"]

@@ -23,8 +23,8 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "azure",
-    "openai",
+    "agent-framework-azure",
+    "agent-framework-openai",
     "pydantic>=2.11.7",
     "typing-extensions>=4.14.0",
 ]
@@ -34,13 +34,36 @@ prerelease = "if-necessary-or-explicit"
 dev-dependencies = [
     "pre-commit >= 3.7",
     "ruff>=0.11.8",
-    "poethepoet>=0.36.0",
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
     "pytest-cov>=6.2.1",
     "pytest-xdist[psutil]>=3.8.0",
     "pytest-timeout>=2.3.1",
     "mypy>=1.16.1",
+    "pyright>=1.1.402",
+
+    #tasks
+    "poethepoet>=0.36.0",
+    "rich",
+    "tomli",
+    "tomli-w",
+    "markdownify",
+    # Documentation
+    "myst-nb==1.1.2",
+    "pydata-sphinx-theme==0.16.0",
+    "sphinx-copybutton",
+    "sphinx-design",
+    "sphinx",
+    "sphinxcontrib-apidoc",
+    "autodoc_pydantic~=2.2",
+    "pygments",
+    "sphinxext-rediraffe",
+    "opentelemetry-instrumentation-openai",
+    "markdown-it-py[linkify]",
+    # Documentation tooling
+    "diskcache",
+    "redis",
+    "sphinx-autobuild",
 ]
 environments = [
     "sys_platform == 'darwin'",
@@ -60,8 +83,8 @@ timeout = 120
 members = ["extensions/*"]
 
 [tool.uv.sources]
-openai = { workspace = true }
-azure = { workspace = true }
+agent-framework-openai = { workspace = true }
+agent-framework-azure = { workspace = true }
 
 [tool.uv-dynamic-versioning]
 fallback-version = "0.0.0"
@@ -71,6 +94,7 @@ line-length = 120
 target-version = "py310"
 fix = true
 include = ["*.py", "*.pyi", "**/pyproject.toml", "*.ipynb"]
+exclude = ["docs/*", "run_tasks_in_extensions_if_exists.py", "check_md_code_blocks.py"]
 preview = true
 
 [tool.ruff.lint]
@@ -124,7 +148,7 @@ notice-rgx = "^# Copyright \\(c\\) Microsoft\\. All rights reserved\\."
 min-file-size = 1
 
 [tool.pyright]
-include = ["agent_framework", "tests", "samples"]
+include = ["agent_framework", "samples"]
 typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
 reportMissingTypeStubs = false
@@ -146,7 +170,62 @@ disallow_any_unimported = true
 
 [tool.bandit]
 targets = ["agent_framework"]
-exclude_dirs = ["tests"]
+exclude_dirs = ["tests", "./run_tasks_in_extensions_if_exists.py", "./check_md_code_blocks.py", "docs"]
+
+[tool.poe.tasks]
+markdown-code-lint = """python check_md_code_blocks.py ../README.md ./docs/agent-framework/**/*.md README.md"""
+samples-code-check = """pyright ./samples"""
+docs-clean = "rm -rf docs/build"
+docs-build = "sphinx-build docs/agent-framework docs/build"
+docs-serve = "sphinx-autobuild --watch src docs/agent-framework docs/build --port 8000 --jobs auto"
+docs-check = "sphinx-build --fail-on-warning docs/agent-framework docs/build"
+docs-check-examples = "sphinx-build -b code_lint docs/agent-framework docs/build"
+pre-commit-install = "uv run pre-commit install --install-hooks --overwrite"
+install = "uv sync --all-extras --dev -U --prerelease=if-necessary-or-explicit"
+format.ref = "fmt"
+check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint", "samples-code-check"]
+pre-commit-check = ["fmt", "lint", "pyright", "test", "markdown-code-lint", "samples-code-check"]
+
+[tool.poe.tasks.fmt]
+sequence = [
+    { cmd = "python run_tasks_in_extensions_if_exists.py fmt"},
+    { cmd = "ruff format agent_framework tests samples" }
+]
+[tool.poe.tasks.lint]
+sequence = [
+    { cmd = "python run_tasks_in_extensions_if_exists.py lint" },
+    { cmd = "ruff check --fix --exit-non-zero-on-fix agent_framework tests samples" }
+]
+[tool.poe.tasks.pyright]
+sequence = [
+    { cmd = "python run_tasks_in_extensions_if_exists.py pyright" },
+    { cmd = "pyright" }
+]
+[tool.poe.tasks.mypy]
+sequence = [
+    { cmd = "python run_tasks_in_extensions_if_exists.py mypy" },
+    { cmd = "mypy --config-file pyproject.toml agent_framework" }
+]
+[tool.poe.tasks.test]
+sequence = [
+    { cmd = "python run_tasks_in_extensions_if_exists.py test" },
+    { cmd = "pytest --cov=agent_framework --cov-report=term-missing:skip-covered tests/unit/" }
+]
+[tool.poe.tasks.build]
+sequence = [
+    { cmd = "python run_tasks_in_extensions_if_exists.py build" },
+    { cmd = "uv build" }
+]
+[tool.poe.tasks.venv]
+cmd = "uv venv --python $python"
+args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
+[tool.poe.tasks.setup]
+sequence = [
+    { ref = "venv --python $python"},
+    { ref = "install" },
+    { ref = "pre-commit-install" }
+]
+args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
 
 [tool.uv.build-backend]
 module-name = "agent_framework"

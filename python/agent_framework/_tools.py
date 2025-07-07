@@ -92,7 +92,15 @@ def ai_function(
     description: str | None = None,
     additional_properties: dict[str, Any] | None = None,
 ) -> AIFunction[Any, ReturnT] | Callable[[Callable[..., ReturnT | Awaitable[ReturnT]]], AIFunction[Any, ReturnT]]:
-    """Create a AIFunction from a function and return the callable tool object."""
+    """Decorate a function to turn it into a AIFunction that can be passed to models.
+
+    Args:
+        func: The function to wrap. If None, returns a decorator.
+        name: The name of the tool. Defaults to the function's name.
+        description: A description of the tool. Defaults to the function's docstring.
+        additional_properties: Additional properties to set on the tool.
+
+    """
 
     def wrapper(f: Callable[..., ReturnT | Awaitable[ReturnT]]) -> AIFunction[Any, ReturnT]:
         tool_name: str = name or getattr(f, "__name__", "unknown_function")  # type: ignore[assignment]
@@ -106,7 +114,9 @@ def ai_function(
             for pname, param in sig.parameters.items()
             if pname not in {"self", "cls"}
         }
-        input_model = create_model(f"{tool_name}_input", **fields)  # type: ignore[call-overload]
+        input_model: Any = create_model(f"{tool_name}_input", **fields)  # type: ignore[call-overload]
+        if not issubclass(input_model, BaseModel):
+            raise TypeError(f"Input model for {tool_name} must be a subclass of BaseModel, got {input_model}")
 
         return functools.update_wrapper(  # type: ignore[return-value]
             AIFunction[Any, ReturnT](

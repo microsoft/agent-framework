@@ -32,14 +32,13 @@
             }
         },
         {
-            "label": "Mypy",
+            "label": "Format",
             "type": "shell",
             "command": "uv",
             "args": [
                 "run",
-                "mypy",
-                "-p",
-                "agent_framework",
+                "poe",
+                "fmt",
             ],
             "problemMatcher": {
                 "owner": "python",
@@ -60,22 +59,112 @@
             }
         },
         {
-            "label": "Tests - Code Coverage",
+            "label": "Lint",
             "type": "shell",
             "command": "uv",
             "args": [
                 "run",
-                "pytest",
-                "--cov=semantic_kernel",
-                "--cov-report=term-missing:skip-covered",
-                "tests/unit/"
+                "poe",
+                "lint",
             ],
-            "group": "test",
-            "presentation": {
-                "reveal": "always",
-                "panel": "shared"
+            "problemMatcher": {
+                "owner": "python",
+                "fileLocation": [
+                    "relative",
+                    "${workspaceFolder}"
+                ],
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "column": 3,
+                    "message": 4
+                }
             },
-            "problemMatcher": []
+            "presentation": {
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Mypy",
+            "type": "shell",
+            "command": "uv",
+            "args": [
+                "run",
+                "poe",
+                "mypy",
+            ],
+            "problemMatcher": {
+                "owner": "python",
+                "fileLocation": [
+                    "relative",
+                    "${workspaceFolder}"
+                ],
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "column": 3,
+                    "message": 4
+                }
+            },
+            "presentation": {
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Pyright",
+            "type": "shell",
+            "command": "uv",
+            "args": [
+                "run",
+                "poe",
+                "pyright",
+            ],
+            "problemMatcher": {
+                "owner": "python",
+                "fileLocation": [
+                    "relative",
+                    "${workspaceFolder}"
+                ],
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "column": 3,
+                    "message": 4
+                }
+            },
+            "presentation": {
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Test",
+            "type": "shell",
+            "command": "uv",
+            "args": [
+                "run",
+                "poe",
+                "test",
+            ],
+            "problemMatcher": {
+                "owner": "python",
+                "fileLocation": [
+                    "relative",
+                    "${workspaceFolder}"
+                ],
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "column": 3,
+                    "message": 4
+                }
+            },
+            "presentation": {
+                "panel": "shared"
+            }
         },
         {
             "label": "Create Venv",
@@ -92,11 +181,10 @@
             "type": "shell",
             "command": "uv",
             "args": [
-                "sync",
-                "--all-extras",
-                "--dev",
-                "-U",
-                "--prerelease=if-necessary-or-explicit"
+                "run",
+                "poe",
+                "uv-setup",
+                "--python=${input:py_version}"
             ],
             "presentation": {
                 "reveal": "always",
