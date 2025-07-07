@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from . import __version__  # type: ignore[attr-defined]
+from ._clients import ModelClient
 from ._logging import get_logger
 from ._tools import AITool, ai_function
 from ._types import (
@@ -17,7 +18,7 @@ from ._types import (
     ErrorContent,
     FunctionCallContent,
     FunctionResultContent,
-    ModelClient,
+    GeneratedEmbeddings,
     StructuredResponse,
     TextContent,
     TextReasoningContent,
@@ -42,6 +43,7 @@ __all__ = [
     "ErrorContent",
     "FunctionCallContent",
     "FunctionResultContent",
+    "GeneratedEmbeddings",
     "InputGuardrail",
     "ModelClient",
     "OutputGuardrail",
