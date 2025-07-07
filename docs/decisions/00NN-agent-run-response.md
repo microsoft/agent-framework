@@ -285,7 +285,6 @@ class AgentRunResponse // Compare with ChatResponse
     public IList<ChatMessage> Messages { get; set; }
 
     public string? ResponseId { get; set; }
-    public AgentRunFinishReason? FinishReason { get; set; }
 
     // Metadata
     public string? AuthorName { get; set; }
@@ -307,7 +306,6 @@ public class AgentRunResponseUpdate // Compare with ChatResponseUpdate
 
     public string? ResponseId { get; set; }
     public string? MessageId { get; set; }
-    public AgentRunFinishReason? FinishReason { get; set; }
 
     // Metadata
     public ChatRole? Role { get; set; }
@@ -321,16 +319,6 @@ public class AgentRunResponseUpdate // Compare with ChatResponseUpdate
 // Not Included in AgentRunResponseUpdate compared to ChatResponseUpdate
 public string? ConversationId { get; set; }
 public string? ModelId { get; set; }
-
-public class AgentRunFinishReason // Compare with ChatFinishReason
-{
-    public static AgentRunFinishReason Stop { get; } = new AgentRunFinishReason("stop");
-    public static AgentRunFinishReason Length { get; } = new AgentRunFinishReason("length");
-    public static AgentRunFinishReason ContentFilter { get; } = new AgentRunFinishReason("content_filter");
-}
-
-// Not included in AgentRunFinishReason compared to ChatFinishReason
-public static ChatFinishReason ToolCalls { get; } = new ChatFinishReason("tool_calls");
 ```
 
 - **PROS**: Agent response types can evolve separately. Types can still resemble MEAI response types to ensure a fimilar experience for developers.
