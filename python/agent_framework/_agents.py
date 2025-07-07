@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import uuid
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from typing import Any, TypeVar
+from uuid import uuid4
 
 from pydantic import Field
 
@@ -12,8 +12,6 @@ from ._types import ChatMessage, ChatResponse, ChatResponseUpdate, ChatRole, Tex
 from .exceptions import AgentExecutionException
 
 TThreadType = TypeVar("TThreadType", bound="AgentThread")
-
-# region AgentThread
 
 
 class AgentThread(ABC):
@@ -28,14 +26,16 @@ class AgentThread(ABC):
     def id(self) -> str | None:
         """Returns the ID of the current thread (if any)."""
         if self._is_deleted:
-            raise RuntimeError("Thread has been deleted; call `create()` to recreate it.")
+            raise RuntimeError(
+                "Thread has been deleted; Create a new AgentThread instance and call `create()` to recreate it."
+            )
         return self._id
 
     async def create(self) -> str | None:
         """Starts the thread and returns the thread ID."""
         # A thread should not be recreated after it has been deleted.
         if self._is_deleted:
-            raise RuntimeError("Cannot create thread because it has already been deleted.")
+            raise RuntimeError("Thread has already been deleted. For new thread, create a new AgentThread instance.")
 
         # If the thread ID is already set, we're done, just return the Id.
         if self.id is not None:
@@ -91,12 +91,6 @@ class AgentThread(ABC):
         raise NotImplementedError
 
 
-# endregion
-
-
-# region Agent
-
-
 class Agent(AFBaseModel, ABC):
     """Base abstraction for all agents.
 
@@ -116,7 +110,7 @@ class Agent(AFBaseModel, ABC):
 
     arguments: dict[str, Any] | None = None
     description: str | None = None
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    id: str = Field(default_factory=lambda: str(uuid4()))
     instructions: str | None = None
     name: str = "UnnamedAgent"
 
@@ -220,15 +214,11 @@ class Agent(AFBaseModel, ABC):
         """
         pass
 
-    # endregion
-
-    # region Thread Management
-
     async def _ensure_thread_exists_with_messages(
         self,
         *,
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
-        thread: AgentThread | None,
+        thread: TThreadType | None,
         construct_thread: Callable[[], TThreadType],
         expected_type: type[TThreadType],
     ) -> TThreadType:
@@ -267,8 +257,6 @@ class Agent(AFBaseModel, ABC):
         """Notify the thread of a new message."""
         await thread.on_new_message(new_message)
 
-    # endregion
-
     def __eq__(self, other: Any) -> bool:
         """Check if two agents are equal."""
         if isinstance(other, Agent):
@@ -283,6 +271,3 @@ class Agent(AFBaseModel, ABC):
     def __hash__(self) -> int:
         """Get the hash of the agent."""
         return hash((self.id, self.name, self.description, self.instructions))
-
-
-# endregion

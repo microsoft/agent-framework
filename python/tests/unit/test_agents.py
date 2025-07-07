@@ -74,9 +74,6 @@ def agent() -> Agent:
     return MockAgent()
 
 
-# region AgentThread
-
-
 @pytest.mark.asyncio
 async def test_agent_thread_id_property(agent_thread: MockAgentThread) -> None:
     assert agent_thread.id is None
@@ -114,7 +111,7 @@ async def test_agent_thread_on_new_message_creates_thread(agent_thread: MockAgen
 @pytest.mark.asyncio
 async def test_agent_thread_create_after_delete_raises(agent_thread: MockAgentThread) -> None:
     await agent_thread.delete()
-    with pytest.raises(RuntimeError, match="Cannot create thread because it has already been deleted"):
+    with pytest.raises(RuntimeError, match="Thread has already been deleted"):
         await agent_thread.create()
 
 
@@ -123,11 +120,6 @@ async def test_agent_thread_id_after_delete_raises(agent_thread: MockAgentThread
     await agent_thread.delete()
     with pytest.raises(RuntimeError, match="Thread has been deleted"):
         _ = agent_thread.id
-
-
-# endregion
-
-# region Agent
 
 
 @pytest.mark.asyncio
@@ -178,6 +170,3 @@ def test_agent_hash() -> None:
     agent1 = MockAgent(id="123", name="Agent1", description="Desc", instructions="Instruct")
     agent2 = MockAgent(id="123", name="Agent1", description="Desc", instructions="Instruct")
     assert hash(agent1) == hash(agent2)
-
-
-# endregion
