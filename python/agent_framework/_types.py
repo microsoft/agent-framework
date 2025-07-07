@@ -1200,8 +1200,8 @@ class ChatResponseUpdate(AFBaseModel):
     def __init__(
         self,
         *,
-        contents: list[AIContent],
-        role: ChatRole | None = None,
+        contents: list[AIContents],
+        role: ChatRole | Literal["system", "user", "assistant", "tool"] | None = None,
         author_name: str | None = None,
         response_id: str | None = None,
         message_id: str | None = None,
@@ -1219,7 +1219,7 @@ class ChatResponseUpdate(AFBaseModel):
         self,
         *,
         text: TextContent | str,
-        role: ChatRole | None = None,
+        role: ChatRole | Literal["system", "user", "assistant", "tool"] | None = None,
         author_name: str | None = None,
         response_id: str | None = None,
         message_id: str | None = None,
@@ -1235,9 +1235,9 @@ class ChatResponseUpdate(AFBaseModel):
     def __init__(
         self,
         *,
-        contents: list[AIContent] | None = None,
+        contents: list[AIContents] | None = None,
         text: TextContent | str | None = None,
-        role: ChatRole | None = None,
+        role: ChatRole | Literal["system", "user", "assistant", "tool"] | None = None,
         author_name: str | None = None,
         response_id: str | None = None,
         message_id: str | None = None,
@@ -1255,7 +1255,8 @@ class ChatResponseUpdate(AFBaseModel):
             if isinstance(text, str):
                 text = TextContent(text=text)
             contents.append(text)
-
+        if role and isinstance(role, str):
+            role = ChatRole(value=role)
         super().__init__(
             contents=contents,  # type: ignore[reportCallIssue]
             additional_properties=additional_properties,  # type: ignore[reportCallIssue]

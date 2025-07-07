@@ -4,7 +4,6 @@ from collections.abc import AsyncIterable, Sequence
 from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
 
 from ._types import ChatMessage, ChatResponse, ChatResponseUpdate, GeneratedEmbeddings
-from .guard_rails import InputGuardrail, OutputGuardrail
 
 TInput = TypeVar("TInput")
 TEmbedding = TypeVar("TEmbedding")
@@ -54,22 +53,6 @@ class ChatClient(Protocol):
 
         Raises:
             ValueError: If the input message sequence is `None`.
-        """
-        ...
-
-    def add_input_guardrails(self, guardrails: list[InputGuardrail[ChatMessage]]) -> None:
-        """Add input guardrails to the chat client.
-
-        Args:
-            guardrails: The list of input guardrails to add.
-        """
-        ...
-
-    def add_output_guardrails(self, guardrails: list[OutputGuardrail[ChatResponse | Sequence[ChatResponse]]]) -> None:
-        """Add output guardrails to the chat client.
-
-        Args:
-            guardrails: The list of output guardrails to add.
         """
         ...
 
