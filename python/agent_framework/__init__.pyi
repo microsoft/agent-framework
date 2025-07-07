@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from . import __version__  # type: ignore[attr-defined]
-from ._clients import ModelClient
+from ._clients import ChatClient, EmbeddingGenerator
 from ._logging import get_logger
 from ._tools import AITool, ai_function
 from ._types import (
@@ -32,6 +32,7 @@ __all__ = [
     "AIContent",
     "AIContents",
     "AITool",
+    "ChatClient",
     "ChatFinishReason",
     "ChatMessage",
     "ChatOptions",
@@ -40,12 +41,12 @@ __all__ = [
     "ChatRole",
     "ChatToolMode",
     "DataContent",
+    "EmbeddingGenerator",
     "ErrorContent",
     "FunctionCallContent",
     "FunctionResultContent",
     "GeneratedEmbeddings",
     "InputGuardrail",
-    "ModelClient",
     "OutputGuardrail",
     "StructuredResponse",
     "TextContent",
