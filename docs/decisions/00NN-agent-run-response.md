@@ -49,7 +49,7 @@ To solve complex problems, many agents must be used together. These agents typic
 
 When an agent is in conversation with one or more humans, the information that may be displayed to the user(s) can vary. E.g. When an agent is part of a conversation with multiple humans it may be asked to perform tasks by the humans, and they may not want a stream of distracting updates posted to the conversation, but rather just a final response.  On the other hand, if an agent is being used by a single human to perform a task, the human may be waiting for the agent to complete the task.  Therefore, they may be interested in getting updates of what the agent is doing.
 
-Where agents are nested, consumers would also likely would want to constrain the amount of data from an agent that bubbles up into higher level conversations to avoid exceeding the context window, therefore limiting it to the Primary response only.
+Where agents are nested, consumers would also likely want to constrain the amount of data from an agent that bubbles up into higher level conversations to avoid exceeding the context window, therefore limiting it to the Primary response only.
 
 ### Comparison with other SDKs / Protocols
 
@@ -285,7 +285,7 @@ class AgentRunResponse // Compare with ChatResponse
     public IList<ChatMessage> Messages { get; set; }
 
     public string? ResponseId { get; set; }
-    public AgentRunResponseReason? FinishReason { get; set; }
+    public AgentRunFinishReason? FinishReason { get; set; }
 
     // Metadata
     public string? AuthorName { get; set; }
@@ -307,7 +307,7 @@ public class AgentRunResponseUpdate // Compare with ChatResponseUpdate
 
     public string? ResponseId { get; set; }
     public string? MessageId { get; set; }
-    public AgentRunResponseReason? FinishReason { get; set; }
+    public AgentRunFinishReason? FinishReason { get; set; }
 
     // Metadata
     public ChatRole? Role { get; set; }
@@ -322,14 +322,14 @@ public class AgentRunResponseUpdate // Compare with ChatResponseUpdate
 public string? ConversationId { get; set; }
 public string? ModelId { get; set; }
 
-public class AgentRunResponseReason // Compare with ChatFinishReason
+public class AgentRunFinishReason // Compare with ChatFinishReason
 {
-    public static AgentRunResponseReason Stop { get; } = new AgentRunResponseReason("stop");
-    public static AgentRunResponseReason Length { get; } = new AgentRunResponseReason("length");
-    public static AgentRunResponseReason ContentFilter { get; } = new AgentRunResponseReason("content_filter");
+    public static AgentRunFinishReason Stop { get; } = new AgentRunFinishReason("stop");
+    public static AgentRunFinishReason Length { get; } = new AgentRunFinishReason("length");
+    public static AgentRunFinishReason ContentFilter { get; } = new AgentRunFinishReason("content_filter");
 }
 
-// Not included in AgentRunResponseReason compared to ChatFinishReason
+// Not included in AgentRunFinishReason compared to ChatFinishReason
 public static ChatFinishReason ToolCalls { get; } = new ChatFinishReason("tool_calls");
 ```
 
