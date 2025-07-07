@@ -1401,7 +1401,7 @@ class ChatOptions(AFBaseModel):
 class GeneratedEmbeddings(AFBaseModel, MutableSequence[TEmbedding], Generic[TEmbedding]):
     """A model representing generated embeddings."""
 
-    embeddings: list[TEmbedding] = Field(default_factory=list, kw_only=False)
+    embeddings: list[TEmbedding] = Field(default_factory=list, kw_only=False)  # type: ignore[ReportUnknownVariableType]
     usage: UsageDetails | None = None
     additional_properties: dict[str, Any] = Field(default_factory=dict)
 
@@ -1428,21 +1428,21 @@ class GeneratedEmbeddings(AFBaseModel, MutableSequence[TEmbedding], Generic[TEmb
         return self.embeddings.count(value)
 
     @overload
-    def __getitem__(self, index: int, /) -> TEmbedding: ...
+    def __getitem__(self, index: int) -> TEmbedding: ...
 
     @overload
-    def __getitem__(self, slice: slice, /) -> MutableSequence[TEmbedding]: ...
+    def __getitem__(self, index: slice) -> MutableSequence[TEmbedding]: ...
 
-    def __getitem__(self, index: int | slice, /) -> TEmbedding | MutableSequence[TEmbedding]:
+    def __getitem__(self, index: int | slice) -> TEmbedding | MutableSequence[TEmbedding]:
         return self.embeddings[index]
 
     @overload
-    def __setitem__(self, index: int, value: TEmbedding, /) -> None: ...
+    def __setitem__(self, index: int, value: TEmbedding) -> None: ...
 
     @overload
-    def __setitem__(self, slice: slice, value: Iterable[TEmbedding], /) -> None: ...
+    def __setitem__(self, index: slice, value: Iterable[TEmbedding]) -> None: ...
 
-    def __setitem__(self, index: int | slice, value: TEmbedding | Iterable[TEmbedding], /) -> None:
+    def __setitem__(self, index: int | slice, value: TEmbedding | Iterable[TEmbedding]) -> None:
         if isinstance(index, int):
             if isinstance(value, Iterable):
                 raise TypeError("Value must be an iterable when setting a slice.")
@@ -1453,12 +1453,12 @@ class GeneratedEmbeddings(AFBaseModel, MutableSequence[TEmbedding], Generic[TEmb
         self.embeddings[index] = value
 
     @overload
-    def __delitem__(self, index: int, /) -> None: ...
+    def __delitem__(self, index: int) -> None: ...
 
     @overload
-    def __delitem__(self, index: slice, /) -> None: ...
+    def __delitem__(self, index: slice) -> None: ...
 
-    def __delitem__(self, index: int | slice, /) -> None:
+    def __delitem__(self, index: int | slice) -> None:
         del self.embeddings[index]
 
     def insert(self, index: int, value: TEmbedding) -> None:
