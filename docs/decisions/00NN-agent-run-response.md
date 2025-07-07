@@ -295,6 +295,7 @@ class AgentRunResponse // Compare with ChatResponse
 }
 
 // Not Included in AgentRunResponse compared to ChatResponse
+public ChatFinishReason? FinishReason { get; set; }
 public string? ConversationId { get; set; }
 public string? ModelId { get; set; }
 
@@ -317,6 +318,7 @@ public class AgentRunResponseUpdate // Compare with ChatResponseUpdate
 }
 
 // Not Included in AgentRunResponseUpdate compared to ChatResponseUpdate
+public ChatFinishReason? FinishReason { get; set; }
 public string? ConversationId { get; set; }
 public string? ModelId { get; set; }
 ```
