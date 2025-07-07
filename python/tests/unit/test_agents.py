@@ -25,7 +25,7 @@ class MockAgentThread(AgentThread):
 
 # Mock Agent implementation for testing
 class MockAgent:
-    async def get_response(
+    async def run(
         self,
         messages: str | ChatMessage | list[str | ChatMessage] | None = None,
         *,
@@ -35,18 +35,7 @@ class MockAgent:
     ) -> ChatResponse:
         return ChatResponse(messages=[ChatMessage(role=ChatRole.ASSISTANT, contents=[TextContent("Response")])])
 
-    async def invoke(
-        self,
-        messages: str | ChatMessage | list[str | ChatMessage] | None = None,
-        *,
-        arguments: dict[str, Any] | None = None,
-        thread: AgentThread | None = None,
-        on_intermediate_message: Callable[[ChatMessage], Awaitable[None]] | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponse]:
-        yield ChatResponse(messages=[ChatMessage(role=ChatRole.ASSISTANT, contents=[TextContent("Response")])])
-
-    async def invoke_stream(
+    async def run_stream(
         self,
         messages: str | ChatMessage | list[str | ChatMessage] | None = None,
         *,
@@ -101,25 +90,16 @@ def test_agent_type(agent: MockAgent) -> None:
     assert isinstance(agent, Agent)
 
 
-async def test_agent_get_response(agent: MockAgent) -> None:
-    response = await agent.get_response("test")
+async def test_agent_run(agent: MockAgent) -> None:
+    response = await agent.run("test")
     assert response.messages[0].role == ChatRole.ASSISTANT
     assert cast(TextContent, response.messages[0].contents[0]).text == "Response"
 
 
-async def test_invoke(agent: MockAgent) -> None:
-    async def collect_responses(responses: AsyncIterable[ChatResponse]) -> list[ChatResponse]:
-        return [r async for r in responses]
-
-    responses = await collect_responses(agent.invoke(messages="test"))
-    assert responses[0].messages[0].role == ChatRole.ASSISTANT
-    assert cast(TextContent, responses[0].messages[0].contents[0]).text == "Response"
-
-
-async def test_invoke_stream(agent: MockAgent) -> None:
+async def tesT_agent_run_stream(agent: MockAgent) -> None:
     async def collect_updates(updates: AsyncIterable[ChatResponseUpdate]) -> list[ChatResponseUpdate]:
         return [u async for u in updates]
 
-    updates = await collect_updates(agent.invoke_stream(messages="test"))
+    updates = await collect_updates(agent.run_stream(messages="test"))
     assert len(updates) == 1
     assert cast(TextContent, updates[0].contents[0]).text == "Response"

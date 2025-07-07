@@ -76,7 +76,7 @@ class AgentThread(ABC):
 class Agent(Protocol):
     """A protocol for an agent that can be invoked."""
 
-    async def get_response(
+    async def run(
         self,
         messages: str | ChatMessage | list[str | ChatMessage] | None = None,
         *,
@@ -90,7 +90,7 @@ class Agent(Protocol):
         as a single ChatResponse object. The caller is blocked until
         the final result is available.
 
-        Note: For streaming responses, use the invoke_stream method, which returns
+        Note: For streaming responses, use the run_stream method, which returns
         intermediate steps and the final result as a stream of ChatResponseUpdate
         objects. Streaming only the final result is not feasible because the timing of
         the final result's availability is unknown, and blocking the caller until then
@@ -107,39 +107,7 @@ class Agent(Protocol):
         """
         ...
 
-    async def invoke(
-        self,
-        messages: str | ChatMessage | list[str | ChatMessage] | None = None,
-        *,
-        arguments: dict[str, Any] | None = None,
-        thread: AgentThread | None = None,
-        on_intermediate_message: Callable[[ChatMessage], Awaitable[None]] | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponse]:
-        """Invoke the agent.
-
-        This invocation method will return the final results of the agent's execution as a
-        stream of ChatResponse objects to the caller. The reason for returning a stream
-        is to allow for future extensions to the agent's capabilities, such as multi-modality.
-
-        To get the intermediate steps of the agent's execution, use the on_intermediate_message callback
-        to handle those messages.
-
-        Note: A ChatResponse object contains an entire message.
-
-        Args:
-            messages: The message(s) to send to the agent.
-            arguments: Additional arguments to pass to the agent.
-            thread: The conversation thread associated with the message(s).
-            on_intermediate_message: A callback function to handle intermediate steps of the agent's execution.
-            kwargs: Additional keyword arguments.
-
-        Yields:
-            An agent response item.
-        """
-        ...
-
-    async def invoke_stream(
+    async def run_stream(
         self,
         messages: str | ChatMessage | list[str | ChatMessage] | None = None,
         *,
@@ -148,9 +116,9 @@ class Agent(Protocol):
         on_intermediate_message: Callable[[ChatMessage], Awaitable[None]] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
-        """Invoke the agent as a stream.
+        """Run the agent as a stream.
 
-        This invocation method will return the intermediate steps and final results of the
+        This method will return the intermediate steps and final results of the
         agent's execution as a stream of ChatResponseUpdate objects to the caller.
 
         To get the intermediate steps of the agent's execution as fully formed messages,
