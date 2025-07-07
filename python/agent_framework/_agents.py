@@ -9,6 +9,9 @@ from ._types import ChatMessage, ChatResponse, ChatResponseUpdate
 TThreadType = TypeVar("TThreadType", bound="AgentThread")
 
 
+# region AgentThread
+
+
 class AgentThread(ABC):
     """Base class for agent threads."""
 
@@ -64,6 +67,9 @@ class AgentThread(ABC):
     ) -> None:
         """Invoked when a new message has been contributed to the chat by any participant."""
         raise NotImplementedError
+
+
+# region Agent Protocol
 
 
 @runtime_checkable
