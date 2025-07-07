@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from collections.abc import MutableSequence
+
 from pydantic import BaseModel, ValidationError
 from pytest import mark, raises
 
@@ -14,6 +16,7 @@ from agent_framework import (
     DataContent,
     FunctionCallContent,
     FunctionResultContent,
+    GeneratedEmbeddings,
     StructuredResponse,
     TextContent,
     TextReasoningContent,
@@ -464,3 +467,16 @@ def test_chat_tool_mode_from_dict():
 
     # Ensure the instance is of type ChatToolMode
     assert isinstance(mode, ChatToolMode)
+
+
+def test_generated_embeddings():
+    """Test the GeneratedEmbeddings class to ensure it initializes correctly."""
+    # Create an instance of GeneratedEmbeddings
+    embeddings = GeneratedEmbeddings(embeddings=[[0.1, 0.2, 0.3]])
+
+    # Check the type and content
+    assert embeddings.embeddings == [[0.1, 0.2, 0.3]]
+
+    # Ensure the instance is of type GeneratedEmbeddings
+    assert isinstance(embeddings, GeneratedEmbeddings)
+    assert issubclass(GeneratedEmbeddings, MutableSequence)

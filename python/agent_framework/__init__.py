@@ -31,9 +31,11 @@ _IMPORTS = {
     "ChatResponseUpdate": "._types",
     "ChatRole": "._types",
     "ErrorContent": "._types",
-    "ModelClient": "._types",
+    "GeneratedEmbeddings": "._types",
     "ChatOptions": "._types",
     "ChatToolMode": "._types",
+    "ChatClient": "._clients",
+    "EmbeddingGenerator": "._clients",
     "InputGuardrail": ".guard_rails",
     "OutputGuardrail": ".guard_rails",
 }

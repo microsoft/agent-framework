@@ -3,14 +3,13 @@
 import base64
 import re
 import sys
-from collections.abc import AsyncIterable, MutableSequence, Sequence
-from typing import Annotated, Any, ClassVar, Generic, Literal, Protocol, TypeVar, overload, runtime_checkable
+from collections.abc import AsyncIterable, Iterable, Iterator, MutableSequence, Sequence
+from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, overload
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ._pydantic import AFBaseModel
 from ._tools import AITool
-from .guard_rails import InputGuardrail, OutputGuardrail
 
 if sys.version_info >= (3, 12):
     pass  # pragma: no cover
@@ -22,8 +21,7 @@ else:
 # region: Constants and types
 _T = TypeVar("_T")
 TValue = TypeVar("TValue")
-TInput = TypeVar("TInput")
-TResponse = TypeVar("TResponse")
+TEmbedding = TypeVar("TEmbedding")
 TChatResponse = TypeVar("TChatResponse", bound="ChatResponse")
 TChatToolMode = TypeVar("TChatToolMode", bound="ChatToolMode")
 
@@ -118,8 +116,10 @@ class UsageDetails(AFBaseModel):
         """
         return self.model_extra or {}
 
-    def __add__(self, other: "UsageDetails") -> "UsageDetails":
+    def __add__(self, other: "UsageDetails | None") -> "UsageDetails":
         """Combines two `UsageDetails` instances."""
+        if not other:
+            return self
         if not isinstance(other, UsageDetails):
             raise ValueError("Can only add two usage details objects together.")
 
@@ -134,6 +134,21 @@ class UsageDetails(AFBaseModel):
             total_token_count=(self.total_token_count or 0) + (other.total_token_count or 0),
             **additional_counts,
         )
+
+    def __iadd__(self, other: "UsageDetails | None") -> Self:
+        if not other:
+            return self
+        if not isinstance(other, UsageDetails):
+            raise ValueError("Can only add usage details objects together.")
+
+        self.input_token_count = (self.input_token_count or 0) + (other.input_token_count or 0)
+        self.output_token_count = (self.output_token_count or 0) + (other.output_token_count or 0)
+        self.total_token_count = (self.total_token_count or 0) + (other.total_token_count or 0)
+
+        for key, value in other.additional_counts.items():
+            self.additional_counts[key] = self.additional_counts.get(key, 0) + (value or 0)
+
+        return self
 
 
 def _process_update(response: "ChatResponse", update: "ChatResponseUpdate") -> None:
@@ -1202,8 +1217,8 @@ class ChatResponseUpdate(AFBaseModel):
     def __init__(
         self,
         *,
-        contents: list[AIContent],
-        role: ChatRole | None = None,
+        contents: list[AIContents],
+        role: ChatRole | Literal["system", "user", "assistant", "tool"] | None = None,
         author_name: str | None = None,
         response_id: str | None = None,
         message_id: str | None = None,
@@ -1221,7 +1236,7 @@ class ChatResponseUpdate(AFBaseModel):
         self,
         *,
         text: TextContent | str,
-        role: ChatRole | None = None,
+        role: ChatRole | Literal["system", "user", "assistant", "tool"] | None = None,
         author_name: str | None = None,
         response_id: str | None = None,
         message_id: str | None = None,
@@ -1237,9 +1252,9 @@ class ChatResponseUpdate(AFBaseModel):
     def __init__(
         self,
         *,
-        contents: list[AIContent] | None = None,
+        contents: list[AIContents] | None = None,
         text: TextContent | str | None = None,
-        role: ChatRole | None = None,
+        role: ChatRole | Literal["system", "user", "assistant", "tool"] | None = None,
         author_name: str | None = None,
         response_id: str | None = None,
         message_id: str | None = None,
@@ -1257,7 +1272,8 @@ class ChatResponseUpdate(AFBaseModel):
             if isinstance(text, str):
                 text = TextContent(text=text)
             contents.append(text)
-
+        if role and isinstance(role, str):
+            role = ChatRole(value=role)
         super().__init__(
             contents=contents,  # type: ignore[reportCallIssue]
             additional_properties=additional_properties,  # type: ignore[reportCallIssue]
@@ -1379,66 +1395,103 @@ class ChatOptions(AFBaseModel):
         return settings
 
 
-# region: ModelClient Protocol
+# region: GeneratedEmbeddings
 
 
-@runtime_checkable
-class ModelClient(Protocol, Generic[TInput, TResponse]):
-    """A protocol for a model client that can generate responses."""
+class GeneratedEmbeddings(AFBaseModel, MutableSequence[TEmbedding], Generic[TEmbedding]):
+    """A model representing generated embeddings."""
 
-    async def get_response(
-        self,
-        messages: TInput | Sequence[TInput],
-        **kwargs: Any,
-    ) -> TResponse:
-        """Sends input and returns the response.
+    embeddings: list[TEmbedding] = Field(default_factory=list, kw_only=False)  # type: ignore[ReportUnknownVariableType]
+    usage: UsageDetails | None = None
+    additional_properties: dict[str, Any] = Field(default_factory=dict)
 
-        Args:
-            messages: The sequence of input messages to send.
-            **kwargs: Additional options for the request, such as ai_model_id, temperature, etc.
-                       See `ChatOptions` for more details.
+    def __contains__(self, value: object) -> bool:
+        return value in self.embeddings
 
-        Returns:
-            The response messages generated by the client.
+    def __iter__(self) -> Iterator[TEmbedding]:  # type: ignore[override] # overrides a method in BaseModel, ignoring
+        return iter(self.embeddings)
 
-        Raises:
-            ValueError: If the input message sequence is `None`.
-        """
-        ...
+    def __len__(self) -> int:
+        return len(self.embeddings)
 
-    async def get_streaming_response(
-        self,
-        messages: TInput | Sequence[TInput],
-        **kwargs: Any,  # kwargs?
-    ) -> AsyncIterable[TResponse]:
-        """Sends input messages and streams the response.
+    def __reversed__(self) -> Iterator[TEmbedding]:
+        return self.embeddings.__reversed__()
 
-        Args:
-            messages: The sequence of input messages to send.
-            **kwargs: Additional options for the request, such as ai_model_id, temperature, etc.
-                       See `ChatOptions` for more details.
+    def index(self, value: TEmbedding, start: int = 0, stop: int | None = None) -> int:
+        if start > 0:
+            if stop is not None:
+                return self.embeddings.index(value, start, stop)
+            return self.embeddings.index(value, start)
+        return self.embeddings.index(value)
 
-        Returns:
-            An async iterable of chat response updates containing the content of the response messages
-            generated by the client.
+    def count(self, value: TEmbedding) -> int:
+        return self.embeddings.count(value)
 
-        Raises:
-            ValueError: If the input message sequence is `None`.
-        """
-        ...
+    @overload
+    def __getitem__(self, index: int) -> TEmbedding: ...
 
-    def add_input_guardrails(self, guardrails: list[InputGuardrail[TInput]]) -> None:
-        """Add input guardrails to the model client.
+    @overload
+    def __getitem__(self, index: slice) -> MutableSequence[TEmbedding]: ...
 
-        Args:
-            guardrails: The list of input guardrails to add.
-        """
-        ...
+    def __getitem__(self, index: int | slice) -> TEmbedding | MutableSequence[TEmbedding]:
+        return self.embeddings[index]
 
-    def add_output_guardrails(self, guardrails: list[OutputGuardrail[TResponse | Sequence[TResponse]]]) -> None:
-        """Add output guardrails to the model client.
+    @overload
+    def __setitem__(self, index: int, value: TEmbedding) -> None: ...
 
-        Args:
-            guardrails: The list of output guardrails to add.
-        """
-        ...
+    @overload
+    def __setitem__(self, index: slice, value: Iterable[TEmbedding]) -> None: ...
+
+    def __setitem__(self, index: int | slice, value: TEmbedding | Iterable[TEmbedding]) -> None:
+        if isinstance(index, int):
+            if isinstance(value, Iterable):
+                raise TypeError("Value must be an iterable when setting a slice.")
+            self.embeddings[index] = value
+            return
+        if not isinstance(value, Iterable):
+            raise TypeError("Value must be an iterable when setting a slice.")
+        self.embeddings[index] = value
+
+    @overload
+    def __delitem__(self, index: int) -> None: ...
+
+    @overload
+    def __delitem__(self, index: slice) -> None: ...
+
+    def __delitem__(self, index: int | slice) -> None:
+        del self.embeddings[index]
+
+    def insert(self, index: int, value: TEmbedding) -> None:
+        self.embeddings.insert(index, value)
+
+    def append(self, value: TEmbedding) -> None:
+        self.embeddings.append(value)
+
+    def clear(self) -> None:
+        self.embeddings.clear()
+        self.usage = None
+        self.additional_properties = {}
+
+    def reverse(self) -> None:
+        self.embeddings.reverse()
+
+    def extend(self, values: Iterable[TEmbedding]) -> None:
+        self.embeddings.extend(values)
+
+    def pop(self, index: int = -1) -> TEmbedding:
+        return self.embeddings.pop(index)
+
+    def remove(self, value: TEmbedding) -> None:
+        self.embeddings.remove(value)
+
+    def __iadd__(self, values: Iterable[TEmbedding] | Self) -> Self:
+        if isinstance(values, GeneratedEmbeddings):
+            self.embeddings += values.embeddings
+            if not self.usage:
+                self.usage = values.usage
+            else:
+                self.usage += values.usage
+            self.additional_properties.update(values.additional_properties)
+        else:
+            self.embeddings += values
+        return self
