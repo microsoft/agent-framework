@@ -1,29 +1,38 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import uuid
 from collections.abc import AsyncIterable, Awaitable, Callable
-from typing import Any, TypeVar, cast
+from typing import Any, List, TypeVar, cast
 
-from pytest import fixture
+from pytest import fixture, raises
 
-from agent_framework import Agent, AgentThread, ChatMessage, ChatResponse, ChatResponseUpdate, ChatRole, TextContent
+from agent_framework import (
+    Agent,
+    AgentThread,
+    ChatClientAgentThread,
+    ChatMessage,
+    ChatResponse,
+    ChatResponseUpdate,
+    ChatRole,
+    TextContent,
+)
 
 TThreadType = TypeVar("TThreadType", bound=AgentThread)
 
 
-# Mock AgentThread implementation for testing
-class MockAgentThread(AgentThread):
-    async def _create(self) -> str:
-        return str(uuid.uuid4())
+# region MockAgentThread
 
-    async def _delete(self) -> None:
-        pass
+
+class MockAgentThread(AgentThread):
+    def __init__(self) -> None:
+        self.chat_messages: List[ChatMessage] = []
 
     async def _on_new_message(self, new_message: ChatMessage) -> None:
-        pass
+        self.chat_messages.append(new_message)
 
 
-# Mock Agent implementation for testing
+# region MockAgent
+
+
 class MockAgent:
     async def run(
         self,
@@ -46,60 +55,96 @@ class MockAgent:
     ) -> AsyncIterable[ChatResponseUpdate]:
         yield ChatResponseUpdate(contents=[TextContent("Response")])
 
-
-@fixture
-def agent_thread() -> AgentThread:
-    return MockAgentThread()
+    def get_new_thread(self) -> AgentThread:
+        return MockAgentThread()
 
 
-@fixture
-def agent() -> MockAgent:
-    return MockAgent()
+# region AgentThread tests
 
 
-async def test_agent_thread_id_property(agent_thread: MockAgentThread) -> None:
-    assert agent_thread.id is None
-    await agent_thread.create()
-    assert isinstance(agent_thread.id, str)
+class TestAgentThread:
+    @fixture
+    def agent_thread(self) -> AgentThread:
+        return MockAgentThread()
+
+    async def test_agent_thread_on_new_message_creates_thread(self, agent_thread: MockAgentThread) -> None:
+        message = ChatMessage(role=ChatRole.USER, contents=[TextContent("Hello")])
+        await agent_thread.on_new_message(message)
+        assert cast(TextContent, agent_thread.chat_messages[0].contents[0]).text == "Hello"
 
 
-async def test_agent_thread_create(agent_thread: MockAgentThread) -> None:
-    thread_id = await agent_thread.create()
-    assert thread_id == agent_thread.id
-    assert isinstance(thread_id, str)
+# region Agent tests
 
 
-async def test_agent_thread_create_already_exists(agent_thread: MockAgentThread) -> None:
-    thread_id = await agent_thread.create()
-    same_id = await agent_thread.create()
-    assert thread_id == same_id
+class TestAgent:
+    @fixture
+    def agent(self) -> MockAgent:
+        return MockAgent()
+
+    def test_agent_type(self, agent: MockAgent) -> None:
+        assert isinstance(agent, Agent)
+
+    async def test_agent_run(self, agent: MockAgent) -> None:
+        response = await agent.run("test")
+        assert response.messages[0].role == ChatRole.ASSISTANT
+        assert cast(TextContent, response.messages[0].contents[0]).text == "Response"
+
+    async def test_agent_run_stream(self, agent: MockAgent) -> None:
+        async def collect_updates(updates: AsyncIterable[ChatResponseUpdate]) -> list[ChatResponseUpdate]:
+            return [u async for u in updates]
+
+        updates = await collect_updates(agent.run_stream(messages="test"))
+        assert len(updates) == 1
+        assert cast(TextContent, updates[0].contents[0]).text == "Response"
+
+    def test_agent_get_new_thread(self, agent: MockAgent) -> None:
+        thread = agent.get_new_thread()
+        assert isinstance(thread, MockAgentThread)
 
 
-async def test_agent_thread_delete_already_deleted(agent_thread: MockAgentThread) -> None:
-    await agent_thread.delete()
-    await agent_thread.delete()  # Should not raise error
+# region ChatClientAgentThread tests
 
 
-async def test_agent_thread_on_new_message_creates_thread(agent_thread: MockAgentThread) -> None:
-    message = ChatMessage(role=ChatRole.USER, contents=[TextContent("Hello")])
-    await agent_thread.on_new_message(message)
-    assert agent_thread.id is not None
+class TestChatClientAgentThread:
+    def test_init_with_both_id_and_messages_raises_value_error(self) -> None:
+        with raises(ValueError, match="Cannot specify both id and messages"):
+            ChatClientAgentThread(
+                id="test_id", messages=[ChatMessage(role=ChatRole.USER, contents=[TextContent("Hello")])]
+            )
 
+    def test_init_with_empty_id_raises_value_error(self) -> None:
+        with raises(ValueError, match="ID cannot be empty or whitespace"):
+            ChatClientAgentThread(id="   ")
 
-def test_agent_type(agent: MockAgent) -> None:
-    assert isinstance(agent, Agent)
+    async def test_init_with_valid_id(self) -> None:
+        thread = ChatClientAgentThread(id="test_id")
+        messages = [msg async for msg in thread.get_messages()]
 
+        assert thread.id == "test_id"
+        assert len(messages) == 0
 
-async def test_agent_run(agent: MockAgent) -> None:
-    response = await agent.run("test")
-    assert response.messages[0].role == ChatRole.ASSISTANT
-    assert cast(TextContent, response.messages[0].contents[0]).text == "Response"
+    async def test_init_with_messages(self) -> None:
+        messages = [ChatMessage(role=ChatRole.USER, contents=[TextContent("Hello")])]
+        thread = ChatClientAgentThread(messages=messages)
+        thread_messages = [msg async for msg in thread.get_messages()]
+        assert thread.id is None
+        assert thread_messages == messages
 
+    async def test_get_messages_empty(self) -> None:
+        thread = ChatClientAgentThread()
+        messages = [msg async for msg in thread.get_messages()]
+        assert messages == []
 
-async def tesT_agent_run_stream(agent: MockAgent) -> None:
-    async def collect_updates(updates: AsyncIterable[ChatResponseUpdate]) -> list[ChatResponseUpdate]:
-        return [u async for u in updates]
+    async def test_on_new_message_local_thread(self) -> None:
+        thread = ChatClientAgentThread()
+        new_message = ChatMessage(role=ChatRole.USER, contents=[TextContent("Hello")])
+        await cast(AgentThread, thread).on_new_message(new_message)
+        messages = [msg async for msg in thread.get_messages()]
+        assert messages == [new_message]
 
-    updates = await collect_updates(agent.run_stream(messages="test"))
-    assert len(updates) == 1
-    assert cast(TextContent, updates[0].contents[0]).text == "Response"
+    async def test_on_new_message_server_thread(self) -> None:
+        thread = ChatClientAgentThread(id="test_id")
+        new_message = ChatMessage(role=ChatRole.USER, contents=[TextContent("Hello")])
+        await cast(AgentThread, thread).on_new_message(new_message)
+        messages = [msg async for msg in thread.get_messages()]
+        assert messages == []

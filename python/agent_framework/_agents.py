@@ -2,12 +2,9 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable
-from typing import Any, Protocol, TypeVar, runtime_checkable
+from typing import Any, Iterable, List, Protocol, runtime_checkable
 
 from ._types import ChatMessage, ChatResponse, ChatResponseUpdate
-
-TThreadType = TypeVar("TThreadType", bound="AgentThread")
-
 
 # region AgentThread
 
@@ -24,41 +21,12 @@ class AgentThread(ABC):
         """Returns the ID of the current thread (if any)."""
         return self._id
 
-    async def create(self) -> str | None:
-        """Starts the thread and returns the thread ID."""
-        # If the thread ID is already set, we're done, just return the Id.
-        if self.id is not None:
-            return self.id
-
-        # Otherwise, create the thread.
-        self._id = await self._create()
-        return self.id
-
-    async def delete(self) -> None:
-        """Ends the current thread."""
-        await self._delete()
-        self._id = None
-
     async def on_new_message(
         self,
         new_message: ChatMessage,
     ) -> None:
         """Invoked when a new message has been contributed to the chat by any participant."""
-        # If the thread is not created yet, create it.
-        if self.id is None:
-            await self.create()
-
         await self._on_new_message(new_message)
-
-    @abstractmethod
-    async def _create(self) -> str:
-        """Starts the thread and returns the thread ID."""
-        raise NotImplementedError
-
-    @abstractmethod
-    async def _delete(self) -> None:
-        """Ends the current thread."""
-        raise NotImplementedError
 
     @abstractmethod
     async def _on_new_message(
@@ -138,3 +106,66 @@ class Agent(Protocol):
             An agent response item.
         """
         ...
+
+    def get_new_thread(self) -> AgentThread:
+        """Get a new AgentThread instance compatible with the agent.
+
+        Returns:
+            A new AgentThread instance.
+
+        Notes:
+            - Returns the default thread type or configured thread type if multiple are supported.
+            - Thread may be created via a service call on first use.
+        """
+        ...
+
+
+# region ChatClientAgentThread
+
+
+class ChatClientAgentThread(AgentThread):
+    """Chat client agent thread.
+
+    This class manages chat threads either locally (in-memory) or via a service based on initialization.
+    """
+
+    def __init__(self, id: str | None = None, messages: Iterable[ChatMessage] | None = None):
+        """Initialize the chat client agent thread.
+
+        Args:
+            id (str | None): Service thread identifier. If provided, thread is managed by the service and messages are
+            not stored locally. Must not be empty or whitespace.
+            messages (Iterable[ChatMessage] | None): Initial messages for local storage. If provided, thread is managed
+            locally in-memory.
+
+        Raises:
+            ValueError: If both id and messages are provided, or if id is empty/whitespace.
+
+        Notes:
+            - If id is set, _id is assigned and _chat_messages remains empty (service-managed).
+            - If messages is set, _chat_messages is populated and _id is None (local).
+            - If neither is provided, creates an empty local thread.
+        """
+        super().__init__()
+        self._chat_messages: List[ChatMessage] = []
+
+        if id and messages:
+            raise ValueError("Cannot specify both id and messages")
+
+        if id:
+            if not id.strip():
+                raise ValueError("ID cannot be empty or whitespace")
+            self._id = id
+        elif messages:
+            self._chat_messages.extend(messages)
+
+    async def get_messages(self) -> AsyncIterable[ChatMessage]:
+        """Get all messages in the thread."""
+        for message in self._chat_messages:
+            yield message
+
+    async def _on_new_message(self, new_message: ChatMessage) -> None:
+        """Handle new message."""
+        # If id is not initialized, it means that thread is local and messages are stored in-memory.
+        if self._id is None:
+            self._chat_messages.append(new_message)
