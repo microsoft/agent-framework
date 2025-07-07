@@ -65,7 +65,7 @@ Approaches observed from the compared SDKs:
 | OpenAI Agent SDK | **Approach 1** Separates new_items (Primary+Secondary) from final output (Primary) as separate properties on the [RunResult](https://github.com/openai/openai-agents-python/blob/main/src/agents/result.py#L39) | **Approach 1** Similar to non-streaming, has a way of streaming updates via a method on the response object which includes all data, and then a separate final output property on the response object which is populated only when the run is complete. See [RunResultStreaming](https://github.com/openai/openai-agents-python/blob/main/src/agents/result.py#L136) |
 | Google ADK | **Approach 2** [Emits events](https://google.github.io/adk-docs/runtime/#step-by-step-breakdown) with [FinalResponse](https://github.com/google/adk-java/blob/main/core/src/main/java/com/google/adk/events/Event.java#L232) true (Primary) / false (Secondary) and callers have to filter out those with false to get just the final response message | **Approach 2** Similar to non-streaming except [events](https://google.github.io/adk-docs/runtime/#streaming-vs-non-streaming-output-partialtrue) are emitted with [Partial](https://github.com/google/adk-java/blob/main/core/src/main/java/com/google/adk/events/Event.java#L133) true to indicate that they are streaming messages. A final non partial event is also emitted. |
 | AWS (Strands) | **Approach 3** Returns an [AgentResult](https://strandsagents.com/latest/api-reference/agent/#strands.agent.agent_result.AgentResult) (Primary) with messages and a reason for the run's completion. | **Approach 2** [Streams events](https://strandsagents.com/latest/api-reference/agent/#strands.agent.agent.Agent.stream_async) (Primary+Secondary) including, response text, current_tool_use, even data from "callbacks" (strands plugins) |
-| LangGraph | TBD | TBD |
+| LangGraph | **Approach 2** A mixed list of all [messages](https://langchain-ai.github.io/langgraph/agents/run_agents/#output-format) | **Approach 2** A mixed list of all [messages](https://langchain-ai.github.io/langgraph/agents/run_agents/#output-format) |
 | Agno | **Combination of various approaches** Returns a [RunResponse](https://docs.agno.com/reference/agents/run-response) object with text content, messages (essentially chat history including inputs and instructions), reasoning and thinking text properties. Secondary events could potentially be extracted from messages. | **Approach 2** Returns [RunResponseEvent](https://docs.agno.com/reference/agents/run-response#runresponseevent-types-and-attributes) objects including tool call, memory update, etc, information, where the [RunResponseCompletedEvent](https://docs.agno.com/reference/agents/run-response#runresponsecompletedevent) has similar properties to RunResponse|
 | A2A | **Approach 3** Returns a [Task or Message](https://a2aproject.github.io/A2A/latest/specification/#71-messagesend) where the message is the final result (Primary) and task is a reference to a long running process. | **Approach 2** Returns a [stream](https://a2aproject.github.io/A2A/latest/specification/#72-messagestream) that contains task updates (Secondary) and a final message (Primary) |
 | Protocol Activity | **Approach 2** Single stream of responses including secondary events and final response messages (Primary). | No separate behavior for streaming. |
@@ -414,12 +414,41 @@ needing to break out of the abstraction.
 
 We need to consider abstractions for `AIContent` derived types for tool call results for common tool types beyond Function calls, e.g. CodeInterpreter, WebSearch, etc.
 
-## StructuredOutputs (Work in progress)
+## StructuredOutputs
 
-Open Questions:
+Structured outputs is a valueable aspect of any Agent system, since it forces an Agent to produce output in a required format, and may include required fields. This allows turning unstructured data into structured data easily using a general purpose language model.
 
-1. Should our agent abstraction support Structured Outputs.
-2. If it does, it is the agent that decides what the output structure should be, or can either caller and agent decide?
+Not all agent types necessarily support this or necessarily support this in the same way.
+Requesting a specific output schema at invocation time is widely supported by inference services though, and therefore inference based agents would support this well.
+Custom agents on the other hand may not necessarily want to support this, and forcing all custom Agent implementations to have a final structured output step to produce this complicates implementations.
+Custom agents may also have a built in output schema, that they always produce.
+
+Options:
+
+1. Support configuring the preferred structured output schema at agent construction time for those agents that support structured outputs.
+2. Support configuring the preferred structured output schema at invocation time, and ignore/throw if not supported (similar to IChatClient)
+3. Support both options with the invocation time schema overriding the construction time (or built in) schema if both are supported.
+
+Note that where an agent doesn't support structured output, it may also be possible to use a decorator to produce structured output from the agent's unstructured response, thereby turning an agent that doesn't support this into one that does.
+
+See [Structured Outputs Support](#structured-outputs-support) for a comparison on what other agent frameworks and protocols support.
+
+To support a good user experience for structured outputs, I'm proposing that we follow the pattern used by MEAI.
+We would add a generic version of `AgentRunResponse<T>`, that allows us to get the agent result already deserialized into our preferred type.
+This would be coupled with generic overload extension methods for Run that automatically builds a schema from the supplied type and updates
+the run options.
+
+```csharp
+class Movie
+{
+    public string Title { get; set; }
+    public string DirectorFullName { get; set; }
+    public int ReleaseYear { get; set; }
+}
+
+AgentRunResponse<Movie[]> response = agent.RunAsync<Movie[]>("What are the top 3 children's movies of the 80s.");
+Movie[] movies = response.Result
+```
 
 ## Decision Outcome
 
@@ -445,3 +474,32 @@ We need to decide what AIContent types, each agent response type will be mapped 
 | 11. | RAG indexing / lookups (are these just traces?) | ? |
 | 12. | General status updates for human consumption / Tracing | ? |
 | 13. | Unknown Type | AIContent |
+
+## Addendum 2: Other SDK feature comparison
+
+### Structured Outputs Support
+
+1. Configure Schema on Agent at Agent construction
+2. Pass schema at Agent invocation
+
+| SDK | Structured Outputs support |
+|-|-|
+| AutoGen | **Approach 1** Supports [configuring an agent](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/agents.html#structured-output) at agent creation. |
+| Google ADK | **Approach 1** Both [input and output shemas can be specified for LLM Agents](https://google.github.io/adk-docs/agents/llm-agents/#structuring-data-input_schema-output_schema-output_key) at construction time. This option is specific to this agent type and other agent types do not necessarily support |
+| AWS (Strands) | **Approach 2** Supports a special invocation method called [structured_output](https://strandsagents.com/latest/api-reference/agent/#strands.agent.agent.Agent.structured_output) |
+| LangGraph | **Approach 1** Supports [configuring an agent](https://langchain-ai.github.io/langgraph/agents/agents/?h=structured#6-configure-structured-output) at agent construction time, and a [structured response](https://langchain-ai.github.io/langgraph/agents/run_agents/#output-format) can be retrieved as a special property on the agent response |
+| Agno | **Approach 1** Supports [configuring an agent](https://docs.agno.com/examples/getting-started/structured-output) at agent construction time |
+| A2A | **Informal Approach 2** Doesn't formally support schema negotiation, but [hints can be provided via metadata](https://a2aproject.github.io/A2A/v0.2.5/specification/#97-structured-data-exchange-requesting-and-providing-json) at invocation time |
+| Protocol Activity | Supports returning [Complex types](https://github.com/microsoft/Agents/blob/main/specs/activity/protocol-activity.md#complex-types) but no support for requesting a type |
+
+### Response Reason Support
+
+| SDK | Response Reason support |
+|-|-|
+| AutoGen | Supports a [stop reason](https://microsoft.github.io/autogen/stable/reference/python/autogen_agentchat.base.html#autogen_agentchat.base.TaskResult.stop_reason) which is a freeform text string |
+| Google ADK | [No equivalent present](https://github.com/google/adk-python/blob/main/src/google/adk/events/event.py) |
+| AWS (Strands) | Exposes a [stop_reason](https://strandsagents.com/latest/api-reference/types/#strands.types.event_loop.StopReason) property on the [AgentResult](https://strandsagents.com/latest/api-reference/agent/#strands.agent.agent_result.AgentResult) class with options that are tied closely to LLM operations. |
+| LangGraph | No equivalent present, output contains only [messages](https://langchain-ai.github.io/langgraph/agents/run_agents/#output-format) |
+| Agno | [No equivalent present](https://docs.agno.com/reference/agents/run-response) |
+| A2A | No equivalent present, response only contains a [message](https://a2aproject.github.io/A2A/v0.2.5/specification/#64-message-object) or [task](https://a2aproject.github.io/A2A/v0.2.5/specification/#61-task-object). |
+| Protocol Activity | [No equivalent present.](https://github.com/microsoft/Agents/blob/main/specs/activity/protocol-activity.md) |
