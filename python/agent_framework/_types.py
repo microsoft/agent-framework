@@ -3,7 +3,7 @@
 import base64
 import re
 import sys
-from collections.abc import AsyncIterable, Iterator, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Iterable, Iterator, MutableSequence, Sequence
 from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, overload
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -116,8 +116,10 @@ class UsageDetails(AFBaseModel):
         """
         return self.model_extra or {}
 
-    def __add__(self, other: "UsageDetails") -> "UsageDetails":
+    def __add__(self, other: "UsageDetails | None") -> "UsageDetails":
         """Combines two `UsageDetails` instances."""
+        if not other:
+            return self
         if not isinstance(other, UsageDetails):
             raise ValueError("Can only add two usage details objects together.")
 
@@ -132,6 +134,21 @@ class UsageDetails(AFBaseModel):
             total_token_count=(self.total_token_count or 0) + (other.total_token_count or 0),
             **additional_counts,
         )
+
+    def __iadd__(self, other: "UsageDetails | None") -> Self:
+        if not other:
+            return self
+        if not isinstance(other, UsageDetails):
+            raise ValueError("Can only add usage details objects together.")
+
+        self.input_token_count = (self.input_token_count or 0) + (other.input_token_count or 0)
+        self.output_token_count = (self.output_token_count or 0) + (other.output_token_count or 0)
+        self.total_token_count = (self.total_token_count or 0) + (other.total_token_count or 0)
+
+        for key, value in other.additional_counts.items():
+            self.additional_counts[key] = self.additional_counts.get(key, 0) + (value or 0)
+
+        return self
 
 
 def _process_update(response: "ChatResponse", update: "ChatResponseUpdate") -> None:
@@ -1381,17 +1398,17 @@ class ChatOptions(AFBaseModel):
 # region: GeneratedEmbeddings
 
 
-class GeneratedEmbeddings(AFBaseModel, MutableSequence, Generic[TEmbedding]):
+class GeneratedEmbeddings(AFBaseModel, MutableSequence[TEmbedding], Generic[TEmbedding]):
     """A model representing generated embeddings."""
 
     embeddings: list[TEmbedding] = Field(default_factory=list, kw_only=False)
     usage: UsageDetails | None = None
-    additional_properties: dict[str, Any] | None = None
+    additional_properties: dict[str, Any] = Field(default_factory=dict)
 
-    def __contains__(self, value: TEmbedding) -> bool:
+    def __contains__(self, value: object) -> bool:
         return value in self.embeddings
 
-    def __iter__(self) -> Iterator[TEmbedding]:
+    def __iter__(self) -> Iterator[TEmbedding]:  # type: ignore[override] # overrides a method in BaseModel, ignoring
         return iter(self.embeddings)
 
     def __len__(self) -> int:
@@ -1401,18 +1418,47 @@ class GeneratedEmbeddings(AFBaseModel, MutableSequence, Generic[TEmbedding]):
         return self.embeddings.__reversed__()
 
     def index(self, value: TEmbedding, start: int = 0, stop: int | None = None) -> int:
-        return self.embeddings.index(value, start, stop)
+        if start > 0:
+            if stop is not None:
+                return self.embeddings.index(value, start, stop)
+            return self.embeddings.index(value, start)
+        return self.embeddings.index(value)
 
     def count(self, value: TEmbedding) -> int:
         return self.embeddings.count(value)
 
-    def __getitem__(self, index: int) -> TEmbedding:
+    @overload
+    def __getitem__(self, index: int, /) -> TEmbedding: ...
+
+    @overload
+    def __getitem__(self, slice: slice[Any, Any, Any], /) -> MutableSequence[TEmbedding]: ...
+
+    def __getitem__(self, index: int | slice[Any, Any, Any], /) -> TEmbedding | MutableSequence[TEmbedding]:
         return self.embeddings[index]
 
-    def __setitem__(self, index: int, value: TEmbedding) -> None:
+    @overload
+    def __setitem__(self, index: int, value: TEmbedding, /) -> None: ...
+
+    @overload
+    def __setitem__(self, slice: slice[Any, Any, Any], value: Iterable[TEmbedding], /) -> None: ...
+
+    def __setitem__(self, index: int | slice[Any, Any, Any], value: TEmbedding | Iterable[TEmbedding], /) -> None:
+        if isinstance(index, int):
+            if isinstance(value, Iterable):
+                raise TypeError("Value must be an iterable when setting a slice.")
+            self.embeddings[index] = value
+            return
+        if not isinstance(value, Iterable):
+            raise TypeError("Value must be an iterable when setting a slice.")
         self.embeddings[index] = value
 
-    def __delitem__(self, index: int) -> None:
+    @overload
+    def __delitem__(self, index: int, /) -> None: ...
+
+    @overload
+    def __delitem__(self, index: slice[Any, Any, Any], /) -> None: ...
+
+    def __delitem__(self, index: int | slice[Any, Any, Any], /) -> None:
         del self.embeddings[index]
 
     def insert(self, index: int, value: TEmbedding) -> None:
@@ -1424,12 +1470,12 @@ class GeneratedEmbeddings(AFBaseModel, MutableSequence, Generic[TEmbedding]):
     def clear(self) -> None:
         self.embeddings.clear()
         self.usage = None
-        self.additional_properties = None
+        self.additional_properties = {}
 
     def reverse(self) -> None:
         self.embeddings.reverse()
 
-    def extend(self, values: Sequence[TEmbedding]) -> None:
+    def extend(self, values: Iterable[TEmbedding]) -> None:
         self.embeddings.extend(values)
 
     def pop(self, index: int = -1) -> TEmbedding:
@@ -1438,10 +1484,13 @@ class GeneratedEmbeddings(AFBaseModel, MutableSequence, Generic[TEmbedding]):
     def remove(self, value: TEmbedding) -> None:
         self.embeddings.remove(value)
 
-    def __iadd__(self, values: Sequence[TEmbedding] | Self) -> Self:
+    def __iadd__(self, values: Iterable[TEmbedding] | Self) -> Self:
         if isinstance(values, GeneratedEmbeddings):
             self.embeddings += values.embeddings
-            self.usage += values.usage
+            if not self.usage:
+                self.usage = values.usage
+            else:
+                self.usage += values.usage
             self.additional_properties.update(values.additional_properties)
         else:
             self.embeddings += values

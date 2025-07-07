@@ -5,7 +5,7 @@ from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
 
 from ._types import ChatMessage, ChatResponse, ChatResponseUpdate, GeneratedEmbeddings
 
-TInput = TypeVar("TInput")
+TInput = TypeVar("TInput", contravariant=True)
 TEmbedding = TypeVar("TEmbedding")
 
 # region: ChatClient Protocol
