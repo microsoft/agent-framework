@@ -1,8 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 import importlib.metadata
 
-from ._openai_chat_completion_base import OpenAIChatCompletionBase
-from ._openai_chat_completion import OpenAIChatCompletion
+from ._chat_completion import OpenAIChatCompletion, OpenAIChatCompletionBase
 
 try:
     __version__ = importlib.metadata.version(__name__)

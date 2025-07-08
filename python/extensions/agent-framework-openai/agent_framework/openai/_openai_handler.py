@@ -2,7 +2,7 @@
 
 import logging
 from abc import ABC
-from typing import Any, Union
+from typing import Annotated, Any, Union
 
 from openai import AsyncOpenAI, AsyncStream, BadRequestError
 from openai import _legacy_response # type: ignore
@@ -12,6 +12,7 @@ from openai.types.audio import Transcription
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai.types.images_response import ImagesResponse
 from pydantic import BaseModel
+from pydantic.types import StringConstraints
 
 from agent_framework import (
     AFBaseModel, ChatOptions, SpeechToTextOptions, TextToSpeechOptions
@@ -21,7 +22,7 @@ from agent_framework.exceptions import (
 )
 
 from .exceptions import ContentFilterAIException
-from .openai_model_types import OpenAIModelTypes
+from ._openai_model_types import OpenAIModelTypes
 
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -49,6 +50,7 @@ class OpenAIHandler(AFBaseModel, ABC):
     """Internal class for calls to OpenAI API's."""
 
     client: AsyncOpenAI
+    ai_model_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     ai_model_type: OpenAIModelTypes = OpenAIModelTypes.CHAT
     prompt_tokens: int = 0
     completion_tokens: int = 0

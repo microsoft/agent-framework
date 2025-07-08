@@ -9,7 +9,7 @@ from openai import AsyncOpenAI
 from pydantic import ConfigDict, Field, validate_call
 
 from ._openai_handler import OpenAIHandler
-from .openai_model_types import OpenAIModelTypes
+from ._openai_model_types import OpenAIModelTypes
 from agent_framework.exceptions import ServiceInitializationError
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -25,7 +25,6 @@ class OpenAIConfigBase(OpenAIHandler):
         api_key: str | None = Field(min_length=1),
         ai_model_type: OpenAIModelTypes | None = OpenAIModelTypes.CHAT,
         org_id: str | None = None,
-        service_id: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
@@ -45,7 +44,6 @@ class OpenAIConfigBase(OpenAIHandler):
                 model to interact with. Defaults to CHAT.
             org_id (str): OpenAI organization ID. This is optional
                 unless the account belongs to multiple organizations.
-            service_id (str): OpenAI service ID. This is optional.
             default_headers (Mapping[str, str]): Default headers
                 for HTTP requests. (Optional)
             client (AsyncOpenAI): An existing OpenAI client, optional.
@@ -70,8 +68,6 @@ class OpenAIConfigBase(OpenAIHandler):
             "client": client,
             "ai_model_type": ai_model_type,
         }
-        if service_id:
-            args["service_id"] = service_id
         if instruction_role:
             args["instruction_role"] = instruction_role
         super().__init__(**args, **kwargs)
@@ -91,7 +87,6 @@ class OpenAIConfigBase(OpenAIHandler):
                 "total_tokens",
                 "api_type",
                 "ai_model_type",
-                "service_id",
                 "client",
             },
             by_alias=True,

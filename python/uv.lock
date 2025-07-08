@@ -42,7 +42,6 @@ dependencies = [
     { name = "agent-framework-azure", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-openai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "pydantic-settings", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
@@ -84,7 +83,6 @@ requires-dist = [
     { name = "agent-framework-azure", editable = "extensions/agent-framework-azure" },
     { name = "agent-framework-openai", editable = "extensions/agent-framework-openai" },
     { name = "pydantic", specifier = ">=2.11.7" },
-    { name = "pydantic-settings", specifier = "~=2.0" },
     { name = "typing-extensions", specifier = ">=4.14.0" },
 ]
 
