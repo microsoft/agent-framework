@@ -3,6 +3,7 @@
 using System;
 using System.Threading.Tasks;
 using Microsoft.Agents.Orchestration.Concurrent;
+using Microsoft.Extensions.AI.Agents;
 using Microsoft.SemanticKernel.Agents.Runtime.InProcess;
 
 namespace Microsoft.Agents.Orchestration.UnitTest;

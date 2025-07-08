@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using Microsoft.Extensions.AI.Agents;
 using Microsoft.SemanticKernel.Agents.Runtime;
 using Microsoft.Shared.Diagnostics;
 

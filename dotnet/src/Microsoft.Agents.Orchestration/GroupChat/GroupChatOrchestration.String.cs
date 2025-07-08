@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Microsoft.Extensions.AI.Agents;
+
 namespace Microsoft.Agents.Orchestration.GroupChat;
 
 /// <summary>

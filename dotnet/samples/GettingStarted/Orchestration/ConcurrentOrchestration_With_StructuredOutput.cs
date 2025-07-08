@@ -1,10 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json;
-using Microsoft.Agents;
 using Microsoft.Agents.Orchestration;
 using Microsoft.Agents.Orchestration.Concurrent;
 using Microsoft.Agents.Orchestration.Transforms;
+using Microsoft.Extensions.AI.Agents;
 using Microsoft.SemanticKernel.Agents.Runtime.InProcess;
 using Microsoft.Shared.Samples;
 

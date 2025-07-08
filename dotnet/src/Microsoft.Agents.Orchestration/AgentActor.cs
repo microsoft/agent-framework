@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.Logging;
 using Microsoft.SemanticKernel.Agents.Runtime;
 

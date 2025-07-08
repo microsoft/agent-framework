@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Microsoft.Agents.Orchestration.Extensions;
 using Microsoft.Agents.Orchestration.Transforms;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.SemanticKernel.Agents.Runtime;

@@ -107,10 +107,7 @@
     <File Path="src/LegacySupport/TrimAttributes/RequiresUnreferencedCodeAttribute.cs" />
     <File Path="src/LegacySupport/TrimAttributes/UnconditionalSuppressMessageAttribute.cs" />
   </Folder>
-  <Project Path="src/Microsoft.Agents.Abstractions/Microsoft.Agents.Abstractions.csproj" />
   <Project Path="src/Microsoft.Agents.Orchestration/Microsoft.Agents.Orchestration.csproj" />
-  <Project Path="src/Microsoft.Agents/Microsoft.Agents.csproj" />
-  <Project Path="src/Microsoft.Extensions.AI.AzureAIAgentsPersistent/Microsoft.Extensions.AI.AzureAIAgentsPersistent.csproj" />
   <Project Path="src/Microsoft.Extensions.AI.Agents.Abstractions/Microsoft.Extensions.AI.Agents.Abstractions.csproj" />
   <Project Path="src/Microsoft.Extensions.AI.Agents/Microsoft.Extensions.AI.Agents.csproj" />
   <Project Path="src/Microsoft.Extensions.AI.Agents.AzureAI/Microsoft.Extensions.AI.Agents.AzureAI.csproj" />
@@ -118,9 +115,6 @@
     <BuildType Solution="Publish|*" Project="Debug" />
   </Project>
   <Project Path="tests/Microsoft.Agents.Orchestration.UnitTests/Microsoft.Agents.Orchestration.UnitTests.csproj">
-    <BuildType Solution="Publish|*" Project="Debug" />
-  </Project>
-  <Project Path="tests/Microsoft.Agents.UnitTests/Microsoft.Agents.UnitTests.csproj">
     <BuildType Solution="Publish|*" Project="Debug" />
   </Project>
   <Project Path="tests/Microsoft.Extensions.AI.Agents.UnitTests/Microsoft.Extensions.AI.Agents.UnitTests.csproj">

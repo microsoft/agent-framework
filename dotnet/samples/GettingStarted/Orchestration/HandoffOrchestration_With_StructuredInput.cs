@@ -1,10 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json.Serialization;
-using Microsoft.Agents;
 using Microsoft.Agents.Orchestration;
 using Microsoft.Agents.Orchestration.Handoff;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
 using Microsoft.SemanticKernel.Agents.Runtime.InProcess;
 
 namespace Orchestration;
