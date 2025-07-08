@@ -42,7 +42,7 @@ public sealed class Step03_ChatClientAgent_UsingCodeInterpreterTools(ITestOutput
         var thread = agent.GetNewThread();
 
         // Prompt which allows to verify that the data was processed from file correctly and current datetime is returned.
-        const string Prompt = "Calculate the total number of items, identify the most frequently puchased item and return the result with today's datetime.";
+        const string Prompt = "Calculate the total number of items, identify the most frequently purchased item and return the result with today's datetime.";
 
         var assistantOutput = new StringBuilder();
         var codeInterpreterOutput = new StringBuilder();
