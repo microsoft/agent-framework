@@ -33,13 +33,13 @@ class MockAgentThread(AgentThread):
 # region MockAgent
 
 
-class MockAgent:
+class MockAgent(Agent):
     async def run(
         self,
         messages: str | ChatMessage | list[str | ChatMessage] | None = None,
         *,
-        arguments: dict[str, Any] | None = None,
         thread: AgentThread | None = None,
+        on_intermediate_message: Callable[[ChatMessage], Awaitable[None]] | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         return ChatResponse(messages=[ChatMessage(role=ChatRole.ASSISTANT, contents=[TextContent("Response")])])
@@ -48,7 +48,6 @@ class MockAgent:
         self,
         messages: str | ChatMessage | list[str | ChatMessage] | None = None,
         *,
-        arguments: dict[str, Any] | None = None,
         thread: AgentThread | None = None,
         on_intermediate_message: Callable[[ChatMessage], Awaitable[None]] | None = None,
         **kwargs: Any,

@@ -2,9 +2,17 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable
-from typing import Any, Iterable, List, Protocol, runtime_checkable
+from enum import Enum
+from typing import Any, Iterable, List, Protocol, Sequence, TypeVar, runtime_checkable
+from uuid import uuid4
 
-from ._types import ChatMessage, ChatResponse, ChatResponseUpdate
+from pydantic import Field
+
+from agent_framework import ChatClient, ChatMessage, ChatResponse, ChatResponseUpdate, ChatRole, TextContent
+
+from .exceptions import AgentExecutionException
+
+TThreadType = TypeVar("TThreadType", bound="AgentThread")
 
 # region AgentThread
 
@@ -37,6 +45,68 @@ class AgentThread(ABC):
         raise NotImplementedError
 
 
+# region BaseAgent
+
+
+class BaseAgent:
+    """Base abstraction for all agents.
+
+    Attributes:
+       id: The unique identifier of the agent  If no id is provided,
+           a new UUID will be generated.
+       name: The name of the agent
+       description: The description of the agent
+       instructions: The instructions for the agent (optional)
+    """
+
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    name: str = Field(default="UnnamedAgent")
+    description: str | None = None
+    instructions: str | None = None
+
+    async def _ensure_thread_exists_with_messages(
+        self,
+        *,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        thread: AgentThread | None,
+        construct_thread: Callable[[], TThreadType],
+        expected_type: type[TThreadType],
+    ) -> TThreadType:
+        """Ensure the thread exists with the provided message(s)."""
+        if messages is None:
+            messages = []
+
+        if isinstance(messages, (str, ChatMessage)):
+            messages = [messages]
+
+        normalized_messages = [
+            ChatMessage(role=ChatRole.USER, contents=[TextContent(msg)]) if isinstance(msg, str) else msg
+            for msg in messages
+        ]
+
+        if thread is None:
+            thread = construct_thread()
+
+        if not isinstance(thread, expected_type):
+            raise AgentExecutionException(
+                f"{self.__class__.__name__} currently only supports agent threads of type {expected_type.__name__}."
+            )
+
+        # Notify the thread that new messages are available.
+        for msg in normalized_messages:
+            await self._notify_thread_of_new_message(thread, msg)
+
+        return thread
+
+    async def _notify_thread_of_new_message(
+        self,
+        thread: AgentThread,
+        new_message: ChatMessage,
+    ) -> None:
+        """Notify the thread of a new message."""
+        await thread.on_new_message(new_message)
+
+
 # region Agent Protocol
 
 
@@ -48,8 +118,8 @@ class Agent(Protocol):
         self,
         messages: str | ChatMessage | list[str | ChatMessage] | None = None,
         *,
-        arguments: dict[str, Any] | None = None,
         thread: AgentThread | None = None,
+        on_intermediate_message: Callable[[ChatMessage], Awaitable[None]] | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         """Get a response from the agent.
@@ -66,8 +136,9 @@ class Agent(Protocol):
 
         Args:
             messages: The message(s) to send to the agent.
-            arguments: Additional arguments to pass to the agent.
             thread: The conversation thread associated with the message(s).
+            on_intermediate_message: A callback function to handle intermediate steps of the
+                                     agent's execution as fully formed messages.
             kwargs: Additional keyword arguments.
 
         Returns:
@@ -75,11 +146,10 @@ class Agent(Protocol):
         """
         ...
 
-    async def run_stream(
+    def run_stream(
         self,
         messages: str | ChatMessage | list[str | ChatMessage] | None = None,
         *,
-        arguments: dict[str, Any] | None = None,
         thread: AgentThread | None = None,
         on_intermediate_message: Callable[[ChatMessage], Awaitable[None]] | None = None,
         **kwargs: Any,
@@ -96,7 +166,6 @@ class Agent(Protocol):
 
         Args:
             messages: The message(s) to send to the agent.
-            arguments: Additional arguments to pass to the agent.
             thread: The conversation thread associated with the message(s).
             on_intermediate_message: A callback function to handle intermediate steps of the
                                      agent's execution as fully formed messages.
@@ -123,11 +192,23 @@ class Agent(Protocol):
 # region ChatClientAgentThread
 
 
+class ChatClientAgentThreadType(Enum):
+    """Defines the different supported storage locations for ChatClientAgentThread."""
+
+    IN_MEMORY_MESSAGES = "InMemoryMessages"
+    """Messages are stored in memory inside the thread object."""
+
+    CONVERSATION_ID = "ConversationId"
+    """Messages are stored in the service and the thread object just has an id reference to the service storage."""
+
+
 class ChatClientAgentThread(AgentThread):
     """Chat client agent thread.
 
     This class manages chat threads either locally (in-memory) or via a service based on initialization.
     """
+
+    _storage_location: ChatClientAgentThreadType | None = None
 
     def __init__(self, id: str | None = None, messages: Iterable[ChatMessage] | None = None):
         """Initialize the chat client agent thread.
@@ -156,8 +237,10 @@ class ChatClientAgentThread(AgentThread):
             if not id.strip():
                 raise ValueError("ID cannot be empty or whitespace")
             self._id = id
+            self._storage_location = ChatClientAgentThreadType.CONVERSATION_ID
         elif messages:
             self._chat_messages.extend(messages)
+            self._storage_location = ChatClientAgentThreadType.IN_MEMORY_MESSAGES
 
     async def get_messages(self) -> AsyncIterable[ChatMessage]:
         """Get all messages in the thread."""
@@ -166,6 +249,79 @@ class ChatClientAgentThread(AgentThread):
 
     async def _on_new_message(self, new_message: ChatMessage) -> None:
         """Handle new message."""
-        # If id is not initialized, it means that thread is local and messages are stored in-memory.
-        if self._id is None:
+        if self._storage_location == ChatClientAgentThreadType.IN_MEMORY_MESSAGES:
             self._chat_messages.append(new_message)
+
+
+# region ChatClientAgent
+
+
+class ChatClientAgent(BaseAgent, Agent):
+    """A Chat Client Agent based on ChatClient.
+
+    Attributes:
+       id: The unique identifier of the agent  If no id is provided,
+           a new UUID will be generated.
+       name: The name of the agent
+       description: The description of the agent
+       instructions: The instructions for the agent (optional)
+    """
+
+    _chat_client: ChatClient = Field(..., exclude=True)
+
+    def __init__(
+        self,
+        id: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        instructions: str | None = None,
+    ) -> None:
+        args: dict[str, Any] = {}
+
+        if id is not None:
+            args["id"] = id
+        if name is not None:
+            args["name"] = name
+        if description is not None:
+            args["description"] = description
+        if instructions is not None:
+            args["instructions"] = instructions
+
+        super().__init__(**args)
+
+    async def run(
+        self,
+        messages: str | ChatMessage | list[str | ChatMessage] | None = None,
+        *,
+        thread: AgentThread | None = None,
+        on_intermediate_message: Callable[[ChatMessage], Awaitable[None]] | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
+        thread = await self._ensure_thread_exists_with_messages(
+            messages=messages,
+            thread=thread,
+            construct_thread=lambda: ChatClientAgentThread(),
+            expected_type=ChatClientAgentThread,
+        )
+
+        thread_messages: list[ChatMessage] = []
+
+        async for message in thread.get_messages():
+            thread_messages.append(message)
+
+        response = await self._chat_client.get_response(thread_messages, **kwargs)
+
+        return response
+
+    async def run_stream(
+        self,
+        messages: str | ChatMessage | list[str | ChatMessage] | None = None,
+        *,
+        thread: AgentThread | None = None,
+        on_intermediate_message: Callable[[ChatMessage], Awaitable[None]] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterable[ChatResponseUpdate]:
+        yield ChatResponseUpdate(contents=[TextContent("Response")])
+
+    def get_new_thread(self) -> AgentThread:
+        return ChatClientAgentThread()
