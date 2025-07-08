@@ -3,8 +3,8 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
-using Microsoft.SemanticKernel.Agents.Runtime;
 
 namespace Microsoft.Agents.Orchestration;
 
@@ -73,7 +73,7 @@ public sealed class OrchestrationResult<TValue> : IDisposable
 
         if (timeout.HasValue)
         {
-            Task[] tasks = { this._completion.Task };
+            Task[] tasks = [this._completion.Task];
             if (!Task.WaitAll(tasks, timeout.Value))
             {
                 this._logger.LogOrchestrationResultTimeout(this.Orchestration, this.Topic);

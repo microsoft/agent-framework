@@ -10,7 +10,7 @@ using System.Threading.Tasks;
 using Microsoft.Agents.Orchestration.Handoff;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
-using Microsoft.SemanticKernel.Agents.Runtime.InProcess;
+using Microsoft.Extensions.AI.Agents.Runtime.InProcess;
 using OpenAI;
 
 namespace Microsoft.Agents.Orchestration.UnitTest;

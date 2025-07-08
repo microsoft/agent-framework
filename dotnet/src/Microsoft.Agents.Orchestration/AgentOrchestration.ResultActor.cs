@@ -5,9 +5,8 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.Agents.Orchestration.Transforms;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
-using Microsoft.SemanticKernel.Agents.Runtime;
-using Microsoft.SemanticKernel.Agents.Runtime.Core;
 
 namespace Microsoft.Agents.Orchestration;
 

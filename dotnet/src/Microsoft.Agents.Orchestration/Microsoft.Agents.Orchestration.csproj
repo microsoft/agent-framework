@@ -22,12 +22,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Microsoft.Extensions.AI.Agents\Microsoft.Extensions.AI.Agents.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="Microsoft.SemanticKernel.Agents.Runtime.Abstractions" />
-    <PackageReference Include="Microsoft.SemanticKernel.Agents.Runtime.Core" />
-    <PackageReference Include="Microsoft.SemanticKernel.Agents.Runtime.InProcess" />
+    <ProjectReference Include="..\Microsoft.Extensions.AI.Agents.Runtime.Abstractions\Microsoft.Extensions.AI.Agents.Runtime.Abstractions.csproj" />
+    <ProjectReference Include="..\Microsoft.Extensions.AI.Agents.Runtime.InProcess\Microsoft.Extensions.AI.Agents.Runtime.InProcess.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,8 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics.CodeAnalysis;
+using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
-using Microsoft.SemanticKernel.Agents.Runtime;
 
 namespace Microsoft.Agents.Orchestration;
 
@@ -20,7 +20,6 @@ internal static partial class OrchestrationResultLogMessages
     /// Logs <see cref="OrchestrationResult{TValue}"/> awaiting the orchestration.
     /// </summary>
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Trace,
         Message = "AWAIT {Orchestration}: {Topic}")]
     public static partial void LogOrchestrationResultAwait(
@@ -32,7 +31,6 @@ internal static partial class OrchestrationResultLogMessages
     /// Logs <see cref="OrchestrationResult{TValue}"/> timeout while awaiting the orchestration.
     /// </summary>
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Error,
         Message = "TIMEOUT {Orchestration}: {Topic}")]
     public static partial void LogOrchestrationResultTimeout(
@@ -44,7 +42,6 @@ internal static partial class OrchestrationResultLogMessages
     /// Logs <see cref="OrchestrationResult{TValue}"/> cancelled the orchestration.
     /// </summary>
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Error,
         Message = "CANCELLED {Orchestration}: {Topic}")]
     public static partial void LogOrchestrationResultCancelled(
@@ -56,7 +53,6 @@ internal static partial class OrchestrationResultLogMessages
     /// Logs <see cref="OrchestrationResult{TValue}"/> the awaited the orchestration has completed.
     /// </summary>
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Trace,
         Message = "COMPLETE {Orchestration}: {Topic}")]
     public static partial void LogOrchestrationResultComplete(

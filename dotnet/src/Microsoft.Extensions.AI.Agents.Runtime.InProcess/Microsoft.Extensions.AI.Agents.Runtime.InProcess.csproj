@@ -1,0 +1,28 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
+    <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
+    <VersionSuffix>alpha</VersionSuffix>
+    <IsAotCompatible>false</IsAotCompatible> <!-- TODO: Fix this -->
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <InjectDiagnosticAttributesOnLegacy>true</InjectDiagnosticAttributesOnLegacy>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Extensions.AI.Agents.Runtime.InProcess.UnitTests" />
+  </ItemGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <ItemGroup Condition="'$(TargetFrameworkIdentifier)' != '.NETCoreApp'">
+    <PackageReference Include="System.Threading.Tasks.Extensions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Extensions.AI.Agents.Runtime.Abstractions\Microsoft.Extensions.AI.Agents.Runtime.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>
