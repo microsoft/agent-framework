@@ -154,24 +154,26 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
         {
             Azure.AI.Agents.Persistent.ToolResources? toolResources = null;
 
-            // At the time of the call it will check if there are any tools defined in the options.
-            foreach (var tool in chatOptions.Tools!)
+            if (chatOptions.Tools is { Count: > 0 })
             {
-                if (tool is NewHostedCodeInterpreterTool codeInterpreterTool &&
-                    codeInterpreterTool.FileIds is { Count: > 0 })
+                // At the time of the call it will check if there are any tools defined in the options.
+                foreach (var tool in chatOptions.Tools)
                 {
-                    toolResources ??= new Azure.AI.Agents.Persistent.ToolResources()
+                    if (tool is NewHostedCodeInterpreterTool codeInterpreterTool &&
+                        codeInterpreterTool.FileIds is { Count: > 0 })
                     {
-                        CodeInterpreter = new CodeInterpreterToolResource()
-                    };
+                        toolResources ??= new Azure.AI.Agents.Persistent.ToolResources()
+                        {
+                            CodeInterpreter = new CodeInterpreterToolResource()
+                        };
 
-                    foreach (var fileId in codeInterpreterTool.FileIds)
-                    {
-                        toolResources.CodeInterpreter.FileIds.Add(fileId);
+                        foreach (var fileId in codeInterpreterTool.FileIds)
+                        {
+                            toolResources.CodeInterpreter.FileIds.Add(fileId);
+                        }
                     }
                 }
             }
-
             return new ThreadAndRunOptions { ToolResources = toolResources };
         };
 

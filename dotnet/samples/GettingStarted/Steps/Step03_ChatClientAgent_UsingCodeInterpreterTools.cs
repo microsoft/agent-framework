@@ -24,7 +24,7 @@ public sealed class Step03_ChatClientAgent_UsingCodeInterpreterTools(ITestOutput
         var chatOptions = base.GetChatOptions(provider);
         var fileId = await UploadFileAsync("Resources/groceries.txt", provider);
 
-        chatOptions?.Tools?.Add(new NewHostedCodeInterpreterTool { FileIds = [fileId] });
+        chatOptions!.Tools = [new NewHostedCodeInterpreterTool { FileIds = [fileId] }];
 
         var agentOptions = new ChatClientAgentOptions
         {
@@ -102,7 +102,6 @@ public sealed class Step03_ChatClientAgent_UsingCodeInterpreterTools(ITestOutput
     /// <param name="rawRepresentation">Raw representation of the response containing code interpreter output.</param>
     /// <param name="provider">Provider of the chat client that is used to determine how to extract the output.</param>
     /// <returns>The code interpreter output as a string.</returns>
-    /// <exception cref="NotSupportedException">If the provider is not supported.</exception>
     private static string? GetCodeInterpreterOutput(object rawRepresentation, ChatClientProviders provider)
     {
 #pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
@@ -122,10 +121,9 @@ public sealed class Step03_ChatClientAgent_UsingCodeInterpreterTools(ITestOutput
                     string.Empty,
                     stepDetails.CodeInterpreterOutputs.OfType<RunStepDeltaCodeInterpreterLogOutput>().SelectMany(l => l.Logs)
                     )}";
-
-            default:
-                throw new NotSupportedException($"Client provider {provider} is not supported.");
         }
+
+        return null;
     }
 
     #endregion
