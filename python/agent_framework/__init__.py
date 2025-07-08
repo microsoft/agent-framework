@@ -16,6 +16,7 @@ _IMPORTS = {
     "ai_function": "._tools",
     "AIContent": "._types",
     "AIContents": "._types",
+    "ChatClientAgent": "._agents",
     "ChatClientAgentThread": "._agents",
     "TextContent": "._types",
     "TextReasoningContent": "._types",

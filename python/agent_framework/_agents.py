@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from abc import abstractmethod
 from collections.abc import AsyncIterable, Sequence
 from enum import Enum
 from typing import Any, Callable, Iterable, List, Protocol, Tuple, TypeVar, runtime_checkable
@@ -30,13 +29,12 @@ class AgentThread(AFBaseModel):
         """Invoked when a new message has been contributed to the chat by any participant."""
         await self._on_new_messages(new_messages=new_messages)
 
-    @abstractmethod
     async def _on_new_messages(
         self,
         new_messages: ChatMessage | Sequence[ChatMessage],
     ) -> None:
         """Invoked when a new message has been contributed to the chat by any participant."""
-        ...
+        pass
 
 
 # region MessagesRetrievableThread
@@ -176,9 +174,9 @@ class ChatClientAgentThread(AgentThread):
         """Initialize the chat client agent thread.
 
         Args:
-            id (str | None): Service thread identifier. If provided, thread is managed by the service and messages are
+            id: Service thread identifier. If provided, thread is managed by the service and messages are
             not stored locally. Must not be empty or whitespace.
-            messages (Iterable[ChatMessage] | None): Initial messages for local storage. If provided, thread is managed
+            messages: Initial messages for local storage. If provided, thread is managed
             locally in-memory.
 
         Raises:
@@ -198,7 +196,7 @@ class ChatClientAgentThread(AgentThread):
         if id:
             if not id.strip():
                 raise ValueError("ID cannot be empty or whitespace")
-            self._id = id
+            self.id = id
             self._storage_location = ChatClientAgentThreadType.CONVERSATION_ID
         elif messages:
             self._chat_messages.extend(messages)
@@ -219,7 +217,7 @@ class ChatClientAgentThread(AgentThread):
 
 
 class ChatClientAgent(BaseAgent):
-    """A Chat Client Agent based on ChatClient.
+    """A Chat Client Agent which depends on ChatClient.
 
     Attributes:
        id: The unique identifier of the agent  If no id is provided,
@@ -229,21 +227,14 @@ class ChatClientAgent(BaseAgent):
        instructions: The instructions for the agent (optional)
     """
 
-    def __init__(
-        self,
-        chat_client: ChatClient,
-        *,
-        id: str | None = Field(default_factory=lambda: str(uuid4())),
-        name: str | None = Field(default="UnnamedAgent"),
-        description: str | None = None,
-        instructions: str | None = None,
-    ) -> None:
-        self._chat_client = chat_client
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    name: str = Field(default="UnnamedAgent")
+    description: str | None = None
+    instructions: str | None = None
 
-        self.id = id
-        self.name = name
-        self.description = description
-        self.instructions = instructions
+    def __init__(self, chat_client: ChatClient, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._chat_client = chat_client
 
     async def run(
         self,
@@ -305,6 +296,15 @@ class ChatClientAgent(BaseAgent):
     def _update_thread_with_type_and_conversation_id(
         self, chatClientThread: ChatClientAgentThread, responseConversationId: str | None
     ) -> None:
+        """Update thread with storage type and conversation ID.
+
+        Args:
+            chatClientThread: The thread to update.
+            responseConversationId: The conversation ID from the response, if any.
+
+        Raises:
+            AgentExecutionException: If conversation ID is missing for service-managed thread.
+        """
         # Set the thread's storage location, the first time that we use it.
         if chatClientThread._storage_location is None:  # type: ignore[reportPrivateUsage]
             chatClientThread._storage_location = (  # type: ignore[reportPrivateUsage]
@@ -315,10 +315,11 @@ class ChatClientAgent(BaseAgent):
 
         # If we got a conversation id back from the chat client, it means that the service supports server side thread
         # storage so we should capture the id and update the thread with the new id.
-
         if chatClientThread._storage_location == ChatClientAgentThreadType.CONVERSATION_ID:  # type: ignore[reportPrivateUsage]
             if responseConversationId is None:
-                raise ValueError("Service did not return a valid conversation id when using a service managed thread.")
+                raise AgentExecutionException(
+                    "Service did not return a valid conversation id when using a service managed thread."
+                )
             chatClientThread.id = responseConversationId
 
     async def _prepare_thread_and_messages(
@@ -329,6 +330,20 @@ class ChatClientAgent(BaseAgent):
         construct_thread: Callable[[], TThreadType],
         expected_type: type[TThreadType],
     ) -> Tuple[TThreadType, list[ChatMessage]]:
+        """Prepare thread and messages for agent execution.
+
+        Args:
+            thread: The conversation thread, or None to create a new one.
+            input_messages: Messages to process, can be string, ChatMessage, or sequence.
+            construct_thread: Factory function to create a new thread.
+            expected_type: Expected thread type for validation.
+
+        Returns:
+            Tuple of the thread and normalized messages.
+
+        Raises:
+            AgentExecutionException: If thread type is incompatible.
+        """
         messages: list[ChatMessage] = []
 
         if thread is None:
