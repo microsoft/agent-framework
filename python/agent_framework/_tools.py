@@ -32,7 +32,7 @@ ArgsT = TypeVar("ArgsT", bound=BaseModel)
 ReturnT = TypeVar("ReturnT")
 
 
-class AIFunction(Generic[ArgsT, ReturnT]):
+class AIFunction(AITool, Generic[ArgsT, ReturnT]):
     """A tool that represents a function that can be called by an AI service."""
 
     def __init__(
@@ -66,6 +66,9 @@ class AIFunction(Generic[ArgsT, ReturnT]):
     def __call__(self, *args: Any, **kwargs: Any) -> ReturnT | Awaitable[ReturnT]:
         """Call the wrapped function with the provided arguments."""
         return self._func(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return f"AIFunction(name={self.name}, description={self.description})"
 
     async def invoke(
         self,

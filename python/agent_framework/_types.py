@@ -622,7 +622,10 @@ class FunctionCallContent(AIContent):
         if isinstance(self.arguments, str):
             # If arguments are a string, try to parse it as JSON
             try:
-                return json.loads(self.arguments)
+                loaded = json.loads(self.arguments)
+                if isinstance(loaded, dict):
+                    return loaded  # type:ignore
+                return {"raw": loaded}
             except (json.JSONDecodeError, TypeError):
                 return {"raw": self.arguments}
         return self.arguments
