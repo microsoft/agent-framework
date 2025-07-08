@@ -86,11 +86,6 @@ members = ["extensions/*"]
 agent-framework-openai = { workspace = true }
 agent-framework-azure = { workspace = true }
 
-[tool.setuptools.packages.find]
-where = ["extensions/"]
-include = ["agent_framework_*"]
-namespaces = true
-
 [tool.uv-dynamic-versioning]
 fallback-version = "0.0.0"
 
@@ -153,7 +148,7 @@ notice-rgx = "^# Copyright \\(c\\) Microsoft\\. All rights reserved\\."
 min-file-size = 1
 
 [tool.pyright]
-include = ["agent_framework", "samples"]
+include = ["src", "samples"]
 typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
 reportMissingTypeStubs = false
@@ -174,7 +169,7 @@ disallow_untyped_decorators = true
 disallow_any_unimported = true
 
 [tool.bandit]
-targets = ["agent_framework"]
+targets = ["src/agent_framework"]
 exclude_dirs = ["tests", "./run_tasks_in_extensions_if_exists.py", "./check_md_code_blocks.py", "docs"]
 
 [tool.poe.tasks]
@@ -189,17 +184,17 @@ pre-commit-install = "uv run pre-commit install --install-hooks --overwrite"
 install = "uv sync --all-extras --dev -U --prerelease=if-necessary-or-explicit"
 format.ref = "fmt"
 check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint", "samples-code-check"]
-pre-commit-check = ["fmt", "lint", "pyright", "test", "markdown-code-lint", "samples-code-check"]
+pre-commit-check = ["fmt", "lint", "pyright", "markdown-code-lint", "samples-code-check"]
 
 [tool.poe.tasks.fmt]
 sequence = [
     { cmd = "python run_tasks_in_extensions_if_exists.py fmt"},
-    { cmd = "ruff format agent_framework tests samples" }
+    { cmd = "ruff format src tests samples" }
 ]
 [tool.poe.tasks.lint]
 sequence = [
     { cmd = "python run_tasks_in_extensions_if_exists.py lint" },
-    { cmd = "ruff check --fix --exit-non-zero-on-fix agent_framework tests samples" }
+    { cmd = "ruff check --fix --exit-non-zero-on-fix src tests samples" }
 ]
 [tool.poe.tasks.pyright]
 sequence = [
@@ -209,7 +204,7 @@ sequence = [
 [tool.poe.tasks.mypy]
 sequence = [
     { cmd = "python run_tasks_in_extensions_if_exists.py mypy" },
-    { cmd = "mypy --config-file pyproject.toml agent_framework" }
+    { cmd = "mypy --config-file pyproject.toml src" }
 ]
 [tool.poe.tasks.test]
 sequence = [
@@ -234,7 +229,6 @@ args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
 
 [tool.uv.build-backend]
 module-name = "agent_framework"
-module-root = ""
 
 [build-system]
 requires = ["uv_build>=0.7.19,<0.8.0"]

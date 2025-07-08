@@ -27,7 +27,6 @@ dependencies = [
     "openai>=1.93.0",
 ]
 
-
 [tool.ruff]
 extend = "../../pyproject.toml"
 include = ["agent-framework/openai/**", "tests/*.py"]
@@ -48,13 +47,8 @@ include = ["agent_framework", "samples"]
 [tool.uv.sources]
 agent-framework = { workspace = true }
 
-[tool.setuptools.packages.find]
-where = ["./"]
-include = ["agent_framework.openai"]
-
 [tool.uv.build-backend]
 module-name = "agent_framework.openai"
-module-root = ""
 
 [build-system]
 requires = ["uv_build>=0.7.19,<0.8.0"]
