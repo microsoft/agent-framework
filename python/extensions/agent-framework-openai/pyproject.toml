@@ -30,7 +30,7 @@ dependencies = [
 
 [tool.ruff]
 extend = "../../pyproject.toml"
-include = ["src/agent-framework/openai/**", "tests/*.py"]
+include = ["agent-framework/openai/**", "tests/*.py"]
 
 [tool.ruff.lint.per-file-ignores]
 # Ignore all directories named `tests` and `samples`.
