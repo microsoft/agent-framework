@@ -9,8 +9,8 @@ namespace Steps;
 public sealed class Step02_ChatClientAgent_UsingTools(ITestOutputHelper output) : AgentSample(output)
 {
     [Theory]
-    [InlineData(ChatClientProviders.OpenAI)]
     [InlineData(ChatClientProviders.AzureOpenAI)]
+    [InlineData(ChatClientProviders.OpenAIChatCompletion)]
     public async Task RunningWithTools(ChatClientProviders provider)
     {
         // Creating a Menu Tools to be used by the agent.
@@ -57,8 +57,8 @@ public sealed class Step02_ChatClientAgent_UsingTools(ITestOutputHelper output) 
     }
 
     [Theory]
-    [InlineData(ChatClientProviders.OpenAI)]
     [InlineData(ChatClientProviders.AzureOpenAI)]
+    [InlineData(ChatClientProviders.OpenAIChatCompletion)]
     public async Task StreamingRunWithTools(ChatClientProviders provider)
     {
         // Creating a Menu Tools to be used by the agent.

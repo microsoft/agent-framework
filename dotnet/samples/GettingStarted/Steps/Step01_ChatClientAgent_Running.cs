@@ -20,8 +20,8 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
     /// a unique interaction with no conversation history between them.
     /// </summary>
     [Theory]
-    [InlineData(ChatClientProviders.OpenAI)]
     [InlineData(ChatClientProviders.AzureOpenAI)]
+    [InlineData(ChatClientProviders.OpenAIChatCompletion)]
     [InlineData(ChatClientProviders.OpenAIResponses)]
     [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
     public async Task RunWithoutThread(ChatClientProviders provider)
@@ -61,7 +61,6 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
     /// Demonstrate the usage of <see cref="ChatClientAgent"/> where a conversation history is maintained.
     /// </summary>
     [Theory]
-    [InlineData(ChatClientProviders.OpenAI)]
     [InlineData(ChatClientProviders.AzureOpenAI)]
     [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
     [InlineData(ChatClientProviders.OpenAIResponses_InMemoryMessageThread)]
@@ -110,7 +109,6 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
     /// where a conversation is maintained by the <see cref="AgentThread"/>.
     /// </summary>
     [Theory]
-    [InlineData(ChatClientProviders.OpenAI)]
     [InlineData(ChatClientProviders.AzureOpenAI)]
     [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
     [InlineData(ChatClientProviders.OpenAIResponses_InMemoryMessageThread)]

@@ -1,12 +1,15 @@
-name: Check Python
+name: Python - Code Quality
 on:
   merge_group:
   workflow_dispatch:
   pull_request:
     branches: ["main"]
+    paths:
+      - "python/**"
 
 jobs:
   pre-commit:
+    name: Checks
     if: "!cancelled()"
     strategy:
       fail-fast: false
@@ -16,7 +19,7 @@ jobs:
     continue-on-error: true
     defaults:
       run:
-        working-directory: python
+        working-directory: ./python
     env:
       # Configure a constant location for the uv cache
       UV_CACHE_DIR: /tmp/.uv-cache
@@ -24,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Set up uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v6
         with:
           version: "0.7.x"
           enable-cache: true
@@ -36,3 +39,5 @@ jobs:
         name: Run Pre-Commit Hooks
         with:
           extra_args: --config python/.pre-commit-config.yaml --all-files
+      - name: Run Mypy
+        run: uv run mypy -p agent_framework

@@ -34,4 +34,10 @@
   	<Using Include="GettingStarted" />
     <Using Include="Microsoft.Shared.SampleUtilities" />
   </ItemGroup>
+
+  <ItemGroup>
+    <None Update="Tools\Files\groceries.txt">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 </Project>

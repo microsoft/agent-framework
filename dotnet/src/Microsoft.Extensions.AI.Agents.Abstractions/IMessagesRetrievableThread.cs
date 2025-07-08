@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
-using Microsoft.Extensions.AI;
 
 namespace Microsoft.Extensions.AI.Agents;
 
