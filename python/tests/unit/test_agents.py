@@ -63,50 +63,50 @@ def agent() -> Agent:
     return MockAgent()
 
 
-def test_agent_thread_type(agent_thread: MockAgentThread) -> None:
+def test_agent_thread_type(agent_thread: AgentThread) -> None:
     assert isinstance(agent_thread, AgentThread)
 
 
-async def test_agent_thread_id_property(agent_thread: MockAgentThread) -> None:
+async def test_agent_thread_id_property(agent_thread: AgentThread) -> None:
     assert agent_thread.id is None
     await agent_thread.create()
     assert isinstance(agent_thread.id, str)
 
 
-async def test_agent_thread_create(agent_thread: MockAgentThread) -> None:
+async def test_agent_thread_create(agent_thread: AgentThread) -> None:
     thread_id = await agent_thread.create()
     assert thread_id == agent_thread.id
     assert isinstance(thread_id, str)
 
 
-async def test_agent_thread_create_already_exists(agent_thread: MockAgentThread) -> None:
+async def test_agent_thread_create_already_exists(agent_thread: AgentThread) -> None:
     thread_id = await agent_thread.create()
     same_id = await agent_thread.create()
     assert thread_id == same_id
 
 
-async def test_agent_thread_delete_already_deleted(agent_thread: MockAgentThread) -> None:
+async def test_agent_thread_delete_already_deleted(agent_thread: AgentThread) -> None:
     await agent_thread.delete()
     await agent_thread.delete()  # Should not raise error
 
 
-async def test_agent_thread_on_new_message_creates_thread(agent_thread: MockAgentThread) -> None:
+async def test_agent_thread_on_new_message_creates_thread(agent_thread: AgentThread) -> None:
     message = ChatMessage(role=ChatRole.USER, contents=[TextContent("Hello")])
     await agent_thread.on_new_message(message)
     assert agent_thread.id is not None
 
 
-def test_agent_type(agent: MockAgent) -> None:
+def test_agent_type(agent: Agent) -> None:
     assert isinstance(agent, Agent)
 
 
-async def test_agent_run(agent: MockAgent) -> None:
+async def test_agent_run(agent: Agent) -> None:
     response = await agent.run("test")
     assert response.messages[0].role == ChatRole.ASSISTANT
     assert response.messages[0].text == "Response"
 
 
-async def test_agent_run_stream(agent: MockAgent) -> None:
+async def test_agent_run_stream(agent: Agent) -> None:
     async def collect_updates(updates: AsyncIterable[ChatResponseUpdate]) -> list[ChatResponseUpdate]:
         return [u async for u in updates]
 
