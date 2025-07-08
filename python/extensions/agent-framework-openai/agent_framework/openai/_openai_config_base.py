@@ -76,7 +76,7 @@ class OpenAIConfigBase(OpenAIHandler):
             args["instruction_role"] = instruction_role
         super().__init__(**args, **kwargs)
 
-    def to_dict(self) -> dict[str, str]:
+    def to_dict(self) -> dict[str, Any]:
         """Create a dict of the service settings."""
         client_settings = {
             "api_key": self.client.api_key,

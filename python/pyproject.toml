@@ -87,6 +87,11 @@ members = ["extensions/*"]
 agent-framework-openai = { workspace = true }
 agent-framework-azure = { workspace = true }
 
+[tool.setuptools.packages.find]
+where = ["extensions/"]
+include = ["agent_framework_*"]
+namespaces = true
+
 [tool.uv-dynamic-versioning]
 fallback-version = "0.0.0"
 
