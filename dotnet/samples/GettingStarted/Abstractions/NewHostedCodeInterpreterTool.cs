@@ -1,8 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Extensions.AI;
-
-namespace GettingStarted.Tools.Abstractions;
+namespace Microsoft.Extensions.AI;
 
 /// <summary>
 /// Proposal for abstraction updates based on the common code interpreter tool properties.

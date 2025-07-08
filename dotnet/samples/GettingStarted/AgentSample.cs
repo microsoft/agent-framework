@@ -7,8 +7,8 @@ using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Samples;
-using OpenAI;
 using OpenAI.Assistants;
+using OpenAI.Chat;
 using OpenAI.Responses;
 
 #pragma warning disable OPENAI001
@@ -50,12 +50,10 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
         {
             ChatClientProviders.OpenAIResponses_InMemoryMessageThread => new() { RawRepresentationFactory = static (_) => new ResponseCreationOptions() { StoredOutputEnabled = false } },
             ChatClientProviders.OpenAIResponses_ConversationIdThread => new() { RawRepresentationFactory = static (_) => new ResponseCreationOptions() { StoredOutputEnabled = true } },
+            ChatClientProviders.AzureAIAgentsPersistent => GetAzureAIPersistentChatOptions(),
+            ChatClientProviders.OpenAIAssistant => GetOpenAIAssistantChatOptions(),
             _ => null
         };
-
-    protected OpenAIClient OpenAIClient => new(TestConfiguration.OpenAI.ApiKey);
-
-    protected PersistentAgentsClient AzureAIPersistentAgentsClient => new(TestConfiguration.AzureAI.Endpoint, new AzureCliCredential());
 
     /// <summary>
     /// For providers that store the agent and the thread on the server side, this will clean and delete
@@ -83,8 +81,7 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
 
     private Task<IChatClient> GetOpenAIChatClientAsync()
         => Task.FromResult(
-                OpenAIClient
-                    .GetChatClient(TestConfiguration.OpenAI.ChatModelId)
+                new ChatClient(TestConfiguration.OpenAI.ChatModelId, TestConfiguration.OpenAI.ApiKey)
                     .AsIChatClient());
 
     private Task<IChatClient> GetAzureOpenAIChatClientAsync()
@@ -98,39 +95,127 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
 
     private Task<IChatClient> GetOpenAIResponsesClientAsync()
         => Task.FromResult(
-                OpenAIClient
-                    .GetOpenAIResponseClient(TestConfiguration.OpenAI.ChatModelId)
+                new OpenAIResponseClient(TestConfiguration.OpenAI.ChatModelId, TestConfiguration.OpenAI.ApiKey)
                     .AsIChatClient());
 
     private async Task<IChatClient> GetAzureAIAgentPersistentClientAsync(ChatClientAgentOptions options, CancellationToken cancellationToken)
     {
-        // Create a server side agent to work with.
-        var persistentAgentResponse = await AzureAIPersistentAgentsClient.Administration.CreateAgentAsync(
-            model: TestConfiguration.AzureAI.DeploymentName,
-            name: options.Name,
-            instructions: options.Instructions,
-            cancellationToken: cancellationToken);
+        var persistentAgentsClient = new PersistentAgentsClient(
+            TestConfiguration.AzureAI.Endpoint,
+            new AzureCliCredential());
 
-        var persistentAgent = persistentAgentResponse.Value;
+        // If the Id is not provided, create a new agent.
+        if (options.Id is null)
+        {
+            var persistentAgentResponse = await persistentAgentsClient.Administration.CreateAgentAsync(
+                       model: TestConfiguration.AzureAI.DeploymentName,
+                       name: options.Name,
+                       instructions: options.Instructions,
+                       cancellationToken: cancellationToken);
 
-        // Get the chat client to use for the agent.
-        return AzureAIPersistentAgentsClient.AsIChatClient(persistentAgent.Id);
+            var persistentAgent = persistentAgentResponse.Value;
+
+            return persistentAgentsClient.AsIChatClient(persistentAgent.Id);
+        }
+
+        return persistentAgentsClient.AsIChatClient(options.Id);
     }
 
     private async Task<IChatClient> GetOpenAIAssistantChatClientAsync(ChatClientAgentOptions options, CancellationToken cancellationToken)
     {
-        var assistantClient = OpenAIClient.GetAssistantClient();
+        var assistantClient = new AssistantClient(TestConfiguration.OpenAI.ApiKey);
 
-        Assistant assistant = await assistantClient.CreateAssistantAsync(
-            TestConfiguration.OpenAI.ChatModelId,
-            new()
+        // If the Id is not provided, create a new assistant.
+        if (options.Id is null)
+        {
+            Assistant assistant = await assistantClient.CreateAssistantAsync(
+                TestConfiguration.OpenAI.ChatModelId,
+                new()
+                {
+                    Name = options.Name,
+                    Instructions = options.Instructions
+                },
+                cancellationToken);
+
+            return assistantClient.AsIChatClient(assistant.Id);
+        }
+
+        return assistantClient.AsIChatClient(options.Id);
+    }
+
+    #endregion
+
+    #region Private GetChatOptions
+    private ChatOptions GetAzureAIPersistentChatOptions()
+    {
+        var chatOptions = new ChatOptions();
+
+        chatOptions.RawRepresentationFactory = _ =>
+        {
+            Azure.AI.Agents.Persistent.ToolResources? toolResources = null;
+
+            // At the time of the call it will check if there are any tools defined in the options.
+            foreach (var tool in chatOptions.Tools!)
             {
-                Name = options.Name,
-                Instructions = options.Instructions
-            },
-            cancellationToken);
+                if (tool is NewHostedCodeInterpreterTool codeInterpreterTool &&
+                    codeInterpreterTool.FileIds is { Count: > 0 })
+                {
+                    toolResources ??= new Azure.AI.Agents.Persistent.ToolResources()
+                    {
+                        CodeInterpreter = new CodeInterpreterToolResource()
+                    };
 
-        return assistantClient.AsIChatClient(assistant.Id);
+                    foreach (var fileId in codeInterpreterTool.FileIds)
+                    {
+                        toolResources.CodeInterpreter.FileIds.Add(fileId);
+                    }
+                }
+            }
+
+            return new ThreadAndRunOptions { ToolResources = toolResources };
+        };
+
+        return chatOptions;
+    }
+
+    private ChatOptions GetOpenAIAssistantChatOptions()
+    {
+        var chatOptions = new ChatOptions();
+
+        chatOptions.RawRepresentationFactory = _ =>
+        {
+            // File references can be added on message attachment level only and not on code interpreter tool definition level.
+            // Message attachment content should be non-empty.
+            var threadInitializationMessage = new ThreadInitializationMessage(OpenAI.Assistants.MessageRole.User, [OpenAI.Assistants.MessageContent.FromText("attachments")]);
+            var toolDefinitions = new List<OpenAI.Assistants.ToolDefinition>();
+            var runCreationOptions = new RunCreationOptions();
+
+            if (chatOptions.Tools is { Count: > 0 })
+            {
+                foreach (var tool in chatOptions.Tools)
+                {
+                    if (tool is NewHostedCodeInterpreterTool codeInterpreterTool)
+                    {
+                        var codeInterpreterToolDefinition = new OpenAI.Assistants.CodeInterpreterToolDefinition();
+                        toolDefinitions.Add(codeInterpreterToolDefinition);
+
+                        if (codeInterpreterTool.FileIds is { Count: > 0 })
+                        {
+                            foreach (var fileId in codeInterpreterTool.FileIds)
+                            {
+                                threadInitializationMessage.Attachments.Add(new(fileId, [codeInterpreterToolDefinition]));
+                            }
+                        }
+                    }
+                }
+
+                runCreationOptions.AdditionalMessages.Add(threadInitializationMessage);
+            }
+
+            return runCreationOptions;
+        };
+
+        return chatOptions;
     }
 
     #endregion
