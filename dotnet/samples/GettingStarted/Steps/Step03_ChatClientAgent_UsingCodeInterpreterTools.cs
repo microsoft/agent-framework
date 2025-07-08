@@ -11,8 +11,8 @@ using OpenAI.Files;
 namespace Steps;
 
 /// <summary>
-/// This sample demonstrates how to use a <see cref="ChatClientAgent"/> with function tools.
-/// It includes examples of both streaming and non-streaming agent interactions.
+/// Demonstrates how to use <see cref="ChatClientAgent"/> with code interpreter tools and file references.
+/// Shows uploading files to different providers and using them with code interpreter capabilities to analyze data and generate responses.
 /// </summary>
 public sealed class Step03_ChatClientAgent_UsingCodeInterpreterTools(ITestOutputHelper output) : AgentSample(output)
 {
