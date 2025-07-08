@@ -47,11 +47,11 @@ class MessagesRetrievableThread(Protocol):
         ...
 
 
-# region BaseAgent
+# region AgentBase
 
 
-class BaseAgent(AFBaseModel):
-    """Base abstraction for all agents."""
+class AgentBase(AFBaseModel):
+    """Base class for all agents."""
 
     async def _notify_thread_of_new_messages(
         self, thread: AgentThread, new_messages: ChatMessage | Sequence[ChatMessage]
@@ -216,7 +216,7 @@ class ChatClientAgentThread(AgentThread):
 # region ChatClientAgent
 
 
-class ChatClientAgent(BaseAgent):
+class ChatClientAgent(AgentBase):
     """A Chat Client Agent which depends on ChatClient.
 
     Attributes:
