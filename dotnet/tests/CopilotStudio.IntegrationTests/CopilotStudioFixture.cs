@@ -7,10 +7,10 @@ using System.Threading.Tasks;
 using AgentConformance.IntegrationTests;
 using AgentConformance.IntegrationTests.Support;
 using CopilotStudio.IntegrationTests.Support;
-using Microsoft.Agents;
-using Microsoft.Agents.CopilotStudio;
 using Microsoft.Agents.CopilotStudio.Client;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
+using Microsoft.Extensions.AI.Agents.CopilotStudio;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 

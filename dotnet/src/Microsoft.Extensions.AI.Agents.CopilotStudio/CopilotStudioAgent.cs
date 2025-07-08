@@ -7,12 +7,11 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.CopilotStudio.Client;
 using Microsoft.Agents.Core.Models;
-using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.CopilotStudio;
+namespace Microsoft.Extensions.AI.Agents.CopilotStudio;
 
 /// <summary>
 /// Represents a Copilot Studio agent in the cloud.

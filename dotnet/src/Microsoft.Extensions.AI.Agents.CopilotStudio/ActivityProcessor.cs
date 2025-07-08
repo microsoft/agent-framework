@@ -3,10 +3,9 @@
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.Agents.Core.Models;
-using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 
-namespace Microsoft.Agents.CopilotStudio;
+namespace Microsoft.Extensions.AI.Agents.CopilotStudio;
 
 /// <summary>
 /// Contains code to process <see cref="IActivity"/> responses from the Copilot Studio agent and convert them to <see cref="ChatMessage"/> objects.
