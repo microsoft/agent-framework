@@ -69,7 +69,7 @@ class MockAgent(Agent):
 
 
 # Mock ChatClient implementation for testing
-class MockChatClient:
+class MockChatClient(ChatClient):
     _mock_response: ChatResponse | None = None
 
     def __init__(self, mock_response: ChatResponse | None = None) -> None:
