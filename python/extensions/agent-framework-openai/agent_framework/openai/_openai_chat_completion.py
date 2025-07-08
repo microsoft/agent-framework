@@ -7,10 +7,10 @@ from typing import Any
 from openai import AsyncOpenAI
 from pydantic import SecretStr, ValidationError
 
-from .openai_chat_completion_base import OpenAIChatCompletionBase
-from .openai_config_base import OpenAIConfigBase
+from ._openai_chat_completion_base import OpenAIChatCompletionBase
+from ._openai_config_base import OpenAIConfigBase
 from .openai_model_types import OpenAIModelTypes
-from .openai_settings import OpenAISettings
+from ._openai_settings import OpenAISettings
 from agent_framework.exceptions import ServiceInitializationError
 
 logger: logging.Logger = logging.getLogger(__name__)

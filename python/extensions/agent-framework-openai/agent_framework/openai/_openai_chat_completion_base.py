@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import sys
-from collections.abc import AsyncIterable, Sequence 
+from collections.abc import AsyncIterable, Sequence
 import json
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
@@ -30,7 +30,7 @@ from agent_framework import (
     UsageDetails,
 )
 
-from .openai_handler import OpenAIHandler
+from ._openai_handler import OpenAIHandler
 from agent_framework.exceptions import ServiceInvalidResponseError
 
 # from agent_framework.contents.streaming_text_content import StreamingTextContent
@@ -79,7 +79,7 @@ class OpenAIChatCompletionBase(AIServiceClientBase, OpenAIHandler, ChatClient):
         
     @override
     # @trace_streaming_chat_completion(MODEL_PROVIDER_NAME)
-    async def get_streaming_response(
+    async def get_streaming_response( # type: ignore
         self,
         messages: ChatMessage | Sequence[ChatMessage],
         **kwargs: Any,

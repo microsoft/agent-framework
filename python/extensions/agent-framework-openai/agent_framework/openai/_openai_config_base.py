@@ -8,7 +8,7 @@ from typing import Any
 from openai import AsyncOpenAI
 from pydantic import ConfigDict, Field, validate_call
 
-from .openai_handler import OpenAIHandler
+from ._openai_handler import OpenAIHandler
 from .openai_model_types import OpenAIModelTypes
 from agent_framework.exceptions import ServiceInitializationError
 

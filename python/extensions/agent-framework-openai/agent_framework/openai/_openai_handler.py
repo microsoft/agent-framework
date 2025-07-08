@@ -22,8 +22,8 @@ from agent_framework.exceptions import (
 
 from .exceptions import ContentFilterAIException
 from .openai_model_types import OpenAIModelTypes
-from .openai_prompt_execution_settings import OpenAIEmbeddingPromptExecutionSettings
-from .openai_text_to_image_execution_settings import (
+from ._openai_prompt_execution_settings import OpenAIEmbeddingPromptExecutionSettings
+from ._openai_text_to_image_execution_settings import (
     OpenAITextToImageExecutionSettings,
 )
 
@@ -96,13 +96,13 @@ class OpenAIHandler(AFBaseModel, ABC):
                 self._handle_structured_outputs(chat_options, options_dict)
                 if chat_options.tools is None:
                     options_dict.pop("parallel_tool_calls", None)
-                response = await self.client.chat.completions.create(**options_dict)
+                response = await self.client.chat.completions.create(**options_dict) # type: ignore
             else:
-                response = await self.client.completions.create(**options_dict)
+                response = await self.client.completions.create(**options_dict) # type: ignore
 
             assert isinstance(response, (ChatCompletion, Completion, AsyncStream))
-            self.store_usage(response)
-            return response
+            self.store_usage(response) # type: ignore
+            return response # type: ignore
         except BadRequestError as ex:
             if ex.code == "content_filter":
                 raise ContentFilterAIException(
@@ -151,7 +151,7 @@ class OpenAIHandler(AFBaseModel, ABC):
                 return await self.client.audio.transcriptions.create(
                     file=audio_file,
                     **options.to_provider_settings(exclude={"filename"}),
-                )
+                ) # type: ignore
         except Exception as ex:
             raise ServiceResponseException(
                 f"{type(self)} service failed to transcribe audio",
