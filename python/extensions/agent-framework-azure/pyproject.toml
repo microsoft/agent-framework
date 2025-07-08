@@ -29,13 +29,7 @@ dependencies = [
 
 [tool.ruff]
 extend = "../../pyproject.toml"
-include = ["agent-framework/azure/**", "tests/*.py"]
-
-[tool.ruff.lint.per-file-ignores]
-# Ignore all directories named `tests` and `samples`.
-"tests/**" = ["D", "INP", "TD", "ERA001", "RUF", "S"]
-"samples/**" = ["D", "INP", "ERA001", "RUF", "S"]
-"*.ipynb" = ["CPY", "E501"]
+include = ["agent-framework/openai/**", "tests/*.py"]
 
 [tool.poe]
 include = "../../shared_tasks.toml"
@@ -49,8 +43,8 @@ agent-framework = { workspace = true }
 agent-framework-openai = { workspace = true }
 
 [tool.uv.build-backend]
-module-name = "agent_framework.azure"
-module-root = ""
+module-name = "azure"
+module-root = "agent_framework"
 
 [build-system]
 requires = ["uv_build>=0.7.19,<0.8.0"]

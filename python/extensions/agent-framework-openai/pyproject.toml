@@ -39,22 +39,12 @@ include = "../../shared_tasks.toml"
 extends = "../../pyproject.toml"
 include = ["agent_framework", "samples"]
 
-[tool.ruff.lint.per-file-ignores]
-# Ignore all directories named `tests` and `samples`.
-"tests/**" = ["D", "INP", "TD", "ERA001", "RUF", "S"]
-"samples/**" = ["D", "INP", "ERA001", "RUF", "S"]
-"*.ipynb" = ["CPY", "E501"]
-
 [tool.uv.sources]
 agent-framework = { workspace = true }
 
-[tool.setuptools.packages.find]
-where = ["./"]
-include = ["agent_framework.openai"]
-
 [tool.uv.build-backend]
-module-name = "agent_framework.openai"
-module-root = ""
+module-name = "openai"
+module-root = "agent_framework"
 
 [build-system]
 requires = ["uv_build>=0.7.19,<0.8.0"]

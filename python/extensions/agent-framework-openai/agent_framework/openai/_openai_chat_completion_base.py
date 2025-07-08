@@ -3,7 +3,7 @@
 import sys
 from collections.abc import AsyncIterable, Sequence
 import json
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import Any, ClassVar, cast
 
 if sys.version_info >= (3, 12):
     from typing import override  # pragma: no cover
@@ -23,7 +23,6 @@ from agent_framework import (
     ChatResponse, 
     ChatResponseUpdate,
     ChatRole,
-    ChatClient,
     ChatFinishReason,
     FunctionCallContent,
     TextContent,
@@ -31,6 +30,7 @@ from agent_framework import (
 )
 
 from ._openai_handler import OpenAIHandler
+from agent_framework import ChatOptions
 from agent_framework.exceptions import ServiceInvalidResponseError
 
 # from agent_framework.contents.streaming_text_content import StreamingTextContent
@@ -40,11 +40,9 @@ from agent_framework.exceptions import ServiceInvalidResponseError
 #     trace_streaming_chat_completion,
 # )
 
-if TYPE_CHECKING:
-    from agent_framework import ChatOptions
 
-
-class OpenAIChatCompletionBase(AIServiceClientBase, OpenAIHandler, ChatClient):
+# Implements agent_framework.ChatClient protocol
+class OpenAIChatCompletionBase(AIServiceClientBase, OpenAIHandler):
     """OpenAI Chat completion class."""
 
     MODEL_PROVIDER_NAME: ClassVar[str] = "openai"
@@ -58,7 +56,6 @@ class OpenAIChatCompletionBase(AIServiceClientBase, OpenAIHandler, ChatClient):
     def service_url(self) -> str | None:
         return str(self.client.base_url)
 
-    @override
     # @trace_chat_completion(MODEL_PROVIDER_NAME)
     async def get_response(
         self,
@@ -77,7 +74,6 @@ class OpenAIChatCompletionBase(AIServiceClientBase, OpenAIHandler, ChatClient):
             self._create_chat_message_content(response, choice, response_metadata) for choice in response.choices
         )
         
-    @override
     # @trace_streaming_chat_completion(MODEL_PROVIDER_NAME)
     async def get_streaming_response( # type: ignore
         self,
