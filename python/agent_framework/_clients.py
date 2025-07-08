@@ -354,7 +354,7 @@ class ChatClientBase(AFBaseModel, ABC):
             messages = [messages]
         self._prepare_tools_and_tool_choice(chat_options=chat_options)
         # function calling loop
-        if not self.SUPPORTS_FUNCTION_CALLING or chat_options.tool_choice != ChatToolMode.NONE:
+        if not self.SUPPORTS_FUNCTION_CALLING or chat_options.tool_choice == ChatToolMode.NONE:
             async for update in self._inner_get_streaming_response(
                 messages=messages, chat_options=chat_options, **kwargs
             ):
