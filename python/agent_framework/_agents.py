@@ -2,7 +2,8 @@
 
 from collections.abc import AsyncIterable, Sequence
 from enum import Enum
-from typing import Any, Callable, Iterable, List, Protocol, Tuple, TypeVar, runtime_checkable
+from typing import Any, List, Protocol, Tuple, TypeVar, runtime_checkable
+from collections.abc import Callable, Iterable
 from uuid import uuid4
 
 from pydantic import Field
@@ -188,7 +189,7 @@ class ChatClientAgentThread(AgentThread):
             - If neither is provided, creates an empty local thread.
         """
         super().__init__()
-        self._chat_messages: List[ChatMessage] = []
+        self._chat_messages: list[ChatMessage] = []
 
         if id and messages:
             raise ValueError("Cannot specify both id and messages")
@@ -329,7 +330,7 @@ class ChatClientAgent(BaseAgent):
         input_messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         construct_thread: Callable[[], TThreadType],
         expected_type: type[TThreadType],
-    ) -> Tuple[TThreadType, list[ChatMessage]]:
+    ) -> tuple[TThreadType, list[ChatMessage]]:
         """Prepare thread and messages for agent execution.
 
         Args:
