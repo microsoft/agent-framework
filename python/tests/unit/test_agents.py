@@ -1,8 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import AsyncIterable, Awaitable, Callable
-from typing import Any, List, TypeVar, cast
+from typing import Any, List, Sequence, cast
+from uuid import uuid4
 
+from pydantic import BaseModel, Field
 from pytest import fixture, raises
 
 from agent_framework import (
@@ -16,24 +18,27 @@ from agent_framework import (
     TextContent,
 )
 
-TThreadType = TypeVar("TThreadType", bound=AgentThread)
-
-
 # region MockAgentThread
 
 
 class MockAgentThread(AgentThread):
     def __init__(self) -> None:
+        super().__init__()
         self.chat_messages: List[ChatMessage] = []
 
-    async def _on_new_message(self, new_message: ChatMessage) -> None:
-        self.chat_messages.append(new_message)
+    async def _on_new_messages(self, new_messages: ChatMessage | Sequence[ChatMessage]) -> None:
+        self.chat_messages.extend([new_messages] if isinstance(new_messages, ChatMessage) else new_messages)
 
 
 # region MockAgent
 
 
-class MockAgent(Agent):
+class MockAgent(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    name: str | None = None
+    description: str | None = None
+    instructions: str | None = None
+
     async def run(
         self,
         messages: str | ChatMessage | list[str | ChatMessage] | None = None,
@@ -68,7 +73,7 @@ class TestAgentThread:
 
     async def test_agent_thread_on_new_message_creates_thread(self, agent_thread: MockAgentThread) -> None:
         message = ChatMessage(role=ChatRole.USER, contents=[TextContent("Hello")])
-        await agent_thread.on_new_message(message)
+        await agent_thread.on_new_messages(message)
         assert cast(TextContent, agent_thread.chat_messages[0].contents[0]).text == "Hello"
 
 
@@ -137,13 +142,13 @@ class TestChatClientAgentThread:
     async def test_on_new_message_local_thread(self) -> None:
         thread = ChatClientAgentThread()
         new_message = ChatMessage(role=ChatRole.USER, contents=[TextContent("Hello")])
-        await cast(AgentThread, thread).on_new_message(new_message)
+        await thread.on_new_messages(new_message)
         messages = [msg async for msg in thread.get_messages()]
         assert messages == [new_message]
 
     async def test_on_new_message_server_thread(self) -> None:
         thread = ChatClientAgentThread(id="test_id")
         new_message = ChatMessage(role=ChatRole.USER, contents=[TextContent("Hello")])
-        await cast(AgentThread, thread).on_new_message(new_message)
+        await thread.on_new_messages(new_message)
         messages = [msg async for msg in thread.get_messages()]
         assert messages == []
