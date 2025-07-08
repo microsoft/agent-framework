@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Samples;
@@ -80,29 +81,29 @@ public abstract class BaseSample : TextWriter
     /// <param name="message">The text of the message to be sent. Cannot be null or empty.</param>
     protected void WriteUserMessage(string message)
     {
-        this.WriteResponseOutput(new ChatResponse(new ChatMessage(ChatRole.User, message)), printUsage: false);
+        this.WriteResponseOutput(new AgentRunResponse(new ChatMessage(ChatRole.User, message)), printUsage: false);
     }
 
     /// <summary>
     /// Processes and writes the latest agent chat response to the console, including metadata and content details.
     /// </summary>
     /// <remarks>This method formats and outputs the most recent message from the provided <see
-    /// cref="ChatResponse"/> object. It includes the message role, author name (if available), text content, and
+    /// cref="AgentRunResponse"/> object. It includes the message role, author name (if available), text content, and
     /// additional content such as images, function calls, and function results. Usage statistics, including token
     /// counts, are also displayed.</remarks>
-    /// <param name="chatResponse">The <see cref="ChatResponse"/> object containing the chat messages and usage data.</param>
+    /// <param name="response">The <see cref="AgentRunResponse"/> object containing the chat messages and usage data.</param>
     /// <param name="printUsage">The flag to indicate whether to print usage information. Defaults to <see langword="true"/>.</param>
-    protected void WriteResponseOutput(ChatResponse chatResponse, bool? printUsage = true)
+    protected void WriteResponseOutput(AgentRunResponse response, bool? printUsage = true)
     {
-        if (chatResponse.Messages.Count == 0)
+        if (response.Messages.Count == 0)
         {
             // If there are no messages, we can skip writing the message.
             return;
         }
 
-        var message = chatResponse.Messages.Last();
+        var message = response.Messages.Last();
         string authorExpression = message.Role == ChatRole.User ? string.Empty : FormatAuthor();
-        string contentExpression = string.IsNullOrWhiteSpace(chatResponse.Text) ? string.Empty : chatResponse.Text;
+        string contentExpression = string.IsNullOrWhiteSpace(response.Text) ? string.Empty : response.Text;
         bool isCode = false; //message.AdditionalProperties?.ContainsKey(OpenAIAssistantAgent.CodeInterpreterMetadataKey) ?? false;
         string codeMarker = isCode ? "\n  [CODE]\n" : " ";
         Console.WriteLine($"\n# {message.Role}{authorExpression}:{codeMarker}{contentExpression}");
@@ -124,7 +125,7 @@ public abstract class BaseSample : TextWriter
             }
         }
 
-        WriteUsage(chatResponse.Usage);
+        WriteUsage(response.Usage);
 
         string FormatAuthor() => message.AuthorName is not null ? $" - {message.AuthorName ?? " * "}" : string.Empty;
 
@@ -140,11 +141,11 @@ public abstract class BaseSample : TextWriter
     /// Writes the streaming agent response updates to the console.
     /// </summary>
     /// <remarks>This method formats and outputs the most recent message from the provided <see
-    /// cref="ChatResponseUpdate"/> object. It includes the message role, author name (if available), text content, and
+    /// cref="AgentRunResponseUpdate"/> object. It includes the message role, author name (if available), text content, and
     /// additional content such as images, function calls, and function results. Usage statistics, including token
     /// counts, are also displayed.</remarks>
-    /// <param name="update">The <see cref="ChatResponseUpdate"/> object containing the chat messages and usage data.</param>
-    protected void WriteAgentOutput(ChatResponseUpdate update)
+    /// <param name="update">The <see cref="AgentRunResponseUpdate"/> object containing the chat messages and usage data.</param>
+    protected void WriteAgentOutput(AgentRunResponseUpdate update)
     {
         if (update.Contents.Count == 0)
         {

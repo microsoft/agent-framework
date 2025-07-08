@@ -26,12 +26,12 @@ public abstract class ChatClientAgentRunTests<TAgentFixture>(Func<TAgentFixture>
         await using var threadCleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
-        var chatResponse = await agent.RunAsync(thread);
+        var response = await agent.RunAsync(thread);
 
         // Assert
-        Assert.NotNull(chatResponse);
-        Assert.Single(chatResponse.Messages);
-        Assert.Contains("Computer says no", chatResponse.Text, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(response);
+        Assert.Single(response.Messages);
+        Assert.Contains("Computer says no", response.Text, StringComparison.OrdinalIgnoreCase);
     }
 
     [RetryFact(Constants.RetryCount, Constants.RetryDelay)]

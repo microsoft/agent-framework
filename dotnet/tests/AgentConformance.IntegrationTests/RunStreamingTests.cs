@@ -25,10 +25,10 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
-        var chatResponses = await agent.RunStreamingAsync("What is the capital of France.", thread).ToListAsync();
+        var responseUpdates = await agent.RunStreamingAsync("What is the capital of France.", thread).ToListAsync();
 
         // Assert
-        var chatResponseText = string.Join("", chatResponses.Select(x => x.Text));
+        var chatResponseText = string.Join("", responseUpdates.Select(x => x.Text));
         Assert.Contains("Paris", chatResponseText);
     }
 
@@ -41,10 +41,10 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
-        var chatResponses = await agent.RunStreamingAsync(new ChatMessage(ChatRole.User, "What is the capital of France."), thread).ToListAsync();
+        var responseUpdates = await agent.RunStreamingAsync(new ChatMessage(ChatRole.User, "What is the capital of France."), thread).ToListAsync();
 
         // Assert
-        var chatResponseText = string.Join("", chatResponses.Select(x => x.Text));
+        var chatResponseText = string.Join("", responseUpdates.Select(x => x.Text));
         Assert.Contains("Paris", chatResponseText);
     }
 
@@ -57,7 +57,7 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
-        var chatResponses = await agent.RunStreamingAsync(
+        var responseUpdates = await agent.RunStreamingAsync(
             [
                 new ChatMessage(ChatRole.User, "Hello."),
                 new ChatMessage(ChatRole.User, "What is the capital of France.")
@@ -65,7 +65,7 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
             thread).ToListAsync();
 
         // Assert
-        var chatResponseText = string.Join("", chatResponses.Select(x => x.Text));
+        var chatResponseText = string.Join("", responseUpdates.Select(x => x.Text));
         Assert.Contains("Paris", chatResponseText);
     }
 
@@ -80,14 +80,14 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
-        var chatResponses1 = await agent.RunStreamingAsync(q1, thread).ToListAsync();
-        var chatResponses2 = await agent.RunStreamingAsync(q2, thread).ToListAsync();
+        var responseUpdates1 = await agent.RunStreamingAsync(q1, thread).ToListAsync();
+        var responseUpdates2 = await agent.RunStreamingAsync(q2, thread).ToListAsync();
 
         // Assert
-        var chatResponse1Text = string.Join("", chatResponses1.Select(x => x.Text));
-        var chatResponse2Text = string.Join("", chatResponses2.Select(x => x.Text));
-        Assert.Contains("Paris", chatResponse1Text);
-        Assert.Contains("Vienna", chatResponse2Text);
+        var response1Text = string.Join("", responseUpdates1.Select(x => x.Text));
+        var response2Text = string.Join("", responseUpdates2.Select(x => x.Text));
+        Assert.Contains("Paris", response1Text);
+        Assert.Contains("Vienna", response2Text);
 
         var chatHistory = await this.Fixture.GetChatHistoryAsync(thread);
         Assert.Equal(4, chatHistory.Count);

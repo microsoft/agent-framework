@@ -65,7 +65,7 @@ public sealed class ChatClientAgent : Agent
     internal ChatOptions? ChatOptions => this._agentOptions?.ChatOptions;
 
     /// <inheritdoc/>
-    public override async Task<ChatResponse> RunAsync(
+    public override async Task<AgentRunResponse> RunAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -106,11 +106,11 @@ public sealed class ChatClientAgent : Agent
             await options.OnIntermediateMessages(chatResponseMessages).ConfigureAwait(false);
         }
 
-        return chatResponse;
+        return chatResponse.ToAgentRunResponse();
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<ChatResponseUpdate> RunStreamingAsync(
+    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -143,7 +143,7 @@ public sealed class ChatClientAgent : Agent
             {
                 responseUpdates.Add(update);
                 update.AuthorName ??= agentName;
-                yield return update;
+                yield return update.ToAgentRunResponseUpdate();
             }
 
             hasUpdates = await responseUpdatesEnumerator.MoveNextAsync().ConfigureAwait(false);

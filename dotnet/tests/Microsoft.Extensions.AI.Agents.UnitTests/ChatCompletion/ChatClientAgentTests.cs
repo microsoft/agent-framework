@@ -60,7 +60,7 @@ public class ChatClientAgentTests
             });
 
         // Act
-        ChatResponse result = await agent.RunAsync([new(ChatRole.User, "Where are you?")]);
+        var result = await agent.RunAsync([new(ChatRole.User, "Where are you?")]);
 
         // Assert
         Assert.Single(result.Messages);
@@ -1054,7 +1054,7 @@ public class ChatClientAgentTests
             });
 
         // Act
-        ChatResponseUpdate[] result = await agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "Hello")]).ToArrayAsync();
+        var result = await agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "Hello")]).ToArrayAsync();
 
         // Assert
         Assert.Equal(2, result.Length);

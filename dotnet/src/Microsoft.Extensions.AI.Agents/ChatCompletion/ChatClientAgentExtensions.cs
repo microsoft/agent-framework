@@ -21,8 +21,8 @@ public static class ChatClientAgentExtensions
     /// <param name="agentRunOptions">Optional parameters for agent invocation.</param>
     /// <param name="chatOptions">Optional chat options.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A <see cref="ChatResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
-    public static Task<ChatResponse> RunAsync(
+    /// <returns>A <see cref="AgentRunResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
+    public static Task<AgentRunResponse> RunAsync(
         this ChatClientAgent agent,
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
@@ -45,8 +45,8 @@ public static class ChatClientAgentExtensions
     /// <param name="agentRunOptions">Optional parameters for agent invocation.</param>
     /// <param name="chatOptions">Optional chat options.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A <see cref="ChatResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
-    public static Task<ChatResponse> RunAsync(
+    /// <returns>A <see cref="AgentRunResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
+    public static Task<AgentRunResponse> RunAsync(
         this ChatClientAgent agent,
         string prompt,
         AgentThread? thread = null,
@@ -69,7 +69,7 @@ public static class ChatClientAgentExtensions
     /// <param name="agentRunOptions">Optional parameters for agent invocation.</param>
     /// <param name="chatOptions">Optional chat options.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    public static IAsyncEnumerable<ChatResponseUpdate> RunStreamingAsync(
+    public static IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
         this ChatClientAgent agent,
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
@@ -92,8 +92,8 @@ public static class ChatClientAgentExtensions
     /// <param name="agentRunOptions">Optional parameters for agent invocation.</param>
     /// <param name="chatOptions">Optional chat options.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>An async enumerable of <see cref="ChatResponseUpdate"/> items for streaming the response.</returns>
-    public static IAsyncEnumerable<ChatResponseUpdate> RunStreamingAsync(
+    /// <returns>An async enumerable of <see cref="AgentRunResponseUpdate"/> items for streaming the response.</returns>
+    public static IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
         this ChatClientAgent agent,
         string prompt,
         AgentThread? thread = null,

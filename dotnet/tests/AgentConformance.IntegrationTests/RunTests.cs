@@ -25,12 +25,12 @@ public abstract class RunTests<TAgentFixture>(Func<TAgentFixture> createAgentFix
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
-        var chatResponse = await agent.RunAsync("What is the capital of France.", thread);
+        var response = await agent.RunAsync("What is the capital of France.", thread);
 
         // Assert
-        Assert.NotNull(chatResponse);
-        Assert.Single(chatResponse.Messages);
-        Assert.Contains("Paris", chatResponse.Text);
+        Assert.NotNull(response);
+        Assert.Single(response.Messages);
+        Assert.Contains("Paris", response.Text);
     }
 
     [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
@@ -42,12 +42,12 @@ public abstract class RunTests<TAgentFixture>(Func<TAgentFixture> createAgentFix
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
-        var chatResponse = await agent.RunAsync(new ChatMessage(ChatRole.User, "What is the capital of France."), thread);
+        var response = await agent.RunAsync(new ChatMessage(ChatRole.User, "What is the capital of France."), thread);
 
         // Assert
-        Assert.NotNull(chatResponse);
-        Assert.Single(chatResponse.Messages);
-        Assert.Contains("Paris", chatResponse.Text);
+        Assert.NotNull(response);
+        Assert.Single(response.Messages);
+        Assert.Contains("Paris", response.Text);
     }
 
     [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
@@ -59,7 +59,7 @@ public abstract class RunTests<TAgentFixture>(Func<TAgentFixture> createAgentFix
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
-        var chatResponse = await agent.RunAsync(
+        var response = await agent.RunAsync(
             [
                 new ChatMessage(ChatRole.User, "Hello."),
                 new ChatMessage(ChatRole.User, "What is the capital of France.")
@@ -67,9 +67,9 @@ public abstract class RunTests<TAgentFixture>(Func<TAgentFixture> createAgentFix
             thread);
 
         // Assert
-        Assert.NotNull(chatResponse);
-        Assert.Single(chatResponse.Messages);
-        Assert.Contains("Paris", chatResponse.Text);
+        Assert.NotNull(response);
+        Assert.Single(response.Messages);
+        Assert.Contains("Paris", response.Text);
     }
 
     [RetryFact(Constants.RetryCount, Constants.RetryDelay)]

@@ -106,8 +106,8 @@ public class AgentRunResponseUpdate
     /// Some providers may consider streaming responses to be a single message, and in that case
     /// the value of this property may be the same as the response ID.
     ///
-    /// This value is used when <see cref="ChatResponseExtensions.ToChatResponseAsync(IAsyncEnumerable{ChatResponseUpdate}, System.Threading.CancellationToken)"/>
-    /// groups <see cref="ChatResponseUpdate"/> instances into <see cref="ChatMessage"/> instances.
+    /// This value is used when <see cref="AgentRunResponseUpdateExtensions.ToAgentRunResponseAsync(IAsyncEnumerable{AgentRunResponseUpdate}, System.Threading.CancellationToken)"/>
+    /// groups <see cref="AgentRunResponseUpdate"/> instances into <see cref="AgentRunResponse"/> instances.
     /// The value must be unique to each call to the underlying provider, and must be shared by
     /// all updates that are part of the same logical message within a streaming response.
     /// </remarks>

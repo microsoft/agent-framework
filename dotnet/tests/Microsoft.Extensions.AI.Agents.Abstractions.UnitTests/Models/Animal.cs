@@ -5,7 +5,7 @@ using System.ComponentModel;
 namespace Microsoft.Extensions.AI.Agents.Abstractions.UnitTests.Models;
 
 [Description("Some test description")]
-internal class Animal
+internal sealed class Animal
 {
     public int Id { get; set; }
     public string? FullName { get; set; }
