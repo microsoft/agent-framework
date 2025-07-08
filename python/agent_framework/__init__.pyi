@@ -5,8 +5,6 @@ from ._agents import Agent, AgentThread
 from ._clients import ChatClient, EmbeddingGenerator
 from ._logging import get_logger
 
-# TODO(peterychang): remove this once all connectors have migrated to the new options
-from ._prompt_execution_settings import PromptExecutionSettings
 from ._pydantic import AFBaseModel, AFBaseSettings
 from ._tools import AITool, ai_function
 from ._types import (
@@ -59,7 +57,6 @@ __all__ = [
     "GeneratedEmbeddings",
     "InputGuardrail",
     "OutputGuardrail",
-    "PromptExecutionSettings",
     "SpeechToTextOptions",
     "StructuredResponse",
     "TextContent",

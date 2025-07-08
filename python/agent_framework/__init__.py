@@ -41,8 +41,6 @@ _IMPORTS = {
     "EmbeddingGenerator": "._clients",
     "InputGuardrail": ".guard_rails",
     "OutputGuardrail": ".guard_rails",
-    # TODO(peterychang): remove this once all connectors have migrated to the new options
-    "PromptExecutionSettings": "._prompt_execution_settings",
     "TextToSpeechOptions": "._types",
     "SpeechToTextOptions": "._types",
 }

@@ -22,11 +22,6 @@ from agent_framework.exceptions import (
 
 from .exceptions import ContentFilterAIException
 from .openai_model_types import OpenAIModelTypes
-from ._openai_prompt_execution_settings import OpenAIEmbeddingPromptExecutionSettings
-from ._openai_text_to_image_execution_settings import (
-    OpenAITextToImageExecutionSettings,
-)
-
 
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -47,8 +42,6 @@ OPTION_TYPE = Union[
     ChatOptions,
     SpeechToTextOptions,
     TextToSpeechOptions,
-    OpenAITextToImageExecutionSettings,
-    OpenAIEmbeddingPromptExecutionSettings,
 ]
 
 
@@ -68,11 +61,13 @@ class OpenAIHandler(AFBaseModel, ABC):
             return await self._send_completion_request(options, messages)
         # TODO(evmattso): move other PromptExecutionSettings to a common options class
         if self.ai_model_type == OpenAIModelTypes.EMBEDDING:
-            assert isinstance(options, OpenAIEmbeddingPromptExecutionSettings)  # nosec
-            return await self._send_embedding_request(options)
+            raise NotImplementedError("Embedding generation is not yet implemented in OpenAIHandler")
+            # assert isinstance(options, OpenAIEmbeddingPromptExecutionSettings)  # nosec
+            # return await self._send_embedding_request(options)
         if self.ai_model_type == OpenAIModelTypes.TEXT_TO_IMAGE:
-            assert isinstance(options, OpenAITextToImageExecutionSettings)  # nosec
-            return await self._send_text_to_image_request(options)
+            raise NotImplementedError("Text to image generation is not yet implemented in OpenAIHandler")
+            # assert isinstance(options, OpenAITextToImageExecutionSettings)  # nosec
+            # return await self._send_text_to_image_request(options)
         if self.ai_model_type == OpenAIModelTypes.SPEECH_TO_TEXT:
             assert isinstance(options, SpeechToTextOptions)  # nosec
             return await self._send_audio_to_text_request(options)
@@ -119,27 +114,27 @@ class OpenAIHandler(AFBaseModel, ABC):
                 ex,
             ) from ex
 
-    async def _send_embedding_request(self, settings: OpenAIEmbeddingPromptExecutionSettings) -> list[Any]:
-        """Send a request to the OpenAI embeddings endpoint."""
-        try:
-            response = await self.client.embeddings.create(**settings.prepare_settings_dict())
+    # async def _send_embedding_request(self, settings: OpenAIEmbeddingPromptExecutionSettings) -> list[Any]:
+    #     """Send a request to the OpenAI embeddings endpoint."""
+    #     try:
+    #         response = await self.client.embeddings.create(**settings.prepare_settings_dict())
 
-            self.store_usage(response)
-            return [x.embedding for x in response.data]
-        except Exception as ex:
-            raise ServiceResponseException(
-                f"{type(self)} service failed to generate embeddings",
-                ex,
-            ) from ex
+    #         self.store_usage(response)
+    #         return [x.embedding for x in response.data]
+    #     except Exception as ex:
+    #         raise ServiceResponseException(
+    #             f"{type(self)} service failed to generate embeddings",
+    #             ex,
+    #         ) from ex
 
-    async def _send_text_to_image_request(self, settings: OpenAITextToImageExecutionSettings) -> ImagesResponse:
-        """Send a request to the OpenAI text to image endpoint."""
-        try:
-            return await self.client.images.generate(
-                **settings.prepare_settings_dict(),
-            )
-        except Exception as ex:
-            raise ServiceResponseException(f"Failed to generate image: {ex}") from ex
+    # async def _send_text_to_image_request(self, settings: OpenAITextToImageExecutionSettings) -> ImagesResponse:
+    #     """Send a request to the OpenAI text to image endpoint."""
+    #     try:
+    #         return await self.client.images.generate(
+    #             **settings.prepare_settings_dict(),
+    #         )
+    #     except Exception as ex:
+    #         raise ServiceResponseException(f"Failed to generate image: {ex}") from ex
 
     async def _send_audio_to_text_request(self, options: SpeechToTextOptions) -> Transcription:
         """Send a request to the OpenAI audio to text endpoint."""
