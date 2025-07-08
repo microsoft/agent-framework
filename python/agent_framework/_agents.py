@@ -1,9 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncIterable, Callable, Iterable, Sequence
 from enum import Enum
-from typing import Any, List, Protocol, Tuple, TypeVar, runtime_checkable
-from collections.abc import Callable, Iterable
+from typing import Any, Protocol, TypeVar, runtime_checkable
 from uuid import uuid4
 
 from pydantic import Field
