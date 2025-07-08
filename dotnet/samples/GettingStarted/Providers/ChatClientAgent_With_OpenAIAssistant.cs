@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Agents;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Samples;
 using OpenAI;
 
@@ -38,7 +38,7 @@ public sealed class ChatClientAgent_With_OpenAIAssistant(ITestOutputHelper outpu
         // Get the chat client to use for the agent.
         using var chatClient = assistantClient.AsIChatClient(assistantId);
 
-        // Define the agent
+        // Define the agent.
         ChatClientAgent agent = new(chatClient);
 
         // Start a new thread for the agent conversation.

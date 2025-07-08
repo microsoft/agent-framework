@@ -85,7 +85,7 @@ jobs:
 
           # Change to project directory to ensure local nuget.config is used
           cd consoleapp
-          dotnet add packcheck.csproj package Microsoft.Agents --prerelease
+          dotnet add packcheck.csproj package Microsoft.Extensions.AI.Agents --prerelease
           dotnet build -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} packcheck.csproj
 
           # Clean up
@@ -135,6 +135,7 @@ jobs:
           # OpenAI Models
           OpenAI__ApiKey: ${{ secrets.OPENAI__APIKEY }}
           OpenAI__ChatModelId: ${{ vars.OPENAI__CHATMODELID }}
+          OpenAI__ChatReasoningModelId: ${{ vars.OPENAI__CHATREASONINGMODELID }}
           OpenAIEmbeddings__ApiKey: ${{ secrets.OPENAIEMBEDDINGS__APIKEY }}
           OpenAIEmbeddings__ModelId: ${{ vars.OPENAIEMBEDDINGS__MODELID }}
           OpenAITextToAudio__ApiKey: ${{ secrets.OPENAITEXTTOAUDIO__APIKEY }}

@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Agents;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Samples;
 using OpenAI;
 using OpenAI.Responses;
@@ -43,7 +43,7 @@ public sealed class ChatClientAgent_With_OpenAIResponsesChatCompletion(ITestOutp
         // Start a new thread for the agent conversation based on the type.
         AgentThread thread = agent.GetNewThread();
 
-        // Respond to user input
+        // Respond to user input.
         await RunAgentAsync("Tell me a joke about a pirate.");
         await RunAgentAsync("Now add some emojis to the joke.");
 

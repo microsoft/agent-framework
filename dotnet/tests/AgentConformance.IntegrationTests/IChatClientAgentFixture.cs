@@ -1,8 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Generic;
 using System.Threading.Tasks;
-using Microsoft.Agents;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
 
 namespace AgentConformance.IntegrationTests;
 
@@ -14,7 +15,10 @@ public interface IChatClientAgentFixture : IAgentFixture
 {
     IChatClient ChatClient { get; }
 
-    Task<ChatClientAgent> CreateAgentWithInstructionsAsync(string instructions);
+    Task<ChatClientAgent> CreateChatClientAgentAsync(
+        string name = "HelpfulAssistant",
+        string instructions = "You are a helpful assistant.",
+        IList<AITool>? aiTools = null);
 
     Task DeleteAgentAsync(ChatClientAgent agent);
 }
