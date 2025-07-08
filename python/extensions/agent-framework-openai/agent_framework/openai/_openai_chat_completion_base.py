@@ -1,14 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import sys
 from collections.abc import AsyncIterable, Sequence
 import json
 from typing import Any, ClassVar, cast
-
-if sys.version_info >= (3, 12):
-    from typing import override  # pragma: no cover
-else:
-    from typing_extensions import override  # pragma: no cover
 
 from openai import AsyncStream
 from openai.types import CompletionUsage
@@ -18,7 +12,6 @@ from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall
 
 from agent_framework import (
-    AIServiceClientBase,
     ChatMessage,
     ChatResponse, 
     ChatResponseUpdate,
@@ -42,7 +35,7 @@ from agent_framework.exceptions import ServiceInvalidResponseError
 
 
 # Implements agent_framework.ChatClient protocol
-class OpenAIChatCompletionBase(AIServiceClientBase, OpenAIHandler):
+class OpenAIChatCompletionBase(OpenAIHandler):
     """OpenAI Chat completion class."""
 
     MODEL_PROVIDER_NAME: ClassVar[str] = "openai"
@@ -50,11 +43,6 @@ class OpenAIChatCompletionBase(AIServiceClientBase, OpenAIHandler):
 
     # region Overriding base class methods
     # most of the methods are overridden from the ChatCompletionClientBase class, otherwise it is mentioned
-
-    # Override from AIServiceClientBase
-    @override
-    def service_url(self) -> str | None:
-        return str(self.client.base_url)
 
     # @trace_chat_completion(MODEL_PROVIDER_NAME)
     async def get_response(

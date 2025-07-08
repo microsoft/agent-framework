@@ -2,7 +2,6 @@
 
 from . import __version__  # type: ignore[attr-defined]
 from ._agents import Agent, AgentThread
-from ._ai_service_client_base import AIServiceClientBase
 from ._clients import ChatClient, EmbeddingGenerator
 from ._logging import get_logger
 
@@ -41,7 +40,6 @@ __all__ = [
     "AFBaseSettings",
     "AIContent",
     "AIContents",
-    "AIServiceClientBase",
     "AITool",
     "Agent",
     "AgentThread",

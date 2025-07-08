@@ -19,7 +19,6 @@ _IMPORTS = {
     "ai_function": "._tools",
     "AIContent": "._types",
     "AIContents": "._types",
-    "AIServiceClientBase": "._ai_service_client_base",
     "TextContent": "._types",
     "TextReasoningContent": "._types",
     "DataContent": "._types",
