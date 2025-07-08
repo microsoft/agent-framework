@@ -428,6 +428,8 @@ We would add a generic version of `AgentRunResponse<T>`, that allows us to get t
 This would be coupled with generic overload extension methods for Run that automatically builds a schema from the supplied type and updates
 the run options.
 
+If we support requesting a schema at invocation time the following would be the preferred approach:
+
 ```csharp
 class Movie
 {
@@ -440,10 +442,28 @@ AgentRunResponse<Movie[]> response = agent.RunAsync<Movie[]>("What are the top 3
 Movie[] movies = response.Result
 ```
 
+If we only support requesting a schema at agent creation time or where an agent has a built in schema, the following would be the preferred approach:
+
+```csharp
+AgentRunResponse response = agent.RunAsync("What are the top 3 children's movies of the 80s.");
+Movie[] movies = response.TryParseStructuredOutput<Movie[]>();
+```
+
 ## Decision Outcome
 
-Chosen option: "{title of option 1}", because
-{justification. e.g., only option, which meets k.o. criterion decision driver | which resolves force {force} | … | comes out best (see below)}.
+### Response Type Options Decision
+
+Option 1.1 with the caveate that we cannot control the output of all agents. However, as far as possible we should have appropriate AIContext derived types for
+progress updates so that TextContent is not used for these.
+
+### Custom Response Type Design Options Decision
+
+Option 2 chosen so that we can vary Agent responses independently of Chat Client.
+
+### StructuredOutputs Decision
+
+We will not support structured output per run request, but individual agents are free to allow this on the concrete implementation or at construction time.
+We will however add support for easily extracting a structured output type from the `AgentRunResponse`.
 
 ## Addendum 1: AIContext Derived Types for different response types / Gap Analysis (Work in progress)
 
