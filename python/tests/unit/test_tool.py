@@ -14,7 +14,7 @@ def test_ai_function_decorator():
     assert isinstance(test_tool, AITool)
     assert test_tool.name == "test_tool"
     assert test_tool.description == "A test tool"
-    assert test_tool.model_json_schema() == {
+    assert test_tool.parameters() == {
         "properties": {"x": {"title": "X", "type": "integer"}, "y": {"title": "Y", "type": "integer"}},
         "required": ["x", "y"],
         "title": "test_tool_input",
@@ -34,7 +34,7 @@ async def test_ai_function_decorator_with_async():
     assert isinstance(async_test_tool, AITool)
     assert async_test_tool.name == "async_test_tool"
     assert async_test_tool.description == "An async test tool"
-    assert async_test_tool.model_json_schema() == {
+    assert async_test_tool.parameters() == {
         "properties": {"x": {"title": "X", "type": "integer"}, "y": {"title": "Y", "type": "integer"}},
         "required": ["x", "y"],
         "title": "async_test_tool_input",

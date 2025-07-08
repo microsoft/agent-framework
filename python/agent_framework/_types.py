@@ -1,12 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import base64
+import json
 import re
 import sys
-from collections.abc import AsyncIterable, Iterable, Iterator, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Iterable, Iterator, Mapping, MutableSequence, Sequence
 from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, overload
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ._pydantic import AFBaseModel
 from ._tools import AITool
@@ -579,7 +580,7 @@ class FunctionCallContent(AIContent):
     """The function call identifier."""
     name: str
     """The name of the function requested."""
-    arguments: dict[str, Any | None] | None = None
+    arguments: str | dict[str, Any | None] | None = None
     """The arguments requested to be provided to the function."""
     exception: Exception | None = None
     """Any exception that occurred while mapping the original function call data to this representation."""
@@ -589,7 +590,7 @@ class FunctionCallContent(AIContent):
         *,
         call_id: str,
         name: str,
-        arguments: dict[str, Any | None] | None = None,
+        arguments: str | dict[str, Any | None] | None = None,
         exception: Exception | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -600,7 +601,8 @@ class FunctionCallContent(AIContent):
         Args:
             call_id: The function call identifier.
             name: The name of the function requested.
-            arguments: The arguments requested to be provided to the function.
+            arguments: The arguments requested to be provided to the function,
+                can be a string to allow gradual completion of the args.
             exception: Any exception that occurred while mapping the original function call data to this representation.
             additional_properties: Optional additional properties associated with the content.
             raw_representation: Optional raw representation of the content.
@@ -615,6 +617,15 @@ class FunctionCallContent(AIContent):
             additional_properties=additional_properties,
             **kwargs,
         )
+
+    def parse_arguments(self) -> dict[str, Any | None] | None:
+        if isinstance(self.arguments, str):
+            # If arguments are a string, try to parse it as JSON
+            try:
+                return json.loads(self.arguments)
+            except (json.JSONDecodeError, TypeError):
+                return {"raw": self.arguments}
+        return self.arguments
 
 
 class FunctionResultContent(AIContent):
@@ -1334,45 +1345,47 @@ class ChatOptions(AFBaseModel):
     """Common request settings for AI services."""
 
     ai_model_id: Annotated[str | None, Field(serialization_alias="model")] = None
-    frequency_penalty: Annotated[float | None, Field(ge=-2.0, le=2.0)] = None
-    logit_bias: dict[str | int, float] | None = None
     max_tokens: Annotated[int | None, Field(gt=0)] = None
-    messages: list[dict[str, Any]] | None = Field(default=None, description="List of messages for the chat completion.")
-    presence_penalty: Annotated[float | None, Field(ge=-2.0, le=2.0)] = None
+    temperature: Annotated[float | None, Field(ge=0.0, le=2.0)] = None
+    top_p: Annotated[float | None, Field(ge=0.0, le=1.0)] = None
+    tool_choice: ChatToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None = None
+    tools: Sequence[AITool] | Sequence[Mapping[str, Any]] | None = None
     response_format: type[BaseModel] | None = Field(
         default=None, description="Structured output response format schema. Must be a valid Pydantic model."
     )
-    seed: int | None = None
-    stop: str | list[str] | None = None
-    temperature: Annotated[float | None, Field(ge=0.0, le=2.0)] = None
-    tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = None
-    tools: list[AITool] | None = None
-    top_p: Annotated[float | None, Field(ge=0.0, le=1.0)] = None
     user: str | None = None
+    stop: str | Sequence[str] | None = None
+    frequency_penalty: Annotated[float | None, Field(ge=-2.0, le=2.0)] = None
+    logit_bias: Mapping[str | int, float] | None = None
+    presence_penalty: Annotated[float | None, Field(ge=-2.0, le=2.0)] = None
+    seed: int | None = None
     store: bool | None = None
-    metadata: dict[str, str] | None = None
-    additional_properties: dict[str, Any] = Field(
+    metadata: Mapping[str, str] | None = None
+    additional_properties: Mapping[str, Any] = Field(
         default_factory=dict, description="Provider-specific additional properties."
     )
 
     @field_validator("tool_choice", mode="before")
     @classmethod
-    def _validate_tool_mode(cls, data: dict[str, Any]) -> dict[str, Any]:
+    def _validate_tool_mode(
+        cls, tool_choice: ChatToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None
+    ) -> ChatToolMode:
         """Validates the tool_choice field to ensure it is a valid ChatToolMode."""
-        if isinstance(data, dict):
-            tool_choice = data.get("tool_choice")
-            if isinstance(tool_choice, str):
-                if tool_choice == "auto":
-                    data["tool_choice"] = ChatToolMode.AUTO
-                elif tool_choice == "required":
-                    data["tool_choice"] = ChatToolMode.REQUIRED_ANY
-                elif tool_choice == "none":
-                    data["tool_choice"] = ChatToolMode.NONE
-                else:
-                    raise ValueError(f"Invalid tool choice: {tool_choice}")
-            elif isinstance(tool_choice, dict):
-                data["tool_choice"] = ChatToolMode.model_validate(tool_choice)
-        return data
+        if not tool_choice:
+            return ChatToolMode.NONE
+        if isinstance(tool_choice, str):
+            match tool_choice:
+                case "auto":
+                    return ChatToolMode.AUTO
+                case "required":
+                    return ChatToolMode.REQUIRED_ANY
+                case "none":
+                    return ChatToolMode.NONE
+                case _:
+                    raise ValidationError(f"Invalid tool choice: {tool_choice}")
+        if isinstance(tool_choice, (dict, Mapping)):
+            return ChatToolMode.model_validate(tool_choice)
+        return tool_choice
 
     def to_provider_settings(self, by_alias: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:
         """Convert the ChatOptions to a dictionary suitable for provider requests.
