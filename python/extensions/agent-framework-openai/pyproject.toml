@@ -1,0 +1,51 @@
+[project]
+name = "agent-framework-openai"
+description = "OpenAI integrations for Microsoft Agent Framework."
+authors = [{ name = "Microsoft", email = "SK-Support@microsoft.com"}]
+readme = "README.md"
+requires-python = ">=3.10"
+version = "0.1.0b1"
+license = {file = "../../LICENSE"}
+urls.homepage = "https://learn.microsoft.com/en-us/semantic-kernel/overview/"
+urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
+urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=tag%3Apython-1&expanded=true"
+urls.issues = "https://github.com/microsoft/agent-framework/issues"
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Development Status :: 5 - Production/Stable",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Framework :: Pydantic :: 2",
+  "Typing :: Typed",
+]
+dependencies = [
+    "agent-framework",
+    "openai>=1.93.0",
+]
+
+
+[tool.ruff]
+extend = "../../pyproject.toml"
+include = ["agent-framework/openai/**", "tests/*.py"]
+
+[tool.poe]
+include = "../../shared_tasks.toml"
+
+[tool.pyright]
+extends = "../../pyproject.toml"
+include = ["agent_framework", "samples"]
+
+[tool.uv.sources]
+agent-framework = { workspace = true }
+
+[tool.uv.build-backend]
+module-name = "openai"
+module-root = "agent_framework"
+
+[build-system]
+requires = ["uv_build>=0.7.19,<0.8.0"]
+build-backend = "uv_build"

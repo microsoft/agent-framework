@@ -85,7 +85,7 @@ jobs:
 
           # Change to project directory to ensure local nuget.config is used
           cd consoleapp
-          dotnet add packcheck.csproj package Microsoft.Agents --prerelease
+          dotnet add packcheck.csproj package Microsoft.Extensions.AI.Agents --prerelease
           dotnet build -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} packcheck.csproj
 
           # Clean up
