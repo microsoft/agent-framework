@@ -184,47 +184,6 @@ public class ChatClientAgentTests
     }
 
     /// <summary>
-    /// Verify that RunAsync calls OnIntermediateMessage callback for each response message.
-    /// </summary>
-    [Fact]
-    public async Task RunAsyncCallsOnIntermediateMessageForEachResponseMessageAsync()
-    {
-        // Arrange
-        Mock<IChatClient> mockService = new();
-        var responseMessages = new[]
-        {
-            new ChatMessage(ChatRole.Assistant, "first response"),
-            new ChatMessage(ChatRole.Assistant, "second response")
-        };
-        mockService.Setup(
-            s => s.GetResponseAsync(
-                It.IsAny<IEnumerable<ChatMessage>>(),
-                It.IsAny<ChatOptions>(),
-                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse(responseMessages));
-
-        ChatClientAgent agent = new(mockService.Object, new() { Instructions = "test instructions", Name = "TestAgent" });
-
-        var callbackMessages = new List<ChatMessage>();
-        var runOptions = new AgentRunOptions
-        {
-            OnIntermediateMessages = messages =>
-            {
-                callbackMessages.AddRange(messages);
-                return Task.CompletedTask;
-            }
-        };
-
-        // Act
-        await agent.RunAsync([new(ChatRole.User, "test")], options: runOptions);
-
-        // Assert
-        Assert.Equal(2, callbackMessages.Count);
-        Assert.Equal("first response", callbackMessages[0].Text);
-        Assert.Equal("second response", callbackMessages[1].Text);
-        Assert.All(callbackMessages, msg => Assert.Equal("TestAgent", msg.AuthorName));
-    }
-
-    /// <summary>
     /// Verify that RunAsync sets AuthorName on all response messages.
     /// </summary>
     [Fact]

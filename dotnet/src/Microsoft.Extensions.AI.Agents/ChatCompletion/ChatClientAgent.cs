@@ -101,10 +101,6 @@ public sealed class ChatClientAgent : Agent
         var chatResponseMessages = chatResponse.Messages as IReadOnlyCollection<ChatMessage> ?? chatResponse.Messages.ToArray();
 
         await this.NotifyThreadOfNewMessagesAsync(chatClientThread, chatResponseMessages, cancellationToken).ConfigureAwait(false);
-        if (options?.OnIntermediateMessages is not null)
-        {
-            await options.OnIntermediateMessages(chatResponseMessages).ConfigureAwait(false);
-        }
 
         return chatResponse.ToAgentRunResponse();
     }
@@ -160,10 +156,6 @@ public sealed class ChatClientAgent : Agent
         await this.NotifyThreadOfNewMessagesAsync(chatClientThread, inputMessages, cancellationToken).ConfigureAwait(false);
 
         await this.NotifyThreadOfNewMessagesAsync(chatClientThread, chatResponseMessages, cancellationToken).ConfigureAwait(false);
-        if (options?.OnIntermediateMessages is not null)
-        {
-            await options.OnIntermediateMessages(chatResponseMessages).ConfigureAwait(false);
-        }
     }
 
     /// <inheritdoc/>
