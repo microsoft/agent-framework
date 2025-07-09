@@ -1,6 +1,6 @@
 [project]
-name = "agent-framework-azure"
-description = "Azure integrations for Microsoft Agent Framework."
+name = "agent-framework-openai"
+description = "OpenAI integrations for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "SK-Support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
@@ -24,32 +24,29 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework",
-    "agent-framework-openai",
+    "openai>=1.93.0",
 ]
 
 [tool.ruff]
 extend = "../../pyproject.toml"
-include = ["agent-framework/azure/**", "tests/*.py"]
-
-[tool.ruff.lint.per-file-ignores]
-# Ignore all directories named `tests` and `samples`.
-"tests/**" = ["D", "INP", "TD", "ERA001", "RUF", "S"]
-"samples/**" = ["D", "INP", "ERA001", "RUF", "S"]
-"*.ipynb" = ["CPY", "E501"]
-
-[tool.poe]
-include = "../../shared_tasks.toml"
 
 [tool.pyright]
-extends = "../../pyproject.toml"
-include = ["agent_framework", "samples"]
+extend = "../../pyproject.toml"
+exclude = ['tests']
 
-[tool.uv.sources]
-agent-framework = { workspace = true }
-agent-framework-openai = { workspace = true }
+[tool.mypy]
+extend = "../../pyproject.toml"
+
+[tool.bandit]
+targets = ["agent_framework"]
+exclude_dirs = ["tests"]
+
+[tool.poe]
+executor.type = "uv"
+include = "../../shared_tasks.toml"
 
 [tool.uv.build-backend]
-module-name = "agent_framework.azure"
+module-name = "agent_framework.openai"
 module-root = ""
 
 [build-system]

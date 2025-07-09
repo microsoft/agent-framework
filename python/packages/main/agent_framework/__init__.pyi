@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import agent_framework.openai as openai
+
 from . import __version__  # type: ignore[attr-defined]
 from ._agents import Agent, AgentThread
 from ._clients import ChatClient, ChatClientBase, EmbeddingGenerator
@@ -61,4 +63,5 @@ __all__ = [
     "__version__",
     "ai_function",
     "get_logger",
+    "openai",
 ]
