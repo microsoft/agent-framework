@@ -21,7 +21,7 @@ from agent_framework.exceptions import (
     ServiceInvalidRequestError, ServiceResponseException
 )
 
-from .exceptions import ContentFilterAIException
+from .exceptions import OpenAIContentFilterException
 from ._openai_model_types import OpenAIModelTypes
 
 
@@ -98,7 +98,7 @@ class OpenAIHandler(AFBaseModel, ABC):
             return response # type: ignore
         except BadRequestError as ex:
             if ex.code == "content_filter":
-                raise ContentFilterAIException(
+                raise OpenAIContentFilterException(
                     f"{type(self)} service encountered a content error",
                     ex,
                 ) from ex

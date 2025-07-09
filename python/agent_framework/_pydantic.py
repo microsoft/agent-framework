@@ -13,7 +13,7 @@ class AFBaseModel(BaseModel):
     model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True, validate_assignment=True)
 
 
-T = TypeVar("T", bound="AFBaseSettings")
+TSettings = TypeVar("TSettings", bound="AFBaseSettings")
 
 
 class AFBaseSettings(BaseSettings):
@@ -49,7 +49,7 @@ class AFBaseSettings(BaseSettings):
         kwargs = {k: v for k, v in kwargs.items() if v is not None}
         super().__init__(**kwargs)
 
-    def __new__(cls: type["T"], *args: Any, **kwargs: Any) -> "T":
+    def __new__(cls: type["TSettings"], *args: Any, **kwargs: Any) -> "TSettings":
         """Override the __new__ method to set the env_prefix."""
         # for both, if supplied but None, set to default
         if "env_file_encoding" in kwargs and kwargs["env_file_encoding"] is not None:
