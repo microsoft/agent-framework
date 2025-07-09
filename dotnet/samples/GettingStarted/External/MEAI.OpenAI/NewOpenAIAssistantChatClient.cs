@@ -316,7 +316,18 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
                             var codeInterpreterToolDefinition = new CodeInterpreterToolDefinition();
                             runOptions.ToolsOverride.Add(codeInterpreterToolDefinition);
 
-                         
+                            // Once available, HostedCodeInterpreterTool.FileIds property will be used instead of the AdditionalProperties.
+                            if (tool.AdditionalProperties.TryGetValue("fileIds", out object? fileIdsObject) && fileIdsObject is IEnumerable<string> fileIds)
+                            {
+                                var threadInitializationMessage = new ThreadInitializationMessage(OpenAI.Assistants.MessageRole.User, [OpenAI.Assistants.MessageContent.FromText("attachments")]);
+
+                                foreach (var fileId in fileIds)
+                                {
+                                    threadInitializationMessage.Attachments.Add(new(fileId, [codeInterpreterToolDefinition]));
+                                }
+
+                                runOptions.AdditionalMessages.Add(threadInitializationMessage);
+                            }
 
                             break;
                     }
