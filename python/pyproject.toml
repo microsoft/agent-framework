@@ -48,14 +48,6 @@ environments = [
     "sys_platform == 'win32'"
 ]
 
-[tool.pytest.ini_options]
-testpaths = 'tests'
-addopts = "-ra -q -r fEX"
-asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "function"
-filterwarnings = []
-timeout = 120
-
 [tool.uv.workspace]
 members = ["packages/*"]
 
@@ -127,7 +119,7 @@ min-file-size = 1
 
 [tool.pyright]
 include = ["agent_framework", "samples"]
-exclude = ["**/tests/**", "docs"]
+exclude = ["**/tests/**", "docs", "**/.venv/**"]
 typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
 reportMissingTypeStubs = false

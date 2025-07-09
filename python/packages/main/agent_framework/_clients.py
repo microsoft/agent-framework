@@ -1,9 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import sys
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, MutableSequence, Sequence
-from typing import Annotated, Any, ClassVar, Generic, Literal, Protocol, TypeVar, runtime_checkable
+from collections.abc import AsyncIterable, Callable, MutableSequence, Sequence
+from functools import wraps
+from types import CoroutineType
+from typing import Annotated, Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
 
 from pydantic import BaseModel, PrivateAttr, StringConstraints
 
@@ -20,6 +23,11 @@ from ._types import (
     FunctionResultContent,
     GeneratedEmbeddings,
 )
+
+if sys.version_info >= (3, 11):
+    pass  # pragma: no cover
+else:
+    pass  # pragma: no cover
 
 TInput = TypeVar("TInput", contravariant=True)
 TEmbedding = TypeVar("TEmbedding")
@@ -92,11 +100,190 @@ class ChatClient(Protocol):
         ...
 
 
+async def _auto_invoke_function(
+    function_call_content: FunctionCallContent,
+    custom_args: dict[str, Any] | None = None,
+    *,
+    tool_map: dict[str, AIFunction[BaseModel, Any]],
+    sequence_index: int | None = None,
+    request_index: int | None = None,
+) -> AIContents:
+    """Invoke a function call requested by the agent, applying filters that are defined in the agent."""
+    tool: AIFunction[BaseModel, Any] | None = tool_map.get(function_call_content.name)
+    if tool is None:
+        raise KeyError(f"No tool or function named '{function_call_content.name}'")
+
+    parsed_args: dict[str, Any] = dict(function_call_content.parse_arguments() or {})
+
+    # Merge with user-supplied args; right-hand side dominates, so parsed args win on conflicts.
+    merged_args: dict[str, Any] = (custom_args or {}) | parsed_args
+    args = tool.input_model.model_validate(merged_args)
+    exception = None
+    try:
+        function_result = await tool.invoke(arguments=args)
+    except Exception as ex:
+        exception = ex
+        function_result = None
+    return FunctionResultContent(
+        call_id=function_call_content.call_id,
+        exception=exception,
+        result=function_result,
+    )
+
+
+def _tool_to_json_schema_spec(tool: AITool) -> dict[str, Any]:
+    """Convert a AITool to the JSON Schema function specification format."""
+    return {
+        "type": "function",
+        "function": {
+            "name": tool.name,
+            "description": tool.description,
+            "parameters": tool.parameters(),
+        },
+    }
+
+
+def _prepare_tools_and_tool_choice(chat_options: ChatOptions) -> None:
+    """Prepare the tools and tool choice for the chat options."""
+    chat_tool_mode: ChatToolMode | None = chat_options.tool_choice  # type: ignore
+    if chat_tool_mode is None or chat_tool_mode == ChatToolMode.NONE:
+        chat_options.tools = None
+        chat_options.tool_choice = ChatToolMode.NONE.mode
+        return
+    chat_options.tools = [
+        (_tool_to_json_schema_spec(t) if isinstance(t, AITool) else t) for t in chat_options.tools or []
+    ]
+    chat_options.tool_choice = chat_tool_mode.mode
+
+
+def tool_call_enabled(
+    func: Callable[..., CoroutineType[Any, Any, ChatResponse]],
+) -> Callable[..., CoroutineType[Any, Any, ChatResponse]]:
+    """Decorate the internal _inner_get_response method to enable tool calls.
+
+    Remarks:
+        Relies on a class that has the _tool_map attribute for the executable tools to call.
+    """
+
+    @wraps(func)
+    async def wrapper(*args: Any, **kwargs: Any) -> ChatResponse:
+        self_ = args[0]
+        messages = kwargs.pop("messages", [])
+        chat_options = kwargs.pop("chat_options", None)
+        response: ChatResponse | None = None
+        fcc_messages: list[ChatMessage] = []
+        for attempt_idx in range(10):
+            response = await func(*args, messages=messages, chat_options=chat_options)
+            # if there are function calls, we will handle them first
+            function_calls = [it for it in response.messages[0].contents if isinstance(it, FunctionCallContent)]
+            if function_calls:
+                # Run all function calls concurrently
+                results = await asyncio.gather(*[
+                    _auto_invoke_function(
+                        function_call,
+                        custom_args=kwargs,
+                        tool_map=self_._tool_map,
+                        sequence_index=seq_idx,
+                        request_index=attempt_idx,
+                    )
+                    for seq_idx, function_call in enumerate(function_calls)
+                ])
+                # add a single ChatMessage to the response with the results
+                response.messages.append(ChatMessage(role="tool", contents=results))
+                # response should contain 2 messages after this,
+                # one with function call contents
+                # and one with function result contents
+                # the amount and call_id's should match
+                # this runs in every but the first run
+                # we need to keep track of all function call messages
+                fcc_messages.extend(response.messages)
+                # and add them as additional context to the messages
+                messages.extend(response.messages)
+                continue
+            # If we reach this point, it means there were no function calls to handle,
+            # we'll add the previous function call and responses
+            # to the front of the list, so that the final response is the last one
+            # TODO (eavanvalkenburg): control this behavior?
+            if fcc_messages:
+                for msg in reversed(fcc_messages):
+                    response.messages.insert(0, msg)
+            return response
+
+        # Failsafe: give up on tools, ask model for plain answer
+        chat_options.tool_choice = "none"
+        _prepare_tools_and_tool_choice(chat_options=chat_options)
+        response = await func(messages, chat_options)
+        if fcc_messages:
+            for msg in reversed(fcc_messages):
+                response.messages.insert(0, msg)
+        return response
+
+    return wrapper
+
+
+def streaming_tool_call_enabled(
+    func: Callable[..., AsyncIterable[ChatResponseUpdate]],
+) -> Callable[..., AsyncIterable[ChatResponseUpdate]]:
+    """Decorate the internal _inner_get_response method to enable tool calls.
+
+    Remarks:
+        Relies on a class that has the _tool_map attribute for the executable tools to call.
+    """
+
+    @wraps(func)
+    async def wrapper(*args: Any, **kwargs: Any) -> AsyncIterable[ChatResponseUpdate]:
+        self_ = args[0]
+        messages = kwargs.pop("messages", [])
+        chat_options = kwargs.pop("chat_options", None)
+        for attempt_idx in range(10):
+            function_call_returned = False
+            all_messages: list[ChatResponseUpdate] = []
+            async for update in func(*args, messages=messages, chat_options=chat_options):
+                if update.contents and any(isinstance(item, FunctionCallContent) for item in update.contents):
+                    all_messages.append(update)
+                    function_call_returned = True
+                yield update
+
+            if not function_call_returned:
+                return
+
+            # There is one FunctionCallContent response stream in the messages, combining now to create
+            # the full completion depending on the prompt, the message may contain both function call
+            # content and others
+            response: ChatResponse = ChatResponse.from_chat_response_updates(all_messages)
+            function_calls = [item for item in response.messages[0].contents if isinstance(item, FunctionCallContent)]
+            messages.append(response.messages[0])
+
+            if function_calls:
+                # Run all function calls concurrently
+                results = await asyncio.gather(*[
+                    _auto_invoke_function(
+                        function_call,
+                        custom_args=kwargs,
+                        tool_map=self_._tool_map,
+                        sequence_index=seq_idx,
+                        request_index=attempt_idx,
+                    )
+                    for seq_idx, function_call in enumerate(function_calls)
+                ])
+                yield ChatResponseUpdate(contents=results, role="tool")
+                response.messages.append(ChatMessage(role="tool", contents=results))
+                messages.extend(response.messages)
+                continue
+
+        # Failsafe: give up on tools, ask model for plain answer
+        chat_options.tool_choice = "none"
+        _prepare_tools_and_tool_choice(chat_options=chat_options)
+        async for update in func(*args, messages=messages, chat_options=chat_options, **kwargs):
+            yield update
+
+    return wrapper
+
+
 class ChatClientBase(AFBaseModel, ABC):
     """Base class for chat clients."""
 
     ai_model_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-    SUPPORTS_FUNCTION_CALLING: ClassVar[bool] = False
     _tool_map: dict[str, AIFunction[BaseModel, Any]] = PrivateAttr(default_factory=dict)  # type: ignore
 
     # region Internal methods to be implemented by the derived classes
@@ -124,7 +311,6 @@ class ChatClientBase(AFBaseModel, ABC):
         self,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions,
-        function_invoke_attempt: int = 0,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Send a streaming chat request to the AI service.
@@ -132,7 +318,6 @@ class ChatClientBase(AFBaseModel, ABC):
         Args:
             messages: The chat messages to send.
             chat_options: The chat_options for the request.
-            function_invoke_attempt: The current attempt count for automatically invoking functions.
             kwargs: Any additional keyword arguments.
 
         Yields:
@@ -141,6 +326,9 @@ class ChatClientBase(AFBaseModel, ABC):
         # Below is needed for mypy: https://mypy.readthedocs.io/en/stable/more_types.html#asynchronous-iterators
         if False:
             yield
+        await asyncio.sleep(0)  # pragma: no cover
+        # This is a no-op, but it allows the method to be async and return an AsyncIterable.
+        # The actual implementation should yield ChatResponseUpdate instances as needed.
 
     # endregion
 
@@ -218,67 +406,8 @@ class ChatClientBase(AFBaseModel, ABC):
             messages = [ChatMessage(role="user", text=messages)]
         if isinstance(messages, ChatMessage):
             messages = [messages]
-        self._prepare_tools_and_tool_choice(chat_options=chat_options)
-        # function calling loop
-        if not self.SUPPORTS_FUNCTION_CALLING or chat_options.tool_choice == ChatToolMode.NONE:
-            return await self._inner_get_response(messages=messages, chat_options=chat_options)
-        return await self._auto_invoke_loop(messages=messages, chat_options=chat_options, **kwargs)
-
-    async def _auto_invoke_loop(
-        self,
-        *,
-        messages: list[ChatMessage],
-        chat_options: ChatOptions,
-        max_attempts: int = 10,
-        **kwargs: Any,
-    ) -> ChatResponse:
-        """Loop until the model stops emitting tool calls or until filters terminate."""
-        response: ChatResponse | None = None
-        fcc_messages: list[ChatMessage] = []
-        for attempt_idx in range(max_attempts):
-            response = await self._inner_get_response(messages=messages, chat_options=chat_options)
-            # if there are function calls, we will handle them first
-            function_call_contents = [it for it in response.messages[0].contents if isinstance(it, FunctionCallContent)]
-            if function_call_contents:
-                # Run all function calls concurrently
-                results = await asyncio.gather(*[
-                    self._auto_invoke_function(
-                        function_call_content,
-                        custom_args=kwargs,
-                        sequence_index=seq_idx,
-                        request_index=attempt_idx,
-                    )
-                    for seq_idx, function_call_content in enumerate(function_call_contents)
-                ])
-                # add a single ChatMessage to the response with the results
-                response.messages.append(ChatMessage(role="tool", contents=results))
-                # response should contain 2 messages after this,
-                # one with function call contents
-                # and one with function result contents
-                # the amount and call_id's should match
-                # this runs in every but the first run
-                # we need to keep track of all function call messages
-                fcc_messages.extend(response.messages)
-                # and add them as additional context to the messages
-                messages.extend(response.messages)
-                continue
-            # If we reach this point, it means there were no function calls to handle,
-            # we'll add the previous function call and responses
-            # to the front of the list, so that the final response is the last one
-            # TODO (eavanvalkenburg): control this behavior?
-            if fcc_messages:
-                for msg in reversed(fcc_messages):
-                    response.messages.insert(0, msg)
-            return response
-
-        # Failsafe: give up on tools, ask model for plain answer
-        chat_options.tool_choice = "none"
-        self._prepare_tools_and_tool_choice(chat_options=chat_options)
-        response = await self._inner_get_response(messages=messages, chat_options=chat_options)
-        if fcc_messages:
-            for msg in reversed(fcc_messages):
-                response.messages.insert(0, msg)
-        return response
+        _prepare_tools_and_tool_choice(chat_options=chat_options)
+        return await self._inner_get_response(messages=messages, chat_options=chat_options, **kwargs)
 
     async def get_streaming_response(
         self,
@@ -352,132 +481,9 @@ class ChatClientBase(AFBaseModel, ABC):
             messages = [ChatMessage(role="user", text=messages)]
         if isinstance(messages, ChatMessage):
             messages = [messages]
-        self._prepare_tools_and_tool_choice(chat_options=chat_options)
-        # function calling loop
-        if not self.SUPPORTS_FUNCTION_CALLING or chat_options.tool_choice == ChatToolMode.NONE:
-            async for update in self._inner_get_streaming_response(
-                messages=messages, chat_options=chat_options, **kwargs
-            ):
-                yield update
-            return
-        async for update in self._auto_invoke_loop_streaming(
-            messages=messages,
-            chat_options=chat_options,
-            **kwargs,
-        ):
-            yield update
-
-    async def _auto_invoke_loop_streaming(
-        self,
-        *,
-        messages: list[ChatMessage],
-        chat_options: ChatOptions,
-        max_attempts: int = 10,
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        """Loop until the model stops emitting tool calls or until filters terminate in streaming mode."""
-        for request_index in range(max_attempts):
-            # Hold the messages, if there are more than one response, it will not be used, so we flatten
-            function_call_returned = False
-            all_messages: list[ChatResponseUpdate] = []
-            async for update in self._inner_get_streaming_response(messages=messages, chat_options=chat_options):
-                if update.contents:
-                    if any(isinstance(item, FunctionCallContent) for item in update.contents):
-                        all_messages.append(update)
-                        function_call_returned = True
-                else:
-                    yield update
-
-            if not function_call_returned:
-                return
-
-            # There is one FunctionCallContent response stream in the messages, combining now to create
-            # the full completion depending on the prompt, the message may contain both function call
-            # content and others
-            response: ChatResponse = ChatResponse.from_chat_response_updates(all_messages)
-            function_calls = [item for item in response.messages[0].contents if isinstance(item, FunctionCallContent)]
-            messages.append(response.messages[0])
-            # This function either updates the chat history with the function call results
-            # or returns the context, with terminate set to True in which case the loop will
-            # break and the function calls are returned.
-            results = await asyncio.gather(*[
-                self._auto_invoke_function(
-                    fcc,
-                    custom_args=kwargs,
-                    sequence_index=seq_idx,
-                    request_index=request_index,
-                )
-                for seq_idx, fcc in enumerate(function_calls)
-            ])
-
-            # Merge and yield the function results, regardless of the termination status
-            # Include the ai_model_id so we can later add two streaming messages together
-            # Some settings may not have an ai_model_id, so we need to check for it
-            yield ChatResponseUpdate(contents=results, role="tool")
-            response.messages.append(ChatMessage(role="tool", contents=results))
-            messages.extend(response.messages)
-
-        # Failsafe: give up on tools, ask model for plain answer
-        chat_options.tool_choice = "none"
-        self._prepare_tools_and_tool_choice(chat_options=chat_options)
+        _prepare_tools_and_tool_choice(chat_options=chat_options)
         async for update in self._inner_get_streaming_response(messages=messages, chat_options=chat_options, **kwargs):
             yield update
-
-    async def _auto_invoke_function(
-        self,
-        function_call_content: FunctionCallContent,
-        custom_args: dict[str, Any] | None = None,
-        *,
-        sequence_index: int | None = None,
-        request_index: int | None = None,
-    ) -> AIContents:
-        """Invoke a function call requested by the agent, applying filters that are defined in the agent."""
-        tool: AIFunction[BaseModel, Any] | None = self._tool_map.get(function_call_content.name)
-        if tool is None:
-            raise KeyError(f"No tool or function named '{function_call_content.name}'")
-
-        parsed_args: dict[str, Any] = dict(function_call_content.parse_arguments() or {})
-
-        # Merge with user-supplied args; right-hand side dominates, so parsed args win on conflicts.
-        merged_args: dict[str, Any] = (custom_args or {}) | parsed_args
-        args = tool.input_model.model_validate(merged_args)
-        exception = None
-        try:
-            function_result = await tool.invoke(arguments=args)
-        except Exception as ex:
-            exception = ex
-            function_result = None
-        return FunctionResultContent(
-            call_id=function_call_content.call_id,
-            exception=exception,
-            result=function_result,
-        )
-
-    def _prepare_tools_and_tool_choice(
-        self,
-        chat_options: ChatOptions,
-    ) -> None:
-        chat_tool_mode: ChatToolMode | None = chat_options.tool_choice  # type: ignore
-        if chat_tool_mode is None or chat_tool_mode == ChatToolMode.NONE:
-            chat_options.tools = None
-            chat_options.tool_choice = ChatToolMode.NONE.mode
-            return
-        chat_options.tools = [
-            (self.tool_to_json_schema_spec(t) if isinstance(t, AITool) else t) for t in chat_options.tools or []
-        ]
-        chat_options.tool_choice = chat_tool_mode.mode
-
-    @staticmethod
-    def tool_to_json_schema_spec(tool: AITool) -> dict[str, Any]:
-        """Convert a AITool to the JSON Schema function specification format."""
-        return {
-            "type": "function",
-            "function": {
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": tool.parameters(),
-            },
-        }
 
 
 # region: Embedding Client

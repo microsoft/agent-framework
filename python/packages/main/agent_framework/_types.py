@@ -9,11 +9,11 @@ from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, overload
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from agent_framework.exceptions import AgentFrameworkException
+
 from ._pydantic import AFBaseModel
 from ._tools import AITool
 
-if sys.version_info >= (3, 12):
-    pass  # pragma: no cover
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
 else:
@@ -171,7 +171,16 @@ def _process_update(response: "ChatResponse", update: "ChatResponseUpdate") -> N
     if update.message_id:
         message.message_id = update.message_id
     for content in update.contents:
-        if isinstance(content, UsageContent):
+        if (
+            isinstance(content, FunctionCallContent)
+            and len(message.contents) > 0
+            and isinstance(message.contents[-1], FunctionCallContent)
+        ):
+            try:
+                message.contents[-1] += content
+            except AgentFrameworkException:
+                message.contents.append(content)
+        elif isinstance(content, UsageContent):
             if response.usage_details is None:
                 response.usage_details = UsageDetails()
             response.usage_details += content.details
@@ -629,6 +638,30 @@ class FunctionCallContent(AIContent):
             except (json.JSONDecodeError, TypeError):
                 return {"raw": self.arguments}
         return self.arguments
+
+    def __add__(self, other: "FunctionCallContent") -> "FunctionCallContent":
+        if not isinstance(other, FunctionCallContent):
+            raise TypeError("Incompatible type")
+        if self.call_id != other.call_id:
+            raise AgentFrameworkException("Incompatible function call contents")
+        if not self.arguments:
+            arguments = other.arguments
+        elif not other.arguments:
+            arguments = self.arguments
+        elif isinstance(self.arguments, str) and isinstance(other.arguments, str):
+            arguments = self.arguments + other.arguments
+        elif isinstance(self.arguments, dict) and isinstance(other.arguments, dict):
+            arguments = {**self.arguments, **other.arguments}
+        else:
+            raise TypeError("Incompatible argument types")
+        return FunctionCallContent(
+            call_id=self.call_id,
+            name=self.name,
+            arguments=arguments,
+            exception=self.exception or other.exception,
+            additional_properties={**(self.additional_properties or {}), **(other.additional_properties or {})},
+            raw_representation=self.raw_representation or other.raw_representation,
+        )
 
 
 class FunctionResultContent(AIContent):

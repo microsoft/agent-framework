@@ -36,6 +36,8 @@ _IMPORTS = {
     "ChatToolMode": "._types",
     "ChatClient": "._clients",
     "ChatClientBase": "._clients",
+    "tool_call_enabled": "._clients",
+    "streaming_tool_call_enabled": "._clients",
     "EmbeddingGenerator": "._clients",
     "InputGuardrail": ".guard_rails",
     "OutputGuardrail": ".guard_rails",

@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 from collections.abc import AsyncIterable, MutableSequence, Sequence
 from typing import Any
 
@@ -20,6 +21,8 @@ from agent_framework import (
     GeneratedEmbeddings,
     TextContent,
     ai_function,
+    streaming_tool_call_enabled,
+    tool_call_enabled,
 )
 
 
@@ -48,10 +51,10 @@ class MockChatClient:
 class MockChatClientBase(ChatClientBase):
     """Mock implementation of the ChatClientBase."""
 
-    SUPPORTS_FUNCTION_CALLING: bool = True
     run_responses: list[ChatResponse] = Field(default_factory=list)
-    streaming_responses: list[ChatResponseUpdate] = Field(default_factory=list)
+    streaming_responses: list[list[ChatResponseUpdate]] = Field(default_factory=list)
 
+    @tool_call_enabled
     async def _inner_get_response(
         self,
         messages: MutableSequence[ChatMessage],
@@ -72,18 +75,20 @@ class MockChatClientBase(ChatClientBase):
             return ChatResponse(messages=ChatMessage(role="assistant", text=f"test response - {messages[0].text}"))
         return self.run_responses.pop(0)
 
+    @streaming_tool_call_enabled
     async def _inner_get_streaming_response(
         self,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions,
-        function_invoke_attempt: int = 0,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         if not self.streaming_responses:
             yield ChatResponseUpdate(text=f"update - {messages[0].text}", role="assistant")
             return
-        for update in self.streaming_responses.pop(0):
+        response = self.streaming_responses.pop(0)
+        for update in response:
             yield update
+        await asyncio.sleep(0)
 
 
 class ImplementedEmbeddingGenerator:
@@ -193,3 +198,36 @@ async def test_base_client_with_function_calling(chat_client_base: MockChatClien
     assert response.messages[1].contents[0].result == "Processed value1"
     assert response.messages[2].role == ChatRole.ASSISTANT
     assert response.messages[2].text == "done"
+
+
+async def test_base_client_with_streaming_function_calling(chat_client_base: MockChatClientBase):
+    exec_counter = 0
+
+    @ai_function(name="test_function")
+    def ai_func(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}"
+
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                contents=[FunctionCallContent(call_id="1", name="test_function", arguments='{"arg1":')],
+                role="assistant",
+            ),
+            ChatResponseUpdate(
+                contents=[FunctionCallContent(call_id="1", name="test_function", arguments='"value1"}')],
+                role="assistant",
+            ),
+        ],
+        [
+            ChatResponseUpdate(
+                contents=[TextContent(text="Processed value1")],
+                role="assistant",
+            )
+        ],
+    ]
+    updates = []
+    async for update in chat_client_base.get_streaming_response("hello", tool_choice="auto", tools=[ai_func]):
+        updates.append(update)
+    assert exec_counter == 1
