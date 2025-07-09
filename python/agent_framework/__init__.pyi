@@ -4,7 +4,6 @@ from . import __version__  # type: ignore[attr-defined]
 from ._agents import Agent, AgentThread
 from ._clients import ChatClient, EmbeddingGenerator
 from ._logging import get_logger
-
 from ._pydantic import AFBaseModel, AFBaseSettings
 from ._tools import AITool, ai_function
 from ._types import (

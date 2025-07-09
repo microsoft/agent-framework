@@ -754,6 +754,7 @@ class ChatRole(AFBaseModel):
         """Returns the string representation of the role."""
         return f"ChatRole(value={self.value!r})"
 
+
 # Note: ClassVar is used to indicate that these are class-level constants, not instance attributes.
 # The type: ignore[assignment] is used to suppress the type checker warning about assigning to a ClassVar,
 # it gets assigned immediately after the class definition.

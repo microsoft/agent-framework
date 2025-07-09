@@ -97,7 +97,7 @@ class OpenAIHandler(AFBaseModel, ABC):
             else:
                 response = await self.client.completions.create(**options_dict) # type: ignore
 
-            assert isinstance(response, (ChatCompletion, Completion, AsyncStream))
+            assert isinstance(response, (ChatCompletion, Completion, AsyncStream)) # nosec
             self.store_usage(response) # type: ignore
             return response # type: ignore
         except BadRequestError as ex:

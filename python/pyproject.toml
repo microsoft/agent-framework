@@ -133,7 +133,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 # Ignore all directories named `tests` and `samples`.
-"tests/**" = ["D", "INP", "TD", "ERA001", "RUF", "S"]
+"**/tests/**" = ["D", "INP", "TD", "ERA001", "RUF", "S"]
 "samples/**" = ["D", "INP", "ERA001", "RUF", "S"]
 "*.ipynb" = ["CPY", "E501"]
 

@@ -58,7 +58,7 @@ class OpenAIChatCompletionBase(OpenAIHandler):
         **kwargs: Any,
     ) -> ChatResponse:
         chat_options: ChatOptions = kwargs.get("chat_options", ChatOptions())
-        assert isinstance(chat_options, ChatOptions)
+        assert isinstance(chat_options, ChatOptions) # nosec
         chat_options.additional_properties.update({"stream": False})
         chat_options.ai_model_id = chat_options.ai_model_id or self.ai_model_id
 
@@ -76,7 +76,7 @@ class OpenAIChatCompletionBase(OpenAIHandler):
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         chat_options: ChatOptions = kwargs.get("chat_options", ChatOptions())
-        assert isinstance(chat_options, ChatOptions)
+        assert isinstance(chat_options, ChatOptions) # nosec
         chat_options.additional_properties.update({"stream": True, "stream_options": {"include_usage": True}})
         chat_options.ai_model_id = chat_options.ai_model_id or self.ai_model_id
 
