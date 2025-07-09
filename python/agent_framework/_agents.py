@@ -90,7 +90,7 @@ class Agent(Protocol):
 
     async def run(
         self,
-        messages: str | ChatMessage | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | list[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -119,7 +119,7 @@ class Agent(Protocol):
 
     def run_stream(
         self,
-        messages: str | ChatMessage | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | list[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -238,7 +238,7 @@ class ChatClientAgent(AgentBase):
 
     async def run(
         self,
-        messages: str | ChatMessage | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | list[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -263,7 +263,7 @@ class ChatClientAgent(AgentBase):
 
     async def run_stream(
         self,
-        messages: str | ChatMessage | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | list[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
