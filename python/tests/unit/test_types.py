@@ -1,11 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import MutableSequence
+from typing import cast
 
 from pydantic import BaseModel, ValidationError
-from pytest import mark, raises
+from pytest import fixture, mark, raises
 
 from agent_framework import (
+    AgentRunResponse,
+    AgentRunResponseUpdate,
     AIContent,
     AIContents,
     ChatMessage,
@@ -480,3 +483,112 @@ def test_generated_embeddings():
     # Ensure the instance is of type GeneratedEmbeddings
     assert isinstance(embeddings, GeneratedEmbeddings)
     assert issubclass(GeneratedEmbeddings, MutableSequence)
+
+
+# region Agent Response Fixtures
+
+
+@fixture
+def chat_message() -> ChatMessage:
+    return ChatMessage(role=ChatRole.USER, text="Hello")
+
+
+@fixture
+def text_content() -> TextContent:
+    return TextContent(text="Test content")
+
+
+@fixture
+def agent_run_response(chat_message: ChatMessage) -> AgentRunResponse:
+    return AgentRunResponse(messages=chat_message)
+
+
+@fixture
+def agent_run_response_update(text_content: TextContent) -> AgentRunResponseUpdate:
+    return AgentRunResponseUpdate(role=ChatRole.ASSISTANT, contents=[text_content])
+
+
+# region AgentRunResponse
+
+
+def test_agent_run_response_init_single_message(chat_message: ChatMessage) -> None:
+    response = AgentRunResponse(messages=chat_message)
+    assert response.messages == [chat_message]
+
+
+def test_agent_run_response_init_list_messages(chat_message: ChatMessage) -> None:
+    response = AgentRunResponse(messages=[chat_message, chat_message])
+    assert len(response.messages) == 2
+    assert response.messages[0] == chat_message
+
+
+def test_agent_run_response_init_none_messages() -> None:
+    response = AgentRunResponse()
+    assert response.messages == []
+
+
+def test_agent_run_response_text_property(chat_message: ChatMessage) -> None:
+    response = AgentRunResponse(messages=[chat_message, chat_message])
+    assert response.text == "HelloHello"
+
+
+def test_agent_run_response_text_property_empty() -> None:
+    response = AgentRunResponse()
+    assert response.text == ""
+
+
+def test_agent_run_response_from_updates(agent_run_response_update: AgentRunResponseUpdate) -> None:
+    updates = [agent_run_response_update, agent_run_response_update]
+    response = AgentRunResponse.from_agent_run_response_updates(updates)
+    assert len(response.messages) > 0
+    assert response.text == "Test content\nTest content"
+
+
+def test_agent_run_response_str_method(chat_message: ChatMessage) -> None:
+    response = AgentRunResponse(messages=chat_message)
+    assert str(response) == "Hello"
+
+
+# region AgentRunResponseUpdate
+
+
+def test_agent_run_response_update_init_string_content() -> None:
+    update = AgentRunResponseUpdate(contents="Test")
+    assert len(update.contents) == 1
+    assert cast(TextContent, update.contents[0]).text == "Test"
+
+
+def test_agent_run_response_update_init_content_list(text_content: TextContent) -> None:
+    update = AgentRunResponseUpdate(contents=[text_content, text_content])
+    assert len(update.contents) == 2
+    assert update.contents[0] == text_content
+
+
+def test_agent_run_response_update_init_none_content() -> None:
+    update = AgentRunResponseUpdate()
+    assert update.contents == []
+
+
+def test_agent_run_response_update_author_name_cleaning() -> None:
+    update = AgentRunResponseUpdate(author_name="   ")
+    assert update.author_name is None
+
+
+def test_agent_run_response_update_author_name_valid() -> None:
+    update = AgentRunResponseUpdate(author_name="Valid Name")
+    assert update.author_name == "Valid Name"
+
+
+def test_agent_run_response_update_text_property(text_content: TextContent) -> None:
+    update = AgentRunResponseUpdate(contents=[text_content, text_content])
+    assert update.text == "Test contentTest content"
+
+
+def test_agent_run_response_update_text_property_empty() -> None:
+    update = AgentRunResponseUpdate()
+    assert update.text == ""
+
+
+def test_agent_run_response_update_str_method(text_content: TextContent) -> None:
+    update = AgentRunResponseUpdate(contents=[text_content])
+    assert str(update) == "Test content"
