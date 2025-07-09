@@ -39,7 +39,7 @@ jobs:
       - name: Test with pytest
         env:
           PYTHON_GIL: ${{ matrix.gil }}
-        run: uv run poe test --junitxml=pytest.xml
+        run: uv run poe test -- --junitxml=pytest.xml
       - name: Surface failing tests
         uses: pmeier/pytest-results-action@v0.7.2
         with:
