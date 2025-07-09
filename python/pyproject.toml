@@ -185,6 +185,11 @@ install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessar
 format.ref = "fmt"
 check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint", "samples-code-check"]
 pre-commit-check = ["fmt", "lint", "pyright", "markdown-code-lint", "samples-code-check"]
+test-extensions = "python run_tasks_in_extensions_if_exists.py test"
+test-main = "pytest --cov=agent_framework --cov-report=term-missing:skip-covered tests/unit"
+
+[tool.poe]
+executor.type = "uv"
 
 [tool.poe.tasks.fmt]
 sequence = [
@@ -206,10 +211,11 @@ sequence = [
     { cmd = "python run_tasks_in_extensions_if_exists.py mypy" },
     { cmd = "mypy --config-file pyproject.toml agent_framework" }
 ]
+
 [tool.poe.tasks.test]
 sequence = [
-    { cmd = "python run_tasks_in_extensions_if_exists.py test" },
-    { cmd = "pytest --cov=agent_framework --cov-report=term-missing:skip-covered tests/unit/" }
+    {ref = "test-main"},
+    {ref = "test-extensions"}
 ]
 args = []
 [tool.poe.tasks.build]
