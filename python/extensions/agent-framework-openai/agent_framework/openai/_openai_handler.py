@@ -7,7 +7,7 @@ from typing import Annotated, Any, Union
 from openai import AsyncOpenAI, AsyncStream, BadRequestError
 from openai import _legacy_response # type: ignore
 from openai.lib._parsing._completions import type_to_response_format_param
-from openai.types import Completion, CreateEmbeddingResponse
+from openai.types import Completion
 from openai.types.audio import Transcription
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai.types.images_response import ImagesResponse
@@ -52,9 +52,6 @@ class OpenAIHandler(AFBaseModel, ABC):
     client: AsyncOpenAI
     ai_model_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     ai_model_type: OpenAIModelTypes = OpenAIModelTypes.CHAT
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    total_tokens: int = 0
 
     async def _send_request(self, options: OPTION_TYPE, messages: list[dict[str, Any]] | None = None) -> RESPONSE_TYPE:
         """Send a request to the OpenAI API."""
@@ -98,7 +95,6 @@ class OpenAIHandler(AFBaseModel, ABC):
                 response = await self.client.completions.create(**options_dict) # type: ignore
 
             assert isinstance(response, (ChatCompletion, Completion, AsyncStream)) # nosec
-            self.store_usage(response) # type: ignore
             return response # type: ignore
         except BadRequestError as ex:
             if ex.code == "content_filter":
@@ -176,23 +172,3 @@ class OpenAIHandler(AFBaseModel, ABC):
         response_format = getattr(chat_options, "response_format", None)
         if response_format and isinstance(response_format, type) and issubclass(response_format, BaseModel):
             options_dict["response_format"] = type_to_response_format_param(response_format)
-
-    def store_usage(
-        self,
-        response: ChatCompletion
-        | Completion
-        | AsyncStream[ChatCompletionChunk]
-        | AsyncStream[Completion]
-        | CreateEmbeddingResponse,
-    ):
-        """Store the usage information from the response."""
-        if isinstance(response, (ChatCompletion, Completion)) and response.usage:
-            logger.info(f"OpenAI usage: {response.usage}")
-            self.prompt_tokens += response.usage.prompt_tokens
-            self.total_tokens += response.usage.total_tokens
-            if hasattr(response.usage, "completion_tokens"):
-                self.completion_tokens += response.usage.completion_tokens
-        elif isinstance(response, CreateEmbeddingResponse) and response.usage:
-            logger.info(f"OpenAI embedding usage: {response.usage}")
-            self.prompt_tokens += response.usage.prompt_tokens
-            self.total_tokens += response.usage.total_tokens
