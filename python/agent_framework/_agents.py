@@ -82,11 +82,6 @@ class Agent(Protocol):
         """Returns the description of the agent."""
         ...
 
-    @property
-    def instructions(self) -> str | None:
-        """Returns the instructions for the agent."""
-        ...
-
     async def run(
         self,
         messages: str | ChatMessage | list[ChatMessage] | None = None,

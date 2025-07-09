@@ -29,7 +29,6 @@ class MockAgent(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     name: str | None = None
     description: str | None = None
-    instructions: str | None = None
 
     async def run(
         self,
