@@ -14,6 +14,11 @@ on:
       - '.github/workflows/dotnet-build-and-test.yml'
   merge_group:
     branches: ["main"]
+  push:
+    branches: ["main"]
+    paths:
+      - dotnet/**
+      - '.github/workflows/dotnet-build-and-test.yml'
 
 env:
   COVERAGE_THRESHOLD: 80
