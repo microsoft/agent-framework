@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI.Agents.Runtime;
@@ -84,7 +85,10 @@ public static class OrchestrationHandoffsExtensions
 
         foreach (Agent target in targets)
         {
-            agentHandoffs[target.Name ?? target.Id] = target.Description ?? string.Empty;
+            agentHandoffs[target.Name ?? target.Id] =
+                !string.IsNullOrWhiteSpace(target.Description) ?
+                target.Description! :
+                throw new InvalidOperationException($"The provided target agent with Id '{target.Id}' and name '{target.Name}' has no description, and no handoff description has been provided. At least one of these are required to register a handoff.");
         }
 
         return handoffs;

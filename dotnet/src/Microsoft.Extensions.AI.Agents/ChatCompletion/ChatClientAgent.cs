@@ -40,6 +40,7 @@ public sealed class ChatClientAgent : Agent
         this.ChatClient = chatClient.AsAgentInvokingChatClient();
 
         this._logger = (loggerFactory ?? chatClient.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance).CreateLogger<ChatClientAgent>();
+        this.Instructions = this._agentOptions?.Instructions;
     }
 
     /// <summary>
@@ -56,8 +57,10 @@ public sealed class ChatClientAgent : Agent
     /// <inheritdoc/>
     public override string? Description => this._agentOptions?.Description;
 
-    /// <inheritdoc/>
-    public override string? Instructions => this._agentOptions?.Instructions;
+    /// <summary>
+    /// Gets the instructions for the agent (optional).
+    /// </summary>
+    public string? Instructions { get; }
 
     /// <summary>
     /// Gets of the default <see cref="Microsoft.Extensions.AI.ChatOptions"/> used by the agent.

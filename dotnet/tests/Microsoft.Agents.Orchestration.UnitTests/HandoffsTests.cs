@@ -201,23 +201,19 @@ public class HandoffsTests
     }
 
     [Fact]
-    public void AddWithTargetWithNoDescriptionUsesEmptyString()
+    public void AddWithAgentWithNoDescriptionThrows()
     {
         // Arrange
         OrchestrationHandoffs handoffs = new("source");
 
         Agent sourceAgent = CreateAgent("source", "Source Agent");
-        Agent targetAgent = CreateAgent("target", null);
+        Agent targetAgent1 = CreateAgent("target1", name: "target 1");
 
         // Act
-        handoffs.Add(sourceAgent, targetAgent);
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => handoffs.Add(sourceAgent, targetAgent1));
 
         // Assert
-        Assert.Single(handoffs);
-        Assert.Equal("source", handoffs.FirstAgentName);
-        AgentHandoffs sourceHandoffs = handoffs["source"];
-        Assert.Single(sourceHandoffs);
-        Assert.Equal(string.Empty, sourceHandoffs["target"]);
+        Assert.Equal("The provided target agent with Id 'target1' and name 'target 1' has no description, and no handoff description has been provided. At least one of these are required to register a handoff.", ex.Message);
     }
 
     private static ChatClientAgent CreateAgent(string id, string? description = null, string? name = null)

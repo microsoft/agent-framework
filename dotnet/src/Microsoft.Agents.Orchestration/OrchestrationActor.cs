@@ -15,7 +15,7 @@ public abstract class OrchestrationActor : BaseAgent
     /// <summary>
     /// Initializes a new instance of the <see cref="OrchestrationActor"/> class.
     /// </summary>
-    protected OrchestrationActor(AgentId id, IAgentRuntime runtime, OrchestrationContext context, string description, ILogger? logger = null)
+    protected OrchestrationActor(AgentId id, IAgentRuntime runtime, OrchestrationContext context, string? description, ILogger? logger = null)
         : base(id, runtime, description, logger)
     {
         this.Context = context;

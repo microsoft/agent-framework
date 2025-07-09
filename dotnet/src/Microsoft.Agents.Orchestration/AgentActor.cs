@@ -30,7 +30,7 @@ public abstract class AgentActor : OrchestrationActor
             id,
             runtime,
             context,
-            VerifyDescription(agent),
+            agent.Description,
             logger)
     {
         this.Agent = agent;
@@ -161,10 +161,5 @@ public abstract class AgentActor : OrchestrationActor
                 await this.Context.StreamingResponseCallback.Invoke(streamedResponse, isFinal).ConfigureAwait(false);
             }
         }
-    }
-
-    private static string VerifyDescription(Agent agent)
-    {
-        return agent.Description ?? throw new ArgumentException($"Missing agent description: {agent.Name ?? agent.Id}", nameof(agent));
     }
 }

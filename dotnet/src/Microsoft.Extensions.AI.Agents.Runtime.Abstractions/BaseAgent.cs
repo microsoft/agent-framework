@@ -34,7 +34,7 @@ public abstract class BaseAgent : IHostableAgent
     /// <summary>
     /// Gets the description of the agent.
     /// </summary>
-    protected string Description { get; }
+    protected string? Description { get; }
 
     /// <summary>
     /// Gets the unique identifier of the agent.
@@ -56,7 +56,7 @@ public abstract class BaseAgent : IHostableAgent
     protected BaseAgent(
         AgentId id,
         IAgentRuntime runtime,
-        string description,
+        string? description,
         ILogger? logger = null)
     {
         this.Logger = logger ?? NullLogger.Instance;
