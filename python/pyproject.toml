@@ -211,6 +211,7 @@ sequence = [
     { cmd = "python run_tasks_in_extensions_if_exists.py test" },
     { cmd = "pytest --cov=agent_framework --cov-report=term-missing:skip-covered tests/unit/" }
 ]
+args = []
 [tool.poe.tasks.build]
 sequence = [
     { cmd = "python run_tasks_in_extensions_if_exists.py build" },
