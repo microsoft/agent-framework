@@ -50,8 +50,6 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
         {
             ChatClientProviders.OpenAIResponses_InMemoryMessageThread => new() { RawRepresentationFactory = static (_) => new ResponseCreationOptions() { StoredOutputEnabled = false } },
             ChatClientProviders.OpenAIResponses_ConversationIdThread => new() { RawRepresentationFactory = static (_) => new ResponseCreationOptions() { StoredOutputEnabled = true } },
-            ChatClientProviders.AzureAIAgentsPersistent => GetAzureAIPersistentChatOptions(),
-            ChatClientProviders.OpenAIAssistant => GetOpenAIAssistantChatOptions(),
             _ => null
         };
 
@@ -141,56 +139,6 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
         }
 
         return new NewOpenAIAssistantChatClient(assistantClient, options.Id, null);
-    }
-
-    #endregion
-
-    #region Private GetChatOptions
-    private ChatOptions GetAzureAIPersistentChatOptions()
-    {
-        var chatOptions = new ChatOptions();
-
-        return chatOptions;
-    }
-
-    private ChatOptions GetOpenAIAssistantChatOptions()
-    {
-        var chatOptions = new ChatOptions();
-
-        /*chatOptions.RawRepresentationFactory = _ =>
-        {
-            // File references can be added on message attachment level only and not on code interpreter tool definition level.
-            // Message attachment content should be non-empty.
-            var threadInitializationMessage = new ThreadInitializationMessage(OpenAI.Assistants.MessageRole.User, [OpenAI.Assistants.MessageContent.FromText("attachments")]);
-            var toolDefinitions = new List<OpenAI.Assistants.ToolDefinition>();
-            var runCreationOptions = new RunCreationOptions();
-
-            if (chatOptions.Tools is { Count: > 0 })
-            {
-                foreach (var tool in chatOptions.Tools)
-                {
-                    if (tool is OpenAI.Assistants.HostedFileCodeInterpreterTool codeInterpreterTool)
-                    {
-                        var codeInterpreterToolDefinition = new OpenAI.Assistants.CodeInterpreterToolDefinition();
-                        toolDefinitions.Add(codeInterpreterToolDefinition);
-
-                        if (codeInterpreterTool.FileIds is { Count: > 0 })
-                        {
-                            foreach (var fileId in codeInterpreterTool.FileIds)
-                            {
-                                threadInitializationMessage.Attachments.Add(new(fileId, [codeInterpreterToolDefinition]));
-                            }
-                        }
-                    }
-                }
-
-                runCreationOptions.AdditionalMessages.Add(threadInitializationMessage);
-            }
-
-            return runCreationOptions;
-        };*/
-
-        return chatOptions;
     }
 
     #endregion
