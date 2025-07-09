@@ -39,7 +39,6 @@ jobs:
       - name: Test with pytest
         run: uv run poe test --junitxml=pytest.xml
       - name: Surface failing tests
-        if: always()
         uses: pmeier/pytest-results-action@v0.7.2
         with:
           path: python/pytest.xml
