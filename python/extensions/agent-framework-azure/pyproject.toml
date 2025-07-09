@@ -50,6 +50,7 @@ agent-framework-openai = { workspace = true }
 
 [tool.uv.build-backend]
 module-name = "agent_framework.azure"
+module-root = ""
 
 [build-system]
 requires = ["uv_build>=0.7.19,<0.8.0"]
