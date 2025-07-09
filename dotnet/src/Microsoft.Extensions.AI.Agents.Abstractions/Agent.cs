@@ -22,7 +22,7 @@ public abstract class Agent
     /// </value>
     public virtual string Id { get; } = Guid.NewGuid().ToString();
 
-    /// <summary>AgentActor
+    /// <summary>
     /// Gets the name of the agent (optional).
     /// </summary>
     public virtual string? Name { get; }
