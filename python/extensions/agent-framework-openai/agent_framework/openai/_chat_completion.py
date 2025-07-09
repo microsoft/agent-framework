@@ -229,7 +229,13 @@ class OpenAIChatCompletionBase(OpenAIHandler):
             chat_history = [chat_history]
         return [
             {
-                **message.model_dump()            }
+                "role": message.role.value if isinstance(message.role, ChatRole) else message.role,
+                "content": [
+                    content.model_dump()
+                    for content in message.contents
+                ],
+                "metadata": message.additional_properties or {},
+            }
             for message in chat_history
         ]
         # return [
