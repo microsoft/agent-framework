@@ -50,7 +50,7 @@ class ContentFilterCodes(Enum):
 
 
 @dataclass
-class ContentFilterAIException(ServiceContentFilterException):
+class OpenAIContentFilterException(ServiceContentFilterException):
     """AI exception for an error from Azure OpenAI's content filter."""
 
     # The parameter that caused the error.
