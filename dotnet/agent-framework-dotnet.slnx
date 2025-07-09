@@ -107,17 +107,29 @@
     <File Path="src/LegacySupport/TrimAttributes/RequiresUnreferencedCodeAttribute.cs" />
     <File Path="src/LegacySupport/TrimAttributes/UnconditionalSuppressMessageAttribute.cs" />
   </Folder>
-  <Project Path="src/Microsoft.Agents.Orchestration/Microsoft.Agents.Orchestration.csproj" />
-  <Project Path="src/Microsoft.Extensions.AI.Agents.Abstractions/Microsoft.Extensions.AI.Agents.Abstractions.csproj" />
-  <Project Path="src/Microsoft.Extensions.AI.Agents/Microsoft.Extensions.AI.Agents.csproj" />
-  <Project Path="src/Microsoft.Extensions.AI.Agents.AzureAI/Microsoft.Extensions.AI.Agents.AzureAI.csproj" />
-  <Project Path="tests/Microsoft.Extensions.AI.Agents.Abstractions.UnitTests/Microsoft.Extensions.AI.Agents.Abstractions.UnitTests.csproj">
-    <BuildType Solution="Publish|*" Project="Debug" />
-  </Project>
-  <Project Path="tests/Microsoft.Agents.Orchestration.UnitTests/Microsoft.Agents.Orchestration.UnitTests.csproj">
-    <BuildType Solution="Publish|*" Project="Debug" />
-  </Project>
-  <Project Path="tests/Microsoft.Extensions.AI.Agents.UnitTests/Microsoft.Extensions.AI.Agents.UnitTests.csproj">
-    <BuildType Solution="Publish|*" Project="Debug" />
-  </Project>
+  <Folder Name="/src/">
+    <Project Path="src/Microsoft.Agents.Orchestration/Microsoft.Agents.Orchestration.csproj" />
+    <Project Path="src/Microsoft.Extensions.AI.Agents.Abstractions/Microsoft.Extensions.AI.Agents.Abstractions.csproj" />
+    <Project Path="src/Microsoft.Extensions.AI.Agents.AzureAI/Microsoft.Extensions.AI.Agents.AzureAI.csproj" />
+    <Project Path="src/Microsoft.Extensions.AI.Agents.Runtime.Abstractions/Microsoft.Extensions.AI.Agents.Runtime.Abstractions.csproj" />
+    <Project Path="src/Microsoft.Extensions.AI.Agents.Runtime.InProcess/Microsoft.Extensions.AI.Agents.Runtime.InProcess.csproj" />
+    <Project Path="src/Microsoft.Extensions.AI.Agents/Microsoft.Extensions.AI.Agents.csproj" />
+  </Folder>
+  <Folder Name="/UnitTests/">
+    <Project Path="tests/Microsoft.Agents.Orchestration.UnitTests/Microsoft.Agents.Orchestration.UnitTests.csproj">
+      <BuildType Solution="Publish|*" Project="Debug" />
+    </Project>
+    <Project Path="tests/Microsoft.Extensions.AI.Agents.Abstractions.UnitTests/Microsoft.Extensions.AI.Agents.Abstractions.UnitTests.csproj">
+      <BuildType Solution="Publish|*" Project="Debug" />
+    </Project>
+    <Project Path="tests/Microsoft.Extensions.AI.Agents.Runtime.Abstractions.UnitTests/Microsoft.Extensions.AI.Agents.Runtime.Abstractions.UnitTests.csproj">
+      <BuildType Solution="Publish|*" Project="Debug" />
+    </Project>
+    <Project Path="tests/Microsoft.Extensions.AI.Agents.Runtime.InProcess.UnitTests/Microsoft.Extensions.AI.Agents.Runtime.InProcess.UnitTests.csproj">
+      <BuildType Solution="Publish|*" Project="Debug" />
+    </Project>
+    <Project Path="tests/Microsoft.Extensions.AI.Agents.UnitTests/Microsoft.Extensions.AI.Agents.UnitTests.csproj">
+      <BuildType Solution="Publish|*" Project="Debug" />
+    </Project>
+  </Folder>
 </Solution>

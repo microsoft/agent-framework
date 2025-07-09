@@ -30,7 +30,7 @@ public abstract class ChatClientAgentRunStreamingTests<TAgentFixture>(Func<TAgen
         var chatResponses = await agent.RunStreamingAsync(thread).ToListAsync();
 
         // Assert
-        var chatResponseText = string.Join("", chatResponses.Select(x => x.Text));
+        var chatResponseText = string.Concat(chatResponses.Select(x => x.Text));
         Assert.Contains("Computer says no", chatResponseText, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -63,7 +63,7 @@ public abstract class ChatClientAgentRunStreamingTests<TAgentFixture>(Func<TAgen
                 thread).ToListAsync();
 
             // Assert
-            var chatResponseText = string.Join("", chatResponses.Select(x => x.Text));
+            var chatResponseText = string.Concat(chatResponses.Select(x => x.Text));
             Assert.Contains(questionAndAnswer.ExpectedAnswer, chatResponseText, StringComparison.OrdinalIgnoreCase);
         }
     }

@@ -2,8 +2,8 @@
 
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Agents.Orchestration.Concurrent;
+using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
-using Microsoft.SemanticKernel.Agents.Runtime;
 
 namespace Microsoft.Agents.Orchestration;
 
@@ -18,7 +18,6 @@ namespace Microsoft.Agents.Orchestration;
 internal static partial class ConcurrentOrchestrationLogMessages
 {
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Trace,
         Message = "REQUEST Concurrent agent [{AgentId}]")]
     public static partial void LogConcurrentAgentInvoke(
@@ -26,7 +25,6 @@ internal static partial class ConcurrentOrchestrationLogMessages
         AgentId agentId);
 
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Trace,
         Message = "RESULT Concurrent agent [{AgentId}]: {Message}")]
     public static partial void LogConcurrentAgentResult(
@@ -38,7 +36,6 @@ internal static partial class ConcurrentOrchestrationLogMessages
     /// Logs result capture.
     /// </summary>
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Information,
         Message = "COLLECT Concurrent result [{AgentId}]: #{ResultCount} / {ExpectedCount}")]
     public static partial void LogConcurrentResultCapture(

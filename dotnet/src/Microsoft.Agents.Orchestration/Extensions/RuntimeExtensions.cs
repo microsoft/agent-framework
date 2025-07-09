@@ -3,8 +3,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.SemanticKernel.Agents.Runtime;
-using Microsoft.SemanticKernel.Agents.Runtime.Core;
+using Microsoft.Extensions.AI.Agents.Runtime;
 
 namespace Microsoft.Agents.Orchestration.Extensions;
 

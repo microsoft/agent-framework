@@ -2,7 +2,7 @@
 
 using System.Collections.Generic;
 using Microsoft.Extensions.AI.Agents;
-using Microsoft.SemanticKernel.Agents.Runtime;
+using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Orchestration.Handoff;
