@@ -1,28 +1,19 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, Awaitable, Callable
-from typing import Any, Protocol, TypeVar, runtime_checkable
+from abc import abstractmethod
+from collections.abc import AsyncIterable, Sequence
+from typing import Any, Protocol, runtime_checkable
 
+from ._pydantic import AFBaseModel
 from ._types import ChatMessage, ChatResponse, ChatResponseUpdate
-
-TThreadType = TypeVar("TThreadType", bound="AgentThread")
-
 
 # region AgentThread
 
 
-class AgentThread(ABC):
+class AgentThread(AFBaseModel):
     """Base class for agent threads."""
 
-    def __init__(self) -> None:
-        """Initialize the agent thread."""
-        self._id: str | None = None  # type: ignore
-
-    @property
-    def id(self) -> str | None:
-        """Returns the ID of the current thread (if any)."""
-        return self._id
+    id: str | None = None
 
     async def create(self) -> str | None:
         """Starts the thread and returns the thread ID."""
@@ -31,42 +22,42 @@ class AgentThread(ABC):
             return self.id
 
         # Otherwise, create the thread.
-        self._id = await self._create()
+        self.id = await self._create()
         return self.id
 
     async def delete(self) -> None:
         """Ends the current thread."""
         await self._delete()
-        self._id = None
+        self.id = None
 
     async def on_new_message(
         self,
-        new_message: ChatMessage,
+        new_messages: ChatMessage | Sequence[ChatMessage],
     ) -> None:
         """Invoked when a new message has been contributed to the chat by any participant."""
         # If the thread is not created yet, create it.
         if self.id is None:
             await self.create()
 
-        await self._on_new_message(new_message)
+        await self._on_new_message(new_messages=new_messages)
 
     @abstractmethod
     async def _create(self) -> str:
         """Starts the thread and returns the thread ID."""
-        raise NotImplementedError
+        ...
 
     @abstractmethod
     async def _delete(self) -> None:
         """Ends the current thread."""
-        raise NotImplementedError
+        ...
 
     @abstractmethod
     async def _on_new_message(
         self,
-        new_message: ChatMessage,
+        new_messages: ChatMessage | Sequence[ChatMessage],
     ) -> None:
         """Invoked when a new message has been contributed to the chat by any participant."""
-        raise NotImplementedError
+        ...
 
 
 # region Agent Protocol
@@ -76,11 +67,30 @@ class AgentThread(ABC):
 class Agent(Protocol):
     """A protocol for an agent that can be invoked."""
 
+    @property
+    def id(self) -> str:
+        """Returns the ID of the agent."""
+        ...
+
+    @property
+    def name(self) -> str | None:
+        """Returns the name of the agent."""
+        ...
+
+    @property
+    def description(self) -> str | None:
+        """Returns the description of the agent."""
+        ...
+
+    @property
+    def instructions(self) -> str | None:
+        """Returns the instructions for the agent."""
+        ...
+
     async def run(
         self,
-        messages: str | ChatMessage | list[str | ChatMessage] | None = None,
+        messages: str | ChatMessage | list[ChatMessage] | None = None,
         *,
-        arguments: dict[str, Any] | None = None,
         thread: AgentThread | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
@@ -98,7 +108,6 @@ class Agent(Protocol):
 
         Args:
             messages: The message(s) to send to the agent.
-            arguments: Additional arguments to pass to the agent.
             thread: The conversation thread associated with the message(s).
             kwargs: Additional keyword arguments.
 
@@ -107,13 +116,11 @@ class Agent(Protocol):
         """
         ...
 
-    async def run_stream(
+    def run_stream(
         self,
-        messages: str | ChatMessage | list[str | ChatMessage] | None = None,
+        messages: str | ChatMessage | list[ChatMessage] | None = None,
         *,
-        arguments: dict[str, Any] | None = None,
         thread: AgentThread | None = None,
-        on_intermediate_message: Callable[[ChatMessage], Awaitable[None]] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Run the agent as a stream.
@@ -128,13 +135,14 @@ class Agent(Protocol):
 
         Args:
             messages: The message(s) to send to the agent.
-            arguments: Additional arguments to pass to the agent.
             thread: The conversation thread associated with the message(s).
-            on_intermediate_message: A callback function to handle intermediate steps of the
-                                     agent's execution as fully formed messages.
             kwargs: Additional keyword arguments.
 
         Yields:
             An agent response item.
         """
+        ...
+
+    def get_new_thread(self) -> AgentThread:
+        """Creates a new conversation thread for the agent."""
         ...

@@ -81,7 +81,7 @@ public abstract class BaseSample : TextWriter
     /// <param name="message">The text of the message to be sent. Cannot be null or empty.</param>
     protected void WriteUserMessage(string message)
     {
-        this.WriteResponseOutput(new AgentRunResponse(new ChatMessage(ChatRole.User, message)), printUsage: false);
+        this.WriteMessageOutput(new ChatMessage(ChatRole.User, message));
     }
 
     /// <summary>
@@ -102,8 +102,28 @@ public abstract class BaseSample : TextWriter
         }
 
         var message = response.Messages.Last();
+        this.WriteMessageOutput(message);
+
+        WriteUsage();
+
+        void WriteUsage()
+        {
+            if (!(printUsage ?? true) || response.Usage is null) { return; }
+
+            UsageDetails usageDetails = response.Usage;
+
+            Console.WriteLine($"  [Usage] Tokens: {usageDetails.TotalTokenCount}, Input: {usageDetails.InputTokenCount}, Output: {usageDetails.OutputTokenCount}");
+        }
+    }
+
+    /// <summary>
+    /// Writes the given chat message to the console.
+    /// </summary>
+    /// <param name="message">The specified message</param>
+    protected void WriteMessageOutput(ChatMessage message)
+    {
         string authorExpression = message.Role == ChatRole.User ? string.Empty : FormatAuthor();
-        string contentExpression = string.IsNullOrWhiteSpace(response.Text) ? string.Empty : response.Text;
+        string contentExpression = message.Text.Trim();
         bool isCode = false; //message.AdditionalProperties?.ContainsKey(OpenAIAssistantAgent.CodeInterpreterMetadataKey) ?? false;
         string codeMarker = isCode ? "\n  [CODE]\n" : " ";
         Console.WriteLine($"\n# {message.Role}{authorExpression}:{codeMarker}{contentExpression}");
@@ -125,16 +145,7 @@ public abstract class BaseSample : TextWriter
             }
         }
 
-        WriteUsage(response.Usage);
-
         string FormatAuthor() => message.AuthorName is not null ? $" - {message.AuthorName ?? " * "}" : string.Empty;
-
-        void WriteUsage(UsageDetails? usageDetails)
-        {
-            if (!(printUsage ?? true) || usageDetails is null) { return; }
-
-            Console.WriteLine($"  [Usage] Tokens: {usageDetails.TotalTokenCount}, Input: {usageDetails.InputTokenCount}, Output: {usageDetails.OutputTokenCount}");
-        }
     }
 
     /// <summary>
