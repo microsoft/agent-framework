@@ -5,7 +5,7 @@ import re
 import sys
 from collections.abc import AsyncIterable, Iterable, Iterator, MutableSequence, Sequence
 from datetime import datetime
-from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, Union, overload
+from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, overload
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -1517,7 +1517,7 @@ class AgentRunResponse(AFBaseModel):
     raw_representation: Any | None = None
     additional_properties: dict[str, Any] | None = None
 
-    def __init__(self, messages: Union[ChatMessage, list[ChatMessage]] | None = None, **kwargs: Any) -> None:
+    def __init__(self, messages: ChatMessage | list[ChatMessage] | None = None, **kwargs: Any) -> None:
         """Initialize an AgentRunResponse.
 
         Args:
@@ -1571,7 +1571,7 @@ class AgentRunResponseUpdate(AFBaseModel):
     created_at: datetime | None = None
 
     def __init__(
-        self, role: ChatRole | None = None, contents: Union[str, list[AIContents]] | None = None, **kwargs: Any
+        self, role: ChatRole | None = None, contents: str | list[AIContents] | None = None, **kwargs: Any
     ) -> None:
         """Initialize an AgentRunResponseUpdate.
 
