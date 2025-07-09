@@ -41,7 +41,7 @@ jobs:
       - name: Surface failing tests
         uses: pmeier/pytest-results-action@v0.7.2
         with:
-          path: python/pytest.xml
+          path: python/**/pytest.xml
           summary: true
           display-options: fEX
           fail-on-empty: true
