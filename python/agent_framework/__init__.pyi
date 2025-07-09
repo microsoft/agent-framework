@@ -6,6 +6,8 @@ from ._clients import ChatClient, EmbeddingGenerator
 from ._logging import get_logger
 from ._tools import AITool, ai_function
 from ._types import (
+    AgentRunResponse,
+    AgentRunResponseUpdate,
     AIContent,
     AIContents,
     ChatFinishReason,
@@ -34,6 +36,8 @@ __all__ = [
     "AIContents",
     "AITool",
     "Agent",
+    "AgentRunResponse",
+    "AgentRunResponseUpdate",
     "AgentThread",
     "ChatClient",
     "ChatFinishReason",

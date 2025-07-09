@@ -4,7 +4,8 @@ import base64
 import re
 import sys
 from collections.abc import AsyncIterable, Iterable, Iterator, MutableSequence, Sequence
-from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, overload
+from datetime import datetime
+from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, Union, overload
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -24,6 +25,7 @@ TValue = TypeVar("TValue")
 TEmbedding = TypeVar("TEmbedding")
 TChatResponse = TypeVar("TChatResponse", bound="ChatResponse")
 TChatToolMode = TypeVar("TChatToolMode", bound="ChatToolMode")
+TAgentRunResponse = TypeVar("TAgentRunResponse", bound="AgentRunResponse")
 
 CreatedAtT = str  # Use a datetimeoffset type? Or a more specific type like datetime.datetime?
 
@@ -1495,3 +1497,156 @@ class GeneratedEmbeddings(AFBaseModel, MutableSequence[TEmbedding], Generic[TEmb
         else:
             self.embeddings += values
         return self
+
+
+# region AgentRunResponse
+
+
+class AgentRunResponse(AFBaseModel):
+    """Represents the response to an Agent run request.
+
+    Provides one or more response messages and metadata about the response.
+    A typical response will contain a single message, but may contain multiple
+    messages in scenarios involving function calls, RAG retrievals, or complex logic.
+    """
+
+    messages: list[ChatMessage] = Field(default_factory=lambda: [])
+    response_id: str | None = None
+    created_at: datetime | None = None
+    usage: UsageDetails | None = None
+    raw_representation: Any | None = None
+    additional_properties: dict[str, Any] | None = None
+
+    def __init__(self, messages: Union[ChatMessage, list[ChatMessage]] | None = None, **kwargs: Any) -> None:
+        """Initialize an AgentRunResponse.
+
+        Args:
+            messages: A single response message or a list of response messages.
+            **kwargs: Any additional keyword arguments.
+
+        Raises:
+            ValueError: If messages is None when provided.
+        """
+        super().__init__(**kwargs)
+        self.messages = []
+        if messages is not None:
+            if isinstance(messages, ChatMessage):
+                self.messages.append(messages)
+            elif isinstance(messages, list):
+                self.messages.extend(messages)
+
+    @property
+    def text(self) -> str:
+        """Get the concatenated text of all messages."""
+        return "".join(msg.text for msg in self.messages) if self.messages else ""
+
+    @classmethod
+    def from_agent_run_response_updates(
+        cls: type[TAgentRunResponse], updates: Sequence["AgentRunResponseUpdate"]
+    ) -> TAgentRunResponse:
+        """Joins multiple updates into a single AgentRunResponse."""
+        msg = cls(messages=[])
+        for update in updates:
+            _process_agent_run_update(msg, update)
+        _finalize_agent_run_response(msg)
+        return msg
+
+    def __str__(self) -> str:
+        return self.text
+
+
+# region AgentRunResponseUpdate
+
+
+class AgentRunResponseUpdate(AFBaseModel):
+    """Represents a single streaming response chunk from an Agent."""
+
+    author_name: str | None = None
+    role: ChatRole | None = None
+    contents: list[AIContents] = Field(default_factory=lambda: [])
+    raw_representation: Any | None = None
+    additional_properties: dict[str, Any] | None = None
+    response_id: str | None = None
+    message_id: str | None = None
+    created_at: datetime | None = None
+
+    def __init__(
+        self, role: ChatRole | None = None, contents: Union[str, list[AIContents]] | None = None, **kwargs: Any
+    ) -> None:
+        """Initialize an AgentRunResponseUpdate.
+
+        Args:
+            role: The role of the author of the update.
+            contents: The text content (as string) or list of AIContent objects.
+            **kwargs: Any additional keyword arguments.
+        """
+        super().__init__(**kwargs)
+        self.contents = []
+        if contents is not None:
+            if isinstance(contents, str):
+                self.contents.append(TextContent(text=contents))
+            elif isinstance(contents, list):
+                self.contents.extend(contents)
+
+        self.role = role
+
+    @field_validator("author_name", mode="before")
+    @classmethod
+    def clean_author_name(cls, value: str | None) -> str | None:
+        """Ensure author_name is None if empty or whitespace."""
+        return None if value is None or value.strip() == "" else value
+
+    @property
+    def text(self) -> str:
+        """Get the concatenated text of all TextContent objects in contents."""
+        return (
+            "".join(content.text for content in self.contents if isinstance(content, TextContent))
+            if self.contents
+            else ""
+        )
+
+    def __str__(self) -> str:
+        return self.text
+
+
+def _process_agent_run_update(response: "AgentRunResponse", update: "AgentRunResponseUpdate") -> None:
+    """Processes a single update and modifies the response in place."""
+    is_new_message = False
+    if not response.messages or (update.message_id and response.messages[-1].message_id != update.message_id):
+        is_new_message = True
+
+    if is_new_message:
+        message = ChatMessage(role=ChatRole.ASSISTANT, contents=[])
+        response.messages.append(message)
+    else:
+        message = response.messages[-1]
+    # Incorporate the update's properties into the message.
+    if update.author_name is not None:
+        message.author_name = update.author_name
+    if update.role is not None:
+        message.role = update.role
+    if update.message_id:
+        message.message_id = update.message_id
+    for content in update.contents:
+        if isinstance(content, UsageContent):
+            if response.usage is None:
+                response.usage = UsageDetails()
+            response.usage += content.details
+        else:
+            message.contents.append(content)
+    # Incorporate the update's properties into the response.
+    if update.response_id:
+        response.response_id = update.response_id
+    if update.created_at is not None:
+        response.created_at = update.created_at
+    if update.additional_properties is not None:
+        if response.additional_properties is None:
+            response.additional_properties = {}
+        response.additional_properties.update(update.additional_properties)
+
+
+def _finalize_agent_run_response(response: "AgentRunResponse") -> None:
+    """Finalizes the agent response by performing any necessary post-processing."""
+    for msg in response.messages:
+        _coalesce_text_content(msg.contents, TextContent)
+        _coalesce_text_content(msg.contents, TextReasoningContent)
