@@ -10,12 +10,12 @@ namespace Microsoft.Agents.Orchestration;
 /// <summary>
 /// Base abstractions for any actor that participates in an orchestration.
 /// </summary>
-public abstract class OrchestrationActor : BaseAgent
+public abstract class OrchestrationActor : RuntimeActor
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="OrchestrationActor"/> class.
     /// </summary>
-    protected OrchestrationActor(AgentId id, IAgentRuntime runtime, OrchestrationContext context, string description, ILogger? logger = null)
+    protected OrchestrationActor(ActorId id, IAgentRuntime runtime, OrchestrationContext context, string description, ILogger? logger = null)
         : base(id, runtime, description, logger)
     {
         this.Context = context;
@@ -35,9 +35,9 @@ public abstract class OrchestrationActor : BaseAgent
     /// <returns>The agent identifier, if it exists.</returns>
     protected async ValueTask PublishMessageAsync(
         object message,
-        AgentType agentType,
+        ActorType agentType,
         CancellationToken cancellationToken = default)
     {
-        await base.PublishMessageAsync(message, new TopicId(agentType), messageId: null, cancellationToken).ConfigureAwait(false);
+        await base.PublishMessageAsync(message, new TopicId(agentType.Name), messageId: null, cancellationToken).ConfigureAwait(false);
     }
 }

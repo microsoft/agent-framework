@@ -5,20 +5,20 @@ using System.Diagnostics.CodeAnalysis;
 
 namespace Microsoft.Extensions.AI.Agents.Runtime.InProcess.Tests;
 
-public class TestSubscription(string topicType, string agentType, string? id = null) : ISubscriptionDefinition
+public class TestSubscription(string topicType, ActorType agentType, string? id = null) : ISubscriptionDefinition
 {
     public string Id { get; } = id ?? Guid.NewGuid().ToString();
 
     public string TopicType { get; } = topicType;
 
-    public AgentId MapToAgent(TopicId topic)
+    public ActorId MapToActor(TopicId topic)
     {
         if (!this.Matches(topic))
         {
             throw new InvalidOperationException("TopicId does not match the subscription.");
         }
 
-        return new AgentId(agentType, topic.Source);
+        return new ActorId(agentType, topic.Source);
     }
 
     public bool Equals(ISubscriptionDefinition? other) => this.Id == other?.Id;

@@ -14,7 +14,6 @@ public class TopicIdTests
 
         // Assert
         Assert.Equal("testtype", topicId.Type);
-        Assert.Equal(TopicId.DefaultSource, topicId.Source);
     }
 
     [Fact]
@@ -28,42 +27,28 @@ public class TopicIdTests
         Assert.Equal("customsource", topicId.Source);
     }
 
-    [Fact]
-    public void ConstructWithTupleTest()
+    [Theory]
+    [InlineData("testtype/https://github.com/cloudevents", "testtype", "https://github.com/cloudevents")]
+    [InlineData("testtype/mailto:cncf-wg-serverless@lists.cncf.io", "testtype", "mailto:cncf-wg-serverless@lists.cncf.io")]
+    [InlineData("testtype/urn:uuid:6e8bc430-9c3a-11d9-9669-0800200c9a66", "testtype", "urn:uuid:6e8bc430-9c3a-11d9-9669-0800200c9a66")]
+    [InlineData("testtype//cloudevents/spec/pull/123", "testtype", "/cloudevents/spec/pull/123")]
+    [InlineData("testtype//sensors/tn-1234567/alerts", "testtype", "/sensors/tn-1234567/alerts")]
+    [InlineData("testtype/1-555-123-4567", "testtype", "1-555-123-4567")]
+    public void ParseTest(string input, string expectedType, string expectedSource)
     {
-        // Arrange
-        (string, string) tuple = ("testtype", "customsource");
+        TopicId topicId = TopicId.Parse(input);
 
-        // Act
-        TopicId topicId = new(tuple);
-
-        // Assert
-        Assert.Equal("testtype", topicId.Type);
-        Assert.Equal("customsource", topicId.Source);
-    }
-
-    [Fact]
-    public void ConvertFromStringTest()
-    {
-        // Arrange
-        const string TopicIdStr = "testtype/customsource";
-
-        // Act
-        TopicId topicId = TopicId.FromStr(TopicIdStr);
-
-        // Assert
-        Assert.Equal("testtype", topicId.Type);
-        Assert.Equal("customsource", topicId.Source);
+        Assert.Equal(expectedType, topicId.Type);
+        Assert.Equal(expectedSource, topicId.Source);
     }
 
     [Theory]
     [InlineData("invalid-format")]
-    [InlineData("too/many/parts")]
     [InlineData("")]
-    public void InvalidFormatFromStringThrowsTest(string invalidInput)
+    public void InvalidFormatParseThrowsTest(string invalidInput)
     {
         // Act & Assert
-        Assert.Throws<FormatException>(() => TopicId.FromStr(invalidInput));
+        Assert.Throws<FormatException>(() => TopicId.Parse(invalidInput));
     }
 
     [Fact]
@@ -140,43 +125,5 @@ public class TopicIdTests
 
         // Assert
         Assert.Equal(hash1, hash2);
-    }
-
-    [Fact]
-    public void ExplicitConversionTest()
-    {
-        // Arrange
-        string topicIdStr = "testtype/customsource";
-
-        // Act
-        TopicId topicId = (TopicId)topicIdStr;
-
-        // Assert
-        Assert.Equal("testtype", topicId.Type);
-        Assert.Equal("customsource", topicId.Source);
-    }
-
-    [Fact]
-    public void IsWildcardMatchTest()
-    {
-        // Arrange
-        TopicId topicId1 = new("testtype", "source1");
-        TopicId topicId2 = new("testtype", "source2");
-
-        // Act & Assert
-        Assert.True(topicId1.IsWildcardMatch(topicId2));
-        Assert.True(topicId2.IsWildcardMatch(topicId1));
-    }
-
-    [Fact]
-    public void IsWildcardMismatchTest()
-    {
-        // Arrange
-        TopicId topicId1 = new("testtype1", "source");
-        TopicId topicId2 = new("testtype2", "source");
-
-        // Act & Assert
-        Assert.False(topicId1.IsWildcardMatch(topicId2));
-        Assert.False(topicId2.IsWildcardMatch(topicId1));
     }
 }

@@ -142,6 +142,6 @@ public static class OrchestrationHandoffsExtensions
 
 /// <summary>
 /// Handoff relationships post-processed into a name-based lookup table that includes the agent type and handoff description.
-/// Maps agent names/IDs to a tuple of <see cref="AgentType"/> and handoff description.
+/// Maps agent names/IDs to a tuple of <see cref="ActorType"/> and handoff description.
 /// </summary>
-internal sealed class HandoffLookup : Dictionary<string, (AgentType AgentType, string Description)>;
+internal sealed class HandoffLookup : Dictionary<string, (ActorType AgentType, string Description)>;

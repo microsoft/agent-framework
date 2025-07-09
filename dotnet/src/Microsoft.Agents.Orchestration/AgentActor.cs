@@ -25,7 +25,7 @@ public abstract class AgentActor : OrchestrationActor
     /// <param name="context">The orchestration context.</param>
     /// <param name="agent">An <see cref="Agent"/>.</param>
     /// <param name="logger">The logger to use for the actor</param>
-    protected AgentActor(AgentId id, IAgentRuntime runtime, OrchestrationContext context, Agent agent, ILogger? logger = null)
+    protected AgentActor(ActorId id, IAgentRuntime runtime, OrchestrationContext context, Agent agent, ILogger? logger = null)
         : base(
             id,
             runtime,

@@ -8,10 +8,10 @@ public class AgentMetadataTests()
     public void AgentMetadataShouldInitializeCorrectlyTest()
     {
         // Arrange & Act
-        AgentMetadata metadata = new("TestType", "TestKey", "TestDescription");
+        ActorMetadata metadata = new(new ActorType("TestType"), "TestKey", "TestDescription");
 
         // Assert
-        Assert.Equal("TestType", metadata.Type);
+        Assert.Equal("TestType", metadata.Type.Name);
         Assert.Equal("TestKey", metadata.Key);
         Assert.Equal("TestDescription", metadata.Description);
     }

@@ -17,46 +17,18 @@ public class AgentTypeTests
     public void AgentIdShouldThrowArgumentExceptionWithInvalidType(string? invalidType)
     {
         // Act & Assert
-        ArgumentException exception = Assert.Throws<ArgumentException>(() => new AgentType(invalidType!));
-        Assert.Contains("Invalid AgentId type", exception.Message);
+        ArgumentException exception = Assert.Throws<ArgumentException>(() => new ActorType(invalidType!));
+        Assert.Contains("Invalid type", exception.Message);
     }
 
     [Fact]
-    public void ImplicitConversionFromStringTest()
+    public void ConversionToStringTest()
     {
         // Arrange
-        string agentTypeName = "TestAgent";
-
-        // Act
-        AgentType agentType = agentTypeName;
+        ActorType agentType = new("TestAgent");
 
         // Assert
-        Assert.Equal(agentTypeName, agentType.Name);
-    }
-
-    [Fact]
-    public void ImplicitConversionToStringTest()
-    {
-        // Arrange
-        AgentType agentType = "TestAgent";
-
-        // Act
-        string agentTypeName = agentType;
-
-        // Assert
-        Assert.Equal("TestAgent", agentTypeName);
-    }
-
-    [Fact]
-    public void ExplicitConversionFromTypeTest()
-    {
-        // Arrange
-        Type type = typeof(string);
-
-        // Act
-        AgentType agentType = (AgentType)type;
-
-        // Assert
-        Assert.Equal(type.Name, agentType.Name);
+        Assert.Equal("TestAgent", agentType.Name);
+        Assert.Equal("TestAgent", agentType.ToString());
     }
 }
