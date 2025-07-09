@@ -6,8 +6,8 @@ using System.Threading.Tasks;
 using Microsoft.Agents.Orchestration.Extensions;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
+using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
-using Microsoft.SemanticKernel.Agents.Runtime;
 
 namespace Microsoft.Agents.Orchestration.Concurrent;
 
@@ -44,14 +44,10 @@ public class ConcurrentOrchestration<TInput, TOutput>
         AgentType resultType = this.FormatAgentType(context.Topic, "Results");
         await runtime.RegisterOrchestrationAgentAsync(
             resultType,
-            (agentId, runtime) =>
+            async (agentId, runtime) =>
             {
                 ConcurrentResultActor actor = new(agentId, runtime, context, outputType, this.Members.Count, context.LoggerFactory.CreateLogger<ConcurrentResultActor>());
-#if !NETCOREAPP
-                return new ValueTask<IHostableAgent>(actor);
-#else
-                return ValueTask.FromResult<IHostableAgent>(actor);
-#endif
+                return actor;
             }).ConfigureAwait(false);
         logger.LogRegisterActor(this.OrchestrationLabel, resultType, "RESULTS");
 

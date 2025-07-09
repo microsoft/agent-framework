@@ -3,7 +3,7 @@
 using Microsoft.Agents.Orchestration;
 using Microsoft.Agents.Orchestration.Sequential;
 using Microsoft.Extensions.AI.Agents;
-using Microsoft.SemanticKernel.Agents.Runtime.InProcess;
+using Microsoft.Extensions.AI.Agents.Runtime.InProcess;
 
 namespace Orchestration;
 
