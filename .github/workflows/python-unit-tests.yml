@@ -37,8 +37,8 @@ jobs:
       - name: Install the project
         run: uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
       - name: Test with pytest
-        run: uv run poe test-main --junitxml=pytest.xml
-      - name: Surface failing tests - main
+        run: uv run poe test --junitxml=pytest.xml
+      - name: Surface failing tests
         if: always()
         uses: pmeier/pytest-results-action@v0.7.2
         with:
