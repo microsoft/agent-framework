@@ -34,7 +34,7 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
         };
 
         // Get the chat client to use for the agent.
-        using var chatClient = await base.GetChatClientAsync(provider, agentOptions);
+        using var chatClient = await base.GetChatClient(provider, agentOptions);
 
         // Define the agent
         var agent = new ChatClientAgent(chatClient, agentOptions);
@@ -78,7 +78,7 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
         };
 
         // Get the chat client to use for the agent.
-        using var chatClient = await base.GetChatClientAsync(provider, agentOptions);
+        using var chatClient = await base.GetChatClient(provider, agentOptions);
 
         // Define the agent
         var agent = new ChatClientAgent(chatClient, agentOptions);
@@ -126,7 +126,7 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
         };
 
         // Get the chat client to use for the agent.
-        using var chatClient = await base.GetChatClientAsync(provider, agentOptions);
+        using var chatClient = await base.GetChatClient(provider, agentOptions);
 
         // Define the agent
         var agent = new ChatClientAgent(chatClient, agentOptions);

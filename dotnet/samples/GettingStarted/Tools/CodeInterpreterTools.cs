@@ -36,7 +36,7 @@ public sealed class CodeInterpreterTools(ITestOutputHelper output) : AgentSample
             ChatOptions = TransformChatOptions(chatOptions, provider)
         };
 
-        using var chatClient = await base.GetChatClientAsync(provider, agentOptions);
+        using var chatClient = await base.GetChatClient(provider, agentOptions);
 
         ChatClientAgent agent = new(chatClient, agentOptions);
 

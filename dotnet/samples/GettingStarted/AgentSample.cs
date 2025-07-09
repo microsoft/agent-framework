@@ -31,13 +31,13 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
         AzureAIAgentsPersistent
     }
 
-    protected Task<IChatClient> GetChatClientAsync(ChatClientProviders provider, ChatClientAgentOptions options, CancellationToken cancellationToken = default)
+    protected IChatClient GetChatClient(ChatClientProviders provider, ChatClientAgentOptions options, CancellationToken cancellationToken = default)
         => provider switch
         {
-            ChatClientProviders.OpenAIChatCompletion => GetOpenAIChatClientAsync(),
-            ChatClientProviders.OpenAIAssistant => GetOpenAIAssistantChatClientAsync(options, cancellationToken),
-            ChatClientProviders.AzureOpenAI => GetAzureOpenAIChatClientAsync(),
-            ChatClientProviders.AzureAIAgentsPersistent => GetAzureAIAgentPersistentClientAsync(options, cancellationToken),
+            ChatClientProviders.OpenAIChatCompletion => GetOpenAIChatClient(),
+            ChatClientProviders.OpenAIAssistant => GetOpenAIAssistantChatClient(options, cancellationToken),
+            ChatClientProviders.AzureOpenAI => GetAzureOpenAIChatClient(),
+            ChatClientProviders.AzureAIAgentsPersistent => GetAzureAIAgentPersistentClient(options, cancellationToken),
             ChatClientProviders.OpenAIResponses or
             ChatClientProviders.OpenAIResponses_InMemoryMessageThread or
             ChatClientProviders.OpenAIResponses_ConversationIdThread
@@ -79,15 +79,25 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
         };
     }
 
+    protected Task<string?> AgentCreateAsync(ChatClientProviders provider, ChatClientAgentOptions options, CancellationToken cancellationToken = default)
+    {
+        // Create the chat client based on the provider.
+        return provider switch
+        {
+            ChatClientProviders.OpenAIAssistant => OpenAIAssistantAgentCreateAsync(options, cancellationToken),
+            ChatClientProviders.AzureAIAgentsPersistent => AzureAIAgentsPersistentAgentCreateAsync(options, cancellationToken),
+            _ => Task.FromResult<string?>(null)
+        };
+    }
+
     #region Private GetChatClient
 
-    private Task<IChatClient> GetOpenAIChatClientAsync()
-        => Task.FromResult(
-                OpenAIClient
-                    .GetChatClient(TestConfiguration.OpenAI.ChatModelId)
-                    .AsIChatClient());
+    private IChatClient GetOpenAIChatClient()
+        => OpenAIClient
+            .GetChatClient(TestConfiguration.OpenAI.ChatModelId)
+            .AsIChatClient());
 
-    private Task<IChatClient> GetAzureOpenAIChatClientAsync()
+    private Task<IChatClient> GetAzureOpenAIChatClient()
         => Task.FromResult(
             ((TestConfiguration.AzureOpenAI.ApiKey is null)
                 // Use Azure CLI credentials if API key is not provided.
@@ -102,7 +112,7 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
                     .GetOpenAIResponseClient(TestConfiguration.OpenAI.ChatModelId)
                     .AsIChatClient());
 
-    private async Task<IChatClient> GetAzureAIAgentPersistentClientAsync(ChatClientAgentOptions options, CancellationToken cancellationToken)
+    private async Task<IChatClient> GetAzureAIAgentPersistentClient(ChatClientAgentOptions options, CancellationToken cancellationToken)
     {
         // Create a server side agent to work with.
         var persistentAgentResponse = await AzureAIPersistentAgentsClient.Administration.CreateAgentAsync(
@@ -113,11 +123,14 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
 
         var persistentAgent = persistentAgentResponse.Value;
 
+        // Set the created agent ID in the options for later use.
+        options.Id = persistentAgent.Id;
+
         // Get the chat client to use for the agent.
         return AzureAIPersistentAgentsClient.AsIChatClient(persistentAgent.Id);
     }
 
-    private async Task<IChatClient> GetOpenAIAssistantChatClientAsync(ChatClientAgentOptions options, CancellationToken cancellationToken)
+    private async Task<IChatClient> GetOpenAIAssistantChatClient(ChatClientAgentOptions options, CancellationToken cancellationToken)
     {
         var assistantClient = OpenAIClient.GetAssistantClient();
 
@@ -130,7 +143,41 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
             },
             cancellationToken);
 
+        // Set the created agent ID in the options for later use.
+        options.Id = assistant.Id;
+
         return assistantClient.AsIChatClient(assistant.Id);
+    }
+
+    #endregion
+
+    #region Private AgentCreate
+
+    private async Task<string?> AzureAIAgentsPersistentAgentCreateAsync(ChatClientAgentOptions options, CancellationToken cancellationToken)
+    {
+        // Create a server side agent to work with.
+        var result = await AzureAIPersistentAgentsClient.Administration.CreateAgentAsync(
+            model: TestConfiguration.AzureAI.DeploymentName,
+            name: options.Name,
+            instructions: options.Instructions,
+            cancellationToken: cancellationToken);
+
+        return result?.Value.Id;
+    }
+
+    private async Task<string?> OpenAIAssistantAgentCreateAsync(ChatClientAgentOptions options, CancellationToken cancellationToken)
+    {
+        var assistantClient = OpenAIClient.GetAssistantClient();
+        Assistant assistant = await assistantClient.CreateAssistantAsync(
+            TestConfiguration.OpenAI.ChatModelId,
+            new()
+            {
+                Name = options.Name,
+                Instructions = options.Instructions
+            },
+            cancellationToken);
+
+        return assistant.Id;
     }
 
     #endregion
