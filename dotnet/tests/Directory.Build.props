@@ -7,7 +7,6 @@
     <IsTestProject>true</IsTestProject>
     <IsAotCompatible>false</IsAotCompatible>
     <ProjectsTargetFrameworks>net472;net9.0</ProjectsTargetFrameworks>
-    <ProjectsDebugTargetFrameworks>net9.0</ProjectsDebugTargetFrameworks>
     <UserSecretsId>b7762d10-e29b-4bb1-8b74-b6d69a667dd4</UserSecretsId>
   </PropertyGroup>
 
