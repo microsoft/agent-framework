@@ -6,6 +6,7 @@ using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Samples;
+using OpenAI.Assistants;
 using OpenAI.Files;
 
 namespace Steps;
@@ -24,14 +25,12 @@ public sealed class Step03_ChatClientAgent_UsingCodeInterpreterTools(ITestOutput
         var chatOptions = base.GetChatOptions(provider);
         var fileId = await UploadFileAsync("Resources/groceries.txt", provider);
 
-        chatOptions!.Tools = [new NewHostedCodeInterpreterTool { FileIds = [fileId] }];
+        chatOptions!.Tools = [new NewHostedCodeInterpreterTool([fileId])];
 
         var agentOptions = new ChatClientAgentOptions
         {
             Name = "HelpfulAssistant",
             Instructions = "You are a helpful assistant.",
-            // Transformation is required until the abstraction will be added to either SDK provider or M.E.AI and
-            // implementations will handle new properties/classes.
             ChatOptions = chatOptions
         };
 

@@ -137,10 +137,10 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
                 },
                 cancellationToken);
 
-            return assistantClient.AsIChatClient(assistant.Id);
+            return new NewOpenAIAssistantChatClient(assistantClient, assistant.Id, null);
         }
 
-        return assistantClient.AsIChatClient(options.Id);
+        return new NewOpenAIAssistantChatClient(assistantClient, options.Id, null);
     }
 
     #endregion
@@ -150,33 +150,6 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
     {
         var chatOptions = new ChatOptions();
 
-        chatOptions.RawRepresentationFactory = _ =>
-        {
-            Azure.AI.Agents.Persistent.ToolResources? toolResources = null;
-
-            if (chatOptions.Tools is { Count: > 0 })
-            {
-                // At the time of the call it will check if there are any tools defined in the options.
-                foreach (var tool in chatOptions.Tools)
-                {
-                    if (tool is NewHostedCodeInterpreterTool codeInterpreterTool &&
-                        codeInterpreterTool.FileIds is { Count: > 0 })
-                    {
-                        toolResources ??= new Azure.AI.Agents.Persistent.ToolResources()
-                        {
-                            CodeInterpreter = new CodeInterpreterToolResource()
-                        };
-
-                        foreach (var fileId in codeInterpreterTool.FileIds)
-                        {
-                            toolResources.CodeInterpreter.FileIds.Add(fileId);
-                        }
-                    }
-                }
-            }
-            return new ThreadAndRunOptions { ToolResources = toolResources };
-        };
-
         return chatOptions;
     }
 
@@ -184,7 +157,7 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
     {
         var chatOptions = new ChatOptions();
 
-        chatOptions.RawRepresentationFactory = _ =>
+        /*chatOptions.RawRepresentationFactory = _ =>
         {
             // File references can be added on message attachment level only and not on code interpreter tool definition level.
             // Message attachment content should be non-empty.
@@ -196,7 +169,7 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
             {
                 foreach (var tool in chatOptions.Tools)
                 {
-                    if (tool is NewHostedCodeInterpreterTool codeInterpreterTool)
+                    if (tool is OpenAI.Assistants.HostedFileCodeInterpreterTool codeInterpreterTool)
                     {
                         var codeInterpreterToolDefinition = new OpenAI.Assistants.CodeInterpreterToolDefinition();
                         toolDefinitions.Add(codeInterpreterToolDefinition);
@@ -215,7 +188,7 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
             }
 
             return runCreationOptions;
-        };
+        };*/
 
         return chatOptions;
     }

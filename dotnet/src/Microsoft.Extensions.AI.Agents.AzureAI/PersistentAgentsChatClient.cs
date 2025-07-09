@@ -251,6 +251,7 @@ public sealed partial class PersistentAgentsChatClient : IChatClient
             if (options.Tools is { Count: > 0 } tools)
             {
                 List<ToolDefinition> toolDefinitions = [];
+                ToolResources? toolResources = null;
 
                 // If the caller has provided any tool overrides, we'll assume they don't want to use the agent's tools.
                 // But if they haven't, the only way we can provide our tools is via an override, whereas we'd really like to
@@ -287,6 +288,15 @@ public sealed partial class PersistentAgentsChatClient : IChatClient
 
                         case HostedCodeInterpreterTool:
                             toolDefinitions.Add(new CodeInterpreterToolDefinition());
+
+                            // Once available, HostedCodeInterpreterTool.FileIds property will be used instead of the AdditionalProperties.
+                            if (tool.AdditionalProperties.TryGetValue("fileIds", out object? fileIdsObject) && fileIdsObject is IEnumerable<string> fileIds)
+                            {
+                                foreach (var fileId in fileIds)
+                                {
+                                    (toolResources ??= new() { CodeInterpreter = new() }).CodeInterpreter.FileIds.Add(fileId);
+                                }
+                            }
                             break;
 
                         case HostedWebSearchTool webSearch when webSearch.AdditionalProperties?.TryGetValue("connectionId", out object? connectionId) is true:
@@ -298,6 +308,11 @@ public sealed partial class PersistentAgentsChatClient : IChatClient
                 if (toolDefinitions.Count > 0)
                 {
                     runOptions.OverrideTools = toolDefinitions;
+                }
+
+                if (toolResources is not null)
+                {
+                    runOptions.ToolResources = toolResources;
                 }
             }
 

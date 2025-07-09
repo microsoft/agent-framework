@@ -36,6 +36,11 @@
     <Using Include="Microsoft.Shared.SampleUtilities" />
   </ItemGroup>
 
+  <PropertyGroup>
+    <InjectSharedThrow>true</InjectSharedThrow>
+  </PropertyGroup>
+
+  
   <ItemGroup>
     <None Update="Resources\*">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
