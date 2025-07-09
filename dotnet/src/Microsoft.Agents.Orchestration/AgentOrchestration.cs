@@ -9,9 +9,9 @@ using Microsoft.Agents.Orchestration.Extensions;
 using Microsoft.Agents.Orchestration.Transforms;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
+using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.SemanticKernel.Agents.Runtime;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Orchestration;

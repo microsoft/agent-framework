@@ -70,7 +70,7 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
         // implement the abstractions directly rather than providing adapters on top of the public APIs,
         // the package can provide such implementations separate from what's exposed in the public API.
         Uri providerUrl = typeof(AssistantClient).GetField("_endpoint", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-            ?.GetValue(assistantClient) as Uri ?? OpenAIClientExtensions.DefaultOpenAIEndpoint;
+            ?.GetValue(assistantClient) as Uri ?? OpenAIClientExtensions2.DefaultOpenAIEndpoint;
 
         _metadata = new("openai", providerUrl);
     }
@@ -251,13 +251,13 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
     internal static FunctionToolDefinition ToOpenAIAssistantsFunctionToolDefinition(AIFunction aiFunction, ChatOptions? options = null)
     {
         bool? strict =
-            OpenAIClientExtensions.HasStrict(aiFunction.AdditionalProperties) ??
-            OpenAIClientExtensions.HasStrict(options?.AdditionalProperties);
+            OpenAIClientExtensions2.HasStrict(aiFunction.AdditionalProperties) ??
+            OpenAIClientExtensions2.HasStrict(options?.AdditionalProperties);
 
         return new FunctionToolDefinition(aiFunction.Name)
         {
             Description = aiFunction.Description,
-            Parameters = OpenAIClientExtensions.ToOpenAIFunctionParameters(aiFunction, strict),
+            Parameters = OpenAIClientExtensions2.ToOpenAIFunctionParameters(aiFunction, strict),
             StrictParameterSchemaEnabled = strict,
         };
     }
@@ -366,12 +366,12 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
                         runOptions.ResponseFormat = AssistantResponseFormat.CreateTextFormat();
                         break;
 
-                    case ChatResponseFormatJson jsonFormat when OpenAIClientExtensions.StrictSchemaTransformCache.GetOrCreateTransformedSchema(jsonFormat) is { } jsonSchema:
+                    case ChatResponseFormatJson jsonFormat when OpenAIClientExtensions2.StrictSchemaTransformCache.GetOrCreateTransformedSchema(jsonFormat) is { } jsonSchema:
                         runOptions.ResponseFormat = AssistantResponseFormat.CreateJsonSchemaFormat(
                             jsonFormat.SchemaName,
                             BinaryData.FromBytes(JsonSerializer.SerializeToUtf8Bytes(jsonSchema, OpenAIJsonContext.Default.JsonElement)),
                             jsonFormat.SchemaDescription,
-                            OpenAIClientExtensions.HasStrict(options.AdditionalProperties));
+                            OpenAIClientExtensions2.HasStrict(options.AdditionalProperties));
                         break;
 
                     case ChatResponseFormatJson jsonFormat:
@@ -415,7 +415,7 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
             // to include that information in its responses. System messages should ideally be instead done as instructions to
             // the assistant when the assistant is created.
             if (chatMessage.Role == ChatRole.System ||
-                chatMessage.Role == OpenAIClientExtensions.ChatRoleDeveloper)
+                chatMessage.Role == OpenAIClientExtensions2.ChatRoleDeveloper)
             {
                 foreach (var textContent in chatMessage.Contents.OfType<TextContent>())
                 {
@@ -509,7 +509,7 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
 }
 
 /// <summary>Provides extension methods for working with <see cref="OpenAIClient"/>s.</summary>
-public static class OpenAIClientExtensions
+internal static class OpenAIClientExtensions2
 {
     /// <summary>Key into AdditionalProperties used to store a strict option.</summary>
     private const string StrictKey = "strictJsonSchema";
@@ -637,7 +637,7 @@ public static class OpenAIClientExtensions
     UseStringEnumConverter = true,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     WriteIndented = true)]
-[JsonSerializable(typeof(OpenAIClientExtensions.ToolJson))]
+[JsonSerializable(typeof(OpenAIClientExtensions2.ToolJson))]
 [JsonSerializable(typeof(IDictionary<string, object?>))]
 [JsonSerializable(typeof(string[]))]
 [JsonSerializable(typeof(JsonElement))]

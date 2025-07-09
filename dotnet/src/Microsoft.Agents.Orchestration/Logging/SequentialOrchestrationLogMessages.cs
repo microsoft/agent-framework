@@ -2,8 +2,8 @@
 
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Agents.Orchestration.Sequential;
+using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
-using Microsoft.SemanticKernel.Agents.Runtime;
 
 namespace Microsoft.Agents.Orchestration;
 
@@ -18,7 +18,6 @@ namespace Microsoft.Agents.Orchestration;
 internal static partial class SequentialOrchestrationLogMessages
 {
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Trace,
         Message = "REQUEST Sequential agent [{AgentId}]")]
     public static partial void LogSequentialAgentInvoke(
@@ -26,7 +25,6 @@ internal static partial class SequentialOrchestrationLogMessages
         AgentId agentId);
 
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Trace,
         Message = "RESULT Sequential agent [{AgentId}]: {Message}")]
     public static partial void LogSequentialAgentResult(
