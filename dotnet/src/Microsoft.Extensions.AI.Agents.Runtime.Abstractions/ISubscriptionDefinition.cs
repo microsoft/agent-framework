@@ -5,7 +5,7 @@ using System.Diagnostics.CodeAnalysis;
 namespace Microsoft.Extensions.AI.Agents.Runtime;
 
 /// <summary>
-/// Defines a subscription that matches topics and maps them to agents.
+/// Defines a subscription that matches topics and maps them to actors.
 /// </summary>
 public interface ISubscriptionDefinition
 {
@@ -42,10 +42,10 @@ public interface ISubscriptionDefinition
     bool Matches(TopicId topic);
 
     /// <summary>
-    /// Maps a <see cref="TopicId"/> to an <see cref="AgentId"/>.
+    /// Maps a <see cref="TopicId"/> to an <see cref="ActorId"/>.
     /// Should only be called if <see cref="Matches"/> returns <c>true</c>.
     /// </summary>
     /// <param name="topic">The topic to map.</param>
-    /// <returns>The <see cref="AgentId"/> that should handle the topic.</returns>
-    AgentId MapToAgent(TopicId topic);
+    /// <returns>The <see cref="ActorId"/> that should handle the topic.</returns>
+    ActorId MapToActor(TopicId topic);
 }

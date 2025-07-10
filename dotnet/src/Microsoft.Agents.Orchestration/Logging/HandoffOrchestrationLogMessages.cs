@@ -22,14 +22,14 @@ internal static partial class HandoffOrchestrationLogMessages
         Message = "REQUEST Handoff agent [{AgentId}]")]
     public static partial void LogHandoffAgentInvoke(
         this ILogger logger,
-        AgentId agentId);
+        ActorId agentId);
 
     [LoggerMessage(
         Level = LogLevel.Trace,
         Message = "RESULT Handoff agent [{AgentId}]: {Message}")]
     public static partial void LogHandoffAgentResult(
         this ILogger logger,
-        AgentId agentId,
+        ActorId agentId,
         string? message);
 
     [LoggerMessage(
@@ -37,7 +37,7 @@ internal static partial class HandoffOrchestrationLogMessages
         Message = "TOOL Handoff [{AgentId}]: {Name}")]
     public static partial void LogHandoffFunctionCall(
         this ILogger logger,
-        AgentId agentId,
+        ActorId agentId,
         string name);
 
     [LoggerMessage(
@@ -45,6 +45,6 @@ internal static partial class HandoffOrchestrationLogMessages
         Message = "RESULT Handoff summary [{AgentId}]: {Summary}")]
     public static partial void LogHandoffSummary(
         this ILogger logger,
-        AgentId agentId,
+        ActorId agentId,
         string? summary);
 }
