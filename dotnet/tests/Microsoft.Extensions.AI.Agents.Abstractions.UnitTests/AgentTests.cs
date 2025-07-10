@@ -18,7 +18,7 @@ public class AgentTests
     private readonly Mock<Agent> _agentMock;
     private readonly Mock<AgentThread> _agentThreadMock;
     private readonly AgentRunResponse _invokeResponse = new();
-    private readonly List<AgentRunResponseUpdate> _invokeStreamingResponses = new();
+    private readonly List<AgentRunResponseUpdate> _invokeStreamingResponses = [];
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentTests"/> class.
@@ -255,9 +255,7 @@ public class AgentTests
     /// <summary>
     /// Typed mock thread.
     /// </summary>
-    public abstract class TestAgentThread : AgentThread
-    {
-    }
+    public abstract class TestAgentThread : AgentThread;
 
     /// <summary>
     /// Mock class to test the <see cref="Agent.ValidateOrCreateThreadType{TThreadType}"/> method.

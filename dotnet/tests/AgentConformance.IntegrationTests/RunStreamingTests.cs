@@ -28,7 +28,7 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
         var responseUpdates = await agent.RunStreamingAsync("What is the capital of France.", thread).ToListAsync();
 
         // Assert
-        var chatResponseText = string.Join("", responseUpdates.Select(x => x.Text));
+        var chatResponseText = string.Concat(responseUpdates.Select(x => x.Text));
         Assert.Contains("Paris", chatResponseText);
     }
 
@@ -44,7 +44,7 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
         var responseUpdates = await agent.RunStreamingAsync(new ChatMessage(ChatRole.User, "What is the capital of France."), thread).ToListAsync();
 
         // Assert
-        var chatResponseText = string.Join("", responseUpdates.Select(x => x.Text));
+        var chatResponseText = string.Concat(responseUpdates.Select(x => x.Text));
         Assert.Contains("Paris", chatResponseText);
     }
 
@@ -65,7 +65,7 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
             thread).ToListAsync();
 
         // Assert
-        var chatResponseText = string.Join("", responseUpdates.Select(x => x.Text));
+        var chatResponseText = string.Concat(responseUpdates.Select(x => x.Text));
         Assert.Contains("Paris", chatResponseText);
     }
 
@@ -84,8 +84,8 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
         var responseUpdates2 = await agent.RunStreamingAsync(q2, thread).ToListAsync();
 
         // Assert
-        var response1Text = string.Join("", responseUpdates1.Select(x => x.Text));
-        var response2Text = string.Join("", responseUpdates2.Select(x => x.Text));
+        var response1Text = string.Concat(responseUpdates1.Select(x => x.Text));
+        var response2Text = string.Concat(responseUpdates2.Select(x => x.Text));
         Assert.Contains("Paris", response1Text);
         Assert.Contains("Vienna", response2Text);
 

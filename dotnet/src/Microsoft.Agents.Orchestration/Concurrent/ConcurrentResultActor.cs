@@ -3,9 +3,8 @@
 using System.Collections.Concurrent;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
-using Microsoft.SemanticKernel.Agents.Runtime;
-using Microsoft.SemanticKernel.Agents.Runtime.Core;
 
 namespace Microsoft.Agents.Orchestration.Concurrent;
 
