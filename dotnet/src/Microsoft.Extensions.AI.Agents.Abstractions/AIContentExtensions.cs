@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#if NET
 using System;
+#endif
 using System.Collections.Generic;
 using System.Linq;
 #if NET
