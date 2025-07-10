@@ -1,25 +1,60 @@
 [project]
-name = "agent-framework"
-readme = "README.md"
-requires-python = ">=3.10"
+name = "agent-framework-project"
+description = "Microsoft Agent Framework for building AI Agents with Python."
 version = "0.0.0"
-license = {file = "LICENSE"}
-urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
-dependencies = [
-]
 
 [dependency-groups]
 dev = [
     "pre-commit >= 3.7",
-    "pyright>=1.1.400",
-    "mypy>=1.15.0",
     "ruff>=0.11.8",
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.0.0",
+    "pytest-cov>=6.2.1",
+    "pytest-xdist[psutil]>=3.8.0",
+    "pytest-timeout>=2.3.1",
+    "mypy>=1.16.1",
+    "pyright>=1.1.402",
+
+    #tasks
+    "poethepoet>=0.36.0",
+    "rich",
+    "tomli",
+    "tomli-w",
+    "markdownify",
+    # Documentation
+    "myst-nb==1.1.2",
+    "pydata-sphinx-theme==0.16.0",
+    "sphinx-copybutton",
+    "sphinx-design",
+    "sphinx",
+    "sphinxcontrib-apidoc",
+    "autodoc_pydantic~=2.2",
+    "pygments",
+    "sphinxext-rediraffe",
+    "opentelemetry-instrumentation-openai",
+    "markdown-it-py[linkify]",
+    # Documentation tooling
+    "diskcache",
+    "redis",
+    "sphinx-autobuild",
 ]
 
-[build-system]
-requires = ["hatchling", "uv-dynamic-versioning"]
-build-backend = "hatchling.build"
+[tool.uv]
+package = false
+prerelease = "if-necessary-or-explicit"
+environments = [
+    "sys_platform == 'darwin'",
+    "sys_platform == 'linux'",
+    "sys_platform == 'win32'"
+]
 
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+agent-framework = { workspace = true }
+agent-framework-openai = { workspace = true }
+agent-framework-azure = { workspace = true }
 
 [tool.uv-dynamic-versioning]
 fallback-version = "0.0.0"
@@ -27,7 +62,9 @@ fallback-version = "0.0.0"
 [tool.ruff]
 line-length = 120
 target-version = "py310"
+fix = true
 include = ["*.py", "*.pyi", "**/pyproject.toml", "*.ipynb"]
+exclude = ["docs/*", "run_tasks_in_packages_if_exists.py", "check_md_code_blocks.py"]
 preview = true
 
 [tool.ruff.lint]
@@ -59,9 +96,16 @@ select = [
 ignore = [
     "D100", # allow missing docstring in public module
     "D104", # allow missing docstring in public package
+    "D418", # allow overload to have a docstring
     "TD003", # allow missing link to todo issue
     "FIX002" # allow todo
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# Ignore all directories named `tests` and `samples`.
+"**/tests/**" = ["D", "INP", "TD", "ERA001", "RUF", "S"]
+"samples/**" = ["D", "INP", "ERA001", "RUF", "S"]
+"*.ipynb" = ["CPY", "E501"]
 
 [tool.ruff.format]
 docstring-code-format = true
@@ -74,25 +118,62 @@ notice-rgx = "^# Copyright \\(c\\) Microsoft\\. All rights reserved\\."
 min-file-size = 1
 
 [tool.pyright]
-include = ["src", "tests", "samples"]
+include = ["agent_framework", "samples"]
+exclude = ["**/tests/**", "docs", "**/.venv/**"]
 typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
 reportMissingTypeStubs = false
-venvPath = "."
-venv = ".venv"
 
 [tool.mypy]
+plugins = ['pydantic.mypy']
 strict = true
-python_version = "3.9"
+python_version = "3.10"
 ignore_missing_imports = true
-
 disallow_untyped_defs = true
 no_implicit_optional = true
 check_untyped_defs = true
 warn_return_any = true
 show_error_codes = true
 warn_unused_ignores = false
-
 disallow_incomplete_defs = true
 disallow_untyped_decorators = true
 disallow_any_unimported = true
+
+[tool.bandit]
+targets = ["agent_framework"]
+exclude_dirs = ["tests", "./run_tasks_in_packages_if_exists.py", "./check_md_code_blocks.py", "docs"]
+
+[tool.poe]
+executor.type = "uv"
+
+[tool.poe.tasks]
+markdown-code-lint = """python check_md_code_blocks.py ../README.md ./docs/agent-framework/**/*.md README.md"""
+samples-code-check = """pyright ./samples"""
+docs-clean = "rm -rf docs/build"
+docs-build = "sphinx-build docs/agent-framework docs/build"
+docs-serve = "sphinx-autobuild --watch docs/agent-framework docs/build --port 8000 --jobs auto"
+docs-check = "sphinx-build --fail-on-warning docs/agent-framework docs/build"
+docs-check-examples = "sphinx-build -b code_lint docs/agent-framework docs/build"
+pre-commit-install = "uv run pre-commit install --install-hooks --overwrite"
+install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit"
+test = "python run_tasks_in_packages_if_exists.py test"
+fmt = "python run_tasks_in_packages_if_exists.py fmt"
+format.ref = "fmt"
+lint = "python run_tasks_in_packages_if_exists.py lint"
+pyright = "python run_tasks_in_packages_if_exists.py pyright"
+mypy = "python run_tasks_in_packages_if_exists.py mypy"
+build = "python run_tasks_in_packages_if_exists.py build"
+# combined checks
+check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint", "samples-code-check"]
+pre-commit-check = ["fmt", "lint", "pyright", "markdown-code-lint", "samples-code-check"]
+
+[tool.poe.tasks.venv]
+cmd = "uv venv --python $python"
+args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
+[tool.poe.tasks.setup]
+sequence = [
+    { ref = "venv --python $python"},
+    { ref = "install" },
+    { ref = "pre-commit-install" }
+]
+args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]

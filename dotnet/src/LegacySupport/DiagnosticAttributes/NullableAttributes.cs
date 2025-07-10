@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 #pragma warning disable CA1019
 
@@ -42,7 +42,7 @@ internal sealed class MaybeNullWhenAttribute : Attribute
     /// <param name="returnValue">
     /// The return value condition. If the method returns this value, the associated parameter may be <see langword="null" />.
     /// </param>
-    public MaybeNullWhenAttribute(bool returnValue) => ReturnValue = returnValue;
+    public MaybeNullWhenAttribute(bool returnValue) => this.ReturnValue = returnValue;
 
     /// <summary>Gets the return value condition.</summary>
     public bool ReturnValue { get; }
@@ -57,7 +57,7 @@ internal sealed class NotNullWhenAttribute : Attribute
     /// <param name="returnValue">
     /// The return value condition. If the method returns this value, the associated parameter will not be <see langword="null" />.
     /// </param>
-    public NotNullWhenAttribute(bool returnValue) => ReturnValue = returnValue;
+    public NotNullWhenAttribute(bool returnValue) => this.ReturnValue = returnValue;
 
     /// <summary>Gets the return value condition.</summary>
     public bool ReturnValue { get; }
@@ -72,7 +72,7 @@ internal sealed class NotNullIfNotNullAttribute : Attribute
     /// <param name="parameterName">
     /// The associated parameter name.  The output will be non-null if the argument to the parameter specified is non-null.
     /// </param>
-    public NotNullIfNotNullAttribute(string parameterName) => ParameterName = parameterName;
+    public NotNullIfNotNullAttribute(string parameterName) => this.ParameterName = parameterName;
 
     /// <summary>Gets the associated parameter name.</summary>
     public string ParameterName { get; }
@@ -95,7 +95,7 @@ internal sealed class DoesNotReturnIfAttribute : Attribute
     /// The condition parameter value. Code after the method will be considered unreachable by diagnostics if the argument to
     /// the associated parameter matches this value.
     /// </param>
-    public DoesNotReturnIfAttribute(bool parameterValue) => ParameterValue = parameterValue;
+    public DoesNotReturnIfAttribute(bool parameterValue) => this.ParameterValue = parameterValue;
 
     /// <summary>Gets the condition parameter value.</summary>
     public bool ParameterValue { get; }
@@ -111,13 +111,13 @@ internal sealed class MemberNotNullAttribute : Attribute
     /// <param name="member">
     /// The field or property member that is promised to be not-null.
     /// </param>
-    public MemberNotNullAttribute(string member) => Members = new[] { member };
+    public MemberNotNullAttribute(string member) => this.Members = new[] { member };
 
     /// <summary>Initializes the attribute with the list of field and property members.</summary>
     /// <param name="members">
     /// The list of field and property members that are promised to be not-null.
     /// </param>
-    public MemberNotNullAttribute(params string[] members) => Members = members;
+    public MemberNotNullAttribute(params string[] members) => this.Members = members;
 
     /// <summary>Gets field or property member names.</summary>
     public string[] Members { get; }
@@ -137,8 +137,8 @@ internal sealed class MemberNotNullWhenAttribute : Attribute
     /// </param>
     public MemberNotNullWhenAttribute(bool returnValue, string member)
     {
-        ReturnValue = returnValue;
-        Members = new[] { member };
+        this.ReturnValue = returnValue;
+        this.Members = [member];
     }
 
     /// <summary>Initializes the attribute with the specified return value condition and list of field and property members.</summary>
@@ -150,8 +150,8 @@ internal sealed class MemberNotNullWhenAttribute : Attribute
     /// </param>
     public MemberNotNullWhenAttribute(bool returnValue, params string[] members)
     {
-        ReturnValue = returnValue;
-        Members = members;
+        this.ReturnValue = returnValue;
+        this.Members = members;
     }
 
     /// <summary>Gets the return value condition.</summary>

@@ -5,8 +5,8 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests;
 using AgentConformance.IntegrationTests.Support;
-using Microsoft.Agents;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
 using OpenAI;
 using OpenAI.Assistants;
 using Shared.IntegrationTests;
@@ -35,16 +35,16 @@ public class OpenAIAssistantFixture : IChatClientAgentFixture
             throw new InvalidOperationException("The thread must be of type ChatClientAgentThread to retrieve chat history.");
         }
 
-        List<ChatMessage> messages = new();
+        List<ChatMessage> messages = [];
         await foreach (var agentMessage in this._assistantClient!.GetMessagesAsync(chatClientThread.Id, new() { Order = MessageCollectionOrder.Ascending }))
         {
             messages.Add(new()
             {
                 Role = agentMessage.Role == MessageRole.User ? ChatRole.User : ChatRole.Assistant,
-                Contents = new List<AIContent>()
-                {
+                Contents =
+                [
                     new TextContent(agentMessage.Content[0].Text ?? string.Empty)
-                },
+                ],
             });
         }
 
