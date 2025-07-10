@@ -5,12 +5,13 @@ from collections.abc import Mapping
 from copy import copy
 from typing import Any
 
-from openai import AsyncOpenAI
+from agent_framework.exceptions import ServiceInitializationError
 from pydantic import ConfigDict, Field, validate_call
+
+from openai import AsyncOpenAI
 
 from ._openai_handler import OpenAIHandler
 from ._openai_model_types import OpenAIModelTypes
-from agent_framework.exceptions import ServiceInitializationError
 
 logger: logging.Logger = logging.getLogger(__name__)
 

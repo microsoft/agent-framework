@@ -1,10 +1,13 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from agent_framework.exceptions import ServiceContentFilterException
+
 from openai import BadRequestError
 
-from agent_framework.exceptions import ServiceContentFilterException
 
 class ContentFilterResultSeverity(Enum):
     """The severity of the content filter result."""
@@ -77,11 +80,11 @@ class OpenAIContentFilterException(ServiceContentFilterException):
 
         self.param = inner_exception.param
         if inner_exception.body is not None and isinstance(inner_exception.body, dict):
-            inner_error = inner_exception.body.get("innererror", {}) # type: ignore
+            inner_error = inner_exception.body.get("innererror", {})  # type: ignore
             self.content_filter_code = ContentFilterCodes(
-                inner_error.get("code", ContentFilterCodes.RESPONSIBLE_AI_POLICY_VIOLATION.value) # type: ignore
+                inner_error.get("code", ContentFilterCodes.RESPONSIBLE_AI_POLICY_VIOLATION.value)  # type: ignore
             )
             self.content_filter_result = {
-                key: ContentFilterResult.from_inner_error_result(values) # type: ignore
-                for key, values in inner_error.get("content_filter_result", {}).items() #type: ignore
+                key: ContentFilterResult.from_inner_error_result(values)  # type: ignore
+                for key, values in inner_error.get("content_filter_result", {}).items()  # type: ignore
             }

@@ -5,7 +5,7 @@ import pytest
 from agent_framework.exceptions import ServiceInitializationError
 
 from agent_framework import ChatClient
-from agent_framework.openai import OpenAIChatCompletion
+from agent_framework.openai._chat_completion import OpenAIChatCompletion
 
 
 def test_init(openai_unit_test_env: dict[str, str]) -> None:

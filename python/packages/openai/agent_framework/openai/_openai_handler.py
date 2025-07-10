@@ -4,26 +4,25 @@ import logging
 from abc import ABC
 from typing import Annotated, Any, Union
 
-from openai import AsyncOpenAI, AsyncStream, BadRequestError
-from openai import _legacy_response # type: ignore
+from agent_framework.exceptions import ServiceInvalidRequestError, ServiceResponseException
+from pydantic import BaseModel
+from pydantic.types import StringConstraints
+
+from agent_framework import AFBaseModel, ChatOptions, SpeechToTextOptions, TextToSpeechOptions
+from openai import (
+    AsyncOpenAI,
+    AsyncStream,
+    BadRequestError,
+    _legacy_response,  # type: ignore
+)
 from openai.lib._parsing._completions import type_to_response_format_param
 from openai.types import Completion
 from openai.types.audio import Transcription
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai.types.images_response import ImagesResponse
-from pydantic import BaseModel
-from pydantic.types import StringConstraints
 
-from agent_framework import (
-    AFBaseModel, ChatOptions, SpeechToTextOptions, TextToSpeechOptions
-)
-from agent_framework.exceptions import (
-    ServiceInvalidRequestError, ServiceResponseException
-)
-
-from .exceptions import OpenAIContentFilterException
 from ._openai_model_types import OpenAIModelTypes
-
+from .exceptions import OpenAIContentFilterException
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -56,22 +55,18 @@ class OpenAIHandler(AFBaseModel, ABC):
     async def _send_request(self, options: OPTION_TYPE, messages: list[dict[str, Any]] | None = None) -> RESPONSE_TYPE:
         """Send a request to the OpenAI API."""
         if self.ai_model_type == OpenAIModelTypes.CHAT:
-            assert isinstance(options, ChatOptions)  # nosec
+            assert isinstance(options, ChatOptions)  # nosec # noqa: S101
             return await self._send_completion_request(options, messages)
         # TODO(evmattso): move other PromptExecutionSettings to a common options class
         if self.ai_model_type == OpenAIModelTypes.EMBEDDING:
             raise NotImplementedError("Embedding generation is not yet implemented in OpenAIHandler")
-            # assert isinstance(options, OpenAIEmbeddingPromptExecutionSettings)  # nosec
-            # return await self._send_embedding_request(options)
         if self.ai_model_type == OpenAIModelTypes.TEXT_TO_IMAGE:
             raise NotImplementedError("Text to image generation is not yet implemented in OpenAIHandler")
-            # assert isinstance(options, OpenAITextToImageExecutionSettings)  # nosec
-            # return await self._send_text_to_image_request(options)
         if self.ai_model_type == OpenAIModelTypes.SPEECH_TO_TEXT:
-            assert isinstance(options, SpeechToTextOptions)  # nosec
+            assert isinstance(options, SpeechToTextOptions)  # nosec # noqa: S101
             return await self._send_audio_to_text_request(options)
         if self.ai_model_type == OpenAIModelTypes.TEXT_TO_SPEECH:
-            assert isinstance(options, TextToSpeechOptions)  # nosec
+            assert isinstance(options, TextToSpeechOptions)  # nosec # noqa: S101
             return await self._send_text_to_audio_request(options)
 
         raise NotImplementedError(f"Model type {self.ai_model_type} is not supported")
@@ -90,12 +85,12 @@ class OpenAIHandler(AFBaseModel, ABC):
                 self._handle_structured_outputs(chat_options, options_dict)
                 if chat_options.tools is None:
                     options_dict.pop("parallel_tool_calls", None)
-                response = await self.client.chat.completions.create(**options_dict) # type: ignore
+                response = await self.client.chat.completions.create(**options_dict)  # type: ignore
             else:
-                response = await self.client.completions.create(**options_dict) # type: ignore
+                response = await self.client.completions.create(**options_dict)  # type: ignore
 
-            assert isinstance(response, (ChatCompletion, Completion, AsyncStream)) # nosec
-            return response # type: ignore
+            assert isinstance(response, (ChatCompletion, Completion, AsyncStream))  # nosec  # noqa: S101
+            return response  # type: ignore
         except BadRequestError as ex:
             if ex.code == "content_filter":
                 raise OpenAIContentFilterException(
@@ -112,39 +107,18 @@ class OpenAIHandler(AFBaseModel, ABC):
                 ex,
             ) from ex
 
-    # async def _send_embedding_request(self, settings: OpenAIEmbeddingPromptExecutionSettings) -> list[Any]:
-    #     """Send a request to the OpenAI embeddings endpoint."""
-    #     try:
-    #         response = await self.client.embeddings.create(**settings.prepare_settings_dict())
-
-    #         self.store_usage(response)
-    #         return [x.embedding for x in response.data]
-    #     except Exception as ex:
-    #         raise ServiceResponseException(
-    #             f"{type(self)} service failed to generate embeddings",
-    #             ex,
-    #         ) from ex
-
-    # async def _send_text_to_image_request(self, settings: OpenAITextToImageExecutionSettings) -> ImagesResponse:
-    #     """Send a request to the OpenAI text to image endpoint."""
-    #     try:
-    #         return await self.client.images.generate(
-    #             **settings.prepare_settings_dict(),
-    #         )
-    #     except Exception as ex:
-    #         raise ServiceResponseException(f"Failed to generate image: {ex}") from ex
-
     async def _send_audio_to_text_request(self, options: SpeechToTextOptions) -> Transcription:
         """Send a request to the OpenAI audio to text endpoint."""
         if not options.additional_properties["filename"]:
             raise ServiceInvalidRequestError("Audio file is required for audio to text service")
 
         try:
-            with open(options.additional_properties["filename"], "rb") as audio_file:
+            # TODO(peterychang): open isn't async safe
+            with open(options.additional_properties["filename"], "rb") as audio_file:  # noqa: ASYNC230
                 return await self.client.audio.transcriptions.create(
                     file=audio_file,
                     **options.to_provider_settings(exclude={"filename"}),
-                ) # type: ignore
+                )  # type: ignore
         except Exception as ex:
             raise ServiceResponseException(
                 f"{type(self)} service failed to transcribe audio",
