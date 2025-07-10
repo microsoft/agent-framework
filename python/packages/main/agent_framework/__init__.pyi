@@ -4,7 +4,7 @@ import agent_framework.openai as openai
 
 from . import __version__  # type: ignore[attr-defined]
 from ._agents import Agent, AgentThread
-from ._clients import ChatClient, ChatClientBase, EmbeddingGenerator, streaming_tool_call_enabled, tool_call_enabled
+from ._clients import ChatClient, ChatClientBase, EmbeddingGenerator, use_tool_calling
 from ._logging import get_logger
 from ._tools import AITool, ai_function
 from ._types import (
@@ -64,6 +64,5 @@ __all__ = [
     "ai_function",
     "get_logger",
     "openai",
-    "streaming_tool_call_enabled",
-    "tool_call_enabled",
+    "use_tool_calling",
 ]

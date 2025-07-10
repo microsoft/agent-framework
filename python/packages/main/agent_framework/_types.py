@@ -1371,6 +1371,14 @@ class ChatToolMode(AFBaseModel):
         """Returns a ChatToolMode that requires the specified function to be called."""
         return cls(mode="required", required_function_name=function_name)
 
+    def __eq__(self, other: object) -> bool:
+        """Checks equality with another ChatToolMode or string."""
+        if isinstance(other, str):
+            return self.mode == other
+        if isinstance(other, ChatToolMode):
+            return self.mode == other.mode and self.required_function_name == other.required_function_name
+        return False
+
 
 ChatToolMode.AUTO = ChatToolMode(mode="auto")  # type: ignore[assignment]
 ChatToolMode.REQUIRED_ANY = ChatToolMode(mode="required")  # type: ignore[assignment]
