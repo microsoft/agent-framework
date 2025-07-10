@@ -189,7 +189,7 @@ public class AgentRunResponseTests
         var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, JsonSerializer.Serialize(expectedResult, TestJsonSerializerContext.Default.Animal)));
 
         // Act.
-        var animal = response.ParseAsStructuredOutput<Animal>(TestJsonSerializerContext.Default.Options);
+        var animal = response.Deserialize<Animal>(TestJsonSerializerContext.Default.Options);
 
         // Assert.
         Assert.NotNull(animal);
@@ -205,7 +205,7 @@ public class AgentRunResponseTests
         var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, string.Empty));
 
         // Act & Assert.
-        var exception = Assert.Throws<InvalidOperationException>(() => response.ParseAsStructuredOutput<Animal>(TestJsonSerializerContext.Default.Options));
+        var exception = Assert.Throws<InvalidOperationException>(() => response.Deserialize<Animal>(TestJsonSerializerContext.Default.Options));
         Assert.Equal("The response did not contain JSON to be deserialized.", exception.Message);
     }
 
@@ -216,7 +216,7 @@ public class AgentRunResponseTests
         var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "invalid json"));
 
         // Act & Assert.
-        Assert.Throws<JsonException>(() => response.ParseAsStructuredOutput<Animal>(TestJsonSerializerContext.Default.Options));
+        Assert.Throws<JsonException>(() => response.Deserialize<Animal>(TestJsonSerializerContext.Default.Options));
     }
 
     [Fact]
@@ -226,7 +226,7 @@ public class AgentRunResponseTests
         var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "[]"));
 
         // Act & Assert.
-        Assert.Throws<JsonException>(() => response.ParseAsStructuredOutput<Animal>(TestJsonSerializerContext.Default.Options));
+        Assert.Throws<JsonException>(() => response.Deserialize<Animal>(TestJsonSerializerContext.Default.Options));
     }
 
     [Fact]
@@ -237,7 +237,7 @@ public class AgentRunResponseTests
         var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, JsonSerializer.Serialize(expectedResult, TestJsonSerializerContext.Default.Animal)));
 
         // Act.
-        var animal = response.ParseAsStructuredOutput<Animal>(TestJsonSerializerContext.Default.Options);
+        var animal = response.Deserialize<Animal>(TestJsonSerializerContext.Default.Options);
 
         // Assert.
         Assert.NotNull(animal);
@@ -253,7 +253,7 @@ public class AgentRunResponseTests
         var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, string.Empty));
 
         // Act & Assert.
-        Assert.False(response.TryParseAsStructuredOutput<Animal>(TestJsonSerializerContext.Default.Options, out _));
+        Assert.False(response.TryDeserialize<Animal>(TestJsonSerializerContext.Default.Options, out _));
     }
 
     [Fact]
@@ -263,6 +263,6 @@ public class AgentRunResponseTests
         var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "[]"));
 
         // Act & Assert.
-        Assert.False(response.TryParseAsStructuredOutput<Animal>(TestJsonSerializerContext.Default.Options, out _));
+        Assert.False(response.TryDeserialize<Animal>(TestJsonSerializerContext.Default.Options, out _));
     }
 }

@@ -151,13 +151,13 @@ public class AgentRunResponse
 
     // TODO: Add overloads without serializer options.
     /// <summary>
-    /// Parses the response as structured output using the specified serializer options.
+    /// Deserializes the response text into the given type using the specified serializer options.
     /// </summary>
-    /// <typeparam name="T">The type of structured output to parse.</typeparam>
+    /// <typeparam name="T">The output type to deserialize into.</typeparam>
     /// <param name="serializerOptions">The JSON serialization options to use.</param>
     /// <returns>The result as the requested type.</returns>
     /// <exception cref="InvalidOperationException">The result is not parsable into the requested type.</exception>
-    public T ParseAsStructuredOutput<T>(JsonSerializerOptions serializerOptions)
+    public T Deserialize<T>(JsonSerializerOptions serializerOptions)
     {
         var structuredOutput = this.GetResultCore<T>(serializerOptions, out var failureReason);
         return failureReason switch
@@ -169,13 +169,13 @@ public class AgentRunResponse
     }
 
     /// <summary>
-    /// Tries to parse the response as structured output using the specified serializer options.
+    /// Tries to deserialize response text into the given type using the specified serializer options.
     /// </summary>
-    /// <typeparam name="T">The type of structured output to parse.</typeparam>
+    /// <typeparam name="T">The output type to deserialize into.</typeparam>
     /// <param name="serializerOptions">The JSON serialization options to use.</param>
     /// <param name="structuredOutput">The parsed structured output.</param>
     /// <returns><see langword="true" /> if parsing was successful; otherwise, <see langword="false" />.</returns>
-    public bool TryParseAsStructuredOutput<T>(JsonSerializerOptions serializerOptions, [NotNullWhen(true)] out T? structuredOutput)
+    public bool TryDeserialize<T>(JsonSerializerOptions serializerOptions, [NotNullWhen(true)] out T? structuredOutput)
     {
         try
         {
