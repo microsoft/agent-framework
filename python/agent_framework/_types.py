@@ -174,14 +174,9 @@ def _process_update(
         message.message_id = update.message_id
     for content in update.contents:
         if isinstance(content, UsageContent):
-            if isinstance(response, ChatResponse):
-                if response.usage_details is None:
-                    response.usage_details = UsageDetails()
-                response.usage_details += content.details
-            elif isinstance(response, AgentRunResponse):
-                if response.usage is None:
-                    response.usage = UsageDetails()
-                response.usage += content.details
+            if response.usage_details is None:
+                response.usage_details = UsageDetails()
+            response.usage_details += content.details
         else:
             message.contents.append(content)
     # Incorporate the update's properties into the response.
@@ -1521,7 +1516,7 @@ class AgentRunResponse(AFBaseModel):
     messages: list[ChatMessage] = Field(default_factory=list)
     response_id: str | None = None
     created_at: CreatedAtT | None = None  # use a datetimeoffset type?
-    usage: UsageDetails | None = None
+    usage_details: UsageDetails | None = None
     raw_representation: Any | None = None
     additional_properties: dict[str, Any] | None = None
 
