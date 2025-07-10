@@ -6,7 +6,11 @@ using Microsoft.Extensions.AI.Agents;
 
 namespace Steps;
 
-public sealed class Step02_ChatClientAgent_UsingTools(ITestOutputHelper output) : AgentSample(output)
+/// <summary>
+/// This sample demonstrates how to use a <see cref="ChatClientAgent"/> with function tools.
+/// It includes examples of both streaming and non-streaming agent interactions.
+/// </summary>
+public sealed class Step02_ChatClientAgent_UsingFunctionTools(ITestOutputHelper output) : AgentSample(output)
 {
     [Theory]
     [InlineData(ChatClientProviders.AzureOpenAI)]
