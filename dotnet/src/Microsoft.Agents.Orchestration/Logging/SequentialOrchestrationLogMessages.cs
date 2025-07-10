@@ -22,13 +22,13 @@ internal static partial class SequentialOrchestrationLogMessages
         Message = "REQUEST Sequential agent [{AgentId}]")]
     public static partial void LogSequentialAgentInvoke(
         this ILogger logger,
-        AgentId agentId);
+        ActorId agentId);
 
     [LoggerMessage(
         Level = LogLevel.Trace,
         Message = "RESULT Sequential agent [{AgentId}]: {Message}")]
     public static partial void LogSequentialAgentResult(
         this ILogger logger,
-        AgentId agentId,
+        ActorId agentId,
         string? message);
 }

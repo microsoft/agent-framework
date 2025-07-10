@@ -46,7 +46,7 @@ public class MessageEnvelopeTests
     {
         // Arrange
         MessageEnvelope envelope = new("test");
-        AgentId sender = new("testtype", "testkey");
+        ActorId sender = new("testtype", "testkey");
 
         // Act
         MessageEnvelope result = envelope.WithSender(sender);
@@ -61,7 +61,7 @@ public class MessageEnvelopeTests
     {
         // Arrange
         MessageEnvelope envelope = new("test");
-        AgentId receiver = new("receivertype", "receiverkey");
+        ActorId receiver = new("receivertype", "receiverkey");
         object expectedResult = new { Response = "Success" };
 
         ValueTask<object?> servicer(MessageEnvelope env, CancellationToken ct) => new(expectedResult);
@@ -76,8 +76,8 @@ public class MessageEnvelopeTests
 
         // Invoke the servicer to verify result sink works
         await delivery.InvokeAsync(CancellationToken.None);
-        Assert.True(delivery.ResultSink.Future.IsCompleted);
-        object? result = await delivery.ResultSink.Future;
+        Assert.True(delivery.ResultTask.IsCompleted);
+        object? result = await delivery.ResultTask;
         Assert.Same(expectedResult, result);
     }
 
