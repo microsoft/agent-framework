@@ -17,54 +17,34 @@ public class AgentIdTests()
     public void AgentIdShouldThrowArgumentExceptionWithInvalidKey(string? invalidKey)
     {
         // Act & Assert
-        ArgumentException exception = Assert.Throws<ArgumentException>(() => new AgentId("validType", invalidKey!));
-        Assert.Contains("Invalid AgentId key", exception.Message);
+        ArgumentException exception = Assert.Throws<ArgumentException>(() => new ActorId("validType", invalidKey!));
+        Assert.Contains("Invalid ActorId key", exception.Message);
     }
 
     [Fact]
     public void AgentIdShouldInitializeCorrectlyTest()
     {
-        AgentId agentId = new("TestType", "TestKey");
+        ActorId agentId = new("TestType", "TestKey");
 
-        Assert.Equal("TestType", agentId.Type);
-        Assert.Equal("TestKey", agentId.Key);
-    }
-
-    [Fact]
-    public void AgentIdShouldConvertFromTupleTest()
-    {
-        (string, string) agentTuple = ("TupleType", "TupleKey");
-        AgentId agentId = new(agentTuple);
-
-        Assert.Equal("TupleType", agentId.Type);
-        Assert.Equal("TupleKey", agentId.Key);
-    }
-
-    [Fact]
-    public void AgentIdShouldConvertFromAgentType()
-    {
-        AgentType agentType = "TestType";
-        AgentId agentId = new(agentType, "TestKey");
-
-        Assert.Equal("TestType", agentId.Type);
+        Assert.Equal("TestType", agentId.Type.Name);
         Assert.Equal("TestKey", agentId.Key);
     }
 
     [Fact]
     public void AgentIdShouldParseFromStringTest()
     {
-        AgentId agentId = AgentId.FromStr("ParsedType/ParsedKey");
+        ActorId agentId = ActorId.Parse("ParsedType/ParsedKey");
 
-        Assert.Equal("ParsedType", agentId.Type);
+        Assert.Equal("ParsedType", agentId.Type.Name);
         Assert.Equal("ParsedKey", agentId.Key);
     }
 
     [Fact]
     public void AgentIdShouldCompareEqualityCorrectlyTest()
     {
-        AgentId agentId1 = new("SameType", "SameKey");
-        AgentId agentId2 = new("SameType", "SameKey");
-        AgentId agentId3 = new("DifferentType", "DifferentKey");
+        ActorId agentId1 = new("SameType", "SameKey");
+        ActorId agentId2 = new("SameType", "SameKey");
+        ActorId agentId3 = new("DifferentType", "DifferentKey");
 
         Assert.Equal(agentId2, agentId1);
         Assert.NotEqual(agentId3, agentId1);
@@ -75,27 +55,18 @@ public class AgentIdTests()
     [Fact]
     public void AgentIdShouldGenerateCorrectHashCodeTest()
     {
-        AgentId agentId1 = new("HashType", "HashKey");
-        AgentId agentId2 = new("HashType", "HashKey");
-        AgentId agentId3 = new("DifferentType", "DifferentKey");
+        ActorId agentId1 = new("HashType", "HashKey");
+        ActorId agentId2 = new("HashType", "HashKey");
+        ActorId agentId3 = new("DifferentType", "DifferentKey");
 
         Assert.Equal(agentId2.GetHashCode(), agentId1.GetHashCode());
         Assert.NotEqual(agentId3.GetHashCode(), agentId1.GetHashCode());
     }
 
     [Fact]
-    public void AgentIdShouldConvertExplicitlyFromStringTest()
-    {
-        AgentId agentId = (AgentId)"ConvertedType/ConvertedKey";
-
-        Assert.Equal("ConvertedType", agentId.Type);
-        Assert.Equal("ConvertedKey", agentId.Key);
-    }
-
-    [Fact]
     public void AgentIdShouldReturnCorrectToStringTest()
     {
-        AgentId agentId = new("ToStringType", "ToStringKey");
+        ActorId agentId = new("ToStringType", "ToStringKey");
 
         Assert.Equal("ToStringType/ToStringKey", agentId.ToString());
     }
@@ -103,7 +74,7 @@ public class AgentIdTests()
     [Fact]
     public void AgentIdShouldCompareInequalityForWrongTypeTest()
     {
-        AgentId agentId1 = new("Type1", "Key1");
+        ActorId agentId1 = new("Type1", "Key1");
 
         Assert.False(agentId1.Equals(Guid.NewGuid()));
     }
@@ -111,8 +82,8 @@ public class AgentIdTests()
     [Fact]
     public void AgentIdShouldCompareInequalityCorrectlyTest()
     {
-        AgentId agentId1 = new("Type1", "Key1");
-        AgentId agentId2 = new("Type2", "Key2");
+        ActorId agentId1 = new("Type1", "Key1");
+        ActorId agentId2 = new("Type2", "Key2");
 
         Assert.True(agentId1 != agentId2);
     }

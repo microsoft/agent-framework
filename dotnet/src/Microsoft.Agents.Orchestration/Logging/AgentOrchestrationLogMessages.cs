@@ -37,7 +37,7 @@ internal static partial class AgentOrchestrationLogMessages
     public static partial void LogRegisterActor(
         this ILogger logger,
         string orchestration,
-        AgentType agentType,
+        ActorType agentType,
         string label);
 
     /// <summary>
@@ -49,7 +49,7 @@ internal static partial class AgentOrchestrationLogMessages
     public static partial void LogRegisterActor(
         this ILogger logger,
         string orchestration,
-        AgentType agentType,
+        ActorType agentType,
         string label,
         int count);
 
@@ -96,7 +96,7 @@ internal static partial class AgentOrchestrationLogMessages
     public static partial void LogOrchestrationStart(
         this ILogger logger,
         string orchestration,
-        AgentId agentId);
+        ActorId agentId);
 
     /// <summary>
     /// Logs that orchestration request actor is active
@@ -107,7 +107,7 @@ internal static partial class AgentOrchestrationLogMessages
     public static partial void LogOrchestrationRequestInvoke(
         this ILogger logger,
         string orchestration,
-        AgentId agentId);
+        ActorId agentId);
 
     /// <summary>
     /// Logs that orchestration request actor experienced an unexpected failure.
@@ -118,7 +118,7 @@ internal static partial class AgentOrchestrationLogMessages
     public static partial void LogOrchestrationRequestFailure(
         this ILogger logger,
         string orchestration,
-        AgentId agentId,
+        ActorId agentId,
         Exception exception);
 
     /// <summary>
@@ -130,7 +130,7 @@ internal static partial class AgentOrchestrationLogMessages
     public static partial void LogOrchestrationResultInvoke(
         this ILogger logger,
         string orchestration,
-        AgentId agentId);
+        ActorId agentId);
 
     /// <summary>
     /// Logs that orchestration result actor experienced an unexpected failure.
@@ -141,6 +141,6 @@ internal static partial class AgentOrchestrationLogMessages
     public static partial void LogOrchestrationResultFailure(
         this ILogger logger,
         string orchestration,
-        AgentId agentId,
+        ActorId agentId,
         Exception exception);
 }

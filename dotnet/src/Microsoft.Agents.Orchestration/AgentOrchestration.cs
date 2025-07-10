@@ -129,7 +129,7 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
 
         TaskCompletionSource<TOutput> completion = new();
 
-        AgentType orchestrationType = await this.RegisterAsync(runtime, context, completion, handoff: null).ConfigureAwait(false);
+        ActorType orchestrationType = await this.RegisterAsync(runtime, context, completion, handoff: null).ConfigureAwait(false);
 
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -149,7 +149,7 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
     /// <param name="topic">The unique identifier for the orchestration session.</param>
     /// <param name="input">The input to be transformed and processed.</param>
     /// <param name="entryAgent">The initial agent type used for starting the orchestration.</param>
-    protected abstract ValueTask StartAsync(IAgentRuntime runtime, TopicId topic, IEnumerable<ChatMessage> input, AgentType? entryAgent);
+    protected abstract ValueTask StartAsync(IAgentRuntime runtime, TopicId topic, IEnumerable<ChatMessage> input, ActorType? entryAgent);
 
     /// <summary>
     /// Orchestration specific registration, including members and returns an optional entry agent.
@@ -159,7 +159,7 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
     /// <param name="registrar">A registration context.</param>
     /// <param name="logger">The logger to use during registration</param>
     /// <returns>The entry AgentType for the orchestration, if any.</returns>
-    protected abstract ValueTask<AgentType?> RegisterOrchestrationAsync(IAgentRuntime runtime, OrchestrationContext context, RegistrationContext registrar, ILogger logger);
+    protected abstract ValueTask<ActorType?> RegisterOrchestrationAsync(IAgentRuntime runtime, OrchestrationContext context, RegistrationContext registrar, ILogger logger);
 
     /// <summary>
     /// Formats and returns a unique AgentType based on the provided topic and suffix.
@@ -167,7 +167,7 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
     /// <param name="topic">The topic identifier used in formatting the agent type.</param>
     /// <param name="suffix">A suffix to differentiate the agent type.</param>
     /// <returns>A formatted AgentType object.</returns>
-    protected AgentType FormatAgentType(TopicId topic, string suffix) => new($"{topic.Type}_{suffix}");
+    protected ActorType FormatAgentType(TopicId topic, string suffix) => new($"{topic.Type}_{suffix}");
 
     /// <summary>
     /// Registers the orchestration's root and boot agents, setting up completion and target routing.
@@ -177,7 +177,7 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
     /// <param name="completion">A TaskCompletionSource for the orchestration.</param>
     /// <param name="handoff">The actor type used for handoff.  Only defined for nested orchestrations.</param>
     /// <returns>The AgentType representing the orchestration entry point.</returns>
-    private async ValueTask<AgentType> RegisterAsync(IAgentRuntime runtime, OrchestrationContext context, TaskCompletionSource<TOutput> completion, AgentType? handoff)
+    private async ValueTask<ActorType> RegisterAsync(IAgentRuntime runtime, OrchestrationContext context, TaskCompletionSource<TOutput> completion, ActorType? handoff)
     {
         // Create a logger for the orchestration registration.
         ILogger logger = context.LoggerFactory.CreateLogger(this.GetType());
@@ -185,10 +185,10 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
 
         // Register orchestration
         RegistrationContext registrar = new(this.FormatAgentType(context.Topic, "Root"), runtime, context, completion, this.ResultTransform);
-        AgentType? entryAgent = await this.RegisterOrchestrationAsync(runtime, context, registrar, logger).ConfigureAwait(false);
+        ActorType? entryAgent = await this.RegisterOrchestrationAsync(runtime, context, registrar, logger).ConfigureAwait(false);
 
         // Register actor for orchestration entry-point
-        AgentType orchestrationEntry =
+        ActorType orchestrationEntry =
             await runtime.RegisterOrchestrationAgentAsync(
                 this.FormatAgentType(context.Topic, "Boot"),
                     (agentId, runtime) =>
@@ -201,11 +201,7 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
                                 completion,
                                 StartAsync,
                                 context.LoggerFactory.CreateLogger<RequestActor>());
-#if !NETCOREAPP
-                        return new ValueTask<IHostableAgent>(actor);
-#else
-                        return ValueTask.FromResult<IHostableAgent>(actor);
-#endif
+                        return new ValueTask<IRuntimeActor>(actor);
                     }).ConfigureAwait(false);
 
         logger.LogOrchestrationRegistrationDone(context.Orchestration, context.Topic);
@@ -219,7 +215,7 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
     /// A context used during registration (<see cref="RegisterAsync"/>).
     /// </summary>
     public sealed class RegistrationContext(
-        AgentType agentType,
+        ActorType agentType,
         IAgentRuntime runtime,
         OrchestrationContext context,
         TaskCompletionSource<TOutput> completion,
@@ -228,10 +224,10 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
         /// <summary>
         /// Register the final result type.
         /// </summary>
-        public async ValueTask<AgentType> RegisterResultTypeAsync<TResult>(OrchestrationResultTransform<TResult> resultTransform)
+        public async ValueTask<ActorType> RegisterResultTypeAsync<TResult>(OrchestrationResultTransform<TResult> resultTransform)
         {
             // Register actor for final result
-            AgentType registeredType =
+            ActorType registeredType =
                 await runtime.RegisterOrchestrationAgentAsync(
                     agentType,
                     (agentId, runtime) =>
@@ -244,11 +240,7 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
                                 outputTransform,
                                 completion,
                                 context.LoggerFactory.CreateLogger<ResultActor<TResult>>());
-#if !NETCOREAPP
-                        return new ValueTask<IHostableAgent>(actor);
-#else
-                        return ValueTask.FromResult<IHostableAgent>(actor);
-#endif
+                        return new ValueTask<IRuntimeActor>(actor);
                     }).ConfigureAwait(false);
 
             return registeredType;
