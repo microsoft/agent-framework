@@ -274,7 +274,7 @@ class ChatClient(Protocol):
         """
         ...
 
-    async def get_streaming_response(
+    def get_streaming_response(
         self,
         messages: str | ChatMessage | Sequence[ChatMessage],
         **kwargs: Any,
