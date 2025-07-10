@@ -34,8 +34,11 @@ public sealed class OrchestrationResult<TValue> : IDisposable
     /// </summary>
     public void Dispose()
     {
-        this.Dispose(disposing: true);
-        GC.SuppressFinalize(this);
+        if (!this._isDisposed)
+        {
+            this._cancelSource.Dispose();
+            this._isDisposed = true;
+        }
     }
 
     /// <summary>
@@ -60,13 +63,13 @@ public sealed class OrchestrationResult<TValue> : IDisposable
     /// <exception cref="TimeoutException">Thrown if the orchestration does not complete within the specified timeout period.</exception>
     public async ValueTask<TValue> GetValueAsync(TimeSpan? timeout = null, CancellationToken cancellationToken = default)
     {
-#if !NETCOREAPP
+#if NET
+        ObjectDisposedException.ThrowIf(this._isDisposed, this);
+#else
         if (this._isDisposed)
         {
             throw new ObjectDisposedException(this.GetType().Name);
         }
-#else
-        ObjectDisposedException.ThrowIf(this._isDisposed, this);
 #endif
 
         this._logger.LogOrchestrationResultAwait(this.Orchestration, this.Topic);
@@ -96,30 +99,17 @@ public sealed class OrchestrationResult<TValue> : IDisposable
     /// </remarks>
     public void Cancel()
     {
-#if !NETCOREAPP
+#if NET
+        ObjectDisposedException.ThrowIf(this._isDisposed, this);
+#else
         if (this._isDisposed)
         {
             throw new ObjectDisposedException(this.GetType().Name);
         }
-#else
-        ObjectDisposedException.ThrowIf(this._isDisposed, this);
 #endif
 
         this._logger.LogOrchestrationResultCancelled(this.Orchestration, this.Topic);
         this._cancelSource.Cancel();
         this._completion.SetCanceled();
-    }
-
-    private void Dispose(bool disposing)
-    {
-        if (!this._isDisposed)
-        {
-            if (disposing)
-            {
-                this._cancelSource.Dispose();
-            }
-
-            this._isDisposed = true;
-        }
     }
 }

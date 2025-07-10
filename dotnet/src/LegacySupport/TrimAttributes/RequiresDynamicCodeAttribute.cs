@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 namespace System.Diagnostics.CodeAnalysis;
 
@@ -22,7 +22,7 @@ internal sealed class RequiresDynamicCodeAttribute : Attribute
     /// </param>
     public RequiresDynamicCodeAttribute(string message)
     {
-        Message = message;
+        this.Message = message;
     }
 
     /// <summary>

@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Orchestration.Transforms;
 using Microsoft.Extensions.AI;
@@ -15,7 +16,7 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
     /// <summary>
     /// Actor responsible for receiving the resultant message, transforming it, and handling further orchestration.
     /// </summary>
-    private sealed class ResultActor<TResult> : OrchestrationActor, IHandle<TResult>
+    private sealed class ResultActor<TResult> : OrchestrationActor
     {
         private readonly TaskCompletionSource<TOutput> _completionSource;
         private readonly OrchestrationResultTransform<TResult> _transformResult;
@@ -32,7 +33,7 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
         /// <param name="completionSource">Optional TaskCompletionSource to signal orchestration completion.</param>
         /// <param name="logger">The logger to use for the actor</param>
         public ResultActor(
-            AgentId id,
+            ActorId id,
             IAgentRuntime runtime,
             OrchestrationContext context,
             OrchestrationResultTransform<TResult> transformResult,
@@ -44,6 +45,8 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
             this._completionSource = completionSource;
             this._transformResult = transformResult;
             this._transform = transformOutput;
+
+            this.RegisterMessageHandler<TResult>(this.HandleAsync);
         }
 
         /// <summary>
@@ -53,8 +56,9 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
         /// </summary>
         /// <param name="item">The result item to process.</param>
         /// <param name="messageContext">The context associated with the message.</param>
+        /// <param name="cancellationToken">A token to cancel the operation if needed.</param>
         /// <returns>A ValueTask representing asynchronous operation.</returns>
-        public async ValueTask HandleAsync(TResult item, MessageContext messageContext)
+        private async ValueTask HandleAsync(TResult item, MessageContext messageContext, CancellationToken cancellationToken)
         {
             this.Logger.LogOrchestrationResultInvoke(this.Context.Orchestration, this.Id);
 
@@ -63,7 +67,7 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
                 if (!this._completionSource.Task.IsCompleted)
                 {
                     IList<ChatMessage> result = this._transformResult.Invoke(item);
-                    TOutput output = await this._transform.Invoke(result).ConfigureAwait(false);
+                    TOutput output = await this._transform.Invoke(result, cancellationToken).ConfigureAwait(false);
                     this._completionSource.TrySetResult(output);
                 }
             }

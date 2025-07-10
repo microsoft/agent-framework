@@ -22,14 +22,14 @@ internal static partial class GroupChatOrchestrationLogMessages
         Message = "CHAT AGENT invoked [{AgentId}]")]
     public static partial void LogChatAgentInvoke(
         this ILogger logger,
-        AgentId agentId);
+        ActorId agentId);
 
     [LoggerMessage(
         Level = LogLevel.Trace,
         Message = "CHAT AGENT result [{AgentId}]: {Message}")]
     public static partial void LogChatAgentResult(
         this ILogger logger,
-        AgentId agentId,
+        ActorId agentId,
         string? message);
 
     [LoggerMessage(
@@ -37,21 +37,21 @@ internal static partial class GroupChatOrchestrationLogMessages
         Message = "CHAT MANAGER initialized [{AgentId}]")]
     public static partial void LogChatManagerInit(
         this ILogger logger,
-        AgentId agentId);
+        ActorId agentId);
 
     [LoggerMessage(
         Level = LogLevel.Debug,
         Message = "CHAT MANAGER invoked [{AgentId}]")]
     public static partial void LogChatManagerInvoke(
         this ILogger logger,
-        AgentId agentId);
+        ActorId agentId);
 
     [LoggerMessage(
         Level = LogLevel.Debug,
         Message = "CHAT MANAGER terminate? [{AgentId}]: {Result} ({Reason})")]
     public static partial void LogChatManagerTerminate(
         this ILogger logger,
-        AgentId agentId,
+        ActorId agentId,
         bool result,
         string reason);
 
@@ -60,15 +60,15 @@ internal static partial class GroupChatOrchestrationLogMessages
         Message = "CHAT MANAGER select: {NextAgent} [{AgentId}]")]
     public static partial void LogChatManagerSelect(
         this ILogger logger,
-        AgentId agentId,
-        AgentType nextAgent);
+        ActorId agentId,
+        ActorType nextAgent);
 
     [LoggerMessage(
         Level = LogLevel.Debug,
         Message = "CHAT MANAGER result [{AgentId}]: '{Result}' ({Reason})")]
     public static partial void LogChatManagerResult(
         this ILogger logger,
-        AgentId agentId,
+        ActorId agentId,
         string result,
         string reason);
 
@@ -77,7 +77,7 @@ internal static partial class GroupChatOrchestrationLogMessages
         Message = "CHAT MANAGER user-input? [{AgentId}]: {Result} ({Reason})")]
     public static partial void LogChatManagerInput(
         this ILogger logger,
-        AgentId agentId,
+        ActorId agentId,
         bool result,
         string reason);
 
@@ -86,6 +86,6 @@ internal static partial class GroupChatOrchestrationLogMessages
         Message = "CHAT AGENT user-input [{AgentId}]: {Message}")]
     public static partial void LogChatManagerUserInput(
         this ILogger logger,
-        AgentId agentId,
+        ActorId agentId,
         string? message);
 }
