@@ -15,9 +15,9 @@ public static class RuntimeExtensions
     /// <summary>
     /// Sends a message to the specified agent.
     /// </summary>
-    public static async ValueTask PublishMessageAsync(this IAgentRuntime runtime, object message, AgentType agentType, CancellationToken cancellationToken = default)
+    public static async ValueTask PublishMessageAsync(this IAgentRuntime runtime, object message, ActorType agentType, CancellationToken cancellationToken = default)
     {
-        await runtime.PublishMessageAsync(message, new TopicId(agentType), sender: null, messageId: null, cancellationToken).ConfigureAwait(false);
+        await runtime.PublishMessageAsync(message, new TopicId(agentType.Name), sender: null, messageId: null, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -27,12 +27,12 @@ public static class RuntimeExtensions
     /// <param name="agentType">The type of agent to register.</param>
     /// <param name="factoryFunc">The factory function for creating the agent.</param>
     /// <returns>The registered agent type.</returns>
-    public static async ValueTask<AgentType> RegisterOrchestrationAgentAsync(this IAgentRuntime runtime, AgentType agentType, Func<AgentId, IAgentRuntime, ValueTask<IHostableAgent>> factoryFunc)
+    public static async ValueTask<ActorType> RegisterOrchestrationAgentAsync(this IAgentRuntime runtime, ActorType agentType, Func<ActorId, IAgentRuntime, ValueTask<IRuntimeActor>> factoryFunc)
     {
-        AgentType registeredType = await runtime.RegisterAgentFactoryAsync(agentType, factoryFunc).ConfigureAwait(false);
+        ActorType registeredType = await runtime.RegisterActorFactoryAsync(agentType, factoryFunc).ConfigureAwait(false);
 
         // Subscribe agent to its own unique topic
-        await runtime.SubscribeAsync(registeredType).ConfigureAwait(false);
+        await runtime.SubscribeAsync(new(registeredType.Name)).ConfigureAwait(false);
 
         return registeredType;
     }
@@ -42,9 +42,9 @@ public static class RuntimeExtensions
     /// </summary>
     /// <param name="runtime">The runtime for managing the subscription.</param>
     /// <param name="agentType">The agent type to subscribe.</param>
-    public static async Task SubscribeAsync(this IAgentRuntime runtime, string agentType)
+    public static async Task SubscribeAsync(this IAgentRuntime runtime, ActorType agentType)
     {
-        await runtime.AddSubscriptionAsync(new TypeSubscription(agentType, agentType)).ConfigureAwait(false);
+        await runtime.AddSubscriptionAsync(new TypeSubscription(agentType.Name, agentType)).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -53,7 +53,7 @@ public static class RuntimeExtensions
     /// <param name="runtime">The runtime for managing the subscription.</param>
     /// <param name="agentType">The agent type to subscribe.</param>
     /// <param name="topics">A variable list of topics for subscription.</param>
-    public static async Task SubscribeAsync(this IAgentRuntime runtime, string agentType, params TopicId[] topics)
+    public static async Task SubscribeAsync(this IAgentRuntime runtime, ActorType agentType, params TopicId[] topics)
     {
         for (int index = 0; index < topics.Length; ++index)
         {

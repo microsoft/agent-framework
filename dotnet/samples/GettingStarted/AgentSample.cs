@@ -7,8 +7,8 @@ using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Samples;
-using OpenAI;
 using OpenAI.Assistants;
+using OpenAI.Chat;
 using OpenAI.Responses;
 
 #pragma warning disable OPENAI001
@@ -53,10 +53,6 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
             _ => null
         };
 
-    protected OpenAIClient OpenAIClient => new(TestConfiguration.OpenAI.ApiKey);
-
-    protected PersistentAgentsClient AzureAIPersistentAgentsClient => new(TestConfiguration.AzureAI.Endpoint, new AzureCliCredential());
-
     /// <summary>
     /// For providers that store the agent and the thread on the server side, this will clean and delete
     /// any sample agent and thread that was created during this execution.
@@ -83,8 +79,7 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
 
     private Task<IChatClient> GetOpenAIChatClientAsync()
         => Task.FromResult(
-                OpenAIClient
-                    .GetChatClient(TestConfiguration.OpenAI.ChatModelId)
+                new ChatClient(TestConfiguration.OpenAI.ChatModelId, TestConfiguration.OpenAI.ApiKey)
                     .AsIChatClient());
 
     private Task<IChatClient> GetAzureOpenAIChatClientAsync()
@@ -98,39 +93,52 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
 
     private Task<IChatClient> GetOpenAIResponsesClientAsync()
         => Task.FromResult(
-                OpenAIClient
-                    .GetOpenAIResponseClient(TestConfiguration.OpenAI.ChatModelId)
+                new OpenAIResponseClient(TestConfiguration.OpenAI.ChatModelId, TestConfiguration.OpenAI.ApiKey)
                     .AsIChatClient());
 
     private async Task<IChatClient> GetAzureAIAgentPersistentClientAsync(ChatClientAgentOptions options, CancellationToken cancellationToken)
     {
-        // Create a server side agent to work with.
-        var persistentAgentResponse = await AzureAIPersistentAgentsClient.Administration.CreateAgentAsync(
-            model: TestConfiguration.AzureAI.DeploymentName,
-            name: options.Name,
-            instructions: options.Instructions,
-            cancellationToken: cancellationToken);
+        var persistentAgentsClient = new PersistentAgentsClient(
+            TestConfiguration.AzureAI.Endpoint,
+            new AzureCliCredential());
 
-        var persistentAgent = persistentAgentResponse.Value;
+        // If the Id is not provided, create a new agent.
+        if (options.Id is null)
+        {
+            var persistentAgentResponse = await persistentAgentsClient.Administration.CreateAgentAsync(
+                       model: TestConfiguration.AzureAI.DeploymentName,
+                       name: options.Name,
+                       instructions: options.Instructions,
+                       cancellationToken: cancellationToken);
 
-        // Get the chat client to use for the agent.
-        return AzureAIPersistentAgentsClient.AsIChatClient(persistentAgent.Id);
+            var persistentAgent = persistentAgentResponse.Value;
+
+            return persistentAgentsClient.AsIChatClient(persistentAgent.Id);
+        }
+
+        return persistentAgentsClient.AsIChatClient(options.Id);
     }
 
     private async Task<IChatClient> GetOpenAIAssistantChatClientAsync(ChatClientAgentOptions options, CancellationToken cancellationToken)
     {
-        var assistantClient = OpenAIClient.GetAssistantClient();
+        var assistantClient = new AssistantClient(TestConfiguration.OpenAI.ApiKey);
 
-        Assistant assistant = await assistantClient.CreateAssistantAsync(
-            TestConfiguration.OpenAI.ChatModelId,
-            new()
-            {
-                Name = options.Name,
-                Instructions = options.Instructions
-            },
-            cancellationToken);
+        // If the Id is not provided, create a new assistant.
+        if (options.Id is null)
+        {
+            Assistant assistant = await assistantClient.CreateAssistantAsync(
+                TestConfiguration.OpenAI.ChatModelId,
+                new()
+                {
+                    Name = options.Name,
+                    Instructions = options.Instructions
+                },
+                cancellationToken);
 
-        return assistantClient.AsIChatClient(assistant.Id);
+            return new NewOpenAIAssistantChatClient(assistantClient, assistant.Id, null);
+        }
+
+        return new NewOpenAIAssistantChatClient(assistantClient, options.Id, null);
     }
 
     #endregion

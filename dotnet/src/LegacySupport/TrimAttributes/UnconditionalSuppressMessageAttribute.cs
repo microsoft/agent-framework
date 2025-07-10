@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 namespace System.Diagnostics.CodeAnalysis;
 
@@ -23,8 +23,8 @@ internal sealed class UnconditionalSuppressMessageAttribute : Attribute
     /// <param name="checkId">The identifier of the analysis rule the attribute applies to.</param>
     public UnconditionalSuppressMessageAttribute(string category, string checkId)
     {
-        Category = category;
-        CheckId = checkId;
+        this.Category = category;
+        this.CheckId = checkId;
     }
 
     /// <summary>

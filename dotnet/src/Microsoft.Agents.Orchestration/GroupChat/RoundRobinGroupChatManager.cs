@@ -22,11 +22,7 @@ public class RoundRobinGroupChatManager : GroupChatManager
     public override ValueTask<GroupChatManagerResult<string>> FilterResults(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default)
     {
         GroupChatManagerResult<string> result = new(history.LastOrDefault()?.Text ?? string.Empty) { Reason = "Default result filter provides the final chat message." };
-#if !NETCOREAPP
         return new ValueTask<GroupChatManagerResult<string>>(result);
-#else
-        return ValueTask.FromResult(result);
-#endif
     }
 
     /// <inheritdoc/>
@@ -35,21 +31,13 @@ public class RoundRobinGroupChatManager : GroupChatManager
         string nextAgent = team.Skip(this._currentAgentIndex).First().Key;
         this._currentAgentIndex = (this._currentAgentIndex + 1) % team.Count;
         GroupChatManagerResult<string> result = new(nextAgent) { Reason = $"Selected agent at index: {this._currentAgentIndex}" };
-#if !NETCOREAPP
         return new ValueTask<GroupChatManagerResult<string>>(result);
-#else
-        return ValueTask.FromResult(result);
-#endif
     }
 
     /// <inheritdoc/>
     public override ValueTask<GroupChatManagerResult<bool>> ShouldRequestUserInput(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default)
     {
         GroupChatManagerResult<bool> result = new(false) { Reason = "The default round-robin group chat manager does not request user input." };
-#if !NETCOREAPP
         return new ValueTask<GroupChatManagerResult<bool>>(result);
-#else
-        return ValueTask.FromResult(result);
-#endif
     }
 }

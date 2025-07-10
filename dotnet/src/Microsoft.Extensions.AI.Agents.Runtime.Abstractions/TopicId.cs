@@ -2,147 +2,111 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using System.Text.RegularExpressions;
 
 namespace Microsoft.Extensions.AI.Agents.Runtime;
 
 /// <summary>
-/// Represents a topic identifier that defines the scope of a broadcast message.
+/// Provides a topic identifier that defines the scope of a broadcast message.
+/// </summary>
+/// <remarks>
 /// The agent runtime implements a publish-subscribe model through its broadcast API,
 /// where messages must be published with a specific topic.
-///
-/// See the Python equivalent:
-/// <see href="https://github.com/cloudevents/spec/blob/main/cloudevents/spec.md#type">CloudEvents Type Specification</see>.
-/// </summary>
-public struct TopicId : IEquatable<TopicId>
+/// </remarks>
+public readonly partial struct TopicId : IEquatable<TopicId>
 {
-    /// <summary>
-    /// The default source value used when no source is explicitly provided.
-    /// </summary>
-    public const string DefaultSource = "default";
+    private const string TypePattern = @"^[\w-.:=]+$";
 
-    /// <summary>
-    /// The separator character for the string representation of the topic.
-    /// </summary>
-    public const string Separator = "/";
-
-    /// <summary>
-    /// Gets the type of the event that this <see cref="TopicId"/> represents.
-    /// This adheres to the CloudEvents specification.
-    ///
-    /// Must match the pattern: <c>^[\w\-\.\:\=]+$</c>.
-    ///
-    /// Learn more here:
-    /// <see href="https://github.com/cloudevents/spec/blob/main/cloudevents/spec.md#type">CloudEvents Type</see>.
-    /// </summary>
-    public string Type { get; }
-
-    /// <summary>
-    /// Gets the source that identifies the context in which an event happened.
-    /// This adheres to the CloudEvents specification.
-    ///
-    /// Learn more here:
-    /// <see href="https://github.com/cloudevents/spec/blob/main/cloudevents/spec.md#source-1">CloudEvents Source</see>.
-    /// </summary>
-    public string Source { get; }
+#if NET
+    [GeneratedRegex(TypePattern)]
+    private static partial Regex TypeRegex();
+#else
+    private static Regex TypeRegex() => s_typeRegex;
+    private static readonly Regex s_typeRegex = new(TypePattern, RegexOptions.Compiled);
+#endif
 
     /// <summary>
     /// Initializes a new instance of the <see cref="TopicId"/> struct.
     /// </summary>
-    /// <param name="type">The type of the topic.</param>
-    /// <param name="source">The source of the event. Defaults to <see cref="DefaultSource"/> if not specified.</param>
-    public TopicId(string type, string source = DefaultSource)
+    /// <param name="type">The type of the topic. Must match the pattern: <c>^[\w-.:=]+$</c></param>
+    /// <param name="source">The source of the event.</param>
+    public TopicId(string type, string? source = null)
     {
-        this.Type = type;
-        this.Source = source;
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="TopicId"/> struct from a tuple.
-    /// </summary>
-    /// <param name="kvPair">A tuple containing the topic type and source.</param>
-    public TopicId((string Type, string Source) kvPair) : this(kvPair.Type, kvPair.Source)
-    {
-    }
-
-    /// <summary>
-    /// Converts a string in the format "type/source" into a <see cref="TopicId"/>.
-    /// </summary>
-    /// <param name="maybeTopicId">The topic ID string.</param>
-    /// <returns>An instance of <see cref="TopicId"/>.</returns>
-    /// <exception cref="FormatException">Thrown when the string is not in the valid "type/source" format.</exception>
-    public static TopicId FromStr(string maybeTopicId) => new(maybeTopicId.ToKeyValuePair(nameof(Type), nameof(Source)));
-
-    /// <summary>
-    /// Returns the string representation of the <see cref="TopicId"/>.
-    /// </summary>
-    /// <returns>A string in the format "type/source".</returns>
-    public override readonly string ToString() => $"{this.Type}{Separator}{this.Source}";
-
-    /// <summary>
-    /// Determines whether the specified object is equal to the current <see cref="TopicId"/>.
-    /// </summary>
-    /// <param name="obj">The object to compare with the current instance.</param>
-    /// <returns><c>true</c> if the specified object is equal to the current <see cref="TopicId"/>; otherwise, <c>false</c>.</returns>
-    public override readonly bool Equals([NotNullWhen(true)] object? obj)
-    {
-        if (obj is TopicId other)
+        if (type is null)
         {
-            return this.Type == other.Type && this.Source == other.Source;
+            throw new ArgumentNullException(nameof(type));
         }
 
-        return false;
+        if (!TypeRegex().IsMatch(type))
+        {
+            throw new ArgumentException("Invalid type format.", nameof(type));
+        }
+
+        // TODO: What validation should be performed on source? The cited cloudevents spec suggests it should be a URI reference.
+
+        this.Type = type;
+        this.Source = source ?? "default";
     }
 
     /// <summary>
-    /// Determines whether the specified object is equal to the current <see cref="TopicId"/>.
+    /// Gets the type of the event that this <see cref="TopicId"/> represents.
     /// </summary>
-    /// <param name="other">The object to compare with the current instance.</param>
-    /// <returns><c>true</c> if the specified object is equal to the current <see cref="TopicId"/>; otherwise, <c>false</c>.</returns>
-    public readonly bool Equals([NotNullWhen(true)] TopicId other)
-    {
-        return this.Type == other.Type && this.Source == other.Source;
-    }
+    /// <remarks>
+    /// This adheres to the CloudEvents specification.
+    /// <see href="https://github.com/cloudevents/spec/blob/main/cloudevents/spec.md#type">CloudEvents Type</see>.
+    /// </remarks>
+    public string Type { get; }
 
     /// <summary>
-    /// Returns a hash code for this <see cref="TopicId"/>.
+    /// Gets the source that identifies the context in which an event happened.
     /// </summary>
-    /// <returns>A hash code for the current instance.</returns>
-    public override readonly int GetHashCode()
-    {
-        return HashCode.Combine(this.Type, this.Source);
-    }
+    /// <remarks>
+    /// This adheres to the CloudEvents specification.
+    /// <see href="https://github.com/cloudevents/spec/blob/main/cloudevents/spec.md#source-1">CloudEvents Source</see>.
+    /// </remarks>
+    public string Source { get; }
 
     /// <summary>
-    /// Explicitly converts a string to a <see cref="TopicId"/>.
+    /// Convert a string of the format "type/key" into an <see cref="TopicId"/>.
     /// </summary>
-    /// <param name="id">The string representation of a topic ID.</param>
+    /// <param name="TopicId">The actor ID string.</param>
     /// <returns>An instance of <see cref="TopicId"/>.</returns>
-    public static explicit operator TopicId(string id) => FromStr(id);
+    public static TopicId Parse(string TopicId)
+    {
+        if (!KeyValueParser.TryParse(TopicId, out string? type, out string? key))
+        {
+            throw new FormatException($"Invalid TopicId format: '{TopicId}'. Expected format is 'type/key'.");
+        }
+
+        return new TopicId(type, key);
+    }
+
+    /// <inheritdoc />
+    public override readonly string ToString() => $"{this.Type}/{this.Source}";
+
+    /// <inheritdoc />
+    public override readonly bool Equals([NotNullWhen(true)] object? obj) =>
+        obj is TopicId other && this.Equals(other);
+
+    /// <inheritdoc/>
+    public readonly bool Equals(TopicId other) =>
+        this.Type == other.Type && this.Source == other.Source;
+
+    /// <inheritdoc />
+    public override readonly int GetHashCode() =>
+        HashCode.Combine(this.Type, this.Source);
+
+    /// <inheritdoc />
+    public static bool operator ==(TopicId left, TopicId right) =>
+        left.Equals(right);
+
+    /// <inheritdoc />
+    public static bool operator !=(TopicId left, TopicId right) =>
+        !left.Equals(right);
 
     // TODO: Implement < for wildcard matching (type, *)
-    // == => <
-    // Type == other.Type => <
-    /// <summary>
-    /// Determines whether the given <see cref="TopicId"/> matches another topic.
-    /// </summary>
-    /// <param name="other">The topic ID to compare against.</param>
-    /// <returns>
-    /// <c>true</c> if the topic types are equal; otherwise, <c>false</c>.
-    /// </returns>
-    public readonly bool IsWildcardMatch(TopicId other)
-    {
-        return this.Type == other.Type;
-    }
-
-    /// <inheritdoc/>
-    public static bool operator ==(TopicId left, TopicId right)
-    {
-        return left.Equals(right);
-    }
-
-    /// <inheritdoc/>
-    public static bool operator !=(TopicId left, TopicId right)
-    {
-        return !(left == right);
-    }
+    //public readonly bool IsWildcardMatch(TopicId other)
+    //{
+    //    return this.Type == other.Type;
+    //}
 }

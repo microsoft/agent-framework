@@ -1,80 +1,34 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Threading;
 
 namespace Microsoft.Extensions.AI.Agents.Runtime.Abstractions.Tests;
 
 public class MessageContextTests
 {
     [Fact]
-    public void ConstructWithMessageIdAndCancellationTokenTest()
+    public void Properties_Roundtrip()
     {
-        // Arrange
-        string messageId = Guid.NewGuid().ToString();
-        CancellationToken cancellationToken = new();
+        MessageContext ctx = new();
 
-        // Act
-        MessageContext messageContext = new(messageId, cancellationToken);
+        string id = ctx.MessageId;
+        Assert.NotNull(id);
+        Assert.True(Guid.TryParse(id, out _));
+        ctx.MessageId = "newid";
+        Assert.Equal("newid", ctx.MessageId);
 
-        // Assert
-        Assert.Equal(messageId, messageContext.MessageId);
-        Assert.Equal(cancellationToken, messageContext.CancellationToken);
-    }
+        Assert.False(ctx.IsRpc);
+        ctx.IsRpc = true;
+        Assert.True(ctx.IsRpc);
 
-    [Fact]
-    public void ConstructWithCancellationTokenTest()
-    {
-        // Arrange
-        CancellationToken cancellationToken = new();
+        Assert.Null(ctx.Sender);
+        ActorId sender = new("type", "key");
+        ctx.Sender = sender;
+        Assert.Equal(sender, ctx.Sender);
 
-        // Act
-        MessageContext messageContext = new(cancellationToken);
-
-        // Assert
-        Assert.NotNull(messageContext.MessageId);
-        Assert.Equal(cancellationToken, messageContext.CancellationToken);
-    }
-
-    [Fact]
-    public void AssignSenderTest()
-    {
-        // Arrange
-        MessageContext messageContext = new(new CancellationToken());
-        AgentId sender = new("type", "key");
-
-        // Act
-        messageContext.Sender = sender;
-
-        // Assert
-        Assert.Equal(sender, messageContext.Sender);
-    }
-
-    [Fact]
-    public void AssignTopicTest()
-    {
-        // Arrange
-        MessageContext messageContext = new(new CancellationToken());
+        Assert.Null(ctx.Topic);
         TopicId topic = new("type", "source");
-
-        // Act
-        messageContext.Topic = topic;
-
-        // Assert
-        Assert.Equal(topic, messageContext.Topic);
-    }
-
-    [Fact]
-    public void AssignIsRpcPropertyTest()
-    {
-        // Arrange
-        MessageContext messageContext = new(new CancellationToken())
-        {
-            // Act
-            IsRpc = true
-        };
-
-        // Assert
-        Assert.True(messageContext.IsRpc);
+        ctx.Topic = topic;
+        Assert.Equal(topic, ctx.Topic);
     }
 }
