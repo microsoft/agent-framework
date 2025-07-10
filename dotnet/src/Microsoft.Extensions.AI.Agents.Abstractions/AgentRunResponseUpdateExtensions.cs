@@ -213,6 +213,11 @@ public static class AgentRunResponseUpdateExtensions
         // Other members on a AgentRunResponseUpdate map to members of the AgentRunResponse.
         // Update the response object with those, preferring the values from later updates.
 
+        if (update.AgentId is { Length: > 0 })
+        {
+            response.AgentId = update.AgentId;
+        }
+
         if (update.ResponseId is { Length: > 0 })
         {
             response.ResponseId = update.ResponseId;

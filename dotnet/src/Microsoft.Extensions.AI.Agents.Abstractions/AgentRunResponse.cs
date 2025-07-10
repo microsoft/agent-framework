@@ -70,6 +70,9 @@ public class AgentRunResponse
     [JsonIgnore]
     public string Text => this._messages?.ConcatText() ?? string.Empty;
 
+    /// <summary>Gets or sets the ID of the agent that produced the response.</summary>
+    public string? AgentId { get; set; }
+
     /// <summary>Gets or sets the ID of the agent response.</summary>
     public string? ResponseId { get; set; }
 
@@ -131,6 +134,7 @@ public class AgentRunResponse
                 RawRepresentation = message.RawRepresentation,
                 Role = message.Role,
 
+                AgentId = this.AgentId,
                 ResponseId = this.ResponseId,
                 MessageId = message.MessageId,
                 CreatedAt = this.CreatedAt,

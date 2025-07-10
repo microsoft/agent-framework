@@ -95,6 +95,9 @@ public class AgentRunResponseUpdate
     /// <summary>Gets or sets additional properties for the update.</summary>
     public AdditionalPropertiesDictionary? AdditionalProperties { get; set; }
 
+    /// <summary>Gets or sets the ID of the agent that produced the response.</summary>
+    public string? AgentId { get; set; }
+
     /// <summary>Gets or sets the ID of the response of which this update is a part.</summary>
     public string? ResponseId { get; set; }
 

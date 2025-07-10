@@ -48,6 +48,10 @@ public class AgentRunResponseTests
     {
         AgentRunResponse response = new();
 
+        Assert.Null(response.AgentId);
+        response.AgentId = "agentId";
+        Assert.Equal("agentId", response.AgentId);
+
         Assert.Null(response.ResponseId);
         response.ResponseId = "id";
         Assert.Equal("id", response.ResponseId);
@@ -77,6 +81,7 @@ public class AgentRunResponseTests
     {
         AgentRunResponse original = new(new ChatMessage(ChatRole.Assistant, "the message"))
         {
+            AgentId = "agentId",
             ResponseId = "id",
             CreatedAt = new DateTimeOffset(2022, 1, 1, 0, 0, 0, TimeSpan.Zero),
             Usage = new UsageDetails(),
@@ -92,6 +97,7 @@ public class AgentRunResponseTests
         Assert.Equal(ChatRole.Assistant, result.Messages.Single().Role);
         Assert.Equal("the message", result.Messages.Single().Text);
 
+        Assert.Equal("agentId", result.AgentId);
         Assert.Equal("id", result.ResponseId);
         Assert.Equal(new DateTimeOffset(2022, 1, 1, 0, 0, 0, TimeSpan.Zero), result.CreatedAt);
         Assert.NotNull(result.Usage);
@@ -145,6 +151,7 @@ public class AgentRunResponseTests
     {
         AgentRunResponse response = new(new ChatMessage(new ChatRole("customRole"), "Text") { MessageId = "someMessage" })
         {
+            AgentId = "agentId",
             ResponseId = "12345",
             CreatedAt = new DateTimeOffset(2024, 11, 10, 9, 20, 0, TimeSpan.Zero),
             AdditionalProperties = new() { ["key1"] = "value1", ["key2"] = 42 },
@@ -159,6 +166,7 @@ public class AgentRunResponseTests
         Assert.Equal(2, updates.Length);
 
         AgentRunResponseUpdate update0 = updates[0];
+        Assert.Equal("agentId", update0.AgentId);
         Assert.Equal("12345", update0.ResponseId);
         Assert.Equal("someMessage", update0.MessageId);
         Assert.Equal(new DateTimeOffset(2024, 11, 10, 9, 20, 0, TimeSpan.Zero), update0.CreatedAt);
