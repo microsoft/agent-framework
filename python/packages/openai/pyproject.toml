@@ -1,6 +1,6 @@
 [project]
-name = "agent-framework-azure"
-description = "Azure integrations for Microsoft Agent Framework."
+name = "agent-framework-openai"
+description = "OpenAI integrations for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "SK-Support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
@@ -24,27 +24,50 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework",
-    "agent-framework-openai",
+    "openai>=1.93.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = 'tests'
+addopts = "-ra -q -r fEX"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = []
+timeout = 120
 
 [tool.ruff]
 extend = "../../pyproject.toml"
-include = ["agent-framework/openai/**", "tests/*.py"]
-
-[tool.poe]
-include = "../../shared_tasks.toml"
 
 [tool.pyright]
-extends = "../../pyproject.toml"
-include = ["agent_framework", "samples"]
+extend = "../../pyproject.toml"
+exclude = ['tests', ".venv"]
 
-[tool.uv.sources]
-agent-framework = { workspace = true }
-agent-framework-openai = { workspace = true }
+[tool.mypy]
+plugins = ['pydantic.mypy']
+strict = true
+python_version = "3.10"
+ignore_missing_imports = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+check_untyped_defs = true
+warn_return_any = true
+show_error_codes = true
+warn_unused_ignores = false
+disallow_incomplete_defs = true
+disallow_untyped_decorators = true
+disallow_any_unimported = true
+
+[tool.bandit]
+targets = ["agent_framework"]
+exclude_dirs = ["tests"]
+
+[tool.poe]
+executor.type = "uv"
+include = "../../shared_tasks.toml"
 
 [tool.uv.build-backend]
-module-name = "azure"
-module-root = "agent_framework"
+module-name = "agent_framework.openai"
+module-root = ""
 
 [build-system]
 requires = ["uv_build>=0.7.19,<0.8.0"]
