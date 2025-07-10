@@ -104,7 +104,6 @@ class OpenAIChatCompletionBase(OpenAIHandler, ChatClientBase):
 
     # region content creation
 
-    # TODO(peterychang): Usage?
     def _create_chat_message_content(
         self, response: ChatCompletion, choice: Choice, response_metadata: dict[str, Any]
     ) -> "ChatResponse":
