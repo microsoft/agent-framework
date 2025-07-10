@@ -569,16 +569,6 @@ def test_agent_run_response_update_init_none_content() -> None:
     assert update.contents == []
 
 
-def test_agent_run_response_update_author_name_cleaning() -> None:
-    update = AgentRunResponseUpdate(author_name="   ")
-    assert update.author_name is None
-
-
-def test_agent_run_response_update_author_name_valid() -> None:
-    update = AgentRunResponseUpdate(author_name="Valid Name")
-    assert update.author_name == "Valid Name"
-
-
 def test_agent_run_response_update_text_property(text_content: TextContent) -> None:
     update = AgentRunResponseUpdate(contents=[text_content, text_content])
     assert update.text == "Test contentTest content"
