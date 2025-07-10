@@ -1,37 +1,10 @@
 [project]
-name = "agent-framework"
+name = "agent-framework-project"
 description = "Microsoft Agent Framework for building AI Agents with Python."
-authors = [{ name = "Microsoft", email = "SK-Support@microsoft.com"}]
-readme = "README.md"
-requires-python = ">=3.10"
-version = "0.1.0b1"
-license = {file = "LICENSE"}
-urls.homepage = "https://learn.microsoft.com/en-us/semantic-kernel/overview/"
-urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
-urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=tag%3Apython-1&expanded=true"
-urls.issues = "https://github.com/microsoft/agent-framework/issues"
-classifiers = [
-  "License :: OSI Approved :: MIT License",
-  "Development Status :: 5 - Production/Stable",
-  "Intended Audience :: Developers",
-  "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
-  "Programming Language :: Python :: 3.12",
-  "Programming Language :: Python :: 3.13",
-  "Framework :: Pydantic :: 2",
-  "Typing :: Typed",
-]
-dependencies = [
-    "agent-framework-azure",
-    "agent-framework-openai",
-    "pydantic>=2.11.7",
-    "typing-extensions>=4.14.0",
-]
+version = "0.0.0"
 
-[tool.uv]
-prerelease = "if-necessary-or-explicit"
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "pre-commit >= 3.7",
     "ruff>=0.11.8",
     "pytest>=8.4.1",
@@ -65,24 +38,21 @@ dev-dependencies = [
     "redis",
     "sphinx-autobuild",
 ]
+
+[tool.uv]
+package = false
+prerelease = "if-necessary-or-explicit"
 environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",
     "sys_platform == 'win32'"
 ]
 
-[tool.pytest.ini_options]
-testpaths = 'tests'
-addopts = "-ra -q -r fEX"
-asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "function"
-filterwarnings = []
-timeout = 120
-
 [tool.uv.workspace]
-members = ["extensions/*"]
+members = ["packages/*"]
 
 [tool.uv.sources]
+agent-framework = { workspace = true }
 agent-framework-openai = { workspace = true }
 agent-framework-azure = { workspace = true }
 
@@ -94,7 +64,7 @@ line-length = 120
 target-version = "py310"
 fix = true
 include = ["*.py", "*.pyi", "**/pyproject.toml", "*.ipynb"]
-exclude = ["docs/*", "run_tasks_in_extensions_if_exists.py", "check_md_code_blocks.py"]
+exclude = ["docs/*", "run_tasks_in_packages_if_exists.py", "check_md_code_blocks.py"]
 preview = true
 
 [tool.ruff.lint]
@@ -133,7 +103,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 # Ignore all directories named `tests` and `samples`.
-"tests/**" = ["D", "INP", "TD", "ERA001", "RUF", "S"]
+"**/tests/**" = ["D", "INP", "TD", "ERA001", "RUF", "S"]
 "samples/**" = ["D", "INP", "ERA001", "RUF", "S"]
 "*.ipynb" = ["CPY", "E501"]
 
@@ -149,6 +119,7 @@ min-file-size = 1
 
 [tool.pyright]
 include = ["agent_framework", "samples"]
+exclude = ["**/tests/**", "docs", "**/.venv/**"]
 typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
 reportMissingTypeStubs = false
@@ -170,52 +141,32 @@ disallow_any_unimported = true
 
 [tool.bandit]
 targets = ["agent_framework"]
-exclude_dirs = ["tests", "./run_tasks_in_extensions_if_exists.py", "./check_md_code_blocks.py", "docs"]
+exclude_dirs = ["tests", "./run_tasks_in_packages_if_exists.py", "./check_md_code_blocks.py", "docs"]
+
+[tool.poe]
+executor.type = "uv"
 
 [tool.poe.tasks]
 markdown-code-lint = """python check_md_code_blocks.py ../README.md ./docs/agent-framework/**/*.md README.md"""
 samples-code-check = """pyright ./samples"""
 docs-clean = "rm -rf docs/build"
 docs-build = "sphinx-build docs/agent-framework docs/build"
-docs-serve = "sphinx-autobuild --watch src docs/agent-framework docs/build --port 8000 --jobs auto"
+docs-serve = "sphinx-autobuild --watch docs/agent-framework docs/build --port 8000 --jobs auto"
 docs-check = "sphinx-build --fail-on-warning docs/agent-framework docs/build"
 docs-check-examples = "sphinx-build -b code_lint docs/agent-framework docs/build"
 pre-commit-install = "uv run pre-commit install --install-hooks --overwrite"
-install = "uv sync --all-extras --dev -U --prerelease=if-necessary-or-explicit"
+install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit"
+test = "python run_tasks_in_packages_if_exists.py test"
+fmt = "python run_tasks_in_packages_if_exists.py fmt"
 format.ref = "fmt"
+lint = "python run_tasks_in_packages_if_exists.py lint"
+pyright = "python run_tasks_in_packages_if_exists.py pyright"
+mypy = "python run_tasks_in_packages_if_exists.py mypy"
+build = "python run_tasks_in_packages_if_exists.py build"
+# combined checks
 check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint", "samples-code-check"]
-pre-commit-check = ["fmt", "lint", "pyright", "test", "markdown-code-lint", "samples-code-check"]
+pre-commit-check = ["fmt", "lint", "pyright", "markdown-code-lint", "samples-code-check"]
 
-[tool.poe.tasks.fmt]
-sequence = [
-    { cmd = "python run_tasks_in_extensions_if_exists.py fmt"},
-    { cmd = "ruff format agent_framework tests samples" }
-]
-[tool.poe.tasks.lint]
-sequence = [
-    { cmd = "python run_tasks_in_extensions_if_exists.py lint" },
-    { cmd = "ruff check --fix --exit-non-zero-on-fix agent_framework tests samples" }
-]
-[tool.poe.tasks.pyright]
-sequence = [
-    { cmd = "python run_tasks_in_extensions_if_exists.py pyright" },
-    { cmd = "pyright" }
-]
-[tool.poe.tasks.mypy]
-sequence = [
-    { cmd = "python run_tasks_in_extensions_if_exists.py mypy" },
-    { cmd = "mypy --config-file pyproject.toml agent_framework" }
-]
-[tool.poe.tasks.test]
-sequence = [
-    { cmd = "python run_tasks_in_extensions_if_exists.py test" },
-    { cmd = "pytest --cov=agent_framework --cov-report=term-missing:skip-covered tests/unit/" }
-]
-[tool.poe.tasks.build]
-sequence = [
-    { cmd = "python run_tasks_in_extensions_if_exists.py build" },
-    { cmd = "uv build" }
-]
 [tool.poe.tasks.venv]
 cmd = "uv venv --python $python"
 args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
@@ -226,11 +177,3 @@ sequence = [
     { ref = "pre-commit-install" }
 ]
 args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
-
-[tool.uv.build-backend]
-module-name = "agent_framework"
-module-root = ""
-
-[build-system]
-requires = ["uv_build>=0.7.19,<0.8.0"]
-build-backend = "uv_build"

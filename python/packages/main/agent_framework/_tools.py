@@ -2,7 +2,7 @@
 
 import functools
 import inspect
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
 
 from pydantic import BaseModel, create_model
@@ -23,12 +23,16 @@ class AITool(Protocol):
         """Return a string representation of the tool."""
         ...
 
+    def parameters(self) -> Mapping[str, Any]:
+        """Return the parameters of the tool as a JSON schema."""
+        ...
+
 
 ArgsT = TypeVar("ArgsT", bound=BaseModel)
 ReturnT = TypeVar("ReturnT")
 
 
-class AIFunction(Generic[ArgsT, ReturnT]):
+class AIFunction(AITool, Generic[ArgsT, ReturnT]):
     """A tool that represents a function that can be called by an AI service."""
 
     def __init__(
@@ -55,13 +59,16 @@ class AIFunction(Generic[ArgsT, ReturnT]):
         self.additional_properties: dict[str, Any] | None = kwargs
         self._func = func
 
-    def model_json_schema(self) -> dict[str, Any]:
-        """Return the JSON schema of the input model."""
+    def parameters(self) -> dict[str, Any]:
+        """Return the parameter json schemas of the input model."""
         return self.input_model.model_json_schema()
 
     def __call__(self, *args: Any, **kwargs: Any) -> ReturnT | Awaitable[ReturnT]:
         """Call the wrapped function with the provided arguments."""
         return self._func(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return f"AIFunction(name={self.name}, description={self.description})"
 
     async def invoke(
         self,

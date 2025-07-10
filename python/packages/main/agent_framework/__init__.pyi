@@ -2,7 +2,7 @@
 
 from . import __version__  # type: ignore[attr-defined]
 from ._agents import Agent, AgentThread
-from ._clients import ChatClient, EmbeddingGenerator
+from ._clients import ChatClient, ChatClientBase, EmbeddingGenerator, use_tool_calling
 from ._logging import get_logger
 from ._tools import AITool, ai_function
 from ._types import (
@@ -36,6 +36,7 @@ __all__ = [
     "Agent",
     "AgentThread",
     "ChatClient",
+    "ChatClientBase",
     "ChatFinishReason",
     "ChatMessage",
     "ChatOptions",
@@ -60,4 +61,5 @@ __all__ = [
     "__version__",
     "ai_function",
     "get_logger",
+    "use_tool_calling",
 ]
