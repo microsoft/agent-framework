@@ -23,11 +23,7 @@ public sealed class ConcurrentOrchestration : ConcurrentOrchestration<string, st
             (response, cancellationToken) =>
             {
                 string[] result = [.. response.Select(r => r.Text)];
-#if !NETCOREAPP
                 return new ValueTask<string[]>(result);
-#else
-                return ValueTask.FromResult(result);
-#endif
             };
     }
 }

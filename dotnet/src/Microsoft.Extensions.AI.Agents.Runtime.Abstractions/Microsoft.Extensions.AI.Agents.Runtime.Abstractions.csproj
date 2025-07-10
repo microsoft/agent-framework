@@ -1,0 +1,28 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
+    <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
+    <NoWarn>$(NoWarn);IDE1006;IDE0130</NoWarn>
+    <VersionSuffix>alpha</VersionSuffix>
+    <IsAotCompatible>false</IsAotCompatible> <!-- TODO: Fix this -->
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <InjectDiagnosticAttributesOnLegacy>true</InjectDiagnosticAttributesOnLegacy>
+  </PropertyGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFrameworkIdentifier)' != '.NETCoreApp'">
+    <PackageReference Include="Microsoft.Bcl.HashCode" />
+    <PackageReference Include="System.Text.Json" />
+    <PackageReference Include="System.Threading.Tasks.Extensions" />
+    <PackageReference Include="System.Diagnostics.DiagnosticSource" />
+  </ItemGroup>
+
+</Project>

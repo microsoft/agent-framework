@@ -19,11 +19,6 @@
         "editor.defaultFormatter": "charliermarsh.ruff"
     },
     "python.analysis.autoFormatStrings": true,
-    "python.analysis.extraPaths": [
-        "${workspaceFolder}/agent_framework",
-        "${workspaceFolder}/extensions/openai",
-        "${workspaceFolder}/extensions/azure"
-    ],
     "python.analysis.importFormat": "relative",
     "python.analysis.packageIndexDepths": [
         {

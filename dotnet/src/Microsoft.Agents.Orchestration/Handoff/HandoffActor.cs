@@ -6,9 +6,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
+using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
-using Microsoft.SemanticKernel.Agents.Runtime;
-using Microsoft.SemanticKernel.Agents.Runtime.Core;
 
 namespace Microsoft.Agents.Orchestration.Handoff;
 
@@ -177,7 +176,7 @@ internal sealed class HandoffActor :
             name: "end_task",
             description: "Complete the task with a summary when no further requests are given.");
 
-        foreach (KeyValuePair<string, (AgentType _, string Description)> handoff in this._handoffs)
+        foreach (KeyValuePair<string, (AgentType AgentType, string Description)> handoff in this._handoffs)
         {
             AIFunction handoffFunction =
                 AIFunctionFactory.Create(

@@ -119,7 +119,6 @@ dotnet_diagnostic.RCS1232.severity = warning # Order elements in documentation c
 
 # Diagnostics elevated as warnings
 dotnet_diagnostic.CA1000.severity = warning # Do not declare static members on generic types
-dotnet_diagnostic.CA1031.severity = warning # Do not catch general exception types
 dotnet_diagnostic.CA1050.severity = warning # Declare types in namespaces
 dotnet_diagnostic.CA1063.severity = warning # Implement IDisposable correctly
 dotnet_diagnostic.CA1064.severity = warning # Exceptions should be public
@@ -155,6 +154,7 @@ dotnet_diagnostic.IDE0161.severity = warning # Use file-scoped namespace
 
 # Suppressed diagnostics
 dotnet_diagnostic.CA1002.severity = none # Change 'List<string>' in '...' to use 'Collection<T>' ...
+dotnet_diagnostic.CA1031.severity = suggestion # Do not catch general exception types
 dotnet_diagnostic.CA1032.severity = none # We're using RCS1194 which seems to cover more ctors
 dotnet_diagnostic.CA1034.severity = none # Do not nest type. Alternatively, change its accessibility so that it is not externally visible
 dotnet_diagnostic.CA1062.severity = none # Disable null check, C# already does it for us
@@ -177,6 +177,7 @@ dotnet_diagnostic.CA2227.severity = none # Change to be read-only by removing th
 dotnet_diagnostic.CA2253.severity = none # Named placeholders in the logging message template should not be comprised of only numeric characters
 dotnet_diagnostic.CA2253.severity = none # Named placeholders in the logging message template should not be comprised of only numeric characters
 dotnet_diagnostic.CA2263.severity = suggestion # Use generic overload
+dotnet_diagnostic.CS1998.severity = suggestion # async method lacks 'await' operators and will run synchronously
 
 dotnet_diagnostic.VSTHRD003.severity = none # Waiting on thread from another context
 dotnet_diagnostic.VSTHRD103.severity = none # Use async equivalent; analyzer is currently noisy

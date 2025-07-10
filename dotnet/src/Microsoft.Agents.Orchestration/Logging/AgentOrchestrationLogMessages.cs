@@ -2,8 +2,8 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
-using Microsoft.SemanticKernel.Agents.Runtime;
 
 namespace Microsoft.Agents.Orchestration;
 
@@ -21,7 +21,6 @@ internal static partial class AgentOrchestrationLogMessages
     /// Logs the start of the registration phase for an orchestration.
     /// </summary>
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Trace,
         Message = "REGISTER {Orchestration} Start: {Topic}")]
     public static partial void LogOrchestrationRegistrationStart(
@@ -33,7 +32,6 @@ internal static partial class AgentOrchestrationLogMessages
     /// Logs pattern actor registration.
     /// </summary>
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Information,
         Message = "REGISTER ACTOR {Orchestration} {label}: {AgentType}")]
     public static partial void LogRegisterActor(
@@ -46,7 +44,6 @@ internal static partial class AgentOrchestrationLogMessages
     /// Logs agent actor registration.
     /// </summary>
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Information,
         Message = "REGISTER ACTOR {Orchestration} {label} #{Count}: {AgentType}")]
     public static partial void LogRegisterActor(
@@ -60,7 +57,6 @@ internal static partial class AgentOrchestrationLogMessages
     /// Logs the end of the registration phase for an orchestration.
     /// </summary>
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Trace,
         Message = "REGISTER {Orchestration} Complete: {Topic}")]
     public static partial void LogOrchestrationRegistrationDone(
@@ -72,7 +68,6 @@ internal static partial class AgentOrchestrationLogMessages
     /// Logs an orchestration invocation
     /// </summary>
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Information,
         Message = "INVOKE {Orchestration}: {Topic}")]
     public static partial void LogOrchestrationInvoke(
@@ -85,7 +80,6 @@ internal static partial class AgentOrchestrationLogMessages
     /// yielded control back to the caller.
     /// </summary>
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Trace,
         Message = "YIELD {Orchestration}: {Topic}")]
     public static partial void LogOrchestrationYield(
@@ -97,7 +91,6 @@ internal static partial class AgentOrchestrationLogMessages
     /// Logs the start an orchestration (top/outer).
     /// </summary>
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Information,
         Message = "START {Orchestration}: {AgentId}")]
     public static partial void LogOrchestrationStart(
@@ -109,7 +102,6 @@ internal static partial class AgentOrchestrationLogMessages
     /// Logs that orchestration request actor is active
     /// </summary>
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Information,
         Message = "INIT {Orchestration}: {AgentId}")]
     public static partial void LogOrchestrationRequestInvoke(
@@ -121,7 +113,6 @@ internal static partial class AgentOrchestrationLogMessages
     /// Logs that orchestration request actor experienced an unexpected failure.
     /// </summary>
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Error,
         Message = "FAILURE {Orchestration}: {AgentId}")]
     public static partial void LogOrchestrationRequestFailure(
@@ -134,7 +125,6 @@ internal static partial class AgentOrchestrationLogMessages
     /// Logs that orchestration result actor is active
     /// </summary>
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Information,
         Message = "EXIT {Orchestration}: {AgentId}")]
     public static partial void LogOrchestrationResultInvoke(
@@ -146,7 +136,6 @@ internal static partial class AgentOrchestrationLogMessages
     /// Logs that orchestration result actor experienced an unexpected failure.
     /// </summary>
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Error,
         Message = "FAILURE {Orchestration}: {AgentId}")]
     public static partial void LogOrchestrationResultFailure(

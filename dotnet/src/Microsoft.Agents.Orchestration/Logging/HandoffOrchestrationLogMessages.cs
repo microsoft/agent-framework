@@ -2,8 +2,8 @@
 
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Agents.Orchestration.Handoff;
+using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
-using Microsoft.SemanticKernel.Agents.Runtime;
 
 namespace Microsoft.Agents.Orchestration;
 
@@ -18,7 +18,6 @@ namespace Microsoft.Agents.Orchestration;
 internal static partial class HandoffOrchestrationLogMessages
 {
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Trace,
         Message = "REQUEST Handoff agent [{AgentId}]")]
     public static partial void LogHandoffAgentInvoke(
@@ -26,7 +25,6 @@ internal static partial class HandoffOrchestrationLogMessages
         AgentId agentId);
 
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Trace,
         Message = "RESULT Handoff agent [{AgentId}]: {Message}")]
     public static partial void LogHandoffAgentResult(
@@ -35,7 +33,6 @@ internal static partial class HandoffOrchestrationLogMessages
         string? message);
 
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Trace,
         Message = "TOOL Handoff [{AgentId}]: {Name}")]
     public static partial void LogHandoffFunctionCall(
@@ -44,7 +41,6 @@ internal static partial class HandoffOrchestrationLogMessages
         string name);
 
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Trace,
         Message = "RESULT Handoff summary [{AgentId}]: {Summary}")]
     public static partial void LogHandoffSummary(

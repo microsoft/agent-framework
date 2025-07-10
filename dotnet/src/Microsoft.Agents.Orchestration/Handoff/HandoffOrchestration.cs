@@ -7,8 +7,8 @@ using System.Threading.Tasks;
 using Microsoft.Agents.Orchestration.Extensions;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
+using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
-using Microsoft.SemanticKernel.Agents.Runtime;
 
 namespace Microsoft.Agents.Orchestration.Handoff;
 
@@ -29,8 +29,10 @@ public class HandoffOrchestration<TInput, TOutput> : AgentOrchestration<TInput, 
         : base(agents)
     {
         // Create list of distinct agent names
-        HashSet<string> agentNames = new(agents.Select(a => a.Name ?? a.Id), StringComparer.Ordinal);
-        agentNames.Add(handoffs.FirstAgentName);
+        HashSet<string> agentNames = new(agents.Select(a => a.Name ?? a.Id), StringComparer.Ordinal)
+        {
+            handoffs.FirstAgentName
+        };
         // Extract names from handoffs that don't align with a member agent.
         string[] badNames = [.. handoffs.Keys.Concat(handoffs.Values.SelectMany(h => h.Keys)).Where(name => !agentNames.Contains(name))];
         // Fail fast if invalid names are present.

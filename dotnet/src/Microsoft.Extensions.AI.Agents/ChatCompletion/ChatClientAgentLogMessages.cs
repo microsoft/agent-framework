@@ -21,7 +21,6 @@ internal static partial class ChatClientAgentLogMessages
     /// Logs <see cref="ChatClientAgent"/> invoking agent (started).
     /// </summary>
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Debug,
         Message = "[{MethodName}] Agent {AgentId}/{AgentName} Invoking client {ClientType}.")]
     public static partial void LogAgentChatClientInvokingAgent(
@@ -35,7 +34,6 @@ internal static partial class ChatClientAgentLogMessages
     /// Logs <see cref="ChatClientAgent"/> invoked agent (complete).
     /// </summary>
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Information,
         Message = "[{MethodName}] Agent {AgentId}/{AgentName} Invoked client {ClientType} with message count: {MessageCount}.")]
     public static partial void LogAgentChatClientInvokedAgent(
@@ -50,7 +48,6 @@ internal static partial class ChatClientAgentLogMessages
     /// Logs <see cref="ChatClientAgent"/> invoked streaming agent (complete).
     /// </summary>
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Information,
         Message = "[{MethodName}] Agent {AgentId}/{AgentName} Invoked client {ClientType}.")]
     public static partial void LogAgentChatClientInvokedStreamingAgent(

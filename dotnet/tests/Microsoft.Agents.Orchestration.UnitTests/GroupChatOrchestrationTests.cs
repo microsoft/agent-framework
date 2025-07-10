@@ -4,7 +4,7 @@ using System;
 using System.Threading.Tasks;
 using Microsoft.Agents.Orchestration.GroupChat;
 using Microsoft.Extensions.AI.Agents;
-using Microsoft.SemanticKernel.Agents.Runtime.InProcess;
+using Microsoft.Extensions.AI.Agents.Runtime.InProcess;
 
 namespace Microsoft.Agents.Orchestration.UnitTest;
 

@@ -2,8 +2,8 @@
 
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Agents.Orchestration.GroupChat;
+using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
-using Microsoft.SemanticKernel.Agents.Runtime;
 
 namespace Microsoft.Agents.Orchestration;
 
@@ -18,7 +18,6 @@ namespace Microsoft.Agents.Orchestration;
 internal static partial class GroupChatOrchestrationLogMessages
 {
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Trace,
         Message = "CHAT AGENT invoked [{AgentId}]")]
     public static partial void LogChatAgentInvoke(
@@ -26,7 +25,6 @@ internal static partial class GroupChatOrchestrationLogMessages
         AgentId agentId);
 
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Trace,
         Message = "CHAT AGENT result [{AgentId}]: {Message}")]
     public static partial void LogChatAgentResult(
@@ -35,7 +33,6 @@ internal static partial class GroupChatOrchestrationLogMessages
         string? message);
 
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Debug,
         Message = "CHAT MANAGER initialized [{AgentId}]")]
     public static partial void LogChatManagerInit(
@@ -43,7 +40,6 @@ internal static partial class GroupChatOrchestrationLogMessages
         AgentId agentId);
 
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Debug,
         Message = "CHAT MANAGER invoked [{AgentId}]")]
     public static partial void LogChatManagerInvoke(
@@ -51,7 +47,6 @@ internal static partial class GroupChatOrchestrationLogMessages
         AgentId agentId);
 
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Debug,
         Message = "CHAT MANAGER terminate? [{AgentId}]: {Result} ({Reason})")]
     public static partial void LogChatManagerTerminate(
@@ -61,7 +56,6 @@ internal static partial class GroupChatOrchestrationLogMessages
         string reason);
 
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Debug,
         Message = "CHAT MANAGER select: {NextAgent} [{AgentId}]")]
     public static partial void LogChatManagerSelect(
@@ -70,7 +64,6 @@ internal static partial class GroupChatOrchestrationLogMessages
         AgentType nextAgent);
 
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Debug,
         Message = "CHAT MANAGER result [{AgentId}]: '{Result}' ({Reason})")]
     public static partial void LogChatManagerResult(
@@ -80,7 +73,6 @@ internal static partial class GroupChatOrchestrationLogMessages
         string reason);
 
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Debug,
         Message = "CHAT MANAGER user-input? [{AgentId}]: {Result} ({Reason})")]
     public static partial void LogChatManagerInput(
@@ -90,7 +82,6 @@ internal static partial class GroupChatOrchestrationLogMessages
         string reason);
 
     [LoggerMessage(
-        EventId = 0,
         Level = LogLevel.Trace,
         Message = "CHAT AGENT user-input [{AgentId}]: {Message}")]
     public static partial void LogChatManagerUserInput(
