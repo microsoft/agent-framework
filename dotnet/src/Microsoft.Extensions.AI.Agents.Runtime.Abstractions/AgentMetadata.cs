@@ -7,7 +7,7 @@ namespace Microsoft.Extensions.AI.Agents.Runtime;
 /// <summary>
 /// Represents metadata associated with an agent, including its type, unique key, and description.
 /// </summary>
-public readonly struct AgentMetadata(string type, string key, string? description) : IEquatable<AgentMetadata>
+public readonly struct AgentMetadata(string type, string key, string? description = null) : IEquatable<AgentMetadata>
 {
     /// <summary>
     /// An identifier that associates an agent with a specific factory function.
