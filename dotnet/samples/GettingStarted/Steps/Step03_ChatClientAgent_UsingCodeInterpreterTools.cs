@@ -3,7 +3,6 @@
 using System.Text;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
-using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Samples;
 using OpenAI.Assistants;
@@ -22,16 +21,14 @@ public sealed class Step03_ChatClientAgent_UsingCodeInterpreterTools(ITestOutput
     [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
     public async Task RunningWithFileReferenceAsync(ChatClientProviders provider)
     {
-        var fileId = await UploadFileAsync("Resources/groceries.txt", provider);
+        var codeInterpreterTool = new NewHostedCodeInterpreterTool();
+        codeInterpreterTool.FileIds.Add(await UploadFileAsync("Resources/groceries.txt", provider));
 
         var agentOptions = new ChatClientAgentOptions
         {
             Name = "HelpfulAssistant",
             Instructions = "You are a helpful assistant.",
-            ChatOptions = new ChatOptions()
-            {
-                Tools = [new NewHostedCodeInterpreterTool([fileId])]
-            }
+            ChatOptions = new() { Tools = [codeInterpreterTool] }
         };
 
         using var chatClient = await base.GetChatClientAsync(provider, agentOptions);

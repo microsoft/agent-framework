@@ -14,16 +14,20 @@ public class NewHostedCodeInterpreterTool : HostedCodeInterpreterTool
     // ChatClients must rely on the AdditionalProperties to check and set correctly the Code Interpreter Resource avoiding a customized RawRepresentationFactory implementation.
     private readonly Dictionary<string, object?> _additionalProperties = [];
 
-    /// <inheritdoc/>
-    public NewHostedCodeInterpreterTool(IList<string> fileIds)
-    {
-        this._additionalProperties["fileIds"] = fileIds;
-    }
-
     /// <summary>Gets or sets the list of file IDs that the code interpreter tool can access.</summary>
-    public IList<string>? FileIds
+    public IList<string> FileIds
     {
-        get => this._additionalProperties.TryGetValue("fileIds", out var value) ? (IList<string>?)value : null;
+        get
+        {
+            // Only create the property in the dictionary when it is actually used
+            if (!this._additionalProperties.TryGetValue("fileIds", out var value) || value is null)
+            {
+                value = new List<string>();
+                this._additionalProperties["fileIds"] = value;
+            }
+
+            return (IList<string>)value;
+        }
     }
 
     /// <inheritdoc/>
