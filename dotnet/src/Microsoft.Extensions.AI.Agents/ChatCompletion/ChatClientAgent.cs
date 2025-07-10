@@ -56,8 +56,10 @@ public sealed class ChatClientAgent : Agent
     /// <inheritdoc/>
     public override string? Description => this._agentOptions?.Description;
 
-    /// <inheritdoc/>
-    public override string? Instructions => this._agentOptions?.Instructions;
+    /// <summary>
+    /// Gets the instructions for the agent (optional).
+    /// </summary>
+    public string? Instructions => this._agentOptions?.Instructions;
 
     /// <summary>
     /// Gets of the default <see cref="Microsoft.Extensions.AI.ChatOptions"/> used by the agent.

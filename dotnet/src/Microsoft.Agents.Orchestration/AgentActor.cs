@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -25,12 +24,12 @@ public abstract class AgentActor : OrchestrationActor
     /// <param name="context">The orchestration context.</param>
     /// <param name="agent">An <see cref="Agent"/>.</param>
     /// <param name="logger">The logger to use for the actor</param>
-    protected AgentActor(AgentId id, IAgentRuntime runtime, OrchestrationContext context, Agent agent, ILogger? logger = null)
+    protected AgentActor(ActorId id, IAgentRuntime runtime, OrchestrationContext context, Agent agent, ILogger? logger = null)
         : base(
             id,
             runtime,
             context,
-            VerifyDescription(agent),
+            agent.Description,
             logger)
     {
         this.Agent = agent;
@@ -153,10 +152,5 @@ public abstract class AgentActor : OrchestrationActor
                 updates.Add(streamedResponse);
             }
         }
-    }
-
-    private static string VerifyDescription(Agent agent)
-    {
-        return agent.Description ?? throw new ArgumentException($"Missing agent description: {agent.Name ?? agent.Id}", nameof(agent));
     }
 }

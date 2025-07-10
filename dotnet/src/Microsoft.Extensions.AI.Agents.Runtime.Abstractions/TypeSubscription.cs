@@ -6,8 +6,8 @@ using System.Diagnostics.CodeAnalysis;
 namespace Microsoft.Extensions.AI.Agents.Runtime;
 
 /// <summary>
-/// This subscription matches on topics based on the exact type and maps to agents using the source of the topic as the agent key.
-/// This subscription causes each source to have its own agent instance.
+/// This subscription matches on topics based on the exact type and maps to actors using the source of the topic as the actor key.
+/// This subscription causes each source to have its own actor instance.
 /// </summary>
 /// <remarks>
 /// Example:
@@ -15,21 +15,21 @@ namespace Microsoft.Extensions.AI.Agents.Runtime;
 /// var subscription = new TypeSubscription("t1", "a1");
 /// </code>
 /// In this case:
-/// - A <see cref="TopicId"/> with type `"t1"` and source `"s1"` will be handled by an agent of type `"a1"` with key `"s1"`.
-/// - A <see cref="TopicId"/> with type `"t1"` and source `"s2"` will be handled by an agent of type `"a1"` with key `"s2"`.
+/// - A <see cref="TopicId"/> with type `"t1"` and source `"s1"` will be handled by an actor of type `"a1"` with key `"s1"`.
+/// - A <see cref="TopicId"/> with type `"t1"` and source `"s2"` will be handled by an actor of type `"a1"` with key `"s2"`.
 /// </remarks>
-public class TypeSubscription : ISubscriptionDefinition
+public sealed class TypeSubscription : ISubscriptionDefinition
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="TypeSubscription"/> class.
     /// </summary>
     /// <param name="topicType">The exact topic type to match against.</param>
-    /// <param name="agentType">Agent type to handle this subscription.</param>
+    /// <param name="actorType">Actor type to handle this subscription.</param>
     /// <param name="id">Unique identifier for the subscription. If not provided, a new UUID will be generated.</param>
-    public TypeSubscription(string topicType, AgentType agentType, string? id = null)
+    public TypeSubscription(string topicType, ActorType actorType, string? id = null)
     {
         this.TopicType = topicType;
-        this.AgentType = agentType;
+        this.ActorType = actorType;
         this.Id = id ?? Guid.NewGuid().ToString();
     }
 
@@ -44,9 +44,9 @@ public class TypeSubscription : ISubscriptionDefinition
     public string TopicType { get; }
 
     /// <summary>
-    /// Gets the agent type that handles this subscription.
+    /// Gets the actor type that handles this subscription.
     /// </summary>
-    public AgentType AgentType { get; }
+    public ActorType ActorType { get; }
 
     /// <summary>
     /// Checks if a given <see cref="TopicId"/> matches the subscription based on an exact type match.
@@ -59,19 +59,19 @@ public class TypeSubscription : ISubscriptionDefinition
     }
 
     /// <summary>
-    /// Maps a <see cref="TopicId"/> to an <see cref="AgentId"/>. Should only be called if <see cref="Matches"/> returns true.
+    /// Maps a <see cref="TopicId"/> to an <see cref="ActorId"/>. Should only be called if <see cref="Matches"/> returns true.
     /// </summary>
     /// <param name="topic">The topic to map.</param>
-    /// <returns>An <see cref="AgentId"/> representing the agent that should handle the topic.</returns>
+    /// <returns>An <see cref="ActorId"/> representing the actor that should handle the topic.</returns>
     /// <exception cref="InvalidOperationException">Thrown if the topic does not match the subscription.</exception>
-    public AgentId MapToAgent(TopicId topic)
+    public ActorId MapToActor(TopicId topic)
     {
         if (!this.Matches(topic))
         {
             throw new InvalidOperationException("TopicId does not match the subscription.");
         }
 
-        return new AgentId(this.AgentType, topic.Source);
+        return new ActorId(this.ActorType, topic.Source);
     }
 
     /// <summary>
@@ -84,7 +84,7 @@ public class TypeSubscription : ISubscriptionDefinition
         return
             obj is TypeSubscription other &&
                 (this.Id == other.Id ||
-                    (this.AgentType == other.AgentType &&
+                    (this.ActorType == other.ActorType &&
                         this.TopicType == other.TopicType));
     }
 
@@ -101,6 +101,6 @@ public class TypeSubscription : ISubscriptionDefinition
     /// <returns>A hash code for this instance, suitable for use in hashing algorithms and data structures.</returns>
     public override int GetHashCode()
     {
-        return HashCode.Combine(this.Id, this.AgentType, this.TopicType);
+        return HashCode.Combine(this.Id, this.ActorType, this.TopicType);
     }
 }

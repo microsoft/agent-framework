@@ -16,10 +16,10 @@ public class SendMessageTests
 
         MessagingTestFixture fixture = new();
 
-        await fixture.RegisterFactoryMapInstances(nameof(ProcessorAgent),
+        await fixture.RegisterFactoryMapInstances(new(nameof(ProcessorAgent)),
             (id, runtime) => new ValueTask<ProcessorAgent>(new ProcessorAgent(id, runtime, ProcessFunc, string.Empty)));
 
-        AgentId targetAgent = new(nameof(ProcessorAgent), Guid.NewGuid().ToString());
+        ActorId targetAgent = new(nameof(ProcessorAgent), Guid.NewGuid().ToString());
         object? maybeResult = await fixture.RunSendTestAsync(targetAgent, new BasicMessage { Content = "1" });
 
         Assert.Equal("Processed(1)", Assert.IsType<BasicMessage>(maybeResult).Content);
@@ -30,12 +30,12 @@ public class SendMessageTests
     {
         MessagingTestFixture fixture = new();
 
-        await fixture.RegisterFactoryMapInstances(nameof(CancelAgent),
+        await fixture.RegisterFactoryMapInstances(new(nameof(CancelAgent)),
             (id, runtime) => new ValueTask<CancelAgent>(new CancelAgent(id, runtime, string.Empty)));
 
-        AgentId targetAgent = new(nameof(CancelAgent), Guid.NewGuid().ToString());
+        ActorId targetAgent = new(nameof(CancelAgent), Guid.NewGuid().ToString());
 
-        await Assert.ThrowsAsync<OperationCanceledException>(() => fixture.RunSendTestAsync(targetAgent, new BasicMessage { Content = "1" }).AsTask());
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fixture.RunSendTestAsync(targetAgent, new BasicMessage { Content = "1" }).AsTask());
     }
 
     [Fact]
@@ -43,10 +43,10 @@ public class SendMessageTests
     {
         MessagingTestFixture fixture = new();
 
-        await fixture.RegisterFactoryMapInstances(nameof(ErrorAgent),
+        await fixture.RegisterFactoryMapInstances(new(nameof(ErrorAgent)),
             (id, runtime) => new ValueTask<ErrorAgent>(new ErrorAgent(id, runtime, string.Empty)));
 
-        AgentId targetAgent = new(nameof(ErrorAgent), Guid.NewGuid().ToString());
+        ActorId targetAgent = new(nameof(ErrorAgent), Guid.NewGuid().ToString());
 
         await Assert.ThrowsAsync<TestException>(() => fixture.RunSendTestAsync(targetAgent, new BasicMessage { Content = "1" }).AsTask());
     }
@@ -58,16 +58,16 @@ public class SendMessageTests
 
         MessagingTestFixture fixture = new();
 
-        Dictionary<AgentId, SendOnAgent> sendAgents = fixture.GetAgentInstances<SendOnAgent>();
-        Dictionary<AgentId, ReceiverAgent> receiverAgents = fixture.GetAgentInstances<ReceiverAgent>();
+        Dictionary<ActorId, SendOnAgent> sendAgents = fixture.GetAgentInstances<SendOnAgent>();
+        Dictionary<ActorId, ReceiverAgent> receiverAgents = fixture.GetAgentInstances<ReceiverAgent>();
 
-        await fixture.RegisterFactoryMapInstances(nameof(SendOnAgent),
+        await fixture.RegisterFactoryMapInstances(new(nameof(SendOnAgent)),
             (id, runtime) => new ValueTask<SendOnAgent>(new SendOnAgent(id, runtime, string.Empty, targetGuids)));
 
-        await fixture.RegisterFactoryMapInstances(nameof(ReceiverAgent),
+        await fixture.RegisterFactoryMapInstances(new(nameof(ReceiverAgent)),
             (id, runtime) => new ValueTask<ReceiverAgent>(new ReceiverAgent(id, runtime, string.Empty)));
 
-        AgentId targetAgent = new(nameof(SendOnAgent), Guid.NewGuid().ToString());
+        ActorId targetAgent = new(nameof(SendOnAgent), Guid.NewGuid().ToString());
         BasicMessage input = new() { Content = "Hello" };
         Task testTask = fixture.RunSendTestAsync(targetAgent, input).AsTask();
 
@@ -82,7 +82,7 @@ public class SendMessageTests
         // Check that each of the target agents received the message
         foreach (Guid targetKey in targetGuids)
         {
-            AgentId targetId = new(nameof(ReceiverAgent), targetKey.ToString());
+            ActorId targetId = new(nameof(ReceiverAgent), targetKey.ToString());
             Assert.Single(receiverAgents[targetId].Messages);
             Assert.Contains(receiverAgents[targetId].Messages, m => m.Content == $"@{targetKey}: {input.Content}");
         }

@@ -14,15 +14,11 @@ namespace Microsoft.Agents.Orchestration.Handoff;
 /// <summary>
 /// An actor used with the <see cref="HandoffOrchestration{TInput,TOutput}"/>.
 /// </summary>
-internal sealed class HandoffActor :
-    AgentActor,
-    IHandle<HandoffMessages.InputTask>,
-    IHandle<HandoffMessages.Request>,
-    IHandle<HandoffMessages.Response>
+internal sealed class HandoffActor : AgentActor
 {
     private readonly ChatClientAgent _chatAgent;
     private readonly HandoffLookup _handoffs;
-    private readonly AgentType _resultHandoff;
+    private readonly ActorType _resultHandoff;
     private readonly List<ChatMessage> _cache;
     private readonly ChatOptions _options;
 
@@ -39,7 +35,7 @@ internal sealed class HandoffActor :
     /// <param name="handoffs">The handoffs available to this agent</param>
     /// <param name="resultHandoff">The handoff agent for capturing the result.</param>
     /// <param name="logger">The logger to use for the actor</param>
-    public HandoffActor(AgentId id, IAgentRuntime runtime, OrchestrationContext context, ChatClientAgent agent, HandoffLookup handoffs, AgentType resultHandoff, ILogger<HandoffActor>? logger = null)
+    public HandoffActor(ActorId id, IAgentRuntime runtime, OrchestrationContext context, ChatClientAgent agent, HandoffLookup handoffs, ActorType resultHandoff, ILogger<HandoffActor>? logger = null)
         : base(id, runtime, context, agent, logger)
     {
         if (handoffs.ContainsKey(agent.Name ?? agent.Id))
@@ -57,6 +53,10 @@ internal sealed class HandoffActor :
                 Tools = [.. this.CreateHandoffFunctions()],
                 ToolMode = ChatToolMode.Auto
             };
+
+        this.RegisterMessageHandler<HandoffMessages.InputTask>(this.HandleAsync);
+        this.RegisterMessageHandler<HandoffMessages.Request>(this.HandleAsync);
+        this.RegisterMessageHandler<HandoffMessages.Response>(this.HandleAsync);
     }
 
     /// <inheritdoc/>
@@ -85,33 +85,20 @@ internal sealed class HandoffActor :
     /// </summary>
     public OrchestrationInteractiveCallback? InteractiveCallback { get; init; }
 
-    /// <inheritdoc/>
-    public ValueTask HandleAsync(HandoffMessages.InputTask item, MessageContext messageContext)
+    private ValueTask HandleAsync(HandoffMessages.InputTask item, MessageContext messageContext, CancellationToken cancellationToken)
     {
         this._taskSummary = null;
         this._cache.AddRange(item.Messages);
-
-#if !NETCOREAPP
-        return new ValueTask();
-#else
-        return ValueTask.CompletedTask;
-#endif
+        return default;
     }
 
-    /// <inheritdoc/>
-    public ValueTask HandleAsync(HandoffMessages.Response item, MessageContext messageContext)
+    private ValueTask HandleAsync(HandoffMessages.Response item, MessageContext messageContext, CancellationToken cancellationToken)
     {
         this._cache.Add(item.Message);
-
-#if !NETCOREAPP
-        return new ValueTask();
-#else
-        return ValueTask.CompletedTask;
-#endif
+        return default;
     }
 
-    /// <inheritdoc/>
-    public async ValueTask HandleAsync(HandoffMessages.Request item, MessageContext messageContext)
+    private async ValueTask HandleAsync(HandoffMessages.Request item, MessageContext messageContext, CancellationToken cancellationToken)
     {
         try
         {
@@ -122,7 +109,7 @@ internal sealed class HandoffActor :
                 ChatMessage response;
                 try
                 {
-                    response = await this.InvokeAsync(this._cache, messageContext.CancellationToken).ConfigureAwait(false);
+                    response = await this.InvokeAsync(this._cache, cancellationToken).ConfigureAwait(false);
                 }
                 catch (Exception exception)
                 {
@@ -139,13 +126,13 @@ internal sealed class HandoffActor :
                 // Since we don't want to publish that message, so we only publish if the response is an ASSISTANT message.
                 if (response.Role == ChatRole.Assistant)
                 {
-                    await this.PublishMessageAsync(new HandoffMessages.Response { Message = response }, this.Context.Topic, messageId: null, messageContext.CancellationToken).ConfigureAwait(false);
+                    await this.PublishMessageAsync(new HandoffMessages.Response { Message = response }, this.Context.Topic, messageId: null, cancellationToken).ConfigureAwait(false);
                 }
 
                 if (this._handoffAgent != null)
                 {
-                    AgentType handoffType = this._handoffs[this._handoffAgent].AgentType;
-                    await this.PublishMessageAsync(new HandoffMessages.Request(), handoffType, messageContext.CancellationToken).ConfigureAwait(false);
+                    ActorType handoffType = this._handoffs[this._handoffAgent].AgentType;
+                    await this.PublishMessageAsync(new HandoffMessages.Request(), handoffType, cancellationToken).ConfigureAwait(false);
 
                     this._handoffAgent = null;
                     break;
@@ -154,12 +141,12 @@ internal sealed class HandoffActor :
                 if (this.InteractiveCallback != null && this._taskSummary == null)
                 {
                     ChatMessage input = await this.InteractiveCallback().ConfigureAwait(false);
-                    await this.PublishMessageAsync(new HandoffMessages.Response { Message = input }, this.Context.Topic, messageId: null, messageContext.CancellationToken).ConfigureAwait(false);
+                    await this.PublishMessageAsync(new HandoffMessages.Response { Message = input }, this.Context.Topic, messageId: null, cancellationToken).ConfigureAwait(false);
                     this._cache.Add(input);
                     continue;
                 }
 
-                await this.EndAsync(response.Text ?? "No handoff or human response function requested. Ending task.", messageContext.CancellationToken).ConfigureAwait(false);
+                await this.EndAsync(response.Text ?? "No handoff or human response function requested. Ending task.", cancellationToken).ConfigureAwait(false);
             }
         }
         catch (Exception exception)
@@ -176,7 +163,7 @@ internal sealed class HandoffActor :
             name: "end_task",
             description: "Complete the task with a summary when no further requests are given.");
 
-        foreach (KeyValuePair<string, (AgentType AgentType, string Description)> handoff in this._handoffs)
+        foreach (KeyValuePair<string, (ActorType AgentType, string Description)> handoff in this._handoffs)
         {
             AIFunction handoffFunction =
                 AIFunctionFactory.Create(

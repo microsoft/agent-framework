@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 namespace System.Diagnostics.CodeAnalysis;
 
@@ -39,7 +39,7 @@ internal sealed class DynamicallyAccessedMembersAttribute : Attribute
     /// <param name="memberTypes">The types of members dynamically accessed.</param>
     public DynamicallyAccessedMembersAttribute(DynamicallyAccessedMemberTypes memberTypes)
     {
-        MemberTypes = memberTypes;
+        this.MemberTypes = memberTypes;
     }
 
     /// <summary>
