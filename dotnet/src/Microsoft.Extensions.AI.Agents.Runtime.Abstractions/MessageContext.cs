@@ -7,32 +7,36 @@ namespace Microsoft.Extensions.AI.Agents.Runtime;
 
 /// <summary>
 /// Represents the context of a message being sent within the agent runtime.
-/// This includes metadata such as the sender, topic, RPC status, and cancellation handling.
 /// </summary>
-public class MessageContext(string messageId, CancellationToken cancellationToken)
+/// <remarks>
+/// This includes metadata such as the sender, topic, ahd RPC status.
+/// </remarks>
+public sealed class MessageContext
 {
-    /// <summary>
-    /// Initializes a new instance of the <see cref="MessageContext"/> class.
-    /// </summary>
-    public MessageContext(CancellationToken cancellation) : this(Guid.NewGuid().ToString(), cancellation)
-    { }
+    private string? _messageId;
 
     /// <summary>
     /// Gets or sets the unique identifier for this message.
     /// </summary>
-    public string MessageId { get; } = messageId;
+    public string MessageId
+    {
+        get => this._messageId ?? Interlocked.CompareExchange(ref this._messageId, Guid.NewGuid().ToString(), null) ?? this._messageId;
+        set
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                throw new ArgumentException("MessageId cannot be null or empty.", nameof(value));
+            }
 
-    /// <summary>
-    /// Gets or sets the cancellation token associated with this message.
-    /// This can be used to cancel the operation if necessary.
-    /// </summary>
-    public CancellationToken CancellationToken { get; } = cancellationToken;
+            this._messageId = value;
+        }
+    }
 
     /// <summary>
     /// Gets or sets the sender of the message.
     /// If <c>null</c>, the sender is unspecified.
     /// </summary>
-    public AgentId? Sender { get; set; }
+    public ActorId? Sender { get; set; }
 
     /// <summary>
     /// Gets or sets the topic associated with the message.

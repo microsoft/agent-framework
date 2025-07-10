@@ -15,7 +15,7 @@ namespace Microsoft.Extensions.AI.Agents;
 public abstract class Agent
 {
     /// <summary>
-    /// Gets the identifier of the agent (optional).
+    /// Gets the identifier of the agent.
     /// </summary>
     /// <value>
     /// The identifier of the agent. The default is a random GUID value, but for service agents, it will match the id of the agent in the service.
@@ -31,11 +31,6 @@ public abstract class Agent
     /// Gets the description of the agent (optional).
     /// </summary>
     public virtual string? Description { get; }
-
-    /// <summary>
-    /// Gets the instructions for the agent (optional).
-    /// </summary>
-    public virtual string? Instructions { get; }
 
     /// <summary>
     /// Get a new <see cref="AgentThread"/> instance that is compatible with the agent.

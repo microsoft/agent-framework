@@ -27,7 +27,7 @@ public class SequentialOrchestration<TInput, TOutput> : AgentOrchestration<TInpu
     }
 
     /// <inheritdoc />
-    protected override async ValueTask StartAsync(IAgentRuntime runtime, TopicId topic, IEnumerable<ChatMessage> input, AgentType? entryAgent)
+    protected override async ValueTask StartAsync(IAgentRuntime runtime, TopicId topic, IEnumerable<ChatMessage> input, ActorType? entryAgent)
     {
         if (!entryAgent.HasValue)
         {
@@ -37,12 +37,12 @@ public class SequentialOrchestration<TInput, TOutput> : AgentOrchestration<TInpu
     }
 
     /// <inheritdoc />
-    protected override async ValueTask<AgentType?> RegisterOrchestrationAsync(IAgentRuntime runtime, OrchestrationContext context, RegistrationContext registrar, ILogger logger)
+    protected override async ValueTask<ActorType?> RegisterOrchestrationAsync(IAgentRuntime runtime, OrchestrationContext context, RegistrationContext registrar, ILogger logger)
     {
-        AgentType outputType = await registrar.RegisterResultTypeAsync<SequentialMessages.Response>(response => [response.Message]).ConfigureAwait(false);
+        ActorType outputType = await registrar.RegisterResultTypeAsync<SequentialMessages.Response>(response => [response.Message]).ConfigureAwait(false);
 
         // Each agent handsoff its result to the next agent.
-        AgentType nextAgent = outputType;
+        ActorType nextAgent = outputType;
         for (int index = this.Members.Count - 1; index >= 0; --index)
         {
             Agent agent = this.Members[index];
@@ -53,20 +53,15 @@ public class SequentialOrchestration<TInput, TOutput> : AgentOrchestration<TInpu
 
         return nextAgent;
 
-        ValueTask<AgentType> RegisterAgentAsync(Agent agent, int index, AgentType nextAgent) =>
+        ValueTask<ActorType> RegisterAgentAsync(Agent agent, int index, ActorType nextAgent) =>
             runtime.RegisterOrchestrationAgentAsync(
                 this.GetAgentType(context.Topic, index),
                 (agentId, runtime) =>
                 {
                     SequentialActor actor = new(agentId, runtime, context, agent, nextAgent, context.LoggerFactory.CreateLogger<SequentialActor>());
-
-#if !NETCOREAPP
-                    return new ValueTask<IHostableAgent>(actor);
-#else
-                    return ValueTask.FromResult<IHostableAgent>(actor);
-#endif
+                    return new ValueTask<IRuntimeActor>(actor);
                 });
     }
 
-    private AgentType GetAgentType(TopicId topic, int index) => this.FormatAgentType(topic, $"Agent_{index + 1}");
+    private ActorType GetAgentType(TopicId topic, int index) => this.FormatAgentType(topic, $"Agent_{index + 1}");
 }
