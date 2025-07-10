@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable, Callable, Iterable, Sequence
+from collections.abc import AsyncIterable, Callable, Sequence
 from enum import Enum
 from typing import Any, Protocol, TypeVar, runtime_checkable
 from uuid import uuid4
@@ -9,7 +9,7 @@ from pydantic import Field
 
 from ._clients import ChatClient
 from ._pydantic import AFBaseModel
-from ._types import ChatMessage, ChatResponse, ChatResponseUpdate, ChatRole, TextContent
+from ._types import ChatMessage, ChatResponse, ChatResponseUpdate, ChatRole
 from .exceptions import AgentExecutionException
 
 TThreadType = TypeVar("TThreadType", bound="AgentThread")
@@ -47,46 +47,12 @@ class MessagesRetrievableThread(Protocol):
         ...
 
 
-# region AgentBase
-
-
-class AgentBase(AFBaseModel):
-    """Base class for all agents."""
-
-    async def _notify_thread_of_new_messages(
-        self, thread: AgentThread, new_messages: ChatMessage | Sequence[ChatMessage]
-    ) -> None:
-        """Notify the thread of new messages."""
-        if isinstance(new_messages, ChatMessage) or len(new_messages) > 0:
-            await thread.on_new_messages(new_messages)
-
-
 # region Agent Protocol
 
 
 @runtime_checkable
 class Agent(Protocol):
     """A protocol for an agent that can be invoked."""
-
-    @property
-    def id(self) -> str:
-        """Returns the ID of the agent."""
-        ...
-
-    @property
-    def name(self) -> str | None:
-        """Returns the name of the agent."""
-        ...
-
-    @property
-    def description(self) -> str | None:
-        """Returns the description of the agent."""
-        ...
-
-    @property
-    def instructions(self) -> str | None:
-        """Returns the instructions for the agent."""
-        ...
 
     async def run(
         self,
@@ -149,6 +115,31 @@ class Agent(Protocol):
         ...
 
 
+# region AgentBase
+
+
+class AgentBase(AFBaseModel):
+    """Base class for all agents.
+
+    Attributes:
+       id: The unique identifier of the agent  If no id is provided,
+           a new UUID will be generated.
+       name: The name of the agent
+       description: The description of the agent
+    """
+
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    name: str = Field(default="UnnamedAgent")
+    description: str | None = None
+
+    async def _notify_thread_of_new_messages(
+        self, thread: AgentThread, new_messages: ChatMessage | Sequence[ChatMessage]
+    ) -> None:
+        """Notify the thread of new messages."""
+        if isinstance(new_messages, ChatMessage) or len(new_messages) > 0:
+            await thread.on_new_messages(new_messages)
+
+
 # region ChatClientAgentThread
 
 
@@ -168,9 +159,10 @@ class ChatClientAgentThread(AgentThread):
     This class manages chat threads either locally (in-memory) or via a service based on initialization.
     """
 
+    chat_messages: list[ChatMessage] | None = None
     _storage_location: ChatClientAgentThreadType | None = None
 
-    def __init__(self, id: str | None = None, messages: Iterable[ChatMessage] | None = None):
+    def __init__(self, id: str | None = None, messages: Sequence[ChatMessage] | None = None):
         """Initialize the chat client agent thread.
 
         Args:
@@ -188,7 +180,6 @@ class ChatClientAgentThread(AgentThread):
             - If neither is provided, creates an empty local thread.
         """
         super().__init__()
-        self._chat_messages: list[ChatMessage] = []
 
         if id and messages:
             raise ValueError("Cannot specify both id and messages")
@@ -199,42 +190,30 @@ class ChatClientAgentThread(AgentThread):
             self.id = id
             self._storage_location = ChatClientAgentThreadType.CONVERSATION_ID
         elif messages:
-            self._chat_messages.extend(messages)
+            self.chat_messages = []
+            self.chat_messages.extend(messages)
             self._storage_location = ChatClientAgentThreadType.IN_MEMORY_MESSAGES
 
     async def get_messages(self) -> AsyncIterable[ChatMessage]:
         """Get all messages in the thread."""
-        for message in self._chat_messages:
+        for message in self.chat_messages or []:
             yield message
 
     async def _on_new_messages(self, new_messages: ChatMessage | Sequence[ChatMessage]) -> None:
         """Handle new messages."""
         if self._storage_location == ChatClientAgentThreadType.IN_MEMORY_MESSAGES:
-            self._chat_messages.extend([new_messages] if isinstance(new_messages, ChatMessage) else new_messages)
+            if self.chat_messages is None:
+                self.chat_messages = []
+            self.chat_messages.extend([new_messages] if isinstance(new_messages, ChatMessage) else new_messages)
 
 
 # region ChatClientAgent
 
 
 class ChatClientAgent(AgentBase):
-    """A Chat Client Agent which depends on ChatClient.
+    """A Chat Client Agent which depends on ChatClient."""
 
-    Attributes:
-       id: The unique identifier of the agent  If no id is provided,
-           a new UUID will be generated.
-       name: The name of the agent
-       description: The description of the agent
-       instructions: The instructions for the agent (optional)
-    """
-
-    id: str = Field(default_factory=lambda: str(uuid4()))
-    name: str = Field(default="UnnamedAgent")
-    description: str | None = None
-    instructions: str | None = None
-
-    def __init__(self, chat_client: ChatClient, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self._chat_client = chat_client
+    chat_client: ChatClient
 
     async def run(
         self,
@@ -250,7 +229,7 @@ class ChatClientAgent(AgentBase):
             expected_type=ChatClientAgentThread,
         )
 
-        response = await self._chat_client.get_response(thread_messages, **kwargs)
+        response = await self.chat_client.get_response(thread_messages, **kwargs)
 
         self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
 
@@ -277,7 +256,7 @@ class ChatClientAgent(AgentBase):
 
         response_updates: list[ChatResponseUpdate] = []
 
-        async for update in self._chat_client.get_streaming_response(thread_messages):
+        async for update in self.chat_client.get_streaming_response(thread_messages):
             response_updates.append(update)
             yield update
 
@@ -294,20 +273,20 @@ class ChatClientAgent(AgentBase):
         return ChatClientAgentThread()
 
     def _update_thread_with_type_and_conversation_id(
-        self, chatClientThread: ChatClientAgentThread, responseConversationId: str | None
+        self, chat_client_thread: ChatClientAgentThread, responseConversationId: str | None
     ) -> None:
         """Update thread with storage type and conversation ID.
 
         Args:
-            chatClientThread: The thread to update.
+            chat_client_thread: The thread to update.
             responseConversationId: The conversation ID from the response, if any.
 
         Raises:
             AgentExecutionException: If conversation ID is missing for service-managed thread.
         """
         # Set the thread's storage location, the first time that we use it.
-        if chatClientThread._storage_location is None:  # type: ignore[reportPrivateUsage]
-            chatClientThread._storage_location = (  # type: ignore[reportPrivateUsage]
+        if chat_client_thread._storage_location is None:  # type: ignore[reportPrivateUsage]
+            chat_client_thread._storage_location = (  # type: ignore[reportPrivateUsage]
                 ChatClientAgentThreadType.CONVERSATION_ID
                 if responseConversationId is not None
                 else ChatClientAgentThreadType.IN_MEMORY_MESSAGES
@@ -315,12 +294,12 @@ class ChatClientAgent(AgentBase):
 
         # If we got a conversation id back from the chat client, it means that the service supports server side thread
         # storage so we should capture the id and update the thread with the new id.
-        if chatClientThread._storage_location == ChatClientAgentThreadType.CONVERSATION_ID:  # type: ignore[reportPrivateUsage]
+        if chat_client_thread._storage_location == ChatClientAgentThreadType.CONVERSATION_ID:  # type: ignore[reportPrivateUsage]
             if responseConversationId is None:
                 raise AgentExecutionException(
                     "Service did not return a valid conversation id when using a service managed thread."
                 )
-            chatClientThread.id = responseConversationId
+            chat_client_thread.id = responseConversationId
 
     async def _prepare_thread_and_messages(
         self,
@@ -366,8 +345,7 @@ class ChatClientAgent(AgentBase):
             input_messages = [input_messages]
 
         normalized_messages = [
-            ChatMessage(role=ChatRole.USER, contents=[TextContent(msg)]) if isinstance(msg, str) else msg
-            for msg in input_messages
+            ChatMessage(role=ChatRole.USER, text=msg) if isinstance(msg, str) else msg for msg in input_messages
         ]
 
         messages.extend(normalized_messages)

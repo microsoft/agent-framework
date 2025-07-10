@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import AsyncIterable, Sequence
-from typing import Any, cast
+from typing import Any
 from uuid import uuid4
 
 from pytest import fixture, raises
@@ -48,7 +48,7 @@ class MockAgent(Agent):
 
     async def run(
         self,
-        messages: ChatMessage | str | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | list[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -138,7 +138,7 @@ async def test_chat_client_agent_thread_init_in_memory() -> None:
 
     assert thread._storage_location == ChatClientAgentThreadType.IN_MEMORY_MESSAGES  # type: ignore[reportPrivateUsage]
     assert thread.id is None
-    assert thread._chat_messages == messages  # type: ignore[reportPrivateUsage]
+    assert thread.chat_messages == messages
 
 
 async def test_chat_client_agent_thread_empty() -> None:
@@ -146,7 +146,7 @@ async def test_chat_client_agent_thread_empty() -> None:
 
     assert thread._storage_location is None  # type: ignore[reportPrivateUsage]
     assert thread.id is None
-    assert thread._chat_messages == []  # type: ignore[reportPrivateUsage]
+    assert thread.chat_messages is None
 
 
 async def test_chat_client_agent_thread_init_invalid() -> None:
@@ -163,7 +163,7 @@ async def test_chat_client_agent_thread_init_conversation_id() -> None:
 
     assert thread._storage_location == ChatClientAgentThreadType.CONVERSATION_ID  # type: ignore[reportPrivateUsage]
     assert thread.id == thread_id
-    assert thread._chat_messages == []  # type: ignore[reportPrivateUsage]
+    assert thread.chat_messages is None
 
 
 async def test_chat_client_agent_thread_get_messages() -> None:
@@ -181,29 +181,25 @@ async def test_chat_client_agent_thread_on_new_messages_in_memory() -> None:
     thread = ChatClientAgentThread(messages=[initial_message])
 
     await thread._on_new_messages(new_message)  # type: ignore[reportPrivateUsage]
-    assert thread._chat_messages == [initial_message, new_message]  # type: ignore[reportPrivateUsage]
+    assert thread.chat_messages == [initial_message, new_message]
 
 
 def test_chat_client_agent_type(chat_client: ChatClient) -> None:
-    chat_client_agent = ChatClientAgent(chat_client)
+    chat_client_agent = ChatClientAgent(chat_client=chat_client)
     assert isinstance(chat_client_agent, Agent)
-
-    agent = cast(Agent, chat_client_agent)
-    assert agent.name == "UnnamedAgent"
 
 
 async def test_chat_client_agent_init(chat_client: ChatClient) -> None:
     agent_id = str(uuid4())
-    agent = ChatClientAgent(chat_client, id=agent_id, description="Test")
+    agent = ChatClientAgent(chat_client=chat_client, id=agent_id, description="Test")
 
     assert agent.id == agent_id
     assert agent.name == "UnnamedAgent"
     assert agent.description == "Test"
-    assert agent.instructions is None
 
 
 async def test_chat_client_agent_run(chat_client: ChatClient) -> None:
-    agent = ChatClientAgent(chat_client)
+    agent = ChatClientAgent(chat_client=chat_client)
 
     result = await agent.run("Hello")
 
@@ -211,7 +207,7 @@ async def test_chat_client_agent_run(chat_client: ChatClient) -> None:
 
 
 async def test_chat_client_agent_run_stream(chat_client: ChatClient) -> None:
-    agent = ChatClientAgent(chat_client)
+    agent = ChatClientAgent(chat_client=chat_client)
 
     result = await ChatResponse.from_chat_response_generator(agent.run_stream("Hello"))
 
@@ -219,7 +215,7 @@ async def test_chat_client_agent_run_stream(chat_client: ChatClient) -> None:
 
 
 async def test_chat_client_agent_get_new_thread(chat_client: ChatClient) -> None:
-    agent = ChatClientAgent(chat_client)
+    agent = ChatClientAgent(chat_client=chat_client)
     thread = agent.get_new_thread()
 
     assert isinstance(thread, ChatClientAgentThread)
@@ -227,7 +223,7 @@ async def test_chat_client_agent_get_new_thread(chat_client: ChatClient) -> None
 
 
 async def test_chat_client_agent_prepare_thread_and_messages(chat_client: ChatClient) -> None:
-    agent = ChatClientAgent(chat_client)
+    agent = ChatClientAgent(chat_client=chat_client)
     message = ChatMessage(role=ChatRole.USER, contents=[TextContent("Hello")])
     thread = ChatClientAgentThread(messages=[message])
 
@@ -251,7 +247,7 @@ async def test_chat_client_agent_update_thread_id() -> None:
             conversation_id="123",
         )
     )
-    agent = ChatClientAgent(chat_client)
+    agent = ChatClientAgent(chat_client=chat_client)
     thread = agent.get_new_thread()
 
     result = await agent.run("Hello", thread=thread)
@@ -263,7 +259,7 @@ async def test_chat_client_agent_update_thread_id() -> None:
 
 
 async def test_chat_client_agent_update_thread_messages(chat_client: ChatClient) -> None:
-    agent = ChatClientAgent(chat_client)
+    agent = ChatClientAgent(chat_client=chat_client)
     thread = agent.get_new_thread()
 
     result = await agent.run("Hello", thread=thread)
@@ -272,13 +268,15 @@ async def test_chat_client_agent_update_thread_messages(chat_client: ChatClient)
     assert thread.id is None
     assert isinstance(thread, ChatClientAgentThread)
     assert thread._storage_location == ChatClientAgentThreadType.IN_MEMORY_MESSAGES  # type: ignore[reportPrivateUsage]
-    assert len(thread._chat_messages) == 2  # type: ignore[reportPrivateUsage]
-    assert thread._chat_messages[0].text == "Hello"  # type: ignore[reportPrivateUsage]
-    assert thread._chat_messages[1].text == "test response"  # type: ignore[reportPrivateUsage]
+
+    assert thread.chat_messages is not None
+    assert len(thread.chat_messages) == 2
+    assert thread.chat_messages[0].text == "Hello"
+    assert thread.chat_messages[1].text == "test response"
 
 
 async def test_chat_client_agent_update_thread_conversation_id_missing(chat_client: ChatClient) -> None:
-    agent = ChatClientAgent(chat_client)
+    agent = ChatClientAgent(chat_client=chat_client)
     thread = ChatClientAgentThread(id="123")
 
     with raises(AgentExecutionException, match="Service did not return a valid conversation id"):
