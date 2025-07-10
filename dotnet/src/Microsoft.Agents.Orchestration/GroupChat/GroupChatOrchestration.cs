@@ -36,7 +36,7 @@ public class GroupChatOrchestration<TInput, TOutput> :
     }
 
     /// <inheritdoc />
-    protected override ValueTask StartAsync(IAgentRuntime runtime, TopicId topic, IEnumerable<ChatMessage> input, AgentType? entryAgent)
+    protected override ValueTask StartAsync(IAgentRuntime runtime, TopicId topic, IEnumerable<ChatMessage> input, ActorType? entryAgent)
     {
         if (!entryAgent.HasValue)
         {
@@ -46,37 +46,33 @@ public class GroupChatOrchestration<TInput, TOutput> :
     }
 
     /// <inheritdoc />
-    protected override async ValueTask<AgentType?> RegisterOrchestrationAsync(IAgentRuntime runtime, OrchestrationContext context, RegistrationContext registrar, ILogger logger)
+    protected override async ValueTask<ActorType?> RegisterOrchestrationAsync(IAgentRuntime runtime, OrchestrationContext context, RegistrationContext registrar, ILogger logger)
     {
-        AgentType outputType = await registrar.RegisterResultTypeAsync<GroupChatMessages.Result>(response => [response.Message]).ConfigureAwait(false);
+        ActorType outputType = await registrar.RegisterResultTypeAsync<GroupChatMessages.Result>(response => [response.Message]).ConfigureAwait(false);
 
         int agentCount = 0;
         GroupChatTeam team = [];
         foreach (Agent agent in this.Members)
         {
             ++agentCount;
-            AgentType agentType = await RegisterAgentAsync(agent, agentCount).ConfigureAwait(false);
-            string name = agent.Name ?? agent.Id ?? agentType;
+            ActorType agentType = await RegisterAgentAsync(agent, agentCount).ConfigureAwait(false);
+            string name = agent.Name ?? agent.Id ?? agentType.Name;
             string? description = agent.Description;
 
-            team[name] = (agentType, description ?? DefaultAgentDescription);
+            team[name] = (agentType.Name, description ?? DefaultAgentDescription);
 
             logger.LogRegisterActor(this.OrchestrationLabel, agentType, "MEMBER", agentCount);
 
             await runtime.SubscribeAsync(agentType, context.Topic).ConfigureAwait(false);
         }
 
-        AgentType managerType =
+        ActorType managerType =
             await runtime.RegisterOrchestrationAgentAsync(
                 this.FormatAgentType(context.Topic, "Manager"),
                 (agentId, runtime) =>
                 {
                     GroupChatManagerActor actor = new(agentId, runtime, context, this._manager, team, outputType, context.LoggerFactory.CreateLogger<GroupChatManagerActor>());
-#if !NETCOREAPP
-                    return new ValueTask<IHostableAgent>(actor);
-#else
-                    return ValueTask.FromResult<IHostableAgent>(actor);
-#endif
+                    return new ValueTask<IRuntimeActor>(actor);
                 }).ConfigureAwait(false);
         logger.LogRegisterActor(this.OrchestrationLabel, managerType, "MANAGER");
 
@@ -84,17 +80,13 @@ public class GroupChatOrchestration<TInput, TOutput> :
 
         return managerType;
 
-        ValueTask<AgentType> RegisterAgentAsync(Agent agent, int agentCount) =>
+        ValueTask<ActorType> RegisterAgentAsync(Agent agent, int agentCount) =>
             runtime.RegisterOrchestrationAgentAsync(
                 this.FormatAgentType(context.Topic, $"Agent_{agentCount}"),
                 (agentId, runtime) =>
                 {
                     GroupChatAgentActor actor = new(agentId, runtime, context, agent, context.LoggerFactory.CreateLogger<GroupChatAgentActor>());
-#if !NETCOREAPP
-                    return new ValueTask<IHostableAgent>(actor);
-#else
-                    return ValueTask.FromResult<IHostableAgent>(actor);
-#endif
+                    return new ValueTask<IRuntimeActor>(actor);
                 });
     }
 }

@@ -30,18 +30,18 @@ public class ConcurrentOrchestration<TInput, TOutput>
     }
 
     /// <inheritdoc />
-    protected override ValueTask StartAsync(IAgentRuntime runtime, TopicId topic, IEnumerable<ChatMessage> input, AgentType? entryAgent)
+    protected override ValueTask StartAsync(IAgentRuntime runtime, TopicId topic, IEnumerable<ChatMessage> input, ActorType? entryAgent)
     {
         return runtime.PublishMessageAsync(input.AsInputMessage(), topic);
     }
 
     /// <inheritdoc />
-    protected override async ValueTask<AgentType?> RegisterOrchestrationAsync(IAgentRuntime runtime, OrchestrationContext context, RegistrationContext registrar, ILogger logger)
+    protected override async ValueTask<ActorType?> RegisterOrchestrationAsync(IAgentRuntime runtime, OrchestrationContext context, RegistrationContext registrar, ILogger logger)
     {
-        AgentType outputType = await registrar.RegisterResultTypeAsync<ConcurrentMessages.Result[]>(response => [.. response.Select(r => r.Message)]).ConfigureAwait(false);
+        ActorType outputType = await registrar.RegisterResultTypeAsync<ConcurrentMessages.Result[]>(response => [.. response.Select(r => r.Message)]).ConfigureAwait(false);
 
         // Register result actor
-        AgentType resultType = this.FormatAgentType(context.Topic, "Results");
+        ActorType resultType = this.FormatAgentType(context.Topic, "Results");
         await runtime.RegisterOrchestrationAgentAsync(
             resultType,
             async (agentId, runtime) =>
@@ -57,17 +57,13 @@ public class ConcurrentOrchestration<TInput, TOutput>
         {
             ++agentCount;
 
-            AgentType agentType =
-                await runtime.RegisterAgentFactoryAsync(
+            ActorType agentType =
+                await runtime.RegisterActorFactoryAsync(
                     this.FormatAgentType(context.Topic, $"Agent_{agentCount}"),
                     (agentId, runtime) =>
                     {
                         ConcurrentActor actor = new(agentId, runtime, context, agent, resultType, context.LoggerFactory.CreateLogger<ConcurrentActor>());
-#if !NETCOREAPP
-                        return new ValueTask<IHostableAgent>(actor);
-#else
-                        return ValueTask.FromResult<IHostableAgent>(actor);
-#endif
+                        return new ValueTask<IRuntimeActor>(actor);
                     }).ConfigureAwait(false);
 
             logger.LogRegisterActor(this.OrchestrationLabel, agentType, "MEMBER", agentCount);

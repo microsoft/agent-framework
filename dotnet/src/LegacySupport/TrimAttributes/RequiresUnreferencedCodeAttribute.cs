@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 namespace System.Diagnostics.CodeAnalysis;
 
@@ -23,7 +23,7 @@ internal sealed class RequiresUnreferencedCodeAttribute : Attribute
     /// </param>
     public RequiresUnreferencedCodeAttribute(string message)
     {
-        Message = message;
+        this.Message = message;
     }
 
     /// <summary>
