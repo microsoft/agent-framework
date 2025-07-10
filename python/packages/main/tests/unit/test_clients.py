@@ -25,7 +25,7 @@ from agent_framework import (
     use_tool_calling,
 )
 
-if sys.version_info >= (3, 11):
+if sys.version_info >= (3, 12):
     from typing import override  # type: ignore
 else:
     from typing_extensions import override  # type: ignore[import]
