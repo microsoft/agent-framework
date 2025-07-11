@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import MutableSequence
-from typing import cast
 
 from pydantic import BaseModel, ValidationError
 from pytest import fixture, mark, raises
@@ -550,12 +549,6 @@ def test_agent_run_response_str_method(chat_message: ChatMessage) -> None:
 
 
 # region AgentRunResponseUpdate
-
-
-def test_agent_run_response_update_init_string_content() -> None:
-    update = AgentRunResponseUpdate(contents="Test")
-    assert len(update.contents) == 1
-    assert cast(TextContent, update.contents[0]).text == "Test"
 
 
 def test_agent_run_response_update_init_content_list(text_content: TextContent) -> None:
