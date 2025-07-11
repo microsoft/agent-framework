@@ -6,7 +6,7 @@ from typing import Any
 
 from openai import BadRequestError
 
-from agent_framework.exceptions import ServiceContentFilterException
+from ..exceptions import ServiceContentFilterException
 
 
 class ContentFilterResultSeverity(Enum):

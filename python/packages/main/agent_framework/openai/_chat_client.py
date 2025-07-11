@@ -29,9 +29,7 @@ from .._types import (
     UsageDetails,
 )
 from ..exceptions import ServiceInitializationError, ServiceInvalidResponseError
-from ._config_base import OpenAIConfigBase
-from ._handler import OpenAIHandler, OpenAIModelTypes
-from ._settings import OpenAISettings
+from ._shared import OpenAIConfigBase, OpenAIHandler, OpenAIModelTypes, OpenAISettings
 
 
 # Implements agent_framework.ChatClient protocol, through ChatClientBase

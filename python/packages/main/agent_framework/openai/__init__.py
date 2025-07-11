@@ -2,7 +2,7 @@
 
 
 from ._chat_client import OpenAIChatClient
-from ._settings import OpenAISettings
+from ._shared import OpenAISettings
 
 __all__ = [
     "OpenAIChatClient",
