@@ -81,7 +81,7 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
     /// <param name="provider">The provider to use for creating the agent.</param>
     /// <param name="options">The options to configure the agent.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>The identifier of the created agent, or <see langword="null"/> if the provider do not use server-side agents.</returns>
+    /// <returns>The identifier of the created agent, or <see langword="null"/> if the provider does not use server-side agents.</returns>
     /// <remarks>Some server-side agent providers require an agent id reference to be created before it can be invoked.</remarks>
     protected Task<string?> AgentCreateAsync(ChatClientProviders provider, ChatClientAgentOptions options, CancellationToken cancellationToken = default)
     {
