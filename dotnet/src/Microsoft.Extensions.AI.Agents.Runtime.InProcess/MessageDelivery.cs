@@ -6,14 +6,11 @@ using System.Threading.Tasks;
 
 namespace Microsoft.Extensions.AI.Agents.Runtime.InProcess;
 
-internal sealed class MessageDelivery(MessageEnvelope message, Func<MessageEnvelope, CancellationToken, ValueTask> servicer, IResultSink<object?> resultSink)
+internal sealed class MessageDelivery(MessageEnvelope message, Func<MessageEnvelope, CancellationToken, ValueTask> servicer, Task<object?> resultTask)
 {
     public MessageEnvelope Message { get; } = message;
     public Func<MessageEnvelope, CancellationToken, ValueTask> Servicer { get; } = servicer;
-    public IResultSink<object?> ResultSink { get; } = resultSink;
+    public Task<object?> ResultTask { get; } = resultTask;
 
-    public ValueTask InvokeAsync(CancellationToken cancellation)
-    {
-        return this.Servicer(this.Message, cancellation);
-    }
+    public ValueTask InvokeAsync(CancellationToken cancellation) => this.Servicer(this.Message, cancellation);
 }

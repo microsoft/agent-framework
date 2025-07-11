@@ -22,14 +22,14 @@ internal static partial class ConcurrentOrchestrationLogMessages
         Message = "REQUEST Concurrent agent [{AgentId}]")]
     public static partial void LogConcurrentAgentInvoke(
         this ILogger logger,
-        AgentId agentId);
+        ActorId agentId);
 
     [LoggerMessage(
         Level = LogLevel.Trace,
         Message = "RESULT Concurrent agent [{AgentId}]: {Message}")]
     public static partial void LogConcurrentAgentResult(
         this ILogger logger,
-        AgentId agentId,
+        ActorId agentId,
         string? message);
 
     /// <summary>
@@ -40,7 +40,7 @@ internal static partial class ConcurrentOrchestrationLogMessages
         Message = "COLLECT Concurrent result [{AgentId}]: #{ResultCount} / {ExpectedCount}")]
     public static partial void LogConcurrentResultCapture(
         this ILogger logger,
-        AgentId agentId,
+        ActorId agentId,
         int resultCount,
         int expectedCount);
 }

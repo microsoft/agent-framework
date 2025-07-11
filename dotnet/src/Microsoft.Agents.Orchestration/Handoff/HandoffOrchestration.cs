@@ -50,7 +50,7 @@ public class HandoffOrchestration<TInput, TOutput> : AgentOrchestration<TInput, 
     public OrchestrationInteractiveCallback? InteractiveCallback { get; init; }
 
     /// <inheritdoc />
-    protected override async ValueTask StartAsync(IAgentRuntime runtime, TopicId topic, IEnumerable<ChatMessage> input, AgentType? entryAgent)
+    protected override async ValueTask StartAsync(IAgentRuntime runtime, TopicId topic, IEnumerable<ChatMessage> input, ActorType? entryAgent)
     {
         if (!entryAgent.HasValue)
         {
@@ -61,14 +61,14 @@ public class HandoffOrchestration<TInput, TOutput> : AgentOrchestration<TInput, 
     }
 
     /// <inheritdoc />
-    protected override async ValueTask<AgentType?> RegisterOrchestrationAsync(IAgentRuntime runtime, OrchestrationContext context, RegistrationContext registrar, ILogger logger)
+    protected override async ValueTask<ActorType?> RegisterOrchestrationAsync(IAgentRuntime runtime, OrchestrationContext context, RegistrationContext registrar, ILogger logger)
     {
-        AgentType outputType = await registrar.RegisterResultTypeAsync<HandoffMessages.Result>(response => [response.Message]).ConfigureAwait(false);
+        ActorType outputType = await registrar.RegisterResultTypeAsync<HandoffMessages.Result>(response => [response.Message]).ConfigureAwait(false);
 
         // Each agent handsoff its result to the next agent.
-        Dictionary<string, AgentType> agentMap = [];
+        Dictionary<string, ActorType> agentMap = [];
         Dictionary<string, HandoffLookup> handoffMap = [];
-        AgentType agentType = outputType;
+        ActorType agentType = outputType;
         for (int index = this.Members.Count - 1; index >= 0; --index)
         {
             Agent agent = this.Members[index];
@@ -84,11 +84,7 @@ public class HandoffOrchestration<TInput, TOutput> : AgentOrchestration<TInput, 
                             {
                                 InteractiveCallback = this.InteractiveCallback
                             };
-#if !NETCOREAPP
-                        return new ValueTask<IHostableAgent>(actor);
-#else
-                        return ValueTask.FromResult<IHostableAgent>(actor);
-#endif
+                        return new ValueTask<IRuntimeActor>(actor);
                     }).ConfigureAwait(false);
             agentMap[agent.Name ?? agent.Id] = agentType;
 
@@ -112,5 +108,5 @@ public class HandoffOrchestration<TInput, TOutput> : AgentOrchestration<TInput, 
         return agentMap[this._handoffs.FirstAgentName];
     }
 
-    private AgentType GetAgentType(TopicId topic, int index) => this.FormatAgentType(topic, $"Agent_{index + 1}");
+    private ActorType GetAgentType(TopicId topic, int index) => this.FormatAgentType(topic, $"Agent_{index + 1}");
 }

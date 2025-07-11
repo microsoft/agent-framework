@@ -15,7 +15,7 @@ namespace Microsoft.Extensions.AI.Agents;
 public abstract class Agent
 {
     /// <summary>
-    /// Gets the identifier of the agent (optional).
+    /// Gets the identifier of the agent.
     /// </summary>
     /// <value>
     /// The identifier of the agent. The default is a random GUID value, but for service agents, it will match the id of the agent in the service.
@@ -31,11 +31,6 @@ public abstract class Agent
     /// Gets the description of the agent (optional).
     /// </summary>
     public virtual string? Description { get; }
-
-    /// <summary>
-    /// Gets the instructions for the agent (optional).
-    /// </summary>
-    public virtual string? Instructions { get; }
 
     /// <summary>
     /// Get a new <see cref="AgentThread"/> instance that is compatible with the agent.
@@ -55,7 +50,7 @@ public abstract class Agent
     /// <summary>
     /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the thread.
     /// </summary>
-    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent reponse.</param>
+    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
@@ -71,7 +66,7 @@ public abstract class Agent
     /// Run the agent with the provided message and arguments.
     /// </summary>
     /// <param name="message">The message to pass to the agent.</param>
-    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent reponse.</param>
+    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
@@ -93,7 +88,7 @@ public abstract class Agent
     /// Run the agent with the provided message and arguments.
     /// </summary>
     /// <param name="message">The message to pass to the agent.</param>
-    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent reponse.</param>
+    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
@@ -112,7 +107,7 @@ public abstract class Agent
     /// Run the agent with the provided message and arguments.
     /// </summary>
     /// <param name="messages">The messages to pass to the agent.</param>
-    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent reponse.</param>
+    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
@@ -125,7 +120,7 @@ public abstract class Agent
     /// <summary>
     /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the thread.
     /// </summary>
-    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent reponse.</param>
+    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An async list of response items that each contain a <see cref="ChatResponseUpdate"/>.</returns>
@@ -141,7 +136,7 @@ public abstract class Agent
     /// Run the agent with the provided message and arguments.
     /// </summary>
     /// <param name="message">The message to pass to the agent.</param>
-    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent reponse.</param>
+    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An async list of response items that each contain a <see cref="ChatResponseUpdate"/>.</returns>
@@ -163,7 +158,7 @@ public abstract class Agent
     /// Run the agent with the provided message and arguments.
     /// </summary>
     /// <param name="message">The message to pass to the agent.</param>
-    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent reponse.</param>
+    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An async list of response items that each contain a <see cref="ChatResponseUpdate"/>.</returns>
@@ -182,7 +177,7 @@ public abstract class Agent
     /// Run the agent with the provided message and arguments.
     /// </summary>
     /// <param name="messages">The messages to pass to the agent.</param>
-    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent reponse.</param>
+    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An async list of response items that each contain a <see cref="ChatResponseUpdate"/>.</returns>

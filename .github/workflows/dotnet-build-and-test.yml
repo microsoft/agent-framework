@@ -15,10 +15,12 @@ on:
   merge_group:
     branches: ["main"]
   push:
-    branches: ["main"]
+    branches: ["main", "feature*"]
     paths:
       - dotnet/**
       - '.github/workflows/dotnet-build-and-test.yml'
+  schedule:
+    - cron: "0 0 * * *" # Run at midnight UTC daily
 
 env:
   COVERAGE_THRESHOLD: 80
@@ -108,7 +110,7 @@ jobs:
       
       - name: Log event name and matrix integration-tests
         shell: bash 
-        run: echo "The event name is ${{ github.event_name }} and the matrix integration-tests is ${{ matrix.integration-tests }}" 
+        run: echo "github.event_name:${{ github.event_name }} matrix.integration-tests:${{ matrix.integration-tests }} github.event.action:${{ github.event.action }} github.event.pull_request.merged:${{ github.event.pull_request.merged }}" 
 
       - name: Azure CLI Login
         if: github.event_name != 'pull_request' && matrix.integration-tests
