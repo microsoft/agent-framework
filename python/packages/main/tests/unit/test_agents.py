@@ -4,7 +4,6 @@ from collections.abc import AsyncIterable, Sequence
 from typing import Any
 from uuid import uuid4
 
-from pydantic import Field
 from pytest import fixture, raises
 
 from agent_framework import (
@@ -33,9 +32,18 @@ class MockAgentThread(AgentThread):
 
 # Mock Agent implementation for testing
 class MockAgent(Agent):
-    id: str = Field(default_factory=lambda: str(uuid4()))
-    name: str | None = None
-    description: str | None = None
+    @property
+    def id(self) -> str:
+        return str(uuid4())
+
+    @property
+    def name(self) -> str | None:
+        """Returns the name of the agent."""
+        return "Name"
+
+    @property
+    def description(self) -> str | None:
+        return "Description"
 
     async def run(
         self,
@@ -127,7 +135,7 @@ async def test_chat_client_agent_thread_init_in_memory() -> None:
     messages = [ChatMessage(role=ChatRole.USER, contents=[TextContent("Hello")])]
     thread = ChatClientAgentThread(messages=messages)
 
-    assert thread._storage_location == ChatClientAgentThreadType.IN_MEMORY_MESSAGES  # type: ignore[reportPrivateUsage]
+    assert thread.storage_location == ChatClientAgentThreadType.IN_MEMORY_MESSAGES
     assert thread.id is None
     assert thread.chat_messages == messages
 
@@ -135,7 +143,7 @@ async def test_chat_client_agent_thread_init_in_memory() -> None:
 async def test_chat_client_agent_thread_empty() -> None:
     thread = ChatClientAgentThread()
 
-    assert thread._storage_location is None  # type: ignore[reportPrivateUsage]
+    assert thread.storage_location is None
     assert thread.id is None
     assert thread.chat_messages is None
 
@@ -152,7 +160,7 @@ async def test_chat_client_agent_thread_init_conversation_id() -> None:
     thread_id = str(uuid4())
     thread = ChatClientAgentThread(id=thread_id)
 
-    assert thread._storage_location == ChatClientAgentThreadType.CONVERSATION_ID  # type: ignore[reportPrivateUsage]
+    assert thread.storage_location == ChatClientAgentThreadType.CONVERSATION_ID
     assert thread.id == thread_id
     assert thread.chat_messages is None
 
@@ -210,7 +218,7 @@ async def test_chat_client_agent_get_new_thread(chat_client: ChatClient) -> None
     thread = agent.get_new_thread()
 
     assert isinstance(thread, ChatClientAgentThread)
-    assert thread._storage_location is None  # type: ignore[reportPrivateUsage]
+    assert thread.storage_location is None
 
 
 async def test_chat_client_agent_prepare_thread_and_messages(chat_client: ChatClient) -> None:
@@ -246,7 +254,7 @@ async def test_chat_client_agent_update_thread_id() -> None:
 
     assert thread.id == "123"
     assert isinstance(thread, ChatClientAgentThread)
-    assert thread._storage_location == ChatClientAgentThreadType.CONVERSATION_ID  # type: ignore[reportPrivateUsage]
+    assert thread.storage_location == ChatClientAgentThreadType.CONVERSATION_ID
 
 
 async def test_chat_client_agent_update_thread_messages(chat_client: ChatClient) -> None:
@@ -258,7 +266,7 @@ async def test_chat_client_agent_update_thread_messages(chat_client: ChatClient)
 
     assert thread.id is None
     assert isinstance(thread, ChatClientAgentThread)
-    assert thread._storage_location == ChatClientAgentThreadType.IN_MEMORY_MESSAGES  # type: ignore[reportPrivateUsage]
+    assert thread.storage_location == ChatClientAgentThreadType.IN_MEMORY_MESSAGES
 
     assert thread.chat_messages is not None
     assert len(thread.chat_messages) == 2

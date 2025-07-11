@@ -54,6 +54,21 @@ class MessagesRetrievableThread(Protocol):
 class Agent(Protocol):
     """A protocol for an agent that can be invoked."""
 
+    @property
+    def id(self) -> str:
+        """Returns the ID of the agent."""
+        ...
+
+    @property
+    def name(self) -> str | None:
+        """Returns the name of the agent."""
+        ...
+
+    @property
+    def description(self) -> str | None:
+        """Returns the description of the agent."""
+        ...
+
     async def run(
         self,
         messages: str | ChatMessage | list[str | ChatMessage] | None = None,
@@ -157,7 +172,7 @@ class ChatClientAgentThread(AgentThread):
     """
 
     chat_messages: list[ChatMessage] | None = None
-    _storage_location: ChatClientAgentThreadType | None = None
+    storage_location: ChatClientAgentThreadType | None = None
 
     def __init__(
         self,
@@ -200,10 +215,9 @@ class ChatClientAgentThread(AgentThread):
         super().__init__(
             id=id,
             chat_messages=processed_messages,  # type: ignore[reportCallIssue]
+            storage_location=storage_location,  # type: ignore[reportCallIssue]
             **kwargs,
         )
-
-        self._storage_location = storage_location
 
     async def get_messages(self) -> AsyncIterable[ChatMessage]:
         """Get all messages in the thread."""
@@ -212,7 +226,7 @@ class ChatClientAgentThread(AgentThread):
 
     async def _on_new_messages(self, new_messages: ChatMessage | Sequence[ChatMessage]) -> None:
         """Handle new messages."""
-        if self._storage_location == ChatClientAgentThreadType.IN_MEMORY_MESSAGES:
+        if self.storage_location == ChatClientAgentThreadType.IN_MEMORY_MESSAGES:
             if self.chat_messages is None:
                 self.chat_messages = []
             self.chat_messages.extend([new_messages] if isinstance(new_messages, ChatMessage) else new_messages)
@@ -314,8 +328,8 @@ class ChatClientAgent(AgentBase):
             AgentExecutionException: If conversation ID is missing for service-managed thread.
         """
         # Set the thread's storage location, the first time that we use it.
-        if chat_client_thread._storage_location is None:  # type: ignore[reportPrivateUsage]
-            chat_client_thread._storage_location = (  # type: ignore[reportPrivateUsage]
+        if chat_client_thread.storage_location is None:
+            chat_client_thread.storage_location = (
                 ChatClientAgentThreadType.CONVERSATION_ID
                 if responseConversationId is not None
                 else ChatClientAgentThreadType.IN_MEMORY_MESSAGES
@@ -323,7 +337,7 @@ class ChatClientAgent(AgentBase):
 
         # If we got a conversation id back from the chat client, it means that the service supports server side thread
         # storage so we should capture the id and update the thread with the new id.
-        if chat_client_thread._storage_location == ChatClientAgentThreadType.CONVERSATION_ID:  # type: ignore[reportPrivateUsage]
+        if chat_client_thread.storage_location == ChatClientAgentThreadType.CONVERSATION_ID:
             if responseConversationId is None:
                 raise AgentExecutionException(
                     "Service did not return a valid conversation id when using a service managed thread."
