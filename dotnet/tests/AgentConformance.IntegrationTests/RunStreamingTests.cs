@@ -17,6 +17,18 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
     where TAgentFixture : IAgentFixture
 {
     [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
+    public virtual async Task RunWithNoMessageDoesNotFailAsync()
+    {
+        // Arrange
+        var agent = this.Fixture.Agent;
+        var thread = agent.GetNewThread();
+        await using var cleanup = new ThreadCleanup(thread, this.Fixture);
+
+        // Act
+        var chatResponses = await agent.RunStreamingAsync(thread).ToListAsync();
+    }
+
+    [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
     public virtual async Task RunWithStringReturnsExpectedResultAsync()
     {
         // Arrange
