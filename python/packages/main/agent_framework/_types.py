@@ -1570,30 +1570,50 @@ class AgentRunResponse(AFBaseModel):
     messages in scenarios involving function calls, RAG retrievals, or complex logic.
     """
 
-    messages: list[ChatMessage] = Field(default_factory=list)
+    messages: list[ChatMessage] = Field(default_factory=list[ChatMessage])
     response_id: str | None = None
     created_at: CreatedAtT | None = None  # use a datetimeoffset type?
     usage_details: UsageDetails | None = None
     raw_representation: Any | None = None
     additional_properties: dict[str, Any] | None = None
 
-    def __init__(self, messages: ChatMessage | list[ChatMessage] | None = None, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        messages: ChatMessage | list[ChatMessage] | None = None,
+        response_id: str | None = None,
+        created_at: CreatedAtT | None = None,
+        usage_details: UsageDetails | None = None,
+        raw_representation: Any | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Initialize an AgentRunResponse.
 
-        Args:
-            messages: A single response message or a list of response messages.
-            **kwargs: Any additional keyword arguments.
-
-        Raises:
-            ValueError: If messages is None when provided.
+        Attributes:
+        messages: The list of chat messages in the response.
+        response_id: The ID of the chat response.
+        created_at: A timestamp for the chat response.
+        usage_details: The usage details for the chat response.
+        additional_properties: Any additional properties associated with the chat response.
+        raw_representation: The raw representation of the chat response from an underlying implementation.
+        **kwargs: Additional properties to set on the response.
         """
-        super().__init__(**kwargs)
-        self.messages = []
+        processed_messages: list[ChatMessage] = []
         if messages is not None:
             if isinstance(messages, ChatMessage):
-                self.messages.append(messages)
+                processed_messages.append(messages)
             elif isinstance(messages, list):
-                self.messages.extend(messages)
+                processed_messages.extend(messages)
+
+        super().__init__(
+            messages=processed_messages,  # type: ignore[reportCallIssue]
+            response_id=response_id,  # type: ignore[reportCallIssue]
+            created_at=created_at,  # type: ignore[reportCallIssue]
+            usage_details=usage_details,  # type: ignore[reportCallIssue]
+            additional_properties=additional_properties,  # type: ignore[reportCallIssue]
+            raw_representation=raw_representation,  # type: ignore[reportCallIssue]
+            **kwargs,
+        )
 
     @property
     def text(self) -> str:
@@ -1621,34 +1641,14 @@ class AgentRunResponse(AFBaseModel):
 class AgentRunResponseUpdate(AFBaseModel):
     """Represents a single streaming response chunk from an Agent."""
 
-    author_name: str | None = None
+    contents: list[AIContents] = Field(default_factory=list[AIContents])
     role: ChatRole | None = None
-    contents: list[AIContents] = Field(default_factory=list)
-    raw_representation: Any | None = None
-    additional_properties: dict[str, Any] | None = None
+    author_name: str | None = None
     response_id: str | None = None
     message_id: str | None = None
     created_at: CreatedAtT | None = None  # use a datetimeoffset type?
-
-    def __init__(
-        self, role: ChatRole | None = None, contents: str | list[AIContents] | None = None, **kwargs: Any
-    ) -> None:
-        """Initialize an AgentRunResponseUpdate.
-
-        Args:
-            role: The role of the author of the update.
-            contents: The text content (as string) or list of AIContent objects.
-            **kwargs: Any additional keyword arguments.
-        """
-        super().__init__(**kwargs)
-        self.contents = []
-        if contents is not None:
-            if isinstance(contents, str):
-                self.contents.append(TextContent(text=contents))
-            elif isinstance(contents, list):
-                self.contents.extend(contents)
-
-        self.role = role
+    additional_properties: dict[str, Any] | None = None
+    raw_representation: Any | None = None
 
     @property
     def text(self) -> str:
@@ -1661,3 +1661,76 @@ class AgentRunResponseUpdate(AFBaseModel):
 
     def __str__(self) -> str:
         return self.text
+
+
+# region: SpeechToTextOptions
+
+
+class SpeechToTextOptions(AFBaseModel):
+    """Common request settings for Speech to Text AI services."""
+
+    ai_model_id: Annotated[str | None, Field(serialization_alias="model")] = None
+    speech_language: Annotated[str | None, Field(description="Language of the input speech.")] = None
+    text_language: Annotated[str | None, Field(description="Language of the output text.")] = None
+    speech_sample_rate: Annotated[int | None, Field(description="Sample rate of the input speech.")] = None
+    additional_properties: dict[str, Any] = Field(
+        default_factory=dict, description="Provider-specific additional properties."
+    )
+
+    def to_provider_settings(self, by_alias: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:
+        """Convert the SpeechToTextOptions to a dictionary suitable for provider requests.
+
+        Args:
+            by_alias: Use alias names for fields if True.
+            exclude: Additional keys to exclude from the output.
+
+        Returns:
+            Dictionary of settings for provider.
+        """
+        default_exclude = {"additional_properties"}
+        merged_exclude = default_exclude if exclude is None else default_exclude | set(exclude)
+
+        settings: dict[str, Any] = self.model_dump(exclude_none=True, by_alias=by_alias, exclude=merged_exclude)
+        settings = {k: v for k, v in settings.items() if not (isinstance(v, dict) and not v)}
+        settings.update(self.additional_properties)
+        for key in merged_exclude:
+            settings.pop(key, None)
+        return settings
+
+
+# region: TextToSpeechOptions
+
+
+class TextToSpeechOptions(AFBaseModel):
+    """Request settings for text to speech services.
+
+    Tailor this to be more general as more models (aside from OpenAI) are added.
+    """
+
+    ai_model_id: str | None = Field(None, serialization_alias="model")
+    voice: Literal["alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer"] = "alloy"
+    response_format: Literal["mp3", "opus", "aac", "flac", "wav", "pcm"] | None = None
+    speed: Annotated[float | None, Field(ge=0.25, le=4.0)] = None
+    additional_properties: dict[str, Any] = Field(
+        default_factory=dict, description="Provider-specific additional properties."
+    )
+
+    def to_provider_settings(self, by_alias: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:
+        """Convert the SpeechToTextOptions to a dictionary suitable for provider requests.
+
+        Args:
+            by_alias: Use alias names for fields if True.
+            exclude: Additional keys to exclude from the output.
+
+        Returns:
+            Dictionary of settings for provider.
+        """
+        default_exclude = {"additional_properties"}
+        merged_exclude = default_exclude if exclude is None else default_exclude | set(exclude)
+
+        settings: dict[str, Any] = self.model_dump(exclude_none=True, by_alias=by_alias, exclude=merged_exclude)
+        settings = {k: v for k, v in settings.items() if not (isinstance(v, dict) and not v)}
+        settings.update(self.additional_properties)
+        for key in merged_exclude:
+            settings.pop(key, None)
+        return settings

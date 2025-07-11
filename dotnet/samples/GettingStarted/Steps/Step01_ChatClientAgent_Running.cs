@@ -20,10 +20,11 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
     /// a unique interaction with no conversation history between them.
     /// </summary>
     [Theory]
+    [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
     [InlineData(ChatClientProviders.AzureOpenAI)]
+    [InlineData(ChatClientProviders.OpenAIAssistant)]
     [InlineData(ChatClientProviders.OpenAIChatCompletion)]
     [InlineData(ChatClientProviders.OpenAIResponses)]
-    [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
     public async Task RunWithoutThread(ChatClientProviders provider)
     {
         // Define the options for the chat client agent.
@@ -33,8 +34,11 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
             Instructions = ParrotInstructions,
         };
 
+        // Create the server-side agent Id when applicable (depending on the provider).
+        agentOptions.Id = await base.AgentCreateAsync(provider, agentOptions);
+
         // Get the chat client to use for the agent.
-        using var chatClient = await base.GetChatClientAsync(provider, agentOptions);
+        using var chatClient = base.GetChatClient(provider, agentOptions);
 
         // Define the agent
         var agent = new ChatClientAgent(chatClient, agentOptions);
@@ -53,7 +57,7 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
             this.WriteResponseOutput(response);
         }
 
-        // Clean up the agent after use when applicable.
+        // Clean up the server-side agent after use when applicable (depending on the provider).
         await base.AgentCleanUpAsync(provider, agent);
     }
 
@@ -61,8 +65,9 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
     /// Demonstrate the usage of <see cref="ChatClientAgent"/> where a conversation history is maintained.
     /// </summary>
     [Theory]
-    [InlineData(ChatClientProviders.AzureOpenAI)]
     [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
+    [InlineData(ChatClientProviders.AzureOpenAI)]
+    [InlineData(ChatClientProviders.OpenAIAssistant)]
     [InlineData(ChatClientProviders.OpenAIResponses_InMemoryMessageThread)]
     [InlineData(ChatClientProviders.OpenAIResponses_ConversationIdThread)]
     public async Task RunWithThread(ChatClientProviders provider)
@@ -77,8 +82,11 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
             ChatOptions = base.GetChatOptions(provider),
         };
 
+        // Create the server-side agent Id when applicable (depending on the provider).
+        agentOptions.Id = await base.AgentCreateAsync(provider, agentOptions);
+
         // Get the chat client to use for the agent.
-        using var chatClient = await base.GetChatClientAsync(provider, agentOptions);
+        using var chatClient = base.GetChatClient(provider, agentOptions);
 
         // Define the agent
         var agent = new ChatClientAgent(chatClient, agentOptions);
@@ -100,7 +108,7 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
             this.WriteResponseOutput(response);
         }
 
-        // Clean up the agent and thread after use when applicable.
+        // Clean up the server-side agent and thread after use when applicable (depending on the provider).
         await base.AgentCleanUpAsync(provider, agent, thread);
     }
 
@@ -111,6 +119,7 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
     [Theory]
     [InlineData(ChatClientProviders.AzureOpenAI)]
     [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
+    [InlineData(ChatClientProviders.OpenAIAssistant)]
     [InlineData(ChatClientProviders.OpenAIResponses_InMemoryMessageThread)]
     [InlineData(ChatClientProviders.OpenAIResponses_ConversationIdThread)]
     public async Task RunStreamingWithThread(ChatClientProviders provider)
@@ -125,8 +134,11 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
             ChatOptions = base.GetChatOptions(provider),
         };
 
+        // Create the server-side agent Id when applicable (depending on the provider).
+        agentOptions.Id = await base.AgentCreateAsync(provider, agentOptions);
+
         // Get the chat client to use for the agent.
-        using var chatClient = await base.GetChatClientAsync(provider, agentOptions);
+        using var chatClient = base.GetChatClient(provider, agentOptions);
 
         // Define the agent
         var agent = new ChatClientAgent(chatClient, agentOptions);
@@ -149,7 +161,7 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
             }
         }
 
-        // Clean up the agent and thread after use when applicable.
+        // Clean up the server-side agent and thread after use when applicable (depending on the provider).
         await base.AgentCleanUpAsync(provider, agent, thread);
     }
 }

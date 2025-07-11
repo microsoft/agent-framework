@@ -27,7 +27,7 @@ public delegate ValueTask OrchestrationResponseCallback(IEnumerable<ChatMessage>
 /// </summary>
 /// <param name="response">The agent response</param>
 /// <param name="isFinal">Indicates if streamed content is final chunk of the message.</param>
-public delegate ValueTask OrchestrationStreamingCallback(ChatResponseUpdate response, bool isFinal);
+public delegate ValueTask OrchestrationStreamingCallback(AgentRunResponseUpdate response, bool isFinal);
 
 /// <summary>
 /// Called when human interaction is requested.

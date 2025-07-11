@@ -74,7 +74,7 @@ public abstract class OrchestrationSample : BaseSample
     }
 
     /// <summary>
-    /// Writes the provided chat response messages to the console or test output, including role and author information.
+    /// Writes the provided messages to the console or test output, including role and author information.
     /// </summary>
     /// <param name="response">An enumerable of <see cref="ChatMessage"/> objects to write.</param>
     protected static void WriteResponse(IEnumerable<ChatMessage> response)
@@ -89,15 +89,15 @@ public abstract class OrchestrationSample : BaseSample
     }
 
     /// <summary>
-    /// Writes the streamed chat response updates to the console or test output, including role and author information.
+    /// Writes the streamed agent run response updates to the console or test output, including role and author information.
     /// </summary>
-    /// <param name="streamedResponses">An enumerable of <see cref="ChatResponseUpdate"/> objects representing streamed responses.</param>
-    protected static void WriteStreamedResponse(IEnumerable<ChatResponseUpdate> streamedResponses)
+    /// <param name="streamedResponses">An enumerable of <see cref="AgentRunResponseUpdate"/> objects representing streamed responses.</param>
+    protected static void WriteStreamedResponse(IEnumerable<AgentRunResponseUpdate> streamedResponses)
     {
         string? authorName = null;
         ChatRole? authorRole = null;
         StringBuilder builder = new();
-        foreach (ChatResponseUpdate response in streamedResponses)
+        foreach (AgentRunResponseUpdate response in streamedResponses)
         {
             authorName ??= response.AuthorName;
             authorRole ??= response.Role;
@@ -122,7 +122,7 @@ public abstract class OrchestrationSample : BaseSample
         /// <summary>
         /// Gets the list of streamed response updates received so far.
         /// </summary>
-        public List<ChatResponseUpdate> StreamedResponses { get; } = [];
+        public List<AgentRunResponseUpdate> StreamedResponses { get; } = [];
 
         /// <summary>
         /// Gets the list of chat messages representing the conversation history.
@@ -142,12 +142,12 @@ public abstract class OrchestrationSample : BaseSample
         }
 
         /// <summary>
-        /// Callback to handle a streamed chat response update, adding it to the list and writing output if final.
+        /// Callback to handle a streamed agent run response update, adding it to the list and writing output if final.
         /// </summary>
-        /// <param name="streamedResponse">The <see cref="ChatResponseUpdate"/> to process.</param>
+        /// <param name="streamedResponse">The <see cref="AgentRunResponseUpdate"/> to process.</param>
         /// <param name="isFinal">Indicates whether this is the final update in the stream.</param>
         /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
-        public ValueTask StreamingResultCallback(ChatResponseUpdate streamedResponse, bool isFinal)
+        public ValueTask StreamingResultCallback(AgentRunResponseUpdate streamedResponse, bool isFinal)
         {
             this.StreamedResponses.Add(streamedResponse);
 

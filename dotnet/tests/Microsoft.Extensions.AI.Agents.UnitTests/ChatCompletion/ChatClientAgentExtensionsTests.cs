@@ -441,7 +441,7 @@ public class ChatClientAgentExtensionsTests
         var messages = new List<ChatMessage> { new(ChatRole.User, "test message") };
 
         // Act
-        var updates = new List<ChatResponseUpdate>();
+        var updates = new List<AgentRunResponseUpdate>();
         await foreach (var update in ChatClientAgentExtensions.RunStreamingAsync(agent, messages))
         {
             updates.Add(update);
@@ -522,7 +522,7 @@ public class ChatClientAgentExtensionsTests
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
 
         // Act
-        var updates = new List<ChatResponseUpdate>();
+        var updates = new List<AgentRunResponseUpdate>();
         await foreach (var update in ChatClientAgentExtensions.RunStreamingAsync(agent, messages, chatOptions: chatOptions))
         {
             updates.Add(update);
@@ -559,7 +559,7 @@ public class ChatClientAgentExtensionsTests
         var thread = agent.GetNewThread();
 
         // Act
-        var updates = new List<ChatResponseUpdate>();
+        var updates = new List<AgentRunResponseUpdate>();
         await foreach (var update in ChatClientAgentExtensions.RunStreamingAsync(agent, messages, thread: thread))
         {
             updates.Add(update);
@@ -633,7 +633,7 @@ public class ChatClientAgentExtensionsTests
         const string TestPrompt = "test prompt";
 
         // Act
-        var updates = new List<ChatResponseUpdate>();
+        var updates = new List<AgentRunResponseUpdate>();
         await foreach (var update in ChatClientAgentExtensions.RunStreamingAsync(agent, TestPrompt))
         {
             updates.Add(update);
@@ -738,7 +738,7 @@ public class ChatClientAgentExtensionsTests
         const string TestPrompt = "test prompt";
 
         // Act
-        var updates = new List<ChatResponseUpdate>();
+        var updates = new List<AgentRunResponseUpdate>();
         await foreach (var update in agent.RunStreamingAsync(TestPrompt))
         {
             updates.Add(update);
@@ -771,7 +771,7 @@ public class ChatClientAgentExtensionsTests
         const string TestPrompt = "test prompt";
 
         // Act
-        var updates = new List<ChatResponseUpdate>();
+        var updates = new List<AgentRunResponseUpdate>();
         await foreach (var update in agent.RunStreamingAsync(TestPrompt, chatOptions: chatOptions))
         {
             updates.Add(update);
@@ -808,7 +808,7 @@ public class ChatClientAgentExtensionsTests
         var thread = agent.GetNewThread();
 
         // Act
-        var updates = new List<ChatResponseUpdate>();
+        var updates = new List<AgentRunResponseUpdate>();
         await foreach (var update in agent.RunStreamingAsync(TestPrompt, thread: thread))
         {
             updates.Add(update);

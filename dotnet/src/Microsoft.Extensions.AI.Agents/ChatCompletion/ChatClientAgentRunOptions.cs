@@ -14,7 +14,6 @@ internal sealed class ChatClientAgentRunOptions : AgentRunOptions
     /// <param name="chatOptions">Optional chat options to pass to the agent's invocation.</param>
     internal ChatClientAgentRunOptions(AgentRunOptions? source = null, ChatOptions? chatOptions = null)
     {
-        this.OnIntermediateMessages = source?.OnIntermediateMessages;
         this.ChatOptions = chatOptions;
     }
 

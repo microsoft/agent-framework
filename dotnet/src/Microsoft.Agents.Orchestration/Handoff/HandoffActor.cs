@@ -60,7 +60,7 @@ internal sealed class HandoffActor : AgentActor
     }
 
     /// <inheritdoc/>
-    protected override Task InvokeAsync(
+    protected override Task<AgentRunResponse> InvokeAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentRunOptions options,
         CancellationToken cancellationToken = default) =>
@@ -72,7 +72,7 @@ internal sealed class HandoffActor : AgentActor
             cancellationToken);
 
     /// <inheritdoc/>
-    protected override IAsyncEnumerable<ChatResponseUpdate> InvokeStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentRunOptions options, CancellationToken cancellationToken) =>
+    protected override IAsyncEnumerable<AgentRunResponseUpdate> InvokeStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentRunOptions options, CancellationToken cancellationToken) =>
         this._chatAgent.RunStreamingAsync(
             messages,
             this.Thread,

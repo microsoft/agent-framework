@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Samples;
@@ -87,29 +88,29 @@ public abstract class BaseSample : TextWriter
     /// Processes and writes the latest agent chat response to the console, including metadata and content details.
     /// </summary>
     /// <remarks>This method formats and outputs the most recent message from the provided <see
-    /// cref="ChatResponse"/> object. It includes the message role, author name (if available), text content, and
+    /// cref="AgentRunResponse"/> object. It includes the message role, author name (if available), text content, and
     /// additional content such as images, function calls, and function results. Usage statistics, including token
     /// counts, are also displayed.</remarks>
-    /// <param name="chatResponse">The <see cref="ChatResponse"/> object containing the chat messages and usage data.</param>
+    /// <param name="response">The <see cref="AgentRunResponse"/> object containing the chat messages and usage data.</param>
     /// <param name="printUsage">The flag to indicate whether to print usage information. Defaults to <see langword="true"/>.</param>
-    protected void WriteResponseOutput(ChatResponse chatResponse, bool? printUsage = true)
+    protected void WriteResponseOutput(AgentRunResponse response, bool? printUsage = true)
     {
-        if (chatResponse.Messages.Count == 0)
+        if (response.Messages.Count == 0)
         {
             // If there are no messages, we can skip writing the message.
             return;
         }
 
-        var message = chatResponse.Messages.Last();
+        var message = response.Messages.Last();
         this.WriteMessageOutput(message);
 
         WriteUsage();
 
         void WriteUsage()
         {
-            if (!(printUsage ?? true) || chatResponse.Usage is null) { return; }
+            if (!(printUsage ?? true) || response.Usage is null) { return; }
 
-            UsageDetails usageDetails = chatResponse.Usage;
+            UsageDetails usageDetails = response.Usage;
 
             Console.WriteLine($"  [Usage] Tokens: {usageDetails.TotalTokenCount}, Input: {usageDetails.InputTokenCount}, Output: {usageDetails.OutputTokenCount}");
         }
@@ -151,11 +152,11 @@ public abstract class BaseSample : TextWriter
     /// Writes the streaming agent response updates to the console.
     /// </summary>
     /// <remarks>This method formats and outputs the most recent message from the provided <see
-    /// cref="ChatResponseUpdate"/> object. It includes the message role, author name (if available), text content, and
+    /// cref="AgentRunResponseUpdate"/> object. It includes the message role, author name (if available), text content, and
     /// additional content such as images, function calls, and function results. Usage statistics, including token
     /// counts, are also displayed.</remarks>
-    /// <param name="update">The <see cref="ChatResponseUpdate"/> object containing the chat messages and usage data.</param>
-    protected void WriteAgentOutput(ChatResponseUpdate update)
+    /// <param name="update">The <see cref="AgentRunResponseUpdate"/> object containing the chat messages and usage data.</param>
+    protected void WriteAgentOutput(AgentRunResponseUpdate update)
     {
         if (update.Contents.Count == 0)
         {

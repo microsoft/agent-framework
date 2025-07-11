@@ -67,7 +67,7 @@ public sealed class ChatClientAgent : Agent
     internal ChatOptions? ChatOptions => this._agentOptions?.ChatOptions;
 
     /// <inheritdoc/>
-    public override async Task<ChatResponse> RunAsync(
+    public override async Task<AgentRunResponse> RunAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -103,16 +103,12 @@ public sealed class ChatClientAgent : Agent
         var chatResponseMessages = chatResponse.Messages as IReadOnlyCollection<ChatMessage> ?? chatResponse.Messages.ToArray();
 
         await this.NotifyThreadOfNewMessagesAsync(chatClientThread, chatResponseMessages, cancellationToken).ConfigureAwait(false);
-        if (options?.OnIntermediateMessages is not null)
-        {
-            await options.OnIntermediateMessages(chatResponseMessages).ConfigureAwait(false);
-        }
 
-        return chatResponse;
+        return chatResponse.ToAgentRunResponse(this.Id);
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<ChatResponseUpdate> RunStreamingAsync(
+    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -145,7 +141,7 @@ public sealed class ChatClientAgent : Agent
             {
                 responseUpdates.Add(update);
                 update.AuthorName ??= agentName;
-                yield return update;
+                yield return update.ToAgentRunResponseUpdate(this.Id);
             }
 
             hasUpdates = await responseUpdatesEnumerator.MoveNextAsync().ConfigureAwait(false);
@@ -162,10 +158,6 @@ public sealed class ChatClientAgent : Agent
         await this.NotifyThreadOfNewMessagesAsync(chatClientThread, inputMessages, cancellationToken).ConfigureAwait(false);
 
         await this.NotifyThreadOfNewMessagesAsync(chatClientThread, chatResponseMessages, cancellationToken).ConfigureAwait(false);
-        if (options?.OnIntermediateMessages is not null)
-        {
-            await options.OnIntermediateMessages(chatResponseMessages).ConfigureAwait(false);
-        }
     }
 
     /// <inheritdoc/>
