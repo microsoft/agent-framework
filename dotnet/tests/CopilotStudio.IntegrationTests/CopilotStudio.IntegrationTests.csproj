@@ -4,15 +4,16 @@
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
     <InjectSharedIntegrationTestCode>True</InjectSharedIntegrationTestCode>
+    <InjectSharedThrow>true</InjectSharedThrow>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Microsoft.Extensions.AI.Agents.AzureAI\Microsoft.Extensions.AI.Agents.AzureAI.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Extensions.AI.Agents.CopilotStudio\Microsoft.Extensions.AI.Agents.CopilotStudio.csproj" />
     <ProjectReference Include="..\AgentConformance.IntegrationTests\AgentConformance.IntegrationTests.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Azure.Identity" />
+    <PackageReference Include="Microsoft.Identity.Client.Extensions.Msal" />
   </ItemGroup>
 
 </Project>
