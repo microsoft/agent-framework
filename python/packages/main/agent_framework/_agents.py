@@ -159,7 +159,12 @@ class ChatClientAgentThread(AgentThread):
     chat_messages: list[ChatMessage] | None = None
     _storage_location: ChatClientAgentThreadType | None = None
 
-    def __init__(self, id: str | None = None, messages: Sequence[ChatMessage] | None = None):
+    def __init__(
+        self,
+        id: str | None = None,
+        messages: Sequence[ChatMessage] | None = None,
+        **kwargs: Any,
+    ):
         """Initialize the chat client agent thread.
 
         Args:
@@ -167,16 +172,18 @@ class ChatClientAgentThread(AgentThread):
             not stored locally. Must not be empty or whitespace.
             messages: Initial messages for local storage. If provided, thread is managed
             locally in-memory.
+            kwargs: Additional keyword arguments.
 
         Raises:
             ValueError: If both id and messages are provided, or if id is empty/whitespace.
 
         Notes:
-            - If id is set, _id is assigned and _chat_messages remains empty (service-managed).
+            - If id is set, _id is assigned and _chat_messages is None (service-managed).
             - If messages is set, _chat_messages is populated and _id is None (local).
             - If neither is provided, creates an empty local thread.
         """
-        super().__init__()
+        processed_messages: list[ChatMessage] | None = None
+        storage_location: ChatClientAgentThreadType | None = None
 
         if id and messages:
             raise ValueError("Cannot specify both id and messages")
@@ -184,12 +191,19 @@ class ChatClientAgentThread(AgentThread):
         if id:
             if not id.strip():
                 raise ValueError("ID cannot be empty or whitespace")
-            self.id = id
-            self._storage_location = ChatClientAgentThreadType.CONVERSATION_ID
+            storage_location = ChatClientAgentThreadType.CONVERSATION_ID
         elif messages:
-            self.chat_messages = []
-            self.chat_messages.extend(messages)
-            self._storage_location = ChatClientAgentThreadType.IN_MEMORY_MESSAGES
+            processed_messages = []
+            processed_messages.extend(messages)
+            storage_location = ChatClientAgentThreadType.IN_MEMORY_MESSAGES
+
+        super().__init__(
+            id=id,
+            chat_messages=processed_messages,  # type: ignore[reportCallIssue]
+            **kwargs,
+        )
+
+        self._storage_location = storage_location
 
     async def get_messages(self) -> AsyncIterable[ChatMessage]:
         """Get all messages in the thread."""
