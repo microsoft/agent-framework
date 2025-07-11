@@ -44,7 +44,7 @@ public class CopilotStudioAgent : Agent
     }
 
     /// <inheritdoc/>
-    public override async Task<ChatResponse> RunAsync(
+    public override async Task<AgentRunResponse> RunAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -63,39 +63,24 @@ public class CopilotStudioAgent : Agent
         // Invoke the Copilot Studio agent with the provided messages.
         string question = string.Join("\n", messages.Select(m => m.Text));
         var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, copilotStudioAgentThread.Id, cancellationToken), streaming: false, this._logger);
-
-        // Enumerate the response messages
         var responseMessagesList = new List<ChatMessage>();
-        await foreach ((ChatMessage message, bool reasoning) in responseMessages.ConfigureAwait(false))
+        await foreach (var message in responseMessages.ConfigureAwait(false))
         {
-            // If the message is a reasoning message, return it as part of the intermediate messages
-            // instead of the final response.
-            if (reasoning)
-            {
-                if (options?.OnIntermediateMessages is not null)
-                {
-                    await options.OnIntermediateMessages.Invoke([message]).ConfigureAwait(false);
-                }
-
-                continue;
-            }
-
-            // Add the message to the list
             responseMessagesList.Add(message);
         }
 
         // TODO: Review list of ChatResponse properties to ensure we set all availble values.
         // Setting ResponseId and MessageId end up being particularly important for streaming consumers
         // so that they can tell things like response boundaries.
-        return new ChatResponse(responseMessagesList)
+        return new AgentRunResponse(responseMessagesList)
         {
+            AgentId = this.Id,
             ResponseId = responseMessagesList.LastOrDefault()?.MessageId,
-            ConversationId = copilotStudioAgentThread.Id,
         };
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<ChatResponseUpdate> RunStreamingAsync(
+    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -116,25 +101,19 @@ public class CopilotStudioAgent : Agent
         var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, copilotStudioAgentThread.Id, cancellationToken), streaming: true, this._logger);
 
         // Enumerate the response messages
-        await foreach ((ChatMessage message, bool reasoning) in responseMessages.ConfigureAwait(false))
+        await foreach (ChatMessage message in responseMessages.ConfigureAwait(false))
         {
-            // If the message is a reasoning message, return it as part of the intermediate messages.
-            if (reasoning && options?.OnIntermediateMessages is not null)
-            {
-                await options.OnIntermediateMessages.Invoke([message]).ConfigureAwait(false);
-            }
-
             // TODO: Review list of ChatResponse properties to ensure we set all availble values.
             // Setting ResponseId and MessageId end up being particularly important for streaming consumers
             // so that they can tell things like response boundaries.
-            yield return new ChatResponseUpdate(message.Role, message.Contents)
+            yield return new AgentRunResponseUpdate(message.Role, message.Contents)
             {
+                AgentId = this.Id,
                 AdditionalProperties = message.AdditionalProperties,
                 AuthorName = message.AuthorName,
                 RawRepresentation = message.RawRepresentation,
                 ResponseId = message.MessageId,
                 MessageId = message.MessageId,
-                ConversationId = copilotStudioAgentThread.Id,
             };
         }
     }
