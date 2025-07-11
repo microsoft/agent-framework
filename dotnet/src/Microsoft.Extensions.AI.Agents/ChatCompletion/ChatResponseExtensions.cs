@@ -44,7 +44,7 @@ internal static class ChatResponseExtensions
     {
         _ = Throw.IfNull(chatResponseUpdate);
 
-        return new AgentRunResponseUpdate()
+        return new()
         {
             AgentId = agentId,
             Role = chatResponseUpdate.Role,
