@@ -355,7 +355,7 @@ class ChatClientBase(AFBaseModel, ABC):
 
     async def get_response(
         self,
-        messages: str | ChatMessage | list[ChatMessage],
+        messages: str | ChatMessage | Sequence[ChatMessage],
         *,
         model: str | None = None,
         max_tokens: int | None = None,
@@ -430,7 +430,7 @@ class ChatClientBase(AFBaseModel, ABC):
 
     async def get_streaming_response(
         self,
-        messages: str | ChatMessage | list[ChatMessage],
+        messages: str | ChatMessage | Sequence[ChatMessage],
         *,
         model: str | None = None,
         max_tokens: int | None = None,

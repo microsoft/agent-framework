@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import AsyncIterable, Sequence
-from typing import Any
+from typing import Any, MutableSequence
 from uuid import uuid4
 
 from pytest import fixture, raises
@@ -14,13 +14,15 @@ from agent_framework import (
     ChatClient,
     ChatClientAgent,
     ChatClientAgentThread,
+    ChatClientAgentThreadType,
+    ChatClientBase,
     ChatMessage,
+    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     ChatRole,
     TextContent,
 )
-from agent_framework._agents import ChatClientAgentThreadType
 from agent_framework.exceptions import AgentExecutionException
 
 
@@ -68,15 +70,17 @@ class MockAgent(Agent):
 
 
 # Mock ChatClient implementation for testing
-class MockChatClient(ChatClient):
+class MockChatClient(ChatClientBase):
     _mock_response: ChatResponse | None = None
 
     def __init__(self, mock_response: ChatResponse | None = None) -> None:
         self._mock_response = mock_response
 
-    async def get_response(
+    async def _inner_get_response(
         self,
-        messages: str | ChatMessage | Sequence[ChatMessage],
+        *,
+        messages: MutableSequence[ChatMessage],
+        chat_options: ChatOptions,
         **kwargs: Any,
     ) -> ChatResponse:
         return (
@@ -85,9 +89,11 @@ class MockChatClient(ChatClient):
             else ChatResponse(messages=ChatMessage(role=ChatRole.ASSISTANT, text="test response"))
         )
 
-    async def get_streaming_response(
+    async def _inner_get_streaming_response(
         self,
-        messages: str | ChatMessage | Sequence[ChatMessage],
+        *,
+        messages: MutableSequence[ChatMessage],
+        chat_options: ChatOptions,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         yield ChatResponseUpdate(role=ChatRole.ASSISTANT, text=TextContent(text="test streaming response"))
@@ -104,7 +110,7 @@ def agent() -> Agent:
 
 
 @fixture
-def chat_client() -> ChatClient:
+def chat_client() -> ChatClientBase:
     return MockChatClient()
 
 

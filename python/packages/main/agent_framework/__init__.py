@@ -23,6 +23,7 @@ _IMPORTS = {
     "AIContents": "._types",
     "ChatClientAgent": "._agents",
     "ChatClientAgentThread": "._agents",
+    "ChatClientAgentThreadType": "._agents",
     "TextContent": "._types",
     "TextReasoningContent": "._types",
     "DataContent": "._types",
