@@ -27,10 +27,10 @@
 ### Sample getting started code
 ```python
 from typing import Annotated
-from agent_framework import Agent, ai_tool
+from agent_framework import Agent, ai_function
 from agent_framework.openai import OpenAIChatClient
 
-@ai_tool(description="Get the current weather in a given location")
+@ai_function(description="Get the current weather in a given location")
 async def get_weather(location: Annotated[str, "The location as a city name"]) -> str:
     """Get the current weather in a given location."""
     # Implementation of the tool to get weather
@@ -65,12 +65,13 @@ Overall the following structure is proposed:
         * utils (optional)
         * telemetry (could also be observability or monitoring)
         * workflows (includes multi-agent orchestration)
+        * openai
+        * azure (LLM integrations for Azure)
     * tier 2; extensions 
         * Extensions are any additional functionality that is useful for a user, to reduce friction they will imported in a similar way as tier 1, however the code for them will be in a separate package, so that they can be installed separately, they must have everything in a folder with the same name as the package, and without a `__init__.py` file in the root, so that they can be used as a namespace package.
         * Some examples are:
-            * openai
-            * azure
-            * will be exposed through i.e. `agent_framework.openai` and `agent_framework.azure`
+            * azure (non LLM integrations)
+            * will be exposed through i.e. `agent_framework.azure`
             * anything other then a connector that we want to expose as a separate package, for instance:
                 * mem0 (memory management)
                 * would be exposed through i.e. `agent_framework.mem0`
@@ -79,7 +80,6 @@ Overall the following structure is proposed:
 * tests
 * samples
 * extensions
-    * openai
     * azure
     * ...
 
@@ -90,25 +90,39 @@ Internal imports will be done using relative imports, so that the package can be
 The resulting file structure will be as follows:
 
 ```plaintext
-agent_framework/
-    __init__.py
-    __init__.pyi
-    _agents.py
-    _tools.py
-    _models.py
-    _logging.py
-    context_providers.py
-    guardrails.py
-    exceptions.py
-    evaluations.py
-    utils.py
-    telemetry.py
-    templates.py
-    text_search.py
-    vector_data.py
-    workflows.py
-    py.typed
-extensions/
+packages/
+    main/
+        agent_framework/
+            openai/
+                __init__.py
+                _chat_client.py
+                _shared.py
+                exceptions.py
+            __init__.py
+            __init__.pyi
+            _agents.py
+            _tools.py
+            _models.py
+            _logging.py
+            context_providers.py
+            guardrails.py
+            exceptions.py
+            evaluations.py
+            utils.py
+            telemetry.py
+            templates.py
+            text_search.py
+            vector_data.py
+            workflows.py
+            py.typed
+        tests/
+            unit/
+                test_types.py
+            integration/
+                test_chat_clients.py
+        pyproject.toml
+        README.md
+        ...
     mem0/
         agent_framework/
             mem0/
@@ -116,25 +130,6 @@ extensions/
                 _mem0.py
                 ...
     redis/
-        ...
-    openai/
-        agent_framework/
-            openai/
-                __init__.py
-                _chat.py
-                _embeddings.py
-                ...
-        tests/
-            unit/
-                test_openai_client.py
-                test_openai_tools.py
-                ...
-            integration/
-                test_openai_integration.py
-        samples/ (optional)
-            ...
-        pyproject.toml
-        README.md
         ...
     google/        
         agent_framework/
@@ -156,13 +151,6 @@ extensions/
         README.md
         ...
     ...
-tests/
-    __init__.py
-    unit/
-        conftest.py
-        test_agents.py
-        test_types.py
-        ...
 samples/
     ...
 pyproject.toml
@@ -281,8 +269,8 @@ The logging will be simplified, there will be one logger in the base package:
 * name: `agent_framework` - used for all logging in the abstractions and base components
 
 Each of the other subpackages for connectors will have a similar single logger.
-* name: `agent_framework.connectors.openai` 
-* name: `agent_framework.connectors.azure` 
+* name: `agent_framework.openai` 
+* name: `agent_framework.azure` 
 
 This means that when a logger is needed, it should be created like this:
 ```python
@@ -290,7 +278,7 @@ from agent_framework import get_logger
 
 logger = get_logger()
 #or in a subpackage:
-logger = get_logger('agent_framework.connectors.openai')
+logger = get_logger('agent_framework.openai')
 ```
 The implementation should be something like this:
 ```python
@@ -332,40 +320,9 @@ logger = logging.getLogger("agent_framework")
 #### Telemetry
 Telemetry will be based on OpenTelemetry (OTel), and will be implemented in the `agent_framework.telemetry` package.
 
+We will also add headers with user-agent strings where applicable, these will include `agent-framework-python` and the version.
+
 We should consider auto-instrumentation and provide an implementation of it to the OTel community.
-
-### Function definitions
-To make the code easier to use, we will be very deliberate about the ordering and marking of function parameters.
-This means that we will use the following conventions:
-* Only parameters that are fully expected to be passed and only if there are a very limited number of them, let's say 3 or less, can they be supplied as positional parameters (still with a keyword, _almost_ never positional only).
-* All other parameters should be supplied as keyword parameters, this is especially important to configure correctly when using Pydantic or dataclasses.
-* If there are multiple required parameters, and they do not have a order that is common sense, then they will all use keyword parameters.
-* If we use `kwargs` we will document how and what we use them for, this might be a reference to a outside package's documentation or an explanation of what the `kwargs` are used for.
-* If we want to combine `kwargs` for multiple things, such as partly for a external client constructor, and partly for our own use, we will try to keep those separate, by adding a parameter, such as `client_kwargs` with type `dict[str, Any]`, and then use that to pass the kwargs to the client constructor (by using `Client(**client_kwargs)`), while using the `**kwargs` parameters for other uses, which are then also well documented.
-
-### Attributes vs inheritance
-
-When the parameters are the same except for one, we will use attributes, instead of inheritance, to minimize the conceptual overhead of understanding the code. Off course there are exceptions and these things will be decided on a case by case basis, but the general rule is that if the parameters are the same, we will use attributes.
-```python
-# ✅ preferred
-from agent_framework import ChatMessage
-user_msg = ChatMessage(
-    role="user",
-    content="Hello, world!"
-)
-asst_msg = ChatMessage(
-    role="assistant",
-    content="Hello, world!"
-)
-# ❌ not preferred
-from agent_framework import UserMessage, AssistantMessage
-user_msg = UserMessage(
-    content="Hello, world!"
-)
-asst_msg = AssistantMessage(
-    content="Hello, world!"
-)
-```
 
 ### Build and release
 The build step will be done in GHA, adding the package to the release and then we call into Azure DevOps to use the ESRP pipeline to publish to pypi. This is how SK already works, we will just have to adapt it to the new package structure.
