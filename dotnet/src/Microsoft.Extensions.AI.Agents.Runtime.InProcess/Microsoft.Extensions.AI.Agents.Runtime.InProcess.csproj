@@ -4,7 +4,6 @@
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
     <VersionSuffix>alpha</VersionSuffix>
-    <IsAotCompatible>false</IsAotCompatible> <!-- TODO: Fix this -->
   </PropertyGroup>
 
   <PropertyGroup>

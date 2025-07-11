@@ -2,6 +2,7 @@
 fmt = "ruff format"
 format.ref = "fmt"
 lint = "ruff check"
-mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework tests"
+mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework"
 pyright = "pyright"
 build = "uv build"
+test = "pytest --cov=agent_framework --cov-report=term-missing:skip-covered tests/unit"

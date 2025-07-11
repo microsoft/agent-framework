@@ -11,12 +11,10 @@ namespace Microsoft.Agents.Orchestration.Concurrent;
 /// <summary>
 /// Actor for capturing each <see cref="ConcurrentMessages.Result"/> message.
 /// </summary>
-internal sealed class ConcurrentResultActor :
-    OrchestrationActor,
-    IHandle<ConcurrentMessages.Result>
+internal sealed class ConcurrentResultActor : OrchestrationActor
 {
     private readonly ConcurrentQueue<ConcurrentMessages.Result> _results;
-    private readonly AgentType _orchestrationType;
+    private readonly ActorType _orchestrationType;
     private readonly int _expectedCount;
     private int _resultCount;
 
@@ -30,10 +28,10 @@ internal sealed class ConcurrentResultActor :
     /// <param name="expectedCount">The expected number of messages to be received.</param>
     /// <param name="logger">The logger to use for the actor</param>
     public ConcurrentResultActor(
-        AgentId id,
+        ActorId id,
         IAgentRuntime runtime,
         OrchestrationContext context,
-        AgentType orchestrationType,
+        ActorType orchestrationType,
         int expectedCount,
         ILogger logger)
         : base(id, runtime, context, "Captures the results of the ConcurrentOrchestration", logger)
@@ -41,10 +39,11 @@ internal sealed class ConcurrentResultActor :
         this._orchestrationType = orchestrationType;
         this._expectedCount = expectedCount;
         this._results = [];
+
+        this.RegisterMessageHandler<ConcurrentMessages.Result>(this.HandleAsync);
     }
 
-    /// <inheritdoc/>
-    public async ValueTask HandleAsync(ConcurrentMessages.Result item, MessageContext messageContext)
+    private async ValueTask HandleAsync(ConcurrentMessages.Result item, MessageContext messageContext, CancellationToken cancellationToken)
     {
         this.Logger.LogConcurrentResultCapture(this.Id, this._resultCount + 1, this._expectedCount);
 
@@ -52,7 +51,7 @@ internal sealed class ConcurrentResultActor :
 
         if (Interlocked.Increment(ref this._resultCount) == this._expectedCount)
         {
-            await this.PublishMessageAsync(this._results.ToArray(), this._orchestrationType, messageContext.CancellationToken).ConfigureAwait(false);
+            await this.PublishMessageAsync(this._results.ToArray(), this._orchestrationType, cancellationToken).ConfigureAwait(false);
         }
     }
 }
