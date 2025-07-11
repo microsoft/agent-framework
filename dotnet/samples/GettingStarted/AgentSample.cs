@@ -31,13 +31,13 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
         AzureAIAgentsPersistent
     }
 
-    protected IChatClient GetChatClient(ChatClientProviders provider, ChatClientAgentOptions options)
+    protected IChatClient GetChatClient(ChatClientProviders provider, ChatClientAgentOptions? options = null)
         => provider switch
         {
             ChatClientProviders.OpenAIChatCompletion => GetOpenAIChatClient(),
-            ChatClientProviders.OpenAIAssistant => GetOpenAIAssistantChatClient(options),
+            ChatClientProviders.OpenAIAssistant => GetOpenAIAssistantChatClient(options ?? throw new InvalidOperationException("Options are required for this provider.")),
             ChatClientProviders.AzureOpenAI => GetAzureOpenAIChatClient(),
-            ChatClientProviders.AzureAIAgentsPersistent => GetAzureAIAgentPersistentClient(options),
+            ChatClientProviders.AzureAIAgentsPersistent => GetAzureAIAgentPersistentClient(options ?? throw new InvalidOperationException("Options are required for this provider.")),
             ChatClientProviders.OpenAIResponses or
             ChatClientProviders.OpenAIResponses_InMemoryMessageThread or
             ChatClientProviders.OpenAIResponses_ConversationIdThread

@@ -26,19 +26,16 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
     [InlineData(ChatClientProviders.OpenAIResponses)]
     public async Task RunBasic(ChatClientProviders provider)
     {
-        // Define the options for the chat client agent.
-        var agentOptions = new ChatClientAgentOptions
+        // Get the chat client to communicate with the inference service backing our agent.
+        // Any implementation of Microsoft.Extensions.AI.Agents.IChatClient can be used with the ChatClientAgent.
+        using var chatClient = base.GetChatClient(provider);
+
+        // Define the agent
+        var agent = new ChatClientAgent(chatClient, options: new()
         {
             Name = ParrotName,
             Instructions = ParrotInstructions,
-        };
-
-        // Get the chat client to communicate with the inference service backing our agent.
-        // Any implementation of Microsoft.Extensions.AI.Agents.IChatClient can be used with the ChatClientAgent.
-        using var chatClient = base.GetChatClient(provider, agentOptions);
-
-        // Define the agent
-        var agent = new ChatClientAgent(chatClient, agentOptions);
+        });
 
         // Invoke the agent and output the text result.
         var response = await agent.RunAsync("Fortune favors the bold.");
