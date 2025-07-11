@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <PropertyGroup>
+    <InjectSharedThrow>true</InjectSharedThrow>
     <InjectDiagnosticAttributesOnLegacy>true</InjectDiagnosticAttributesOnLegacy>
     <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>
   </PropertyGroup>
@@ -15,7 +16,7 @@
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
 
   <ItemGroup>
-    <None Include="IRuntimeActor.cs" />
+    <InternalsVisibleTo Include="Microsoft.Extensions.AI.Agents.Runtime.Abstractions.UnitTests" />
   </ItemGroup>
 
   <ItemGroup>
@@ -25,6 +26,7 @@
   <ItemGroup Condition="'$(TargetFrameworkIdentifier)' != '.NETCoreApp'">
     <PackageReference Include="Microsoft.Bcl.HashCode" />
     <PackageReference Include="System.Text.Json" />
+    <PackageReference Include="System.Threading.Channels" />
     <PackageReference Include="System.Threading.Tasks.Extensions" />
     <PackageReference Include="System.Diagnostics.DiagnosticSource" />
   </ItemGroup>

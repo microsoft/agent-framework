@@ -4,13 +4,12 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using Microsoft.Agents.Orchestration.Extensions;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
 
-namespace Microsoft.Agents.Orchestration.Handoff;
+namespace Microsoft.Agents.Orchestration;
 
 /// <summary>
 /// An orchestration that provides the input message to the first agent
@@ -24,17 +23,21 @@ public class HandoffOrchestration<TInput, TOutput> : AgentOrchestration<TInput, 
     /// Initializes a new instance of the <see cref="HandoffOrchestration{TInput, TOutput}"/> class.
     /// </summary>
     /// <param name="handoffs">Defines the handoff connections for each agent.</param>
-    /// <param name="agents">The agents participating in the orchestration.</param>
-    public HandoffOrchestration(OrchestrationHandoffs handoffs, params Agent[] agents)
-        : base(agents)
+    /// <param name="agents">Additional agents participating in the orchestration that weren't passed to <paramref name="handoffs"/>.</param>
+    public HandoffOrchestration(OrchestrationHandoffs handoffs, params Agent[] agents) : base(
+            agents is { Length: 0 } ? handoffs.Agents.ToArray() :
+            handoffs.Agents is { Count: 0 } ? agents :
+            handoffs.Agents.Concat(agents).Distinct().ToArray())
     {
         // Create list of distinct agent names
-        HashSet<string> agentNames = new(agents.Select(a => a.Name ?? a.Id), StringComparer.Ordinal)
+        HashSet<string> agentNames = new(base.Members.Select(a => a.Name ?? a.Id), StringComparer.Ordinal)
         {
             handoffs.FirstAgentName
         };
+
         // Extract names from handoffs that don't align with a member agent.
         string[] badNames = [.. handoffs.Keys.Concat(handoffs.Values.SelectMany(h => h.Keys)).Where(name => !agentNames.Contains(name))];
+
         // Fail fast if invalid names are present.
         if (badNames.Length > 0)
         {
@@ -56,7 +59,7 @@ public class HandoffOrchestration<TInput, TOutput> : AgentOrchestration<TInput, 
         {
             throw new ArgumentException("Entry agent is not defined.", nameof(entryAgent));
         }
-        await runtime.PublishMessageAsync(input.AsInputTaskMessage(), topic).ConfigureAwait(false);
+        await runtime.PublishMessageAsync(new HandoffMessages.InputTask([.. input]), topic).ConfigureAwait(false);
         await runtime.PublishMessageAsync(new HandoffMessages.Request(), entryAgent.Value).ConfigureAwait(false);
     }
 

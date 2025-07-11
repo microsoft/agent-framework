@@ -9,7 +9,7 @@ from pydantic import Field
 
 from ._clients import ChatClient
 from ._pydantic import AFBaseModel
-from ._types import ChatMessage, ChatResponse, ChatResponseUpdate, ChatRole
+from ._types import AgentRunResponse, AgentRunResponseUpdate, ChatMessage, ChatResponse, ChatResponseUpdate, ChatRole
 from .exceptions import AgentExecutionException
 
 TThreadType = TypeVar("TThreadType", bound="AgentThread")
@@ -60,15 +60,15 @@ class Agent(Protocol):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> ChatResponse:
+    ) -> AgentRunResponse:
         """Get a response from the agent.
 
         This method returns the final result of the agent's execution
-        as a single ChatResponse object. The caller is blocked until
+        as a single AgentRunResponse object. The caller is blocked until
         the final result is available.
 
         Note: For streaming responses, use the run_stream method, which returns
-        intermediate steps and the final result as a stream of ChatResponseUpdate
+        intermediate steps and the final result as a stream of AgentRunResponseUpdate
         objects. Streaming only the final result is not feasible because the timing of
         the final result's availability is unknown, and blocking the caller until then
         is undesirable in streaming scenarios.
@@ -89,16 +89,13 @@ class Agent(Protocol):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
+    ) -> AsyncIterable[AgentRunResponseUpdate]:
         """Run the agent as a stream.
 
         This method will return the intermediate steps and final results of the
-        agent's execution as a stream of ChatResponseUpdate objects to the caller.
+        agent's execution as a stream of AgentRunResponseUpdate objects to the caller.
 
-        To get the intermediate steps of the agent's execution as fully formed messages,
-        use the on_intermediate_message callback.
-
-        Note: A ChatResponseUpdate object contains a chunk of a message.
+        Note: An AgentRunResponseUpdate object contains a chunk of a message.
 
         Args:
             messages: The message(s) to send to the agent.
@@ -221,7 +218,7 @@ class ChatClientAgent(AgentBase):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> ChatResponse:
+    ) -> AgentRunResponse:
         thread, thread_messages = await self._prepare_thread_and_messages(
             thread=thread,
             input_messages=messages,
@@ -238,7 +235,14 @@ class ChatClientAgent(AgentBase):
         await self._notify_thread_of_new_messages(thread, thread_messages)
         await self._notify_thread_of_new_messages(thread, response.messages)
 
-        return response
+        return AgentRunResponse(
+            messages=response.messages,
+            response_id=response.response_id,
+            created_at=response.created_at,
+            usage_details=response.usage_details,
+            raw_representation=response.raw_representation,
+            additional_properties=response.additional_properties,
+        )
 
     async def run_stream(
         self,
@@ -246,7 +250,7 @@ class ChatClientAgent(AgentBase):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
+    ) -> AsyncIterable[AgentRunResponseUpdate]:
         thread, thread_messages = await self._prepare_thread_and_messages(
             thread=thread,
             input_messages=messages,
@@ -256,9 +260,20 @@ class ChatClientAgent(AgentBase):
 
         response_updates: list[ChatResponseUpdate] = []
 
-        async for update in self.chat_client.get_streaming_response(thread_messages):
+        streaming_response: AsyncIterable[ChatResponseUpdate] = self.chat_client.get_streaming_response(thread_messages)
+
+        async for update in streaming_response:
             response_updates.append(update)
-            yield update
+            yield AgentRunResponseUpdate(
+                contents=update.contents,
+                role=update.role,
+                author_name=update.author_name,
+                response_id=update.response_id,
+                message_id=update.message_id,
+                created_at=update.created_at,
+                additional_properties=update.additional_properties,
+                raw_representation=update.raw_representation,
+            )
 
         response = ChatResponse.from_chat_response_updates(response_updates)
 

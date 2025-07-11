@@ -10,6 +10,7 @@
 
   <PropertyGroup>
     <InjectSharedThrow>true</InjectSharedThrow>
+    <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
@@ -23,7 +24,6 @@
   <ItemGroup>
     <ProjectReference Include="..\Microsoft.Extensions.AI.Agents\Microsoft.Extensions.AI.Agents.csproj" />
     <ProjectReference Include="..\Microsoft.Extensions.AI.Agents.Runtime.Abstractions\Microsoft.Extensions.AI.Agents.Runtime.Abstractions.csproj" />
-    <ProjectReference Include="..\Microsoft.Extensions.AI.Agents.Runtime.InProcess\Microsoft.Extensions.AI.Agents.Runtime.InProcess.csproj" />
   </ItemGroup>
 
   <ItemGroup>

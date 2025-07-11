@@ -4,10 +4,13 @@ from collections.abc import AsyncIterable, Sequence
 from typing import Any
 from uuid import uuid4
 
+from pydantic import Field
 from pytest import fixture, raises
 
 from agent_framework import (
     Agent,
+    AgentRunResponse,
+    AgentRunResponseUpdate,
     AgentThread,
     ChatClient,
     ChatClientAgent,
@@ -30,21 +33,9 @@ class MockAgentThread(AgentThread):
 
 # Mock Agent implementation for testing
 class MockAgent(Agent):
-    @property
-    def id(self) -> str:
-        return str(uuid4())
-
-    @property
-    def name(self) -> str | None:
-        return None
-
-    @property
-    def description(self) -> str | None:
-        return None
-
-    @property
-    def instructions(self) -> str | None:
-        return None
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    name: str | None = None
+    description: str | None = None
 
     async def run(
         self,
@@ -52,8 +43,8 @@ class MockAgent(Agent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> ChatResponse:
-        return ChatResponse(messages=[ChatMessage(role=ChatRole.ASSISTANT, contents=[TextContent("Response")])])
+    ) -> AgentRunResponse:
+        return AgentRunResponse(messages=[ChatMessage(role=ChatRole.ASSISTANT, contents=[TextContent("Response")])])
 
     async def run_stream(
         self,
@@ -61,8 +52,8 @@ class MockAgent(Agent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        yield ChatResponseUpdate(contents=[TextContent("Response")])
+    ) -> AsyncIterable[AgentRunResponseUpdate]:
+        yield AgentRunResponseUpdate(contents=[TextContent("Response")])
 
     def get_new_thread(self) -> AgentThread:
         return MockAgentThread()
@@ -77,7 +68,7 @@ class MockChatClient(ChatClient):
 
     async def get_response(
         self,
-        messages: ChatMessage | Sequence[ChatMessage],
+        messages: str | ChatMessage | Sequence[ChatMessage],
         **kwargs: Any,
     ) -> ChatResponse:
         return (
@@ -88,7 +79,7 @@ class MockChatClient(ChatClient):
 
     async def get_streaming_response(
         self,
-        messages: ChatMessage | Sequence[ChatMessage],
+        messages: str | ChatMessage | Sequence[ChatMessage],
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         yield ChatResponseUpdate(role=ChatRole.ASSISTANT, text=TextContent(text="test streaming response"))
@@ -124,7 +115,7 @@ async def test_agent_run(agent: Agent) -> None:
 
 
 async def test_agent_run_stream(agent: Agent) -> None:
-    async def collect_updates(updates: AsyncIterable[ChatResponseUpdate]) -> list[ChatResponseUpdate]:
+    async def collect_updates(updates: AsyncIterable[AgentRunResponseUpdate]) -> list[AgentRunResponseUpdate]:
         return [u async for u in updates]
 
     updates = await collect_updates(agent.run_stream(messages="test"))
@@ -209,7 +200,7 @@ async def test_chat_client_agent_run(chat_client: ChatClient) -> None:
 async def test_chat_client_agent_run_stream(chat_client: ChatClient) -> None:
     agent = ChatClientAgent(chat_client=chat_client)
 
-    result = await ChatResponse.from_chat_response_generator(agent.run_stream("Hello"))
+    result = await AgentRunResponse.from_agent_response_generator(agent.run_stream("Hello"))
 
     assert result.text == "test streaming response"
 

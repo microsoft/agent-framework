@@ -17,13 +17,12 @@ namespace Steps;
 public sealed class Step03_ChatClientAgent_UsingCodeInterpreterTools(ITestOutputHelper output) : AgentSample(output)
 {
     [Theory]
-    [InlineData(ChatClientProviders.OpenAIAssistant)]
     [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
+    [InlineData(ChatClientProviders.OpenAIAssistant)]
     public async Task RunningWithFileReferenceAsync(ChatClientProviders provider)
     {
         var codeInterpreterTool = new NewHostedCodeInterpreterTool();
         codeInterpreterTool.FileIds.Add(await UploadFileAsync("Resources/groceries.txt", provider));
-
         var agentOptions = new ChatClientAgentOptions
         {
             Name = "HelpfulAssistant",
@@ -31,7 +30,10 @@ public sealed class Step03_ChatClientAgent_UsingCodeInterpreterTools(ITestOutput
             ChatOptions = new() { Tools = [codeInterpreterTool] }
         };
 
-        using var chatClient = await base.GetChatClientAsync(provider, agentOptions);
+        // Create the server-side agent Id when applicable (depending on the provider).
+        agentOptions.Id = await base.AgentCreateAsync(provider, agentOptions);
+
+        using var chatClient = base.GetChatClient(provider, agentOptions);
 
         ChatClientAgent agent = new(chatClient, agentOptions);
 
@@ -61,6 +63,9 @@ public sealed class Step03_ChatClientAgent_UsingCodeInterpreterTools(ITestOutput
 
         Console.WriteLine("Code interpreter Output:");
         Console.WriteLine(codeInterpreterOutput.ToString());
+
+        // Clean up the server-side agent after use when applicable (depending on the provider).
+        await base.AgentCleanUpAsync(provider, agent, thread);
     }
 
     #region private

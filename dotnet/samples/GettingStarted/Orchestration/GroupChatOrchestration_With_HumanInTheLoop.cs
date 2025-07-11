@@ -1,10 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.Orchestration;
-using Microsoft.Agents.Orchestration.GroupChat;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
-using Microsoft.Extensions.AI.Agents.Runtime.InProcess;
 
 namespace Orchestration;
 
@@ -68,18 +66,11 @@ public class GroupChatOrchestration_With_HumanInTheLoop(ITestOutputHelper output
                 ResponseCallback = monitor.ResponseCallback,
             };
 
-        // Start the runtime
-        await using InProcessRuntime runtime = new();
-        await runtime.StartAsync();
-
         // Run the orchestration
         string input = "Create a slogon for a new eletric SUV that is affordable and fun to drive.";
         Console.WriteLine($"\n# INPUT: {input}\n");
-        OrchestrationResult<string> result = await orchestration.InvokeAsync(input, runtime);
-        string text = await result.GetValueAsync(TimeSpan.FromSeconds(ResultTimeoutInSeconds * 3));
-        Console.WriteLine($"\n# RESULT: {text}");
-
-        await runtime.RunUntilIdleAsync();
+        OrchestrationResult<string> result = await orchestration.InvokeAsync(input);
+        Console.WriteLine($"\n# RESULT: {await result}");
 
         this.DisplayHistory(monitor.History);
     }
@@ -97,23 +88,12 @@ public class GroupChatOrchestration_With_HumanInTheLoop(ITestOutputHelper output
         {
             string? lastAgent = history.LastOrDefault()?.AuthorName;
 
-            GroupChatManagerResult<bool> result;
+            GroupChatManagerResult<bool> result =
+                lastAgent is null ? new(false) { Reason = "No agents have spoken yet." } :
+                lastAgent is "Reviewer" ? new(true) { Reason = "User input is needed after the reviewer's message." } :
+                new(false) { Reason = "User input is not needed until the reviewer's message." };
 
-            if (lastAgent is null)
-            {
-                result = new GroupChatManagerResult<bool>(false) { Reason = "No agents have spoken yet." };
-            }
-
-            if (lastAgent == "Reviewer")
-            {
-                result = new GroupChatManagerResult<bool>(true) { Reason = "User input is needed after the reviewer's message." };
-            }
-            else
-            {
-                result = new GroupChatManagerResult<bool>(false) { Reason = "User input is not needed until the reviewer's message." };
-            }
-
-            return new ValueTask<GroupChatManagerResult<bool>>(result);
+            return new(result);
         }
     }
 }

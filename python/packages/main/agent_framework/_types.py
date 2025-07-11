@@ -25,6 +25,7 @@ TValue = TypeVar("TValue")
 TEmbedding = TypeVar("TEmbedding")
 TChatResponse = TypeVar("TChatResponse", bound="ChatResponse")
 TChatToolMode = TypeVar("TChatToolMode", bound="ChatToolMode")
+TAgentRunResponse = TypeVar("TAgentRunResponse", bound="AgentRunResponse")
 
 CreatedAtT = str  # Use a datetimeoffset type? Or a more specific type like datetime.datetime?
 
@@ -152,7 +153,9 @@ class UsageDetails(AFBaseModel):
         return self
 
 
-def _process_update(response: "ChatResponse", update: "ChatResponseUpdate") -> None:
+def _process_update(
+    response: "ChatResponse | AgentRunResponse", update: "ChatResponseUpdate | AgentRunResponseUpdate"
+) -> None:
     """Processes a single update and modifies the response in place."""
     is_new_message = False
     if not response.messages or (update.message_id and response.messages[-1].message_id != update.message_id):
@@ -189,18 +192,20 @@ def _process_update(response: "ChatResponse", update: "ChatResponseUpdate") -> N
     # Incorporate the update's properties into the response.
     if update.response_id:
         response.response_id = update.response_id
-    if update.conversation_id is not None:
-        response.conversation_id = update.conversation_id
     if update.created_at is not None:
         response.created_at = update.created_at
-    if update.finish_reason is not None:
-        response.finish_reason = update.finish_reason
-    if update.ai_model_id is not None:
-        response.ai_model_id = update.ai_model_id
     if update.additional_properties is not None:
         if response.additional_properties is None:
             response.additional_properties = {}
         response.additional_properties.update(update.additional_properties)
+
+    if isinstance(response, ChatResponse) and isinstance(update, ChatResponseUpdate):
+        if update.conversation_id is not None:
+            response.conversation_id = update.conversation_id
+        if update.finish_reason is not None:
+            response.finish_reason = update.finish_reason
+        if update.ai_model_id is not None:
+            response.ai_model_id = update.ai_model_id
 
 
 def _coalesce_text_content(
@@ -235,8 +240,8 @@ def _coalesce_text_content(
     contents.extend(coalesced_contents)
 
 
-def _finalize_response(response: "ChatResponse") -> None:
-    """Finalizes the chat response by performing any necessary post-processing."""
+def _finalize_response(response: "ChatResponse | AgentRunResponse") -> None:
+    """Finalizes the response by performing any necessary post-processing."""
     for msg in response.messages:
         _coalesce_text_content(msg.contents, TextContent)
         _coalesce_text_content(msg.contents, TextReasoningContent)
@@ -1552,3 +1557,180 @@ class GeneratedEmbeddings(AFBaseModel, MutableSequence[TEmbedding], Generic[TEmb
         else:
             self.embeddings += values
         return self
+
+
+# region AgentRunResponse
+
+
+class AgentRunResponse(AFBaseModel):
+    """Represents the response to an Agent run request.
+
+    Provides one or more response messages and metadata about the response.
+    A typical response will contain a single message, but may contain multiple
+    messages in scenarios involving function calls, RAG retrievals, or complex logic.
+    """
+
+    messages: list[ChatMessage] = Field(default_factory=list[ChatMessage])
+    response_id: str | None = None
+    created_at: CreatedAtT | None = None  # use a datetimeoffset type?
+    usage_details: UsageDetails | None = None
+    raw_representation: Any | None = None
+    additional_properties: dict[str, Any] | None = None
+
+    def __init__(
+        self,
+        messages: ChatMessage | list[ChatMessage] | None = None,
+        response_id: str | None = None,
+        created_at: CreatedAtT | None = None,
+        usage_details: UsageDetails | None = None,
+        raw_representation: Any | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize an AgentRunResponse.
+
+        Attributes:
+        messages: The list of chat messages in the response.
+        response_id: The ID of the chat response.
+        created_at: A timestamp for the chat response.
+        usage_details: The usage details for the chat response.
+        additional_properties: Any additional properties associated with the chat response.
+        raw_representation: The raw representation of the chat response from an underlying implementation.
+        **kwargs: Additional properties to set on the response.
+        """
+        processed_messages: list[ChatMessage] = []
+        if messages is not None:
+            if isinstance(messages, ChatMessage):
+                processed_messages.append(messages)
+            elif isinstance(messages, list):
+                processed_messages.extend(messages)
+
+        super().__init__(
+            messages=processed_messages,  # type: ignore[reportCallIssue]
+            response_id=response_id,  # type: ignore[reportCallIssue]
+            created_at=created_at,  # type: ignore[reportCallIssue]
+            usage_details=usage_details,  # type: ignore[reportCallIssue]
+            additional_properties=additional_properties,  # type: ignore[reportCallIssue]
+            raw_representation=raw_representation,  # type: ignore[reportCallIssue]
+            **kwargs,
+        )
+
+    @property
+    def text(self) -> str:
+        """Get the concatenated text of all messages."""
+        return "".join(msg.text for msg in self.messages) if self.messages else ""
+
+    @classmethod
+    def from_agent_run_response_updates(
+        cls: type[TAgentRunResponse], updates: Sequence["AgentRunResponseUpdate"]
+    ) -> TAgentRunResponse:
+        """Joins multiple updates into a single AgentRunResponse."""
+        msg = cls(messages=[])
+        for update in updates:
+            _process_update(msg, update)
+        _finalize_response(msg)
+        return msg
+
+    def __str__(self) -> str:
+        return self.text
+
+
+# region AgentRunResponseUpdate
+
+
+class AgentRunResponseUpdate(AFBaseModel):
+    """Represents a single streaming response chunk from an Agent."""
+
+    contents: list[AIContents] = Field(default_factory=list[AIContents])
+    role: ChatRole | None = None
+    author_name: str | None = None
+    response_id: str | None = None
+    message_id: str | None = None
+    created_at: CreatedAtT | None = None  # use a datetimeoffset type?
+    additional_properties: dict[str, Any] | None = None
+    raw_representation: Any | None = None
+
+    @property
+    def text(self) -> str:
+        """Get the concatenated text of all TextContent objects in contents."""
+        return (
+            "".join(content.text for content in self.contents if isinstance(content, TextContent))
+            if self.contents
+            else ""
+        )
+
+    def __str__(self) -> str:
+        return self.text
+
+
+# region: SpeechToTextOptions
+
+
+class SpeechToTextOptions(AFBaseModel):
+    """Common request settings for Speech to Text AI services."""
+
+    ai_model_id: Annotated[str | None, Field(serialization_alias="model")] = None
+    speech_language: Annotated[str | None, Field(description="Language of the input speech.")] = None
+    text_language: Annotated[str | None, Field(description="Language of the output text.")] = None
+    speech_sample_rate: Annotated[int | None, Field(description="Sample rate of the input speech.")] = None
+    additional_properties: dict[str, Any] = Field(
+        default_factory=dict, description="Provider-specific additional properties."
+    )
+
+    def to_provider_settings(self, by_alias: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:
+        """Convert the SpeechToTextOptions to a dictionary suitable for provider requests.
+
+        Args:
+            by_alias: Use alias names for fields if True.
+            exclude: Additional keys to exclude from the output.
+
+        Returns:
+            Dictionary of settings for provider.
+        """
+        default_exclude = {"additional_properties"}
+        merged_exclude = default_exclude if exclude is None else default_exclude | set(exclude)
+
+        settings: dict[str, Any] = self.model_dump(exclude_none=True, by_alias=by_alias, exclude=merged_exclude)
+        settings = {k: v for k, v in settings.items() if not (isinstance(v, dict) and not v)}
+        settings.update(self.additional_properties)
+        for key in merged_exclude:
+            settings.pop(key, None)
+        return settings
+
+
+# region: TextToSpeechOptions
+
+
+class TextToSpeechOptions(AFBaseModel):
+    """Request settings for text to speech services.
+
+    Tailor this to be more general as more models (aside from OpenAI) are added.
+    """
+
+    ai_model_id: str | None = Field(None, serialization_alias="model")
+    voice: Literal["alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer"] = "alloy"
+    response_format: Literal["mp3", "opus", "aac", "flac", "wav", "pcm"] | None = None
+    speed: Annotated[float | None, Field(ge=0.25, le=4.0)] = None
+    additional_properties: dict[str, Any] = Field(
+        default_factory=dict, description="Provider-specific additional properties."
+    )
+
+    def to_provider_settings(self, by_alias: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:
+        """Convert the SpeechToTextOptions to a dictionary suitable for provider requests.
+
+        Args:
+            by_alias: Use alias names for fields if True.
+            exclude: Additional keys to exclude from the output.
+
+        Returns:
+            Dictionary of settings for provider.
+        """
+        default_exclude = {"additional_properties"}
+        merged_exclude = default_exclude if exclude is None else default_exclude | set(exclude)
+
+        settings: dict[str, Any] = self.model_dump(exclude_none=True, by_alias=by_alias, exclude=merged_exclude)
+        settings = {k: v for k, v in settings.items() if not (isinstance(v, dict) and not v)}
+        settings.update(self.additional_properties)
+        for key in merged_exclude:
+            settings.pop(key, None)
+        return settings

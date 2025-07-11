@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using Microsoft.Agents.Orchestration.Handoff;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Moq;

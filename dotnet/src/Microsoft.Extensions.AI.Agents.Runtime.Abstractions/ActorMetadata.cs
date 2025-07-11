@@ -22,11 +22,6 @@ public readonly struct ActorMetadata : IEquatable<ActorMetadata>
             throw new ArgumentException("Invalid actor key.", nameof(key));
         }
 
-        if (description is null)
-        {
-            throw new ArgumentNullException(nameof(description));
-        }
-
         this.Type = type;
         this.Key = key;
         this.Description = description;

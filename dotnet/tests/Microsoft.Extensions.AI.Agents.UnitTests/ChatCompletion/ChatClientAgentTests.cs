@@ -60,7 +60,7 @@ public class ChatClientAgentTests
             });
 
         // Act
-        ChatResponse result = await agent.RunAsync([new(ChatRole.User, "Where are you?")]);
+        var result = await agent.RunAsync([new(ChatRole.User, "Where are you?")]);
 
         // Assert
         Assert.Single(result.Messages);
@@ -181,47 +181,6 @@ public class ChatClientAgentTests
         // Assert
         Assert.Contains(capturedMessages, m => m.Text == "base instructions" && m.Role == ChatRole.System);
         Assert.Contains(capturedMessages, m => m.Text == "test" && m.Role == ChatRole.User);
-    }
-
-    /// <summary>
-    /// Verify that RunAsync calls OnIntermediateMessage callback for each response message.
-    /// </summary>
-    [Fact]
-    public async Task RunAsyncCallsOnIntermediateMessageForEachResponseMessageAsync()
-    {
-        // Arrange
-        Mock<IChatClient> mockService = new();
-        var responseMessages = new[]
-        {
-            new ChatMessage(ChatRole.Assistant, "first response"),
-            new ChatMessage(ChatRole.Assistant, "second response")
-        };
-        mockService.Setup(
-            s => s.GetResponseAsync(
-                It.IsAny<IEnumerable<ChatMessage>>(),
-                It.IsAny<ChatOptions>(),
-                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse(responseMessages));
-
-        ChatClientAgent agent = new(mockService.Object, new() { Instructions = "test instructions", Name = "TestAgent" });
-
-        var callbackMessages = new List<ChatMessage>();
-        var runOptions = new AgentRunOptions
-        {
-            OnIntermediateMessages = messages =>
-            {
-                callbackMessages.AddRange(messages);
-                return Task.CompletedTask;
-            }
-        };
-
-        // Act
-        await agent.RunAsync([new(ChatRole.User, "test")], options: runOptions);
-
-        // Assert
-        Assert.Equal(2, callbackMessages.Count);
-        Assert.Equal("first response", callbackMessages[0].Text);
-        Assert.Equal("second response", callbackMessages[1].Text);
-        Assert.All(callbackMessages, msg => Assert.Equal("TestAgent", msg.AuthorName));
     }
 
     /// <summary>
@@ -1054,7 +1013,7 @@ public class ChatClientAgentTests
             });
 
         // Act
-        ChatResponseUpdate[] result = await agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "Hello")]).ToArrayAsync();
+        var result = await agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "Hello")]).ToArrayAsync();
 
         // Assert
         Assert.Equal(2, result.Length);
