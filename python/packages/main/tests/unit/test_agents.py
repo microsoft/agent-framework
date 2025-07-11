@@ -1,8 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncIterable, MutableSequence, Sequence
 from typing import Any
-from collections.abc import MutableSequence
 from uuid import uuid4
 
 from pytest import fixture, raises
