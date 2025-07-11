@@ -23,10 +23,14 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-azure",
-    "agent-framework-openai",
+    "openai>=1.94.0",
     "pydantic>=2.11.7",
     "typing-extensions>=4.14.0",
+]
+
+[project.optional-dependencies]
+azure = [
+    "agent-framework-azure"
 ]
 
 [tool.uv]
@@ -115,7 +119,6 @@ include = "../../shared_tasks.toml"
 [tool.uv.build-backend]
 module-name = "agent_framework"
 module-root = ""
-namespace = true
 
 [build-system]
 requires = ["uv_build>=0.7.19,<0.8.0"]

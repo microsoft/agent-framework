@@ -2,13 +2,9 @@
 
 import logging
 from abc import ABC
+from enum import Enum
 from typing import Annotated, Any, Union
 
-from agent_framework.exceptions import ServiceInvalidRequestError, ServiceResponseException
-from pydantic import BaseModel
-from pydantic.types import StringConstraints
-
-from agent_framework import AFBaseModel, ChatOptions, SpeechToTextOptions, TextToSpeechOptions
 from openai import (
     AsyncOpenAI,
     AsyncStream,
@@ -20,11 +16,17 @@ from openai.types import Completion
 from openai.types.audio import Transcription
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai.types.images_response import ImagesResponse
+from pydantic import BaseModel
+from pydantic.types import StringConstraints
 
-from ._openai_model_types import OpenAIModelTypes
+from .._logging import get_logger
+from .._pydantic import AFBaseModel
+from .._types import ChatOptions, SpeechToTextOptions, TextToSpeechOptions
+from ..exceptions import ServiceInvalidRequestError, ServiceResponseException
 from .exceptions import OpenAIContentFilterException
 
-logger: logging.Logger = logging.getLogger(__name__)
+logger: logging.Logger = get_logger("agent_framework.openai")
+
 
 RESPONSE_TYPE = Union[
     ChatCompletion,
@@ -37,12 +39,23 @@ RESPONSE_TYPE = Union[
     _legacy_response.HttpxBinaryResponseContent,
 ]
 
-# TODO(evmattso): update with proper Options types to move away from ExecutionSettings
 OPTION_TYPE = Union[
     ChatOptions,
     SpeechToTextOptions,
     TextToSpeechOptions,
 ]
+
+
+class OpenAIModelTypes(Enum):
+    """OpenAI model types, can be text, chat or embedding."""
+
+    CHAT = "chat"
+    EMBEDDING = "embedding"
+    TEXT_TO_IMAGE = "text-to-image"
+    SPEECH_TO_TEXT = "speech-to-text"
+    TEXT_TO_SPEECH = "text-to-speech"
+    REALTIME = "realtime"
+    RESPONSE = "response"
 
 
 class OpenAIHandler(AFBaseModel, ABC):
@@ -75,22 +88,18 @@ class OpenAIHandler(AFBaseModel, ABC):
         self,
         chat_options: "ChatOptions",
         messages: list[dict[str, Any]] | None = None,
-    ) -> ChatCompletion | Completion | AsyncStream[ChatCompletionChunk] | AsyncStream[Completion]:
+    ) -> ChatCompletion | AsyncStream[ChatCompletionChunk]:
         """Execute the appropriate call to OpenAI models."""
         try:
             options_dict = chat_options.to_provider_settings()
-            if messages is not None:
+            if messages and "messages" not in options_dict:
                 options_dict["messages"] = messages
-            if self.ai_model_type == OpenAIModelTypes.CHAT:
-                self._handle_structured_outputs(chat_options, options_dict)
-                if chat_options.tools is None:
-                    options_dict.pop("parallel_tool_calls", None)
-                response = await self.client.chat.completions.create(**options_dict)  # type: ignore
-            else:
-                response = await self.client.completions.create(**options_dict)  # type: ignore
-
-            assert isinstance(response, (ChatCompletion, Completion, AsyncStream))  # nosec  # noqa: S101
-            return response  # type: ignore
+            if "messages" not in options_dict:
+                raise ServiceInvalidRequestError("Messages are required for chat completions")
+            self._handle_structured_outputs(chat_options, options_dict)
+            if chat_options.tools is None:
+                options_dict.pop("parallel_tool_calls", None)
+            return await self.client.chat.completions.create(**options_dict)  # type: ignore
         except BadRequestError as ex:
             if ex.code == "content_filter":
                 raise OpenAIContentFilterException(
@@ -115,10 +124,10 @@ class OpenAIHandler(AFBaseModel, ABC):
         try:
             # TODO(peterychang): open isn't async safe
             with open(options.additional_properties["filename"], "rb") as audio_file:  # noqa: ASYNC230
-                return await self.client.audio.transcriptions.create(
+                return await self.client.audio.transcriptions.create(  # type: ignore
                     file=audio_file,
                     **options.to_provider_settings(exclude={"filename"}),
-                )  # type: ignore
+                )
         except Exception as ex:
             raise ServiceResponseException(
                 f"{type(self)} service failed to transcribe audio",
@@ -143,6 +152,9 @@ class OpenAIHandler(AFBaseModel, ABC):
             ) from ex
 
     def _handle_structured_outputs(self, chat_options: "ChatOptions", options_dict: dict[str, Any]) -> None:
-        response_format = getattr(chat_options, "response_format", None)
-        if response_format and isinstance(response_format, type) and issubclass(response_format, BaseModel):
-            options_dict["response_format"] = type_to_response_format_param(response_format)
+        if (
+            chat_options.response_format
+            and isinstance(chat_options.response_format, type)
+            and issubclass(chat_options.response_format, BaseModel)
+        ):
+            options_dict["response_format"] = type_to_response_format_param(chat_options.response_format)

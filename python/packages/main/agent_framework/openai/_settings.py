@@ -4,7 +4,7 @@ from typing import ClassVar
 
 from pydantic import SecretStr
 
-from agent_framework import AFBaseSettings
+from .._pydantic import AFBaseSettings
 
 
 class OpenAISettings(AFBaseSettings):

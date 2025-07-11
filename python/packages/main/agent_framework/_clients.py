@@ -108,7 +108,10 @@ def _prepare_tools_and_tool_choice(chat_options: ChatOptions) -> None:
     chat_options.tools = [
         (_tool_to_json_schema_spec(t) if isinstance(t, AITool) else t) for t in chat_options.tools or []
     ]
-    chat_options.tool_choice = chat_tool_mode.mode
+    if not chat_options.tools:
+        chat_options.tool_choice = ChatToolMode.NONE.mode
+    else:
+        chat_options.tool_choice = chat_tool_mode.mode
 
 
 def _tool_call_non_streaming(func: TInnerGetResponse) -> TInnerGetResponse:
@@ -208,8 +211,9 @@ def _tool_call_streaming(func: TInnerGetStreamingResponse) -> TInnerGetStreaming
             # the full completion depending on the prompt, the message may contain both function call
             # content and others
             response: ChatResponse = ChatResponse.from_chat_response_updates(all_messages)
-            function_calls = [item for item in response.messages[0].contents if isinstance(item, FunctionCallContent)]
+            # add the single assistant response message to the history
             messages.append(response.messages[0])
+            function_calls = [item for item in response.messages[0].contents if isinstance(item, FunctionCallContent)]
 
             if function_calls:
                 # Run all function calls concurrently
@@ -224,8 +228,9 @@ def _tool_call_streaming(func: TInnerGetStreamingResponse) -> TInnerGetStreaming
                     for seq_idx, function_call in enumerate(function_calls)
                 ])
                 yield ChatResponseUpdate(contents=results, role="tool")
-                response.messages.append(ChatMessage(role="tool", contents=results))
-                messages.extend(response.messages)
+                function_result_msg = ChatMessage(role="tool", contents=results)
+                response.messages.append(function_result_msg)
+                messages.append(function_result_msg)
                 continue
 
         # Failsafe: give up on tools, ask model for plain answer
@@ -238,11 +243,17 @@ def _tool_call_streaming(func: TInnerGetStreamingResponse) -> TInnerGetStreaming
 
 
 def use_tool_calling(cls: type[TChatClientBase]) -> type[TChatClientBase]:
-    inner_response = getattr(cls, "_inner_get_response", None)
-    if inner_response is not None:
+    """Class decorator that enables tool calling for a chat client.
+
+    Remarks:
+        This only works on classes that derive from ChatClientBase
+        and have the _tool_map attribute as well as the _inner_get_response
+        and _inner_get_streaming_response methods.
+
+    """
+    if inner_response := getattr(cls, "_inner_get_response", None):
         cls._inner_get_response = _tool_call_non_streaming(inner_response)  # type: ignore
-    inner_streaming_response = getattr(cls, "_inner_get_streaming_response", None)
-    if inner_streaming_response is not None:
+    if inner_streaming_response := getattr(cls, "_inner_get_streaming_response", None):
         cls._inner_get_streaming_response = _tool_call_streaming(inner_streaming_response)  # type: ignore
     return cls
 
@@ -303,6 +314,17 @@ class ChatClientBase(AFBaseModel, ABC):
     maximum_iterations_per_request: int = 10
     _tool_map: dict[str, AIFunction[BaseModel, Any]] = PrivateAttr(default_factory=dict)  # type: ignore
 
+    def _prepare_messages(self, messages: str | ChatMessage | list[str | ChatMessage]) -> MutableSequence[ChatMessage]:
+        """Turn the allowed input into a list of chat messages."""
+        if isinstance(messages, str):
+            messages = [ChatMessage(role="user", text=messages)]
+        if isinstance(messages, ChatMessage):
+            messages = [messages]
+        for i, msg in enumerate(messages):
+            if isinstance(msg, str):
+                messages[i] = ChatMessage(role="user", text=msg)
+        return messages  # type: ignore[return-value]
+
     # region Internal methods to be implemented by the derived classes
 
     @abstractmethod
@@ -355,14 +377,14 @@ class ChatClientBase(AFBaseModel, ABC):
 
     async def get_response(
         self,
-        messages: str | ChatMessage | list[ChatMessage],
+        messages: str | ChatMessage | list[str | ChatMessage],
         *,
         model: str | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
-        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = None,
-        tools: Sequence[AITool] | None = None,
+        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
+        tools: AITool | Sequence[AITool] | None = None,
         response_format: type[BaseModel] | None = None,
         user: str | None = None,
         stop: str | Sequence[str] | None = None,
@@ -402,6 +424,8 @@ class ChatClientBase(AFBaseModel, ABC):
             A chat response from the model.
         """
         if tools is not None:
+            if not isinstance(tools, Sequence):
+                tools = [tools]
             self._tool_map = {tool.name: tool for tool in tools if isinstance(tool, AIFunction)}
         chat_options = ChatOptions(
             ai_model_id=model,
@@ -421,23 +445,20 @@ class ChatClientBase(AFBaseModel, ABC):
             metadata=metadata,
             additional_properties=additional_properties or {},
         )
-        if isinstance(messages, str):
-            messages = [ChatMessage(role="user", text=messages)]
-        if isinstance(messages, ChatMessage):
-            messages = [messages]
+        prepped_messages = self._prepare_messages(messages)
         _prepare_tools_and_tool_choice(chat_options=chat_options)
-        return await self._inner_get_response(messages=messages, chat_options=chat_options, **kwargs)
+        return await self._inner_get_response(messages=prepped_messages, chat_options=chat_options, **kwargs)
 
     async def get_streaming_response(
         self,
-        messages: str | ChatMessage | list[ChatMessage],
+        messages: str | ChatMessage | list[str | ChatMessage],
         *,
         model: str | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
-        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = None,
-        tools: Sequence[AITool] | None = None,
+        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
+        tools: AITool | Sequence[AITool] | None = None,
         response_format: type[BaseModel] | None = None,
         user: str | None = None,
         stop: str | Sequence[str] | None = None,
@@ -476,6 +497,8 @@ class ChatClientBase(AFBaseModel, ABC):
             A stream representing the response(s) from the LLM.
         """
         if tools is not None:
+            if not isinstance(tools, Sequence):
+                tools = [tools]
             self._tool_map = {tool.name: tool for tool in tools if isinstance(tool, AIFunction)}
         chat_options = ChatOptions(
             ai_model_id=model,
@@ -496,12 +519,11 @@ class ChatClientBase(AFBaseModel, ABC):
             additional_properties=additional_properties or {},
             **kwargs,
         )
-        if isinstance(messages, str):
-            messages = [ChatMessage(role="user", text=messages)]
-        if isinstance(messages, ChatMessage):
-            messages = [messages]
+        prepped_messages = self._prepare_messages(messages)
         _prepare_tools_and_tool_choice(chat_options=chat_options)
-        async for update in self._inner_get_streaming_response(messages=messages, chat_options=chat_options, **kwargs):
+        async for update in self._inner_get_streaming_response(
+            messages=prepped_messages, chat_options=chat_options, **kwargs
+        ):
             yield update
 
 

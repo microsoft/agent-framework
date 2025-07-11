@@ -1,8 +1,4 @@
 {
-    "editor.formatOnType": true,
-    "editor.formatOnSave": true,
-    "editor.formatOnPaste": true,
-    "editor.defaultFormatter": "charliermarsh.ruff",
     "cSpell.languageSettings": [
         {
             "languageId": "py",
@@ -16,6 +12,8 @@
             "source.fixAll": "explicit"
         },
         "editor.formatOnSave": true,
+        "editor.formatOnPaste": true,
+        "editor.formatOnType": true,
         "editor.defaultFormatter": "charliermarsh.ruff"
     },
     "python.analysis.autoFormatStrings": true,

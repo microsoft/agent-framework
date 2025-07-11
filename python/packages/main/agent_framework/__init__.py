@@ -17,6 +17,7 @@ _IMPORTS = {
     "AgentThread": "._agents",
     "AITool": "._tools",
     "ai_function": "._tools",
+    "AIFunction": "._tools",
     "AIContent": "._types",
     "AIContents": "._types",
     "TextContent": "._types",
