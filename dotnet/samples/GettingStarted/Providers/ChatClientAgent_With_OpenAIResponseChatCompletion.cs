@@ -24,6 +24,7 @@ public sealed class ChatClientAgent_With_OpenAIResponsesChatCompletion(ITestOutp
     public async Task RunWithChatCompletion(bool useConversationIdThread)
     {
         // Get the chat client to use for the agent.
+#pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
         using var chatClient = new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
             .GetOpenAIResponseClient(TestConfiguration.OpenAI.ChatModelId)
             .AsIChatClient();
@@ -39,6 +40,7 @@ public sealed class ChatClientAgent_With_OpenAIResponsesChatCompletion(ITestOutp
                     RawRepresentationFactory = (_) => new ResponseCreationOptions() { StoredOutputEnabled = useConversationIdThread }
                 }
             });
+#pragma warning restore OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
         // Start a new thread for the agent conversation based on the type.
         AgentThread thread = agent.GetNewThread();

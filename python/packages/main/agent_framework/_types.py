@@ -1552,3 +1552,76 @@ class GeneratedEmbeddings(AFBaseModel, MutableSequence[TEmbedding], Generic[TEmb
         else:
             self.embeddings += values
         return self
+
+
+# region: SpeechToTextOptions
+
+
+class SpeechToTextOptions(AFBaseModel):
+    """Common request settings for Speech to Text AI services."""
+
+    ai_model_id: Annotated[str | None, Field(serialization_alias="model")] = None
+    speech_language: Annotated[str | None, Field(description="Language of the input speech.")] = None
+    text_language: Annotated[str | None, Field(description="Language of the output text.")] = None
+    speech_sample_rate: Annotated[int | None, Field(description="Sample rate of the input speech.")] = None
+    additional_properties: dict[str, Any] = Field(
+        default_factory=dict, description="Provider-specific additional properties."
+    )
+
+    def to_provider_settings(self, by_alias: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:
+        """Convert the SpeechToTextOptions to a dictionary suitable for provider requests.
+
+        Args:
+            by_alias: Use alias names for fields if True.
+            exclude: Additional keys to exclude from the output.
+
+        Returns:
+            Dictionary of settings for provider.
+        """
+        default_exclude = {"additional_properties"}
+        merged_exclude = default_exclude if exclude is None else default_exclude | set(exclude)
+
+        settings: dict[str, Any] = self.model_dump(exclude_none=True, by_alias=by_alias, exclude=merged_exclude)
+        settings = {k: v for k, v in settings.items() if not (isinstance(v, dict) and not v)}
+        settings.update(self.additional_properties)
+        for key in merged_exclude:
+            settings.pop(key, None)
+        return settings
+
+
+# region: TextToSpeechOptions
+
+
+class TextToSpeechOptions(AFBaseModel):
+    """Request settings for text to speech services.
+
+    Tailor this to be more general as more models (aside from OpenAI) are added.
+    """
+
+    ai_model_id: str | None = Field(None, serialization_alias="model")
+    voice: Literal["alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer"] = "alloy"
+    response_format: Literal["mp3", "opus", "aac", "flac", "wav", "pcm"] | None = None
+    speed: Annotated[float | None, Field(ge=0.25, le=4.0)] = None
+    additional_properties: dict[str, Any] = Field(
+        default_factory=dict, description="Provider-specific additional properties."
+    )
+
+    def to_provider_settings(self, by_alias: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:
+        """Convert the SpeechToTextOptions to a dictionary suitable for provider requests.
+
+        Args:
+            by_alias: Use alias names for fields if True.
+            exclude: Additional keys to exclude from the output.
+
+        Returns:
+            Dictionary of settings for provider.
+        """
+        default_exclude = {"additional_properties"}
+        merged_exclude = default_exclude if exclude is None else default_exclude | set(exclude)
+
+        settings: dict[str, Any] = self.model_dump(exclude_none=True, by_alias=by_alias, exclude=merged_exclude)
+        settings = {k: v for k, v in settings.items() if not (isinstance(v, dict) and not v)}
+        settings.update(self.additional_properties)
+        for key in merged_exclude:
+            settings.pop(key, None)
+        return settings

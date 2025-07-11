@@ -2,6 +2,7 @@
 
 import importlib
 import importlib.metadata
+from typing import Any
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -10,6 +11,8 @@ except importlib.metadata.PackageNotFoundError:
 
 _IMPORTS = {
     "get_logger": "._logging",
+    "AFBaseModel": "._pydantic",
+    "AFBaseSettings": "._pydantic",
     "Agent": "._agents",
     "AgentThread": "._agents",
     "AITool": "._tools",
@@ -40,10 +43,12 @@ _IMPORTS = {
     "EmbeddingGenerator": "._clients",
     "InputGuardrail": ".guard_rails",
     "OutputGuardrail": ".guard_rails",
+    "TextToSpeechOptions": "._types",
+    "SpeechToTextOptions": "._types",
 }
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name == "__version__":
         return __version__
     if name in _IMPORTS:
@@ -53,5 +58,5 @@ def __getattr__(name: str):
     raise AttributeError(f"module {__name__} has no attribute {name}")
 
 
-def __dir__():
+def __dir__() -> list[str]:
     return [*list(_IMPORTS.keys()), "__version__"]
