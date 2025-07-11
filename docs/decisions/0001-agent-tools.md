@@ -119,7 +119,7 @@ Function Calling | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | Enables custom, sta
 Code Interpreter | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | Allows agents to execute code for tasks like data analysis or problem-solving.
 Search and Retrieval | ✅ (File Search, Azure AI Search) | ✅ (File Search) | ❌ | ✅ (File Search) | ✅ (Knowledge Bases) | ✅ (Vertex AI Search) | ❌ | Enables agents to search and retrieve information from files, knowledge bases, or enterprise search systems.
 Web Search | ✅ (Bing Search) | ❌ | ✅ | ✅ | ❌ | ✅ (Google Search) | ✅ | Provides real-time access to internet-based content using search engines or web APIs for dynamic, up-to-date information.
-Remote MCP Servers | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ | ✅ | Gives the model access to new capabilities via Model Context Protocol servers.
+Remote MCP Servers | ✅ | ❌ | ❌ | ✅ | ❌ | ✅ | ✅ | Gives the model access to new capabilities via Model Context Protocol servers.
 Computer Use | ❌ | ❌ | ❌ | ✅ | ✅ (ANTHROPIC.Computer) | ❌ | ✅ | Creates agentic workflows that enable a model to control a computer interface.
 OpenAPI Spec Tool | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | Integrates existing OpenAPI specifications for service APIs.
 Stateful Functions | ✅ (Azure Functions) | ❌ | ❌ | ❌ | ✅ (AWS Lambda) | ❌ | ❌ | Supports custom, stateful functions for complex agent actions.
