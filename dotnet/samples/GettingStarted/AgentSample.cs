@@ -159,11 +159,8 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
 
     private async Task AzureAIAgentsPersistentAgentCleanUpAsync(ChatClientAgent agent, AgentThread? thread, CancellationToken cancellationToken)
     {
-        var persistentAgentsClient = agent.ChatClient.GetService<PersistentAgentsClient>();
-        if (persistentAgentsClient is null)
-        {
+        var persistentAgentsClient = agent.ChatClient.GetService<PersistentAgentsClient>() ??
             throw new InvalidOperationException("The provided chat client is not a Persistent Agents Chat Client");
-        }
 
         await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id, cancellationToken);
 

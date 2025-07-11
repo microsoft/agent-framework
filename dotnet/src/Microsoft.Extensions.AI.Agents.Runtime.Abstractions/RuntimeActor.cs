@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI.Agents.Runtime;
 
@@ -70,25 +71,48 @@ public abstract class RuntimeActor : IRuntimeActor
     /// <remarks>
     /// The base implementation of <see cref="OnMessageAsync"/> will use these registered handlers to process incoming messages.
     /// </remarks>
+    protected void RegisterMessageHandler<TInput>(Action<TInput, MessageContext> messageHandler)
+    {
+        _ = Throw.IfNull(messageHandler);
+
+        this.RegisterMessageHandler<TInput, object?>(async (input, ctx, cancellationToken) =>
+        {
+            messageHandler(input, ctx);
+            return null;
+        });
+    }
+
+    /// <summary>Registers a handler for <typeparamref name="TInput"/>.</summary>
+    /// <typeparam name="TInput">The type of the input message for the handler.</typeparam>
+    /// <param name="messageHandler">The handler function that processes the message.</param>
+    /// <exception cref="InvalidOperationException">Thrown when a handler for the specified type is already registered.</exception>
+    /// <remarks>
+    /// The base implementation of <see cref="OnMessageAsync"/> will use these registered handlers to process incoming messages.
+    /// </remarks>
     protected void RegisterMessageHandler<TInput>(Func<TInput, MessageContext, CancellationToken, ValueTask> messageHandler)
     {
-        if (messageHandler is null)
-        {
-            throw new ArgumentNullException(nameof(messageHandler));
-        }
+        _ = Throw.IfNull(messageHandler);
 
-        if (this._handlerInvokers.ContainsKey(typeof(TInput)))
+        this.RegisterMessageHandler<TInput, object?>(async (input, ctx, cancellationToken) =>
         {
-            throw new InvalidOperationException($"A handler for type {typeof(TInput)} is already registered.");
-        }
+            await messageHandler(input, ctx, cancellationToken).ConfigureAwait(false);
+            return null;
+        });
+    }
 
-        this._handlerInvokers.Add(
-            typeof(TInput),
-            async (message, messageContext, cancellationToken) =>
-            {
-                await messageHandler((TInput)message!, messageContext, cancellationToken).ConfigureAwait(false);
-                return null; // No return value for void handlers
-            });
+    /// <summary>Registers a handler for <typeparamref name="TInput"/>.</summary>
+    /// <typeparam name="TInput">The type of the input message for the handler.</typeparam>
+    /// <typeparam name="TOutput">The type of the output message for the handler.</typeparam>
+    /// <param name="messageHandler">The handler function that processes the message.</param>
+    /// <exception cref="InvalidOperationException">Thrown when a handler for the specified type is already registered.</exception>
+    /// <remarks>
+    /// The base implementation of <see cref="OnMessageAsync"/> will use these registered handlers to process incoming messages.
+    /// </remarks>
+    protected void RegisterMessageHandler<TInput, TOutput>(Func<TInput, MessageContext, TOutput> messageHandler)
+    {
+        _ = Throw.IfNull(messageHandler);
+
+        this.RegisterMessageHandler<TInput, object?>(async (input, ctx, cancellationToken) => messageHandler(input, ctx));
     }
 
     /// <summary>Registers a handler for <typeparamref name="TInput"/> that produces a <typeparamref name="TOutput"/>.</summary>
@@ -101,10 +125,7 @@ public abstract class RuntimeActor : IRuntimeActor
     /// </remarks>
     protected void RegisterMessageHandler<TInput, TOutput>(Func<TInput, MessageContext, CancellationToken, ValueTask<TOutput>> messageHandler)
     {
-        if (messageHandler is null)
-        {
-            throw new ArgumentNullException(nameof(messageHandler));
-        }
+        _ = Throw.IfNull(messageHandler);
 
         if (this._handlerInvokers.ContainsKey(typeof(TInput)))
         {
@@ -113,11 +134,7 @@ public abstract class RuntimeActor : IRuntimeActor
 
         this._handlerInvokers.Add(
             typeof(TInput),
-            async (message, messageContext, cancellationToken) =>
-            {
-                TOutput? result = await messageHandler((TInput)message!, messageContext, cancellationToken).ConfigureAwait(false);
-                return (object?)result;
-            });
+            async (message, messageContext, cancellationToken) => await messageHandler((TInput)message!, messageContext, cancellationToken).ConfigureAwait(false));
     }
 
     /// <summary>

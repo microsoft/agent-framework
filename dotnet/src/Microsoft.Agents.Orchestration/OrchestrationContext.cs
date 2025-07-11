@@ -1,6 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
 
@@ -14,17 +19,17 @@ public sealed class OrchestrationContext
     internal OrchestrationContext(
         string orchestration,
         TopicId topic,
-        OrchestrationResponseCallback? responseCallback,
-        OrchestrationStreamingCallback? streamingCallback,
+        Func<IEnumerable<ChatMessage>, ValueTask>? responseCallback,
+        Func<AgentRunResponseUpdate, ValueTask>? streamingCallback,
         ILoggerFactory loggerFactory,
-        CancellationToken cancellation)
+        CancellationToken cancellationToken)
     {
         this.Orchestration = orchestration;
         this.Topic = topic;
         this.ResponseCallback = responseCallback;
         this.StreamingResponseCallback = streamingCallback;
         this.LoggerFactory = loggerFactory;
-        this.Cancellation = cancellation;
+        this.CancellationToken = cancellationToken;
     }
 
     /// <summary>
@@ -43,7 +48,7 @@ public sealed class OrchestrationContext
     /// <summary>
     /// Gets the cancellation token that can be used to observe cancellation requests for the orchestration.
     /// </summary>
-    public CancellationToken Cancellation { get; }
+    public CancellationToken CancellationToken { get; }
 
     /// <summary>
     /// Gets the associated logger factory for creating loggers within the orchestration context.
@@ -53,10 +58,10 @@ public sealed class OrchestrationContext
     /// <summary>
     /// Optional callback that is invoked for every agent response.
     /// </summary>
-    public OrchestrationResponseCallback? ResponseCallback { get; }
+    public Func<IEnumerable<ChatMessage>, ValueTask>? ResponseCallback { get; }
 
     /// <summary>
     /// Optional callback that is invoked for every agent response.
     /// </summary>
-    public OrchestrationStreamingCallback? StreamingResponseCallback { get; }
+    public Func<AgentRunResponseUpdate, ValueTask>? StreamingResponseCallback { get; }
 }

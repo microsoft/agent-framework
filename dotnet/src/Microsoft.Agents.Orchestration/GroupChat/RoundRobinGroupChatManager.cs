@@ -6,7 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 
-namespace Microsoft.Agents.Orchestration.GroupChat;
+namespace Microsoft.Agents.Orchestration;
 
 /// <summary>
 /// A <see cref="GroupChatManager"/> that selects agents in a round-robin fashion.

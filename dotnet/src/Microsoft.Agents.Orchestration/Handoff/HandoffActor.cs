@@ -9,7 +9,7 @@ using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
 
-namespace Microsoft.Agents.Orchestration.Handoff;
+namespace Microsoft.Agents.Orchestration;
 
 /// <summary>
 /// An actor used with the <see cref="HandoffOrchestration{TInput,TOutput}"/>.
@@ -54,48 +54,35 @@ internal sealed class HandoffActor : AgentActor
                 ToolMode = ChatToolMode.Auto
             };
 
-        this.RegisterMessageHandler<HandoffMessages.InputTask>(this.HandleAsync);
+        this.RegisterMessageHandler<HandoffMessages.InputTask>(this.Handle);
         this.RegisterMessageHandler<HandoffMessages.Request>(this.HandleAsync);
-        this.RegisterMessageHandler<HandoffMessages.Response>(this.HandleAsync);
+        this.RegisterMessageHandler<HandoffMessages.Response>(this.Handle);
     }
 
     /// <inheritdoc/>
-    protected override Task<AgentRunResponse> InvokeAsync(
-        IReadOnlyCollection<ChatMessage> messages,
-        AgentRunOptions options,
-        CancellationToken cancellationToken = default) =>
-        this._chatAgent.RunAsync(
-            [.. messages],
-            this.Thread,
-            options,
-            this._options,
-            cancellationToken);
+    protected override Task<AgentRunResponse> InvokeCoreAsync(
+        IReadOnlyCollection<ChatMessage> messages, AgentRunOptions? options, CancellationToken cancellationToken) =>
+        this._chatAgent.RunAsync([.. messages], this.Thread, options, this._options, cancellationToken);
 
     /// <inheritdoc/>
-    protected override IAsyncEnumerable<AgentRunResponseUpdate> InvokeStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentRunOptions options, CancellationToken cancellationToken) =>
-        this._chatAgent.RunStreamingAsync(
-            messages,
-            this.Thread,
-            options,
-            this._options,
-            cancellationToken);
+    protected override IAsyncEnumerable<AgentRunResponseUpdate> InvokeStreamingCoreAsync(
+        IReadOnlyCollection<ChatMessage> messages, AgentRunOptions? options, CancellationToken cancellationToken) =>
+        this._chatAgent.RunStreamingAsync(messages, this.Thread, options, this._options, cancellationToken);
 
     /// <summary>
     /// Gets or sets the callback to be invoked for interactive input.
     /// </summary>
     public OrchestrationInteractiveCallback? InteractiveCallback { get; init; }
 
-    private ValueTask HandleAsync(HandoffMessages.InputTask item, MessageContext messageContext, CancellationToken cancellationToken)
+    private void Handle(HandoffMessages.InputTask item, MessageContext messageContext)
     {
         this._taskSummary = null;
         this._cache.AddRange(item.Messages);
-        return default;
     }
 
-    private ValueTask HandleAsync(HandoffMessages.Response item, MessageContext messageContext, CancellationToken cancellationToken)
+    private void Handle(HandoffMessages.Response item, MessageContext messageContext)
     {
         this._cache.Add(item.Message);
-        return default;
     }
 
     private async ValueTask HandleAsync(HandoffMessages.Request item, MessageContext messageContext, CancellationToken cancellationToken)
@@ -109,7 +96,7 @@ internal sealed class HandoffActor : AgentActor
                 ChatMessage response;
                 try
                 {
-                    response = await this.InvokeAsync(this._cache, cancellationToken).ConfigureAwait(false);
+                    response = await this.RunAsync(this._cache, cancellationToken).ConfigureAwait(false);
                 }
                 catch (Exception exception)
                 {
@@ -126,7 +113,7 @@ internal sealed class HandoffActor : AgentActor
                 // Since we don't want to publish that message, so we only publish if the response is an ASSISTANT message.
                 if (response.Role == ChatRole.Assistant)
                 {
-                    await this.PublishMessageAsync(new HandoffMessages.Response { Message = response }, this.Context.Topic, messageId: null, cancellationToken).ConfigureAwait(false);
+                    await this.PublishMessageAsync(new HandoffMessages.Response(response), this.Context.Topic, messageId: null, cancellationToken).ConfigureAwait(false);
                 }
 
                 if (this._handoffAgent != null)
@@ -141,7 +128,7 @@ internal sealed class HandoffActor : AgentActor
                 if (this.InteractiveCallback != null && this._taskSummary == null)
                 {
                     ChatMessage input = await this.InteractiveCallback().ConfigureAwait(false);
-                    await this.PublishMessageAsync(new HandoffMessages.Response { Message = input }, this.Context.Topic, messageId: null, cancellationToken).ConfigureAwait(false);
+                    await this.PublishMessageAsync(new HandoffMessages.Response(input), this.Context.Topic, messageId: null, cancellationToken).ConfigureAwait(false);
                     this._cache.Add(input);
                     continue;
                 }
@@ -187,7 +174,7 @@ internal sealed class HandoffActor : AgentActor
     {
         this.Logger.LogHandoffSummary(this.Id, summary);
         this._taskSummary = summary;
-        await this.PublishMessageAsync(new HandoffMessages.Result { Message = new ChatMessage(ChatRole.Assistant, summary) }, this._resultHandoff, cancellationToken).ConfigureAwait(false);
+        await this.PublishMessageAsync(new HandoffMessages.Result(new(ChatRole.Assistant, summary)), this._resultHandoff, cancellationToken).ConfigureAwait(false);
 
         if (FunctionInvokingChatClient.CurrentContext is not null)
         {

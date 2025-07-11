@@ -5,7 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI.Agents;
 
-namespace Microsoft.Agents.Orchestration.Concurrent;
+namespace Microsoft.Agents.Orchestration;
 
 /// <summary>
 /// An orchestration that broadcasts the input message to each agent.

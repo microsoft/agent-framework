@@ -26,13 +26,12 @@ public sealed class MockAgent : TestAgent
 {
     public MockAgent(ActorId id, IAgentRuntime runtime, string description) : base(id, runtime, description)
     {
-        this.RegisterMessageHandler<string>(this.HandleAsync);
+        this.RegisterMessageHandler<string>(this.Handle);
     }
 
-    public ValueTask HandleAsync(string item, MessageContext messageContext, CancellationToken cancellationToken)
+    public void Handle(string item, MessageContext messageContext)
     {
         this.ReceivedMessages.Add(item);
-        return default;
     }
 
     public override async ValueTask<JsonElement> SaveStateAsync(CancellationToken cancellationToken = default)

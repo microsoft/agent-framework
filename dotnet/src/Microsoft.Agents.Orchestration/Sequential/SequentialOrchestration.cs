@@ -3,13 +3,12 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using Microsoft.Agents.Orchestration.Extensions;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
 
-namespace Microsoft.Agents.Orchestration.Sequential;
+namespace Microsoft.Agents.Orchestration;
 
 /// <summary>
 /// An orchestration that provides the input message to the first agent
@@ -33,7 +32,7 @@ public class SequentialOrchestration<TInput, TOutput> : AgentOrchestration<TInpu
         {
             throw new ArgumentException("Entry agent is not defined.", nameof(entryAgent));
         }
-        await runtime.PublishMessageAsync(input.AsRequestMessage(), entryAgent.Value).ConfigureAwait(false);
+        await runtime.PublishMessageAsync(new SequentialMessages.Request([.. input]), entryAgent.Value).ConfigureAwait(false);
     }
 
     /// <inheritdoc />

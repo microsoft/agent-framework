@@ -1,9 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.Orchestration;
-using Microsoft.Agents.Orchestration.Sequential;
 using Microsoft.Extensions.AI.Agents;
-using Microsoft.Extensions.AI.Agents.Runtime.InProcess;
 
 namespace Orchestration;
 
@@ -64,18 +62,11 @@ public class SequentialOrchestration_Intro(ITestOutputHelper output) : Orchestra
                 StreamingResponseCallback = streamedResponse ? monitor.StreamingResultCallback : null,
             };
 
-        // Start the runtime
-        await using InProcessRuntime runtime = new();
-        await runtime.StartAsync();
-
         // Run the orchestration
         string input = "An eco-friendly stainless steel water bottle that keeps drinks cold for 24 hours";
         Console.WriteLine($"\n# INPUT: {input}\n");
-        OrchestrationResult<string> result = await orchestration.InvokeAsync(input, runtime);
-        string text = await result.GetValueAsync(TimeSpan.FromSeconds(ResultTimeoutInSeconds));
-        Console.WriteLine($"\n# RESULT: {text}");
-
-        await runtime.RunUntilIdleAsync();
+        OrchestrationResult<string> result = await orchestration.InvokeAsync(input);
+        Console.WriteLine($"\n# RESULT: {await result}");
 
         this.DisplayHistory(monitor.History);
     }

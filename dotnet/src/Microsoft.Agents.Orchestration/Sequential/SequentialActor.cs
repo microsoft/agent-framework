@@ -8,7 +8,7 @@ using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
 
-namespace Microsoft.Agents.Orchestration.Sequential;
+namespace Microsoft.Agents.Orchestration;
 
 /// <summary>
 /// An actor used with the <see cref="SequentialOrchestration{TInput,TOutput}"/>.
@@ -48,10 +48,10 @@ internal sealed class SequentialActor : AgentActor
 
         this.Logger.LogSequentialAgentInvoke(this.Id);
 
-        ChatMessage response = await this.InvokeAsync(input, cancellationToken).ConfigureAwait(false);
+        ChatMessage response = await this.RunAsync(input, cancellationToken).ConfigureAwait(false);
 
         this.Logger.LogSequentialAgentResult(this.Id, response.Text);
 
-        await this.PublishMessageAsync(response.AsResponseMessage(), this._nextAgent, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await this.PublishMessageAsync(new SequentialMessages.Response(response), this._nextAgent, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 }

@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Diagnostics.CodeAnalysis;
 
 namespace Microsoft.Extensions.AI.Agents.Runtime.InProcess.Tests;
 
@@ -23,7 +22,7 @@ public class TestSubscription(string topicType, ActorType agentType, string? id 
 
     public bool Equals(ISubscriptionDefinition? other) => this.Id == other?.Id;
 
-    public override bool Equals([NotNullWhen(true)] object? obj) => obj is TestSubscription other && other.Equals(this);
+    public override bool Equals(object? obj) => obj is TestSubscription other && other.Equals(this);
 
     public override int GetHashCode() => this.Id.GetHashCode();
 

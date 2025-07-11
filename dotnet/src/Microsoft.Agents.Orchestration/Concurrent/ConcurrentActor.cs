@@ -7,7 +7,7 @@ using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
 
-namespace Microsoft.Agents.Orchestration.Concurrent;
+namespace Microsoft.Agents.Orchestration;
 
 /// <summary>
 /// An <see cref="AgentActor"/> used with the <see cref="ConcurrentOrchestration{TInput, TOutput}"/>.
@@ -37,10 +37,10 @@ internal sealed class ConcurrentActor : AgentActor
     {
         this.Logger.LogConcurrentAgentInvoke(this.Id);
 
-        ChatMessage response = await this.InvokeAsync(item.Messages, cancellationToken).ConfigureAwait(false);
+        ChatMessage response = await this.RunAsync(item.Messages, cancellationToken).ConfigureAwait(false);
 
         this.Logger.LogConcurrentAgentResult(this.Id, response.Text);
 
-        await this.PublishMessageAsync(response.AsResultMessage(), this._handoffActor, cancellationToken).ConfigureAwait(false);
+        await this.PublishMessageAsync(new ConcurrentMessages.Result(response), this._handoffActor, cancellationToken).ConfigureAwait(false);
     }
 }

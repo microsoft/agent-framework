@@ -25,12 +25,7 @@ public abstract class AgentActor : OrchestrationActor
     /// <param name="agent">An <see cref="Agent"/>.</param>
     /// <param name="logger">The logger to use for the actor</param>
     protected AgentActor(ActorId id, IAgentRuntime runtime, OrchestrationContext context, Agent agent, ILogger? logger = null)
-        : base(
-            id,
-            runtime,
-            context,
-            agent.Description,
-            logger)
+        : base(id, runtime, context, agent.Description, logger)
     {
         this.Agent = agent;
         this.Thread = this.Agent.GetNewThread();
@@ -55,102 +50,75 @@ public abstract class AgentActor : OrchestrationActor
     }
 
     /// <summary>
-    /// Invokes the agent for a regular (not streamed) response.
+    /// Invokes the agent for a non-streamed responses.
     /// </summary>
     /// <param name="messages">The messages to send.</param>
     /// <param name="options">The options for running the agent.</param>
     /// <param name="cancellationToken">A cancellation token for the operation.</param>
     /// <returns>A task that represents the asynchronous operation.</returns>
     /// <remarks>
-    /// Override this method to customize the invocation of the agent.
+    /// This method is not intended to be called directly; instead, use <see cref="RunAsync"/>.
+    /// This method exists to be overridden in derived classes in order to customize the invocation of the agent by <see cref="RunAsync"/>.
     /// </remarks>
-    protected virtual Task<AgentRunResponse> InvokeAsync(
-        IReadOnlyCollection<ChatMessage> messages,
-        AgentRunOptions options,
-        CancellationToken cancellationToken = default) =>
-        this.Agent.RunAsync(
-            [.. messages],
-            this.Thread,
-            options,
-            cancellationToken);
+    protected virtual Task<AgentRunResponse> InvokeCoreAsync(
+        IReadOnlyCollection<ChatMessage> messages, AgentRunOptions? options, CancellationToken cancellationToken) =>
+        this.Agent.RunAsync([.. messages], this.Thread, options, cancellationToken);
 
     /// <summary>
-    /// Invokes the agent for a streamed response.
+    /// Invokes the agent for a streamed responses.
     /// </summary>
     /// <param name="messages">The messages to send.</param>
     /// <param name="options">The options for running the agent.</param>
     /// <param name="cancellationToken">A cancellation token for the operation.</param>
     /// <returns>A task that represents the asynchronous operation.</returns>
     /// <remarks>
-    /// Override this method to customize the invocation of the agent.
+    /// This method is not intended to be called directly; instead, use <see cref="RunAsync"/>.
+    /// This method exists to be overridden in derived classes in order to customize the invocation of the agent by <see cref="RunAsync"/>.
     /// </remarks>
-    protected virtual IAsyncEnumerable<AgentRunResponseUpdate> InvokeStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentRunOptions options, CancellationToken cancellationToken) =>
-        this.Agent.RunStreamingAsync(
-            messages,
-            this.Thread,
-            options,
-            cancellationToken);
+    protected virtual IAsyncEnumerable<AgentRunResponseUpdate> InvokeStreamingCoreAsync(
+        IReadOnlyCollection<ChatMessage> messages, AgentRunOptions? options, CancellationToken cancellationToken) =>
+        this.Agent.RunStreamingAsync(messages, this.Thread, options, cancellationToken);
 
     /// <summary>
-    /// Invokes the agent with a single chat message.
-    /// This method sets the message role to <see cref="ChatRole.User"/> and delegates to the overload accepting multiple messages.
-    /// </summary>
-    /// <param name="input">The chat message content to send.</param>
-    /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
-    /// <returns>A task that returns the response <see cref="ChatMessage"/>.</returns>
-    protected ValueTask<ChatMessage> InvokeAsync(ChatMessage input, CancellationToken cancellationToken) =>
-        this.InvokeAsync([input], cancellationToken);
-
-    /// <summary>
-    /// Invokes the agent with input messages and respond with both streamed and regular messages.
+    /// Runs the agent with input messages and respond with both streamed and regular messages.
     /// </summary>
     /// <param name="input">The list of chat messages to send.</param>
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
     /// <returns>A task that returns the response <see cref="ChatMessage"/>.</returns>
-    protected async ValueTask<ChatMessage> InvokeAsync(IEnumerable<ChatMessage> input, CancellationToken cancellationToken)
+    protected async ValueTask<ChatMessage> RunAsync(IEnumerable<ChatMessage> input, CancellationToken cancellationToken)
     {
-        this.Context.Cancellation.ThrowIfCancellationRequested();
+        using CancellationTokenSource combined = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, this.Context.CancellationToken);
+        cancellationToken = combined.Token;
 
-        AgentRunOptions options = new();
-
-        if (this.Context.StreamingResponseCallback == null)
+        // Utilize streaming iff a streaming callback is provided; otherwise, use the non-streaming API.
+        AgentRunResponse response;
+        if (this.Context.StreamingResponseCallback is { } streamingCallback)
         {
-            // No need to utilize streaming if no callback is provided
-            AgentRunResponse response = await this.InvokeAsync([.. input], options, cancellationToken).ConfigureAwait(false);
+            // For streaming, enumerate all the updates, invoking the callback for each, and storing them all.
+            // Then convert them all into a single response instance.
+            List<AgentRunResponseUpdate> updates = [];
 
-            if (this.Context.ResponseCallback is not null)
+            await foreach (AgentRunResponseUpdate update in this.InvokeStreamingCoreAsync([.. input], options: null, cancellationToken).WithCancellation(this.Context.CancellationToken).ConfigureAwait(false))
             {
-                await this.Context.ResponseCallback.Invoke(response.Messages).ConfigureAwait(false);
+                updates.Add(update);
+                await streamingCallback(update).ConfigureAwait(false);
             }
 
-            return response.Messages.Last();
+            response = updates.ToAgentRunResponse();
         }
-
-        IAsyncEnumerable<AgentRunResponseUpdate> streamedResponses = this.InvokeStreamingAsync([.. input], options, cancellationToken);
-        AgentRunResponseUpdate? lastStreamedResponse = null;
-        List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate streamedResponse in streamedResponses.ConfigureAwait(false))
+        else
         {
-            this.Context.Cancellation.ThrowIfCancellationRequested();
-
-            await HandleStreamedMessage(lastStreamedResponse, isFinal: false).ConfigureAwait(false);
-
-            lastStreamedResponse = streamedResponse;
+            // For non-streaming, just invoke the non-streaming method and get back the response.
+            response = await this.InvokeCoreAsync([.. input], options: null, cancellationToken).ConfigureAwait(false);
         }
 
-        return updates.ToAgentRunResponse().Messages.Last();
-
-        async ValueTask HandleStreamedMessage(AgentRunResponseUpdate? streamedResponse, bool isFinal)
+        // Regardless of whether we invoked streaming callbacks for individual updates, invoke the non-streaming callback with the final response instance.
+        // This can be used as an indication of completeness if someone otherwise only cares about the streaming updates.
+        if (this.Context.ResponseCallback is { } responseCallback)
         {
-            if (this.Context.StreamingResponseCallback != null && streamedResponse != null)
-            {
-                await this.Context.StreamingResponseCallback.Invoke(streamedResponse, isFinal).ConfigureAwait(false);
-            }
-
-            if (streamedResponse != null)
-            {
-                updates.Add(streamedResponse);
-            }
+            await responseCallback.Invoke(response.Messages).ConfigureAwait(false);
         }
+
+        return response.Messages.LastOrDefault() ?? new();
     }
 }

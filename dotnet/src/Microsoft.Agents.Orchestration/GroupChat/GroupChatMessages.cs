@@ -3,28 +3,17 @@
 using System.Collections.Generic;
 using Microsoft.Extensions.AI;
 
-namespace Microsoft.Agents.Orchestration.GroupChat;
+namespace Microsoft.Agents.Orchestration;
 
 /// <summary>
 /// Common messages used for agent chat patterns.
 /// </summary>
-public static class GroupChatMessages
+internal static class GroupChatMessages
 {
-    /// <summary>
-    /// An empty message instance as a default.
-    /// </summary>
-    internal static readonly ChatMessage Empty = new();
-
     /// <summary>
     /// Broadcast a message to all <see cref="GroupChatAgentActor"/>.
     /// </summary>
-    public sealed class Group
-    {
-        /// <summary>
-        /// The chat message being broadcast.
-        /// </summary>
-        public IEnumerable<ChatMessage> Messages { get; init; } = [];
-    }
+    public sealed record Group(IEnumerable<ChatMessage> Messages);
 
     /// <summary>
     /// Reset/clear the conversation history for all <see cref="GroupChatAgentActor"/>.
@@ -34,13 +23,7 @@ public static class GroupChatMessages
     /// <summary>
     /// The final result.
     /// </summary>
-    public sealed class Result
-    {
-        /// <summary>
-        /// The chat response message.
-        /// </summary>
-        public ChatMessage Message { get; init; } = Empty;
-    }
+    public sealed record Result(ChatMessage Message);
 
     /// <summary>
     /// Signal a <see cref="GroupChatAgentActor"/> to respond.
@@ -50,36 +33,11 @@ public static class GroupChatMessages
     /// <summary>
     /// The input task.
     /// </summary>
-    public sealed class InputTask
+    public sealed record InputTask(IEnumerable<ChatMessage> Messages)
     {
         /// <summary>
-        /// A task that does not require any action.
+        /// Gets an input task that does not require any action.
         /// </summary>
-        public static readonly InputTask None = new();
-
-        /// <summary>
-        /// The input that defines the task goal.
-        /// </summary>
-        public IEnumerable<ChatMessage> Messages { get; init; } = [];
+        public static InputTask None { get; } = new([]);
     }
-
-    /// <summary>
-    /// Extension method to convert a <see cref="ChatMessage"/> to a <see cref="Group"/>.
-    /// </summary>
-    public static Group AsGroupMessage(this ChatMessage message) => new() { Messages = [message] };
-
-    /// <summary>
-    /// Extension method to convert a <see cref="ChatMessage"/> to a <see cref="Group"/>.
-    /// </summary>
-    public static Group AsGroupMessage(this IEnumerable<ChatMessage> messages) => new() { Messages = messages };
-
-    /// <summary>
-    /// Extension method to convert a <see cref="ChatMessage"/> to a <see cref="Result"/>.
-    /// </summary>
-    public static InputTask AsInputTaskMessage(this IEnumerable<ChatMessage> messages) => new() { Messages = messages };
-
-    /// <summary>
-    /// Extension method to convert a <see cref="ChatMessage"/> to a <see cref="Result"/>.
-    /// </summary>
-    public static Result AsResultMessage(this string text) => new() { Message = new(ChatRole.Assistant, text) };
 }

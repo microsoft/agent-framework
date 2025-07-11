@@ -18,25 +18,20 @@ public class InProcessRuntimeTests()
         await using InProcessRuntime runtime = new();
 
         // Assert
-        Assert.False(runtime.DeliverToSelf);
-        Assert.Equal(0, runtime._messageQueueCount);
+        Assert.Equal(0, runtime.MessageCountForTesting);
 
-        // Act
-        await runtime.StopAsync(); // Already stopped
-        await runtime.RunUntilIdleAsync(); // Never throws
-
-        await runtime.StartAsync();
+        runtime.Start();
 
         // Assert
         // Invalid to start runtime that is already started
-        await Assert.ThrowsAsync<InvalidOperationException>(() => runtime.StartAsync());
-        Assert.Equal(0, runtime._messageQueueCount);
+        Assert.Throws<InvalidOperationException>(runtime.Start);
+        Assert.Equal(0, runtime.MessageCountForTesting);
 
         // Act
-        await runtime.StopAsync();
+        await runtime.DisposeAsync();
 
         // Assert
-        Assert.Equal(0, runtime._messageQueueCount);
+        Assert.Equal(0, runtime.MessageCountForTesting);
     }
 
     [Fact]
@@ -194,26 +189,21 @@ public class InProcessRuntimeTests()
         Assert.Empty(agent.ReceivedMessages);
 
         // Act: Send message
-        await runtime.StartAsync();
+        runtime.Start();
         await runtime.SendMessageAsync("TestMessage", agent.Id);
-        await runtime.RunUntilIdleAsync();
+        await runtime.DisposeAsync();
 
         // Assert
-        Assert.Equal(0, runtime._messageQueueCount);
+        Assert.Equal(0, runtime.MessageCountForTesting);
         Assert.Single(agent.ReceivedMessages);
     }
 
-    // Agent will not deliver to self will success when runtime.DeliverToSelf is false (default)
-    [Theory]
-    [InlineData(false, 0)]
-    [InlineData(true, 1)]
-    public async Task RuntimeAgentPublishToSelfTestAsync(bool selfPublish, int receiveCount)
+    // Agent will not deliver to self
+    [Fact]
+    public async Task RuntimeAgentPublishToSelfTestAsync()
     {
         // Arrange
-        await using InProcessRuntime runtime = new()
-        {
-            DeliverToSelf = selfPublish
-        };
+        await using InProcessRuntime runtime = new();
 
         MockAgent? agent = null;
         await runtime.RegisterActorFactoryAsync(new("MyAgent"), async (id, runtime) =>
@@ -238,12 +228,12 @@ public class InProcessRuntimeTests()
         await runtime.AddSubscriptionAsync(new TestSubscription(TopicType, agentId.Type));
 
         // Act
-        await runtime.StartAsync();
+        runtime.Start();
         await runtime.PublishMessageAsync("SelfMessage", new TopicId(TopicType), sender: agentId);
-        await runtime.RunUntilIdleAsync();
+        await runtime.DisposeAsync();
 
         // Assert
-        Assert.Equal(receiveCount, agent.ReceivedMessages.Count);
+        Assert.Empty(agent.ReceivedMessages);
     }
 
     [Fact]
@@ -263,9 +253,9 @@ public class InProcessRuntimeTests()
         const string TopicType = "TestTopic";
         await runtime.AddSubscriptionAsync(new TestSubscription(TopicType, agentId.Type));
 
-        await runtime.StartAsync();
+        runtime.Start();
         await runtime.PublishMessageAsync("test", new TopicId(TopicType));
-        await runtime.RunUntilIdleAsync();
+        await runtime.DisposeAsync();
 
         // Act: Save the state
         JsonElement savedState = await runtime.SaveStateAsync();
@@ -286,8 +276,7 @@ public class InProcessRuntimeTests()
 
         // Act: Start new runtime and restore the state
         agent = null;
-        await using InProcessRuntime newRuntime = new();
-        await newRuntime.StartAsync();
+        await using InProcessRuntime newRuntime = InProcessRuntime.StartNew();
         await newRuntime.RegisterActorFactoryAsync(new("MyAgent"), async (id, runtime) =>
         {
             agent = new MockAgent(id, runtime, "another agent");

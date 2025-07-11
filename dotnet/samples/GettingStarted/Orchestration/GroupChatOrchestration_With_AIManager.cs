@@ -1,10 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.Orchestration;
-using Microsoft.Agents.Orchestration.GroupChat;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
-using Microsoft.Extensions.AI.Agents.Runtime.InProcess;
 
 namespace Orchestration;
 
@@ -132,17 +130,10 @@ public class GroupChatOrchestration_With_AIManager(ITestOutputHelper output) : O
                 ResponseCallback = monitor.ResponseCallback,
             };
 
-        // Start the runtime
-        await using InProcessRuntime runtime = new();
-        await runtime.StartAsync();
-
         // Run the orchestration
         Console.WriteLine($"\n# INPUT: {topic}\n");
-        OrchestrationResult<string> result = await orchestration.InvokeAsync(topic, runtime);
-        string text = await result.GetValueAsync(TimeSpan.FromSeconds(ResultTimeoutInSeconds * 3));
-        Console.WriteLine($"\n# RESULT: {text}");
-
-        await runtime.RunUntilIdleAsync();
+        OrchestrationResult<string> result = await orchestration.InvokeAsync(topic);
+        Console.WriteLine($"\n# RESULT: {await result}");
 
         this.DisplayHistory(monitor.History);
     }

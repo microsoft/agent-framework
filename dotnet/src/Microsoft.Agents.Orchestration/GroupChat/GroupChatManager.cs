@@ -5,7 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 
-namespace Microsoft.Agents.Orchestration.GroupChat;
+namespace Microsoft.Agents.Orchestration;
 
 /// <summary>
 /// Represents the result of a group chat manager operation, including a value and a reason.

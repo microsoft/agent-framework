@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.Orchestration.Transforms;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
@@ -19,8 +18,8 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
     private sealed class ResultActor<TResult> : OrchestrationActor
     {
         private readonly TaskCompletionSource<TOutput> _completionSource;
-        private readonly OrchestrationResultTransform<TResult> _transformResult;
-        private readonly OrchestrationOutputTransform<TOutput> _transform;
+        private readonly Func<TResult, IList<ChatMessage>> _transformResult;
+        private readonly Func<IList<ChatMessage>, CancellationToken, ValueTask<TOutput>> _transform;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AgentOrchestration{TInput, TOutput}.ResultActor{TResult}"/> class.
@@ -36,8 +35,8 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
             ActorId id,
             IAgentRuntime runtime,
             OrchestrationContext context,
-            OrchestrationResultTransform<TResult> transformResult,
-            OrchestrationOutputTransform<TOutput> transformOutput,
+            Func<TResult, IList<ChatMessage>> transformResult,
+            Func<IList<ChatMessage>, CancellationToken, ValueTask<TOutput>> transformOutput,
             TaskCompletionSource<TOutput> completionSource,
             ILogger<ResultActor<TResult>>? logger = null)
             : base(id, runtime, context, $"{id.Type}_Actor", logger)
