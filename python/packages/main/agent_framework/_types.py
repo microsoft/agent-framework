@@ -1631,6 +1631,17 @@ class AgentRunResponse(AFBaseModel):
         _finalize_response(msg)
         return msg
 
+    @classmethod
+    async def from_agent_response_generator(
+        cls: type[TAgentRunResponse], updates: AsyncIterable["AgentRunResponseUpdate"]
+    ) -> TAgentRunResponse:
+        """Joins multiple updates into a single AgentRunResponse."""
+        msg = cls(messages=[])
+        async for update in updates:
+            _process_update(msg, update)
+        _finalize_response(msg)
+        return msg
+
     def __str__(self) -> str:
         return self.text
 
