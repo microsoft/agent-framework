@@ -4,7 +4,7 @@ from . import __version__  # type: ignore[attr-defined]
 from ._agents import Agent, AgentThread
 from ._clients import ChatClient, ChatClientBase, EmbeddingGenerator, use_tool_calling
 from ._logging import get_logger
-from ._pydantic import AFBaseModel, AFBaseSettings
+from ._pydantic import AFBaseModel, AFBaseSettings, HttpsUrl
 from ._tools import AIFunction, AITool, ai_function
 from ._types import (
     AIContent,
@@ -56,6 +56,7 @@ __all__ = [
     "FunctionCallContent",
     "FunctionResultContent",
     "GeneratedEmbeddings",
+    "HttpsUrl",
     "InputGuardrail",
     "OutputGuardrail",
     "SpeechToTextOptions",

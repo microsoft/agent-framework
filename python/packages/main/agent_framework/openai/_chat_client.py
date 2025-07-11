@@ -239,11 +239,11 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
                     function_call = self._openai_content_parser(content)
                     if "tool_calls" not in args:
                         args["tool_calls"] = []
-                    args["tool_calls"].append(function_call)
+                    args["tool_calls"].append(function_call)  # type: ignore
                 case _:
                     if "content" not in args:
                         args["content"] = []
-                    args["content"].append(self._openai_content_parser(content))
+                    args["content"].append(self._openai_content_parser(content))  # type: ignore
         if "content" in args or "tool_calls" in args:
             all_messages.append(args)
         return all_messages

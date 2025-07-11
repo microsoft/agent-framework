@@ -46,6 +46,12 @@ class ServiceContentFilterException(ServiceResponseException):
     pass
 
 
+class ServiceInvalidAuthError(ServiceException):
+    """An error occurred while authenticating the service."""
+
+    pass
+
+
 class ServiceInvalidExecutionSettingsError(ServiceResponseException):
     """An error occurred while validating the execution settings of the service."""
 

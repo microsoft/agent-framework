@@ -24,6 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework",
+    "azure-identity >= 1.13",
 ]
 
 [tool.pytest.ini_options]
