@@ -16,6 +16,36 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
     private const string ParrotInstructions = "Repeat the user message in the voice of a pirate and then end with a parrot sound.";
 
     /// <summary>
+    /// Demonstrate the most basic Agent case, where we do not have a server-side agent
+    /// but just an in-memory agent, backed by an inference service,
+    /// and we are invoking with text input, and getting back a text response.
+    /// </summary>
+    [Theory]
+    [InlineData(ChatClientProviders.AzureOpenAI)]
+    [InlineData(ChatClientProviders.OpenAIChatCompletion)]
+    [InlineData(ChatClientProviders.OpenAIResponses)]
+    public async Task RunBasic(ChatClientProviders provider)
+    {
+        // Define the options for the chat client agent.
+        var agentOptions = new ChatClientAgentOptions
+        {
+            Name = ParrotName,
+            Instructions = ParrotInstructions,
+        };
+
+        // Get the chat client to communicate with the inference service backing our agent.
+        // Any implementation of Microsoft.Extensions.AI.Agents.IChatClient can be used with the ChatClientAgent.
+        using var chatClient = base.GetChatClient(provider, agentOptions);
+
+        // Define the agent
+        var agent = new ChatClientAgent(chatClient, agentOptions);
+
+        // Invoke the agent and output the text result.
+        var response = await agent.RunAsync("Fortune favors the bold.");
+        Console.WriteLine(response.Text);
+    }
+
+    /// <summary>
     /// Demonstrate the usage of <see cref="ChatClientAgent"/> where each invocation is
     /// a unique interaction with no conversation history between them.
     /// </summary>
