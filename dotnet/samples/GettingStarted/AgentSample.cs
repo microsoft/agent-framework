@@ -6,6 +6,7 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
+using Microsoft.Shared.Diagnostics;
 using Microsoft.Shared.Samples;
 using OpenAI.Assistants;
 using OpenAI.Chat;
@@ -35,9 +36,9 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
         => provider switch
         {
             ChatClientProviders.OpenAIChatCompletion => GetOpenAIChatClient(),
-            ChatClientProviders.OpenAIAssistant => GetOpenAIAssistantChatClient(options ?? throw new InvalidOperationException("Options are required for this provider.")),
+            ChatClientProviders.OpenAIAssistant => GetOpenAIAssistantChatClient(Throw.IfNull(options)),
             ChatClientProviders.AzureOpenAI => GetAzureOpenAIChatClient(),
-            ChatClientProviders.AzureAIAgentsPersistent => GetAzureAIAgentPersistentClient(options ?? throw new InvalidOperationException("Options are required for this provider.")),
+            ChatClientProviders.AzureAIAgentsPersistent => GetAzureAIAgentPersistentClient(Throw.IfNull(options)),
             ChatClientProviders.OpenAIResponses or
             ChatClientProviders.OpenAIResponses_InMemoryMessageThread or
             ChatClientProviders.OpenAIResponses_ConversationIdThread
