@@ -189,6 +189,6 @@ internal sealed partial class HandoffActor : AgentActor
     private static partial Regex InvalidNameCharsRegex();
 #else
     private static Regex InvalidNameCharsRegex() => s_invalidNameCharsRegex;
-    private static readonly Regex s_invalidNameCharsRegex = new("[^0-9A-Za-z_]", RegexOptions.Compiled);
+    private static readonly Regex s_invalidNameCharsRegex = new("[^0-9A-Za-z_]+", RegexOptions.Compiled);
 #endif
 }
