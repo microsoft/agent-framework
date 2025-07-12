@@ -2,14 +2,23 @@
 
 from collections.abc import AsyncIterable, Callable, Sequence
 from enum import Enum
-from typing import Any, Protocol, TypeVar, runtime_checkable
+from typing import Any, Literal, Protocol, TypeVar, runtime_checkable
 from uuid import uuid4
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from ._clients import ChatClient
 from ._pydantic import AFBaseModel
-from ._types import AgentRunResponse, AgentRunResponseUpdate, ChatMessage, ChatResponse, ChatResponseUpdate, ChatRole
+from ._tools import AITool
+from ._types import (
+    AgentRunResponse,
+    AgentRunResponseUpdate,
+    ChatMessage,
+    ChatResponse,
+    ChatResponseUpdate,
+    ChatRole,
+    ChatToolMode,
+)
 from .exceptions import AgentExecutionException
 
 TThreadType = TypeVar("TThreadType", bound="AgentThread")
@@ -71,7 +80,7 @@ class Agent(Protocol):
 
     async def run(
         self,
-        messages: str | ChatMessage | list[str | ChatMessage] | None = None,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -100,7 +109,7 @@ class Agent(Protocol):
 
     def run_stream(
         self,
-        messages: str | ChatMessage | list[str | ChatMessage] | None = None,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -238,15 +247,56 @@ class ChatClientAgentThread(AgentThread):
 class ChatClientAgent(AgentBase):
     """A Chat Client Agent which depends on ChatClient."""
 
-    chat_client: ChatClient
+    chat_client: ChatClient = Field(..., kw_only=False)
 
     async def run(
         self,
-        messages: str | ChatMessage | list[str | ChatMessage] | None = None,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
+        tools: AITool | Sequence[AITool] | None = None,
+        response_format: type[BaseModel] | None = None,
+        user: str | None = None,
+        stop: str | Sequence[str] | None = None,
+        frequency_penalty: float | None = None,
+        logit_bias: dict[str | int, float] | None = None,
+        presence_penalty: float | None = None,
+        seed: int | None = None,
+        store: bool | None = None,
+        metadata: dict[str, Any] | None = None,
+        additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> AgentRunResponse:
+        """Run the agent with the given messages and options.
+
+        Args:
+            messages: The messages to process.
+            thread: The thread to use for the agent.
+            model: The model to use for the agent.
+            max_tokens: The maximum number of tokens to generate.
+            temperature: the sampling temperature to use
+            top_p: the nucleus sampling probability to use
+            tool_choice: the tool choice for the request
+            tools: the tools to use for the request
+            response_format: the format of the response
+            user: the user to associate with the request
+            stop: the stop sequence(s) for the request
+            frequency_penalty: the frequency penalty to use
+            logit_bias: the logit bias to use
+            presence_penalty: the presence penalty to use
+            seed: the random seed to use
+            store: whether to store the response
+            metadata: additional metadata to include in the request
+            additional_properties: additional properties to include in the request
+            kwargs: any additional keyword arguments,
+                will only be passed to functions that are called.
+
+        """
         thread, thread_messages = await self._prepare_thread_and_messages(
             thread=thread,
             input_messages=messages,
@@ -254,7 +304,26 @@ class ChatClientAgent(AgentBase):
             expected_type=ChatClientAgentThread,
         )
 
-        response = await self.chat_client.get_response(thread_messages, **kwargs)
+        response = await self.chat_client.get_response(
+            thread_messages,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            tool_choice=tool_choice,
+            tools=tools,
+            response_format=response_format,
+            user=user,
+            stop=stop,
+            frequency_penalty=frequency_penalty,
+            logit_bias=logit_bias,
+            presence_penalty=presence_penalty,
+            seed=seed,
+            store=store,
+            metadata=metadata,
+            additional_properties=additional_properties,
+            **kwargs,
+        )
 
         self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
 
@@ -274,11 +343,52 @@ class ChatClientAgent(AgentBase):
 
     async def run_stream(
         self,
-        messages: str | ChatMessage | list[str | ChatMessage] | None = None,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
+        tools: AITool | Sequence[AITool] | None = None,
+        response_format: type[BaseModel] | None = None,
+        user: str | None = None,
+        stop: str | Sequence[str] | None = None,
+        frequency_penalty: float | None = None,
+        logit_bias: dict[str | int, float] | None = None,
+        presence_penalty: float | None = None,
+        seed: int | None = None,
+        store: bool | None = None,
+        metadata: dict[str, Any] | None = None,
+        additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentRunResponseUpdate]:
+        """Stream the agent with the given messages and options.
+
+        Args:
+            messages: The messages to process.
+            thread: The thread to use for the agent.
+            model: The model to use for the agent.
+            max_tokens: The maximum number of tokens to generate.
+            temperature: the sampling temperature to use
+            top_p: the nucleus sampling probability to use
+            tool_choice: the tool choice for the request
+            tools: the tools to use for the request
+            response_format: the format of the response
+            user: the user to associate with the request
+            stop: the stop sequence(s) for the request
+            frequency_penalty: the frequency penalty to use
+            logit_bias: the logit bias to use
+            presence_penalty: the presence penalty to use
+            seed: the random seed to use
+            store: whether to store the response
+            metadata: additional metadata to include in the request
+            additional_properties: additional properties to include in the request
+            kwargs: any additional keyword arguments,
+                will only be passed to functions that are called.
+
+        """
         thread, thread_messages = await self._prepare_thread_and_messages(
             thread=thread,
             input_messages=messages,
@@ -288,7 +398,26 @@ class ChatClientAgent(AgentBase):
 
         response_updates: list[ChatResponseUpdate] = []
 
-        streaming_response: AsyncIterable[ChatResponseUpdate] = self.chat_client.get_streaming_response(thread_messages)
+        streaming_response: AsyncIterable[ChatResponseUpdate] = self.chat_client.get_streaming_response(
+            thread_messages,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            tool_choice=tool_choice,
+            tools=tools,
+            response_format=response_format,
+            user=user,
+            stop=stop,
+            frequency_penalty=frequency_penalty,
+            logit_bias=logit_bias,
+            presence_penalty=presence_penalty,
+            seed=seed,
+            store=store,
+            metadata=metadata,
+            additional_properties=additional_properties,
+            **kwargs,
+        )
 
         async for update in streaming_response:
             response_updates.append(update)
@@ -348,7 +477,7 @@ class ChatClientAgent(AgentBase):
         self,
         *,
         thread: AgentThread | None,
-        input_messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        input_messages: str | ChatMessage | Sequence[str] | Sequence[ChatMessage] | None = None,
         construct_thread: Callable[[], TThreadType],
         expected_type: type[TThreadType],
     ) -> tuple[TThreadType, list[ChatMessage]]:
@@ -380,17 +509,15 @@ class ChatClientAgent(AgentBase):
         if isinstance(thread, MessagesRetrievableThread):
             async for message in thread.get_messages():
                 messages.append(message)
-
         if input_messages is None:
-            input_messages = []
-
-        if isinstance(input_messages, (str, ChatMessage)):
-            input_messages = [input_messages]
-
-        normalized_messages = [
+            return thread, messages
+        if isinstance(input_messages, str):
+            messages.append(ChatMessage(role=ChatRole.USER, text=input_messages))
+            return thread, messages
+        if isinstance(input_messages, ChatMessage):
+            messages.append(input_messages)
+            return thread, messages
+        messages.extend([
             ChatMessage(role=ChatRole.USER, text=msg) if isinstance(msg, str) else msg for msg in input_messages
-        ]
-
-        messages.extend(normalized_messages)
-
+        ])
         return thread, messages
