@@ -2,7 +2,7 @@
 
 using Microsoft.Extensions.AI.Agents;
 
-namespace Microsoft.Agents.Orchestration.Handoff;
+namespace Microsoft.Agents.Orchestration;
 
 /// <summary>
 /// An orchestration that passes the input message to the first agent, and

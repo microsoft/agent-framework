@@ -3,13 +3,12 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using Microsoft.Agents.Orchestration.Extensions;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
 
-namespace Microsoft.Agents.Orchestration.Concurrent;
+namespace Microsoft.Agents.Orchestration;
 
 /// <summary>
 /// An orchestration that broadcasts the input message to each agent.
@@ -32,7 +31,7 @@ public class ConcurrentOrchestration<TInput, TOutput>
     /// <inheritdoc />
     protected override ValueTask StartAsync(IAgentRuntime runtime, TopicId topic, IEnumerable<ChatMessage> input, ActorType? entryAgent)
     {
-        return runtime.PublishMessageAsync(input.AsInputMessage(), topic);
+        return runtime.PublishMessageAsync(new ConcurrentMessages.Request([.. input]), topic);
     }
 
     /// <inheritdoc />

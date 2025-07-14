@@ -4,15 +4,14 @@ import base64
 import json
 import re
 import sys
-from collections.abc import AsyncIterable, Iterable, Iterator, Mapping, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Iterable, Iterator, Mapping, MutableMapping, MutableSequence, Sequence
 from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, overload
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from agent_framework.exceptions import AgentFrameworkException
-
 from ._pydantic import AFBaseModel
 from ._tools import AITool
+from .exceptions import AgentFrameworkException
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -25,6 +24,7 @@ TValue = TypeVar("TValue")
 TEmbedding = TypeVar("TEmbedding")
 TChatResponse = TypeVar("TChatResponse", bound="ChatResponse")
 TChatToolMode = TypeVar("TChatToolMode", bound="ChatToolMode")
+TAgentRunResponse = TypeVar("TAgentRunResponse", bound="AgentRunResponse")
 
 CreatedAtT = str  # Use a datetimeoffset type? Or a more specific type like datetime.datetime?
 
@@ -152,7 +152,9 @@ class UsageDetails(AFBaseModel):
         return self
 
 
-def _process_update(response: "ChatResponse", update: "ChatResponseUpdate") -> None:
+def _process_update(
+    response: "ChatResponse | AgentRunResponse", update: "ChatResponseUpdate | AgentRunResponseUpdate"
+) -> None:
     """Processes a single update and modifies the response in place."""
     is_new_message = False
     if not response.messages or (update.message_id and response.messages[-1].message_id != update.message_id):
@@ -189,18 +191,20 @@ def _process_update(response: "ChatResponse", update: "ChatResponseUpdate") -> N
     # Incorporate the update's properties into the response.
     if update.response_id:
         response.response_id = update.response_id
-    if update.conversation_id is not None:
-        response.conversation_id = update.conversation_id
     if update.created_at is not None:
         response.created_at = update.created_at
-    if update.finish_reason is not None:
-        response.finish_reason = update.finish_reason
-    if update.ai_model_id is not None:
-        response.ai_model_id = update.ai_model_id
     if update.additional_properties is not None:
         if response.additional_properties is None:
             response.additional_properties = {}
         response.additional_properties.update(update.additional_properties)
+
+    if isinstance(response, ChatResponse) and isinstance(update, ChatResponseUpdate):
+        if update.conversation_id is not None:
+            response.conversation_id = update.conversation_id
+        if update.finish_reason is not None:
+            response.finish_reason = update.finish_reason
+        if update.ai_model_id is not None:
+            response.ai_model_id = update.ai_model_id
 
 
 def _coalesce_text_content(
@@ -219,7 +223,7 @@ def _coalesce_text_content(
                 first_new_content = i
         else:
             if first_new_content is not None:
-                new_content = type_(text="\n".join(current_texts))
+                new_content = type_(text=" ".join(current_texts))
                 new_content.raw_representation = contents[first_new_content].raw_representation
                 new_content.additional_properties = contents[first_new_content].additional_properties
                 # Store the replacement node. We inherit the properties of the first text node. We don't
@@ -230,13 +234,13 @@ def _coalesce_text_content(
                 first_new_content = None
             coalesced_contents.append(content)
     if current_texts:
-        coalesced_contents.append(type_(text="\n".join(current_texts)))
+        coalesced_contents.append(type_(text=" ".join(current_texts)))
     contents.clear()
     contents.extend(coalesced_contents)
 
 
-def _finalize_response(response: "ChatResponse") -> None:
-    """Finalizes the chat response by performing any necessary post-processing."""
+def _finalize_response(response: "ChatResponse | AgentRunResponse") -> None:
+    """Finalizes the response by performing any necessary post-processing."""
     for msg in response.messages:
         _coalesce_text_content(msg.contents, TextContent)
         _coalesce_text_content(msg.contents, TextReasoningContent)
@@ -642,7 +646,7 @@ class FunctionCallContent(AIContent):
     def __add__(self, other: "FunctionCallContent") -> "FunctionCallContent":
         if not isinstance(other, FunctionCallContent):
             raise TypeError("Incompatible type")
-        if self.call_id != other.call_id:
+        if other.call_id and self.call_id != other.call_id:
             raise AgentFrameworkException("Incompatible function call contents")
         if not self.arguments:
             arguments = other.arguments
@@ -875,15 +879,6 @@ class ChatMessage(AFBaseModel):
     raw_representation: Any | None = None
     """The raw representation of the chat message from an underlying implementation."""
 
-    @property
-    def text(self) -> str:
-        """Returns the text content of the message.
-
-        Remarks:
-            This property concatenates the text of all TextContent objects in Contents.
-        """
-        return "\n".join(content.text for content in self.contents if isinstance(content, TextContent))
-
     @overload
     def __init__(
         self,
@@ -911,7 +906,7 @@ class ChatMessage(AFBaseModel):
         self,
         role: ChatRole | Literal["system", "user", "assistant", "tool"],
         *,
-        contents: list[AIContents],
+        contents: MutableSequence[AIContents],
         author_name: str | None = None,
         message_id: str | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -933,7 +928,7 @@ class ChatMessage(AFBaseModel):
         role: ChatRole | Literal["system", "user", "assistant", "tool"],
         *,
         text: str | None = None,
-        contents: list[AIContents] | None = None,
+        contents: MutableSequence[AIContents] | None = None,
         author_name: str | None = None,
         message_id: str | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -953,6 +948,15 @@ class ChatMessage(AFBaseModel):
             additional_properties=additional_properties,  # type: ignore[reportCallIssue]
             raw_representation=raw_representation,  # type: ignore[reportCallIssue]
         )
+
+    @property
+    def text(self) -> str:
+        """Returns the text content of the message.
+
+        Remarks:
+            This property concatenates the text of all TextContent objects in Contents.
+        """
+        return " ".join(content.text for content in self.contents if isinstance(content, TextContent))
 
 
 # region: ChatResponse
@@ -1118,7 +1122,10 @@ class ChatResponse(AFBaseModel):
     @property
     def text(self) -> str:
         """Returns the concatenated text of all messages in the response."""
-        return "\n".join(message.text for message in self.messages if isinstance(message, ChatMessage))
+        return ("\n".join(message.text for message in self.messages if isinstance(message, ChatMessage))).strip()
+
+    def __str__(self) -> str:
+        return self.text
 
 
 class StructuredResponse(ChatResponse, Generic[TValue]):
@@ -1338,7 +1345,10 @@ class ChatResponseUpdate(AFBaseModel):
     @property
     def text(self) -> str:
         """Returns the concatenated text of all contents in the update."""
-        return "\n".join(content.text for content in self.contents if isinstance(content, TextContent))
+        return "".join(content.text for content in self.contents if isinstance(content, TextContent))
+
+    def __str__(self) -> str:
+        return self.text
 
     def with_(self, contents: list[AIContent] | None = None, message_id: str | None = None) -> Self:
         """Returns a new instance with the specified contents and message_id."""
@@ -1393,19 +1403,19 @@ class ChatOptions(AFBaseModel):
     temperature: Annotated[float | None, Field(ge=0.0, le=2.0)] = None
     top_p: Annotated[float | None, Field(ge=0.0, le=1.0)] = None
     tool_choice: ChatToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None = None
-    tools: Sequence[AITool] | Sequence[Mapping[str, Any]] | None = None
+    tools: Sequence[AITool] | Sequence[MutableMapping[str, Any]] | None = None
     response_format: type[BaseModel] | None = Field(
         default=None, description="Structured output response format schema. Must be a valid Pydantic model."
     )
     user: str | None = None
     stop: str | Sequence[str] | None = None
     frequency_penalty: Annotated[float | None, Field(ge=-2.0, le=2.0)] = None
-    logit_bias: Mapping[str | int, float] | None = None
+    logit_bias: MutableMapping[str | int, float] | None = None
     presence_penalty: Annotated[float | None, Field(ge=-2.0, le=2.0)] = None
     seed: int | None = None
     store: bool | None = None
-    metadata: Mapping[str, str] | None = None
-    additional_properties: Mapping[str, Any] = Field(
+    metadata: MutableMapping[str, str] | None = None
+    additional_properties: MutableMapping[str, Any] = Field(
         default_factory=dict, description="Provider-specific additional properties."
     )
 
@@ -1554,6 +1564,121 @@ class GeneratedEmbeddings(AFBaseModel, MutableSequence[TEmbedding], Generic[TEmb
         return self
 
 
+# region AgentRunResponse
+
+
+class AgentRunResponse(AFBaseModel):
+    """Represents the response to an Agent run request.
+
+    Provides one or more response messages and metadata about the response.
+    A typical response will contain a single message, but may contain multiple
+    messages in scenarios involving function calls, RAG retrievals, or complex logic.
+    """
+
+    messages: list[ChatMessage] = Field(default_factory=list[ChatMessage])
+    response_id: str | None = None
+    created_at: CreatedAtT | None = None  # use a datetimeoffset type?
+    usage_details: UsageDetails | None = None
+    raw_representation: Any | None = None
+    additional_properties: dict[str, Any] | None = None
+
+    def __init__(
+        self,
+        messages: ChatMessage | list[ChatMessage] | None = None,
+        response_id: str | None = None,
+        created_at: CreatedAtT | None = None,
+        usage_details: UsageDetails | None = None,
+        raw_representation: Any | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize an AgentRunResponse.
+
+        Attributes:
+        messages: The list of chat messages in the response.
+        response_id: The ID of the chat response.
+        created_at: A timestamp for the chat response.
+        usage_details: The usage details for the chat response.
+        additional_properties: Any additional properties associated with the chat response.
+        raw_representation: The raw representation of the chat response from an underlying implementation.
+        **kwargs: Additional properties to set on the response.
+        """
+        processed_messages: list[ChatMessage] = []
+        if messages is not None:
+            if isinstance(messages, ChatMessage):
+                processed_messages.append(messages)
+            elif isinstance(messages, list):
+                processed_messages.extend(messages)
+
+        super().__init__(
+            messages=processed_messages,  # type: ignore[reportCallIssue]
+            response_id=response_id,  # type: ignore[reportCallIssue]
+            created_at=created_at,  # type: ignore[reportCallIssue]
+            usage_details=usage_details,  # type: ignore[reportCallIssue]
+            additional_properties=additional_properties,  # type: ignore[reportCallIssue]
+            raw_representation=raw_representation,  # type: ignore[reportCallIssue]
+            **kwargs,
+        )
+
+    @property
+    def text(self) -> str:
+        """Get the concatenated text of all messages."""
+        return "".join(msg.text for msg in self.messages) if self.messages else ""
+
+    @classmethod
+    def from_agent_run_response_updates(
+        cls: type[TAgentRunResponse], updates: Sequence["AgentRunResponseUpdate"]
+    ) -> TAgentRunResponse:
+        """Joins multiple updates into a single AgentRunResponse."""
+        msg = cls(messages=[])
+        for update in updates:
+            _process_update(msg, update)
+        _finalize_response(msg)
+        return msg
+
+    @classmethod
+    async def from_agent_response_generator(
+        cls: type[TAgentRunResponse], updates: AsyncIterable["AgentRunResponseUpdate"]
+    ) -> TAgentRunResponse:
+        """Joins multiple updates into a single AgentRunResponse."""
+        msg = cls(messages=[])
+        async for update in updates:
+            _process_update(msg, update)
+        _finalize_response(msg)
+        return msg
+
+    def __str__(self) -> str:
+        return self.text
+
+
+# region AgentRunResponseUpdate
+
+
+class AgentRunResponseUpdate(AFBaseModel):
+    """Represents a single streaming response chunk from an Agent."""
+
+    contents: list[AIContents] = Field(default_factory=list[AIContents])
+    role: ChatRole | None = None
+    author_name: str | None = None
+    response_id: str | None = None
+    message_id: str | None = None
+    created_at: CreatedAtT | None = None  # use a datetimeoffset type?
+    additional_properties: dict[str, Any] | None = None
+    raw_representation: Any | None = None
+
+    @property
+    def text(self) -> str:
+        """Get the concatenated text of all TextContent objects in contents."""
+        return (
+            "".join(content.text for content in self.contents if isinstance(content, TextContent))
+            if self.contents
+            else ""
+        )
+
+    def __str__(self) -> str:
+        return self.text
+
+
 # region: SpeechToTextOptions
 
 
@@ -1625,3 +1750,9 @@ class TextToSpeechOptions(AFBaseModel):
         for key in merged_exclude:
             settings.pop(key, None)
         return settings
+
+
+# endregion
+
+
+# endregion

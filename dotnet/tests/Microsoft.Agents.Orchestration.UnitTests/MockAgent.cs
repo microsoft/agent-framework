@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 using System;
 using System.Collections.Generic;
-using System.Runtime.CompilerServices;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -36,7 +36,7 @@ internal sealed class MockAgent(int index) : Agent
         return new AgentThread() { Id = Guid.NewGuid().ToString() };
     }
 
-    public override async Task<ChatResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public override Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         this.InvokeCount++;
         if (thread == null)
@@ -45,20 +45,13 @@ internal sealed class MockAgent(int index) : Agent
             thread = mockThread.Object;
         }
 
-        await (options?.OnIntermediateMessages?.Invoke(this.Response) ?? Task.CompletedTask);
-
-        return new ChatResponse(messages: [.. this.Response]);
+        return Task.FromResult(new AgentRunResponse(messages: [.. this.Response]));
     }
 
-    public override async IAsyncEnumerable<ChatResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         this.InvokeCount++;
 
-        await (options?.OnIntermediateMessages?.Invoke(this.Response) ?? Task.CompletedTask);
-
-        foreach (ChatMessage message in this.Response)
-        {
-            yield return new ChatResponseUpdate(message.Role, message.Text);
-        }
+        return this.Response.Select(message => new AgentRunResponseUpdate(message.Role, message.Text)).ToAsyncEnumerable();
     }
 }

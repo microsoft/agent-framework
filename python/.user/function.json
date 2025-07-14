@@ -1,0 +1,20 @@
+{
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "Get the weather for a given location.",
+        "parameters": {
+            "properties": {
+                "location": {
+                    "title": "Location",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "location"
+            ],
+            "title": "get_weather_input",
+            "type": "object"
+        }
+    }
+}

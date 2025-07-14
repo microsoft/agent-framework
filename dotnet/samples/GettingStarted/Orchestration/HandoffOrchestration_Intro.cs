@@ -1,10 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.Orchestration;
-using Microsoft.Agents.Orchestration.Handoff;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
-using Microsoft.Extensions.AI.Agents.Runtime.InProcess;
 
 namespace Orchestration;
 
@@ -65,11 +63,7 @@ public class HandoffOrchestration_Intro(ITestOutputHelper output) : Orchestratio
                     .Add(triageAgent, statusAgent, returnAgent, refundAgent)
                     .Add(statusAgent, triageAgent, "Transfer to this agent if the issue is not status related")
                     .Add(returnAgent, triageAgent, "Transfer to this agent if the issue is not return related")
-                    .Add(refundAgent, triageAgent, "Transfer to this agent if the issue is not refund related"),
-                triageAgent,
-                statusAgent,
-                returnAgent,
-                refundAgent)
+                    .Add(refundAgent, triageAgent, "Transfer to this agent if the issue is not refund related"))
             {
                 InteractiveCallback = () =>
                 {
@@ -84,18 +78,11 @@ public class HandoffOrchestration_Intro(ITestOutputHelper output) : Orchestratio
                 StreamingResponseCallback = streamedResponse ? monitor.StreamingResultCallback : null,
             };
 
-        // Start the runtime
-        await using InProcessRuntime runtime = new();
-        await runtime.StartAsync();
-
         // Run the orchestration
         Console.WriteLine($"\n# INPUT:\n{task}\n");
-        OrchestrationResult<string> result = await orchestration.InvokeAsync(task, runtime);
+        OrchestrationResult<string> result = await orchestration.InvokeAsync(task);
 
-        string text = await result.GetValueAsync(TimeSpan.FromSeconds(300));
-        Console.WriteLine($"\n# RESULT: {text}");
-
-        await runtime.RunUntilIdleAsync();
+        Console.WriteLine($"\n# RESULT: {await result}");
 
         this.DisplayHistory(monitor.History);
     }

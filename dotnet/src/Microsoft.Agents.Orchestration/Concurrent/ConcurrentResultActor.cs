@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
 
-namespace Microsoft.Agents.Orchestration.Concurrent;
+namespace Microsoft.Agents.Orchestration;
 
 /// <summary>
 /// Actor for capturing each <see cref="ConcurrentMessages.Result"/> message.

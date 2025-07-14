@@ -1,12 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from . import __version__  # type: ignore[attr-defined]
-from ._agents import Agent, AgentThread
+from ._agents import Agent, AgentThread, ChatClientAgent, ChatClientAgentThread, ChatClientAgentThreadType
 from ._clients import ChatClient, ChatClientBase, EmbeddingGenerator, use_tool_calling
 from ._logging import get_logger
 from ._pydantic import AFBaseModel, AFBaseSettings
-from ._tools import AITool, ai_function
+from ._tools import AIFunction, AITool, ai_function
 from ._types import (
+    AgentRunResponse,
+    AgentRunResponseUpdate,
     AIContent,
     AIContents,
     ChatFinishReason,
@@ -37,10 +39,16 @@ __all__ = [
     "AFBaseSettings",
     "AIContent",
     "AIContents",
+    "AIFunction",
     "AITool",
     "Agent",
+    "AgentRunResponse",
+    "AgentRunResponseUpdate",
     "AgentThread",
     "ChatClient",
+    "ChatClientAgent",
+    "ChatClientAgentThread",
+    "ChatClientAgentThreadType",
     "ChatClientBase",
     "ChatFinishReason",
     "ChatMessage",

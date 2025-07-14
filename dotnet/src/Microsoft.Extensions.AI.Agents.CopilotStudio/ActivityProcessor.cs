@@ -12,7 +12,7 @@ namespace Microsoft.Extensions.AI.Agents.CopilotStudio;
 /// </summary>
 internal static class ActivityProcessor
 {
-    public static async IAsyncEnumerable<(ChatMessage message, bool reasoning)> ProcessActivityAsync(IAsyncEnumerable<IActivity> activities, bool streaming, ILogger logger)
+    public static async IAsyncEnumerable<ChatMessage> ProcessActivityAsync(IAsyncEnumerable<IActivity> activities, bool streaming, ILogger logger)
     {
         await foreach (IActivity activity in activities.ConfigureAwait(false))
         {
@@ -27,13 +27,13 @@ internal static class ActivityProcessor
                     // pick from a list of actions.
                     // The activity text doesn't make sense without the actions, as the message
                     // is often instructing the user to pick from the provided list of actions.
-                    yield return (CreateChatMessageFromActivity(activity, [new TextContent(activity.Text)]), false);
+                    yield return CreateChatMessageFromActivity(activity, [new TextContent(activity.Text)]);
                     break;
                 case "typing":
                 case "event":
                     // TODO: Revisit usage of TextReasoningContent here, to evaluate whether all are really reasoning
                     // or whether simply an AIContent base type would be more appropriate.
-                    yield return (CreateChatMessageFromActivity(activity, [new TextReasoningContent(activity.Text)]), true);
+                    yield return CreateChatMessageFromActivity(activity, [new TextReasoningContent(activity.Text)]);
                     break;
                 default:
                     logger.LogWarning("Unknown activity type '{ActivityType}' received.", activity.Type);

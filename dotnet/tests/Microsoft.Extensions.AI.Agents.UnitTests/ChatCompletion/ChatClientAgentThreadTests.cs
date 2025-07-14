@@ -358,7 +358,7 @@ public class ChatClientAgentThreadTests
         var thread = agent.GetNewThread();
 
         // Act - Run the agent with streaming to populate the thread with messages
-        var streamingResults = new List<ChatResponseUpdate>();
+        var streamingResults = new List<AgentRunResponseUpdate>();
         await foreach (var update in agent.RunStreamingAsync([userMessage], thread))
         {
             streamingResults.Add(update);
@@ -419,13 +419,13 @@ public class ChatClientAgentThreadTests
         var thread = agent.GetNewThread();
 
         // Act - Make two streaming calls
-        var firstStreamingResults = new List<ChatResponseUpdate>();
+        var firstStreamingResults = new List<AgentRunResponseUpdate>();
         await foreach (var update in agent.RunStreamingAsync([firstUserMessage], thread))
         {
             firstStreamingResults.Add(update);
         }
 
-        var secondStreamingResults = new List<ChatResponseUpdate>();
+        var secondStreamingResults = new List<AgentRunResponseUpdate>();
         await foreach (var update in agent.RunStreamingAsync([secondUserMessage], thread))
         {
             secondStreamingResults.Add(update);
@@ -493,7 +493,7 @@ public class ChatClientAgentThreadTests
         await agent.RunAsync([initialUserMessage], thread);
 
         // Then make a streaming call
-        var streamingResults = new List<ChatResponseUpdate>();
+        var streamingResults = new List<AgentRunResponseUpdate>();
         await foreach (var update in agent.RunStreamingAsync([newUserMessage], thread))
         {
             streamingResults.Add(update);
@@ -542,7 +542,7 @@ public class ChatClientAgentThreadTests
         var thread = agent.GetNewThread();
 
         // Act - Run the agent with streaming that returns no updates
-        var streamingResults = new List<ChatResponseUpdate>();
+        var streamingResults = new List<AgentRunResponseUpdate>();
         await foreach (var update in agent.RunStreamingAsync([userMessage], thread))
         {
             streamingResults.Add(update);
@@ -597,7 +597,7 @@ public class ChatClientAgentThreadTests
         var thread = agent.GetNewThread();
 
         // Act - Run the agent with streaming that returns multiple updates
-        var streamingResults = new List<ChatResponseUpdate>();
+        var streamingResults = new List<AgentRunResponseUpdate>();
         await foreach (var update in agent.RunStreamingAsync([userMessage], thread))
         {
             streamingResults.Add(update);
@@ -692,7 +692,7 @@ public class ChatClientAgentThreadTests
         var thread = agent.GetNewThread();
 
         // Act & Assert - Verify that streaming throws an exception after some updates
-        var streamingResults = new List<ChatResponseUpdate>();
+        var streamingResults = new List<AgentRunResponseUpdate>();
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
         {
             await foreach (var update in agent.RunStreamingAsync([userMessage], thread))

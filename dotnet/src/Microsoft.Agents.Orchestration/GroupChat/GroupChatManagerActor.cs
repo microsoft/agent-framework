@@ -7,7 +7,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
 
-namespace Microsoft.Agents.Orchestration.GroupChat;
+namespace Microsoft.Agents.Orchestration;
 
 /// <summary>
 /// An <see cref="OrchestrationActor"/> used to manage a <see cref="GroupChatOrchestration{TInput, TOutput}"/>.
@@ -52,7 +52,7 @@ internal sealed class GroupChatManagerActor : OrchestrationActor
 
         this._chat.AddRange(item.Messages);
 
-        await this.PublishMessageAsync(item.Messages.AsGroupMessage(), this.Context.Topic, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await this.PublishMessageAsync(new GroupChatMessages.Group(item.Messages), this.Context.Topic, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         await this.ManageAsync(messageContext, cancellationToken).ConfigureAwait(false);
     }
@@ -78,7 +78,7 @@ internal sealed class GroupChatManagerActor : OrchestrationActor
                 ChatMessage input = await this._manager.InteractiveCallback.Invoke().ConfigureAwait(false);
                 this.Logger.LogChatManagerUserInput(this.Id, input.Text);
                 this._chat.Add(input);
-                await this.PublishMessageAsync(input.AsGroupMessage(), this.Context.Topic, cancellationToken: cancellationToken).ConfigureAwait(false);
+                await this.PublishMessageAsync(new GroupChatMessages.Group([input]), this.Context.Topic, cancellationToken: cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -88,7 +88,7 @@ internal sealed class GroupChatManagerActor : OrchestrationActor
         {
             GroupChatManagerResult<string> filterResult = await this._manager.FilterResults(this._chat, cancellationToken).ConfigureAwait(false);
             this.Logger.LogChatManagerResult(this.Id, filterResult.Value, filterResult.Reason);
-            await this.PublishMessageAsync(filterResult.Value.AsResultMessage(), this._orchestrationType, cancellationToken).ConfigureAwait(false);
+            await this.PublishMessageAsync(new GroupChatMessages.Result(new(ChatRole.Assistant, filterResult.Value)), this._orchestrationType, cancellationToken).ConfigureAwait(false);
             return;
         }
 

@@ -2,6 +2,11 @@
 name = "agent-framework-project"
 description = "Microsoft Agent Framework for building AI Agents with Python."
 version = "0.0.0"
+requires-python = ">=3.10"
+dependencies = [
+    "agent-framework",
+    "agent-framework-azure",
+]
 
 [dependency-groups]
 dev = [
@@ -21,6 +26,7 @@ dev = [
     "tomli",
     "tomli-w",
     "markdownify",
+
     # Documentation
     "myst-nb==1.1.2",
     "pydata-sphinx-theme==0.16.0",
@@ -49,12 +55,11 @@ environments = [
 ]
 
 [tool.uv.workspace]
-members = ["packages/*"]
+members = [ "packages/*" ]
 
 [tool.uv.sources]
-agent-framework = { workspace = true }
-agent-framework-openai = { workspace = true }
 agent-framework-azure = { workspace = true }
+agent-framework = { workspace = true }
 
 [tool.uv-dynamic-versioning]
 fallback-version = "0.0.0"
@@ -104,7 +109,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # Ignore all directories named `tests` and `samples`.
 "**/tests/**" = ["D", "INP", "TD", "ERA001", "RUF", "S"]
-"samples/**" = ["D", "INP", "ERA001", "RUF", "S"]
+"samples/**" = ["D", "INP", "ERA001", "RUF", "S", "T201"]
 "*.ipynb" = ["CPY", "E501"]
 
 [tool.ruff.format]
@@ -141,7 +146,7 @@ disallow_any_unimported = true
 
 [tool.bandit]
 targets = ["agent_framework"]
-exclude_dirs = ["tests", "./run_tasks_in_packages_if_exists.py", "./check_md_code_blocks.py", "docs"]
+exclude_dirs = ["tests", "./run_tasks_in_packages_if_exists.py", "./check_md_code_blocks.py", "docs", "samples"]
 
 [tool.poe]
 executor.type = "uv"
@@ -155,7 +160,7 @@ docs-serve = "sphinx-autobuild --watch docs/agent-framework docs/build --port 80
 docs-check = "sphinx-build --fail-on-warning docs/agent-framework docs/build"
 docs-check-examples = "sphinx-build -b code_lint docs/agent-framework docs/build"
 pre-commit-install = "uv run pre-commit install --install-hooks --overwrite"
-install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit"
+install = "uv sync --all-packages --dev -U --prerelease=if-necessary-or-explicit"
 test = "python run_tasks_in_packages_if_exists.py test"
 fmt = "python run_tasks_in_packages_if_exists.py fmt"
 format.ref = "fmt"

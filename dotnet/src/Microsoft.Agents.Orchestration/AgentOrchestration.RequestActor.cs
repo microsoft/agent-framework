@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.Orchestration.Transforms;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
@@ -18,7 +17,7 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
     /// </summary>
     private sealed class RequestActor : OrchestrationActor
     {
-        private readonly OrchestrationInputTransform<TInput> _transform;
+        private readonly Func<TInput, CancellationToken, ValueTask<IEnumerable<ChatMessage>>> _transform;
         private readonly Func<IEnumerable<ChatMessage>, ValueTask> _action;
         private readonly TaskCompletionSource<TOutput> _completionSource;
 
@@ -36,7 +35,7 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
             ActorId id,
             IAgentRuntime runtime,
             OrchestrationContext context,
-            OrchestrationInputTransform<TInput> transform,
+            Func<TInput, CancellationToken, ValueTask<IEnumerable<ChatMessage>>> transform,
             TaskCompletionSource<TOutput> completionSource,
             Func<IEnumerable<ChatMessage>, ValueTask> action,
             ILogger<RequestActor>? logger = null)

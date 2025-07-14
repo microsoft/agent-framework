@@ -17,8 +17,8 @@ public class AgentTests
 {
     private readonly Mock<Agent> _agentMock;
     private readonly Mock<AgentThread> _agentThreadMock;
-    private readonly ChatResponse _invokeResponse = new();
-    private readonly List<ChatResponseUpdate> _invokeStreamingResponses = [];
+    private readonly AgentRunResponse _invokeResponse = new();
+    private readonly List<AgentRunResponseUpdate> _invokeStreamingResponses = [];
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentTests"/> class.
@@ -27,8 +27,8 @@ public class AgentTests
     {
         this._agentThreadMock = new Mock<AgentThread>(MockBehavior.Strict);
 
-        this._invokeResponse = new ChatResponse(new ChatMessage(ChatRole.Assistant, "Hi"));
-        this._invokeStreamingResponses.Add(new ChatResponseUpdate(ChatRole.Assistant, "Hi"));
+        this._invokeResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Hi"));
+        this._invokeStreamingResponses.Add(new AgentRunResponseUpdate(ChatRole.Assistant, "Hi"));
 
         this._agentMock = new Mock<Agent>() { CallBase = true };
         this._agentMock
@@ -282,12 +282,12 @@ public class AgentTests
             throw new NotImplementedException();
         }
 
-        public override Task<ChatResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        public override Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             throw new System.NotImplementedException();
         }
 
-        public override IAsyncEnumerable<ChatResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             throw new System.NotImplementedException();
         }
