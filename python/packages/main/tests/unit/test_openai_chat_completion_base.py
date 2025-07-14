@@ -75,15 +75,6 @@ async def test_cmc(
         stream=False,
         messages=openai_chat_completion._prepare_chat_history_for_request(chat_history),  # type: ignore
     )
-
-
-@patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
-async def test_cmc_singular(
-    mock_create: AsyncMock,
-    chat_history: list[str | ChatMessage],
-    mock_chat_completion_response: ChatCompletion,
-    openai_unit_test_env: dict[str, str],
-):
     mock_create.return_value = mock_chat_completion_response
     chat_history.append(ChatMessage(role="user", text="hello world"))
 
