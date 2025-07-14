@@ -2,7 +2,7 @@
 
 using Microsoft.Extensions.AI.Agents;
 
-namespace Microsoft.Agents.Orchestration.GroupChat;
+namespace Microsoft.Agents.Orchestration;
 
 /// <summary>
 /// An orchestration that broadcasts the input message to each agent.

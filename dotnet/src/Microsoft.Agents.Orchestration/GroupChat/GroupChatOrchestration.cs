@@ -3,14 +3,13 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using Microsoft.Agents.Orchestration.Extensions;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.Orchestration.GroupChat;
+namespace Microsoft.Agents.Orchestration;
 
 /// <summary>
 /// An orchestration that coordinates a group-chat.
@@ -42,7 +41,7 @@ public class GroupChatOrchestration<TInput, TOutput> :
         {
             throw new ArgumentException("Entry agent is not defined.", nameof(entryAgent));
         }
-        return runtime.PublishMessageAsync(input.AsInputTaskMessage(), entryAgent.Value);
+        return runtime.PublishMessageAsync(new GroupChatMessages.InputTask(input), entryAgent.Value);
     }
 
     /// <inheritdoc />

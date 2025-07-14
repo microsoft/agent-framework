@@ -2,10 +2,7 @@
 
 using System.Text.Json;
 using Microsoft.Agents.Orchestration;
-using Microsoft.Agents.Orchestration.Concurrent;
-using Microsoft.Agents.Orchestration.Transforms;
 using Microsoft.Extensions.AI.Agents;
-using Microsoft.Extensions.AI.Agents.Runtime.InProcess;
 using Microsoft.Shared.Samples;
 
 namespace Orchestration;
@@ -43,20 +40,14 @@ public class ConcurrentOrchestration_With_StructuredOutput(ITestOutputHelper out
                 ResultTransform = outputTransform.TransformAsync,
             };
 
-        // Start the runtime
-        await using InProcessRuntime runtime = new();
-        await runtime.StartAsync();
-
         // Run the orchestration
         const string resourceId = "Hamlet_full_play_summary.txt";
         string input = Resources.Read(resourceId);
         Console.WriteLine($"\n# INPUT: @{resourceId}\n");
-        OrchestrationResult<Analysis> result = await orchestration.InvokeAsync(input, runtime);
+        OrchestrationResult<Analysis> result = await orchestration.InvokeAsync(input);
 
-        Analysis output = await result.GetValueAsync(TimeSpan.FromSeconds(ResultTimeoutInSeconds * 2));
+        Analysis output = await result;
         Console.WriteLine($"\n# RESULT:\n{JsonSerializer.Serialize(output, s_options)}");
-
-        await runtime.RunUntilIdleAsync();
     }
 
 #pragma warning disable CA1812 // Avoid uninstantiated internal classes

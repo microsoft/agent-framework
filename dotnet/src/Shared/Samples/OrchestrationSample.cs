@@ -17,11 +17,6 @@ namespace Microsoft.Shared.SampleUtilities;
 public abstract class OrchestrationSample : BaseSample
 {
     /// <summary>
-    /// This constant defines the timeout duration for result retrieval, measured in seconds.
-    /// </summary>
-    protected const int ResultTimeoutInSeconds = 30;
-
-    /// <summary>
     /// Creates a new <see cref="ChatClientAgent"/> instance using the specified instructions, description, name, and functions.
     /// </summary>
     /// <param name="instructions">The instructions to provide to the agent.</param>
@@ -136,28 +131,23 @@ public abstract class OrchestrationSample : BaseSample
         /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
         public ValueTask ResponseCallback(IEnumerable<ChatMessage> response)
         {
+            WriteStreamedResponse(this.StreamedResponses);
+            this.StreamedResponses.Clear();
+
             this.History.AddRange(response);
             WriteResponse(response);
-            return new ValueTask();
+            return default;
         }
 
         /// <summary>
         /// Callback to handle a streamed agent run response update, adding it to the list and writing output if final.
         /// </summary>
         /// <param name="streamedResponse">The <see cref="AgentRunResponseUpdate"/> to process.</param>
-        /// <param name="isFinal">Indicates whether this is the final update in the stream.</param>
         /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
-        public ValueTask StreamingResultCallback(AgentRunResponseUpdate streamedResponse, bool isFinal)
+        public ValueTask StreamingResultCallback(AgentRunResponseUpdate streamedResponse)
         {
             this.StreamedResponses.Add(streamedResponse);
-
-            if (isFinal)
-            {
-                WriteStreamedResponse(this.StreamedResponses);
-                this.StreamedResponses.Clear();
-            }
-
-            return new ValueTask();
+            return default;
         }
     }
 

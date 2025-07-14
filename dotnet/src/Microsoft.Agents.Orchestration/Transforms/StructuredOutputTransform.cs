@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.Orchestration.Transforms;
+namespace Microsoft.Agents.Orchestration;
 
 /// <summary>
 /// Populates the target result type  <see cref="ChatMessage"/> into a structured output.

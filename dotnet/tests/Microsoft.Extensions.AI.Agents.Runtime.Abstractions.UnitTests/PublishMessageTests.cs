@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Threading.Tasks;
 
 namespace Microsoft.Extensions.AI.Agents.Runtime.InProcess.Tests;
@@ -35,8 +34,7 @@ public class PublishMessageTests
         await fixture.RegisterErrorAgentAsync(topicTypes: "TestTopic");
 
         // Test that we wrap single errors appropriately
-        var e = await Assert.ThrowsAsync<AggregateException>(async () => await fixture.RunPublishTestAsync(new TopicId("TestTopic"), new BasicMessage { Content = "1" }));
-        Assert.IsType<TestException>(Assert.Single(e.InnerExceptions));
+        await Assert.ThrowsAsync<TestException>(async () => await fixture.RunPublishTestAsync(new TopicId("TestTopic"), new BasicMessage { Content = "1" }));
 
         var values = fixture.GetAgentInstances<ReceiverAgent>().Values;
     }
@@ -50,9 +48,7 @@ public class PublishMessageTests
         await fixture.RegisterErrorAgentAsync("2", topicTypes: "TestTopic");
 
         // What we are really testing here is that a single exception does not prevent sending to the remaining agents
-        var e = await Assert.ThrowsAsync<AggregateException>(async () => await fixture.RunPublishTestAsync(new TopicId("TestTopic"), new BasicMessage { Content = "1" }));
-        Assert.Equal(2, e.InnerExceptions.Count);
-        Assert.All(e.InnerExceptions, innerException => Assert.IsType<TestException>(innerException));
+        await Assert.ThrowsAsync<TestException>(async () => await fixture.RunPublishTestAsync(new TopicId("TestTopic"), new BasicMessage { Content = "1" }));
 
         var values = fixture.GetAgentInstances<ErrorAgent>().Values;
         Assert.Equal(2, values.Count);
@@ -70,9 +66,7 @@ public class PublishMessageTests
         await fixture.RegisterErrorAgentAsync("2", topicTypes: "TestTopic");
 
         // What we are really testing here is that raising exceptions does not prevent sending to the remaining agents
-        var e = await Assert.ThrowsAsync<AggregateException>(async () => await fixture.RunPublishTestAsync(new TopicId("TestTopic"), new BasicMessage { Content = "1" }));
-        Assert.Equal(2, e.InnerExceptions.Count);
-        Assert.All(e.InnerExceptions, innerException => Assert.IsType<TestException>(innerException));
+        await Assert.ThrowsAsync<TestException>(async () => await fixture.RunPublishTestAsync(new TopicId("TestTopic"), new BasicMessage { Content = "1" }));
 
         var agents = fixture.GetAgentInstances<ReceiverAgent>().Values;
         Assert.Equal(2, agents.Count);

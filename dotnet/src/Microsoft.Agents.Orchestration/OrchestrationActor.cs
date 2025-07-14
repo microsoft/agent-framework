@@ -33,11 +33,9 @@ public abstract class OrchestrationActor : RuntimeActor
     /// <param name="agentType">The recipient agent's type.</param>
     /// <param name="cancellationToken">A token used to cancel the operation if needed.</param>
     /// <returns>The agent identifier, if it exists.</returns>
-    protected async ValueTask PublishMessageAsync(
+    protected ValueTask PublishMessageAsync(
         object message,
         ActorType agentType,
-        CancellationToken cancellationToken = default)
-    {
-        await base.PublishMessageAsync(message, new TopicId(agentType.Name), messageId: null, cancellationToken).ConfigureAwait(false);
-    }
+        CancellationToken cancellationToken = default) =>
+        base.PublishMessageAsync(message, new TopicId(agentType.Name), messageId: null, cancellationToken);
 }

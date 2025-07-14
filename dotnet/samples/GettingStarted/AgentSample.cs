@@ -6,6 +6,7 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
+using Microsoft.Shared.Diagnostics;
 using Microsoft.Shared.Samples;
 using OpenAI.Assistants;
 using OpenAI.Chat;
@@ -31,13 +32,13 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
         AzureAIAgentsPersistent
     }
 
-    protected IChatClient GetChatClient(ChatClientProviders provider, ChatClientAgentOptions options)
+    protected IChatClient GetChatClient(ChatClientProviders provider, ChatClientAgentOptions? options = null)
         => provider switch
         {
             ChatClientProviders.OpenAIChatCompletion => GetOpenAIChatClient(),
-            ChatClientProviders.OpenAIAssistant => GetOpenAIAssistantChatClient(options),
+            ChatClientProviders.OpenAIAssistant => GetOpenAIAssistantChatClient(Throw.IfNull(options)),
             ChatClientProviders.AzureOpenAI => GetAzureOpenAIChatClient(),
-            ChatClientProviders.AzureAIAgentsPersistent => GetAzureAIAgentPersistentClient(options),
+            ChatClientProviders.AzureAIAgentsPersistent => GetAzureAIAgentPersistentClient(Throw.IfNull(options)),
             ChatClientProviders.OpenAIResponses or
             ChatClientProviders.OpenAIResponses_InMemoryMessageThread or
             ChatClientProviders.OpenAIResponses_ConversationIdThread
@@ -159,11 +160,8 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
 
     private async Task AzureAIAgentsPersistentAgentCleanUpAsync(ChatClientAgent agent, AgentThread? thread, CancellationToken cancellationToken)
     {
-        var persistentAgentsClient = agent.ChatClient.GetService<PersistentAgentsClient>();
-        if (persistentAgentsClient is null)
-        {
+        var persistentAgentsClient = agent.ChatClient.GetService<PersistentAgentsClient>() ??
             throw new InvalidOperationException("The provided chat client is not a Persistent Agents Chat Client");
-        }
 
         await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id, cancellationToken);
 

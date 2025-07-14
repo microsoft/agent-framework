@@ -3,22 +3,19 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.AI.Agents.Runtime;
 
-namespace Microsoft.Agents.Orchestration.Extensions;
+namespace Microsoft.Extensions.AI.Agents.Runtime;
 
 /// <summary>
 /// Extension methods for <see cref="IAgentRuntime"/>.
 /// </summary>
-public static class RuntimeExtensions
+internal static class AgentRuntimeExtensions
 {
     /// <summary>
     /// Sends a message to the specified agent.
     /// </summary>
-    public static async ValueTask PublishMessageAsync(this IAgentRuntime runtime, object message, ActorType agentType, CancellationToken cancellationToken = default)
-    {
-        await runtime.PublishMessageAsync(message, new TopicId(agentType.Name), sender: null, messageId: null, cancellationToken).ConfigureAwait(false);
-    }
+    public static ValueTask PublishMessageAsync(this IAgentRuntime runtime, object message, ActorType agentType, CancellationToken cancellationToken = default) =>
+        runtime.PublishMessageAsync(message, new TopicId(agentType.Name), sender: null, messageId: null, cancellationToken);
 
     /// <summary>
     /// Registers an agent factory for the specified agent type and associates it with the runtime.
@@ -42,10 +39,8 @@ public static class RuntimeExtensions
     /// </summary>
     /// <param name="runtime">The runtime for managing the subscription.</param>
     /// <param name="agentType">The agent type to subscribe.</param>
-    public static async Task SubscribeAsync(this IAgentRuntime runtime, ActorType agentType)
-    {
-        await runtime.AddSubscriptionAsync(new TypeSubscription(agentType.Name, agentType)).ConfigureAwait(false);
-    }
+    public static Task SubscribeAsync(this IAgentRuntime runtime, ActorType agentType) =>
+        runtime.AddSubscriptionAsync(new TypeSubscription(agentType.Name, agentType)).AsTask();
 
     /// <summary>
     /// Subscribes the specified agent type to the provided topics.

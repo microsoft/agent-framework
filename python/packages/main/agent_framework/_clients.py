@@ -274,7 +274,7 @@ class ChatClient(Protocol):
 
     async def get_response(
         self,
-        messages: str | ChatMessage | Sequence[ChatMessage],
+        messages: str | ChatMessage | list[ChatMessage],
         **kwargs: Any,
     ) -> ChatResponse:
         """Sends input and returns the response.
@@ -292,9 +292,9 @@ class ChatClient(Protocol):
         """
         ...
 
-    async def get_streaming_response(
+    def get_streaming_response(
         self,
-        messages: str | ChatMessage | Sequence[ChatMessage],
+        messages: str | ChatMessage | list[ChatMessage],
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Sends input messages and streams the response.

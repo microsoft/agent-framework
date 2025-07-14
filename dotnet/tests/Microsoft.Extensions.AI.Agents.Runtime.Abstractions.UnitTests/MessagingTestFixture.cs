@@ -56,10 +56,7 @@ public sealed class ReceiverAgent : TestAgent
 
     public ReceiverAgent(ActorId id, IAgentRuntime runtime, string description) : base(id, runtime, description)
     {
-        this.RegisterMessageHandler<BasicMessage>(async (item, messageContext, cancellationToken) =>
-        {
-            this.Messages.Add(item);
-        });
+        this.RegisterMessageHandler<BasicMessage>((item, messageContext) => this.Messages.Add(item));
     }
 }
 
@@ -78,10 +75,10 @@ public sealed class CancelAgent : TestAgent
 {
     public CancelAgent(ActorId id, IAgentRuntime runtime, string description) : base(id, runtime, description)
     {
-        this.RegisterMessageHandler<BasicMessage>(async (item, messageContext, cancellationToken) =>
+        this.RegisterMessageHandler<BasicMessage>((item, messageContext) =>
         {
-            CancellationToken cancelledToken = new(canceled: true);
-            cancelledToken.ThrowIfCancellationRequested();
+            CancellationToken canceledToken = new(canceled: true);
+            canceledToken.ThrowIfCancellationRequested();
         });
     }
 }
@@ -90,7 +87,7 @@ public sealed class ErrorAgent : TestAgent
 {
     public ErrorAgent(ActorId id, IAgentRuntime runtime, string description) : base(id, runtime, description)
     {
-        this.RegisterMessageHandler<BasicMessage>(async (item, messageContext, cancellationToken) =>
+        this.RegisterMessageHandler<BasicMessage>((item, messageContext) =>
         {
             this.DidThrow = true;
             throw new TestException();
@@ -155,20 +152,20 @@ public sealed class MessagingTestFixture
     {
         messageId ??= Guid.NewGuid().ToString();
 
-        await this.Runtime.StartAsync();
+        this.Runtime.Start();
         await this.Runtime.PublishMessageAsync(message, sendTarget, messageId: messageId);
-        await this.Runtime.RunUntilIdleAsync();
+        await this.Runtime.DisposeAsync();
     }
 
     public async ValueTask<object?> RunSendTestAsync(ActorId sendTarget, object message, string? messageId = null)
     {
         messageId ??= Guid.NewGuid().ToString();
 
-        await this.Runtime.StartAsync();
+        this.Runtime.Start();
 
         object? result = await this.Runtime.SendMessageAsync(message, sendTarget, messageId: messageId);
 
-        await this.Runtime.RunUntilIdleAsync();
+        await this.Runtime.DisposeAsync();
 
         return result;
     }

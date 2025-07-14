@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using Microsoft.Agents.Orchestration.GroupChat;
 
 namespace Microsoft.Agents.Orchestration.UnitTest;
 

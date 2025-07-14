@@ -32,6 +32,6 @@ public interface IRuntimeActor : ISaveState
     /// A task representing the asynchronous operation, returning a response to the message.
     /// The response can be <c>null</c> if no reply is necessary.
     /// </returns>
-    /// <exception cref="OperationCanceledException">Thrown if the message was cancelled.</exception>
+    /// <exception cref="OperationCanceledException">Thrown if the message was canceled.</exception>
     ValueTask<object?> OnMessageAsync(object message, MessageContext messageContext, CancellationToken cancellationToken = default);
 }

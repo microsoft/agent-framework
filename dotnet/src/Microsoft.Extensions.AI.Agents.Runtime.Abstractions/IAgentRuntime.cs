@@ -48,26 +48,6 @@ public interface IAgentRuntime : ISaveState
     ValueTask<ActorId> GetActorAsync(ActorId actorId, bool lazy = true, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Retrieves an actor by its type.
-    /// </summary>
-    /// <param name="actorType">The type of the actor.</param>
-    /// <param name="key">An optional key to specify variations of the actor. Defaults to "default".</param>
-    /// <param name="lazy">If <c>true</c>, the actor is fetched lazily.</param>
-    /// <param name="cancellationToken">A token to cancel the operation if needed.</param>
-    /// <returns>A task representing the asynchronous operation, returning the actor's ID.</returns>
-    ValueTask<ActorId> GetActorAsync(ActorType actorType, string key = "default", bool lazy = true, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Retrieves an actor by its string representation.
-    /// </summary>
-    /// <param name="actor">The string representation of the actor.</param>
-    /// <param name="key">An optional key to specify variations of the actor. Defaults to "default".</param>
-    /// <param name="lazy">If <c>true</c>, the actor is fetched lazily.</param>
-    /// <param name="cancellationToken">A token to cancel the operation if needed.</param>
-    /// <returns>A task representing the asynchronous operation, returning the actor's ID.</returns>
-    ValueTask<ActorId> GetActorAsync(string actor, string key = "default", bool lazy = true, CancellationToken cancellationToken = default);
-
-    /// <summary>
     /// Saves the state of an actor.
     /// The result must be JSON serializable.
     /// </summary>

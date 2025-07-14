@@ -8,7 +8,7 @@ using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
 
-namespace Microsoft.Agents.Orchestration.GroupChat;
+namespace Microsoft.Agents.Orchestration;
 
 /// <summary>
 /// An <see cref="AgentActor"/> used with the <see cref="GroupChatOrchestration{TInput, TOutput}"/>.
@@ -30,32 +30,20 @@ internal sealed class GroupChatAgentActor : AgentActor
     {
         this._cache = [];
 
-        this.RegisterMessageHandler<GroupChatMessages.Group>(this.HandleAsync);
-        this.RegisterMessageHandler<GroupChatMessages.Reset>(this.HandleAsync);
+        this.RegisterMessageHandler<GroupChatMessages.Group>((item, ctx) => this._cache.AddRange(item.Messages));
+        this.RegisterMessageHandler<GroupChatMessages.Reset>((item, ctx) => this.ResetThread());
         this.RegisterMessageHandler<GroupChatMessages.Speak>(this.HandleAsync);
-    }
-
-    private ValueTask HandleAsync(GroupChatMessages.Group item, MessageContext messageContext, CancellationToken cancellationToken)
-    {
-        this._cache.AddRange(item.Messages);
-        return default;
-    }
-
-    private ValueTask HandleAsync(GroupChatMessages.Reset item, MessageContext messageContext, CancellationToken cancellationToken)
-    {
-        this.ResetThread();
-        return default;
     }
 
     private async ValueTask HandleAsync(GroupChatMessages.Speak item, MessageContext messageContext, CancellationToken cancellationToken)
     {
         this.Logger.LogChatAgentInvoke(this.Id);
 
-        ChatMessage response = await this.InvokeAsync(this._cache, cancellationToken).ConfigureAwait(false);
+        ChatMessage response = await this.RunAsync(this._cache, cancellationToken).ConfigureAwait(false);
 
         this.Logger.LogChatAgentResult(this.Id, response.Text);
 
         this._cache.Clear();
-        await this.PublishMessageAsync(response.AsGroupMessage(), this.Context.Topic, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await this.PublishMessageAsync(new GroupChatMessages.Group([response]), this.Context.Topic, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 }
