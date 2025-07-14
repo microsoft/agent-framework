@@ -46,26 +46,26 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
         this._meter = new(name);
 
         this._operationDurationHistogram = this._meter.CreateHistogram<double>(
-            AgentOpenTelemetryConsts.Agent.Client.OperationDuration.Name,
+            AgentOpenTelemetryConsts.GenAI.Agent.Client.OperationDuration.Name,
             AgentOpenTelemetryConsts.SecondsUnit,
-            AgentOpenTelemetryConsts.Agent.Client.OperationDuration.Description
+            AgentOpenTelemetryConsts.GenAI.Agent.Client.OperationDuration.Description
 #if NET9_0_OR_GREATER
-            , advice: new() { HistogramBucketBoundaries = AgentOpenTelemetryConsts.Agent.Client.OperationDuration.ExplicitBucketBoundaries }
+            , advice: new() { HistogramBucketBoundaries = AgentOpenTelemetryConsts.GenAI.Agent.Client.OperationDuration.ExplicitBucketBoundaries }
 #endif
             );
 
         this._tokenUsageHistogram = this._meter.CreateHistogram<int>(
-            AgentOpenTelemetryConsts.Agent.Client.TokenUsage.Name,
+            AgentOpenTelemetryConsts.GenAI.Agent.Client.TokenUsage.Name,
             AgentOpenTelemetryConsts.TokensUnit,
-            AgentOpenTelemetryConsts.Agent.Client.TokenUsage.Description
+            AgentOpenTelemetryConsts.GenAI.Agent.Client.TokenUsage.Description
 #if NET9_0_OR_GREATER
-            , advice: new() { HistogramBucketBoundaries = AgentOpenTelemetryConsts.Agent.Client.TokenUsage.ExplicitBucketBoundaries }
+            , advice: new() { HistogramBucketBoundaries = AgentOpenTelemetryConsts.GenAI.Agent.Client.TokenUsage.ExplicitBucketBoundaries }
 #endif
             );
 
         this._requestCounter = this._meter.CreateCounter<int>(
-            AgentOpenTelemetryConsts.Agent.Client.RequestCount.Name,
-            description: AgentOpenTelemetryConsts.Agent.Client.RequestCount.Description);
+            AgentOpenTelemetryConsts.GenAI.Agent.Client.RequestCount.Name,
+            description: AgentOpenTelemetryConsts.GenAI.Agent.Client.RequestCount.Description);
     }
 
     /// <inheritdoc/>
@@ -89,7 +89,7 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
     {
         _ = Throw.IfNull(messages);
 
-        using Activity? activity = this.CreateAndConfigureActivity(AgentOpenTelemetryConsts.Agent.Run, messages, thread);
+        using Activity? activity = this.CreateAndConfigureActivity(AgentOpenTelemetryConsts.GenAI.Agent.Run, messages, thread);
         Stopwatch? stopwatch = this._operationDurationHistogram.Enabled ? Stopwatch.StartNew() : null;
 
         AgentRunResponse? response = null;
@@ -120,7 +120,7 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
     {
         _ = Throw.IfNull(messages);
 
-        using Activity? activity = this.CreateAndConfigureActivity(AgentOpenTelemetryConsts.Agent.RunStreaming, messages, thread);
+        using Activity? activity = this.CreateAndConfigureActivity(AgentOpenTelemetryConsts.GenAI.Agent.RunStreaming, messages, thread);
         Stopwatch? stopwatch = this._operationDurationHistogram.Enabled ? Stopwatch.StartNew() : null;
 
         IAsyncEnumerable<AgentRunResponseUpdate> updates;
@@ -192,20 +192,26 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
             if (activity is not null)
             {
                 _ = activity
-                    .AddTag(AgentOpenTelemetryConsts.Agent.Operation.Name, operationName)
-                    .AddTag(AgentOpenTelemetryConsts.Agent.Request.Id, this.Id)
-                    .AddTag(AgentOpenTelemetryConsts.Agent.Request.Name, this.Name)
-                    .AddTag(AgentOpenTelemetryConsts.Agent.Request.MessageCount, messages.Count);
+                    .AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Operation.Name, operationName)
+                    .AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Id, this.Id)
+                    .AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Name, this.Name)
+                    .AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Request.MessageCount, messages.Count);
+
+                // Add description if available (following gen_ai.agent.description convention)
+                if (!string.IsNullOrWhiteSpace(this.Description))
+                {
+                    _ = activity.AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Description, this.Description);
+                }
 
                 if (!string.IsNullOrWhiteSpace(thread?.Id))
                 {
-                    _ = activity.AddTag(AgentOpenTelemetryConsts.Agent.Request.ThreadId, thread.Id);
+                    _ = activity.AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Request.ThreadId, thread.Id);
                 }
 
                 // Add instructions if available (for ChatClientAgent)
                 if (this._innerAgent is ChatClientAgent chatClientAgent && !string.IsNullOrWhiteSpace(chatClientAgent.Instructions))
                 {
-                    _ = activity.AddTag(AgentOpenTelemetryConsts.Agent.Request.Instructions, chatClientAgent.Instructions);
+                    _ = activity.AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Request.Instructions, chatClientAgent.Instructions);
                 }
             }
         }
@@ -229,8 +235,8 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
         {
             TagList tags = new()
             {
-                { AgentOpenTelemetryConsts.Agent.Operation.Name, isStreaming ? AgentOpenTelemetryConsts.Agent.RunStreaming : AgentOpenTelemetryConsts.Agent.Run },
-                { AgentOpenTelemetryConsts.Agent.Request.Name, this.Name ?? "UnnamedAgent" }
+                { AgentOpenTelemetryConsts.GenAI.Agent.Operation.Name, isStreaming ? AgentOpenTelemetryConsts.GenAI.Agent.RunStreaming : AgentOpenTelemetryConsts.GenAI.Agent.Run },
+                { AgentOpenTelemetryConsts.GenAI.Agent.Name, this.Name ?? "UnnamedAgent" }
             };
 
             if (error is not null)
@@ -246,8 +252,8 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
         {
             TagList tags = new()
             {
-                { AgentOpenTelemetryConsts.Agent.Operation.Name, isStreaming ? AgentOpenTelemetryConsts.Agent.RunStreaming : AgentOpenTelemetryConsts.Agent.Run },
-                { AgentOpenTelemetryConsts.Agent.Request.Name, this.Name ?? "UnnamedAgent" }
+                { AgentOpenTelemetryConsts.GenAI.Agent.Operation.Name, isStreaming ? AgentOpenTelemetryConsts.GenAI.Agent.RunStreaming : AgentOpenTelemetryConsts.GenAI.Agent.Run },
+                { AgentOpenTelemetryConsts.GenAI.Agent.Name, this.Name ?? "UnnamedAgent" }
             };
 
             this._requestCounter.Add(1, tags);
@@ -260,8 +266,8 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
             {
                 TagList tags = new()
                 {
-                    { AgentOpenTelemetryConsts.Agent.Token.Type, "input" },
-                    { AgentOpenTelemetryConsts.Agent.Request.Name, this.Name ?? "UnnamedAgent" }
+                    { AgentOpenTelemetryConsts.GenAI.Agent.Token.Type, "input" },
+                    { AgentOpenTelemetryConsts.GenAI.Agent.Name, this.Name ?? "UnnamedAgent" }
                 };
                 this._tokenUsageHistogram.Record((int)inputTokens, tags);
             }
@@ -270,8 +276,8 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
             {
                 TagList tags = new()
                 {
-                    { AgentOpenTelemetryConsts.Agent.Token.Type, "output" },
-                    { AgentOpenTelemetryConsts.Agent.Request.Name, this.Name ?? "UnnamedAgent" }
+                    { AgentOpenTelemetryConsts.GenAI.Agent.Token.Type, "output" },
+                    { AgentOpenTelemetryConsts.GenAI.Agent.Name, this.Name ?? "UnnamedAgent" }
                 };
                 this._tokenUsageHistogram.Record((int)outputTokens, tags);
             }
@@ -289,21 +295,21 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
 
             if (response is not null)
             {
-                _ = activity.AddTag(AgentOpenTelemetryConsts.Agent.Response.MessageCount, response.Messages.Count);
+                _ = activity.AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Response.MessageCount, response.Messages.Count);
 
                 if (!string.IsNullOrWhiteSpace(response.ResponseId))
                 {
-                    _ = activity.AddTag(AgentOpenTelemetryConsts.Agent.Response.Id, response.ResponseId);
+                    _ = activity.AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Response.Id, response.ResponseId);
                 }
 
                 if (response.Usage?.InputTokenCount is long inputTokens)
                 {
-                    _ = activity.AddTag(AgentOpenTelemetryConsts.Agent.Usage.InputTokens, (int)inputTokens);
+                    _ = activity.AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Usage.InputTokens, (int)inputTokens);
                 }
 
                 if (response.Usage?.OutputTokenCount is long outputTokens)
                 {
-                    _ = activity.AddTag(AgentOpenTelemetryConsts.Agent.Usage.OutputTokens, (int)outputTokens);
+                    _ = activity.AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Usage.OutputTokens, (int)outputTokens);
                 }
             }
         }

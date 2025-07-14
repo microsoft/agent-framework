@@ -59,14 +59,15 @@ public class OpenTelemetryAgentTests
         var activity = Assert.Single(activities);
         Assert.NotNull(activity.Id);
         Assert.NotEmpty(activity.Id);
-        Assert.Equal($"{AgentOpenTelemetryConsts.Agent.Run} TestAgent", activity.DisplayName);
+        Assert.Equal($"{AgentOpenTelemetryConsts.GenAI.Agent.Run} TestAgent", activity.DisplayName);
         Assert.Equal(ActivityKind.Client, activity.Kind);
 
         // Verify activity tags
-        Assert.Equal(AgentOpenTelemetryConsts.Agent.Run, activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Operation.Name));
-        Assert.Equal("test-agent-id", activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Request.Id));
-        Assert.Equal("TestAgent", activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Request.Name));
-        Assert.Equal(1, activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Request.MessageCount));
+        Assert.Equal(AgentOpenTelemetryConsts.GenAI.Agent.Run, activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Operation.Name));
+        Assert.Equal("test-agent-id", activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Id));
+        Assert.Equal("TestAgent", activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Name));
+        Assert.Equal("Test Description", activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Description));
+        Assert.Equal(1, activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Request.MessageCount));
 
         if (withError)
         {
@@ -76,10 +77,10 @@ public class OpenTelemetryAgentTests
         }
         else
         {
-            Assert.Equal(1, activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Response.MessageCount));
-            Assert.Equal("test-response-id", activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Response.Id));
-            Assert.Equal(10, activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Usage.InputTokens));
-            Assert.Equal(20, activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Usage.OutputTokens));
+            Assert.Equal(1, activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Response.MessageCount));
+            Assert.Equal("test-response-id", activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Response.Id));
+            Assert.Equal(10, activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Usage.InputTokens));
+            Assert.Equal(20, activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Usage.OutputTokens));
         }
 
         Assert.True(activity.Duration.TotalMilliseconds > 0);
@@ -136,14 +137,15 @@ public class OpenTelemetryAgentTests
         var activity = Assert.Single(activities);
         Assert.NotNull(activity.Id);
         Assert.NotEmpty(activity.Id);
-        Assert.Equal($"{AgentOpenTelemetryConsts.Agent.RunStreaming} TestAgent", activity.DisplayName);
+        Assert.Equal($"{AgentOpenTelemetryConsts.GenAI.Agent.RunStreaming} TestAgent", activity.DisplayName);
         Assert.Equal(ActivityKind.Client, activity.Kind);
 
         // Verify activity tags
-        Assert.Equal(AgentOpenTelemetryConsts.Agent.RunStreaming, activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Operation.Name));
-        Assert.Equal("test-agent-id", activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Request.Id));
-        Assert.Equal("TestAgent", activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Request.Name));
-        Assert.Equal(1, activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Request.MessageCount));
+        Assert.Equal(AgentOpenTelemetryConsts.GenAI.Agent.RunStreaming, activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Operation.Name));
+        Assert.Equal("test-agent-id", activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Id));
+        Assert.Equal("TestAgent", activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Name));
+        Assert.Equal("Test Description", activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Description));
+        Assert.Equal(1, activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Request.MessageCount));
 
         if (withError)
         {
@@ -153,10 +155,10 @@ public class OpenTelemetryAgentTests
         }
         else
         {
-            Assert.Equal(1, activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Response.MessageCount));
-            Assert.Equal("stream-response-id", activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Response.Id));
-            Assert.Equal(15, activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Usage.InputTokens));
-            Assert.Equal(25, activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Usage.OutputTokens));
+            Assert.Equal(1, activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Response.MessageCount));
+            Assert.Equal("stream-response-id", activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Response.Id));
+            Assert.Equal(15, activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Usage.InputTokens));
+            Assert.Equal(25, activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Usage.OutputTokens));
         }
 
         Assert.True(activity.Duration.TotalMilliseconds > 0);
@@ -196,7 +198,7 @@ public class OpenTelemetryAgentTests
 
         // Assert
         var activity = Assert.Single(activities);
-        Assert.Equal("You are a helpful assistant.", activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Request.Instructions));
+        Assert.Equal("You are a helpful assistant.", activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Request.Instructions));
     }
 
     [Fact]
@@ -225,7 +227,7 @@ public class OpenTelemetryAgentTests
 
         // Assert
         var activity = Assert.Single(activities);
-        Assert.Equal("thread-123", activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Request.ThreadId));
+        Assert.Equal("thread-123", activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Request.ThreadId));
     }
 
     [Fact]
@@ -444,10 +446,10 @@ public class OpenTelemetryAgentTests
 
         // Assert
         var activity = Assert.Single(activities);
-        Assert.Equal(1, activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Response.MessageCount));
-        Assert.Null(activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Response.Id));
-        Assert.Null(activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Usage.InputTokens));
-        Assert.Null(activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Usage.OutputTokens));
+        Assert.Equal(1, activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Response.MessageCount));
+        Assert.Null(activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Response.Id));
+        Assert.Null(activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Usage.InputTokens));
+        Assert.Null(activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Usage.OutputTokens));
     }
 
     [Fact]
@@ -481,7 +483,7 @@ public class OpenTelemetryAgentTests
 
         // Assert
         var activity = Assert.Single(activities);
-        Assert.Equal(AgentOpenTelemetryConsts.Agent.Run, activity.DisplayName);
+        Assert.Equal(AgentOpenTelemetryConsts.GenAI.Agent.Run, activity.DisplayName);
     }
 
     [Fact]
@@ -520,8 +522,8 @@ public class OpenTelemetryAgentTests
         Assert.Equal(4, updates.Count); // 3 content updates + 1 final update
 
         var activity = Assert.Single(activities);
-        Assert.Equal(1, activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Response.MessageCount));
-        Assert.Equal("partial-response-id", activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Response.Id));
+        Assert.Equal(1, activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Response.MessageCount));
+        Assert.Equal("partial-response-id", activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Response.Id));
 
         static async IAsyncEnumerable<AgentRunResponseUpdate> CreatePartialStreamingResponse([EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
@@ -612,15 +614,15 @@ public class OpenTelemetryAgentTests
         Assert.NotEmpty(exportedMetrics);
 
         // Check for operation duration metric
-        var durationMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.Agent.Client.OperationDuration.Name);
+        var durationMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.GenAI.Agent.Client.OperationDuration.Name);
         Assert.NotNull(durationMetric);
 
         // Check for request count metric
-        var requestCountMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.Agent.Client.RequestCount.Name);
+        var requestCountMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.GenAI.Agent.Client.RequestCount.Name);
         Assert.NotNull(requestCountMetric);
 
         // Check for token usage metric
-        var tokenUsageMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.Agent.Client.TokenUsage.Name);
+        var tokenUsageMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.GenAI.Agent.Client.TokenUsage.Name);
         Assert.NotNull(tokenUsageMetric);
     }
 
@@ -660,7 +662,7 @@ public class OpenTelemetryAgentTests
         Assert.NotEmpty(exportedMetrics);
 
         // Check for operation duration metric with error tag
-        var durationMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.Agent.Client.OperationDuration.Name);
+        var durationMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.GenAI.Agent.Client.OperationDuration.Name);
         Assert.NotNull(durationMetric);
     }
 
@@ -705,15 +707,15 @@ public class OpenTelemetryAgentTests
         Assert.NotEmpty(updates);
 
         // Check for operation duration metric
-        var durationMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.Agent.Client.OperationDuration.Name);
+        var durationMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.GenAI.Agent.Client.OperationDuration.Name);
         Assert.NotNull(durationMetric);
 
         // Check for request count metric
-        var requestCountMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.Agent.Client.RequestCount.Name);
+        var requestCountMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.GenAI.Agent.Client.RequestCount.Name);
         Assert.NotNull(requestCountMetric);
 
         // Check for token usage metric
-        var tokenUsageMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.Agent.Client.TokenUsage.Name);
+        var tokenUsageMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.GenAI.Agent.Client.TokenUsage.Name);
         Assert.NotNull(tokenUsageMetric);
     }
 
@@ -757,14 +759,14 @@ public class OpenTelemetryAgentTests
         meterProvider.ForceFlush(5000);
 
         // Assert - Should have duration and request count metrics, but no token usage metrics
-        var durationMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.Agent.Client.OperationDuration.Name);
+        var durationMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.GenAI.Agent.Client.OperationDuration.Name);
         Assert.NotNull(durationMetric);
 
-        var requestCountMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.Agent.Client.RequestCount.Name);
+        var requestCountMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.GenAI.Agent.Client.RequestCount.Name);
         Assert.NotNull(requestCountMetric);
 
         // Token usage metric should not be recorded when usage is null
-        var tokenUsageMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.Agent.Client.TokenUsage.Name);
+        var tokenUsageMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.GenAI.Agent.Client.TokenUsage.Name);
         Assert.Null(tokenUsageMetric);
     }
 
@@ -843,7 +845,46 @@ public class OpenTelemetryAgentTests
         meterProvider.ForceFlush(5000);
 
         // Assert - Should record input tokens but not output tokens
-        var tokenUsageMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.Agent.Client.TokenUsage.Name);
+        var tokenUsageMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.GenAI.Agent.Client.TokenUsage.Name);
         Assert.NotNull(tokenUsageMetric);
+    }
+
+    [Fact]
+    public async Task RunAsync_WithNullDescription_SkipsDescriptionAttributeAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var mockAgent = new Mock<Agent>();
+        mockAgent.Setup(a => a.Id).Returns("test-agent-id");
+        mockAgent.Setup(a => a.Name).Returns("TestAgent");
+        mockAgent.Setup(a => a.Description).Returns((string?)null); // Null description
+
+        var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
+        mockAgent.Setup(a => a.RunAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<AgentThread>(), It.IsAny<AgentRunOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: sourceName);
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Hello")
+        };
+
+        // Act
+        await telemetryAgent.RunAsync(messages);
+
+        // Assert
+        var activity = Assert.Single(activities);
+        Assert.Equal("test-agent-id", activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Id));
+        Assert.Equal("TestAgent", activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Name));
+
+        // Description should not be present when null
+        Assert.Null(activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Description));
     }
 }

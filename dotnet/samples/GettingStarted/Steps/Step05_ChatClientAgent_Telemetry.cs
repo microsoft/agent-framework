@@ -42,7 +42,7 @@ public sealed class Step05_ChatClientAgent_Telemetry(ITestOutputHelper output) :
         var baseAgent = new ChatClientAgent(chatClient, agentOptions);
 
         // Wrap the agent with OpenTelemetry instrumentation
-        using var agent = baseAgent.WithOpenTelemetry();
+        using var agent = baseAgent.WithOpenTelemetry(sourceName: sourceName);
         var thread = agent.GetNewThread();
 
         // Run agent interactions

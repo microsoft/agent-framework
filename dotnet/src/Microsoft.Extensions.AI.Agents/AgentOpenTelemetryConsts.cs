@@ -23,166 +23,182 @@ internal static class AgentOpenTelemetryConsts
     public const string TokensUnit = "token";
 
     /// <summary>
-    /// Constants for agent operations.
+    /// Constants for generative AI telemetry, following OpenTelemetry semantic conventions.
     /// </summary>
-    public static class Agent
+    public static class GenAI
     {
         /// <summary>
-        /// The operation name for agent run operations.
+        /// Constants for agent-related telemetry attributes and operations.
         /// </summary>
-        public const string Run = "agent.run";
-
-        /// <summary>
-        /// The operation name for agent streaming run operations.
-        /// </summary>
-        public const string RunStreaming = "agent.run_streaming";
-
-        /// <summary>
-        /// Constants for agent operation attributes.
-        /// </summary>
-        public static class Operation
+        public static class Agent
         {
             /// <summary>
-            /// The attribute name for the operation name.
+            /// The operation name for agent run operations.
             /// </summary>
-            public const string Name = "agent.operation.name";
-        }
-
-        /// <summary>
-        /// Constants for agent request attributes.
-        /// </summary>
-        public static class Request
-        {
-            /// <summary>
-            /// The attribute name for the agent request ID.
-            /// </summary>
-            public const string Id = "agent.request.id";
+            public const string Run = "agent.run";
 
             /// <summary>
-            /// The attribute name for the agent request name.
+            /// The operation name for agent streaming run operations.
             /// </summary>
-            public const string Name = "agent.request.name";
+            public const string RunStreaming = "agent.run_streaming";
 
             /// <summary>
-            /// The attribute name for the agent request instructions.
+            /// The attribute name for the agent ID (following gen_ai.agent.id convention).
             /// </summary>
-            public const string Instructions = "agent.request.instructions";
+            public const string Id = "gen_ai.agent.id";
 
             /// <summary>
-            /// The attribute name for the agent request message count.
+            /// The attribute name for the agent name (following gen_ai.agent.name convention).
             /// </summary>
-            public const string MessageCount = "agent.request.message_count";
+            public const string Name = "gen_ai.agent.name";
 
             /// <summary>
-            /// The attribute name for the agent request thread ID.
+            /// The attribute name for the agent description (following gen_ai.agent.description convention).
             /// </summary>
-            public const string ThreadId = "agent.request.thread_id";
-        }
-
-        /// <summary>
-        /// Constants for agent response attributes.
-        /// </summary>
-        public static class Response
-        {
-            /// <summary>
-            /// The attribute name for the agent response ID.
-            /// </summary>
-            public const string Id = "agent.response.id";
+            public const string Description = "gen_ai.agent.description";
 
             /// <summary>
-            /// The attribute name for the agent response message count.
+            /// Constants for agent operation attributes.
             /// </summary>
-            public const string MessageCount = "agent.response.message_count";
-        }
-
-        /// <summary>
-        /// Constants for agent usage attributes.
-        /// </summary>
-        public static class Usage
-        {
-            /// <summary>
-            /// The attribute name for input tokens used by the agent.
-            /// </summary>
-            public const string InputTokens = "agent.usage.input_tokens";
-
-            /// <summary>
-            /// The attribute name for output tokens used by the agent.
-            /// </summary>
-            public const string OutputTokens = "agent.usage.output_tokens";
-        }
-
-        /// <summary>
-        /// Constants for agent token attributes.
-        /// </summary>
-        public static class Token
-        {
-            /// <summary>
-            /// The attribute name for the token type.
-            /// </summary>
-            public const string Type = "agent.token.type";
-        }
-
-        /// <summary>
-        /// Constants for agent client metrics.
-        /// </summary>
-        public static class Client
-        {
-            /// <summary>
-            /// Constants for operation duration metrics.
-            /// </summary>
-            public static class OperationDuration
+            public static class Operation
             {
                 /// <summary>
-                /// The description for the operation duration metric.
+                /// The attribute name for the operation name.
                 /// </summary>
-                public const string Description = "Measures the duration of an agent operation";
-
-                /// <summary>
-                /// The name for the operation duration metric.
-                /// </summary>
-                public const string Name = "agent.client.operation.duration";
-
-                /// <summary>
-                /// The explicit bucket boundaries for the operation duration histogram.
-                /// </summary>
-                public static readonly double[] ExplicitBucketBoundaries = [0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92];
+                public const string Name = "agent.operation.name";
             }
 
             /// <summary>
-            /// Constants for token usage metrics.
+            /// Constants for agent request attributes.
             /// </summary>
-            public static class TokenUsage
+            public static class Request
             {
                 /// <summary>
-                /// The description for the token usage metric.
+                /// The attribute name for the agent request instructions.
                 /// </summary>
-                public const string Description = "Measures number of input and output tokens used by agent";
+                public const string Instructions = "agent.request.instructions";
 
                 /// <summary>
-                /// The name for the token usage metric.
+                /// The attribute name for the agent request message count.
                 /// </summary>
-                public const string Name = "agent.client.token.usage";
+                public const string MessageCount = "agent.request.message_count";
 
                 /// <summary>
-                /// The explicit bucket boundaries for the token usage histogram.
+                /// The attribute name for the agent request thread ID.
                 /// </summary>
-                public static readonly int[] ExplicitBucketBoundaries = [1, 4, 16, 64, 256, 1_024, 4_096, 16_384, 65_536, 262_144, 1_048_576, 4_194_304, 16_777_216, 67_108_864];
+                public const string ThreadId = "agent.request.thread_id";
             }
 
             /// <summary>
-            /// Constants for request count metrics.
+            /// Constants for agent response attributes.
             /// </summary>
-            public static class RequestCount
+            public static class Response
             {
                 /// <summary>
-                /// The description for the request count metric.
+                /// The attribute name for the agent response ID.
                 /// </summary>
-                public const string Description = "Measures the number of agent requests";
+                public const string Id = "agent.response.id";
 
                 /// <summary>
-                /// The name for the request count metric.
+                /// The attribute name for the agent response message count.
                 /// </summary>
-                public const string Name = "agent.client.request.count";
+                public const string MessageCount = "agent.response.message_count";
+
+                /// <summary>
+                /// The attribute name for the agent response finish reason.
+                /// </summary>
+                public const string FinishReason = "agent.response.finish_reason";
+            }
+
+            /// <summary>
+            /// Constants for agent usage attributes.
+            /// </summary>
+            public static class Usage
+            {
+                /// <summary>
+                /// The attribute name for input tokens used by the agent.
+                /// </summary>
+                public const string InputTokens = "agent.usage.input_tokens";
+
+                /// <summary>
+                /// The attribute name for output tokens used by the agent.
+                /// </summary>
+                public const string OutputTokens = "agent.usage.output_tokens";
+            }
+
+            /// <summary>
+            /// Constants for agent token attributes.
+            /// </summary>
+            public static class Token
+            {
+                /// <summary>
+                /// The attribute name for the token type.
+                /// </summary>
+                public const string Type = "agent.token.type";
+            }
+
+            /// <summary>
+            /// Constants for agent client metrics.
+            /// </summary>
+            public static class Client
+            {
+                /// <summary>
+                /// Constants for operation duration metrics.
+                /// </summary>
+                public static class OperationDuration
+                {
+                    /// <summary>
+                    /// The description for the operation duration metric.
+                    /// </summary>
+                    public const string Description = "Measures the duration of an agent operation";
+
+                    /// <summary>
+                    /// The name for the operation duration metric.
+                    /// </summary>
+                    public const string Name = "agent.client.operation.duration";
+
+                    /// <summary>
+                    /// The explicit bucket boundaries for the operation duration histogram.
+                    /// </summary>
+                    public static readonly double[] ExplicitBucketBoundaries = [0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92];
+                }
+
+                /// <summary>
+                /// Constants for token usage metrics.
+                /// </summary>
+                public static class TokenUsage
+                {
+                    /// <summary>
+                    /// The description for the token usage metric.
+                    /// </summary>
+                    public const string Description = "Measures number of input and output tokens used by agent";
+
+                    /// <summary>
+                    /// The name for the token usage metric.
+                    /// </summary>
+                    public const string Name = "agent.client.token.usage";
+
+                    /// <summary>
+                    /// The explicit bucket boundaries for the token usage histogram.
+                    /// </summary>
+                    public static readonly int[] ExplicitBucketBoundaries = [1, 4, 16, 64, 256, 1_024, 4_096, 16_384, 65_536, 262_144, 1_048_576, 4_194_304, 16_777_216, 67_108_864];
+                }
+
+                /// <summary>
+                /// Constants for request count metrics.
+                /// </summary>
+                public static class RequestCount
+                {
+                    /// <summary>
+                    /// The description for the request count metric.
+                    /// </summary>
+                    public const string Description = "Measures the number of agent requests";
+
+                    /// <summary>
+                    /// The name for the request count metric.
+                    /// </summary>
+                    public const string Name = "agent.client.request.count";
+                }
             }
         }
     }
