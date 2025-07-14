@@ -41,7 +41,6 @@ class AzureChatClient(AzureOpenAIConfigBase, OpenAIChatClientBase):
 
     def __init__(
         self,
-        service_id: str | None = None,
         api_key: str | None = None,
         deployment_name: str | None = None,
         endpoint: str | None = None,
@@ -59,7 +58,6 @@ class AzureChatClient(AzureOpenAIConfigBase, OpenAIChatClientBase):
         """Initialize an AzureChatCompletion service.
 
         Args:
-            service_id (str | None): The service ID for the Azure deployment. (Optional)
             api_key  (str | None): The optional api key. If provided, will override the value in the
                 env vars or .env file.
             deployment_name  (str | None): The optional deployment. If provided, will override the value
@@ -104,7 +102,6 @@ class AzureChatClient(AzureOpenAIConfigBase, OpenAIChatClientBase):
             endpoint=azure_openai_settings.endpoint,
             base_url=azure_openai_settings.base_url,
             api_version=azure_openai_settings.api_version,
-            service_id=service_id,
             api_key=azure_openai_settings.api_key.get_secret_value() if azure_openai_settings.api_key else None,
             ad_token=ad_token,
             ad_token_provider=ad_token_provider,
@@ -125,7 +122,6 @@ class AzureChatClient(AzureOpenAIConfigBase, OpenAIChatClientBase):
                     ad_auth, ad_token_provider, default_headers
         """
         return AzureChatClient(
-            service_id=settings.get("service_id"),
             api_key=settings.get("api_key"),
             deployment_name=settings.get("deployment_name"),
             endpoint=settings.get("endpoint"),
@@ -184,7 +180,7 @@ class AzureChatClient(AzureOpenAIConfigBase, OpenAIChatClientBase):
                 additional_properties=function_call.additional_properties,
             )
 
-            inner_content = content.messages[-1].contents if isinstance(content, ChatResponse) else content.contents
+            inner_content = content.messages[0].contents if isinstance(content, ChatResponse) else content.contents
 
             inner_content.insert(0, function_call)
             inner_content.insert(1, result)
@@ -232,7 +228,7 @@ class AzureChatClient(AzureOpenAIConfigBase, OpenAIChatClientBase):
             conversation_id=message.conversation_id,
             messages=[messages["tool_call"], messages["tool_result"], messages["assistant"]],
             created_at=message.created_at,
-            ai_model_id=message.ai_model_id,
+            model_id=message.ai_model_id,
             usage_details=message.usage_details,
             finish_reason=message.finish_reason,
             additional_properties=message.additional_properties,

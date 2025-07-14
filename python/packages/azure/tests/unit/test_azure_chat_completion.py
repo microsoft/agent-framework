@@ -2,6 +2,7 @@
 
 import json
 import os
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import openai
@@ -24,19 +25,18 @@ from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from agent_framework import (
     ChatClientBase,
     ChatMessage,
-    ChatOptions,
     FunctionCallContent,
     FunctionResultContent,
     TextContent,
 )
-from agent_framework.azure import AzureChatClient
+from agent_framework.azure._azure_chat_client import AzureChatClient
 
 # region Service Setup
 
 
 def test_init(azure_openai_unit_test_env) -> None:
     # Test successful initialization
-    azure_chat_completion = AzureChatClient(service_id="test_service_id")
+    azure_chat_completion = AzureChatClient()
 
     assert azure_chat_completion.client is not None
     assert isinstance(azure_chat_completion.client, AsyncAzureOpenAI)
@@ -171,42 +171,17 @@ async def test_cmc(
 ) -> None:
     mock_create.return_value = mock_chat_completion_response
     chat_history.append(ChatMessage(text="hello world", role="user"))
-    chat_options = ChatOptions()
 
     azure_chat_completion = AzureChatClient()
-    await azure_chat_completion.get_chat_message_content(
-        chat_history=chat_history,
-        chat_options=chat_options,
+    await azure_chat_completion.get_response(
+        messages=chat_history,
     )
+    chat_msg_history = cast(list[ChatMessage], chat_history)
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
         stream=False,
-        messages=azure_chat_completion._prepare_chat_history_for_request(chat_history),
+        messages=azure_chat_completion._prepare_chat_history_for_request(chat_msg_history),
     )
-
-
-@patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
-async def test_cmc_with_developer_instruction_role_propagates(
-    mock_create,
-    azure_openai_unit_test_env,
-    chat_history: list[str | ChatMessage],
-    mock_chat_completion_response: ChatCompletion,
-) -> None:
-    mock_create.return_value = mock_chat_completion_response
-    chat_history.append(ChatMessage(text="hello world", role="user"))
-    chat_options = ChatOptions()
-
-    azure_chat_completion = AzureChatClient(instruction_role="developer")
-    await azure_chat_completion.get_chat_message_content(
-        chat_history=chat_history,
-        chat_options=chat_options,
-    )
-    mock_create.assert_awaited_once_with(
-        model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
-        stream=False,
-        messages=azure_chat_completion._prepare_chat_history_for_request(chat_history),
-    )
-    assert azure_chat_completion.instruction_role == "developer"
 
 
 @patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
@@ -219,21 +194,17 @@ async def test_cmc_with_logit_bias(
     mock_create.return_value = mock_chat_completion_response
     prompt = "hello world"
     chat_history.append(ChatMessage(text=prompt, role="user"))
-    chat_options = ChatOptions()
 
-    token_bias = {"1": -100}
-    chat_options.logit_bias = token_bias
+    token_bias: dict[str | int, float] = {"1": -100}
 
     azure_chat_completion = AzureChatClient()
 
-    await azure_chat_completion.get_chat_message_content(
-        chat_history=chat_history,
-        chat_options=chat_options,
-    )
+    await azure_chat_completion.get_response(messages=chat_history, logit_bias=token_bias)
 
+    chat_msg_history = cast(list[ChatMessage], chat_history)
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
-        messages=azure_chat_completion._prepare_chat_history_for_request(chat_history),
+        messages=azure_chat_completion._prepare_chat_history_for_request(chat_msg_history),
         stream=False,
         logit_bias=token_bias,
     )
@@ -247,18 +218,19 @@ async def test_cmc_with_stop(
     mock_chat_completion_response: ChatCompletion,
 ) -> None:
     mock_create.return_value = mock_chat_completion_response
-    chat_options = ChatOptions()
+    prompt = "hello world"
+    chat_history.append(ChatMessage(text=prompt, role="user"))
 
     stop = ["!"]
-    chat_options.stop = stop
 
     azure_chat_completion = AzureChatClient()
 
-    await azure_chat_completion.get_chat_message_content(chat_history=chat_history, chat_options=chat_options)
+    await azure_chat_completion.get_response(messages=chat_history, stop=stop)
 
+    chat_msg_history = cast(list[ChatMessage], chat_history)
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
-        messages=azure_chat_completion._prepare_chat_history_for_request(chat_history),
+        messages=azure_chat_completion._prepare_chat_history_for_request(chat_msg_history),
         stream=False,
         stop=stop,
     )
@@ -277,7 +249,7 @@ async def test_azure_on_your_data(
             message=ChatCompletionMessage(
                 content="test",
                 role="assistant",
-                context={
+                context={  # type: ignore
                     "citations": {
                         "content": "test content",
                         "title": "test title",
@@ -311,22 +283,23 @@ async def test_azure_on_your_data(
         ]
     }
 
-    chat_options = ChatOptions(additional_properties={"extra_body": expected_data_settings})
-
     azure_chat_completion = AzureChatClient()
 
-    content = await azure_chat_completion.get_chat_message_content(
-        chat_history=messages_in,
-        chat_options=chat_options,
+    content = await azure_chat_completion.get_response(
+        messages=messages_in,
+        additional_properties={"extra_body": expected_data_settings},
     )
-    assert isinstance(content.items[0], FunctionCallContent)
-    assert isinstance(content.items[1], FunctionResultContent)
-    assert isinstance(content.items[2], TextContent)
-    assert content.items[2].text == "test"
+    assert len(content.messages) == 1
+    assert len(content.messages[0].contents) == 3
+    assert isinstance(content.messages[0].contents[0], FunctionCallContent)
+    assert isinstance(content.messages[0].contents[1], FunctionResultContent)
+    assert isinstance(content.messages[0].contents[2], TextContent)
+    assert content.messages[0].contents[2].text == "test"
 
+    chat_messages_out = cast(list[ChatMessage], messages_out)
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
-        messages=azure_chat_completion._prepare_chat_history_for_request(messages_out),
+        messages=azure_chat_completion._prepare_chat_history_for_request(chat_messages_out),
         stream=False,
         extra_body=expected_data_settings,
     )
@@ -345,7 +318,7 @@ async def test_azure_on_your_data_string(
             message=ChatCompletionMessage(
                 content="test",
                 role="assistant",
-                context=json.dumps({
+                context=json.dumps({  # type: ignore
                     "citations": {
                         "content": "test content",
                         "title": "test title",
@@ -379,22 +352,23 @@ async def test_azure_on_your_data_string(
         ]
     }
 
-    chat_options = ChatOptions(additional_properties={"extra_body": expected_data_settings})
-
     azure_chat_completion = AzureChatClient()
 
-    content = await azure_chat_completion.get_chat_message_content(
-        chat_history=messages_in,
-        chat_options=chat_options,
+    content = await azure_chat_completion.get_response(
+        messages=messages_in,
+        additional_properties={"extra_body": expected_data_settings},
     )
-    assert isinstance(content.items[0], FunctionCallContent)
-    assert isinstance(content.items[1], FunctionResultContent)
-    assert isinstance(content.items[2], TextContent)
-    assert content.items[2].text == "test"
+    assert len(content.messages) == 1
+    assert len(content.messages[0].contents) == 3
+    assert isinstance(content.messages[0].contents[0], FunctionCallContent)
+    assert isinstance(content.messages[0].contents[1], FunctionResultContent)
+    assert isinstance(content.messages[0].contents[2], TextContent)
+    assert content.messages[0].contents[2].text == "test"
 
+    chat_messages_out = cast(list[ChatMessage], messages_out)
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
-        messages=azure_chat_completion._prepare_chat_history_for_request(messages_out),
+        messages=azure_chat_completion._prepare_chat_history_for_request(chat_messages_out),
         stream=False,
         extra_body=expected_data_settings,
     )
@@ -413,7 +387,7 @@ async def test_azure_on_your_data_fail(
             message=ChatCompletionMessage(
                 content="test",
                 role="assistant",
-                context="not a dictionary",
+                context="not a dictionary",  # type: ignore
             ),
             finish_reason="stop",
         )
@@ -438,20 +412,21 @@ async def test_azure_on_your_data_fail(
         ]
     }
 
-    chat_options = ChatOptions(additional_properties={"extra_body": expected_data_settings})
-
     azure_chat_completion = AzureChatClient()
 
-    content = await azure_chat_completion.get_chat_message_content(
-        chat_history=messages_in,
-        chat_options=chat_options,
+    content = await azure_chat_completion.get_response(
+        messages=messages_in,
+        additional_properties={"extra_body": expected_data_settings},
     )
-    assert isinstance(content.items[0], TextContent)
-    assert content.items[0].text == "test"
+    assert len(content.messages) == 1
+    assert len(content.messages[0].contents) == 1
+    assert isinstance(content.messages[0].contents[0], TextContent)
+    assert content.messages[0].contents[0].text == "test"
 
+    chat_messages_out = cast(list[ChatMessage], messages_out)
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
-        messages=azure_chat_completion._prepare_chat_history_for_request(messages_out),
+        messages=azure_chat_completion._prepare_chat_history_for_request(chat_messages_out),
         stream=False,
         extra_body=expected_data_settings,
     )
@@ -470,7 +445,7 @@ async def test_azure_on_your_data_split_messages(
             message=ChatCompletionMessage(
                 content="test",
                 role="assistant",
-                context={
+                context={  # type: ignore
                     "citations": {
                         "content": "test content",
                         "title": "test title",
@@ -491,22 +466,19 @@ async def test_azure_on_your_data_split_messages(
     messages_out: list[str | ChatMessage] = []
     messages_out.append(ChatMessage(text=prompt, role="user"))
 
-    chat_options = ChatOptions()
-
     azure_chat_completion = AzureChatClient()
 
-    content = await azure_chat_completion.get_chat_message_content(
-        chat_history=messages_in,
-        chat_options=chat_options,
+    content = await azure_chat_completion.get_response(
+        messages=messages_in,
     )
-    messages = azure_chat_completion.split_message(content)
-    assert len(messages) == 3
-    assert isinstance(messages[0].items[0], FunctionCallContent)
-    assert isinstance(messages[1].items[0], FunctionResultContent)
-    assert isinstance(messages[2].items[0], TextContent)
-    assert messages[2].items[0].text == "test"
-    message = azure_chat_completion.split_message(messages[0])
-    assert message == [messages[0]]
+    message = azure_chat_completion.split_message(content)
+    assert len(content.messages) == 1
+    assert len(content.messages[0].contents) == 3
+    assert isinstance(content.messages[0].contents[0], FunctionCallContent)
+    assert isinstance(content.messages[0].contents[1], FunctionResultContent)
+    assert isinstance(content.messages[0].contents[2], TextContent)
+    assert content.messages[0].contents[2].text == "test"
+    assert message.messages[0].contents == [content.messages[0].contents[0]]
 
 
 CONTENT_FILTERED_ERROR_MESSAGE = (
@@ -528,9 +500,9 @@ async def test_content_filtering_raises_correct_exception(
 ) -> None:
     prompt = "some prompt that would trigger the content filtering"
     chat_history.append(ChatMessage(text=prompt, role="user"))
-    chat_options = ChatOptions()
 
     test_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    assert test_endpoint is not None
     mock_create.side_effect = openai.BadRequestError(
         CONTENT_FILTERED_ERROR_FULL_MESSAGE,
         response=Response(400, request=Request("POST", test_endpoint)),
@@ -555,9 +527,8 @@ async def test_content_filtering_raises_correct_exception(
     azure_chat_completion = AzureChatClient()
 
     with pytest.raises(OpenAIContentFilterException, match="service encountered a content error") as exc_info:
-        await azure_chat_completion.get_chat_message_content(
-            chat_history=chat_history,
-            chat_options=chat_options,
+        await azure_chat_completion.get_response(
+            messages=chat_history,
         )
 
     content_filter_exc = exc_info.value
@@ -572,9 +543,9 @@ async def test_content_filtering_without_response_code_raises_with_default_code(
 ) -> None:
     prompt = "some prompt that would trigger the content filtering"
     chat_history.append(ChatMessage(text=prompt, role="user"))
-    chat_options = ChatOptions()
 
     test_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    assert test_endpoint is not None
     mock_create.side_effect = openai.BadRequestError(
         CONTENT_FILTERED_ERROR_FULL_MESSAGE,
         response=Response(400, request=Request("POST", test_endpoint)),
@@ -598,9 +569,8 @@ async def test_content_filtering_without_response_code_raises_with_default_code(
     azure_chat_completion = AzureChatClient()
 
     with pytest.raises(OpenAIContentFilterException, match="service encountered a content error"):
-        await azure_chat_completion.get_chat_message_content(
-            chat_history=chat_history,
-            chat_options=chat_options,
+        await azure_chat_completion.get_response(
+            messages=chat_history,
         )
 
 
@@ -610,9 +580,9 @@ async def test_bad_request_non_content_filter(
 ) -> None:
     prompt = "some prompt that would trigger the content filtering"
     chat_history.append(ChatMessage(text=prompt, role="user"))
-    chat_options = ChatOptions()
 
     test_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    assert test_endpoint is not None
     mock_create.side_effect = openai.BadRequestError(
         "The request was bad.", response=Response(400, request=Request("POST", test_endpoint)), body={}
     )
@@ -620,9 +590,8 @@ async def test_bad_request_non_content_filter(
     azure_chat_completion = AzureChatClient()
 
     with pytest.raises(ServiceResponseException, match="service failed to complete the prompt"):
-        await azure_chat_completion.get_chat_message_content(
-            chat_history=chat_history,
-            chat_options=chat_options,
+        await azure_chat_completion.get_response(
+            messages=chat_history,
         )
 
 
@@ -635,20 +604,19 @@ async def test_cmc_streaming(
 ) -> None:
     mock_create.return_value = mock_streaming_chat_completion_response
     chat_history.append(ChatMessage(text="hello world", role="user"))
-    chat_options = ChatOptions()
 
     azure_chat_completion = AzureChatClient()
-    async for msg in azure_chat_completion.get_streaming_chat_message_content(
-        chat_history=chat_history,
-        chat_options=chat_options,
+    async for msg in azure_chat_completion.get_streaming_response(
+        messages=chat_history,
     ):
         assert msg is not None
+    chat_msg_history = cast(list[ChatMessage], chat_history)
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
         stream=True,
-        messages=azure_chat_completion._prepare_chat_history_for_request(chat_history),
+        messages=azure_chat_completion._prepare_chat_history_for_request(chat_msg_history),
         # NOTE: The `stream_options={"include_usage": True}` is explicitly enforced in
-        # `OpenAIChatCompletionBase._inner_get_streaming_chat_message_content`.
+        # `OpenAIChatCompletionBase._inner_get_streaming_response`.
         # To ensure consistency, we align the arguments here accordingly.
         stream_options={"include_usage": True},
     )

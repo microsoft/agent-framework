@@ -31,7 +31,6 @@ class AzureOpenAIConfigBase(OpenAIHandler):
         endpoint: HttpsUrl | None = None,
         base_url: Url | None = None,
         api_version: str = DEFAULT_AZURE_API_VERSION,
-        service_id: str | None = None,
         api_key: str | None = None,
         ad_token: str | None = None,
         ad_token_provider: Callable[[], str | Awaitable[str]] | None = None,
@@ -52,7 +51,6 @@ class AzureOpenAIConfigBase(OpenAIHandler):
             endpoint (HttpsUrl): The specific endpoint URL for the deployment. (Optional)
             base_url (Url): The base URL for Azure services. (Optional)
             api_version (str): Azure API version. Defaults to the defined DEFAULT_AZURE_API_VERSION.
-            service_id (str): Service ID for the deployment. (Optional)
             api_key (str): API key for Azure services. (Optional)
             ad_token (str): Azure AD token for authentication. (Optional)
             ad_token_provider (Callable[[], Union[str, Awaitable[str]]]): A callable
@@ -111,13 +109,11 @@ class AzureOpenAIConfigBase(OpenAIHandler):
             "client": client,
             "ai_model_type": ai_model_type,
         }
-        if service_id:
-            args["service_id"] = service_id
         if instruction_role:
             args["instruction_role"] = instruction_role
         super().__init__(**args, **kwargs)
 
-    def to_dict(self) -> dict[str, str]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert the configuration to a dictionary."""
         client_settings = {
             "base_url": str(self.client.base_url),
