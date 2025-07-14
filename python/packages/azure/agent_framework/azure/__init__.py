@@ -2,7 +2,7 @@
 
 import importlib.metadata
 
-from _azure_chat_client import AzureChatClient
+from ._azure_chat_client import AzureChatClient
 
 try:
     __version__ = importlib.metadata.version(__name__)
