@@ -262,21 +262,22 @@ public sealed partial class InProcessRuntime : IAgentRuntime, IAsyncDisposable
         {
             Debug.Assert(message.Topic.HasValue);
 
-            List<Exception>? exceptions = null;
+            List<Task>? tasks = null;
             TopicId topic = message.Topic!.Value;
             foreach (KeyValuePair<string, ISubscriptionDefinition> subscription in message.Runtime._subscriptions)
             {
-                if (!subscription.Value.Matches(topic))
+                if (subscription.Value.Matches(topic))
                 {
-                    continue;
+                    (tasks ??= []).Add(ProcessSubscriptionAsync(message, subscription.Value, topic, cancellationToken));
                 }
 
-                try
+                static async Task ProcessSubscriptionAsync(
+                    MessageToProcess message, ISubscriptionDefinition subscription, TopicId topic, CancellationToken cancellationToken)
                 {
                     using CancellationTokenSource combinedSource = CancellationTokenSource.CreateLinkedTokenSource(message.Cancellation, cancellationToken);
                     combinedSource.Token.ThrowIfCancellationRequested();
 
-                    ActorId actorId = subscription.Value.MapToActor(topic);
+                    ActorId actorId = subscription.MapToActor(topic);
                     ActorId? sender = message.Sender;
                     if (sender is null || sender != actorId)
                     {
@@ -289,15 +290,11 @@ public sealed partial class InProcessRuntime : IAgentRuntime, IAsyncDisposable
                         }, combinedSource.Token).ConfigureAwait(false);
                     }
                 }
-                catch (Exception ex)
-                {
-                    (exceptions ??= []).Add(ex);
-                }
             }
 
-            if (exceptions is not null)
+            if (tasks is not null)
             {
-                throw new AggregateException("One or more exceptions occurred while processing the message.", exceptions);
+                await Task.WhenAll(tasks).ConfigureAwait(false);
             }
 
             // This method is effectively void, with the result never being used. But it's typed the same as SendMessageServicerAsync

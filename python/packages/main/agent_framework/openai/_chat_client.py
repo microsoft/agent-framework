@@ -3,13 +3,20 @@
 import json
 from collections.abc import AsyncIterable, Mapping, MutableSequence, Sequence
 from datetime import datetime
+from itertools import chain
 from typing import Any, ClassVar, cast
 
-from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidResponseError
+from openai import AsyncOpenAI, AsyncStream
+from openai.types import CompletionUsage
+from openai.types.chat.chat_completion import ChatCompletion, Choice
+from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, ChoiceDeltaToolCall
+from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
+from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall
 from pydantic import SecretStr, ValidationError
 
-from agent_framework import (
-    ChatClientBase,
+from .._clients import ChatClientBase, use_tool_calling
+from .._types import (
+    AIContents,
     ChatFinishReason,
     ChatMessage,
     ChatOptions,
@@ -17,24 +24,17 @@ from agent_framework import (
     ChatResponseUpdate,
     ChatRole,
     FunctionCallContent,
+    FunctionResultContent,
     TextContent,
     UsageDetails,
 )
-from openai import AsyncOpenAI, AsyncStream
-from openai.types import CompletionUsage
-from openai.types.chat.chat_completion import ChatCompletion, Choice
-from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, ChoiceDeltaToolCall
-from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
-from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall
-
-from ._openai_config_base import OpenAIConfigBase
-from ._openai_handler import OpenAIHandler
-from ._openai_model_types import OpenAIModelTypes
-from ._openai_settings import OpenAISettings
+from ..exceptions import ServiceInitializationError, ServiceInvalidResponseError
+from ._shared import OpenAIConfigBase, OpenAIHandler, OpenAIModelTypes, OpenAISettings
 
 
-# Implements agent_framework.ChatClient protocol
-class OpenAIChatCompletionBase(OpenAIHandler, ChatClientBase):
+# Implements agent_framework.ChatClient protocol, through ChatClientBase
+@use_tool_calling
+class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
     """OpenAI Chat completion class."""
 
     MODEL_PROVIDER_NAME: ClassVar[str] = "openai"
@@ -50,10 +50,9 @@ class OpenAIChatCompletionBase(OpenAIHandler, ChatClientBase):
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> ChatResponse:
-        # TODO(peterychang): Is there a better way to handle this?
-        chat_options.additional_properties = dict(chat_options.additional_properties)
-        chat_options.additional_properties.update({"stream": False})
-        chat_options.ai_model_id = chat_options.ai_model_id or self.ai_model_id
+        chat_options.additional_properties["stream"] = False
+        if not chat_options.ai_model_id:
+            chat_options.ai_model_id = self.ai_model_id
 
         response = await self._send_request(chat_options, messages=self._prepare_chat_history_for_request(messages))
         assert isinstance(response, ChatCompletion)  # nosec  # noqa: S101
@@ -70,9 +69,8 @@ class OpenAIChatCompletionBase(OpenAIHandler, ChatClientBase):
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
-        # TODO(peterychang): Is there a better way to handle this?
-        chat_options.additional_properties = dict(chat_options.additional_properties)
-        chat_options.additional_properties.update({"stream": True, "stream_options": {"include_usage": True}})
+        chat_options.additional_properties["stream"] = True
+        chat_options.additional_properties["stream_options"] = {"include_usage": True}
         chat_options.ai_model_id = chat_options.ai_model_id or self.ai_model_id
 
         response = await self._send_request(chat_options, messages=self._prepare_chat_history_for_request(messages))
@@ -110,10 +108,9 @@ class OpenAIChatCompletionBase(OpenAIHandler, ChatClientBase):
         """Create a chat message content object from a choice."""
         metadata = self._get_metadata_from_chat_choice(choice)
         metadata.update(response_metadata)
-
-        items: list[ChatMessage] = [
-            ChatMessage(role="assistant", contents=[tool]) for tool in self._get_tool_calls_from_chat_choice(choice)
-        ]
+        items: MutableSequence[ChatMessage] = []
+        if parsed_tool_calls := [tool for tool in self._get_tool_calls_from_chat_choice(choice)]:
+            items.append(ChatMessage(role="assistant", contents=parsed_tool_calls))
         if choice.message.content:
             items.append(ChatMessage(role="assistant", text=choice.message.content))
         elif hasattr(choice.message, "refusal") and choice.message.refusal:
@@ -176,19 +173,17 @@ class OpenAIChatCompletionBase(OpenAIHandler, ChatClientBase):
             "logprobs": getattr(choice, "logprobs", None),
         }
 
-    def _get_tool_calls_from_chat_choice(self, choice: Choice | ChunkChoice) -> list[FunctionCallContent]:
+    def _get_tool_calls_from_chat_choice(self, choice: Choice | ChunkChoice) -> list[AIContents]:
         """Get tool calls from a chat choice."""
-        resp: list[FunctionCallContent] = []
+        resp: list[AIContents] = []
         content = choice.message if isinstance(choice, Choice) else choice.delta
         if content and (tool_calls := getattr(content, "tool_calls", None)) is not None:
             for tool in cast(list[ChatCompletionMessageToolCall] | list[ChoiceDeltaToolCall], tool_calls):
                 if tool.function:
                     fcc = FunctionCallContent(
                         call_id=tool.id if tool.id else "",
-                        name=tool.function.name if tool.function and tool.function.name else "",
-                        arguments=json.loads(tool.function.arguments)
-                        if tool.function and tool.function.arguments
-                        else {},
+                        name=tool.function.name if tool.function.name else "",
+                        arguments=tool.function.arguments if tool.function.arguments else "",
                     )
                     resp.append(fcc)
 
@@ -197,7 +192,7 @@ class OpenAIChatCompletionBase(OpenAIHandler, ChatClientBase):
 
     def _prepare_chat_history_for_request(
         self,
-        chat_history: ChatMessage | Sequence[ChatMessage],
+        chat_messages: Sequence[ChatMessage],
         role_key: str = "role",
         content_key: str = "content",
     ) -> list[dict[str, Any]]:
@@ -212,30 +207,67 @@ class OpenAIChatCompletionBase(OpenAIHandler, ChatClientBase):
         Override this method to customize the formatting of the chat history for a request.
 
         Args:
-            chat_history (list[ChatMessage]): The chat history to prepare.
-            role_key (str): The key name for the role/author.
-            content_key (str): The key name for the content/message.
+            chat_messages: The chat history to prepare.
+            role_key: The key name for the role/author.
+            content_key: The key name for the content/message.
 
         Returns:
             prepared_chat_history (Any): The prepared chat history for a request.
         """
-        # TODO(peterychang): Chat history type is not finalized yet
-        if not isinstance(chat_history, Sequence):
-            chat_history = [chat_history]
-        # TODO(peterychang): This is the bare minimum to get the chat history into a format that OpenAI expects.
-        return [
-            {
-                "role": message.role.value if isinstance(message.role, ChatRole) else message.role,
-                "content": [content.model_dump() for content in message.contents],
-                "metadata": message.additional_properties or {},
-            }
-            for message in chat_history
-        ]
+        list_of_list = [self._openai_chat_message_parser(message) for message in chat_messages]
+        # Flatten the list of lists into a single list
+        return list(chain.from_iterable(list_of_list))
 
     # endregion
 
+    def _openai_chat_message_parser(self, message: ChatMessage) -> list[dict[str, Any]]:
+        """Parse a chat message into the openai format."""
+        all_messages: list[dict[str, Any]] = []
+        args: dict[str, Any] = {
+            "role": message.role.value if isinstance(message.role, ChatRole) else message.role,
+        }
+        if message.additional_properties:
+            args["metadata"] = message.additional_properties
+        for content in message.contents:
+            match content:
+                case FunctionResultContent():
+                    new_args = args.copy()
+                    new_args["tool_call_id"] = content.call_id
+                    new_args["content"] = content.result
+                    all_messages.append(new_args)
+                case FunctionCallContent():
+                    function_call = self._openai_content_parser(content)
+                    if "tool_calls" not in args:
+                        args["tool_calls"] = []
+                    args["tool_calls"].append(function_call)
+                case _:
+                    if "content" not in args:
+                        args["content"] = []
+                    args["content"].append(self._openai_content_parser(content))
+        if "content" in args or "tool_calls" in args:
+            all_messages.append(args)
+        return all_messages
 
-class OpenAIChatCompletion(OpenAIConfigBase, OpenAIChatCompletionBase):
+    def _openai_content_parser(self, content: AIContents) -> dict[str, Any]:
+        """Parse contents into the openai format."""
+        match content:
+            case FunctionCallContent():
+                args = json.dumps(content.arguments) if isinstance(content.arguments, Mapping) else content.arguments
+                return {
+                    "id": content.call_id,
+                    "type": "function",
+                    "function": {"name": content.name, "arguments": args},
+                }
+            case FunctionResultContent():
+                return {
+                    "tool_call_id": content.call_id,
+                    "content": content.result,
+                }
+            case _:
+                return content.model_dump(exclude_none=True)
+
+
+class OpenAIChatClient(OpenAIConfigBase, OpenAIChatClientBase):
     """OpenAI Chat completion class."""
 
     def __init__(
@@ -301,13 +333,13 @@ class OpenAIChatCompletion(OpenAIConfigBase, OpenAIChatCompletionBase):
         )
 
     @classmethod
-    def from_dict(cls, settings: dict[str, Any]) -> "OpenAIChatCompletion":
+    def from_dict(cls, settings: dict[str, Any]) -> "OpenAIChatClient":
         """Initialize an Open AI service from a dictionary of settings.
 
         Args:
             settings: A dictionary of settings for the service.
         """
-        return OpenAIChatCompletion(
+        return OpenAIChatClient(
             ai_model_id=settings["ai_model_id"],
             default_headers=settings.get("default_headers"),
         )

@@ -4,15 +4,14 @@ import base64
 import json
 import re
 import sys
-from collections.abc import AsyncIterable, Iterable, Iterator, Mapping, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Iterable, Iterator, Mapping, MutableMapping, MutableSequence, Sequence
 from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, overload
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from agent_framework.exceptions import AgentFrameworkException
-
 from ._pydantic import AFBaseModel
 from ._tools import AITool
+from .exceptions import AgentFrameworkException
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -224,7 +223,7 @@ def _coalesce_text_content(
                 first_new_content = i
         else:
             if first_new_content is not None:
-                new_content = type_(text="\n".join(current_texts))
+                new_content = type_(text=" ".join(current_texts))
                 new_content.raw_representation = contents[first_new_content].raw_representation
                 new_content.additional_properties = contents[first_new_content].additional_properties
                 # Store the replacement node. We inherit the properties of the first text node. We don't
@@ -235,7 +234,7 @@ def _coalesce_text_content(
                 first_new_content = None
             coalesced_contents.append(content)
     if current_texts:
-        coalesced_contents.append(type_(text="\n".join(current_texts)))
+        coalesced_contents.append(type_(text=" ".join(current_texts)))
     contents.clear()
     contents.extend(coalesced_contents)
 
@@ -647,7 +646,7 @@ class FunctionCallContent(AIContent):
     def __add__(self, other: "FunctionCallContent") -> "FunctionCallContent":
         if not isinstance(other, FunctionCallContent):
             raise TypeError("Incompatible type")
-        if self.call_id != other.call_id:
+        if other.call_id and self.call_id != other.call_id:
             raise AgentFrameworkException("Incompatible function call contents")
         if not self.arguments:
             arguments = other.arguments
@@ -880,15 +879,6 @@ class ChatMessage(AFBaseModel):
     raw_representation: Any | None = None
     """The raw representation of the chat message from an underlying implementation."""
 
-    @property
-    def text(self) -> str:
-        """Returns the text content of the message.
-
-        Remarks:
-            This property concatenates the text of all TextContent objects in Contents.
-        """
-        return "\n".join(content.text for content in self.contents if isinstance(content, TextContent))
-
     @overload
     def __init__(
         self,
@@ -916,7 +906,7 @@ class ChatMessage(AFBaseModel):
         self,
         role: ChatRole | Literal["system", "user", "assistant", "tool"],
         *,
-        contents: list[AIContents],
+        contents: MutableSequence[AIContents],
         author_name: str | None = None,
         message_id: str | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -938,7 +928,7 @@ class ChatMessage(AFBaseModel):
         role: ChatRole | Literal["system", "user", "assistant", "tool"],
         *,
         text: str | None = None,
-        contents: list[AIContents] | None = None,
+        contents: MutableSequence[AIContents] | None = None,
         author_name: str | None = None,
         message_id: str | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -958,6 +948,15 @@ class ChatMessage(AFBaseModel):
             additional_properties=additional_properties,  # type: ignore[reportCallIssue]
             raw_representation=raw_representation,  # type: ignore[reportCallIssue]
         )
+
+    @property
+    def text(self) -> str:
+        """Returns the text content of the message.
+
+        Remarks:
+            This property concatenates the text of all TextContent objects in Contents.
+        """
+        return " ".join(content.text for content in self.contents if isinstance(content, TextContent))
 
 
 # region: ChatResponse
@@ -1123,7 +1122,10 @@ class ChatResponse(AFBaseModel):
     @property
     def text(self) -> str:
         """Returns the concatenated text of all messages in the response."""
-        return "\n".join(message.text for message in self.messages if isinstance(message, ChatMessage))
+        return ("\n".join(message.text for message in self.messages if isinstance(message, ChatMessage))).strip()
+
+    def __str__(self) -> str:
+        return self.text
 
 
 class StructuredResponse(ChatResponse, Generic[TValue]):
@@ -1343,7 +1345,10 @@ class ChatResponseUpdate(AFBaseModel):
     @property
     def text(self) -> str:
         """Returns the concatenated text of all contents in the update."""
-        return "\n".join(content.text for content in self.contents if isinstance(content, TextContent))
+        return "".join(content.text for content in self.contents if isinstance(content, TextContent))
+
+    def __str__(self) -> str:
+        return self.text
 
     def with_(self, contents: list[AIContent] | None = None, message_id: str | None = None) -> Self:
         """Returns a new instance with the specified contents and message_id."""
@@ -1398,19 +1403,19 @@ class ChatOptions(AFBaseModel):
     temperature: Annotated[float | None, Field(ge=0.0, le=2.0)] = None
     top_p: Annotated[float | None, Field(ge=0.0, le=1.0)] = None
     tool_choice: ChatToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None = None
-    tools: Sequence[AITool] | Sequence[Mapping[str, Any]] | None = None
+    tools: Sequence[AITool] | Sequence[MutableMapping[str, Any]] | None = None
     response_format: type[BaseModel] | None = Field(
         default=None, description="Structured output response format schema. Must be a valid Pydantic model."
     )
     user: str | None = None
     stop: str | Sequence[str] | None = None
     frequency_penalty: Annotated[float | None, Field(ge=-2.0, le=2.0)] = None
-    logit_bias: Mapping[str | int, float] | None = None
+    logit_bias: MutableMapping[str | int, float] | None = None
     presence_penalty: Annotated[float | None, Field(ge=-2.0, le=2.0)] = None
     seed: int | None = None
     store: bool | None = None
-    metadata: Mapping[str, str] | None = None
-    additional_properties: Mapping[str, Any] = Field(
+    metadata: MutableMapping[str, str] | None = None
+    additional_properties: MutableMapping[str, Any] = Field(
         default_factory=dict, description="Provider-specific additional properties."
     )
 
@@ -1631,6 +1636,17 @@ class AgentRunResponse(AFBaseModel):
         _finalize_response(msg)
         return msg
 
+    @classmethod
+    async def from_agent_response_generator(
+        cls: type[TAgentRunResponse], updates: AsyncIterable["AgentRunResponseUpdate"]
+    ) -> TAgentRunResponse:
+        """Joins multiple updates into a single AgentRunResponse."""
+        msg = cls(messages=[])
+        async for update in updates:
+            _process_update(msg, update)
+        _finalize_response(msg)
+        return msg
+
     def __str__(self) -> str:
         return self.text
 
@@ -1734,3 +1750,9 @@ class TextToSpeechOptions(AFBaseModel):
         for key in merged_exclude:
             settings.pop(key, None)
         return settings
+
+
+# endregion
+
+
+# endregion

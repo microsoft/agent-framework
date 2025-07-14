@@ -1,8 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import functools
 import inspect
 from collections.abc import Awaitable, Callable, Mapping
+from functools import wraps
 from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
 
 from pydantic import BaseModel, create_model
@@ -10,7 +10,7 @@ from pydantic import BaseModel, create_model
 
 @runtime_checkable
 class AITool(Protocol):
-    """Represents a tool that can be specified to an AI service."""
+    """Represents a generic tool that can be specified to an AI service."""
 
     name: str
     """The name of the tool."""
@@ -33,7 +33,7 @@ ReturnT = TypeVar("ReturnT")
 
 
 class AIFunction(AITool, Generic[ArgsT, ReturnT]):
-    """A tool that represents a function that can be called by an AI service."""
+    """A AITool that is callable as code."""
 
     def __init__(
         self,
@@ -98,8 +98,18 @@ def ai_function(
     name: str | None = None,
     description: str | None = None,
     additional_properties: dict[str, Any] | None = None,
-) -> AIFunction[Any, ReturnT] | Callable[[Callable[..., ReturnT | Awaitable[ReturnT]]], AIFunction[Any, ReturnT]]:
-    """Decorate a function to turn it into a AIFunction that can be passed to models.
+) -> AIFunction[Any, ReturnT]:
+    """Decorate a function to turn it into a AIFunction that can be passed to models and executed automatically.
+
+    Remarks:
+        In order to add descriptions to parameters, use:
+
+        ```python
+        from typing import Annotated
+        from pydantic import Field
+
+        arg: Annotated[<type>, Field(description="<description>")]
+        ```
 
     Args:
         func: The function to wrap. If None, returns a decorator.
@@ -109,31 +119,32 @@ def ai_function(
 
     """
 
-    def wrapper(f: Callable[..., ReturnT | Awaitable[ReturnT]]) -> AIFunction[Any, ReturnT]:
-        tool_name: str = name or getattr(f, "__name__", "unknown_function")  # type: ignore[assignment]
-        tool_desc: str = description or (f.__doc__ or "")
-        sig = inspect.signature(f)
-        fields = {
-            pname: (
-                param.annotation if param.annotation is not inspect.Parameter.empty else str,
-                param.default if param.default is not inspect.Parameter.empty else ...,
-            )
-            for pname, param in sig.parameters.items()
-            if pname not in {"self", "cls"}
-        }
-        input_model: Any = create_model(f"{tool_name}_input", **fields)  # type: ignore[call-overload]
-        if not issubclass(input_model, BaseModel):
-            raise TypeError(f"Input model for {tool_name} must be a subclass of BaseModel, got {input_model}")
+    def decorator(func: Callable[..., ReturnT | Awaitable[ReturnT]]) -> AIFunction[Any, ReturnT]:
+        @wraps(func)
+        def wrapper(f: Callable[..., ReturnT | Awaitable[ReturnT]]) -> AIFunction[Any, ReturnT]:
+            tool_name: str = name or getattr(f, "__name__", "unknown_function")  # type: ignore[assignment]
+            tool_desc: str = description or (f.__doc__ or "")
+            sig = inspect.signature(f)
+            fields = {
+                pname: (
+                    param.annotation if param.annotation is not inspect.Parameter.empty else str,
+                    param.default if param.default is not inspect.Parameter.empty else ...,
+                )
+                for pname, param in sig.parameters.items()
+                if pname not in {"self", "cls"}
+            }
+            input_model: Any = create_model(f"{tool_name}_input", **fields)  # type: ignore[call-overload]
+            if not issubclass(input_model, BaseModel):
+                raise TypeError(f"Input model for {tool_name} must be a subclass of BaseModel, got {input_model}")
 
-        return functools.update_wrapper(  # type: ignore[return-value]
-            AIFunction[Any, ReturnT](
+            return AIFunction[Any, ReturnT](
                 func=f,
                 name=tool_name,
                 description=tool_desc,
                 input_model=input_model,
                 **(additional_properties if additional_properties is not None else {}),
-            ),
-            f,
-        )
+            )
 
-    return wrapper(func) if func else wrapper
+        return wrapper(func)
+
+    return decorator(func) if func else decorator  # type: ignore[reportReturnType, return-value]

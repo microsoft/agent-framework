@@ -274,7 +274,7 @@ def test_chat_message_contents():
     assert isinstance(message.contents[1], TextContent)
     assert message.contents[0].text == "Hello, how are you?"
     assert message.contents[1].text == "I'm fine, thank you!"
-    assert message.text == "Hello, how are you?\nI'm fine, thank you!"
+    assert message.text == "Hello, how are you? I'm fine, thank you!"
 
 
 # region: ChatResponse
@@ -348,7 +348,7 @@ def test_chat_response_updates_to_chat_response_one():
 
     # Check the type and content
     assert len(chat_response.messages) == 1
-    assert chat_response.text == "I'm doing well, \nthank you!"
+    assert chat_response.text == "I'm doing well,  thank you!"
     assert isinstance(chat_response.messages[0], ChatMessage)
     assert len(chat_response.messages[0].contents) == 1
     assert chat_response.messages[0].message_id == "1"
@@ -396,7 +396,7 @@ def test_chat_response_updates_to_chat_response_multiple():
 
     # Check the type and content
     assert len(chat_response.messages) == 1
-    assert chat_response.text == "I'm doing well, \nthank you!"
+    assert chat_response.text == "I'm doing well,  thank you!"
     assert isinstance(chat_response.messages[0], ChatMessage)
     assert len(chat_response.messages[0].contents) == 3
     assert chat_response.messages[0].message_id == "1"
@@ -422,10 +422,18 @@ def test_chat_response_updates_to_chat_response_multiple_multiple():
 
     # Check the type and content
     assert len(chat_response.messages) == 1
-    assert chat_response.text == "I'm doing well, \nthank you!\nMore context\nFinal part"
     assert isinstance(chat_response.messages[0], ChatMessage)
-    assert len(chat_response.messages[0].contents) == 3
     assert chat_response.messages[0].message_id == "1"
+
+    assert len(chat_response.messages[0].contents) == 3
+    assert isinstance(chat_response.messages[0].contents[0], TextContent)
+    assert chat_response.messages[0].contents[0].text == "I'm doing well,  thank you!"
+    assert isinstance(chat_response.messages[0].contents[1], TextReasoningContent)
+    assert chat_response.messages[0].contents[1].text == "Additional context"
+    assert isinstance(chat_response.messages[0].contents[2], TextContent)
+    assert chat_response.messages[0].contents[2].text == "More context Final part"
+
+    assert chat_response.text == "I'm doing well,  thank you! More context Final part"
 
 
 # region: ChatToolMode

@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from agent_framework.exceptions import ServiceContentFilterException
-
 from openai import BadRequestError
+
+from ..exceptions import ServiceContentFilterException
 
 
 class ContentFilterResultSeverity(Enum):

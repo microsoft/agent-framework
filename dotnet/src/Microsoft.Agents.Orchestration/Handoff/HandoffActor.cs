@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -14,7 +15,7 @@ namespace Microsoft.Agents.Orchestration;
 /// <summary>
 /// An actor used with the <see cref="HandoffOrchestration{TInput,TOutput}"/>.
 /// </summary>
-internal sealed class HandoffActor : AgentActor
+internal sealed partial class HandoffActor : AgentActor
 {
     private readonly ChatClientAgent _chatAgent;
     private readonly HandoffLookup _handoffs;
@@ -155,7 +156,7 @@ internal sealed class HandoffActor : AgentActor
             AIFunction handoffFunction =
                 AIFunctionFactory.Create(
                     () => this.Handoff(handoff.Key),
-                    name: $"transfer_to_{handoff.Key}",
+                    name: $"transfer_to_{InvalidNameCharsRegex().Replace(handoff.Key, "_")}",
                     description: handoff.Value.Description);
 
             yield return handoffFunction;
@@ -181,4 +182,13 @@ internal sealed class HandoffActor : AgentActor
             FunctionInvokingChatClient.CurrentContext.Terminate = true;
         }
     }
+
+    /// <summary>Regex that flags any character other than ASCII digits or letters or the underscore.</summary>
+#if NET
+    [GeneratedRegex("[^0-9A-Za-z_]+")]
+    private static partial Regex InvalidNameCharsRegex();
+#else
+    private static Regex InvalidNameCharsRegex() => s_invalidNameCharsRegex;
+    private static readonly Regex s_invalidNameCharsRegex = new("[^0-9A-Za-z_]+", RegexOptions.Compiled);
+#endif
 }

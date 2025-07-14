@@ -24,7 +24,6 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework",
-    "agent-framework-openai"
 ]
 
 [tool.pytest.ini_options]
