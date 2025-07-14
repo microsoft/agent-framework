@@ -28,20 +28,52 @@ internal static class AgentOpenTelemetryConsts
     public static class GenAI
     {
         /// <summary>
+        /// The attribute name for the GenAI operation name (following gen_ai.operation.name convention).
+        /// </summary>
+        public const string OperationName = "gen_ai.operation.name";
+
+        /// <summary>
+        /// The attribute name for the GenAI system (following gen_ai.system convention).
+        /// </summary>
+        public const string System = "gen_ai.system";
+
+        /// <summary>
+        /// The attribute name for the GenAI conversation ID (following gen_ai.conversation.id convention).
+        /// </summary>
+        public const string ConversationId = "gen_ai.conversation.id";
+
+        /// <summary>
+        /// Constants for official GenAI operation names as defined in OpenTelemetry semantic conventions.
+        /// </summary>
+        public static class Operations
+        {
+            /// <summary>
+            /// Invoke GenAI agent operation.
+            /// </summary>
+            public const string InvokeAgent = "invoke_agent";
+
+            /// <summary>
+            /// Create GenAI agent operation.
+            /// </summary>
+            public const string CreateAgent = "create_agent";
+        }
+
+        /// <summary>
+        /// Constants for GenAI system values as defined in OpenTelemetry semantic conventions.
+        /// </summary>
+        public static class Systems
+        {
+            /// <summary>
+            /// Microsoft Extensions AI system identifier.
+            /// </summary>
+            public const string MicrosoftExtensionsAI = "microsoft.extensions.ai";
+        }
+
+        /// <summary>
         /// Constants for agent-related telemetry attributes and operations.
         /// </summary>
         public static class Agent
         {
-            /// <summary>
-            /// The operation name for agent run operations.
-            /// </summary>
-            public const string Run = "agent.run";
-
-            /// <summary>
-            /// The operation name for agent streaming run operations.
-            /// </summary>
-            public const string RunStreaming = "agent.run_streaming";
-
             /// <summary>
             /// The attribute name for the agent ID (following gen_ai.agent.id convention).
             /// </summary>
@@ -58,17 +90,6 @@ internal static class AgentOpenTelemetryConsts
             public const string Description = "gen_ai.agent.description";
 
             /// <summary>
-            /// Constants for agent operation attributes.
-            /// </summary>
-            public static class Operation
-            {
-                /// <summary>
-                /// The attribute name for the operation name.
-                /// </summary>
-                public const string Name = "agent.operation.name";
-            }
-
-            /// <summary>
             /// Constants for agent request attributes.
             /// </summary>
             public static class Request
@@ -76,17 +97,12 @@ internal static class AgentOpenTelemetryConsts
                 /// <summary>
                 /// The attribute name for the agent request instructions.
                 /// </summary>
-                public const string Instructions = "agent.request.instructions";
+                public const string Instructions = "gen_ai.agent.request.instructions";
 
                 /// <summary>
                 /// The attribute name for the agent request message count.
                 /// </summary>
-                public const string MessageCount = "agent.request.message_count";
-
-                /// <summary>
-                /// The attribute name for the agent request thread ID.
-                /// </summary>
-                public const string ThreadId = "agent.request.thread_id";
+                public const string MessageCount = "gen_ai.agent.request.message_count";
             }
 
             /// <summary>
@@ -97,17 +113,12 @@ internal static class AgentOpenTelemetryConsts
                 /// <summary>
                 /// The attribute name for the agent response ID.
                 /// </summary>
-                public const string Id = "agent.response.id";
+                public const string Id = "gen_ai.agent.response.id";
 
                 /// <summary>
                 /// The attribute name for the agent response message count.
                 /// </summary>
-                public const string MessageCount = "agent.response.message_count";
-
-                /// <summary>
-                /// The attribute name for the agent response finish reason.
-                /// </summary>
-                public const string FinishReason = "agent.response.finish_reason";
+                public const string MessageCount = "gen_ai.agent.response.message_count";
             }
 
             /// <summary>
@@ -118,12 +129,12 @@ internal static class AgentOpenTelemetryConsts
                 /// <summary>
                 /// The attribute name for input tokens used by the agent.
                 /// </summary>
-                public const string InputTokens = "agent.usage.input_tokens";
+                public const string InputTokens = "gen_ai.agent.usage.input_tokens";
 
                 /// <summary>
                 /// The attribute name for output tokens used by the agent.
                 /// </summary>
-                public const string OutputTokens = "agent.usage.output_tokens";
+                public const string OutputTokens = "gen_ai.agent.usage.output_tokens";
             }
 
             /// <summary>
@@ -134,7 +145,7 @@ internal static class AgentOpenTelemetryConsts
                 /// <summary>
                 /// The attribute name for the token type.
                 /// </summary>
-                public const string Type = "agent.token.type";
+                public const string Type = "gen_ai.agent.token.type";
             }
 
             /// <summary>
@@ -155,7 +166,7 @@ internal static class AgentOpenTelemetryConsts
                     /// <summary>
                     /// The name for the operation duration metric.
                     /// </summary>
-                    public const string Name = "agent.client.operation.duration";
+                    public const string Name = "gen_ai.agent.client.operation.duration";
 
                     /// <summary>
                     /// The explicit bucket boundaries for the operation duration histogram.
@@ -176,7 +187,7 @@ internal static class AgentOpenTelemetryConsts
                     /// <summary>
                     /// The name for the token usage metric.
                     /// </summary>
-                    public const string Name = "agent.client.token.usage";
+                    public const string Name = "gen_ai.agent.client.token.usage";
 
                     /// <summary>
                     /// The explicit bucket boundaries for the token usage histogram.
@@ -197,7 +208,7 @@ internal static class AgentOpenTelemetryConsts
                     /// <summary>
                     /// The name for the request count metric.
                     /// </summary>
-                    public const string Name = "agent.client.request.count";
+                    public const string Name = "gen_ai.agent.client.request.count";
                 }
             }
         }

@@ -59,11 +59,12 @@ public class OpenTelemetryAgentTests
         var activity = Assert.Single(activities);
         Assert.NotNull(activity.Id);
         Assert.NotEmpty(activity.Id);
-        Assert.Equal($"{AgentOpenTelemetryConsts.GenAI.Agent.Run} TestAgent", activity.DisplayName);
+        Assert.Equal($"{AgentOpenTelemetryConsts.GenAI.Operations.InvokeAgent} TestAgent", activity.DisplayName);
         Assert.Equal(ActivityKind.Client, activity.Kind);
 
         // Verify activity tags
-        Assert.Equal(AgentOpenTelemetryConsts.GenAI.Agent.Run, activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Operation.Name));
+        Assert.Equal(AgentOpenTelemetryConsts.GenAI.Operations.InvokeAgent, activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.OperationName));
+        Assert.Equal(AgentOpenTelemetryConsts.GenAI.Systems.MicrosoftExtensionsAI, activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.System));
         Assert.Equal("test-agent-id", activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Id));
         Assert.Equal("TestAgent", activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Name));
         Assert.Equal("Test Description", activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Description));
@@ -137,11 +138,12 @@ public class OpenTelemetryAgentTests
         var activity = Assert.Single(activities);
         Assert.NotNull(activity.Id);
         Assert.NotEmpty(activity.Id);
-        Assert.Equal($"{AgentOpenTelemetryConsts.GenAI.Agent.RunStreaming} TestAgent", activity.DisplayName);
+        Assert.Equal($"{AgentOpenTelemetryConsts.GenAI.Operations.InvokeAgent} TestAgent", activity.DisplayName);
         Assert.Equal(ActivityKind.Client, activity.Kind);
 
         // Verify activity tags
-        Assert.Equal(AgentOpenTelemetryConsts.GenAI.Agent.RunStreaming, activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Operation.Name));
+        Assert.Equal(AgentOpenTelemetryConsts.GenAI.Operations.InvokeAgent, activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.OperationName));
+        Assert.Equal(AgentOpenTelemetryConsts.GenAI.Systems.MicrosoftExtensionsAI, activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.System));
         Assert.Equal("test-agent-id", activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Id));
         Assert.Equal("TestAgent", activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Name));
         Assert.Equal("Test Description", activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Description));
@@ -227,7 +229,7 @@ public class OpenTelemetryAgentTests
 
         // Assert
         var activity = Assert.Single(activities);
-        Assert.Equal("thread-123", activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Request.ThreadId));
+        Assert.Equal("thread-123", activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.ConversationId));
     }
 
     [Fact]
@@ -483,7 +485,7 @@ public class OpenTelemetryAgentTests
 
         // Assert
         var activity = Assert.Single(activities);
-        Assert.Equal(AgentOpenTelemetryConsts.GenAI.Agent.Run, activity.DisplayName);
+        Assert.Equal(AgentOpenTelemetryConsts.GenAI.Operations.InvokeAgent, activity.DisplayName);
     }
 
     [Fact]

@@ -89,7 +89,7 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
     {
         _ = Throw.IfNull(messages);
 
-        using Activity? activity = this.CreateAndConfigureActivity(AgentOpenTelemetryConsts.GenAI.Agent.Run, messages, thread);
+        using Activity? activity = this.CreateAndConfigureActivity(AgentOpenTelemetryConsts.GenAI.Operations.InvokeAgent, messages, thread);
         Stopwatch? stopwatch = this._operationDurationHistogram.Enabled ? Stopwatch.StartNew() : null;
 
         AgentRunResponse? response = null;
@@ -120,7 +120,7 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
     {
         _ = Throw.IfNull(messages);
 
-        using Activity? activity = this.CreateAndConfigureActivity(AgentOpenTelemetryConsts.GenAI.Agent.RunStreaming, messages, thread);
+        using Activity? activity = this.CreateAndConfigureActivity(AgentOpenTelemetryConsts.GenAI.Operations.InvokeAgent, messages, thread);
         Stopwatch? stopwatch = this._operationDurationHistogram.Enabled ? Stopwatch.StartNew() : null;
 
         IAsyncEnumerable<AgentRunResponseUpdate> updates;
@@ -192,7 +192,10 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
             if (activity is not null)
             {
                 _ = activity
-                    .AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Operation.Name, operationName)
+                    // Required attributes per OpenTelemetry semantic conventions
+                    .AddTag(AgentOpenTelemetryConsts.GenAI.OperationName, operationName)
+                    .AddTag(AgentOpenTelemetryConsts.GenAI.System, AgentOpenTelemetryConsts.GenAI.Systems.MicrosoftExtensionsAI)
+                    // Agent-specific attributes
                     .AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Id, this.Id)
                     .AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Name, this.Name)
                     .AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Request.MessageCount, messages.Count);
@@ -203,9 +206,10 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
                     _ = activity.AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Description, this.Description);
                 }
 
+                // Add conversation ID if thread is available (following gen_ai.conversation.id convention)
                 if (!string.IsNullOrWhiteSpace(thread?.Id))
                 {
-                    _ = activity.AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Request.ThreadId, thread.Id);
+                    _ = activity.AddTag(AgentOpenTelemetryConsts.GenAI.ConversationId, thread.Id);
                 }
 
                 // Add instructions if available (for ChatClientAgent)
@@ -235,7 +239,7 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
         {
             TagList tags = new()
             {
-                { AgentOpenTelemetryConsts.GenAI.Agent.Operation.Name, isStreaming ? AgentOpenTelemetryConsts.GenAI.Agent.RunStreaming : AgentOpenTelemetryConsts.GenAI.Agent.Run },
+                { AgentOpenTelemetryConsts.GenAI.OperationName, AgentOpenTelemetryConsts.GenAI.Operations.InvokeAgent },
                 { AgentOpenTelemetryConsts.GenAI.Agent.Name, this.Name ?? "UnnamedAgent" }
             };
 
@@ -252,7 +256,7 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
         {
             TagList tags = new()
             {
-                { AgentOpenTelemetryConsts.GenAI.Agent.Operation.Name, isStreaming ? AgentOpenTelemetryConsts.GenAI.Agent.RunStreaming : AgentOpenTelemetryConsts.GenAI.Agent.Run },
+                { AgentOpenTelemetryConsts.GenAI.OperationName, AgentOpenTelemetryConsts.GenAI.Operations.InvokeAgent },
                 { AgentOpenTelemetryConsts.GenAI.Agent.Name, this.Name ?? "UnnamedAgent" }
             };
 
