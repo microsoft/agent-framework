@@ -20,6 +20,7 @@ public sealed class ChatClientAgent : Agent
     private readonly ChatClientAgentOptions? _agentOptions;
     private readonly ILogger _logger;
     private readonly Type _chatClientType;
+    private bool _disposed;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ChatClientAgent"/> class.
@@ -162,6 +163,20 @@ public sealed class ChatClientAgent : Agent
 
     /// <inheritdoc/>
     public override AgentThread GetNewThread() => new ChatClientAgentThread();
+
+    /// <inheritdoc/>
+    protected override void Dispose(bool disposing)
+    {
+        if (this._disposed)
+        {
+            return;
+        }
+
+        this.ChatClient.Dispose();
+        base.Dispose(disposing);
+
+        this._disposed = true;
+    }
 
     #region Private
 

@@ -33,9 +33,9 @@ public sealed class Step03_ChatClientAgent_UsingCodeInterpreterTools(ITestOutput
         // Create the server-side agent Id when applicable (depending on the provider).
         agentOptions.Id = await base.AgentCreateAsync(provider, agentOptions);
 
-        using var chatClient = base.GetChatClient(provider, agentOptions);
+        var chatClient = base.GetChatClient(provider, agentOptions);
 
-        ChatClientAgent agent = new(chatClient, agentOptions);
+        using ChatClientAgent agent = new(chatClient, agentOptions);
 
         var thread = agent.GetNewThread();
 

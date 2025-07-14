@@ -12,7 +12,7 @@ namespace Microsoft.Extensions.AI.Agents;
 /// Base abstraction for all agents. An agent instance may participate in one or more conversations.
 /// A conversation may include one or more agents.
 /// </summary>
-public abstract class Agent
+public abstract class Agent : IDisposable
 {
     /// <summary>
     /// Gets the identifier of the agent.
@@ -186,6 +186,22 @@ public abstract class Agent
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default);
+
+    /// <inheritdoc/>
+    public void Dispose()
+    {
+        this.Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    /// <summary>
+    /// Provides a mechanism for releasing unmanaged resources.
+    /// </summary>
+    /// <param name="disposing"><see langword="true"/> if being called from <see cref="Dispose()"/>; otherwise, <see langword="false"/>.</param>
+    protected virtual void Dispose(bool disposing)
+    {
+        // Nothing to dispose in the base class, but allowing dispose for derived classes.
+    }
 
     /// <summary>
     /// Checks that the thread is of the expected type, or if null, creates the default thread type.

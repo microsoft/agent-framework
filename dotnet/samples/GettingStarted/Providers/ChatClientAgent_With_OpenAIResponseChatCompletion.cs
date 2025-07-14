@@ -25,12 +25,12 @@ public sealed class ChatClientAgent_With_OpenAIResponsesChatCompletion(ITestOutp
     {
         // Get the chat client to use for the agent.
 #pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-        using var chatClient = new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
+        var chatClient = new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
             .GetOpenAIResponseClient(TestConfiguration.OpenAI.ChatModelId)
             .AsIChatClient();
 
         // Define the agent
-        ChatClientAgent agent =
+        using ChatClientAgent agent =
             new(chatClient, new()
             {
                 Name = JokerName,

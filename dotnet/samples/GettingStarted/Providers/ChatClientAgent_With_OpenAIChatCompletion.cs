@@ -19,12 +19,12 @@ public sealed class ChatClientAgent_With_OpenAIChatCompletion(ITestOutputHelper 
     public async Task RunWithChatCompletion()
     {
         // Get the chat client to use for the agent.
-        using var chatClient = new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
+        var chatClient = new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
             .GetChatClient(TestConfiguration.OpenAI.ChatModelId)
             .AsIChatClient();
 
         // Define the agent
-        ChatClientAgent agent =
+        using ChatClientAgent agent =
             new(chatClient, new()
             {
                 Name = JokerName,

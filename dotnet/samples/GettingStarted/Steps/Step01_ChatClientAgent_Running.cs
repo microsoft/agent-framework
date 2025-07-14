@@ -38,10 +38,10 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
         agentOptions.Id = await base.AgentCreateAsync(provider, agentOptions);
 
         // Get the chat client to use for the agent.
-        using var chatClient = base.GetChatClient(provider, agentOptions);
+        var chatClient = base.GetChatClient(provider, agentOptions);
 
         // Define the agent
-        var agent = new ChatClientAgent(chatClient, agentOptions);
+        using var agent = new ChatClientAgent(chatClient, agentOptions);
 
         // Respond to user input
         await RunAgentAsync("Fortune favors the bold.");
@@ -86,10 +86,10 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
         agentOptions.Id = await base.AgentCreateAsync(provider, agentOptions);
 
         // Get the chat client to use for the agent.
-        using var chatClient = base.GetChatClient(provider, agentOptions);
+        var chatClient = base.GetChatClient(provider, agentOptions);
 
         // Define the agent
-        var agent = new ChatClientAgent(chatClient, agentOptions);
+        using var agent = new ChatClientAgent(chatClient, agentOptions);
 
         // Start a new thread for the agent conversation.
         AgentThread thread = agent.GetNewThread();
@@ -138,10 +138,10 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
         agentOptions.Id = await base.AgentCreateAsync(provider, agentOptions);
 
         // Get the chat client to use for the agent.
-        using var chatClient = base.GetChatClient(provider, agentOptions);
+        var chatClient = base.GetChatClient(provider, agentOptions);
 
         // Define the agent
-        var agent = new ChatClientAgent(chatClient, agentOptions);
+        using var agent = new ChatClientAgent(chatClient, agentOptions);
 
         // Start a new thread for the agent conversation.
         AgentThread thread = agent.GetNewThread();

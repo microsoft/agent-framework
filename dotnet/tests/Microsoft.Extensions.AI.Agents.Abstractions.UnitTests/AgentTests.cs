@@ -213,7 +213,7 @@ public class AgentTests
     [Fact]
     public void ValidateAgentIDIsIdempotent()
     {
-        var agent = new MockAgent();
+        using var agent = new MockAgent();
 
         string id = agent.Id;
         Assert.NotNull(id);
@@ -226,7 +226,7 @@ public class AgentTests
         // Custom thread type for type checking
         var threadMock = new Mock<TestAgentThread>() { CallBase = true };
 
-        var agent = new MockAgent();
+        using var agent = new MockAgent();
 
         // Should create
         var result = agent.ValidateOrCreateThreadType<TestAgentThread>(null, () => threadMock.Object);
@@ -245,7 +245,7 @@ public class AgentTests
         var messages = new[] { new ChatMessage(ChatRole.User, "msg1"), new ChatMessage(ChatRole.User, "msg2") };
 
         var threadMock = new Mock<TestAgentThread>() { CallBase = true };
-        var agent = new MockAgent();
+        using var agent = new MockAgent();
 
         await agent.NotifyThreadOfNewMessagesAsync(threadMock.Object, messages, cancellationToken);
 

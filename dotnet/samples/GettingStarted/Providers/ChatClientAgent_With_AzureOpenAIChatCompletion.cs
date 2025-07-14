@@ -21,7 +21,7 @@ public sealed class ChatClientAgent_With_AzureOpenAIChatCompletion(ITestOutputHe
     public async Task RunWithChatCompletion()
     {
         // Get the chat client to use for the agent.
-        using var chatClient = ((TestConfiguration.AzureOpenAI.ApiKey is null)
+        var chatClient = ((TestConfiguration.AzureOpenAI.ApiKey is null)
             // Use Azure CLI credentials if API key is not provided.
             ? new AzureOpenAIClient(TestConfiguration.AzureOpenAI.Endpoint, new AzureCliCredential())
             : new AzureOpenAIClient(TestConfiguration.AzureOpenAI.Endpoint, new ApiKeyCredential(TestConfiguration.AzureOpenAI.ApiKey)))
@@ -29,7 +29,7 @@ public sealed class ChatClientAgent_With_AzureOpenAIChatCompletion(ITestOutputHe
                 .AsIChatClient();
 
         // Define the agent
-        ChatClientAgent agent =
+        using ChatClientAgent agent =
             new(chatClient, new()
             {
                 Name = JokerName,

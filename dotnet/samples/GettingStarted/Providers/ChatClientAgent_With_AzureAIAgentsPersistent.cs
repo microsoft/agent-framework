@@ -34,10 +34,10 @@ public sealed class ChatClientAgent_With_AzureAIAgentsPersistent(ITestOutputHelp
         var persistentAgent = persistentAgentResponse.Value;
 
         // Get the chat client to use for the agent.
-        using var chatClient = persistentAgentsClient.AsIChatClient(persistentAgent.Id);
+        var chatClient = persistentAgentsClient.AsIChatClient(persistentAgent.Id);
 
         // Define the agent.
-        ChatClientAgent agent = new(chatClient);
+        using ChatClientAgent agent = new(chatClient);
 
         // Start a new thread for the agent conversation.
         AgentThread thread = agent.GetNewThread();

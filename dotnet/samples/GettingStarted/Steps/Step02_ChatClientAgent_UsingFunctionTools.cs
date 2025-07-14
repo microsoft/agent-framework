@@ -38,10 +38,10 @@ public sealed class Step02_ChatClientAgent_UsingFunctionTools(ITestOutputHelper 
         };
 
         // Get the chat client to use for the agent.
-        using var chatClient = base.GetChatClient(provider, agentOptions);
+        var chatClient = base.GetChatClient(provider, agentOptions);
 
         // Define the agent
-        var agent = new ChatClientAgent(chatClient, agentOptions);
+        using var agent = new ChatClientAgent(chatClient, agentOptions);
 
         // Create the chat history thread to capture the agent interaction.
         var thread = agent.GetNewThread();
@@ -86,10 +86,10 @@ public sealed class Step02_ChatClientAgent_UsingFunctionTools(ITestOutputHelper 
         };
 
         // Get the chat client to use for the agent.
-        using var chatClient = base.GetChatClient(provider, agentOptions);
+        var chatClient = base.GetChatClient(provider, agentOptions);
 
         // Define the agent
-        var agent = new ChatClientAgent(chatClient, agentOptions);
+        using var agent = new ChatClientAgent(chatClient, agentOptions);
 
         // Create the chat history thread to capture the agent interaction.
         var thread = agent.GetNewThread();
