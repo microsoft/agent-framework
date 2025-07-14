@@ -172,7 +172,11 @@ public sealed class ChatClientAgent : Agent
             return;
         }
 
-        this.ChatClient.Dispose();
+        if (disposing)
+        {
+            this.ChatClient.Dispose();
+        }
+
         base.Dispose(disposing);
 
         this._disposed = true;
