@@ -3,12 +3,14 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Moq;
+using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 
 namespace Microsoft.Extensions.AI.Agents.UnitTests;
@@ -573,5 +575,276 @@ public class OpenTelemetryAgentTests
         var activity = Assert.Single(activities);
         Assert.NotNull(activity);
         Assert.Equal(AgentOpenTelemetryConsts.DefaultSourceName, activity.Source.Name);
+    }
+
+    [Fact]
+    public async Task RunAsync_WithMetricsEnabled_RecordsMetricsAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        var exportedMetrics = new List<Metric>();
+
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        using var meterProvider = OpenTelemetry.Sdk.CreateMeterProviderBuilder()
+            .AddMeter(sourceName)
+            .AddInMemoryExporter(exportedMetrics)
+            .Build();
+
+        var mockAgent = CreateMockAgent(false);
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: sourceName);
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Hello")
+        };
+
+        // Act
+        await telemetryAgent.RunAsync(messages);
+
+        // Force metric collection
+        meterProvider.ForceFlush(5000);
+
+        // Assert - Verify metrics were recorded
+        Assert.NotEmpty(exportedMetrics);
+
+        // Check for operation duration metric
+        var durationMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.Agent.Client.OperationDuration.Name);
+        Assert.NotNull(durationMetric);
+
+        // Check for request count metric
+        var requestCountMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.Agent.Client.RequestCount.Name);
+        Assert.NotNull(requestCountMetric);
+
+        // Check for token usage metric
+        var tokenUsageMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.Agent.Client.TokenUsage.Name);
+        Assert.NotNull(tokenUsageMetric);
+    }
+
+    [Fact]
+    public async Task RunAsync_WithMetricsEnabledAndError_RecordsErrorMetricsAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        var exportedMetrics = new List<Metric>();
+
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        using var meterProvider = OpenTelemetry.Sdk.CreateMeterProviderBuilder()
+            .AddMeter(sourceName)
+            .AddInMemoryExporter(exportedMetrics)
+            .Build();
+
+        var mockAgent = CreateMockAgent(true); // With error
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: sourceName);
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Hello")
+        };
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => telemetryAgent.RunAsync(messages));
+
+        // Force metric collection
+        meterProvider.ForceFlush(5000);
+
+        // Assert - Verify error metrics were recorded
+        Assert.NotEmpty(exportedMetrics);
+
+        // Check for operation duration metric with error tag
+        var durationMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.Agent.Client.OperationDuration.Name);
+        Assert.NotNull(durationMetric);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithMetricsEnabled_RecordsMetricsAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        var exportedMetrics = new List<Metric>();
+
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        using var meterProvider = OpenTelemetry.Sdk.CreateMeterProviderBuilder()
+            .AddMeter(sourceName)
+            .AddInMemoryExporter(exportedMetrics)
+            .Build();
+
+        var mockAgent = CreateMockStreamingAgent(false);
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: sourceName);
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Tell me a story")
+        };
+
+        // Act
+        var updates = new List<AgentRunResponseUpdate>();
+        await foreach (var update in telemetryAgent.RunStreamingAsync(messages))
+        {
+            updates.Add(update);
+        }
+
+        // Force metric collection
+        meterProvider.ForceFlush(5000);
+
+        // Assert - Verify metrics were recorded
+        Assert.NotEmpty(exportedMetrics);
+        Assert.NotEmpty(updates);
+
+        // Check for operation duration metric
+        var durationMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.Agent.Client.OperationDuration.Name);
+        Assert.NotNull(durationMetric);
+
+        // Check for request count metric
+        var requestCountMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.Agent.Client.RequestCount.Name);
+        Assert.NotNull(requestCountMetric);
+
+        // Check for token usage metric
+        var tokenUsageMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.Agent.Client.TokenUsage.Name);
+        Assert.NotNull(tokenUsageMetric);
+    }
+
+    [Fact]
+    public async Task RunAsync_WithNullUsage_SkipsTokenMetricsAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var exportedMetrics = new List<Metric>();
+
+        using var meterProvider = OpenTelemetry.Sdk.CreateMeterProviderBuilder()
+            .AddMeter(sourceName)
+            .AddInMemoryExporter(exportedMetrics)
+            .Build();
+
+        var mockAgent = new Mock<Agent>();
+        mockAgent.Setup(a => a.Id).Returns("test-agent-id");
+        mockAgent.Setup(a => a.Name).Returns("TestAgent");
+
+        // Response with null usage
+        var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Test response"))
+        {
+            ResponseId = "test-response-id",
+            Usage = null // Null usage
+        };
+
+        mockAgent.Setup(a => a.RunAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<AgentThread>(), It.IsAny<AgentRunOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: sourceName);
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Hello")
+        };
+
+        // Act
+        await telemetryAgent.RunAsync(messages);
+
+        // Force metric collection
+        meterProvider.ForceFlush(5000);
+
+        // Assert - Should have duration and request count metrics, but no token usage metrics
+        var durationMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.Agent.Client.OperationDuration.Name);
+        Assert.NotNull(durationMetric);
+
+        var requestCountMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.Agent.Client.RequestCount.Name);
+        Assert.NotNull(requestCountMetric);
+
+        // Token usage metric should not be recorded when usage is null
+        var tokenUsageMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.Agent.Client.TokenUsage.Name);
+        Assert.Null(tokenUsageMetric);
+    }
+
+    [Fact]
+    public async Task RunAsync_WithMetricsDisabled_SkipsMetricRecordingAsync()
+    {
+        // Arrange - No meter provider, so metrics are disabled
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var mockAgent = CreateMockAgent(false);
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: sourceName);
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Hello")
+        };
+
+        // Act
+        await telemetryAgent.RunAsync(messages);
+
+        // Assert - Should complete without recording metrics (since no meter provider)
+        var activity = Assert.Single(activities);
+        Assert.NotNull(activity);
+
+        // Verify the agent was called
+        mockAgent.Verify(a => a.RunAsync(messages, null, null, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RunAsync_WithPartialTokenUsage_RecordsAvailableTokensAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var exportedMetrics = new List<Metric>();
+
+        using var meterProvider = OpenTelemetry.Sdk.CreateMeterProviderBuilder()
+            .AddMeter(sourceName)
+            .AddInMemoryExporter(exportedMetrics)
+            .Build();
+
+        var mockAgent = new Mock<Agent>();
+        mockAgent.Setup(a => a.Id).Returns("test-agent-id");
+        mockAgent.Setup(a => a.Name).Returns("TestAgent");
+
+        // Response with only input tokens (no output tokens)
+        var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Test response"))
+        {
+            ResponseId = "test-response-id",
+            Usage = new UsageDetails
+            {
+                InputTokenCount = 10,
+                OutputTokenCount = null // No output tokens
+            }
+        };
+
+        mockAgent.Setup(a => a.RunAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<AgentThread>(), It.IsAny<AgentRunOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: sourceName);
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Hello")
+        };
+
+        // Act
+        await telemetryAgent.RunAsync(messages);
+
+        // Force metric collection
+        meterProvider.ForceFlush(5000);
+
+        // Assert - Should record input tokens but not output tokens
+        var tokenUsageMetric = exportedMetrics.FirstOrDefault(m => m.Name == AgentOpenTelemetryConsts.Agent.Client.TokenUsage.Name);
+        Assert.NotNull(tokenUsageMetric);
     }
 }
