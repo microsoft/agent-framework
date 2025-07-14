@@ -201,6 +201,176 @@ public class OpenTelemetryAgentTests
         // Assert
         var activity = Assert.Single(activities);
         Assert.Equal("You are a helpful assistant.", activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Request.Instructions));
+        // Should use default system when ChatClientMetadata is not available
+        Assert.Equal(AgentOpenTelemetryConsts.GenAI.Systems.MicrosoftExtensionsAI, activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.System));
+    }
+
+    [Fact]
+    public async Task RunAsync_WithChatClientAgent_WithMetadata_UsesProviderNameAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var mockChatClient = new Mock<IChatClient>();
+        mockChatClient.Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Response")));
+
+        // Setup ChatClientMetadata to return a specific provider name
+        var metadata = new ChatClientMetadata("openai");
+        mockChatClient.Setup(c => c.GetService(typeof(ChatClientMetadata), null))
+            .Returns(metadata);
+
+        var chatClientAgent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            Id = "chat-agent-id",
+            Name = "ChatAgent",
+            Instructions = "You are a helpful assistant."
+        });
+
+        using var telemetryAgent = new OpenTelemetryAgent(chatClientAgent, sourceName: sourceName);
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Hello")
+        };
+
+        // Act
+        await telemetryAgent.RunAsync(messages);
+
+        // Assert
+        var activity = Assert.Single(activities);
+        Assert.Equal("You are a helpful assistant.", activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Request.Instructions));
+        // Should use the provider name from ChatClientMetadata
+        Assert.Equal("openai", activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.System));
+    }
+
+    [Fact]
+    public async Task RunAsync_WithNonChatClientAgent_UsesDefaultSystemAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var mockAgent = CreateMockAgent(false);
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: sourceName);
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Hello")
+        };
+
+        // Act
+        await telemetryAgent.RunAsync(messages);
+
+        // Assert
+        var activity = Assert.Single(activities);
+        // Should use default system when agent is not a ChatClientAgent
+        Assert.Equal(AgentOpenTelemetryConsts.GenAI.Systems.MicrosoftExtensionsAI, activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.System));
+    }
+
+    [Theory]
+    [InlineData("azure")]
+    [InlineData("openai")]
+    [InlineData("custom-provider")]
+    public async Task RunAsync_WithChatClientAgent_WithDifferentProviders_UsesCorrectSystemAsync(string providerName)
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var mockChatClient = new Mock<IChatClient>();
+        mockChatClient.Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Response")));
+
+        // Setup ChatClientMetadata to return the specified provider name
+        var metadata = new ChatClientMetadata(providerName);
+        mockChatClient.Setup(c => c.GetService(typeof(ChatClientMetadata), null))
+            .Returns(metadata);
+
+        var chatClientAgent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            Id = "chat-agent-id",
+            Name = "ChatAgent"
+        });
+
+        using var telemetryAgent = new OpenTelemetryAgent(chatClientAgent, sourceName: sourceName);
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Hello")
+        };
+
+        // Act
+        await telemetryAgent.RunAsync(messages);
+
+        // Assert
+        var activity = Assert.Single(activities);
+        // Should use the provider name from ChatClientMetadata
+        Assert.Equal(providerName, activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.System));
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithChatClientAgent_WithMetadata_UsesProviderNameAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var mockChatClient = new Mock<IChatClient>();
+        ChatResponseUpdate[] returnUpdates =
+        [
+            new ChatResponseUpdate(role: ChatRole.Assistant, content: "Stream response")
+        ];
+        mockChatClient.Setup(c => c.GetStreamingResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Returns(returnUpdates.ToAsyncEnumerable());
+
+        // Setup ChatClientMetadata to return a specific provider name
+        var metadata = new ChatClientMetadata("azure");
+        mockChatClient.Setup(c => c.GetService(typeof(ChatClientMetadata), null))
+            .Returns(metadata);
+
+        var chatClientAgent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            Id = "chat-agent-id",
+            Name = "ChatAgent",
+            Instructions = "You are a helpful assistant."
+        });
+
+        using var telemetryAgent = new OpenTelemetryAgent(chatClientAgent, sourceName: sourceName);
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Hello")
+        };
+
+        // Act
+        await foreach (var update in telemetryAgent.RunStreamingAsync(messages))
+        {
+            // Consume the stream
+        }
+
+        // Assert
+        var activity = Assert.Single(activities);
+        Assert.Equal("You are a helpful assistant.", activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.Agent.Request.Instructions));
+        // Should use the provider name from ChatClientMetadata
+        Assert.Equal("azure", activity.GetTagItem(AgentOpenTelemetryConsts.GenAI.System));
     }
 
     [Fact]

@@ -183,6 +183,10 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
     /// </summary>
     private Activity? CreateAndConfigureActivity(string operationName, IReadOnlyCollection<ChatMessage> messages, AgentThread? thread)
     {
+        // Get the GenAI system name for telemetry
+        var chatClientAgent = this._innerAgent as ChatClientAgent;
+        var genAISystem = chatClientAgent?.ChatClient.GetService<ChatClientMetadata>()?.ProviderName;
+
         Activity? activity = null;
         if (this._activitySource.HasListeners())
         {
@@ -194,7 +198,7 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
                 _ = activity
                     // Required attributes per OpenTelemetry semantic conventions
                     .AddTag(AgentOpenTelemetryConsts.GenAI.OperationName, operationName)
-                    .AddTag(AgentOpenTelemetryConsts.GenAI.System, AgentOpenTelemetryConsts.GenAI.Systems.MicrosoftExtensionsAI)
+                    .AddTag(AgentOpenTelemetryConsts.GenAI.System, genAISystem ?? AgentOpenTelemetryConsts.GenAI.Systems.MicrosoftExtensionsAI)
                     // Agent-specific attributes
                     .AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Id, this.Id)
                     .AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Name, this.Name)
@@ -213,7 +217,7 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
                 }
 
                 // Add instructions if available (for ChatClientAgent)
-                if (this._innerAgent is ChatClientAgent chatClientAgent && !string.IsNullOrWhiteSpace(chatClientAgent.Instructions))
+                if (!string.IsNullOrWhiteSpace(chatClientAgent?.Instructions))
                 {
                     _ = activity.AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Request.Instructions, chatClientAgent.Instructions);
                 }
