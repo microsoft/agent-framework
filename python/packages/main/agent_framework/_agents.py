@@ -14,6 +14,7 @@ from ._types import (
     AgentRunResponse,
     AgentRunResponseUpdate,
     ChatMessage,
+    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     ChatRole,
@@ -245,15 +246,20 @@ class ChatClientAgentThread(AgentThread):
 
 
 class ChatClientAgent(AgentBase):
-    """A Chat Client Agent which depends on ChatClient."""
+    """A Chat Client Agent."""
 
-    chat_client: ChatClient = Field(..., kw_only=False)
+    chat_client: ChatClient
+    instructions: str | None = None
+    chat_options: ChatOptions
 
-    async def run(
+    def __init__(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        chat_client: ChatClient,
+        instructions: str | None = None,
         *,
-        thread: AgentThread | None = None,
+        id: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
@@ -271,12 +277,21 @@ class ChatClientAgent(AgentBase):
         metadata: dict[str, Any] | None = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
-        """Run the agent with the given messages and options.
+    ) -> None:
+        """Create a ChatClientAgent.
+
+        Remarks:
+            The set of attributes from model to kwargs are used to create ChatOptions,
+            they are also passed to the chat client's get_(streaming_)response methods,
+            you can override any of these values in the run and run_stream methods.
 
         Args:
-            messages: The messages to process.
-            thread: The thread to use for the agent.
+            chat_client: The chat client to use for the agent.
+            instructions: Optional instructions for the agent.
+                These will be put into the messages sent to the chat client service as a system message.
+            id: The unique identifier for the agent, will be created automatically if not provided.
+            name: The name of the agent.
+            description: A brief description of the agent's purpose.
             model: The model to use for the agent.
             max_tokens: The maximum number of tokens to generate.
             temperature: the sampling temperature to use
@@ -295,8 +310,77 @@ class ChatClientAgent(AgentBase):
             additional_properties: additional properties to include in the request
             kwargs: any additional keyword arguments,
                 will only be passed to functions that are called.
-
         """
+        chat_options_args: dict[str, Any] = {}
+        if model is not None:
+            chat_options_args["model"] = model
+        if max_tokens is not None:
+            chat_options_args["max_tokens"] = max_tokens
+        if temperature is not None:
+            chat_options_args["temperature"] = temperature
+        if top_p is not None:
+            chat_options_args["top_p"] = top_p
+        if tool_choice is not None:
+            chat_options_args["tool_choice"] = tool_choice
+        if tools is not None:
+            if not isinstance(tools, Sequence):
+                tools = [tools]
+            chat_options_args["ai_tools"] = tools
+        if response_format is not None:
+            chat_options_args["response_format"] = response_format
+        if user is not None:
+            chat_options_args["user"] = user
+        if stop is not None:
+            chat_options_args["stop"] = stop
+        if frequency_penalty is not None:
+            chat_options_args["frequency_penalty"] = frequency_penalty
+        if logit_bias is not None:
+            chat_options_args["logit_bias"] = logit_bias
+        if presence_penalty is not None:
+            chat_options_args["presence_penalty"] = presence_penalty
+        if seed is not None:
+            chat_options_args["seed"] = seed
+        if store is not None:
+            chat_options_args["store"] = store
+        if metadata is not None:
+            chat_options_args["metadata"] = metadata
+        if additional_properties is not None:
+            chat_options_args["additional_properties"] = additional_properties
+        chat_options = ChatOptions(**chat_options_args, **kwargs)
+        args: dict[str, Any] = {
+            "chat_client": chat_client,
+            "chat_options": chat_options,
+        }
+        if instructions is not None:
+            args["instructions"] = instructions
+        if name is not None:
+            args["name"] = name
+        if description is not None:
+            args["description"] = description
+        if id is not None:
+            args["id"] = id
+
+        super().__init__(**args)
+
+    async def run(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        *,
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> AgentRunResponse:
+        """Run the agent with the given messages and options.
+
+        Args:
+            messages: The messages to process.
+            thread: The thread to use for the agent.
+            kwargs: Additional keyword arguments for the agent.
+                These will be passed to a ChatOptions object to override the options set
+                in the agent's constructor.
+        """
+        chat_options = ChatOptions(**kwargs)
+        used_options = self.chat_options & chat_options
+
         thread, thread_messages = await self._prepare_thread_and_messages(
             thread=thread,
             input_messages=messages,
@@ -304,26 +388,7 @@ class ChatClientAgent(AgentBase):
             expected_type=ChatClientAgentThread,
         )
 
-        response = await self.chat_client.get_response(
-            thread_messages,
-            model=model,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            tool_choice=tool_choice,
-            tools=tools,
-            response_format=response_format,
-            user=user,
-            stop=stop,
-            frequency_penalty=frequency_penalty,
-            logit_bias=logit_bias,
-            presence_penalty=presence_penalty,
-            seed=seed,
-            store=store,
-            metadata=metadata,
-            additional_properties=additional_properties,
-            **kwargs,
-        )
+        response = await self.chat_client.get_response(thread_messages, chat_options=used_options)
 
         self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
 
@@ -496,6 +561,8 @@ class ChatClientAgent(AgentBase):
             AgentExecutionException: If thread type is incompatible.
         """
         messages: list[ChatMessage] = []
+        if self.instructions:
+            messages.append(ChatMessage(role=ChatRole.SYSTEM, text=self.instructions))
 
         if thread is None:
             thread = construct_thread()

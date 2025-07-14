@@ -1403,7 +1403,8 @@ class ChatOptions(AFBaseModel):
     temperature: Annotated[float | None, Field(ge=0.0, le=2.0)] = None
     top_p: Annotated[float | None, Field(ge=0.0, le=1.0)] = None
     tool_choice: ChatToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None = None
-    tools: Sequence[AITool] | Sequence[MutableMapping[str, Any]] | None = None
+    ai_tools: list[AITool] | None = Field(default=None, repr=False, exclude=True)
+    tools: list[MutableMapping[str, Any]] | None = None
     response_format: type[BaseModel] | None = Field(
         default=None, description="Structured output response format schema. Must be a valid Pydantic model."
     )
@@ -1460,6 +1461,32 @@ class ChatOptions(AFBaseModel):
         for key in merged_exclude:
             settings.pop(key, None)
         return settings
+
+    def __and__(self, other: object) -> Self:
+        """Combines two ChatOptions instances.
+
+        The values from the other ChatOptions take precedence.
+        List and dicts are combined.
+        """
+        if not isinstance(other, ChatOptions):
+            return self
+        ai_tools = other.ai_tools
+        updated_values = other.model_dump(exclude_none=True)
+        updated_values.pop("ai_tools", [])
+        logit_bias = updated_values.pop("logit_bias", {})
+        metadata = updated_values.pop("metadata", {})
+        additional_properties = updated_values.pop("additional_properties", {})
+        combined = self.model_copy(update=updated_values)
+        if ai_tools:
+            if not combined.ai_tools:
+                combined.ai_tools = []
+            for tool in ai_tools:
+                if tool not in combined.ai_tools:
+                    combined.ai_tools.append(tool)
+        combined.logit_bias = {**(combined.logit_bias or {}), **logit_bias}
+        combined.metadata = {**(combined.metadata or {}), **metadata}
+        combined.additional_properties = {**(combined.additional_properties or {}), **additional_properties}
+        return combined
 
 
 # region: GeneratedEmbeddings

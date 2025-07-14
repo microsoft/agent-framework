@@ -19,8 +19,12 @@ def get_weather(
 
 
 async def main():
-    agent = ChatClientAgent(OpenAIChatClient(), name="WeatherAgent")
-    response = await agent.run("What's the weather in Amsterdam?", tools=get_weather)
+    agent = ChatClientAgent(
+        OpenAIChatClient(),
+        "You are a helpful assistant, you can help the user with weather information.",
+        tools=get_weather,
+    )
+    response = await agent.run("What's the weather in Amsterdam?")
     print(str(response))
 
 

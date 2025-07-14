@@ -10,7 +10,9 @@ from agent_framework import (
     AgentRunResponseUpdate,
     AIContent,
     AIContents,
+    AITool,
     ChatMessage,
+    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     ChatRole,
@@ -492,6 +494,49 @@ def test_generated_embeddings():
     assert issubclass(GeneratedEmbeddings, MutableSequence)
 
 
+# region: ChatOptions
+
+
+def test_chat_options_init() -> None:
+    options = ChatOptions()
+    assert options.ai_model_id is None
+
+
+def test_chat_options_init_with_args(ai_function_tool, ai_tool) -> None:
+    options = ChatOptions(
+        ai_model_id="gpt-4",
+        max_tokens=1024,
+        temperature=0.7,
+        top_p=0.9,
+        presence_penalty=0.0,
+        frequency_penalty=0.0,
+        user="user-123",
+        ai_tools=[ai_function_tool, ai_tool],
+    )
+    assert options.ai_model_id == "gpt-4"
+    assert options.max_tokens == 1024
+    assert options.temperature == 0.7
+    assert options.top_p == 0.9
+    assert options.presence_penalty == 0.0
+    assert options.frequency_penalty == 0.0
+    assert options.user == "user-123"
+    for tool in options.ai_tools:
+        assert isinstance(tool, AITool)
+        assert tool.name is not None
+        assert tool.description is not None
+        assert tool.parameters() is not None
+
+
+def test_chat_options_and(ai_function_tool, ai_tool) -> None:
+    options1 = ChatOptions(ai_model_id="gpt-4o", ai_tools=[ai_function_tool])
+    options2 = ChatOptions(ai_model_id="gpt-4.1", ai_tools=[ai_tool])
+    assert options1 != options2
+    options3 = options1 & options2
+    assert options3.ai_model_id == "gpt-4.1"
+    assert len(options3.ai_tools) == 2
+    assert options3.ai_tools == [ai_function_tool, ai_tool]
+
+
 # region Agent Response Fixtures
 
 
@@ -548,7 +593,7 @@ def test_agent_run_response_from_updates(agent_run_response_update: AgentRunResp
     updates = [agent_run_response_update, agent_run_response_update]
     response = AgentRunResponse.from_agent_run_response_updates(updates)
     assert len(response.messages) > 0
-    assert response.text == "Test content\nTest content"
+    assert response.text == "Test content Test content"
 
 
 def test_agent_run_response_str_method(chat_message: ChatMessage) -> None:

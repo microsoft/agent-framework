@@ -6,7 +6,7 @@ from collections.abc import AsyncIterable, Awaitable, Callable, MutableSequence,
 from functools import wraps
 from typing import Annotated, Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
 
-from pydantic import BaseModel, PrivateAttr, StringConstraints
+from pydantic import BaseModel, StringConstraints
 
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
@@ -35,24 +35,6 @@ TChatClientBase = TypeVar("TChatClientBase", bound="ChatClientBase")
 logger = get_logger()
 
 # region: Tool Calling Functions and Decorators
-
-
-def _merge_function_results(
-    messages: list[ChatMessage],
-) -> ChatMessage:
-    """Combine multiple function result content types to one chat message content type.
-
-    This method combines the FunctionResultContent items from separate ChatMessageContent messages,
-    and is used in the event that the `context.terminate = True` condition is met.
-    """
-    contents: list[Any] = []
-    for message in messages:
-        contents.extend([item for item in message.contents if isinstance(item, FunctionResultContent)])
-
-    return ChatMessage(
-        role="tool",
-        contents=contents,
-    )
 
 
 async def _auto_invoke_function(
@@ -106,7 +88,7 @@ def _prepare_tools_and_tool_choice(chat_options: ChatOptions) -> None:
         chat_options.tool_choice = ChatToolMode.NONE.mode
         return
     chat_options.tools = [
-        (_tool_to_json_schema_spec(t) if isinstance(t, AITool) else t) for t in chat_options.tools or []
+        (_tool_to_json_schema_spec(t) if isinstance(t, AITool) else t) for t in chat_options.ai_tools or []
     ]
     if not chat_options.tools:
         chat_options.tool_choice = ChatToolMode.NONE.mode
@@ -131,7 +113,7 @@ def _tool_call_non_streaming(func: TInnerGetResponse) -> TInnerGetResponse:
     ) -> ChatResponse:
         response: ChatResponse | None = None
         fcc_messages: list[ChatMessage] = []
-        for attempt_idx in range(self.maximum_iterations_per_request):
+        for attempt_idx in range(getattr(self, "__maximum_iterations_per_request", 10)):
             response = await func(self, messages=messages, chat_options=chat_options)
             # if there are function calls, we will handle them first
             function_calls = [it for it in response.messages[0].contents if isinstance(it, FunctionCallContent)]
@@ -141,7 +123,7 @@ def _tool_call_non_streaming(func: TInnerGetResponse) -> TInnerGetResponse:
                     _auto_invoke_function(
                         function_call,
                         custom_args=kwargs,
-                        tool_map=self._tool_map,
+                        tool_map={t.name: t for t in chat_options.ai_tools or [] if isinstance(t, AIFunction)},
                         sequence_index=seq_idx,
                         request_index=attempt_idx,
                     )
@@ -195,7 +177,8 @@ def _tool_call_streaming(func: TInnerGetStreamingResponse) -> TInnerGetStreaming
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
-        for attempt_idx in range(self.maximum_iterations_per_request):
+        """Wrap the inner get streaming response method to handle tool calls."""
+        for attempt_idx in range(getattr(self, "__maximum_iterations_per_request", 10)):
             function_call_returned = False
             all_messages: list[ChatResponseUpdate] = []
             async for update in func(self, messages=messages, chat_options=chat_options):
@@ -221,7 +204,7 @@ def _tool_call_streaming(func: TInnerGetStreamingResponse) -> TInnerGetStreaming
                     _auto_invoke_function(
                         function_call,
                         custom_args=kwargs,
-                        tool_map=self._tool_map,
+                        tool_map={t.name: t for t in chat_options.ai_tools or [] if isinstance(t, AIFunction)},
                         sequence_index=seq_idx,
                         request_index=attempt_idx,
                     )
@@ -251,6 +234,8 @@ def use_tool_calling(cls: type[TChatClientBase]) -> type[TChatClientBase]:
         and _inner_get_streaming_response methods.
 
     """
+    setattr(cls, "__maximum_iterations_per_request", 10)
+
     if inner_response := getattr(cls, "_inner_get_response", None):
         cls._inner_get_response = _tool_call_non_streaming(inner_response)  # type: ignore
     if inner_streaming_response := getattr(cls, "_inner_get_streaming_response", None):
@@ -377,8 +362,6 @@ class ChatClientBase(AFBaseModel, ABC):
     """Base class for chat clients."""
 
     ai_model_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-    maximum_iterations_per_request: int = 10
-    _tool_map: dict[str, AIFunction[BaseModel, Any]] = PrivateAttr(default_factory=dict)  # type: ignore
 
     def _prepare_messages(
         self, messages: str | ChatMessage | list[str] | list[ChatMessage]
@@ -493,28 +476,31 @@ class ChatClientBase(AFBaseModel, ABC):
         Returns:
             A chat response from the model.
         """
-        if tools is not None:
-            if not isinstance(tools, Sequence):
+        if "chat_options" in kwargs:
+            chat_options = kwargs.pop("chat_options")
+            if not isinstance(chat_options, ChatOptions):
+                raise TypeError("chat_options must be an instance of ChatOptions")
+        else:
+            if tools and not isinstance(tools, Sequence):
                 tools = [tools]
-            self._tool_map = {tool.name: tool for tool in tools if isinstance(tool, AIFunction)}
-        chat_options = ChatOptions(
-            ai_model_id=model,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            tool_choice=tool_choice,
-            tools=tools,
-            response_format=response_format,
-            user=user,
-            stop=stop,
-            frequency_penalty=frequency_penalty,
-            logit_bias=logit_bias,
-            presence_penalty=presence_penalty,
-            seed=seed,
-            store=store,
-            metadata=metadata,
-            additional_properties=additional_properties or {},
-        )
+            chat_options = ChatOptions(
+                ai_model_id=model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                tool_choice=tool_choice,
+                ai_tools=tools,  # type: ignore[reportArgumentType]
+                response_format=response_format,
+                user=user,
+                stop=stop,
+                frequency_penalty=frequency_penalty,
+                logit_bias=logit_bias,
+                presence_penalty=presence_penalty,
+                seed=seed,
+                store=store,
+                metadata=metadata,
+                additional_properties=additional_properties or {},
+            )
         prepped_messages = self._prepare_messages(messages)
         _prepare_tools_and_tool_choice(chat_options=chat_options)
         return await self._inner_get_response(messages=prepped_messages, chat_options=chat_options, **kwargs)
@@ -566,29 +552,32 @@ class ChatClientBase(AFBaseModel, ABC):
         Yields:
             A stream representing the response(s) from the LLM.
         """
-        if tools is not None:
-            if not isinstance(tools, Sequence):
+        if "chat_options" in kwargs:
+            chat_options = kwargs.pop("chat_options")
+            if not isinstance(chat_options, ChatOptions):
+                raise TypeError("chat_options must be an instance of ChatOptions")
+        else:
+            if tools and not isinstance(tools, Sequence):
                 tools = [tools]
-            self._tool_map = {tool.name: tool for tool in tools if isinstance(tool, AIFunction)}
-        chat_options = ChatOptions(
-            ai_model_id=model,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            tool_choice=tool_choice,
-            tools=tools,
-            response_format=response_format,
-            user=user,
-            stop=stop,
-            frequency_penalty=frequency_penalty,
-            logit_bias=logit_bias,
-            presence_penalty=presence_penalty,
-            seed=seed,
-            store=store,
-            metadata=metadata,
-            additional_properties=additional_properties or {},
-            **kwargs,
-        )
+            chat_options = ChatOptions(
+                ai_model_id=model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                tool_choice=tool_choice,
+                ai_tools=tools,  # type: ignore[reportArgumentType]
+                response_format=response_format,
+                user=user,
+                stop=stop,
+                frequency_penalty=frequency_penalty,
+                logit_bias=logit_bias,
+                presence_penalty=presence_penalty,
+                seed=seed,
+                store=store,
+                metadata=metadata,
+                additional_properties=additional_properties or {},
+                **kwargs,
+            )
         prepped_messages = self._prepare_messages(messages)
         _prepare_tools_and_tool_choice(chat_options=chat_options)
         async for update in self._inner_get_streaming_response(
