@@ -48,12 +48,20 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
         this._operationDurationHistogram = this._meter.CreateHistogram<double>(
             AgentOpenTelemetryConsts.Agent.Client.OperationDuration.Name,
             AgentOpenTelemetryConsts.SecondsUnit,
-            AgentOpenTelemetryConsts.Agent.Client.OperationDuration.Description);
+            AgentOpenTelemetryConsts.Agent.Client.OperationDuration.Description
+#if NET9_0_OR_GREATER
+            , advice: new() { HistogramBucketBoundaries = AgentOpenTelemetryConsts.Agent.Client.OperationDuration.ExplicitBucketBoundaries }
+#endif
+            );
 
         this._tokenUsageHistogram = this._meter.CreateHistogram<int>(
             AgentOpenTelemetryConsts.Agent.Client.TokenUsage.Name,
             AgentOpenTelemetryConsts.TokensUnit,
-            AgentOpenTelemetryConsts.Agent.Client.TokenUsage.Description);
+            AgentOpenTelemetryConsts.Agent.Client.TokenUsage.Description
+#if NET9_0_OR_GREATER
+            , advice: new() { HistogramBucketBoundaries = AgentOpenTelemetryConsts.Agent.Client.TokenUsage.ExplicitBucketBoundaries }
+#endif
+            );
 
         this._requestCounter = this._meter.CreateCounter<int>(
             AgentOpenTelemetryConsts.Agent.Client.RequestCount.Name,

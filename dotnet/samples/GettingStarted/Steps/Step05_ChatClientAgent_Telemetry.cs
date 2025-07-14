@@ -24,8 +24,10 @@ public sealed class Step05_ChatClientAgent_Telemetry(ITestOutputHelper output) :
         AppContext.SetSwitch("Microsoft.Extensions.AI.Agents.EnableTelemetry", true);
 
         // Create TracerProvider with console exporter
+        string sourceName = Guid.NewGuid().ToString();
+
         using var tracerProvider = Sdk.CreateTracerProviderBuilder()
-            .AddSource(AgentOpenTelemetryConsts.DefaultSourceName)
+            .AddSource(sourceName)
             .AddConsoleExporter()
             .Build();
 

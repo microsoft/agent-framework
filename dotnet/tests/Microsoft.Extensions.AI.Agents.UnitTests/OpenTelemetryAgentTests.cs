@@ -445,7 +445,6 @@ public class OpenTelemetryAgentTests
         var activity = Assert.Single(activities);
         Assert.Equal(1, activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Response.MessageCount));
         Assert.Null(activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Response.Id));
-        Assert.Null(activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Response.FinishReason));
         Assert.Null(activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Usage.InputTokens));
         Assert.Null(activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Usage.OutputTokens));
     }

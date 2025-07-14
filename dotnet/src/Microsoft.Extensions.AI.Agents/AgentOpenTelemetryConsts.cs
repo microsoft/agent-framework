@@ -5,7 +5,7 @@ namespace Microsoft.Extensions.AI.Agents;
 /// <summary>
 /// Provides constants used by agent telemetry services.
 /// </summary>
-public static class AgentOpenTelemetryConsts
+internal static class AgentOpenTelemetryConsts
 {
     /// <summary>
     /// The default source name for agent telemetry.
@@ -93,11 +93,6 @@ public static class AgentOpenTelemetryConsts
             /// The attribute name for the agent response message count.
             /// </summary>
             public const string MessageCount = "agent.response.message_count";
-
-            /// <summary>
-            /// The attribute name for the agent response finish reason.
-            /// </summary>
-            public const string FinishReason = "agent.response.finish_reason";
         }
 
         /// <summary>
