@@ -36,7 +36,7 @@ public sealed class Step05_ChatClientAgent_Telemetry(ITestOutputHelper output) :
             Instructions = "You are a helpful assistant.",
         };
 
-        using var chatClient = await base.GetChatClientAsync(provider, agentOptions);
+        using var chatClient = base.GetChatClient(provider, agentOptions);
         var baseAgent = new ChatClientAgent(chatClient, agentOptions);
 
         // Wrap the agent with OpenTelemetry instrumentation

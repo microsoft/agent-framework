@@ -77,7 +77,6 @@ public class OpenTelemetryAgentTests
         {
             Assert.Equal(1, activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Response.MessageCount));
             Assert.Equal("test-response-id", activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Response.Id));
-            Assert.Equal("stop", activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Response.FinishReason));
             Assert.Equal(10, activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Usage.InputTokens));
             Assert.Equal(20, activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Usage.OutputTokens));
         }
@@ -124,7 +123,7 @@ public class OpenTelemetryAgentTests
         }
         else
         {
-            var updates = new List<ChatResponseUpdate>();
+            var updates = new List<AgentRunResponseUpdate>();
             await foreach (var update in telemetryAgent.RunStreamingAsync(messages, thread))
             {
                 updates.Add(update);
@@ -155,7 +154,6 @@ public class OpenTelemetryAgentTests
         {
             Assert.Equal(1, activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Response.MessageCount));
             Assert.Equal("stream-response-id", activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Response.Id));
-            Assert.Equal("stop", activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Response.FinishReason));
             Assert.Equal(15, activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Usage.InputTokens));
             Assert.Equal(25, activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Usage.OutputTokens));
         }
@@ -279,10 +277,9 @@ public class OpenTelemetryAgentTests
         }
         else
         {
-            var response = new ChatResponse(new ChatMessage(ChatRole.Assistant, "Test response"))
+            var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Test response"))
             {
                 ResponseId = "test-response-id",
-                FinishReason = ChatFinishReason.Stop,
                 Usage = new UsageDetails
                 {
                     InputTokenCount = 10,
@@ -317,7 +314,7 @@ public class OpenTelemetryAgentTests
 
         return mockAgent;
 
-        static async IAsyncEnumerable<ChatResponseUpdate> ThrowingAsyncEnumerable([EnumeratorCancellation] CancellationToken cancellationToken = default)
+        static async IAsyncEnumerable<AgentRunResponseUpdate> ThrowingAsyncEnumerable([EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Yield();
             throw new InvalidOperationException("Streaming error");
@@ -326,23 +323,22 @@ public class OpenTelemetryAgentTests
 #pragma warning restore CS0162 // Unreachable code detected
         }
 
-        static async IAsyncEnumerable<ChatResponseUpdate> CreateStreamingResponse([EnumeratorCancellation] CancellationToken cancellationToken = default)
+        static async IAsyncEnumerable<AgentRunResponseUpdate> CreateStreamingResponse([EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Yield();
 
-            yield return new ChatResponseUpdate(ChatRole.Assistant, "Hello")
+            yield return new AgentRunResponseUpdate(ChatRole.Assistant, "Hello")
             {
                 ResponseId = "stream-response-id"
             };
 
-            yield return new ChatResponseUpdate(ChatRole.Assistant, " there!")
+            yield return new AgentRunResponseUpdate(ChatRole.Assistant, " there!")
             {
                 ResponseId = "stream-response-id"
             };
 
-            yield return new ChatResponseUpdate
+            yield return new AgentRunResponseUpdate
             {
-                FinishReason = ChatFinishReason.Stop,
                 ResponseId = "stream-response-id",
                 Contents = [new UsageContent(new UsageDetails
                 {
@@ -426,10 +422,9 @@ public class OpenTelemetryAgentTests
         mockAgent.Setup(a => a.Id).Returns("test-agent-id");
         mockAgent.Setup(a => a.Name).Returns("TestAgent");
 
-        var response = new ChatResponse(new ChatMessage(ChatRole.Assistant, "Test response"))
+        var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Test response"))
         {
             ResponseId = null, // Null response ID
-            FinishReason = null, // Null finish reason
             Usage = null // Null usage
         };
 
@@ -470,7 +465,7 @@ public class OpenTelemetryAgentTests
         mockAgent.Setup(a => a.Id).Returns("test-agent-id");
         mockAgent.Setup(a => a.Name).Returns((string?)null); // Null name
 
-        var response = new ChatResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
+        var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
         mockAgent.Setup(a => a.RunAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<AgentThread>(), It.IsAny<AgentRunOptions>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(response);
 
@@ -515,7 +510,7 @@ public class OpenTelemetryAgentTests
         };
 
         // Act
-        var updates = new List<ChatResponseUpdate>();
+        var updates = new List<AgentRunResponseUpdate>();
         await foreach (var update in telemetryAgent.RunStreamingAsync(messages))
         {
             updates.Add(update);
@@ -528,28 +523,27 @@ public class OpenTelemetryAgentTests
         Assert.Equal(1, activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Response.MessageCount));
         Assert.Equal("partial-response-id", activity.GetTagItem(AgentOpenTelemetryConsts.Agent.Response.Id));
 
-        static async IAsyncEnumerable<ChatResponseUpdate> CreatePartialStreamingResponse([EnumeratorCancellation] CancellationToken cancellationToken = default)
+        static async IAsyncEnumerable<AgentRunResponseUpdate> CreatePartialStreamingResponse([EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Yield();
 
-            yield return new ChatResponseUpdate(ChatRole.Assistant, "Once")
+            yield return new AgentRunResponseUpdate(ChatRole.Assistant, "Once")
             {
                 ResponseId = "partial-response-id"
             };
 
-            yield return new ChatResponseUpdate(ChatRole.Assistant, " upon")
+            yield return new AgentRunResponseUpdate(ChatRole.Assistant, " upon")
             {
                 ResponseId = "partial-response-id"
             };
 
-            yield return new ChatResponseUpdate(ChatRole.Assistant, " a time...")
+            yield return new AgentRunResponseUpdate(ChatRole.Assistant, " a time...")
             {
                 ResponseId = "partial-response-id"
             };
 
-            yield return new ChatResponseUpdate
+            yield return new AgentRunResponseUpdate
             {
-                FinishReason = ChatFinishReason.Stop,
                 ResponseId = "partial-response-id"
             };
         }

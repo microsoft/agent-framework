@@ -73,7 +73,7 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
     public override AgentThread GetNewThread() => this._innerAgent.GetNewThread();
 
     /// <inheritdoc/>
-    public override async Task<ChatResponse> RunAsync(
+    public override async Task<AgentRunResponse> RunAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -84,7 +84,7 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
         using Activity? activity = this.CreateAndConfigureActivity(AgentOpenTelemetryConsts.Agent.Run, messages, thread);
         Stopwatch? stopwatch = this._operationDurationHistogram.Enabled ? Stopwatch.StartNew() : null;
 
-        ChatResponse? response = null;
+        AgentRunResponse? response = null;
         Exception? error = null;
 
         try
@@ -104,7 +104,7 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<ChatResponseUpdate> RunStreamingAsync(
+    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -115,7 +115,7 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
         using Activity? activity = this.CreateAndConfigureActivity(AgentOpenTelemetryConsts.Agent.RunStreaming, messages, thread);
         Stopwatch? stopwatch = this._operationDurationHistogram.Enabled ? Stopwatch.StartNew() : null;
 
-        IAsyncEnumerable<ChatResponseUpdate> updates;
+        IAsyncEnumerable<AgentRunResponseUpdate> updates;
         try
         {
             updates = this._innerAgent.RunStreamingAsync(messages, thread, options, cancellationToken);
@@ -127,14 +127,14 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
         }
 
         var responseEnumerator = updates.GetAsyncEnumerator(cancellationToken);
-        List<ChatResponseUpdate> trackedUpdates = [];
+        List<AgentRunResponseUpdate> trackedUpdates = [];
         Exception? error = null;
 
         try
         {
             while (true)
             {
-                ChatResponseUpdate update;
+                AgentRunResponseUpdate update;
                 try
                 {
                     if (!await responseEnumerator.MoveNextAsync().ConfigureAwait(false))
@@ -156,7 +156,7 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
         }
         finally
         {
-            this.TraceResponse(activity, trackedUpdates.ToChatResponse(), error, stopwatch, messages.Count, isStreaming: true);
+            this.TraceResponse(activity, trackedUpdates.ToAgentRunResponse(), error, stopwatch, messages.Count, isStreaming: true);
             await responseEnumerator.DisposeAsync().ConfigureAwait(false);
         }
     }
@@ -210,7 +210,7 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
     /// </summary>
     private void TraceResponse(
         Activity? activity,
-        ChatResponse? response,
+        AgentRunResponse? response,
         Exception? error,
         Stopwatch? stopwatch,
         int inputMessageCount,
@@ -286,11 +286,6 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
                 if (!string.IsNullOrWhiteSpace(response.ResponseId))
                 {
                     _ = activity.AddTag(AgentOpenTelemetryConsts.Agent.Response.Id, response.ResponseId);
-                }
-
-                if (response.FinishReason is ChatFinishReason finishReason)
-                {
-                    _ = activity.AddTag(AgentOpenTelemetryConsts.Agent.Response.FinishReason, finishReason.Value);
                 }
 
                 if (response.Usage?.InputTokenCount is long inputTokens)
