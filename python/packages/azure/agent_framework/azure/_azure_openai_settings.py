@@ -102,7 +102,7 @@ class AzureOpenAISettings(AFBaseSettings):
     text_to_audio_deployment_name: str | None = None
     realtime_deployment_name: str | None = None
     endpoint: HttpsUrl | None = None
-    base_url: Url | None = None
+    base_url: HttpsUrl | None = None
     api_key: SecretStr | None = None
     api_version: str = DEFAULT_AZURE_API_VERSION
     token_endpoint: str = DEFAULT_AZURE_TOKEN_ENDPOINT
