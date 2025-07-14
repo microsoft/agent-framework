@@ -30,7 +30,7 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
         // Get the chat client to communicate with the inference service backing our agent.
         // Any implementation of Microsoft.Extensions.AI.Agents.IChatClient can be used with the ChatClientAgent.
         // See the Providers folder for examples on how to create chat clients for some sample providers.
-        using IChatClient chatClient = base.GetChatClient(provider);
+        IChatClient chatClient = base.GetChatClient(provider);
 
         // Define the agent
         Agent agent = new ChatClientAgent(chatClient, options: new()
