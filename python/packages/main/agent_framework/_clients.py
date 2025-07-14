@@ -598,7 +598,7 @@ class ChatClientBase(AFBaseModel, ABC):
                 temperature=temperature,
                 top_p=top_p,
                 tool_choice=tool_choice,
-                ai_tools=tools,  # type: ignore[reportArgumentType]
+                tools=tools,  # type: ignore[reportArgumentType]
                 response_format=response_format,
                 user=user,
                 stop=stop,
