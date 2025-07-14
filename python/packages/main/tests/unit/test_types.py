@@ -511,7 +511,7 @@ def test_chat_options_init_with_args(ai_function_tool, ai_tool) -> None:
         presence_penalty=0.0,
         frequency_penalty=0.0,
         user="user-123",
-        ai_tools=[ai_function_tool, ai_tool],
+        tools=[ai_function_tool, ai_tool],
     )
     assert options.ai_model_id == "gpt-4"
     assert options.max_tokens == 1024
@@ -520,7 +520,7 @@ def test_chat_options_init_with_args(ai_function_tool, ai_tool) -> None:
     assert options.presence_penalty == 0.0
     assert options.frequency_penalty == 0.0
     assert options.user == "user-123"
-    for tool in options.ai_tools:
+    for tool in options._ai_tools:
         assert isinstance(tool, AITool)
         assert tool.name is not None
         assert tool.description is not None
@@ -528,13 +528,62 @@ def test_chat_options_init_with_args(ai_function_tool, ai_tool) -> None:
 
 
 def test_chat_options_and(ai_function_tool, ai_tool) -> None:
-    options1 = ChatOptions(ai_model_id="gpt-4o", ai_tools=[ai_function_tool])
-    options2 = ChatOptions(ai_model_id="gpt-4.1", ai_tools=[ai_tool])
+    options1 = ChatOptions(ai_model_id="gpt-4o", tools=[ai_function_tool])
+    options2 = ChatOptions(ai_model_id="gpt-4.1", tools=[ai_tool])
     assert options1 != options2
     options3 = options1 & options2
     assert options3.ai_model_id == "gpt-4.1"
-    assert len(options3.ai_tools) == 2
-    assert options3.ai_tools == [ai_function_tool, ai_tool]
+    assert len(options3._ai_tools) == 2
+    assert options3._ai_tools == [ai_function_tool, ai_tool]
+    assert options3.tools == [ai_function_tool, ai_tool]
+
+
+def test_chat_options_parsing_tools(ai_function_tool, ai_tool) -> None:
+    from agent_framework._clients import _prepare_tools_and_tool_choice
+
+    def echo() -> str:
+        """Echo the input."""
+        return "Echo"
+
+    dict_function = {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Retrieves current weather for the given location.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string", "description": "City and country e.g. Bogotá, Colombia"},
+                    "units": {
+                        "type": "string",
+                        "enum": ["celsius", "fahrenheit"],
+                        "description": "Units the temperature will be returned in.",
+                    },
+                },
+                "required": ["location", "units"],
+                "additionalProperties": False,
+            },
+            "strict": True,
+        },
+    }
+
+    options = ChatOptions(tools=[ai_function_tool, ai_tool, echo, dict_function], tool_choice="auto")
+    assert len(options.tools) == 4
+    assert options.tools[0] == ai_function_tool
+    assert options.tools[1] == ai_tool
+    assert options.tools[2] != echo
+    assert options.tools[3] == dict_function
+    # after prepare, the tools should be represented as dicts
+    # while ai_tools is still the same.
+    _prepare_tools_and_tool_choice(options)
+    assert options._ai_tools[0] == ai_function_tool
+    assert options._ai_tools[1] == ai_tool
+    assert options._ai_tools[3] == dict_function
+    assert len(options.tools) == 4
+    assert options.tools[0]["function"]["name"] == "simple_function"
+    assert options.tools[1]["function"]["name"] == "generic_tool"
+    assert options.tools[2]["function"]["name"] == "echo"
+    assert options.tools[3]["function"]["name"] == "get_weather"
 
 
 # region Agent Response Fixtures

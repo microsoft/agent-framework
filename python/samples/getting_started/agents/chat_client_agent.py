@@ -4,12 +4,11 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import ChatClientAgent, ai_function
+from agent_framework import ChatClientAgent
 from agent_framework.openai import OpenAIChatClient
 from pydantic import Field
 
 
-@ai_function
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -19,11 +18,8 @@ def get_weather(
 
 
 async def main():
-    agent = ChatClientAgent(
-        OpenAIChatClient(),
-        "You are a helpful assistant, you can help the user with weather information.",
-        tools=get_weather,
-    )
+    instructions = "You are a helpful assistant, you can help the user with weather information."
+    agent = ChatClientAgent(OpenAIChatClient(), instructions=instructions, tools=get_weather)
     print(str(await agent.run("What's the weather in Amsterdam?")))
 
 

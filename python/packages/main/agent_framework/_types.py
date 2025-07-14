@@ -4,13 +4,22 @@ import base64
 import json
 import re
 import sys
-from collections.abc import AsyncIterable, Iterable, Iterator, Mapping, MutableMapping, MutableSequence, Sequence
+from collections.abc import (
+    AsyncIterable,
+    Callable,
+    Iterable,
+    Iterator,
+    Mapping,
+    MutableMapping,
+    MutableSequence,
+    Sequence,
+)
 from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, overload
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator, model_validator
 
 from ._pydantic import AFBaseModel
-from ._tools import AITool
+from ._tools import AITool, ai_function
 from .exceptions import AgentFrameworkException
 
 if sys.version_info >= (3, 11):
@@ -1403,8 +1412,8 @@ class ChatOptions(AFBaseModel):
     temperature: Annotated[float | None, Field(ge=0.0, le=2.0)] = None
     top_p: Annotated[float | None, Field(ge=0.0, le=1.0)] = None
     tool_choice: ChatToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None = None
-    ai_tools: list[AITool] | None = Field(default=None, repr=False, exclude=True)
-    tools: list[MutableMapping[str, Any]] | None = None
+    _ai_tools: list[AITool | MutableMapping[str, Any]] | None = PrivateAttr(default=None)
+    tools: list[AITool | MutableMapping[str, Any]] | None = None
     response_format: type[BaseModel] | None = Field(
         default=None, description="Structured output response format schema. Must be a valid Pydantic model."
     )
@@ -1419,6 +1428,40 @@ class ChatOptions(AFBaseModel):
     additional_properties: MutableMapping[str, Any] = Field(
         default_factory=dict, description="Provider-specific additional properties."
     )
+
+    @model_validator(mode="after")
+    def _copy_to_ai_tools(self) -> Self:
+        if self.tools and not self._ai_tools:
+            self._ai_tools = self.tools
+        return self
+
+    @field_validator("tools", mode="before")
+    @classmethod
+    def _validate_tools(
+        cls,
+        tools: (
+            AITool
+            | list[AITool]
+            | Callable[..., Any]
+            | list[Callable[..., Any]]
+            | MutableMapping[str, Any]
+            | list[MutableMapping[str, Any]]
+            | None
+        ),
+    ) -> list[AITool | MutableMapping[str, Any]] | None:
+        """Parse the tools field.
+
+        All tools are stored in both tools and _ai_tools.
+        """
+        if not tools:
+            return None
+        if not isinstance(tools, list):
+            tools = [tools]  # type: ignore[reportAssignmentType, assignment]
+        for idx, tool in enumerate(tools):  # type: ignore[reportArgumentType, arg-type]
+            if not isinstance(tool, (AITool, MutableMapping)):
+                # Convert to AITool if it's a function or callable
+                tools[idx] = ai_function(tool)  # type: ignore[reportIndexIssues, reportCallIssue, reportArgumentType, index, call-overload, arg-type]
+        return tools  # type: ignore[reportReturnType, return-value]
 
     @field_validator("tool_choice", mode="before")
     @classmethod
@@ -1470,7 +1513,7 @@ class ChatOptions(AFBaseModel):
         """
         if not isinstance(other, ChatOptions):
             return self
-        ai_tools = other.ai_tools
+        ai_tools = other._ai_tools
         updated_values = other.model_dump(exclude_none=True)
         updated_values.pop("ai_tools", [])
         logit_bias = updated_values.pop("logit_bias", {})
@@ -1478,11 +1521,11 @@ class ChatOptions(AFBaseModel):
         additional_properties = updated_values.pop("additional_properties", {})
         combined = self.model_copy(update=updated_values)
         if ai_tools:
-            if not combined.ai_tools:
-                combined.ai_tools = []
+            if not combined._ai_tools:
+                combined._ai_tools = []
             for tool in ai_tools:
-                if tool not in combined.ai_tools:
-                    combined.ai_tools.append(tool)
+                if tool not in combined._ai_tools:
+                    combined._ai_tools.append(tool)
         combined.logit_bias = {**(combined.logit_bias or {}), **logit_bias}
         combined.metadata = {**(combined.metadata or {}), **metadata}
         combined.additional_properties = {**(combined.additional_properties or {}), **additional_properties}

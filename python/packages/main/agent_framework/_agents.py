@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable, Callable, Sequence
+from collections.abc import AsyncIterable, Callable, MutableMapping, Sequence
 from enum import Enum
 from typing import Any, Literal, Protocol, TypeVar, runtime_checkable
 from uuid import uuid4
@@ -265,7 +265,13 @@ class ChatClientAgent(AgentBase):
         temperature: float | None = None,
         top_p: float | None = None,
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: AITool | Sequence[AITool] | None = None,
+        tools: AITool
+        | list[AITool]
+        | Callable[..., Any]
+        | list[Callable[..., Any]]
+        | MutableMapping[str, Any]
+        | list[MutableMapping[str, Any]]
+        | None = None,
         response_format: type[BaseModel] | None = None,
         user: str | None = None,
         stop: str | Sequence[str] | None = None,
@@ -323,9 +329,7 @@ class ChatClientAgent(AgentBase):
         if tool_choice is not None:
             chat_options_args["tool_choice"] = tool_choice
         if tools is not None:
-            if not isinstance(tools, Sequence):
-                tools = [tools]
-            chat_options_args["ai_tools"] = tools
+            chat_options_args["tools"] = tools
         if response_format is not None:
             chat_options_args["response_format"] = response_format
         if user is not None:
@@ -411,22 +415,6 @@ class ChatClientAgent(AgentBase):
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
-        model: str | None = None,
-        max_tokens: int | None = None,
-        temperature: float | None = None,
-        top_p: float | None = None,
-        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: AITool | Sequence[AITool] | None = None,
-        response_format: type[BaseModel] | None = None,
-        user: str | None = None,
-        stop: str | Sequence[str] | None = None,
-        frequency_penalty: float | None = None,
-        logit_bias: dict[str | int, float] | None = None,
-        presence_penalty: float | None = None,
-        seed: int | None = None,
-        store: bool | None = None,
-        metadata: dict[str, Any] | None = None,
-        additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentRunResponseUpdate]:
         """Stream the agent with the given messages and options.
@@ -434,26 +422,13 @@ class ChatClientAgent(AgentBase):
         Args:
             messages: The messages to process.
             thread: The thread to use for the agent.
-            model: The model to use for the agent.
-            max_tokens: The maximum number of tokens to generate.
-            temperature: the sampling temperature to use
-            top_p: the nucleus sampling probability to use
-            tool_choice: the tool choice for the request
-            tools: the tools to use for the request
-            response_format: the format of the response
-            user: the user to associate with the request
-            stop: the stop sequence(s) for the request
-            frequency_penalty: the frequency penalty to use
-            logit_bias: the logit bias to use
-            presence_penalty: the presence penalty to use
-            seed: the random seed to use
-            store: whether to store the response
-            metadata: additional metadata to include in the request
-            additional_properties: additional properties to include in the request
             kwargs: any additional keyword arguments,
-                will only be passed to functions that are called.
+                These will be passed to a ChatOptions object to override the options set
+                in the agent's constructor.
 
         """
+        chat_options = ChatOptions(**kwargs)
+        used_options = self.chat_options & chat_options
         thread, thread_messages = await self._prepare_thread_and_messages(
             thread=thread,
             input_messages=messages,
@@ -465,23 +440,7 @@ class ChatClientAgent(AgentBase):
 
         streaming_response: AsyncIterable[ChatResponseUpdate] = self.chat_client.get_streaming_response(
             thread_messages,
-            model=model,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            tool_choice=tool_choice,
-            tools=tools,
-            response_format=response_format,
-            user=user,
-            stop=stop,
-            frequency_penalty=frequency_penalty,
-            logit_bias=logit_bias,
-            presence_penalty=presence_penalty,
-            seed=seed,
-            store=store,
-            metadata=metadata,
-            additional_properties=additional_properties,
-            **kwargs,
+            chat_options=used_options,
         )
 
         async for update in streaming_response:

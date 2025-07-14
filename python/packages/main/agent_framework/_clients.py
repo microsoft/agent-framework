@@ -2,7 +2,7 @@
 
 import asyncio
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, Awaitable, Callable, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, MutableSequence, Sequence
 from functools import wraps
 from typing import Annotated, Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
 
@@ -88,7 +88,7 @@ def _prepare_tools_and_tool_choice(chat_options: ChatOptions) -> None:
         chat_options.tool_choice = ChatToolMode.NONE.mode
         return
     chat_options.tools = [
-        (_tool_to_json_schema_spec(t) if isinstance(t, AITool) else t) for t in chat_options.ai_tools or []
+        (_tool_to_json_schema_spec(t) if isinstance(t, AITool) else t) for t in chat_options._ai_tools or []
     ]
     if not chat_options.tools:
         chat_options.tool_choice = ChatToolMode.NONE.mode
@@ -123,7 +123,7 @@ def _tool_call_non_streaming(func: TInnerGetResponse) -> TInnerGetResponse:
                     _auto_invoke_function(
                         function_call,
                         custom_args=kwargs,
-                        tool_map={t.name: t for t in chat_options.ai_tools or [] if isinstance(t, AIFunction)},
+                        tool_map={t.name: t for t in chat_options._ai_tools or [] if isinstance(t, AIFunction)},
                         sequence_index=seq_idx,
                         request_index=attempt_idx,
                     )
@@ -204,7 +204,7 @@ def _tool_call_streaming(func: TInnerGetStreamingResponse) -> TInnerGetStreaming
                     _auto_invoke_function(
                         function_call,
                         custom_args=kwargs,
-                        tool_map={t.name: t for t in chat_options.ai_tools or [] if isinstance(t, AIFunction)},
+                        tool_map={t.name: t for t in chat_options._ai_tools or [] if isinstance(t, AIFunction)},
                         sequence_index=seq_idx,
                         request_index=attempt_idx,
                     )
@@ -259,7 +259,13 @@ class ChatClient(Protocol):
         temperature: float | None = None,
         top_p: float | None = None,
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: AITool | Sequence[AITool] | None = None,
+        tools: AITool
+        | list[AITool]
+        | Callable[..., Any]
+        | list[Callable[..., Any]]
+        | MutableMapping[str, Any]
+        | list[MutableMapping[str, Any]]
+        | None = None,
         response_format: type[BaseModel] | None = None,
         user: str | None = None,
         stop: str | Sequence[str] | None = None,
@@ -312,7 +318,13 @@ class ChatClient(Protocol):
         temperature: float | None = None,
         top_p: float | None = None,
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: AITool | Sequence[AITool] | None = None,
+        tools: AITool
+        | list[AITool]
+        | Callable[..., Any]
+        | list[Callable[..., Any]]
+        | MutableMapping[str, Any]
+        | list[MutableMapping[str, Any]]
+        | None = None,
         response_format: type[BaseModel] | None = None,
         user: str | None = None,
         stop: str | Sequence[str] | None = None,
@@ -437,7 +449,13 @@ class ChatClientBase(AFBaseModel, ABC):
         temperature: float | None = None,
         top_p: float | None = None,
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: AITool | Sequence[AITool] | None = None,
+        tools: AITool
+        | list[AITool]
+        | Callable[..., Any]
+        | list[Callable[..., Any]]
+        | MutableMapping[str, Any]
+        | list[MutableMapping[str, Any]]
+        | None = None,
         response_format: type[BaseModel] | None = None,
         user: str | None = None,
         stop: str | Sequence[str] | None = None,
@@ -481,15 +499,13 @@ class ChatClientBase(AFBaseModel, ABC):
             if not isinstance(chat_options, ChatOptions):
                 raise TypeError("chat_options must be an instance of ChatOptions")
         else:
-            if tools and not isinstance(tools, Sequence):
-                tools = [tools]
             chat_options = ChatOptions(
                 ai_model_id=model,
                 max_tokens=max_tokens,
                 temperature=temperature,
                 top_p=top_p,
                 tool_choice=tool_choice,
-                ai_tools=tools,  # type: ignore[reportArgumentType]
+                tools=tools,  # type: ignore
                 response_format=response_format,
                 user=user,
                 stop=stop,
@@ -514,7 +530,13 @@ class ChatClientBase(AFBaseModel, ABC):
         temperature: float | None = None,
         top_p: float | None = None,
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: AITool | Sequence[AITool] | None = None,
+        tools: AITool
+        | list[AITool]
+        | Callable[..., Any]
+        | list[Callable[..., Any]]
+        | MutableMapping[str, Any]
+        | list[MutableMapping[str, Any]]
+        | None = None,
         response_format: type[BaseModel] | None = None,
         user: str | None = None,
         stop: str | Sequence[str] | None = None,
@@ -557,8 +579,6 @@ class ChatClientBase(AFBaseModel, ABC):
             if not isinstance(chat_options, ChatOptions):
                 raise TypeError("chat_options must be an instance of ChatOptions")
         else:
-            if tools and not isinstance(tools, Sequence):
-                tools = [tools]
             chat_options = ChatOptions(
                 ai_model_id=model,
                 max_tokens=max_tokens,
