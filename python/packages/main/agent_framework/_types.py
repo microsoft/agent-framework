@@ -1515,7 +1515,7 @@ class ChatOptions(AFBaseModel):
             return self
         ai_tools = other._ai_tools
         updated_values = other.model_dump(exclude_none=True)
-        updated_values.pop("ai_tools", [])
+        updated_values.pop("tools", [])
         logit_bias = updated_values.pop("logit_bias", {})
         metadata = updated_values.pop("metadata", {})
         additional_properties = updated_values.pop("additional_properties", {})

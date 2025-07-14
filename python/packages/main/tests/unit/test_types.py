@@ -532,6 +532,7 @@ def test_chat_options_and(ai_function_tool, ai_tool) -> None:
     options2 = ChatOptions(ai_model_id="gpt-4.1", tools=[ai_tool])
     assert options1 != options2
     options3 = options1 & options2
+
     assert options3.ai_model_id == "gpt-4.1"
     assert len(options3._ai_tools) == 2
     assert options3._ai_tools == [ai_function_tool, ai_tool]
