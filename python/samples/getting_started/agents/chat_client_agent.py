@@ -24,8 +24,7 @@ async def main():
         "You are a helpful assistant, you can help the user with weather information.",
         tools=get_weather,
     )
-    response = await agent.run("What's the weather in Amsterdam?")
-    print(str(response))
+    print(str(await agent.run("What's the weather in Amsterdam?")))
 
 
 if __name__ == "__main__":
