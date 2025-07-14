@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -18,7 +18,7 @@ public class OpenTelemetryAgentTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task RunAsync_ExpectedTelemetryData_Collected(bool withError)
+    public async Task RunAsync_ExpectedTelemetryData_CollectedAsync(bool withError)
     {
         // Arrange
         var sourceName = Guid.NewGuid().ToString();
@@ -88,7 +88,7 @@ public class OpenTelemetryAgentTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task RunStreamingAsync_ExpectedTelemetryData_Collected(bool withError)
+    public async Task RunStreamingAsync_ExpectedTelemetryData_CollectedAsync(bool withError)
     {
         // Arrange
         var sourceName = Guid.NewGuid().ToString();
@@ -164,7 +164,7 @@ public class OpenTelemetryAgentTests
     }
 
     [Fact]
-    public async Task RunAsync_WithChatClientAgent_IncludesInstructions()
+    public async Task RunAsync_WithChatClientAgent_IncludesInstructionsAsync()
     {
         // Arrange
         var sourceName = Guid.NewGuid().ToString();
@@ -201,7 +201,7 @@ public class OpenTelemetryAgentTests
     }
 
     [Fact]
-    public async Task RunAsync_WithThreadId_IncludesThreadId()
+    public async Task RunAsync_WithThreadId_IncludesThreadIdAsync()
     {
         // Arrange
         var sourceName = Guid.NewGuid().ToString();
