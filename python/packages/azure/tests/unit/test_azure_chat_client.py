@@ -1,0 +1,620 @@
+# Copyright (c) Microsoft. All rights reserved.
+
+import json
+import os
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import openai
+import pytest
+from agent_framework import (
+    ChatClientBase,
+    ChatMessage,
+    FunctionCallContent,
+    FunctionResultContent,
+    TextContent,
+)
+from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
+from agent_framework.openai.exceptions import (
+    ContentFilterResultSeverity,
+    OpenAIContentFilterException,
+)
+from agent_framework.telemetry import USER_AGENT_KEY
+from httpx import Request, Response
+from openai import AsyncAzureOpenAI, AsyncStream
+from openai.resources.chat.completions import AsyncCompletions as AsyncChatCompletions
+from openai.types.chat import ChatCompletion, ChatCompletionChunk
+from openai.types.chat.chat_completion import Choice
+from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
+from openai.types.chat.chat_completion_chunk import ChoiceDelta as ChunkChoiceDelta
+from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
+from agent_framework_azure import AzureChatClient
+
+# region Service Setup
+
+
+def test_init(azure_openai_unit_test_env: dict[str, str]) -> None:
+    # Test successful initialization
+    azure_chat_client = AzureChatClient()
+
+    assert azure_chat_client.client is not None
+    assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
+    assert azure_chat_client.ai_model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
+    assert isinstance(azure_chat_client, ChatClientBase)
+
+
+def test_init_client(azure_openai_unit_test_env: dict[str, str]) -> None:
+    # Test successful initialization with client
+    client = MagicMock(spec=AsyncAzureOpenAI)
+    azure_chat_client = AzureChatClient(async_client=client)
+
+    assert azure_chat_client.client is not None
+    assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
+
+
+def test_init_base_url(azure_openai_unit_test_env: dict[str, str]) -> None:
+    # Custom header for testing
+    default_headers = {"X-Unit-Test": "test-guid"}
+
+    azure_chat_client = AzureChatClient(
+        default_headers=default_headers,
+    )
+
+    assert azure_chat_client.client is not None
+    assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
+    assert azure_chat_client.ai_model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
+    assert isinstance(azure_chat_client, ChatClientBase)
+    for key, value in default_headers.items():
+        assert key in azure_chat_client.client.default_headers
+        assert azure_chat_client.client.default_headers[key] == value
+
+
+@pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_BASE_URL"]], indirect=True)
+def test_init_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
+    azure_chat_client = AzureChatClient()
+
+    assert azure_chat_client.client is not None
+    assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
+    assert azure_chat_client.ai_model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
+    assert isinstance(azure_chat_client, ChatClientBase)
+
+
+@pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]], indirect=True)
+def test_init_with_empty_deployment_name(azure_openai_unit_test_env: dict[str, str]) -> None:
+    with pytest.raises(ServiceInitializationError):
+        AzureChatClient(
+            env_file_path="test.env",
+        )
+
+
+@pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_BASE_URL"]], indirect=True)
+def test_init_with_empty_endpoint_and_base_url(azure_openai_unit_test_env: dict[str, str]) -> None:
+    with pytest.raises(ServiceInitializationError):
+        AzureChatClient(
+            env_file_path="test.env",
+        )
+
+
+@pytest.mark.parametrize("override_env_param_dict", [{"AZURE_OPENAI_ENDPOINT": "http://test.com"}], indirect=True)
+def test_init_with_invalid_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
+    with pytest.raises(ServiceInitializationError):
+        AzureChatClient()
+
+
+@pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_BASE_URL"]], indirect=True)
+def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
+    default_headers = {"X-Test": "test"}
+
+    settings = {
+        "deployment_name": azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
+        "endpoint": azure_openai_unit_test_env["AZURE_OPENAI_ENDPOINT"],
+        "api_key": azure_openai_unit_test_env["AZURE_OPENAI_API_KEY"],
+        "api_version": azure_openai_unit_test_env["AZURE_OPENAI_API_VERSION"],
+        "default_headers": default_headers,
+    }
+
+    azure_chat_client = AzureChatClient.from_dict(settings)
+    dumped_settings = azure_chat_client.to_dict()
+    assert dumped_settings["ai_model_id"] == settings["deployment_name"]
+    assert str(settings["endpoint"]) in str(dumped_settings["base_url"])
+    assert str(settings["deployment_name"]) in str(dumped_settings["base_url"])
+    assert settings["api_key"] == dumped_settings["api_key"]
+    assert settings["api_version"] == dumped_settings["api_version"]
+
+    # Assert that the default header we added is present in the dumped_settings default headers
+    for key, value in default_headers.items():
+        assert key in dumped_settings["default_headers"]
+        assert dumped_settings["default_headers"][key] == value
+
+    # Assert that the 'User-agent' header is not present in the dumped_settings default headers
+    assert USER_AGENT_KEY not in dumped_settings["default_headers"]
+
+
+# endregion
+# region CMC
+
+
+@pytest.fixture
+def mock_chat_completion_response() -> ChatCompletion:
+    return ChatCompletion(
+        id="test_id",
+        choices=[
+            Choice(index=0, message=ChatCompletionMessage(content="test", role="assistant"), finish_reason="stop")
+        ],
+        created=0,
+        model="test",
+        object="chat.completion",
+    )
+
+
+@pytest.fixture
+def mock_streaming_chat_completion_response() -> AsyncStream[ChatCompletionChunk]:
+    content = ChatCompletionChunk(
+        id="test_id",
+        choices=[ChunkChoice(index=0, delta=ChunkChoiceDelta(content="test", role="assistant"), finish_reason="stop")],
+        created=0,
+        model="test",
+        object="chat.completion.chunk",
+    )
+    stream = MagicMock(spec=AsyncStream)
+    stream.__aiter__.return_value = [content]
+    return stream
+
+
+@patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
+async def test_cmc(
+    mock_create: AsyncMock,
+    azure_openai_unit_test_env: dict[str, str],
+    chat_history: list[ChatMessage],
+    mock_chat_completion_response: ChatCompletion,
+) -> None:
+    mock_create.return_value = mock_chat_completion_response
+    chat_history.append(ChatMessage(text="hello world", role="user"))
+
+    azure_chat_client = AzureChatClient()
+    await azure_chat_client.get_response(
+        messages=chat_history,
+    )
+    mock_create.assert_awaited_once_with(
+        model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
+        stream=False,
+        messages=azure_chat_client._prepare_chat_history_for_request(chat_history),  # type: ignore
+    )
+
+
+@patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
+async def test_cmc_with_logit_bias(
+    mock_create: AsyncMock,
+    azure_openai_unit_test_env: dict[str, str],
+    chat_history: list[ChatMessage],
+    mock_chat_completion_response: ChatCompletion,
+) -> None:
+    mock_create.return_value = mock_chat_completion_response
+    prompt = "hello world"
+    chat_history.append(ChatMessage(text=prompt, role="user"))
+
+    token_bias: dict[str | int, float] = {"1": -100}
+
+    azure_chat_client = AzureChatClient()
+
+    await azure_chat_client.get_response(messages=chat_history, logit_bias=token_bias)
+
+    mock_create.assert_awaited_once_with(
+        model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
+        messages=azure_chat_client._prepare_chat_history_for_request(chat_history),  # type: ignore
+        stream=False,
+        logit_bias=token_bias,
+    )
+
+
+@patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
+async def test_cmc_with_stop(
+    mock_create: AsyncMock,
+    azure_openai_unit_test_env: dict[str, str],
+    chat_history: list[ChatMessage],
+    mock_chat_completion_response: ChatCompletion,
+) -> None:
+    mock_create.return_value = mock_chat_completion_response
+    prompt = "hello world"
+    chat_history.append(ChatMessage(text=prompt, role="user"))
+
+    stop = ["!"]
+
+    azure_chat_client = AzureChatClient()
+
+    await azure_chat_client.get_response(messages=chat_history, stop=stop)
+
+    mock_create.assert_awaited_once_with(
+        model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
+        messages=azure_chat_client._prepare_chat_history_for_request(chat_history),  # type: ignore
+        stream=False,
+        stop=stop,
+    )
+
+
+@patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
+async def test_azure_on_your_data(
+    mock_create: AsyncMock,
+    azure_openai_unit_test_env: dict[str, str],
+    chat_history: list[ChatMessage],
+    mock_chat_completion_response: ChatCompletion,
+) -> None:
+    mock_chat_completion_response.choices = [
+        Choice(
+            index=0,
+            message=ChatCompletionMessage(
+                content="test",
+                role="assistant",
+                context={  # type: ignore
+                    "citations": {
+                        "content": "test content",
+                        "title": "test title",
+                        "url": "test url",
+                        "filepath": "test filepath",
+                        "chunk_id": "test chunk_id",
+                    },
+                    "intent": "query used",
+                },
+            ),
+            finish_reason="stop",
+        )
+    ]
+    mock_create.return_value = mock_chat_completion_response
+    prompt = "hello world"
+    messages_in = chat_history
+    chat_history.append(ChatMessage(text=prompt, role="user"))
+    messages_out: list[ChatMessage] = []
+    messages_out.append(ChatMessage(text=prompt, role="user"))
+
+    expected_data_settings = {
+        "data_sources": [
+            {
+                "type": "AzureCognitiveSearch",
+                "parameters": {
+                    "indexName": "test_index",
+                    "endpoint": "https://test-endpoint-search.com",
+                    "key": "test_key",
+                },
+            }
+        ]
+    }
+
+    azure_chat_client = AzureChatClient()
+
+    content = await azure_chat_client.get_response(
+        messages=messages_in,
+        additional_properties={"extra_body": expected_data_settings},
+    )
+    assert len(content.messages) == 1
+    assert len(content.messages[0].contents) == 3
+    assert isinstance(content.messages[0].contents[0], FunctionCallContent)
+    assert isinstance(content.messages[0].contents[1], FunctionResultContent)
+    assert isinstance(content.messages[0].contents[2], TextContent)
+    assert content.messages[0].contents[2].text == "test"
+
+    mock_create.assert_awaited_once_with(
+        model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
+        messages=azure_chat_client._prepare_chat_history_for_request(messages_out),  # type: ignore
+        stream=False,
+        extra_body=expected_data_settings,
+    )
+
+
+@patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
+async def test_azure_on_your_data_string(
+    mock_create: AsyncMock,
+    azure_openai_unit_test_env: dict[str, str],
+    chat_history: list[ChatMessage],
+    mock_chat_completion_response: ChatCompletion,
+) -> None:
+    mock_chat_completion_response.choices = [
+        Choice(
+            index=0,
+            message=ChatCompletionMessage(
+                content="test",
+                role="assistant",
+                context=json.dumps({  # type: ignore
+                    "citations": {
+                        "content": "test content",
+                        "title": "test title",
+                        "url": "test url",
+                        "filepath": "test filepath",
+                        "chunk_id": "test chunk_id",
+                    },
+                    "intent": "query used",
+                }),
+            ),
+            finish_reason="stop",
+        )
+    ]
+    mock_create.return_value = mock_chat_completion_response
+    prompt = "hello world"
+    messages_in = chat_history
+    messages_in.append(ChatMessage(text=prompt, role="user"))
+    messages_out: list[ChatMessage] = []
+    messages_out.append(ChatMessage(text=prompt, role="user"))
+
+    expected_data_settings = {
+        "data_sources": [
+            {
+                "type": "AzureCognitiveSearch",
+                "parameters": {
+                    "indexName": "test_index",
+                    "endpoint": "https://test-endpoint-search.com",
+                    "key": "test_key",
+                },
+            }
+        ]
+    }
+
+    azure_chat_client = AzureChatClient()
+
+    content = await azure_chat_client.get_response(
+        messages=messages_in,
+        additional_properties={"extra_body": expected_data_settings},
+    )
+    assert len(content.messages) == 1
+    assert len(content.messages[0].contents) == 3
+    assert isinstance(content.messages[0].contents[0], FunctionCallContent)
+    assert isinstance(content.messages[0].contents[1], FunctionResultContent)
+    assert isinstance(content.messages[0].contents[2], TextContent)
+    assert content.messages[0].contents[2].text == "test"
+
+    mock_create.assert_awaited_once_with(
+        model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
+        messages=azure_chat_client._prepare_chat_history_for_request(messages_out),  # type: ignore
+        stream=False,
+        extra_body=expected_data_settings,
+    )
+
+
+@patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
+async def test_azure_on_your_data_fail(
+    mock_create: AsyncMock,
+    azure_openai_unit_test_env: dict[str, str],
+    chat_history: list[ChatMessage],
+    mock_chat_completion_response: ChatCompletion,
+) -> None:
+    mock_chat_completion_response.choices = [
+        Choice(
+            index=0,
+            message=ChatCompletionMessage(
+                content="test",
+                role="assistant",
+                context="not a dictionary",  # type: ignore
+            ),
+            finish_reason="stop",
+        )
+    ]
+    mock_create.return_value = mock_chat_completion_response
+    prompt = "hello world"
+    messages_in = chat_history
+    messages_in.append(ChatMessage(text=prompt, role="user"))
+    messages_out: list[ChatMessage] = []
+    messages_out.append(ChatMessage(text=prompt, role="user"))
+
+    expected_data_settings = {
+        "data_sources": [
+            {
+                "type": "AzureCognitiveSearch",
+                "parameters": {
+                    "indexName": "test_index",
+                    "endpoint": "https://test-endpoint-search.com",
+                    "key": "test_key",
+                },
+            }
+        ]
+    }
+
+    azure_chat_client = AzureChatClient()
+
+    content = await azure_chat_client.get_response(
+        messages=messages_in,
+        additional_properties={"extra_body": expected_data_settings},
+    )
+    assert len(content.messages) == 1
+    assert len(content.messages[0].contents) == 1
+    assert isinstance(content.messages[0].contents[0], TextContent)
+    assert content.messages[0].contents[0].text == "test"
+
+    mock_create.assert_awaited_once_with(
+        model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
+        messages=azure_chat_client._prepare_chat_history_for_request(messages_out),  # type: ignore
+        stream=False,
+        extra_body=expected_data_settings,
+    )
+
+
+@patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
+async def test_azure_on_your_data_split_messages(
+    mock_create: AsyncMock,
+    azure_openai_unit_test_env: dict[str, str],
+    chat_history: list[ChatMessage],
+    mock_chat_completion_response: ChatCompletion,
+) -> None:
+    mock_chat_completion_response.choices = [
+        Choice(
+            index=0,
+            message=ChatCompletionMessage(
+                content="test",
+                role="assistant",
+                context={  # type: ignore
+                    "citations": {
+                        "content": "test content",
+                        "title": "test title",
+                        "url": "test url",
+                        "filepath": "test filepath",
+                        "chunk_id": "test chunk_id",
+                    },
+                    "intent": "query used",
+                },
+            ),
+            finish_reason="stop",
+        )
+    ]
+    mock_create.return_value = mock_chat_completion_response
+    prompt = "hello world"
+    messages_in = chat_history
+    messages_in.append(ChatMessage(text=prompt, role="user"))
+    messages_out: list[ChatMessage] = []
+    messages_out.append(ChatMessage(text=prompt, role="user"))
+
+    azure_chat_client = AzureChatClient()
+
+    content = await azure_chat_client.get_response(
+        messages=messages_in,
+    )
+    message = azure_chat_client.split_message(content)
+    assert len(content.messages) == 1
+    assert len(content.messages[0].contents) == 3
+    assert isinstance(content.messages[0].contents[0], FunctionCallContent)
+    assert isinstance(content.messages[0].contents[1], FunctionResultContent)
+    assert isinstance(content.messages[0].contents[2], TextContent)
+    assert content.messages[0].contents[2].text == "test"
+    assert message.messages[0].contents == [content.messages[0].contents[0]]
+
+
+CONTENT_FILTERED_ERROR_MESSAGE = (
+    "The response was filtered due to the prompt triggering Azure OpenAI's content management policy. Please "
+    "modify your prompt and retry. To learn more about our content filtering policies please read our "
+    "documentation: https://go.microsoft.com/fwlink/?linkid=2198766"
+)
+CONTENT_FILTERED_ERROR_FULL_MESSAGE = (
+    "Error code: 400 - {'error': {'message': \"%s\", 'type': null, 'param': 'prompt', 'code': 'content_filter', "
+    "'status': 400, 'innererror': {'code': 'ResponsibleAIPolicyViolation', 'content_filter_result': {'hate': "
+    "{'filtered': True, 'severity': 'high'}, 'self_harm': {'filtered': False, 'severity': 'safe'}, 'sexual': "
+    "{'filtered': False, 'severity': 'safe'}, 'violence': {'filtered': False, 'severity': 'safe'}}}}}"
+) % CONTENT_FILTERED_ERROR_MESSAGE
+
+
+@patch.object(AsyncChatCompletions, "create")
+async def test_content_filtering_raises_correct_exception(
+    mock_create: AsyncMock,
+    azure_openai_unit_test_env: dict[str, str],
+    chat_history: list[ChatMessage],
+) -> None:
+    prompt = "some prompt that would trigger the content filtering"
+    chat_history.append(ChatMessage(text=prompt, role="user"))
+
+    test_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    assert test_endpoint is not None
+    mock_create.side_effect = openai.BadRequestError(
+        CONTENT_FILTERED_ERROR_FULL_MESSAGE,
+        response=Response(400, request=Request("POST", test_endpoint)),
+        body={
+            "message": CONTENT_FILTERED_ERROR_MESSAGE,
+            "type": None,
+            "param": "prompt",
+            "code": "content_filter",
+            "status": 400,
+            "innererror": {
+                "code": "ResponsibleAIPolicyViolation",
+                "content_filter_result": {
+                    "hate": {"filtered": True, "severity": "high"},
+                    "self_harm": {"filtered": False, "severity": "safe"},
+                    "sexual": {"filtered": False, "severity": "safe"},
+                    "violence": {"filtered": False, "severity": "safe"},
+                },
+            },
+        },
+    )
+
+    azure_chat_client = AzureChatClient()
+
+    with pytest.raises(OpenAIContentFilterException, match="service encountered a content error") as exc_info:
+        await azure_chat_client.get_response(
+            messages=chat_history,
+        )
+
+    content_filter_exc = exc_info.value
+    assert content_filter_exc.param == "prompt"
+    assert content_filter_exc.content_filter_result["hate"].filtered
+    assert content_filter_exc.content_filter_result["hate"].severity == ContentFilterResultSeverity.HIGH
+
+
+@patch.object(AsyncChatCompletions, "create")
+async def test_content_filtering_without_response_code_raises_with_default_code(
+    mock_create: AsyncMock,
+    azure_openai_unit_test_env: dict[str, str],
+    chat_history: list[ChatMessage],
+) -> None:
+    prompt = "some prompt that would trigger the content filtering"
+    chat_history.append(ChatMessage(text=prompt, role="user"))
+
+    test_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    assert test_endpoint is not None
+    mock_create.side_effect = openai.BadRequestError(
+        CONTENT_FILTERED_ERROR_FULL_MESSAGE,
+        response=Response(400, request=Request("POST", test_endpoint)),
+        body={
+            "message": CONTENT_FILTERED_ERROR_MESSAGE,
+            "type": None,
+            "param": "prompt",
+            "code": "content_filter",
+            "status": 400,
+            "innererror": {
+                "content_filter_result": {
+                    "hate": {"filtered": True, "severity": "high"},
+                    "self_harm": {"filtered": False, "severity": "safe"},
+                    "sexual": {"filtered": False, "severity": "safe"},
+                    "violence": {"filtered": False, "severity": "safe"},
+                },
+            },
+        },
+    )
+
+    azure_chat_client = AzureChatClient()
+
+    with pytest.raises(OpenAIContentFilterException, match="service encountered a content error"):
+        await azure_chat_client.get_response(
+            messages=chat_history,
+        )
+
+
+@patch.object(AsyncChatCompletions, "create")
+async def test_bad_request_non_content_filter(
+    mock_create: AsyncMock,
+    azure_openai_unit_test_env: dict[str, str],
+    chat_history: list[ChatMessage],
+) -> None:
+    prompt = "some prompt that would trigger the content filtering"
+    chat_history.append(ChatMessage(text=prompt, role="user"))
+
+    test_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    assert test_endpoint is not None
+    mock_create.side_effect = openai.BadRequestError(
+        "The request was bad.", response=Response(400, request=Request("POST", test_endpoint)), body={}
+    )
+
+    azure_chat_client = AzureChatClient()
+
+    with pytest.raises(ServiceResponseException, match="service failed to complete the prompt"):
+        await azure_chat_client.get_response(
+            messages=chat_history,
+        )
+
+
+@patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
+async def test_cmc_streaming(
+    mock_create: AsyncMock,
+    azure_openai_unit_test_env: dict[str, str],
+    chat_history: list[ChatMessage],
+    mock_streaming_chat_completion_response: AsyncStream[ChatCompletionChunk],
+) -> None:
+    mock_create.return_value = mock_streaming_chat_completion_response
+    chat_history.append(ChatMessage(text="hello world", role="user"))
+
+    azure_chat_client = AzureChatClient()
+    async for msg in azure_chat_client.get_streaming_response(
+        messages=chat_history,
+    ):
+        assert msg is not None
+    mock_create.assert_awaited_once_with(
+        model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
+        stream=True,
+        messages=azure_chat_client._prepare_chat_history_for_request(chat_history),  # type: ignore
+        # NOTE: The `stream_options={"include_usage": True}` is explicitly enforced in
+        # `OpenAIChatCompletionBase._inner_get_streaming_response`.
+        # To ensure consistency, we align the arguments here accordingly.
+        stream_options={"include_usage": True},
+    )

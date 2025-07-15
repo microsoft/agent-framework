@@ -16,7 +16,16 @@ from collections.abc import (
 )
 from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, overload
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    ValidationError,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from ._pydantic import AFBaseModel
 from ._tools import AITool, ai_function
@@ -1398,6 +1407,11 @@ class ChatToolMode(AFBaseModel):
             return self.mode == other.mode and self.required_function_name == other.required_function_name
         return False
 
+    @model_serializer
+    def serialize_model(self) -> str:
+        """Serializes the ChatToolMode to just the mode string."""
+        return self.mode
+
 
 ChatToolMode.AUTO = ChatToolMode(mode="auto")  # type: ignore[assignment]
 ChatToolMode.REQUIRED_ANY = ChatToolMode(mode="required")  # type: ignore[assignment]
@@ -1496,10 +1510,13 @@ class ChatOptions(AFBaseModel):
             Dictionary of settings for provider.
         """
         default_exclude = {"additional_properties"}
+        # No tool choice if no tools are defined
+        if self.tools is None or len(self.tools) == 0:
+            default_exclude.add("tool_choice")
         merged_exclude = default_exclude if exclude is None else default_exclude | set(exclude)
 
         settings = self.model_dump(exclude_none=True, by_alias=by_alias, exclude=merged_exclude)
-        settings = {k: v for k, v in settings.items() if v and not isinstance(v, dict)}
+        settings = {k: v for k, v in settings.items() if v}
         settings.update(self.additional_properties)
         for key in merged_exclude:
             settings.pop(key, None)

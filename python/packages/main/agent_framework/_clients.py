@@ -112,7 +112,14 @@ def _tool_call_non_streaming(func: TInnerGetResponse) -> TInnerGetResponse:
         for attempt_idx in range(getattr(self, "__maximum_iterations_per_request", 10)):
             response = await func(self, messages=messages, chat_options=chat_options)
             # if there are function calls, we will handle them first
-            function_calls = [it for it in response.messages[0].contents if isinstance(it, FunctionCallContent)]
+            function_results = {
+                it.call_id for it in response.messages[0].contents if isinstance(it, FunctionResultContent)
+            }
+            function_calls = [
+                it
+                for it in response.messages[0].contents
+                if isinstance(it, FunctionCallContent) and it.call_id not in function_results
+            ]
             if function_calls:
                 # Run all function calls concurrently
                 results = await asyncio.gather(*[

@@ -1,10 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 
-from typing import Any, ClassVar, TypeVar
+from typing import Annotated, Any, ClassVar, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, UrlConstraints
+from pydantic.networks import AnyUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+HttpsUrl = Annotated[AnyUrl, UrlConstraints(max_length=2083, allowed_schemes=["https"])]
 
 
 class AFBaseModel(BaseModel):
