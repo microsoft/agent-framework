@@ -580,6 +580,46 @@ public class ChatClientAgentTests
 
     #endregion
 
+    #region Options params Constructor Tests
+
+    /// <summary>
+    /// Checks that all params are set correctly when using the constructor with optional parameters.
+    /// </summary>
+    [Fact]
+    public void ConstructorUsesOptionalParams()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        ChatClientAgent agent = new(chatClient, instructions: "TestInstructions", name: "TestName", description: "TestDescription", tools: [AIFunctionFactory.Create(() => { })]);
+
+        // Act & Assert
+        Assert.Equal("TestInstructions", agent.Instructions);
+        Assert.Equal("TestName", agent.Name);
+        Assert.Equal("TestDescription", agent.Description);
+        Assert.NotNull(agent.ChatOptions);
+        Assert.NotNull(agent.ChatOptions.Tools);
+        Assert.Single(agent.ChatOptions.Tools!);
+    }
+
+    /// <summary>
+    /// Verify that ChatOptions property returns null when no params are provided that require a ChatOptions instance.
+    /// </summary>
+    [Fact]
+    public void ChatOptionsReturnsNullWhenConstructorToolsNotProvided()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        ChatClientAgent agent = new(chatClient, instructions: "TestInstructions", name: "TestName", description: "TestDescription");
+
+        // Act & Assert
+        Assert.Equal("TestInstructions", agent.Instructions);
+        Assert.Equal("TestName", agent.Name);
+        Assert.Equal("TestDescription", agent.Description);
+        Assert.Null(agent.ChatOptions);
+    }
+
+    #endregion
+
     #region ChatOptions Property Tests
 
     /// <summary>
