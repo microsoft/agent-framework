@@ -112,10 +112,6 @@ exclude_dirs = ["tests"]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
 
-# Disable tests -- TODO: REMOVE THIS WHEN DEV ENVIRONMENT IS FIXED
-[tool.poe.tasks]
-test = "echo 'Tests are disabled for this package.'"
-
 [tool.uv.build-backend]
 module-name = "agent_framework_azure"
 module-root = ""

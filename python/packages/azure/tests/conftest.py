@@ -20,7 +20,7 @@ def override_env_param_dict(request: Any) -> dict[str, str]:
 
 # These two fixtures are used for multiple things, also non-connector tests
 @fixture()
-def azure_openai_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):
+def azure_openai_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):  # type: ignore
     """Fixture to set environment variables for AzureOpenAISettings."""
     if exclude_list is None:
         exclude_list = []
@@ -43,13 +43,13 @@ def azure_openai_unit_test_env(monkeypatch, exclude_list, override_env_param_dic
         "AZURE_OPENAI_TOKEN_ENDPOINT": "https://test-token-endpoint.com",
     }
 
-    env_vars.update(override_env_param_dict)
+    env_vars.update(override_env_param_dict)  # type: ignore
 
     for key, value in env_vars.items():
         if key not in exclude_list:
-            monkeypatch.setenv(key, value)
+            monkeypatch.setenv(key, value)  # type: ignore
         else:
-            monkeypatch.delenv(key, raising=False)
+            monkeypatch.delenv(key, raising=False)  # type: ignore
 
     return env_vars
 

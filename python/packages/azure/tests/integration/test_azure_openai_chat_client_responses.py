@@ -1,7 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from agent_framework import ChatClient, ChatMessage, ChatResponse, ai_function
-from agent_framework.azure import AzureChatClient
+
+from agent_framework_azure import AzureChatClient
 
 
 @ai_function
@@ -15,11 +16,11 @@ def get_story_text() -> str:
     )
 
 
-async def test_azure_openai_chat_completion_response() -> None:
+async def test_azure_openai_chat_client_response() -> None:
     """Test Azure OpenAI chat completion responses."""
-    open_ai_chat_completion = AzureChatClient(deployment_name="gpt-4o")
+    azure_chat_client = AzureChatClient(deployment_name="gpt-4o")
 
-    assert isinstance(open_ai_chat_completion, ChatClient)
+    assert isinstance(azure_chat_client, ChatClient)
 
     messages: list[ChatMessage] = []
     messages.append(
@@ -34,24 +35,24 @@ async def test_azure_openai_chat_completion_response() -> None:
     messages.append(ChatMessage(role="user", text="who are Emily and David?"))
 
     # Test that the client can be used to get a response
-    response = await open_ai_chat_completion.get_response(messages=messages)
+    response = await azure_chat_client.get_response(messages=messages)
 
     assert response is not None
     assert isinstance(response, ChatResponse)
     assert "passionate scientists" in response.text
 
 
-async def test_azure_openai_chat_completion_response_tools() -> None:
+async def test_azure_openai_chat_client_response_tools() -> None:
     """Test AzureOpenAI chat completion responses."""
-    open_ai_chat_completion = AzureChatClient(deployment_name="gpt-4o")
+    azure_chat_client = AzureChatClient(deployment_name="gpt-4o")
 
-    assert isinstance(open_ai_chat_completion, ChatClient)
+    assert isinstance(azure_chat_client, ChatClient)
 
     messages: list[ChatMessage] = []
     messages.append(ChatMessage(role="user", text="who are Emily and David?"))
 
     # Test that the client can be used to get a response
-    response = await open_ai_chat_completion.get_response(
+    response = await azure_chat_client.get_response(
         messages=messages,
         tools=[get_story_text],
         tool_choice="auto",
