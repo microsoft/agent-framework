@@ -28,13 +28,13 @@ dependencies = [
     "openai>=1.94.0",
 ]
 
-[tool.pytest.ini_options]
-testpaths = 'tests'
-addopts = "-ra -q -r fEX"
-asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "function"
-filterwarnings = []
-timeout = 120
+# [tool.pytest.ini_options]
+# testpaths = 'tests'
+# addopts = "-ra -q -r fEX"
+# asyncio_mode = "auto"
+# asyncio_default_fixture_loop_scope = "function"
+# filterwarnings = []
+# timeout = 120
 
 [tool.ruff]
 extend = "../../pyproject.toml"
