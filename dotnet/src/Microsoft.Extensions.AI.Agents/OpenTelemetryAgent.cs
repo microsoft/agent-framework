@@ -18,7 +18,7 @@ namespace Microsoft.Extensions.AI.Agents;
 /// </summary>
 /// <remarks>
 /// This class provides telemetry instrumentation for agent operations including activities, metrics, and logging.
-/// The telemetry output follows OpenTelemetry semantic conventions and is subject to change as the conventions evolve.
+/// The telemetry output follows OpenTelemetry semantic conventions in <see href="https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-agent-spans/"/> and is subject to change as the conventions evolve.
 /// </remarks>
 public sealed class OpenTelemetryAgent : Agent, IDisposable
 {
@@ -186,7 +186,6 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
         // Get the GenAI system name for telemetry
         var chatClientAgent = this._innerAgent as ChatClientAgent;
         var genAISystem = chatClientAgent?.ChatClient.GetService<ChatClientMetadata>()?.ProviderName;
-
         Activity? activity = null;
         if (this._activitySource.HasListeners())
         {
