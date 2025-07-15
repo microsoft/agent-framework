@@ -29,7 +29,7 @@ from agent_framework import (
     FunctionResultContent,
     TextContent,
 )
-from agent_framework.azure._azure_chat_client import AzureChatClient
+from agent_framework.azure import AzureChatClient
 
 # region Service Setup
 

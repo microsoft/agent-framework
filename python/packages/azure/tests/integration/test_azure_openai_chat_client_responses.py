@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from agent_framework import ChatClient, ChatMessage, ChatResponse, ai_function
-from agent_framework.azure._azure_chat_client import AzureChatClient
+from agent_framework.azure import AzureChatClient
 
 
 @ai_function

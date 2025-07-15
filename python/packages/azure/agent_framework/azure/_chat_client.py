@@ -8,14 +8,14 @@ from typing import Any, TypeVar
 from uuid import uuid4
 
 from agent_framework.exceptions import ServiceInitializationError
-from agent_framework.openai import OpenAIChatClientBase, OpenAIModelTypes
+from agent_framework.openai import OpenAIModelTypes
+from agent_framework.openai._chat_client import OpenAIChatClientBase
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from pydantic import SecretStr, ValidationError
 from pydantic.networks import AnyUrl
-from pydantic_core import Url
 
 from agent_framework import (
     ChatFinishReason,
@@ -27,9 +27,12 @@ from agent_framework import (
     TextContent,
 )
 
-from ._azure_config_base import AzureOpenAIConfigBase
-from ._azure_openai_settings import AzureOpenAISettings
-from ._const import DEFAULT_AZURE_API_VERSION, DEFAULT_AZURE_TOKEN_ENDPOINT
+from ._shared import (
+    DEFAULT_AZURE_API_VERSION,
+    DEFAULT_AZURE_TOKEN_ENDPOINT,
+    AzureOpenAIConfigBase,
+    AzureOpenAISettings,
+)
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -83,7 +86,7 @@ class AzureChatClient(AzureOpenAIConfigBase, OpenAIChatClientBase):
             # Filter out any None values from the arguments
             azure_openai_settings = AzureOpenAISettings(
                 api_key=SecretStr(api_key) if api_key else None,
-                base_url=Url(base_url) if base_url else None,
+                base_url=AnyUrl(base_url) if base_url else None,
                 endpoint=AnyUrl(endpoint) if endpoint else None,
                 chat_deployment_name=deployment_name,
                 api_version=api_version or DEFAULT_AZURE_API_VERSION,
