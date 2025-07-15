@@ -6,6 +6,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import openai
 import pytest
+from agent_framework import (
+    ChatClientBase,
+    ChatMessage,
+    FunctionCallContent,
+    FunctionResultContent,
+    TextContent,
+)
+from agent_framework.azure import AzureChatClient
 from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
 from agent_framework.openai.exceptions import (
     ContentFilterResultSeverity,
@@ -20,15 +28,6 @@ from openai.types.chat.chat_completion import Choice
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_chunk import ChoiceDelta as ChunkChoiceDelta
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
-
-from agent_framework import (
-    ChatClientBase,
-    ChatMessage,
-    FunctionCallContent,
-    FunctionResultContent,
-    TextContent,
-)
-from agent_framework.azure import AzureChatClient
 
 # region Service Setup
 

@@ -6,13 +6,12 @@ from collections.abc import Awaitable, Callable, Mapping
 from copy import copy
 from typing import Any, ClassVar, Final
 
+from agent_framework import AFBaseSettings, HttpsUrl
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai import OpenAIHandler, OpenAIModelTypes
 from agent_framework.telemetry import USER_AGENT_KEY
 from openai.lib.azure import AsyncAzureOpenAI
 from pydantic import ConfigDict, SecretStr, validate_call
-
-from agent_framework import AFBaseSettings, HttpsUrl
 
 from ._entra_id_authentication import get_entra_auth_token
 

@@ -3,7 +3,6 @@
 import logging
 
 from agent_framework.exceptions import ServiceInvalidAuthError
-
 from azure.core.exceptions import ClientAuthenticationError
 from azure.identity import DefaultAzureCredential
 

@@ -1,9 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 from typing import Any
 
-from pytest import fixture
-
 from agent_framework import ChatMessage
+from pytest import fixture
 
 
 # region: Connector Settings fixtures

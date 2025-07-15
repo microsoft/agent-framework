@@ -7,16 +7,6 @@ from copy import deepcopy
 from typing import Any, TypeVar
 from uuid import uuid4
 
-from agent_framework.exceptions import ServiceInitializationError
-from agent_framework.openai import OpenAIModelTypes
-from agent_framework.openai._chat_client import OpenAIChatClientBase
-from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
-from openai.types.chat.chat_completion import ChatCompletion, Choice
-from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
-from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
-from pydantic import SecretStr, ValidationError
-from pydantic.networks import AnyUrl
-
 from agent_framework import (
     ChatFinishReason,
     ChatOptions,
@@ -26,6 +16,15 @@ from agent_framework import (
     FunctionResultContent,
     TextContent,
 )
+from agent_framework.exceptions import ServiceInitializationError
+from agent_framework.openai import OpenAIModelTypes
+from agent_framework.openai._chat_client import OpenAIChatClientBase
+from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
+from openai.types.chat.chat_completion import ChatCompletion, Choice
+from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
+from pydantic import SecretStr, ValidationError
+from pydantic.networks import AnyUrl
 
 from ._shared import (
     DEFAULT_AZURE_API_VERSION,
