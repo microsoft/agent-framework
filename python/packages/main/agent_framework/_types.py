@@ -16,8 +16,16 @@ from collections.abc import (
 )
 from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, overload
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator, model_validator
-
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    ValidationError,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from ._pydantic import AFBaseModel
 from ._tools import AITool, ai_function
