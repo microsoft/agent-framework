@@ -932,6 +932,52 @@ public class ChatClientAgentTests
     }
 
     /// <summary>
+    /// Verify that ChatOptions merging uses RawRepresentationFactory from request first, with fallback to agent.
+    /// </summary>
+    [Theory]
+    [InlineData("MockAgentSetting", "MockRequestSetting", "MockRequestSetting")]
+    [InlineData("MockAgentSetting", null, "MockAgentSetting")]
+    [InlineData(null, "MockRequestSetting", "MockRequestSetting")]
+    public async Task ChatOptionsMergingUsesRawRepresentationFactoryWithFallbackAsync(string? agentSetting, string? requestSetting, string expectedSetting)
+    {
+        // Arrange
+        var agentChatOptions = new ChatOptions
+        {
+            RawRepresentationFactory = (_) => agentSetting
+        };
+        var requestChatOptions = new ChatOptions
+        {
+            RawRepresentationFactory = (_) => requestSetting
+        };
+
+        Mock<IChatClient> mockService = new();
+        ChatOptions? capturedChatOptions = null;
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((msgs, opts, ct) =>
+                capturedChatOptions = opts)
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            Instructions = "test instructions",
+            ChatOptions = agentChatOptions
+        });
+        var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
+
+        // Act
+        await agent.RunAsync(messages, chatOptions: requestChatOptions);
+
+        // Assert
+        Assert.NotNull(capturedChatOptions);
+        Assert.NotNull(capturedChatOptions.RawRepresentationFactory);
+        Assert.Equal(expectedSetting, capturedChatOptions.RawRepresentationFactory(null!));
+    }
+
+    /// <summary>
     /// Verify that ChatOptions merging handles all scalar properties correctly.
     /// </summary>
     [Fact]
