@@ -67,7 +67,7 @@ public class OpenAIAssistantFixture : IChatClientAgentFixture
 
         return new ChatClientAgent(
             this._assistantClient.AsIChatClient(assistant.Value.Id),
-            new()
+            options: new()
             {
                 Id = assistant.Value.Id,
                 ChatOptions = new() { Tools = aiTools }

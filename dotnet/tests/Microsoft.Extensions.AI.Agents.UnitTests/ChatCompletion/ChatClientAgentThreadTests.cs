@@ -69,7 +69,7 @@ public class ChatClientAgentThreadTests
             .ReturnsAsync(new ChatResponse([assistantMessage]));
 
         // Create ChatClientAgent with the mocked client
-        var agent = new ChatClientAgent(mockChatClient.Object, new()
+        var agent = new ChatClientAgent(mockChatClient.Object, options: new()
         {
             Instructions = "You are a helpful assistant"
         });
@@ -190,7 +190,7 @@ public class ChatClientAgentThreadTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ChatResponse([new ChatMessage(ChatRole.Assistant, "response")]));
 
-        var agent = new ChatClientAgent(mockChatClient.Object, new());
+        var agent = new ChatClientAgent(mockChatClient.Object, options: new());
 
         // Act
         var thread = agent.GetNewThread();
@@ -210,7 +210,7 @@ public class ChatClientAgentThreadTests
     {
         // Arrange
         var mockChatClient = new Mock<IChatClient>();
-        var agent = new ChatClientAgent(mockChatClient.Object, new());
+        var agent = new ChatClientAgent(mockChatClient.Object, options: new());
 
         // Act
         var thread1 = agent.GetNewThread();
@@ -242,7 +242,7 @@ public class ChatClientAgentThreadTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ChatResponse([assistantMessage]) { ConversationId = responseConversationId });
 
-        var agent = new ChatClientAgent(mockChatClient.Object, new() { Instructions = "Test instructions" });
+        var agent = new ChatClientAgent(mockChatClient.Object, options: new() { Instructions = "Test instructions" });
 
         // Act
         var thread = agent.GetNewThread();
@@ -298,7 +298,7 @@ public class ChatClientAgentThreadTests
             .ReturnsAsync(new ChatResponse([messages[1]]))
             .ReturnsAsync(new ChatResponse([messages[3]]));
 
-        var agent = new ChatClientAgent(mockChatClient.Object, new());
+        var agent = new ChatClientAgent(mockChatClient.Object, options: new());
         var thread = agent.GetNewThread();
 
         // Act - Add messages through multiple agent runs
@@ -349,7 +349,7 @@ public class ChatClientAgentThreadTests
             .Returns(returnUpdates.ToAsyncEnumerable());
 
         // Create ChatClientAgent with the mocked client
-        var agent = new ChatClientAgent(mockChatClient.Object, new()
+        var agent = new ChatClientAgent(mockChatClient.Object, options: new()
         {
             Instructions = "You are a helpful assistant"
         });
@@ -415,7 +415,7 @@ public class ChatClientAgentThreadTests
             .Returns(firstReturnUpdates.ToAsyncEnumerable())
             .Returns(secondReturnUpdates.ToAsyncEnumerable());
 
-        var agent = new ChatClientAgent(mockChatClient.Object, new());
+        var agent = new ChatClientAgent(mockChatClient.Object, options: new());
         var thread = agent.GetNewThread();
 
         // Act - Make two streaming calls
@@ -486,7 +486,7 @@ public class ChatClientAgentThreadTests
                 It.IsAny<CancellationToken>()))
             .Returns(streamingUpdates.ToAsyncEnumerable());
 
-        var agent = new ChatClientAgent(mockChatClient.Object, new());
+        var agent = new ChatClientAgent(mockChatClient.Object, options: new());
         var thread = agent.GetNewThread();
 
         // Act - First, make a regular call to populate the thread
@@ -538,7 +538,7 @@ public class ChatClientAgentThreadTests
                 It.IsAny<CancellationToken>()))
             .Returns(returnUpdates.ToAsyncEnumerable());
 
-        var agent = new ChatClientAgent(mockChatClient.Object, new());
+        var agent = new ChatClientAgent(mockChatClient.Object, options: new());
         var thread = agent.GetNewThread();
 
         // Act - Run the agent with streaming that returns no updates
@@ -593,7 +593,7 @@ public class ChatClientAgentThreadTests
                 It.IsAny<CancellationToken>()))
             .Returns(returnUpdates.ToAsyncEnumerable());
 
-        var agent = new ChatClientAgent(mockChatClient.Object, new());
+        var agent = new ChatClientAgent(mockChatClient.Object, options: new());
         var thread = agent.GetNewThread();
 
         // Act - Run the agent with streaming that returns multiple updates
@@ -638,7 +638,7 @@ public class ChatClientAgentThreadTests
                 It.IsAny<CancellationToken>()))
             .Throws(new InvalidOperationException("Streaming failed"));
 
-        var agent = new ChatClientAgent(mockChatClient.Object, new());
+        var agent = new ChatClientAgent(mockChatClient.Object, options: new());
         var thread = agent.GetNewThread();
 
         // Act & Assert - Verify that streaming throws an exception
@@ -688,7 +688,7 @@ public class ChatClientAgentThreadTests
                 It.IsAny<CancellationToken>()))
             .Returns(GetUpdatesWithExceptionAsync());
 
-        var agent = new ChatClientAgent(mockChatClient.Object, new());
+        var agent = new ChatClientAgent(mockChatClient.Object, options: new());
         var thread = agent.GetNewThread();
 
         // Act & Assert - Verify that streaming throws an exception after some updates

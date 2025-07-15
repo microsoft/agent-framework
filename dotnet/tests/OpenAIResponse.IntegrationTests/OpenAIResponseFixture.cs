@@ -80,7 +80,7 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
     {
         return Task.FromResult(new ChatClientAgent(
             this._openAIResponseClient.AsIChatClient(),
-            new()
+            options: new()
             {
                 Name = name,
                 Instructions = instructions,
