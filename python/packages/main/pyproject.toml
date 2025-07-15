@@ -25,6 +25,7 @@ classifiers = [
 dependencies = [
     "openai>=1.94.0",
     "pydantic>=2.11.7",
+    "pydantic-settings>=2.10.1",
     "typing-extensions>=4.14.0",
 ]
 
@@ -33,9 +34,8 @@ azure = [
     "agent-framework-azure"
 ]
 
-[tool.uv]
-prerelease = "if-necessary-or-explicit"
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "pre-commit >= 3.7",
     "ruff>=0.11.8",
     "pytest>=8.4.1",
@@ -69,11 +69,17 @@ dev-dependencies = [
     "redis",
     "sphinx-autobuild",
 ]
+
+[tool.uv]
+prerelease = "if-necessary-or-explicit"
 environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",
     "sys_platform == 'win32'"
 ]
+
+[tool.uv-dynamic-versioning]
+fallback-version = "0.0.0"
 
 [tool.pytest.ini_options]
 testpaths = 'tests'
@@ -82,9 +88,6 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = []
 timeout = 120
-
-[tool.uv-dynamic-versioning]
-fallback-version = "0.0.0"
 
 [tool.ruff]
 extend = "../../pyproject.toml"

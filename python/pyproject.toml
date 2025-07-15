@@ -19,14 +19,12 @@ dev = [
     "pytest-timeout>=2.3.1",
     "mypy>=1.16.1",
     "pyright>=1.1.402",
-
     #tasks
     "poethepoet>=0.36.0",
     "rich",
     "tomli",
     "tomli-w",
     "markdownify",
-
     # Documentation
     "myst-nb==1.1.2",
     "pydata-sphinx-theme==0.16.0",
@@ -43,6 +41,8 @@ dev = [
     "diskcache",
     "redis",
     "sphinx-autobuild",
+    "tox>=4.27.0",
+    "tox-uv>=1.26.1",
 ]
 
 [tool.uv]
@@ -56,13 +56,11 @@ environments = [
 
 [tool.uv.workspace]
 members = [ "packages/*" ]
+exclude = [ "packages/agent_framework_project.egg-info" ]
 
 [tool.uv.sources]
-agent-framework-azure = { workspace = true }
 agent-framework = { workspace = true }
-
-[tool.uv-dynamic-versioning]
-fallback-version = "0.0.0"
+agent-framework-azure = { workspace = true }
 
 [tool.ruff]
 line-length = 120
@@ -182,3 +180,26 @@ sequence = [
     { ref = "pre-commit-install" }
 ]
 args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
+
+
+[tool.setuptools.packages.find]
+where = ["packages"]
+include = ["agent_framework**"]
+namespaces = true
+
+[tool.tox]
+requires = ["tox>=4", "tox-uv>=1"]
+env_list = [ "3.13"] #, "3.12", "3.11", "3.10" ]
+
+[tool.tox.env_run_base]
+no_package = true
+description = "run tests"
+dependency_groups = [
+  "dev",
+]
+deps = [
+    "-e packages/azure",
+    "-e packages/main"
+]
+commands = [["pytest", { replace = "posargs", default = ["packages/main/tests"], extend = true }]]
+
