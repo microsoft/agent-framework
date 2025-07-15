@@ -9,7 +9,6 @@ from uuid import uuid4
 
 from agent_framework import (
     ChatFinishReason,
-    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     FunctionCallContent,
@@ -134,10 +133,6 @@ class AzureChatClient(AzureOpenAIConfigBase, OpenAIChatClientBase):
             default_headers=settings.get("default_headers"),
             env_file_path=settings.get("env_file_path"),
         )
-
-    def get_chat_options_class(self) -> type["ChatOptions"]:
-        """Create a request settings object."""
-        return ChatOptions
 
     def _create_chat_message_content(
         self, response: ChatCompletion, choice: Choice, response_metadata: dict[str, Any]
