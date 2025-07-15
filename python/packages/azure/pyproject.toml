@@ -26,6 +26,52 @@ dependencies = [
     "agent-framework",
 ]
 
+[dependency-groups]
+dev = [
+    "pre-commit >= 3.7",
+    "ruff>=0.11.8",
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.0.0",
+    "pytest-cov>=6.2.1",
+    "pytest-xdist[psutil]>=3.8.0",
+    "pytest-timeout>=2.3.1",
+    "mypy>=1.16.1",
+    "pyright>=1.1.402",
+
+    #tasks
+    "poethepoet>=0.36.0",
+    "rich",
+    "tomli",
+    "tomli-w",
+    "markdownify",
+    # Documentation
+    "myst-nb==1.1.2",
+    "pydata-sphinx-theme==0.16.0",
+    "sphinx-copybutton",
+    "sphinx-design",
+    "sphinx",
+    "sphinxcontrib-apidoc",
+    "autodoc_pydantic~=2.2",
+    "pygments",
+    "sphinxext-rediraffe",
+    "opentelemetry-instrumentation-openai",
+    "markdown-it-py[linkify]",
+    # Documentation tooling
+    "diskcache",
+    "redis",
+    "sphinx-autobuild",
+]
+
+[tool.uv]
+prerelease = "if-necessary-or-explicit"
+environments = [
+    "sys_platform == 'darwin'",
+    "sys_platform == 'linux'",
+    "sys_platform == 'win32'"
+]
+
+[tool.uv-dynamic-versioning]
+fallback-version = "0.0.0"
 [tool.pytest.ini_options]
 testpaths = 'tests'
 addopts = "-ra -q -r fEX"
@@ -57,7 +103,7 @@ disallow_untyped_decorators = true
 disallow_any_unimported = true
 
 [tool.bandit]
-targets = ["agent_framework"]
+targets = ["agent_framework_azure"]
 exclude_dirs = ["tests"]
 
 [tool.poe]
@@ -65,9 +111,8 @@ executor.type = "uv"
 include = "../../shared_tasks.toml"
 
 [tool.uv.build-backend]
-module-name = "agent_framework.azure"
+module-name = "agent_framework_azure"
 module-root = ""
-namespace = true
 
 [build-system]
 requires = ["uv_build>=0.7.19,<0.8.0"]

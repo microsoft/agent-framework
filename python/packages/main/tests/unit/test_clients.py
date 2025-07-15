@@ -209,7 +209,7 @@ async def test_base_client_with_function_calling(chat_client_base: MockChatClien
 
 
 async def test_base_client_with_function_calling_disabled(chat_client_base: MockChatClientBase):
-    chat_client_base.maximum_iterations_per_request = 0
+    chat_client_base.__maximum_iterations_per_request = 0
     exec_counter = 0
 
     @ai_function(name="test_function")
@@ -273,7 +273,7 @@ async def test_base_client_with_streaming_function_calling(chat_client_base: Moc
 
 
 async def test_base_client_with_streaming_function_calling_disabled(chat_client_base: MockChatClientBase):
-    chat_client_base.maximum_iterations_per_request = 0
+    chat_client_base.__maximum_iterations_per_request = 0
     exec_counter = 0
 
     @ai_function(name="test_function")

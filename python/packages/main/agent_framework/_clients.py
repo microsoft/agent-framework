@@ -2,11 +2,11 @@
 
 import asyncio
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, Awaitable, Callable, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, MutableSequence, Sequence
 from functools import wraps
 from typing import Annotated, Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
 
-from pydantic import BaseModel, PrivateAttr, StringConstraints
+from pydantic import BaseModel, StringConstraints
 
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
@@ -35,24 +35,6 @@ TChatClientBase = TypeVar("TChatClientBase", bound="ChatClientBase")
 logger = get_logger()
 
 # region: Tool Calling Functions and Decorators
-
-
-def _merge_function_results(
-    messages: list[ChatMessage],
-) -> ChatMessage:
-    """Combine multiple function result content types to one chat message content type.
-
-    This method combines the FunctionResultContent items from separate ChatMessageContent messages,
-    and is used in the event that the `context.terminate = True` condition is met.
-    """
-    contents: list[Any] = []
-    for message in messages:
-        contents.extend([item for item in message.contents if isinstance(item, FunctionResultContent)])
-
-    return ChatMessage(
-        role="tool",
-        contents=contents,
-    )
 
 
 async def _auto_invoke_function(
@@ -106,7 +88,7 @@ def _prepare_tools_and_tool_choice(chat_options: ChatOptions) -> None:
         chat_options.tool_choice = ChatToolMode.NONE.mode
         return
     chat_options.tools = [
-        (_tool_to_json_schema_spec(t) if isinstance(t, AITool) else t) for t in chat_options.tools or []
+        (_tool_to_json_schema_spec(t) if isinstance(t, AITool) else t) for t in chat_options._ai_tools or []
     ]
     if not chat_options.tools:
         chat_options.tool_choice = ChatToolMode.NONE.mode
@@ -115,11 +97,7 @@ def _prepare_tools_and_tool_choice(chat_options: ChatOptions) -> None:
 
 
 def _tool_call_non_streaming(func: TInnerGetResponse) -> TInnerGetResponse:
-    """Decorate the internal _inner_get_response method to enable tool calls.
-
-    Remarks:
-        Relies on a class that has the _tool_map attribute for the executable tools to call.
-    """
+    """Decorate the internal _inner_get_response method to enable tool calls."""
 
     @wraps(func)
     async def wrapper(
@@ -131,7 +109,7 @@ def _tool_call_non_streaming(func: TInnerGetResponse) -> TInnerGetResponse:
     ) -> ChatResponse:
         response: ChatResponse | None = None
         fcc_messages: list[ChatMessage] = []
-        for attempt_idx in range(self.maximum_iterations_per_request):
+        for attempt_idx in range(getattr(self, "__maximum_iterations_per_request", 10)):
             response = await func(self, messages=messages, chat_options=chat_options)
             # if there are function calls, we will handle them first
             function_calls = [it for it in response.messages[0].contents if isinstance(it, FunctionCallContent)]
@@ -141,7 +119,7 @@ def _tool_call_non_streaming(func: TInnerGetResponse) -> TInnerGetResponse:
                     _auto_invoke_function(
                         function_call,
                         custom_args=kwargs,
-                        tool_map=self._tool_map,
+                        tool_map={t.name: t for t in chat_options._ai_tools or [] if isinstance(t, AIFunction)},
                         sequence_index=seq_idx,
                         request_index=attempt_idx,
                     )
@@ -181,11 +159,7 @@ def _tool_call_non_streaming(func: TInnerGetResponse) -> TInnerGetResponse:
 
 
 def _tool_call_streaming(func: TInnerGetStreamingResponse) -> TInnerGetStreamingResponse:
-    """Decorate the internal _inner_get_response method to enable tool calls.
-
-    Remarks:
-        Relies on a class that has the _tool_map attribute for the executable tools to call.
-    """
+    """Decorate the internal _inner_get_response method to enable tool calls."""
 
     @wraps(func)
     async def wrapper(
@@ -195,7 +169,8 @@ def _tool_call_streaming(func: TInnerGetStreamingResponse) -> TInnerGetStreaming
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
-        for attempt_idx in range(self.maximum_iterations_per_request):
+        """Wrap the inner get streaming response method to handle tool calls."""
+        for attempt_idx in range(getattr(self, "__maximum_iterations_per_request", 10)):
             function_call_returned = False
             all_messages: list[ChatResponseUpdate] = []
             async for update in func(self, messages=messages, chat_options=chat_options):
@@ -221,7 +196,7 @@ def _tool_call_streaming(func: TInnerGetStreamingResponse) -> TInnerGetStreaming
                     _auto_invoke_function(
                         function_call,
                         custom_args=kwargs,
-                        tool_map=self._tool_map,
+                        tool_map={t.name: t for t in chat_options._ai_tools or [] if isinstance(t, AIFunction)},
                         sequence_index=seq_idx,
                         request_index=attempt_idx,
                     )
@@ -247,10 +222,25 @@ def use_tool_calling(cls: type[TChatClientBase]) -> type[TChatClientBase]:
 
     Remarks:
         This only works on classes that derive from ChatClientBase
-        and have the _tool_map attribute as well as the _inner_get_response
+        and the _inner_get_response
         and _inner_get_streaming_response methods.
+        It also sets a __maximum_iterations_per_request attribute on the class.
+        if you want to expose this to end_users, do a version of this:
 
+        ```python
+        @use_tool_calling
+        class MyChatClient(ChatClientBase):
+            @property
+            def maximum_iterations_per_request(self):
+                return getattr(self, "__maximum_iterations_per_request", 10)
+
+            @maximum_iterations_per_request.setter
+            def maximum_iterations_per_request(self, value: int) -> None:
+                setattr(self, "__maximum_iterations_per_request", value)
+        ```
     """
+    setattr(cls, "__maximum_iterations_per_request", 10)
+
     if inner_response := getattr(cls, "_inner_get_response", None):
         cls._inner_get_response = _tool_call_non_streaming(inner_response)  # type: ignore
     if inner_streaming_response := getattr(cls, "_inner_get_streaming_response", None):
@@ -267,15 +257,54 @@ class ChatClient(Protocol):
 
     async def get_response(
         self,
-        messages: str | ChatMessage | list[ChatMessage],
+        messages: str | ChatMessage | list[str] | list[ChatMessage],
+        *,
+        frequency_penalty: float | None = None,
+        logit_bias: dict[str | int, float] | None = None,
+        max_tokens: int | None = None,
+        metadata: dict[str, Any] | None = None,
+        model: str | None = None,
+        presence_penalty: float | None = None,
+        response_format: type[BaseModel] | None = None,
+        seed: int | None = None,
+        stop: str | Sequence[str] | None = None,
+        store: bool | None = None,
+        temperature: float | None = None,
+        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
+        tools: AITool
+        | list[AITool]
+        | Callable[..., Any]
+        | list[Callable[..., Any]]
+        | MutableMapping[str, Any]
+        | list[MutableMapping[str, Any]]
+        | None = None,
+        top_p: float | None = None,
+        user: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         """Sends input and returns the response.
 
         Args:
             messages: The sequence of input messages to send.
-            **kwargs: Additional options for the request, such as ai_model_id, temperature, etc.
-                       See `ChatOptions` for more details.
+            frequency_penalty: the frequency penalty to use.
+            logit_bias: the logit bias to use.
+            max_tokens: The maximum number of tokens to generate.
+            metadata: additional metadata to include in the request.
+            model: The model to use for the agent.
+            presence_penalty: the presence penalty to use.
+            response_format: the format of the response.
+            seed: the random seed to use.
+            stop: the stop sequence(s) for the request.
+            store: whether to store the response.
+            temperature: the sampling temperature to use.
+            tool_choice: the tool choice for the request.
+            tools: the tools to use for the request.
+            top_p: the nucleus sampling probability to use.
+            user: the user to associate with the request.
+            additional_properties: additional properties to include in the request
+            kwargs: any additional keyword arguments,
+                will only be passed to functions that are called.
 
         Returns:
             The response messages generated by the client.
@@ -287,15 +316,54 @@ class ChatClient(Protocol):
 
     def get_streaming_response(
         self,
-        messages: str | ChatMessage | list[ChatMessage],
+        messages: str | ChatMessage | list[str] | list[ChatMessage],
+        *,
+        frequency_penalty: float | None = None,
+        logit_bias: dict[str | int, float] | None = None,
+        max_tokens: int | None = None,
+        metadata: dict[str, Any] | None = None,
+        model: str | None = None,
+        presence_penalty: float | None = None,
+        response_format: type[BaseModel] | None = None,
+        seed: int | None = None,
+        stop: str | Sequence[str] | None = None,
+        store: bool | None = None,
+        temperature: float | None = None,
+        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
+        tools: AITool
+        | list[AITool]
+        | Callable[..., Any]
+        | list[Callable[..., Any]]
+        | MutableMapping[str, Any]
+        | list[MutableMapping[str, Any]]
+        | None = None,
+        top_p: float | None = None,
+        user: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Sends input messages and streams the response.
 
         Args:
             messages: The sequence of input messages to send.
-            **kwargs: Additional options for the request, such as ai_model_id, temperature, etc.
-                       See `ChatOptions` for more details.
+            frequency_penalty: the frequency penalty to use.
+            logit_bias: the logit bias to use.
+            max_tokens: The maximum number of tokens to generate.
+            metadata: additional metadata to include in the request.
+            model: The model to use for the agent.
+            presence_penalty: the presence penalty to use.
+            response_format: the format of the response.
+            seed: the random seed to use.
+            stop: the stop sequence(s) for the request.
+            store: whether to store the response.
+            temperature: the sampling temperature to use.
+            tool_choice: the tool choice for the request.
+            tools: the tools to use for the request.
+            top_p: the nucleus sampling probability to use.
+            user: the user to associate with the request.
+            additional_properties: additional properties to include in the request
+            kwargs: any additional keyword arguments,
+                will only be passed to functions that are called.
 
         Yields:
             An async iterable of chat response updates containing the content of the response messages
@@ -311,19 +379,21 @@ class ChatClientBase(AFBaseModel, ABC):
     """Base class for chat clients."""
 
     ai_model_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-    maximum_iterations_per_request: int = 10
-    _tool_map: dict[str, AIFunction[BaseModel, Any]] = PrivateAttr(default_factory=dict)  # type: ignore
 
-    def _prepare_messages(self, messages: str | ChatMessage | list[str | ChatMessage]) -> MutableSequence[ChatMessage]:
+    def _prepare_messages(
+        self, messages: str | ChatMessage | list[str] | list[ChatMessage]
+    ) -> MutableSequence[ChatMessage]:
         """Turn the allowed input into a list of chat messages."""
         if isinstance(messages, str):
-            messages = [ChatMessage(role="user", text=messages)]
+            return [ChatMessage(role="user", text=messages)]
         if isinstance(messages, ChatMessage):
-            messages = [messages]
-        for i, msg in enumerate(messages):
+            return [messages]
+        return_messages: list[ChatMessage] = []
+        for msg in messages:
             if isinstance(msg, str):
-                messages[i] = ChatMessage(role="user", text=msg)
-        return messages  # type: ignore[return-value]
+                msg = ChatMessage(role="user", text=msg)
+            return_messages.append(msg)
+        return return_messages
 
     # region Internal methods to be implemented by the derived classes
 
@@ -377,23 +447,29 @@ class ChatClientBase(AFBaseModel, ABC):
 
     async def get_response(
         self,
-        messages: str | ChatMessage | list[str | ChatMessage],
+        messages: str | ChatMessage | list[str] | list[ChatMessage],
         *,
-        model: str | None = None,
-        max_tokens: int | None = None,
-        temperature: float | None = None,
-        top_p: float | None = None,
-        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: AITool | Sequence[AITool] | None = None,
-        response_format: type[BaseModel] | None = None,
-        user: str | None = None,
-        stop: str | Sequence[str] | None = None,
         frequency_penalty: float | None = None,
         logit_bias: dict[str | int, float] | None = None,
-        presence_penalty: float | None = None,
-        seed: int | None = None,
-        store: bool | None = None,
+        max_tokens: int | None = None,
         metadata: dict[str, Any] | None = None,
+        model: str | None = None,
+        presence_penalty: float | None = None,
+        response_format: type[BaseModel] | None = None,
+        seed: int | None = None,
+        stop: str | Sequence[str] | None = None,
+        store: bool | None = None,
+        temperature: float | None = None,
+        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
+        tools: AITool
+        | list[AITool]
+        | Callable[..., Any]
+        | list[Callable[..., Any]]
+        | MutableMapping[str, Any]
+        | list[MutableMapping[str, Any]]
+        | None = None,
+        top_p: float | None = None,
+        user: str | None = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
@@ -401,73 +477,80 @@ class ChatClientBase(AFBaseModel, ABC):
 
         Args:
             messages: the message or messages to send to the model
-            model: the model to use for the request
-            max_tokens: the maximum number of tokens to generate
-            temperature: the sampling temperature to use
-            top_p: the nucleus sampling probability to use
-            tool_choice: the tool choice for the request
-            tools: the tools to use for the request
-            response_format: the format of the response
-            user: the user to associate with the request
-            stop: the stop sequence(s) for the request
-            frequency_penalty: the frequency penalty to use
-            logit_bias: the logit bias to use
-            presence_penalty: the presence penalty to use
-            seed: the random seed to use
-            store: whether to store the response
-            metadata: additional metadata to include in the request
-            additional_properties: additional properties to include in the request
+            frequency_penalty: the frequency penalty to use.
+            logit_bias: the logit bias to use.
+            max_tokens: The maximum number of tokens to generate.
+            metadata: additional metadata to include in the request.
+            model: The model to use for the agent.
+            presence_penalty: the presence penalty to use.
+            response_format: the format of the response.
+            seed: the random seed to use.
+            stop: the stop sequence(s) for the request.
+            store: whether to store the response.
+            temperature: the sampling temperature to use.
+            tool_choice: the tool choice for the request.
+            tools: the tools to use for the request.
+            top_p: the nucleus sampling probability to use.
+            user: the user to associate with the request.
+            additional_properties: additional properties to include in the request.
             kwargs: any additional keyword arguments,
                 will only be passed to functions that are called.
 
         Returns:
             A chat response from the model.
         """
-        if tools is not None:
-            if not isinstance(tools, Sequence):
-                tools = [tools]
-            self._tool_map = {tool.name: tool for tool in tools if isinstance(tool, AIFunction)}
-        chat_options = ChatOptions(
-            ai_model_id=model,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            tool_choice=tool_choice,
-            tools=tools,
-            response_format=response_format,
-            user=user,
-            stop=stop,
-            frequency_penalty=frequency_penalty,
-            logit_bias=logit_bias,
-            presence_penalty=presence_penalty,
-            seed=seed,
-            store=store,
-            metadata=metadata,
-            additional_properties=additional_properties or {},
-        )
+        if "chat_options" in kwargs:
+            chat_options = kwargs.pop("chat_options")
+            if not isinstance(chat_options, ChatOptions):
+                raise TypeError("chat_options must be an instance of ChatOptions")
+        else:
+            chat_options = ChatOptions(
+                ai_model_id=model,
+                frequency_penalty=frequency_penalty,
+                logit_bias=logit_bias,
+                max_tokens=max_tokens,
+                metadata=metadata,
+                presence_penalty=presence_penalty,
+                response_format=response_format,
+                seed=seed,
+                stop=stop,
+                store=store,
+                temperature=temperature,
+                top_p=top_p,
+                tool_choice=tool_choice,
+                tools=tools,  # type: ignore
+                user=user,
+                additional_properties=additional_properties or {},
+            )
         prepped_messages = self._prepare_messages(messages)
         _prepare_tools_and_tool_choice(chat_options=chat_options)
         return await self._inner_get_response(messages=prepped_messages, chat_options=chat_options, **kwargs)
 
     async def get_streaming_response(
         self,
-        messages: str | ChatMessage | list[str | ChatMessage],
+        messages: str | ChatMessage | list[str] | list[ChatMessage],
         *,
-        model: str | None = None,
-        max_tokens: int | None = None,
-        temperature: float | None = None,
-        top_p: float | None = None,
-        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: AITool | Sequence[AITool] | None = None,
-        response_format: type[BaseModel] | None = None,
-        user: str | None = None,
-        stop: str | Sequence[str] | None = None,
         frequency_penalty: float | None = None,
         logit_bias: dict[str | int, float] | None = None,
-        presence_penalty: float | None = None,
-        seed: int | None = None,
-        store: bool | None = None,
+        max_tokens: int | None = None,
         metadata: dict[str, Any] | None = None,
+        model: str | None = None,
+        presence_penalty: float | None = None,
+        response_format: type[BaseModel] | None = None,
+        seed: int | None = None,
+        stop: str | Sequence[str] | None = None,
+        store: bool | None = None,
+        temperature: float | None = None,
+        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
+        tools: AITool
+        | list[AITool]
+        | Callable[..., Any]
+        | list[Callable[..., Any]]
+        | MutableMapping[str, Any]
+        | list[MutableMapping[str, Any]]
+        | None = None,
+        top_p: float | None = None,
+        user: str | None = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
@@ -475,50 +558,51 @@ class ChatClientBase(AFBaseModel, ABC):
 
         Args:
             messages: the message or messages to send to the model
-            model: the model to use for the request
-            max_tokens: the maximum number of tokens to generate
-            temperature: the sampling temperature to use
-            top_p: the nucleus sampling probability to use
-            tool_choice: the tool choice for the request
-            tools: the tools to use for the request
-            response_format: the format of the response
-            user: the user to associate with the request
-            stop: the stop sequence(s) for the request
             frequency_penalty: the frequency penalty to use
             logit_bias: the logit bias to use
-            presence_penalty: the presence penalty to use
-            seed: the random seed to use
-            store: whether to store the response
-            metadata: additional metadata to include in the request
+            max_tokens: The maximum number of tokens to generate.
+            metadata: additional metadata to include in the request.
+            model: The model to use for the agent.
+            presence_penalty: the presence penalty to use.
+            response_format: the format of the response.
+            seed: the random seed to use.
+            stop: the stop sequence(s) for the request.
+            store: whether to store the response.
+            temperature: the sampling temperature to use.
+            tool_choice: the tool choice for the request.
+            tools: the tools to use for the request.
+            top_p: the nucleus sampling probability to use.
+            user: the user to associate with the request.
             additional_properties: additional properties to include in the request
             kwargs: any additional keyword arguments
 
         Yields:
             A stream representing the response(s) from the LLM.
         """
-        if tools is not None:
-            if not isinstance(tools, Sequence):
-                tools = [tools]
-            self._tool_map = {tool.name: tool for tool in tools if isinstance(tool, AIFunction)}
-        chat_options = ChatOptions(
-            ai_model_id=model,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            tool_choice=tool_choice,
-            tools=tools,
-            response_format=response_format,
-            user=user,
-            stop=stop,
-            frequency_penalty=frequency_penalty,
-            logit_bias=logit_bias,
-            presence_penalty=presence_penalty,
-            seed=seed,
-            store=store,
-            metadata=metadata,
-            additional_properties=additional_properties or {},
-            **kwargs,
-        )
+        if "chat_options" in kwargs:
+            chat_options = kwargs.pop("chat_options")
+            if not isinstance(chat_options, ChatOptions):
+                raise TypeError("chat_options must be an instance of ChatOptions")
+        else:
+            chat_options = ChatOptions(
+                ai_model_id=model,
+                frequency_penalty=frequency_penalty,
+                logit_bias=logit_bias,
+                max_tokens=max_tokens,
+                metadata=metadata,
+                presence_penalty=presence_penalty,
+                response_format=response_format,
+                seed=seed,
+                stop=stop,
+                store=store,
+                temperature=temperature,
+                top_p=top_p,
+                tool_choice=tool_choice,
+                tools=tools,  # type: ignore
+                user=user,
+                additional_properties=additional_properties or {},
+                **kwargs,
+            )
         prepped_messages = self._prepare_messages(messages)
         _prepare_tools_and_tool_choice(chat_options=chat_options)
         async for update in self._inner_get_streaming_response(

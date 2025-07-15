@@ -4,13 +4,22 @@ import base64
 import json
 import re
 import sys
-from collections.abc import AsyncIterable, Iterable, Iterator, Mapping, MutableMapping, MutableSequence, Sequence
+from collections.abc import (
+    AsyncIterable,
+    Callable,
+    Iterable,
+    Iterator,
+    Mapping,
+    MutableMapping,
+    MutableSequence,
+    Sequence,
+)
 from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, overload
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator, model_validator
 
 from ._pydantic import AFBaseModel
-from ._tools import AITool
+from ._tools import AITool, ai_function
 from .exceptions import AgentFrameworkException
 
 if sys.version_info >= (3, 11):
@@ -1399,34 +1408,69 @@ class ChatOptions(AFBaseModel):
     """Common request settings for AI services."""
 
     ai_model_id: Annotated[str | None, Field(serialization_alias="model")] = None
+    frequency_penalty: Annotated[float | None, Field(ge=-2.0, le=2.0)] = None
+    logit_bias: MutableMapping[str | int, float] | None = None
     max_tokens: Annotated[int | None, Field(gt=0)] = None
-    temperature: Annotated[float | None, Field(ge=0.0, le=2.0)] = None
-    top_p: Annotated[float | None, Field(ge=0.0, le=1.0)] = None
-    tool_choice: ChatToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None = None
-    tools: Sequence[AITool] | Sequence[MutableMapping[str, Any]] | None = None
+    metadata: MutableMapping[str, str] | None = None
+    presence_penalty: Annotated[float | None, Field(ge=-2.0, le=2.0)] = None
     response_format: type[BaseModel] | None = Field(
         default=None, description="Structured output response format schema. Must be a valid Pydantic model."
     )
-    user: str | None = None
-    stop: str | Sequence[str] | None = None
-    frequency_penalty: Annotated[float | None, Field(ge=-2.0, le=2.0)] = None
-    logit_bias: MutableMapping[str | int, float] | None = None
-    presence_penalty: Annotated[float | None, Field(ge=-2.0, le=2.0)] = None
     seed: int | None = None
+    stop: str | Sequence[str] | None = None
     store: bool | None = None
-    metadata: MutableMapping[str, str] | None = None
+    temperature: Annotated[float | None, Field(ge=0.0, le=2.0)] = None
+    tool_choice: ChatToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None = None
+    tools: list[AITool | MutableMapping[str, Any]] | None = None
+    _ai_tools: list[AITool | MutableMapping[str, Any]] | None = PrivateAttr(default=None)
+    top_p: Annotated[float | None, Field(ge=0.0, le=1.0)] = None
+    user: str | None = None
     additional_properties: MutableMapping[str, Any] = Field(
         default_factory=dict, description="Provider-specific additional properties."
     )
+
+    @model_validator(mode="after")
+    def _copy_to_ai_tools(self) -> Self:
+        if self.tools and not self._ai_tools:
+            self._ai_tools = self.tools
+        return self
+
+    @field_validator("tools", mode="before")
+    @classmethod
+    def _validate_tools(
+        cls,
+        tools: (
+            AITool
+            | list[AITool]
+            | Callable[..., Any]
+            | list[Callable[..., Any]]
+            | MutableMapping[str, Any]
+            | list[MutableMapping[str, Any]]
+            | None
+        ),
+    ) -> list[AITool | MutableMapping[str, Any]] | None:
+        """Parse the tools field.
+
+        All tools are stored in both tools and _ai_tools.
+        """
+        if not tools:
+            return None
+        if not isinstance(tools, list):
+            tools = [tools]  # type: ignore[reportAssignmentType, assignment]
+        for idx, tool in enumerate(tools):  # type: ignore[reportArgumentType, arg-type]
+            if not isinstance(tool, (AITool, MutableMapping)):
+                # Convert to AITool if it's a function or callable
+                tools[idx] = ai_function(tool)  # type: ignore[reportIndexIssues, reportCallIssue, reportArgumentType, index, call-overload, arg-type]
+        return tools  # type: ignore[reportReturnType, return-value]
 
     @field_validator("tool_choice", mode="before")
     @classmethod
     def _validate_tool_mode(
         cls, tool_choice: ChatToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None
-    ) -> ChatToolMode:
+    ) -> ChatToolMode | None:
         """Validates the tool_choice field to ensure it is a valid ChatToolMode."""
         if not tool_choice:
-            return ChatToolMode.NONE
+            return None
         if isinstance(tool_choice, str):
             match tool_choice:
                 case "auto":
@@ -1460,6 +1504,32 @@ class ChatOptions(AFBaseModel):
         for key in merged_exclude:
             settings.pop(key, None)
         return settings
+
+    def __and__(self, other: object) -> Self:
+        """Combines two ChatOptions instances.
+
+        The values from the other ChatOptions take precedence.
+        List and dicts are combined.
+        """
+        if not isinstance(other, ChatOptions):
+            return self
+        ai_tools = other._ai_tools
+        updated_values = other.model_dump(exclude_none=True)
+        updated_values.pop("tools", [])
+        logit_bias = updated_values.pop("logit_bias", {})
+        metadata = updated_values.pop("metadata", {})
+        additional_properties = updated_values.pop("additional_properties", {})
+        combined = self.model_copy(update=updated_values)
+        if ai_tools:
+            if not combined._ai_tools:
+                combined._ai_tools = []
+            for tool in ai_tools:
+                if tool not in combined._ai_tools:
+                    combined._ai_tools.append(tool)
+        combined.logit_bias = {**(combined.logit_bias or {}), **logit_bias}
+        combined.metadata = {**(combined.metadata or {}), **metadata}
+        combined.additional_properties = {**(combined.additional_properties or {}), **additional_properties}
+        return combined
 
 
 # region: GeneratedEmbeddings
