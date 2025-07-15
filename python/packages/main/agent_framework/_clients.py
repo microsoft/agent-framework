@@ -506,20 +506,20 @@ class ChatClientBase(AFBaseModel, ABC):
         else:
             chat_options = ChatOptions(
                 ai_model_id=model,
+                frequency_penalty=frequency_penalty,
+                logit_bias=logit_bias,
                 max_tokens=max_tokens,
+                metadata=metadata,
+                presence_penalty=presence_penalty,
+                response_format=response_format,
+                seed=seed,
+                stop=stop,
+                store=store,
                 temperature=temperature,
                 top_p=top_p,
                 tool_choice=tool_choice,
                 tools=tools,  # type: ignore
-                response_format=response_format,
                 user=user,
-                stop=stop,
-                frequency_penalty=frequency_penalty,
-                logit_bias=logit_bias,
-                presence_penalty=presence_penalty,
-                seed=seed,
-                store=store,
-                metadata=metadata,
                 additional_properties=additional_properties or {},
             )
         prepped_messages = self._prepare_messages(messages)
@@ -586,20 +586,20 @@ class ChatClientBase(AFBaseModel, ABC):
         else:
             chat_options = ChatOptions(
                 ai_model_id=model,
+                frequency_penalty=frequency_penalty,
+                logit_bias=logit_bias,
                 max_tokens=max_tokens,
+                metadata=metadata,
+                presence_penalty=presence_penalty,
+                response_format=response_format,
+                seed=seed,
+                stop=stop,
+                store=store,
                 temperature=temperature,
                 top_p=top_p,
                 tool_choice=tool_choice,
-                tools=tools,  # type: ignore[reportArgumentType]
-                response_format=response_format,
+                tools=tools,  # type: ignore
                 user=user,
-                stop=stop,
-                frequency_penalty=frequency_penalty,
-                logit_bias=logit_bias,
-                presence_penalty=presence_penalty,
-                seed=seed,
-                store=store,
-                metadata=metadata,
                 additional_properties=additional_properties or {},
                 **kwargs,
             )

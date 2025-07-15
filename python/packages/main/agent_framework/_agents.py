@@ -260,7 +260,6 @@ class ChatClientAgent(AgentBase):
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        # chat options
         frequency_penalty: float | None = None,
         logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
@@ -288,9 +287,9 @@ class ChatClientAgent(AgentBase):
         """Create a ChatClientAgent.
 
         Remarks:
-            The set of attributes from model to kwargs are used to create ChatOptions,
-            they are also passed to the chat client's get_(streaming_)response methods,
-            you can override any of these values in the run and run_stream methods.
+            The set of attributes from frequency_penalty to additional_properties are used to
+            call the chat client, they can also be passed to both run methods.
+            When both are set, the ones passed to the run methods take precedence.
 
         Args:
             chat_client: The chat client to use for the agent.
@@ -315,46 +314,29 @@ class ChatClientAgent(AgentBase):
             top_p: the nucleus sampling probability to use.
             user: the user to associate with the request.
             additional_properties: additional properties to include in the request.
-            kwargs: any additional keyword arguments,
-                will only be passed to functions that are called.
+            kwargs: any additional keyword arguments.
+                Unused, can be used by subclasses of this Agent.
         """
-        chat_options_args: dict[str, Any] = {}
-        if model is not None:
-            chat_options_args["model"] = model
-        if max_tokens is not None:
-            chat_options_args["max_tokens"] = max_tokens
-        if temperature is not None:
-            chat_options_args["temperature"] = temperature
-        if top_p is not None:
-            chat_options_args["top_p"] = top_p
-        if tool_choice is not None:
-            chat_options_args["tool_choice"] = tool_choice
-        if tools is not None:
-            chat_options_args["tools"] = tools
-        if response_format is not None:
-            chat_options_args["response_format"] = response_format
-        if user is not None:
-            chat_options_args["user"] = user
-        if stop is not None:
-            chat_options_args["stop"] = stop
-        if frequency_penalty is not None:
-            chat_options_args["frequency_penalty"] = frequency_penalty
-        if logit_bias is not None:
-            chat_options_args["logit_bias"] = logit_bias
-        if presence_penalty is not None:
-            chat_options_args["presence_penalty"] = presence_penalty
-        if seed is not None:
-            chat_options_args["seed"] = seed
-        if store is not None:
-            chat_options_args["store"] = store
-        if metadata is not None:
-            chat_options_args["metadata"] = metadata
-        if additional_properties is not None:
-            chat_options_args["additional_properties"] = additional_properties
-        chat_options = ChatOptions(**chat_options_args, **kwargs)
         args: dict[str, Any] = {
             "chat_client": chat_client,
-            "chat_options": chat_options,
+            "chat_options": ChatOptions(
+                ai_model_id=model,
+                frequency_penalty=frequency_penalty,
+                logit_bias=logit_bias,
+                max_tokens=max_tokens,
+                metadata=metadata,
+                presence_penalty=presence_penalty,
+                response_format=response_format,
+                seed=seed,
+                stop=stop,
+                store=store,
+                temperature=temperature,
+                tool_choice=tool_choice,
+                tools=tools,  # type: ignore
+                top_p=top_p,
+                user=user,
+                additional_properties=additional_properties or {},
+            ),
         }
         if instructions is not None:
             args["instructions"] = instructions
@@ -372,20 +354,60 @@ class ChatClientAgent(AgentBase):
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
+        frequency_penalty: float | None = None,
+        logit_bias: dict[str | int, float] | None = None,
+        max_tokens: int | None = None,
+        metadata: dict[str, Any] | None = None,
+        model: str | None = None,
+        presence_penalty: float | None = None,
+        response_format: type[BaseModel] | None = None,
+        seed: int | None = None,
+        stop: str | Sequence[str] | None = None,
+        store: bool | None = None,
+        temperature: float | None = None,
+        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = None,
+        tools: AITool
+        | list[AITool]
+        | Callable[..., Any]
+        | list[Callable[..., Any]]
+        | MutableMapping[str, Any]
+        | list[MutableMapping[str, Any]]
+        | None = None,
+        top_p: float | None = None,
+        user: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> AgentRunResponse:
         """Run the agent with the given messages and options.
 
+        Remarks:
+            Since you won't always call the agent.run directly, but it get's called
+            through orchestration, it is advised to set your default values for
+            all the chat client parameters in the agent constructor.
+            If both parameters are used, the ones passed to the run methods take precedence.
+
         Args:
             messages: The messages to process.
             thread: The thread to use for the agent.
+            frequency_penalty: the frequency penalty to use.
+            logit_bias: the logit bias to use.
+            max_tokens: The maximum number of tokens to generate.
+            metadata: additional metadata to include in the request.
+            model: The model to use for the agent.
+            presence_penalty: the presence penalty to use.
+            response_format: the format of the response.
+            seed: the random seed to use.
+            stop: the stop sequence(s) for the request.
+            store: whether to store the response.
+            temperature: the sampling temperature to use.
+            tool_choice: the tool choice for the request.
+            tools: the tools to use for the request.
+            top_p: the nucleus sampling probability to use.
+            user: the user to associate with the request.
+            additional_properties: additional properties to include in the request.
             kwargs: Additional keyword arguments for the agent.
-                These will be passed to a ChatOptions object to override the options set
-                in the agent's constructor.
+                will only be passed to functions that are called.
         """
-        chat_options = ChatOptions(**kwargs)
-        used_options = self.chat_options & chat_options
-
         thread, thread_messages = await self._prepare_thread_and_messages(
             thread=thread,
             input_messages=messages,
@@ -393,7 +415,29 @@ class ChatClientAgent(AgentBase):
             expected_type=ChatClientAgentThread,
         )
 
-        response = await self.chat_client.get_response(thread_messages, chat_options=used_options)
+        response = await self.chat_client.get_response(
+            messages=thread_messages,
+            chat_options=self.chat_options
+            & ChatOptions(
+                ai_model_id=model,
+                frequency_penalty=frequency_penalty,
+                logit_bias=logit_bias,
+                max_tokens=max_tokens,
+                metadata=metadata,
+                presence_penalty=presence_penalty,
+                response_format=response_format,
+                seed=seed,
+                stop=stop,
+                store=store,
+                temperature=temperature,
+                tool_choice=tool_choice,
+                tools=tools,  # type: ignore
+                top_p=top_p,
+                user=user,
+                additional_properties=additional_properties or {},
+            ),
+            **kwargs,
+        )
 
         self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
 
@@ -416,20 +460,61 @@ class ChatClientAgent(AgentBase):
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
+        frequency_penalty: float | None = None,
+        logit_bias: dict[str | int, float] | None = None,
+        max_tokens: int | None = None,
+        metadata: dict[str, Any] | None = None,
+        model: str | None = None,
+        presence_penalty: float | None = None,
+        response_format: type[BaseModel] | None = None,
+        seed: int | None = None,
+        stop: str | Sequence[str] | None = None,
+        store: bool | None = None,
+        temperature: float | None = None,
+        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = None,
+        tools: AITool
+        | list[AITool]
+        | Callable[..., Any]
+        | list[Callable[..., Any]]
+        | MutableMapping[str, Any]
+        | list[MutableMapping[str, Any]]
+        | None = None,
+        top_p: float | None = None,
+        user: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentRunResponseUpdate]:
         """Stream the agent with the given messages and options.
 
+        Remarks:
+            Since you won't always call the agent.run_stream directly, but it get's called
+            through orchestration, it is advised to set your default values for
+            all the chat client parameters in the agent constructor.
+            If both parameters are used, the ones passed to the run methods take precedence.
+
         Args:
             messages: The messages to process.
             thread: The thread to use for the agent.
-            kwargs: any additional keyword arguments,
-                These will be passed to a ChatOptions object to override the options set
-                in the agent's constructor.
+            frequency_penalty: the frequency penalty to use.
+            logit_bias: the logit bias to use.
+            max_tokens: The maximum number of tokens to generate.
+            metadata: additional metadata to include in the request.
+            model: The model to use for the agent.
+            presence_penalty: the presence penalty to use.
+            response_format: the format of the response.
+            seed: the random seed to use.
+            stop: the stop sequence(s) for the request.
+            store: whether to store the response.
+            temperature: the sampling temperature to use.
+            tool_choice: the tool choice for the request.
+            tools: the tools to use for the request.
+            top_p: the nucleus sampling probability to use.
+            user: the user to associate with the request.
+            additional_properties: additional properties to include in the request.
+            kwargs: any additional keyword arguments.
+                will only be passed to functions that are called.
 
         """
-        chat_options = ChatOptions(**kwargs)
-        used_options = self.chat_options & chat_options
         thread, thread_messages = await self._prepare_thread_and_messages(
             thread=thread,
             input_messages=messages,
@@ -439,12 +524,29 @@ class ChatClientAgent(AgentBase):
 
         response_updates: list[ChatResponseUpdate] = []
 
-        streaming_response: AsyncIterable[ChatResponseUpdate] = self.chat_client.get_streaming_response(
-            thread_messages,
-            chat_options=used_options,
-        )
-
-        async for update in streaming_response:
+        async for update in self.chat_client.get_streaming_response(
+            messages=thread_messages,
+            chat_options=self.chat_options
+            & ChatOptions(
+                frequency_penalty=frequency_penalty,
+                logit_bias=logit_bias,
+                max_tokens=max_tokens,
+                metadata=metadata,
+                ai_model_id=model,
+                presence_penalty=presence_penalty,
+                response_format=response_format,
+                seed=seed,
+                stop=stop,
+                store=store,
+                temperature=temperature,
+                tool_choice=tool_choice,
+                tools=tools,  # type: ignore
+                top_p=top_p,
+                user=user,
+                additional_properties=additional_properties or {},
+            ),
+            **kwargs,
+        ):
             response_updates.append(update)
             yield AgentRunResponseUpdate(
                 contents=update.contents,
