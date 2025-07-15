@@ -7,7 +7,7 @@
   <ItemGroup>
     <!-- Azure.* -->
     <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.1.0-beta.3" />
-    <PackageVersion Include="Azure.AI.OpenAI" Version="2.2.0-beta.4" />
+    <PackageVersion Include="Azure.AI.OpenAI" Version="2.2.0-beta.5" />
     <PackageVersion Include="Azure.Identity" Version="1.14.0" />
     <!-- System.* -->
     <PackageVersion Include="System.Linq.Async" Version="6.0.1" />
