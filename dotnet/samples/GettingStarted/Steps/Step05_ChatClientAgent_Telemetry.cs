@@ -15,7 +15,9 @@ public sealed class Step05_ChatClientAgent_Telemetry(ITestOutputHelper output) :
     /// Demonstrates OpenTelemetry tracing with Agent Framework.
     /// </summary>
     [Theory]
+    [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
     [InlineData(ChatClientProviders.AzureOpenAI)]
+    [InlineData(ChatClientProviders.OpenAIAssistant)]
     [InlineData(ChatClientProviders.OpenAIChatCompletion)]
     [InlineData(ChatClientProviders.OpenAIResponses)]
     public async Task RunWithTelemetry(ChatClientProviders provider)
@@ -37,6 +39,9 @@ public sealed class Step05_ChatClientAgent_Telemetry(ITestOutputHelper output) :
             Name = "TelemetryAgent",
             Instructions = "You are a helpful assistant.",
         };
+
+        // Create the server-side agent Id when applicable (depending on the provider).
+        agentOptions.Id = await base.AgentCreateAsync(provider, agentOptions);
 
         using var chatClient = base.GetChatClient(provider, agentOptions);
         var baseAgent = new ChatClientAgent(chatClient, agentOptions);

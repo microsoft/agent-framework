@@ -7,8 +7,6 @@ using System.Diagnostics.Metrics;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI.Agents;
@@ -25,7 +23,6 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
     private readonly Agent _innerAgent;
     private readonly ActivitySource _activitySource;
     private readonly Meter _meter;
-    private readonly ILogger _logger;
     private readonly Histogram<double> _operationDurationHistogram;
     private readonly Histogram<int> _tokenUsageHistogram;
     private readonly Counter<int> _requestCounter;
@@ -34,12 +31,10 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
     /// Initializes a new instance of the <see cref="OpenTelemetryAgent"/> class.
     /// </summary>
     /// <param name="innerAgent">The underlying agent to wrap with telemetry.</param>
-    /// <param name="logger">An optional logger for emitting events.</param>
     /// <param name="sourceName">An optional source name that will be used on the telemetry data.</param>
-    public OpenTelemetryAgent(Agent innerAgent, ILogger? logger = null, string? sourceName = null)
+    public OpenTelemetryAgent(Agent innerAgent, string? sourceName = null)
     {
         this._innerAgent = Throw.IfNull(innerAgent);
-        this._logger = logger ?? NullLogger.Instance;
 
         string name = string.IsNullOrEmpty(sourceName) ? AgentOpenTelemetryConsts.DefaultSourceName : sourceName!;
         this._activitySource = new(name);
@@ -200,7 +195,7 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
                     .AddTag(AgentOpenTelemetryConsts.GenAI.System, genAISystem ?? AgentOpenTelemetryConsts.GenAI.Systems.MicrosoftExtensionsAI)
                     // Agent-specific attributes
                     .AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Id, this.Id)
-                    .AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Name, this.Name)
+                    .AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Name, !string.IsNullOrWhiteSpace(this.Name) ? this.Name : "UnnamedAgent")
                     .AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Request.MessageCount, messages.Count);
 
                 // Add description if available (following gen_ai.agent.description convention)

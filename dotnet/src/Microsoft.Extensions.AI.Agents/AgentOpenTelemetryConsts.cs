@@ -51,11 +51,6 @@ internal static class AgentOpenTelemetryConsts
             /// Invoke GenAI agent operation.
             /// </summary>
             public const string InvokeAgent = "invoke_agent";
-
-            /// <summary>
-            /// Create GenAI agent operation.
-            /// </summary>
-            public const string CreateAgent = "create_agent";
         }
 
         /// <summary>
