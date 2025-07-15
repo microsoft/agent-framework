@@ -1408,23 +1408,23 @@ class ChatOptions(AFBaseModel):
     """Common request settings for AI services."""
 
     ai_model_id: Annotated[str | None, Field(serialization_alias="model")] = None
+    frequency_penalty: Annotated[float | None, Field(ge=-2.0, le=2.0)] = None
+    logit_bias: MutableMapping[str | int, float] | None = None
     max_tokens: Annotated[int | None, Field(gt=0)] = None
-    temperature: Annotated[float | None, Field(ge=0.0, le=2.0)] = None
-    top_p: Annotated[float | None, Field(ge=0.0, le=1.0)] = None
-    tool_choice: ChatToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None = None
-    _ai_tools: list[AITool | MutableMapping[str, Any]] | None = PrivateAttr(default=None)
-    tools: list[AITool | MutableMapping[str, Any]] | None = None
+    metadata: MutableMapping[str, str] | None = None
+    presence_penalty: Annotated[float | None, Field(ge=-2.0, le=2.0)] = None
     response_format: type[BaseModel] | None = Field(
         default=None, description="Structured output response format schema. Must be a valid Pydantic model."
     )
-    user: str | None = None
-    stop: str | Sequence[str] | None = None
-    frequency_penalty: Annotated[float | None, Field(ge=-2.0, le=2.0)] = None
-    logit_bias: MutableMapping[str | int, float] | None = None
-    presence_penalty: Annotated[float | None, Field(ge=-2.0, le=2.0)] = None
     seed: int | None = None
+    stop: str | Sequence[str] | None = None
     store: bool | None = None
-    metadata: MutableMapping[str, str] | None = None
+    temperature: Annotated[float | None, Field(ge=0.0, le=2.0)] = None
+    tool_choice: ChatToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None = None
+    tools: list[AITool | MutableMapping[str, Any]] | None = None
+    _ai_tools: list[AITool | MutableMapping[str, Any]] | None = PrivateAttr(default=None)
+    top_p: Annotated[float | None, Field(ge=0.0, le=1.0)] = None
+    user: str | None = None
     additional_properties: MutableMapping[str, Any] = Field(
         default_factory=dict, description="Provider-specific additional properties."
     )

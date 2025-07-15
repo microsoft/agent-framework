@@ -97,11 +97,7 @@ def _prepare_tools_and_tool_choice(chat_options: ChatOptions) -> None:
 
 
 def _tool_call_non_streaming(func: TInnerGetResponse) -> TInnerGetResponse:
-    """Decorate the internal _inner_get_response method to enable tool calls.
-
-    Remarks:
-        Relies on a class that has the _tool_map attribute for the executable tools to call.
-    """
+    """Decorate the internal _inner_get_response method to enable tool calls."""
 
     @wraps(func)
     async def wrapper(
@@ -163,11 +159,7 @@ def _tool_call_non_streaming(func: TInnerGetResponse) -> TInnerGetResponse:
 
 
 def _tool_call_streaming(func: TInnerGetStreamingResponse) -> TInnerGetStreamingResponse:
-    """Decorate the internal _inner_get_response method to enable tool calls.
-
-    Remarks:
-        Relies on a class that has the _tool_map attribute for the executable tools to call.
-    """
+    """Decorate the internal _inner_get_response method to enable tool calls."""
 
     @wraps(func)
     async def wrapper(
@@ -267,10 +259,17 @@ class ChatClient(Protocol):
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage],
         *,
-        model: str | None = None,
+        frequency_penalty: float | None = None,
+        logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
+        metadata: dict[str, Any] | None = None,
+        model: str | None = None,
+        presence_penalty: float | None = None,
+        response_format: type[BaseModel] | None = None,
+        seed: int | None = None,
+        stop: str | Sequence[str] | None = None,
+        store: bool | None = None,
         temperature: float | None = None,
-        top_p: float | None = None,
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
         tools: AITool
         | list[AITool]
@@ -279,15 +278,8 @@ class ChatClient(Protocol):
         | MutableMapping[str, Any]
         | list[MutableMapping[str, Any]]
         | None = None,
-        response_format: type[BaseModel] | None = None,
+        top_p: float | None = None,
         user: str | None = None,
-        stop: str | Sequence[str] | None = None,
-        frequency_penalty: float | None = None,
-        logit_bias: dict[str | int, float] | None = None,
-        presence_penalty: float | None = None,
-        seed: int | None = None,
-        store: bool | None = None,
-        metadata: dict[str, Any] | None = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
@@ -295,21 +287,21 @@ class ChatClient(Protocol):
 
         Args:
             messages: The sequence of input messages to send.
-            model: the model to use for the request
-            max_tokens: the maximum number of tokens to generate
-            temperature: the sampling temperature to use
-            top_p: the nucleus sampling probability to use
-            tool_choice: the tool choice for the request
-            tools: the tools to use for the request
-            response_format: the format of the response
-            user: the user to associate with the request
-            stop: the stop sequence(s) for the request
-            frequency_penalty: the frequency penalty to use
-            logit_bias: the logit bias to use
-            presence_penalty: the presence penalty to use
-            seed: the random seed to use
-            store: whether to store the response
-            metadata: additional metadata to include in the request
+            frequency_penalty: the frequency penalty to use.
+            logit_bias: the logit bias to use.
+            max_tokens: The maximum number of tokens to generate.
+            metadata: additional metadata to include in the request.
+            model: The model to use for the agent.
+            presence_penalty: the presence penalty to use.
+            response_format: the format of the response.
+            seed: the random seed to use.
+            stop: the stop sequence(s) for the request.
+            store: whether to store the response.
+            temperature: the sampling temperature to use.
+            tool_choice: the tool choice for the request.
+            tools: the tools to use for the request.
+            top_p: the nucleus sampling probability to use.
+            user: the user to associate with the request.
             additional_properties: additional properties to include in the request
             kwargs: any additional keyword arguments,
                 will only be passed to functions that are called.
@@ -326,10 +318,17 @@ class ChatClient(Protocol):
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage],
         *,
-        model: str | None = None,
+        frequency_penalty: float | None = None,
+        logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
+        metadata: dict[str, Any] | None = None,
+        model: str | None = None,
+        presence_penalty: float | None = None,
+        response_format: type[BaseModel] | None = None,
+        seed: int | None = None,
+        stop: str | Sequence[str] | None = None,
+        store: bool | None = None,
         temperature: float | None = None,
-        top_p: float | None = None,
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
         tools: AITool
         | list[AITool]
@@ -338,15 +337,8 @@ class ChatClient(Protocol):
         | MutableMapping[str, Any]
         | list[MutableMapping[str, Any]]
         | None = None,
-        response_format: type[BaseModel] | None = None,
+        top_p: float | None = None,
         user: str | None = None,
-        stop: str | Sequence[str] | None = None,
-        frequency_penalty: float | None = None,
-        logit_bias: dict[str | int, float] | None = None,
-        presence_penalty: float | None = None,
-        seed: int | None = None,
-        store: bool | None = None,
-        metadata: dict[str, Any] | None = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
@@ -354,21 +346,21 @@ class ChatClient(Protocol):
 
         Args:
             messages: The sequence of input messages to send.
-            model: the model to use for the request
-            max_tokens: the maximum number of tokens to generate
-            temperature: the sampling temperature to use
-            top_p: the nucleus sampling probability to use
-            tool_choice: the tool choice for the request
-            tools: the tools to use for the request
-            response_format: the format of the response
-            user: the user to associate with the request
-            stop: the stop sequence(s) for the request
-            frequency_penalty: the frequency penalty to use
-            logit_bias: the logit bias to use
-            presence_penalty: the presence penalty to use
-            seed: the random seed to use
-            store: whether to store the response
-            metadata: additional metadata to include in the request
+            frequency_penalty: the frequency penalty to use.
+            logit_bias: the logit bias to use.
+            max_tokens: The maximum number of tokens to generate.
+            metadata: additional metadata to include in the request.
+            model: The model to use for the agent.
+            presence_penalty: the presence penalty to use.
+            response_format: the format of the response.
+            seed: the random seed to use.
+            stop: the stop sequence(s) for the request.
+            store: whether to store the response.
+            temperature: the sampling temperature to use.
+            tool_choice: the tool choice for the request.
+            tools: the tools to use for the request.
+            top_p: the nucleus sampling probability to use.
+            user: the user to associate with the request.
             additional_properties: additional properties to include in the request
             kwargs: any additional keyword arguments,
                 will only be passed to functions that are called.
@@ -457,10 +449,17 @@ class ChatClientBase(AFBaseModel, ABC):
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage],
         *,
-        model: str | None = None,
+        frequency_penalty: float | None = None,
+        logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
+        metadata: dict[str, Any] | None = None,
+        model: str | None = None,
+        presence_penalty: float | None = None,
+        response_format: type[BaseModel] | None = None,
+        seed: int | None = None,
+        stop: str | Sequence[str] | None = None,
+        store: bool | None = None,
         temperature: float | None = None,
-        top_p: float | None = None,
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
         tools: AITool
         | list[AITool]
@@ -469,15 +468,8 @@ class ChatClientBase(AFBaseModel, ABC):
         | MutableMapping[str, Any]
         | list[MutableMapping[str, Any]]
         | None = None,
-        response_format: type[BaseModel] | None = None,
+        top_p: float | None = None,
         user: str | None = None,
-        stop: str | Sequence[str] | None = None,
-        frequency_penalty: float | None = None,
-        logit_bias: dict[str | int, float] | None = None,
-        presence_penalty: float | None = None,
-        seed: int | None = None,
-        store: bool | None = None,
-        metadata: dict[str, Any] | None = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
@@ -485,22 +477,22 @@ class ChatClientBase(AFBaseModel, ABC):
 
         Args:
             messages: the message or messages to send to the model
-            model: the model to use for the request
-            max_tokens: the maximum number of tokens to generate
-            temperature: the sampling temperature to use
-            top_p: the nucleus sampling probability to use
-            tool_choice: the tool choice for the request
-            tools: the tools to use for the request
-            response_format: the format of the response
-            user: the user to associate with the request
-            stop: the stop sequence(s) for the request
-            frequency_penalty: the frequency penalty to use
-            logit_bias: the logit bias to use
-            presence_penalty: the presence penalty to use
-            seed: the random seed to use
-            store: whether to store the response
-            metadata: additional metadata to include in the request
-            additional_properties: additional properties to include in the request
+            frequency_penalty: the frequency penalty to use.
+            logit_bias: the logit bias to use.
+            max_tokens: The maximum number of tokens to generate.
+            metadata: additional metadata to include in the request.
+            model: The model to use for the agent.
+            presence_penalty: the presence penalty to use.
+            response_format: the format of the response.
+            seed: the random seed to use.
+            stop: the stop sequence(s) for the request.
+            store: whether to store the response.
+            temperature: the sampling temperature to use.
+            tool_choice: the tool choice for the request.
+            tools: the tools to use for the request.
+            top_p: the nucleus sampling probability to use.
+            user: the user to associate with the request.
+            additional_properties: additional properties to include in the request.
             kwargs: any additional keyword arguments,
                 will only be passed to functions that are called.
 
@@ -538,10 +530,17 @@ class ChatClientBase(AFBaseModel, ABC):
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage],
         *,
-        model: str | None = None,
+        frequency_penalty: float | None = None,
+        logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
+        metadata: dict[str, Any] | None = None,
+        model: str | None = None,
+        presence_penalty: float | None = None,
+        response_format: type[BaseModel] | None = None,
+        seed: int | None = None,
+        stop: str | Sequence[str] | None = None,
+        store: bool | None = None,
         temperature: float | None = None,
-        top_p: float | None = None,
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
         tools: AITool
         | list[AITool]
@@ -550,15 +549,8 @@ class ChatClientBase(AFBaseModel, ABC):
         | MutableMapping[str, Any]
         | list[MutableMapping[str, Any]]
         | None = None,
-        response_format: type[BaseModel] | None = None,
+        top_p: float | None = None,
         user: str | None = None,
-        stop: str | Sequence[str] | None = None,
-        frequency_penalty: float | None = None,
-        logit_bias: dict[str | int, float] | None = None,
-        presence_penalty: float | None = None,
-        seed: int | None = None,
-        store: bool | None = None,
-        metadata: dict[str, Any] | None = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
@@ -566,21 +558,21 @@ class ChatClientBase(AFBaseModel, ABC):
 
         Args:
             messages: the message or messages to send to the model
-            model: the model to use for the request
-            max_tokens: the maximum number of tokens to generate
-            temperature: the sampling temperature to use
-            top_p: the nucleus sampling probability to use
-            tool_choice: the tool choice for the request
-            tools: the tools to use for the request
-            response_format: the format of the response
-            user: the user to associate with the request
-            stop: the stop sequence(s) for the request
             frequency_penalty: the frequency penalty to use
             logit_bias: the logit bias to use
-            presence_penalty: the presence penalty to use
-            seed: the random seed to use
-            store: whether to store the response
-            metadata: additional metadata to include in the request
+            max_tokens: The maximum number of tokens to generate.
+            metadata: additional metadata to include in the request.
+            model: The model to use for the agent.
+            presence_penalty: the presence penalty to use.
+            response_format: the format of the response.
+            seed: the random seed to use.
+            stop: the stop sequence(s) for the request.
+            store: whether to store the response.
+            temperature: the sampling temperature to use.
+            tool_choice: the tool choice for the request.
+            tools: the tools to use for the request.
+            top_p: the nucleus sampling probability to use.
+            user: the user to associate with the request.
             additional_properties: additional properties to include in the request
             kwargs: any additional keyword arguments
 

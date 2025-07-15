@@ -260,10 +260,18 @@ class ChatClientAgent(AgentBase):
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        model: str | None = None,
+        # chat options
+        frequency_penalty: float | None = None,
+        logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
+        metadata: dict[str, Any] | None = None,
+        model: str | None = None,
+        presence_penalty: float | None = None,
+        response_format: type[BaseModel] | None = None,
+        seed: int | None = None,
+        stop: str | Sequence[str] | None = None,
+        store: bool | None = None,
         temperature: float | None = None,
-        top_p: float | None = None,
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
         tools: AITool
         | list[AITool]
@@ -272,15 +280,8 @@ class ChatClientAgent(AgentBase):
         | MutableMapping[str, Any]
         | list[MutableMapping[str, Any]]
         | None = None,
-        response_format: type[BaseModel] | None = None,
+        top_p: float | None = None,
         user: str | None = None,
-        stop: str | Sequence[str] | None = None,
-        frequency_penalty: float | None = None,
-        logit_bias: dict[str | int, float] | None = None,
-        presence_penalty: float | None = None,
-        seed: int | None = None,
-        store: bool | None = None,
-        metadata: dict[str, Any] | None = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -294,26 +295,26 @@ class ChatClientAgent(AgentBase):
         Args:
             chat_client: The chat client to use for the agent.
             instructions: Optional instructions for the agent.
-                These will be put into the messages sent to the chat client service as a system message.
+            These will be put into the messages sent to the chat client service as a system message.
             id: The unique identifier for the agent, will be created automatically if not provided.
             name: The name of the agent.
             description: A brief description of the agent's purpose.
-            model: The model to use for the agent.
+            frequency_penalty: the frequency penalty to use.
+            logit_bias: the logit bias to use.
             max_tokens: The maximum number of tokens to generate.
-            temperature: the sampling temperature to use
-            top_p: the nucleus sampling probability to use
-            tool_choice: the tool choice for the request
-            tools: the tools to use for the request
-            response_format: the format of the response
-            user: the user to associate with the request
-            stop: the stop sequence(s) for the request
-            frequency_penalty: the frequency penalty to use
-            logit_bias: the logit bias to use
-            presence_penalty: the presence penalty to use
-            seed: the random seed to use
-            store: whether to store the response
-            metadata: additional metadata to include in the request
-            additional_properties: additional properties to include in the request
+            metadata: additional metadata to include in the request.
+            model: The model to use for the agent.
+            presence_penalty: the presence penalty to use.
+            response_format: the format of the response.
+            seed: the random seed to use.
+            stop: the stop sequence(s) for the request.
+            store: whether to store the response.
+            temperature: the sampling temperature to use.
+            tool_choice: the tool choice for the request.
+            tools: the tools to use for the request.
+            top_p: the nucleus sampling probability to use.
+            user: the user to associate with the request.
+            additional_properties: additional properties to include in the request.
             kwargs: any additional keyword arguments,
                 will only be passed to functions that are called.
         """
