@@ -1467,10 +1467,10 @@ class ChatOptions(AFBaseModel):
     @classmethod
     def _validate_tool_mode(
         cls, tool_choice: ChatToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None
-    ) -> ChatToolMode:
+    ) -> ChatToolMode | None:
         """Validates the tool_choice field to ensure it is a valid ChatToolMode."""
         if not tool_choice:
-            return ChatToolMode.NONE
+            return None
         if isinstance(tool_choice, str):
             match tool_choice:
                 case "auto":
