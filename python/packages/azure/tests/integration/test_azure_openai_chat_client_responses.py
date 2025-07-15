@@ -21,7 +21,7 @@ async def test_azure_openai_chat_completion_response() -> None:
 
     assert isinstance(open_ai_chat_completion, ChatClient)
 
-    messages: list[str | ChatMessage] = []
+    messages: list[ChatMessage] = []
     messages.append(
         ChatMessage(
             role="user",
@@ -47,7 +47,7 @@ async def test_azure_openai_chat_completion_response_tools() -> None:
 
     assert isinstance(open_ai_chat_completion, ChatClient)
 
-    messages: list[str | ChatMessage] = []
+    messages: list[ChatMessage] = []
     messages.append(ChatMessage(role="user", text="who are Emily and David?"))
 
     # Test that the client can be used to get a response

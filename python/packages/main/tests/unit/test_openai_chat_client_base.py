@@ -59,22 +59,10 @@ def mock_streaming_chat_completion_response() -> AsyncStream[ChatCompletionChunk
 @patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
 async def test_cmc(
     mock_create: AsyncMock,
-    chat_history: list[str | ChatMessage],
+    chat_history: list[ChatMessage],
     mock_chat_completion_response: ChatCompletion,
     openai_unit_test_env: dict[str, str],
 ):
-    mock_create.return_value = mock_chat_completion_response
-    chat_history.append(ChatMessage(role="user", text="hello world"))
-
-    openai_chat_completion = OpenAIChatClient()
-    await openai_chat_completion.get_response(
-        messages=chat_history,
-    )
-    mock_create.assert_awaited_once_with(
-        model=openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
-        stream=False,
-        messages=openai_chat_completion._prepare_chat_history_for_request(chat_history),  # type: ignore
-    )
     mock_create.return_value = mock_chat_completion_response
     chat_history.append(ChatMessage(role="user", text="hello world"))
 
@@ -92,7 +80,7 @@ async def test_cmc(
 @patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
 async def test_cmc_chat_options(
     mock_create: AsyncMock,
-    chat_history: list[str | ChatMessage],
+    chat_history: list[ChatMessage],
     mock_chat_completion_response: ChatCompletion,
     openai_unit_test_env: dict[str, str],
 ):
@@ -113,7 +101,7 @@ async def test_cmc_chat_options(
 @patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
 async def test_cmc_no_fcc_in_response(
     mock_create: AsyncMock,
-    chat_history: list[str | ChatMessage],
+    chat_history: list[ChatMessage],
     mock_chat_completion_response: ChatCompletion,
     openai_unit_test_env: dict[str, str],
 ):
@@ -136,7 +124,7 @@ async def test_cmc_no_fcc_in_response(
 @patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
 async def test_cmc_structured_output_no_fcc(
     mock_create: AsyncMock,
-    chat_history: list[str | ChatMessage],
+    chat_history: list[ChatMessage],
     mock_chat_completion_response: ChatCompletion,
     openai_unit_test_env: dict[str, str],
 ):
@@ -158,7 +146,7 @@ async def test_cmc_structured_output_no_fcc(
 @patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
 async def test_scmc_chat_options(
     mock_create: AsyncMock,
-    chat_history: list[str | ChatMessage],
+    chat_history: list[ChatMessage],
     mock_streaming_chat_completion_response: AsyncStream[ChatCompletionChunk],
     openai_unit_test_env: dict[str, str],
 ):
@@ -181,7 +169,7 @@ async def test_scmc_chat_options(
 @patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock, side_effect=Exception)
 async def test_cmc_general_exception(
     mock_create: AsyncMock,
-    chat_history: list[str | ChatMessage],
+    chat_history: list[ChatMessage],
     mock_chat_completion_response: ChatCompletion,
     openai_unit_test_env: dict[str, str],
 ):
@@ -201,7 +189,7 @@ async def test_cmc_general_exception(
 @patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
 async def test_scmc(
     mock_create: AsyncMock,
-    chat_history: list[str | ChatMessage],
+    chat_history: list[ChatMessage],
     openai_unit_test_env: dict[str, str],
 ):
     content1 = ChatCompletionChunk(
@@ -240,7 +228,7 @@ async def test_scmc(
 @patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
 async def test_scmc_singular(
     mock_create: AsyncMock,
-    chat_history: list[str | ChatMessage],
+    chat_history: list[ChatMessage],
     openai_unit_test_env: dict[str, str],
 ):
     content1 = ChatCompletionChunk(
@@ -279,7 +267,7 @@ async def test_scmc_singular(
 @patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
 async def test_scmc_structured_output_no_fcc(
     mock_create: AsyncMock,
-    chat_history: list[str | ChatMessage],
+    chat_history: list[ChatMessage],
     openai_unit_test_env: dict[str, str],
 ):
     content1 = ChatCompletionChunk(
@@ -317,7 +305,7 @@ async def test_scmc_structured_output_no_fcc(
 @patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
 async def test_scmc_no_fcc_in_response(
     mock_create: AsyncMock,
-    chat_history: list[str | ChatMessage],
+    chat_history: list[ChatMessage],
     mock_streaming_chat_completion_response: ChatCompletion,
     openai_unit_test_env: dict[str, str],
 ):
@@ -343,7 +331,7 @@ async def test_scmc_no_fcc_in_response(
 @patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
 async def test_scmc_no_stream(
     mock_create: AsyncMock,
-    chat_history: list[str | ChatMessage],
+    chat_history: list[ChatMessage],
     openai_unit_test_env: dict[str, str],
     mock_chat_completion_response: ChatCompletion,  # AsyncStream[ChatCompletionChunk]?
 ):

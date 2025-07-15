@@ -2,7 +2,6 @@
 
 import json
 import os
-from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import openai
@@ -166,7 +165,7 @@ def mock_streaming_chat_completion_response() -> AsyncStream[ChatCompletionChunk
 async def test_cmc(
     mock_create,
     azure_openai_unit_test_env,
-    chat_history: list[str | ChatMessage],
+    chat_history: list[ChatMessage],
     mock_chat_completion_response: ChatCompletion,
 ) -> None:
     mock_create.return_value = mock_chat_completion_response
@@ -176,11 +175,10 @@ async def test_cmc(
     await azure_chat_completion.get_response(
         messages=chat_history,
     )
-    chat_msg_history = cast(list[ChatMessage], chat_history)
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
         stream=False,
-        messages=azure_chat_completion._prepare_chat_history_for_request(chat_msg_history),
+        messages=azure_chat_completion._prepare_chat_history_for_request(chat_history),
     )
 
 
@@ -188,7 +186,7 @@ async def test_cmc(
 async def test_cmc_with_logit_bias(
     mock_create,
     azure_openai_unit_test_env,
-    chat_history: list[str | ChatMessage],
+    chat_history: list[ChatMessage],
     mock_chat_completion_response: ChatCompletion,
 ) -> None:
     mock_create.return_value = mock_chat_completion_response
@@ -201,10 +199,9 @@ async def test_cmc_with_logit_bias(
 
     await azure_chat_completion.get_response(messages=chat_history, logit_bias=token_bias)
 
-    chat_msg_history = cast(list[ChatMessage], chat_history)
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
-        messages=azure_chat_completion._prepare_chat_history_for_request(chat_msg_history),
+        messages=azure_chat_completion._prepare_chat_history_for_request(chat_history),
         stream=False,
         logit_bias=token_bias,
     )
@@ -214,7 +211,7 @@ async def test_cmc_with_logit_bias(
 async def test_cmc_with_stop(
     mock_create,
     azure_openai_unit_test_env,
-    chat_history: list[str | ChatMessage],
+    chat_history: list[ChatMessage],
     mock_chat_completion_response: ChatCompletion,
 ) -> None:
     mock_create.return_value = mock_chat_completion_response
@@ -227,10 +224,9 @@ async def test_cmc_with_stop(
 
     await azure_chat_completion.get_response(messages=chat_history, stop=stop)
 
-    chat_msg_history = cast(list[ChatMessage], chat_history)
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
-        messages=azure_chat_completion._prepare_chat_history_for_request(chat_msg_history),
+        messages=azure_chat_completion._prepare_chat_history_for_request(chat_history),
         stream=False,
         stop=stop,
     )
@@ -240,7 +236,7 @@ async def test_cmc_with_stop(
 async def test_azure_on_your_data(
     mock_create,
     azure_openai_unit_test_env,
-    chat_history: list[str | ChatMessage],
+    chat_history: list[ChatMessage],
     mock_chat_completion_response: ChatCompletion,
 ) -> None:
     mock_chat_completion_response.choices = [
@@ -267,7 +263,7 @@ async def test_azure_on_your_data(
     prompt = "hello world"
     messages_in = chat_history
     chat_history.append(ChatMessage(text=prompt, role="user"))
-    messages_out: list[str | ChatMessage] = []
+    messages_out: list[ChatMessage] = []
     messages_out.append(ChatMessage(text=prompt, role="user"))
 
     expected_data_settings = {
@@ -296,10 +292,9 @@ async def test_azure_on_your_data(
     assert isinstance(content.messages[0].contents[2], TextContent)
     assert content.messages[0].contents[2].text == "test"
 
-    chat_messages_out = cast(list[ChatMessage], messages_out)
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
-        messages=azure_chat_completion._prepare_chat_history_for_request(chat_messages_out),
+        messages=azure_chat_completion._prepare_chat_history_for_request(messages_out),
         stream=False,
         extra_body=expected_data_settings,
     )
@@ -309,7 +304,7 @@ async def test_azure_on_your_data(
 async def test_azure_on_your_data_string(
     mock_create,
     azure_openai_unit_test_env,
-    chat_history: list[str | ChatMessage],
+    chat_history: list[ChatMessage],
     mock_chat_completion_response: ChatCompletion,
 ) -> None:
     mock_chat_completion_response.choices = [
@@ -336,7 +331,7 @@ async def test_azure_on_your_data_string(
     prompt = "hello world"
     messages_in = chat_history
     messages_in.append(ChatMessage(text=prompt, role="user"))
-    messages_out: list[str | ChatMessage] = []
+    messages_out: list[ChatMessage] = []
     messages_out.append(ChatMessage(text=prompt, role="user"))
 
     expected_data_settings = {
@@ -365,10 +360,9 @@ async def test_azure_on_your_data_string(
     assert isinstance(content.messages[0].contents[2], TextContent)
     assert content.messages[0].contents[2].text == "test"
 
-    chat_messages_out = cast(list[ChatMessage], messages_out)
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
-        messages=azure_chat_completion._prepare_chat_history_for_request(chat_messages_out),
+        messages=azure_chat_completion._prepare_chat_history_for_request(messages_out),
         stream=False,
         extra_body=expected_data_settings,
     )
@@ -378,7 +372,7 @@ async def test_azure_on_your_data_string(
 async def test_azure_on_your_data_fail(
     mock_create,
     azure_openai_unit_test_env,
-    chat_history: list[str | ChatMessage],
+    chat_history: list[ChatMessage],
     mock_chat_completion_response: ChatCompletion,
 ) -> None:
     mock_chat_completion_response.choices = [
@@ -396,7 +390,7 @@ async def test_azure_on_your_data_fail(
     prompt = "hello world"
     messages_in = chat_history
     messages_in.append(ChatMessage(text=prompt, role="user"))
-    messages_out: list[str | ChatMessage] = []
+    messages_out: list[ChatMessage] = []
     messages_out.append(ChatMessage(text=prompt, role="user"))
 
     expected_data_settings = {
@@ -423,10 +417,9 @@ async def test_azure_on_your_data_fail(
     assert isinstance(content.messages[0].contents[0], TextContent)
     assert content.messages[0].contents[0].text == "test"
 
-    chat_messages_out = cast(list[ChatMessage], messages_out)
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
-        messages=azure_chat_completion._prepare_chat_history_for_request(chat_messages_out),
+        messages=azure_chat_completion._prepare_chat_history_for_request(messages_out),
         stream=False,
         extra_body=expected_data_settings,
     )
@@ -436,7 +429,7 @@ async def test_azure_on_your_data_fail(
 async def test_azure_on_your_data_split_messages(
     mock_create,
     azure_openai_unit_test_env,
-    chat_history: list[str | ChatMessage],
+    chat_history: list[ChatMessage],
     mock_chat_completion_response: ChatCompletion,
 ) -> None:
     mock_chat_completion_response.choices = [
@@ -463,7 +456,7 @@ async def test_azure_on_your_data_split_messages(
     prompt = "hello world"
     messages_in = chat_history
     messages_in.append(ChatMessage(text=prompt, role="user"))
-    messages_out: list[str | ChatMessage] = []
+    messages_out: list[ChatMessage] = []
     messages_out.append(ChatMessage(text=prompt, role="user"))
 
     azure_chat_completion = AzureChatClient()
@@ -496,7 +489,7 @@ CONTENT_FILTERED_ERROR_FULL_MESSAGE = (
 
 @patch.object(AsyncChatCompletions, "create")
 async def test_content_filtering_raises_correct_exception(
-    mock_create, azure_openai_unit_test_env, chat_history: list[str | ChatMessage]
+    mock_create, azure_openai_unit_test_env, chat_history: list[ChatMessage]
 ) -> None:
     prompt = "some prompt that would trigger the content filtering"
     chat_history.append(ChatMessage(text=prompt, role="user"))
@@ -539,7 +532,7 @@ async def test_content_filtering_raises_correct_exception(
 
 @patch.object(AsyncChatCompletions, "create")
 async def test_content_filtering_without_response_code_raises_with_default_code(
-    mock_create, azure_openai_unit_test_env, chat_history: list[str | ChatMessage]
+    mock_create, azure_openai_unit_test_env, chat_history: list[ChatMessage]
 ) -> None:
     prompt = "some prompt that would trigger the content filtering"
     chat_history.append(ChatMessage(text=prompt, role="user"))
@@ -576,7 +569,7 @@ async def test_content_filtering_without_response_code_raises_with_default_code(
 
 @patch.object(AsyncChatCompletions, "create")
 async def test_bad_request_non_content_filter(
-    mock_create, azure_openai_unit_test_env, chat_history: list[str | ChatMessage]
+    mock_create, azure_openai_unit_test_env, chat_history: list[ChatMessage]
 ) -> None:
     prompt = "some prompt that would trigger the content filtering"
     chat_history.append(ChatMessage(text=prompt, role="user"))
@@ -599,7 +592,7 @@ async def test_bad_request_non_content_filter(
 async def test_cmc_streaming(
     mock_create,
     azure_openai_unit_test_env,
-    chat_history: list[str | ChatMessage],
+    chat_history: list[ChatMessage],
     mock_streaming_chat_completion_response: AsyncStream[ChatCompletionChunk],
 ) -> None:
     mock_create.return_value = mock_streaming_chat_completion_response
@@ -610,11 +603,10 @@ async def test_cmc_streaming(
         messages=chat_history,
     ):
         assert msg is not None
-    chat_msg_history = cast(list[ChatMessage], chat_history)
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
         stream=True,
-        messages=azure_chat_completion._prepare_chat_history_for_request(chat_msg_history),
+        messages=azure_chat_completion._prepare_chat_history_for_request(chat_history),
         # NOTE: The `stream_options={"include_usage": True}` is explicitly enforced in
         # `OpenAIChatCompletionBase._inner_get_streaming_response`.
         # To ensure consistency, we align the arguments here accordingly.

@@ -56,5 +56,5 @@ def azure_openai_unit_test_env(monkeypatch, exclude_list, override_env_param_dic
 
 
 @fixture(scope="function")
-def chat_history() -> list[str | ChatMessage]:
+def chat_history() -> list[ChatMessage]:
     return []
