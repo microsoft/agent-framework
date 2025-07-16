@@ -4,6 +4,7 @@
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
     <InjectSharedIntegrationTestCode>True</InjectSharedIntegrationTestCode>
+    <NoWarn>$(NoWarn);OPENAI001;</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

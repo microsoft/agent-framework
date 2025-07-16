@@ -13,8 +13,6 @@ using Shared.IntegrationTests;
 
 namespace OpenAIAssistant.IntegrationTests;
 
-#pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-
 public class OpenAIAssistantFixture : IChatClientAgentFixture
 {
     private static readonly OpenAIConfiguration s_config = TestConfiguration.LoadSection<OpenAIConfiguration>();
