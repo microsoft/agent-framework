@@ -197,6 +197,12 @@ def _tool_call_streaming(func: TInnerGetStreamingResponse) -> TInnerGetStreaming
             messages.append(response.messages[0])
             function_calls = [item for item in response.messages[0].contents if isinstance(item, FunctionCallContent)]
 
+            # When conversation id is present, it means that messages are hosted on the server.
+            # In this case, we need to update ChatOptions with conversation id and also clear messages
+            if response.conversation_id is not None:
+                chat_options.conversation_id = response.conversation_id
+                messages = []
+
             if function_calls:
                 # Run all function calls concurrently
                 results = await asyncio.gather(*[
