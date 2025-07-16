@@ -63,7 +63,7 @@ jobs:
         run: |
           export SOLUTIONS=$(find ./dotnet/ -type f -name "*.slnx" | tr '\n' ' ')
           for solution in $SOLUTIONS; do
-            dotnet build $solution -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} --warnaserror
+            dotnet build $solution -c ${{ matrix.configuration }} --warnaserror
           done
       - name: Package install check
         shell: bash
@@ -78,7 +78,7 @@ jobs:
             dotnet pack $solution /property:TargetFrameworks=${{ matrix.targetFramework }} -c ${{ matrix.configuration }} --no-build --no-restore --output "$TEMP_DIR/artifacts"
           done
 
-          cd "$TEMP_DIR"
+          pushd "$TEMP_DIR"
 
           # Create a new console app to test the package installation
           dotnet new console -f ${{ matrix.targetFramework }} --name packcheck --output consoleapp
@@ -91,13 +91,13 @@ jobs:
           dotnet nuget add source https://api.nuget.org/v3/index.json --name nuget.org --configfile consoleapp/nuget.config
 
           # Change to project directory to ensure local nuget.config is used
-          cd consoleapp
+          pushd consoleapp
           dotnet add packcheck.csproj package Microsoft.Extensions.AI.Agents --prerelease
           dotnet build -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} packcheck.csproj
 
           # Clean up
-          cd ..
-          cd ..
+          popd
+          popd
           rm -rf "$TEMP_DIR"
 
       - name: Run Unit Tests Windows
