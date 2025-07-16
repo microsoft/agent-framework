@@ -25,9 +25,35 @@ public sealed class ChatClientAgent : Agent
     /// Initializes a new instance of the <see cref="ChatClientAgent"/> class.
     /// </summary>
     /// <param name="chatClient">The chat client to use for invoking the agent.</param>
-    /// <param name="options">Optional agent options to configure the agent.</param>
+    /// <param name="instructions">Optional instructions for the agent.</param>
+    /// <param name="name">Optional name for the agent.</param>
+    /// <param name="description">Optional description for the agent.</param>
+    /// <param name="tools">Optional list of tools that the agent can use during invocation.</param>
     /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
-    public ChatClientAgent(IChatClient chatClient, ChatClientAgentOptions? options = null, ILoggerFactory? loggerFactory = null)
+    public ChatClientAgent(IChatClient chatClient, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null)
+        : this(
+              chatClient,
+              new ChatClientAgentOptions()
+              {
+                  Name = name,
+                  Description = description,
+                  Instructions = instructions,
+                  ChatOptions = tools is null ? null : new ChatOptions()
+                  {
+                      Tools = tools,
+                  }
+              },
+              loggerFactory)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ChatClientAgent"/> class.
+    /// </summary>
+    /// <param name="chatClient">The chat client to use for invoking the agent.</param>
+    /// <param name="options">Full set of options to configure the agent.</param>
+    /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
+    public ChatClientAgent(IChatClient chatClient, ChatClientAgentOptions options, ILoggerFactory? loggerFactory = null)
     {
         Throw.IfNull(chatClient);
 

@@ -10,7 +10,16 @@ from pydantic import BaseModel, create_model
 
 @runtime_checkable
 class AITool(Protocol):
-    """Represents a generic tool that can be specified to an AI service."""
+    """Represents a generic tool that can be specified to an AI service.
+
+    Attributes:
+        name: The name of the tool.
+        description: A description of the tool.
+        additional_properties: Additional properties associated with the tool.
+
+    Methods:
+        parameters: The parameters accepted by the tool, in a json schema format.
+    """
 
     name: str
     """The name of the tool."""
