@@ -620,6 +620,28 @@ public class ChatClientAgentTests
 
     #endregion
 
+    #region Options Constructor Tests
+
+    /// <summary>
+    /// Checks that the various properties on <see cref="ChatClientAgent"/> are null or defaulted when not provided to the constructor.
+    /// </summary>
+    [Fact]
+    public void OptionsPropertiesNullOrDefaultWhenNotProvidedToConstructor()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        ChatClientAgent agent = new(chatClient, options: null!);
+
+        // Act & Assert
+        Assert.NotNull(agent.Id);
+        Assert.Null(agent.Instructions);
+        Assert.Null(agent.Name);
+        Assert.Null(agent.Description);
+        Assert.Null(agent.ChatOptions);
+    }
+
+    #endregion
+
     #region ChatOptions Property Tests
 
     /// <summary>
