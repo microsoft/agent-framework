@@ -104,7 +104,7 @@ public sealed class ChatClientAgent : Agent
         (ChatClientAgentThread chatClientThread, ChatOptions? chatOptions, List<ChatMessage> threadMessages) =
             await this.PrepareThreadAndMessagesAsync(thread, messages, options, cancellationToken).ConfigureAwait(false);
 
-        var agentName = this.GetAgentName();
+        var agentName = this.GetLoggingAgentName();
 
         this._logger.LogAgentChatClientInvokingAgent(nameof(RunAsync), this.Id, agentName, this._chatClientType);
 
@@ -388,6 +388,6 @@ public sealed class ChatClientAgent : Agent
         }
     }
 
-    private string GetAgentName() => this.Name ?? "UnnamedAgent";
+    private string GetLoggingAgentName() => this.Name ?? "UnnamedAgent";
     #endregion
 }
