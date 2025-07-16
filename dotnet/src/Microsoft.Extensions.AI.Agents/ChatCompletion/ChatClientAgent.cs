@@ -146,7 +146,7 @@ public sealed class ChatClientAgent : Agent
             await this.PrepareThreadAndMessagesAsync(thread, inputMessages, options, cancellationToken).ConfigureAwait(false);
 
         int messageCount = threadMessages.Count;
-        var loggingAgentName = this.GetAgentName();
+        var loggingAgentName = this.GetLoggingAgentName();
 
         this._logger.LogAgentChatClientInvokingAgent(nameof(RunStreamingAsync), this.Id, loggingAgentName, this._chatClientType);
 
