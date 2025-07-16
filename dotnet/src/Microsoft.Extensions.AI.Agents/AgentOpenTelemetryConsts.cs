@@ -13,9 +13,6 @@ internal static class AgentOpenTelemetryConsts
     /// </summary>
     public const string DefaultSourceName = "Microsoft.Extensions.AI.Agents";
 
-    /// <summary>The default agent name for agent telemetry</summary>
-    public const string DefaultAgentName = "UnnamedAgent";
-
     /// <summary>
     /// The unit for seconds measurements.
     /// </summary>
