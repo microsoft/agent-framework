@@ -362,6 +362,6 @@ public sealed class ChatClientAgent : Agent
         }
     }
 
-    private string GetAgentName() => this.Name ?? "UnnamedAgent";
+    private string GetAgentName() => this.Name ?? AgentOpenTelemetryConsts.DefaultAgentName;
     #endregion
 }

@@ -14,6 +14,7 @@ Currently, the Agent Framework lacks comprehensive observability and telemetry c
 
 ## Decision Drivers
 
+- **Compliance**: The implementation should adhere to established OpenTelemetry semantic conventions for agents, ensuring consistency and interoperability with existing telemetry systems.
 - **Observability Requirements**: Developers need comprehensive telemetry to monitor agent performance, track usage patterns, and debug issues in production environments.
 - **Standardization**: The solution must follow established OpenTelemetry semantic conventions and integrate seamlessly with existing .NET telemetry infrastructure.
 - **Microsoft.Extensions.AI Alignment**: The implementation should follow the exact patterns and conventions established by Microsoft.Extensions.AI's OpenTelemetry instrumentation.

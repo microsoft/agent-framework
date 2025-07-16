@@ -3,7 +3,8 @@
 namespace Microsoft.Extensions.AI.Agents;
 
 /// <summary>
-/// Provides constants used by agent telemetry services.
+/// Provides constants used by agent telemetry services following OpenTelemetry semantic conventions.
+/// <see href="https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-agent-spans/"/>
 /// </summary>
 internal static class AgentOpenTelemetryConsts
 {
@@ -11,6 +12,9 @@ internal static class AgentOpenTelemetryConsts
     /// The default source name for agent telemetry.
     /// </summary>
     public const string DefaultSourceName = "Microsoft.Extensions.AI.Agents";
+
+    /// <summary>The default agent name for agent telemetry</summary>
+    public const string DefaultAgentName = "UnnamedAgent";
 
     /// <summary>
     /// The unit for seconds measurements.

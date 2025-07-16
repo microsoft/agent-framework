@@ -195,8 +195,13 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
                     .AddTag(AgentOpenTelemetryConsts.GenAI.System, genAISystem ?? AgentOpenTelemetryConsts.GenAI.Systems.MicrosoftExtensionsAI)
                     // Agent-specific attributes
                     .AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Id, this.Id)
-                    .AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Name, !string.IsNullOrWhiteSpace(this.Name) ? this.Name : "UnnamedAgent")
                     .AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Request.MessageCount, messages.Count);
+
+                // Add agent name if available (following gen_ai.agent.name convention - conditionally required when available)
+                if (!string.IsNullOrWhiteSpace(this.Name))
+                {
+                    _ = activity.AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Name, this.Name);
+                }
 
                 // Add description if available (following gen_ai.agent.description convention)
                 if (!string.IsNullOrWhiteSpace(this.Description))
@@ -222,6 +227,17 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
     }
 
     /// <summary>
+    /// Adds a tag to the tag list if the value is not null or whitespace.
+    /// </summary>
+    private static void AddIfNotWhiteSpace(ref TagList tags, string key, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            tags.Add(key, value);
+        }
+    }
+
+    /// <summary>
     /// Adds agent response information to the activity and records metrics.
     /// </summary>
     private void TraceResponse(
@@ -237,9 +253,10 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
         {
             TagList tags = new()
             {
-                { AgentOpenTelemetryConsts.GenAI.OperationName, AgentOpenTelemetryConsts.GenAI.Operations.InvokeAgent },
-                { AgentOpenTelemetryConsts.GenAI.Agent.Name, this.Name ?? "UnnamedAgent" }
+                { AgentOpenTelemetryConsts.GenAI.OperationName, AgentOpenTelemetryConsts.GenAI.Operations.InvokeAgent }
             };
+
+            AddIfNotWhiteSpace(ref tags, AgentOpenTelemetryConsts.GenAI.Agent.Name, this.Name);
 
             if (error is not null)
             {
@@ -254,9 +271,10 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
         {
             TagList tags = new()
             {
-                { AgentOpenTelemetryConsts.GenAI.OperationName, AgentOpenTelemetryConsts.GenAI.Operations.InvokeAgent },
-                { AgentOpenTelemetryConsts.GenAI.Agent.Name, this.Name ?? "UnnamedAgent" }
+                { AgentOpenTelemetryConsts.GenAI.OperationName, AgentOpenTelemetryConsts.GenAI.Operations.InvokeAgent }
             };
+
+            AddIfNotWhiteSpace(ref tags, AgentOpenTelemetryConsts.GenAI.Agent.Name, this.Name);
 
             this._requestCounter.Add(1, tags);
         }
@@ -268,9 +286,11 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
             {
                 TagList tags = new()
                 {
-                    { AgentOpenTelemetryConsts.GenAI.Agent.Token.Type, "input" },
-                    { AgentOpenTelemetryConsts.GenAI.Agent.Name, this.Name ?? "UnnamedAgent" }
+                    { AgentOpenTelemetryConsts.GenAI.Agent.Token.Type, "input" }
                 };
+
+                AddIfNotWhiteSpace(ref tags, AgentOpenTelemetryConsts.GenAI.Agent.Name, this.Name);
+
                 this._tokenUsageHistogram.Record((int)inputTokens, tags);
             }
 
@@ -278,9 +298,11 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
             {
                 TagList tags = new()
                 {
-                    { AgentOpenTelemetryConsts.GenAI.Agent.Token.Type, "output" },
-                    { AgentOpenTelemetryConsts.GenAI.Agent.Name, this.Name ?? "UnnamedAgent" }
+                    { AgentOpenTelemetryConsts.GenAI.Agent.Token.Type, "output" }
                 };
+
+                AddIfNotWhiteSpace(ref tags, AgentOpenTelemetryConsts.GenAI.Agent.Name, this.Name);
+
                 this._tokenUsageHistogram.Record((int)outputTokens, tags);
             }
         }
