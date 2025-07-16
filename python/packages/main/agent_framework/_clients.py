@@ -68,7 +68,7 @@ async def _auto_invoke_function(
     )
 
 
-def _tool_to_json_schema_spec(tool: AITool) -> dict[str, Any]:
+def tool_to_json_schema_spec(tool: AITool) -> dict[str, Any]:
     """Convert a AITool to the JSON Schema function specification format."""
     return {
         "type": "function",
@@ -88,7 +88,7 @@ def _prepare_tools_and_tool_choice(chat_options: ChatOptions) -> None:
         chat_options.tool_choice = ChatToolMode.NONE.mode
         return
     chat_options.tools = [
-        (_tool_to_json_schema_spec(t) if isinstance(t, AITool) else t) for t in chat_options._ai_tools or []
+        (tool_to_json_schema_spec(t) if isinstance(t, AITool) else t) for t in chat_options._ai_tools or []
     ]
     if not chat_options.tools:
         chat_options.tool_choice = ChatToolMode.NONE.mode
