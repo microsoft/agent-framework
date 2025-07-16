@@ -8,6 +8,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Orchestration;
 
@@ -41,7 +42,7 @@ public class HandoffOrchestration<TInput, TOutput> : AgentOrchestration<TInput, 
         // Fail fast if invalid names are present.
         if (badNames.Length > 0)
         {
-            throw new ArgumentException($"The following agents are not defined in the orchestration: {string.Join(", ", badNames)}", nameof(handoffs));
+            Throw.ArgumentException(nameof(handoffs), $"The following agents are not defined in the orchestration: {string.Join(", ", badNames)}");
         }
 
         this._handoffs = handoffs;
@@ -50,15 +51,13 @@ public class HandoffOrchestration<TInput, TOutput> : AgentOrchestration<TInput, 
     /// <summary>
     /// Gets or sets the callback to be invoked for interactive input.
     /// </summary>
-    public OrchestrationInteractiveCallback? InteractiveCallback { get; init; }
+    public Func<ValueTask<ChatMessage>>? InteractiveCallback { get; init; }
 
     /// <inheritdoc />
     protected override async ValueTask StartAsync(IAgentRuntime runtime, TopicId topic, IEnumerable<ChatMessage> input, ActorType? entryAgent)
     {
-        if (!entryAgent.HasValue)
-        {
-            throw new ArgumentException("Entry agent is not defined.", nameof(entryAgent));
-        }
+        Throw.IfNull(entryAgent);
+
         await runtime.PublishMessageAsync(new HandoffMessages.InputTask([.. input]), topic).ConfigureAwait(false);
         await runtime.PublishMessageAsync(new HandoffMessages.Request(), entryAgent.Value).ConfigureAwait(false);
     }

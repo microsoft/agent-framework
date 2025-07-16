@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
 
 namespace Microsoft.Agents.Orchestration.UnitTest;
 
@@ -72,7 +73,7 @@ public class DefaultTransformsTests
         ChatMessage message = result.First();
         Assert.Equal(ChatRole.User, message.Role);
 
-        string expectedJson = JsonSerializer.Serialize(input);
+        string expectedJson = JsonSerializer.Serialize(input, AgentAbstractionsJsonUtilities.DefaultOptions);
         Assert.Equal(expectedJson, message.Text);
     }
 

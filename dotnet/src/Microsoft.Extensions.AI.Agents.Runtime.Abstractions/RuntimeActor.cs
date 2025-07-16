@@ -57,6 +57,8 @@ public abstract class RuntimeActor : IRuntimeActor
         string? description = null,
         ILogger? logger = null)
     {
+        Throw.IfNull(runtime);
+
         this.Id = id;
         this._runtime = runtime;
         this.Logger = logger ?? NullLogger.Instance;

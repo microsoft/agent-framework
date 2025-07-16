@@ -360,12 +360,9 @@ public sealed class ChatClientAgent : AIAgent
     private void UpdateThreadWithTypeAndConversationId(ChatClientAgentThread chatClientThread, string? responseConversationId)
     {
         // Set the thread's storage location, the first time that we use it.
-        if (chatClientThread.StorageLocation is null)
-        {
-            chatClientThread.StorageLocation = string.IsNullOrWhiteSpace(responseConversationId)
-                ? ChatClientAgentThreadType.InMemoryMessages
-                : ChatClientAgentThreadType.ConversationId;
-        }
+        chatClientThread.StorageLocation ??= string.IsNullOrWhiteSpace(responseConversationId)
+            ? ChatClientAgentThreadType.InMemoryMessages
+            : ChatClientAgentThreadType.ConversationId;
 
         // If we got a conversation id back from the chat client, it means that the service supports server side thread storage
         // so we should capture the id and update the thread with the new id.

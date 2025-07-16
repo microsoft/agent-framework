@@ -207,7 +207,9 @@ public abstract class AIAgent
         Func<TThreadType> constructThread)
         where TThreadType : AgentThread
     {
-        thread ??= constructThread is not null ? constructThread() : throw new ArgumentNullException(nameof(constructThread));
+        Throw.IfNull(constructThread);
+
+        thread ??= constructThread();
 
         if (thread is not TThreadType concreteThreadType)
         {

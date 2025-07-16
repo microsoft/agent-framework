@@ -167,19 +167,19 @@ public class GroupChatOrchestration_With_AIManager(ITestOutputHelper output) : O
         }
 
         /// <inheritdoc/>
-        public override ValueTask<GroupChatManagerResult<string>> FilterResults(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default) =>
+        protected override ValueTask<GroupChatManagerResult<string>> FilterResults(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default) =>
             this.GetResponseAsync<string>(history, Prompts.Filter(topic), cancellationToken);
 
         /// <inheritdoc/>
-        public override ValueTask<GroupChatManagerResult<string>> SelectNextAgent(IReadOnlyCollection<ChatMessage> history, GroupChatTeam team, CancellationToken cancellationToken = default) =>
+        protected override ValueTask<GroupChatManagerResult<string>> SelectNextAgent(IReadOnlyCollection<ChatMessage> history, GroupChatTeam team, CancellationToken cancellationToken = default) =>
             this.GetResponseAsync<string>(history, Prompts.Selection(topic, team.FormatList()), cancellationToken);
 
         /// <inheritdoc/>
-        public override ValueTask<GroupChatManagerResult<bool>> ShouldRequestUserInput(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default) =>
+        protected override ValueTask<GroupChatManagerResult<bool>> ShouldRequestUserInput(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default) =>
             new(new GroupChatManagerResult<bool>(false) { Reason = "The AI group chat manager does not request user input." });
 
         /// <inheritdoc/>
-        public override async ValueTask<GroupChatManagerResult<bool>> ShouldTerminate(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default)
+        protected override async ValueTask<GroupChatManagerResult<bool>> ShouldTerminate(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default)
         {
             GroupChatManagerResult<bool> result = await base.ShouldTerminate(history, cancellationToken);
             if (!result.Value)

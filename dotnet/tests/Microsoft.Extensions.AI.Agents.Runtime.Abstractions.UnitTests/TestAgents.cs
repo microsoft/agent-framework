@@ -42,7 +42,7 @@ public sealed class MockAgent : TestAgent
 
     public override ValueTask LoadStateAsync(JsonElement state, CancellationToken cancellationToken = default)
     {
-        this.ReceivedMessages = JsonSerializer.Deserialize<List<object>>(state) ?? throw new InvalidOperationException("Failed to deserialize state");
+        this.ReceivedMessages = state.Deserialize<List<object>>() ?? throw new InvalidOperationException("Failed to deserialize state");
         return default;
     }
 }

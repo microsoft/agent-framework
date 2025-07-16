@@ -2,6 +2,7 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI.Agents.Runtime;
 
@@ -28,6 +29,8 @@ public sealed class TypeSubscription : ISubscriptionDefinition
     /// <param name="id">Unique identifier for the subscription. If not provided, a new UUID will be generated.</param>
     public TypeSubscription(string topicType, ActorType actorType, string? id = null)
     {
+        Throw.IfNullOrEmpty(topicType);
+
         this.TopicType = topicType;
         this.ActorType = actorType;
         this.Id = id ?? Guid.NewGuid().ToString();
@@ -53,10 +56,7 @@ public sealed class TypeSubscription : ISubscriptionDefinition
     /// </summary>
     /// <param name="topic">The topic to check.</param>
     /// <returns><c>true</c> if the topic's type matches exactly, <c>false</c> otherwise.</returns>
-    public bool Matches(TopicId topic)
-    {
-        return topic.Type == this.TopicType;
-    }
+    public bool Matches(TopicId topic) => topic.Type == this.TopicType;
 
     /// <summary>
     /// Maps a <see cref="TopicId"/> to an <see cref="ActorId"/>. Should only be called if <see cref="Matches"/> returns true.
@@ -79,14 +79,9 @@ public sealed class TypeSubscription : ISubscriptionDefinition
     /// </summary>
     /// <param name="obj">The object to compare with the current instance.</param>
     /// <returns><c>true</c> if the specified object is equal to this instance; otherwise, <c>false</c>.</returns>
-    public override bool Equals([NotNullWhen(true)] object? obj)
-    {
-        return
-            obj is TypeSubscription other &&
-                (this.Id == other.Id ||
-                    (this.ActorType == other.ActorType &&
-                        this.TopicType == other.TopicType));
-    }
+    public override bool Equals([NotNullWhen(true)] object? obj) =>
+        obj is TypeSubscription other &&
+        (this.Id == other.Id || (this.ActorType == other.ActorType && this.TopicType == other.TopicType));
 
     /// <summary>
     /// Determines whether the specified subscription is equal to the current subscription.
@@ -99,8 +94,5 @@ public sealed class TypeSubscription : ISubscriptionDefinition
     /// Returns a hash code for this instance.
     /// </summary>
     /// <returns>A hash code for this instance, suitable for use in hashing algorithms and data structures.</returns>
-    public override int GetHashCode()
-    {
-        return HashCode.Combine(this.Id, this.ActorType, this.TopicType);
-    }
+    public override int GetHashCode() => HashCode.Combine(this.Id, this.ActorType, this.TopicType);
 }

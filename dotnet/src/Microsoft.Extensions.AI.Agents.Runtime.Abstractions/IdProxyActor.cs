@@ -3,6 +3,7 @@
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI.Agents.Runtime;
 
@@ -21,6 +22,8 @@ public sealed class IdProxyActor : IRuntimeActor
     /// </summary>
     public IdProxyActor(IAgentRuntime runtime, ActorId actorId)
     {
+        Throw.IfNull(runtime);
+
         this.Id = actorId;
         this._runtime = runtime;
     }

@@ -19,14 +19,14 @@ public class RoundRobinGroupChatManager : GroupChatManager
     private int _currentAgentIndex;
 
     /// <inheritdoc/>
-    public override ValueTask<GroupChatManagerResult<string>> FilterResults(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default)
+    protected internal override ValueTask<GroupChatManagerResult<string>> FilterResults(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default)
     {
         GroupChatManagerResult<string> result = new(history.LastOrDefault()?.Text ?? string.Empty) { Reason = "Default result filter provides the final chat message." };
         return new ValueTask<GroupChatManagerResult<string>>(result);
     }
 
     /// <inheritdoc/>
-    public override ValueTask<GroupChatManagerResult<string>> SelectNextAgent(IReadOnlyCollection<ChatMessage> history, GroupChatTeam team, CancellationToken cancellationToken = default)
+    protected internal override ValueTask<GroupChatManagerResult<string>> SelectNextAgent(IReadOnlyCollection<ChatMessage> history, GroupChatTeam team, CancellationToken cancellationToken = default)
     {
         string nextAgent = team.Skip(this._currentAgentIndex).First().Key;
         this._currentAgentIndex = (this._currentAgentIndex + 1) % team.Count;
@@ -35,7 +35,7 @@ public class RoundRobinGroupChatManager : GroupChatManager
     }
 
     /// <inheritdoc/>
-    public override ValueTask<GroupChatManagerResult<bool>> ShouldRequestUserInput(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default)
+    protected internal override ValueTask<GroupChatManagerResult<bool>> ShouldRequestUserInput(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default)
     {
         GroupChatManagerResult<bool> result = new(false) { Reason = "The default round-robin group chat manager does not request user input." };
         return new ValueTask<GroupChatManagerResult<bool>>(result);

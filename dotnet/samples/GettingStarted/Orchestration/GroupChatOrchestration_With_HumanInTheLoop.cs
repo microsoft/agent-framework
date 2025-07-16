@@ -84,7 +84,7 @@ public class GroupChatOrchestration_With_HumanInTheLoop(ITestOutputHelper output
     /// </remarks>
     private sealed class CustomRoundRobinGroupChatManager : RoundRobinGroupChatManager
     {
-        public override ValueTask<GroupChatManagerResult<bool>> ShouldRequestUserInput(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default)
+        protected override ValueTask<GroupChatManagerResult<bool>> ShouldRequestUserInput(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default)
         {
             string? lastAgent = history.LastOrDefault()?.AuthorName;
 

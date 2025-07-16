@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -17,7 +18,7 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
     /// </summary>
     private sealed class RequestActor : OrchestrationActor
     {
-        private readonly Func<TInput, CancellationToken, ValueTask<IEnumerable<ChatMessage>>> _transform;
+        private readonly Func<TInput, JsonSerializerOptions?, CancellationToken, ValueTask<IEnumerable<ChatMessage>>> _transform;
         private readonly Func<IEnumerable<ChatMessage>, ValueTask> _action;
         private readonly TaskCompletionSource<TOutput> _completionSource;
 
@@ -35,7 +36,7 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
             ActorId id,
             IAgentRuntime runtime,
             OrchestrationContext context,
-            Func<TInput, CancellationToken, ValueTask<IEnumerable<ChatMessage>>> transform,
+            Func<TInput, JsonSerializerOptions?, CancellationToken, ValueTask<IEnumerable<ChatMessage>>> transform,
             TaskCompletionSource<TOutput> completionSource,
             Func<IEnumerable<ChatMessage>, ValueTask> action,
             ILogger<RequestActor>? logger = null)
@@ -60,8 +61,8 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
             this.Logger.LogOrchestrationRequestInvoke(this.Context.Orchestration, this.Id);
             try
             {
-                IEnumerable<ChatMessage> input = await this._transform.Invoke(item, cancellationToken).ConfigureAwait(false);
-                Task task = this._action.Invoke(input).AsTask();
+                IEnumerable<ChatMessage> input = await this._transform.Invoke(item, messageContext.SerializerOptions, cancellationToken).ConfigureAwait(false);
+                var task = this._action.Invoke(input);
                 this.Logger.LogOrchestrationStart(this.Context.Orchestration, this.Id);
                 await task.ConfigureAwait(false);
             }

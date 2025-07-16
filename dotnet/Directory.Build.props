@@ -9,7 +9,8 @@
     <LangVersion>12</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
-    <NoWarn>$(NoWarn);IDE0290;IDE0079</NoWarn>
+    <NoWarn>$(NoWarn);IDE0290;IDE0079;NU5128</NoWarn>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <ProjectsTargetFrameworks>net9.0;net8.0;netstandard2.0;net472</ProjectsTargetFrameworks>
     <ProjectsDebugTargetFrameworks>net9.0;net472</ProjectsDebugTargetFrameworks>
     <IsAotCompatible Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net7.0'))">true</IsAotCompatible>

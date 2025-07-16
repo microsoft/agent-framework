@@ -53,12 +53,9 @@ public class CopilotStudioAgent : AIAgent
         Throw.IfNull(messages);
 
         // Ensure that we have a valid thread to work with.
+        // If the thread ID is null, we need to start a new conversation and set the thread ID accordingly.
         CopilotStudioAgentThread copilotStudioAgentThread = base.ValidateOrCreateThreadType(thread, () => new CopilotStudioAgentThread());
-        if (copilotStudioAgentThread.Id is null)
-        {
-            // If the thread ID is null, we need to start a new conversation and set the thread ID accordingly.
-            copilotStudioAgentThread.Id = await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
-        }
+        copilotStudioAgentThread.Id ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
 
         // Invoke the Copilot Studio agent with the provided messages.
         string question = string.Join("\n", messages.Select(m => m.Text));
@@ -89,12 +86,9 @@ public class CopilotStudioAgent : AIAgent
         Throw.IfNull(messages);
 
         // Ensure that we have a valid thread to work with.
+        // If the thread ID is null, we need to start a new conversation and set the thread ID accordingly.
         CopilotStudioAgentThread copilotStudioAgentThread = base.ValidateOrCreateThreadType(thread, () => new CopilotStudioAgentThread());
-        if (copilotStudioAgentThread.Id is null)
-        {
-            // If the thread ID is null, we need to start a new conversation and set the thread ID accordingly.
-            copilotStudioAgentThread.Id = await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
-        }
+        copilotStudioAgentThread.Id ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
 
         // Invoke the Copilot Studio agent with the provided messages.
         string question = string.Join("\n", messages.Select(m => m.Text));

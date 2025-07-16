@@ -73,6 +73,8 @@ public sealed partial class InProcessRuntime : IAgentRuntime, IAsyncDisposable
     /// <inheritdoc/>
     public ValueTask PublishMessageAsync(object message, TopicId topic, ActorId? sender = null, string? messageId = null, CancellationToken cancellationToken = default)
     {
+        Throw.IfNull(message);
+
         MessageToProcess m = new(this, message, messageId, sender, topic, cancellationToken);
 
         this.IncrementRemainingWork();
@@ -84,6 +86,8 @@ public sealed partial class InProcessRuntime : IAgentRuntime, IAsyncDisposable
     /// <inheritdoc/>
     public ValueTask<object?> SendMessageAsync(object message, ActorId recipient, ActorId? sender = null, string? messageId = null, CancellationToken cancellationToken = default)
     {
+        Throw.IfNull(message);
+
         MessageToProcess m = new(this, message, messageId, sender, recipient, cancellationToken);
 
         this.IncrementRemainingWork();
@@ -140,6 +144,7 @@ public sealed partial class InProcessRuntime : IAgentRuntime, IAsyncDisposable
     /// <inheritdoc/>
     public ValueTask AddSubscriptionAsync(ISubscriptionDefinition subscription, CancellationToken cancellationToken = default)
     {
+        Throw.IfNull(subscription);
         ThrowIfInvalid(this._subscriptions.ContainsKey(subscription.Id), "Subscription with the specified ID already exists.");
 
         this._subscriptions.Add(subscription.Id, subscription);
@@ -150,6 +155,7 @@ public sealed partial class InProcessRuntime : IAgentRuntime, IAsyncDisposable
     /// <inheritdoc/>
     public ValueTask RemoveSubscriptionAsync(string subscriptionId, CancellationToken cancellationToken = default)
     {
+        Throw.IfNull(subscriptionId);
         ThrowIfInvalid(!this._subscriptions.ContainsKey(subscriptionId), "Subscription with the specified ID does not exist.");
 
         this._subscriptions.Remove(subscriptionId);
@@ -187,6 +193,7 @@ public sealed partial class InProcessRuntime : IAgentRuntime, IAsyncDisposable
     /// <inheritdoc/>
     public async ValueTask<ActorType> RegisterActorFactoryAsync(ActorType type, Func<ActorId, IAgentRuntime, ValueTask<IRuntimeActor>> factoryFunc, CancellationToken cancellationToken = default)
     {
+        Throw.IfNull(factoryFunc);
         ThrowIfInvalid(this._actorFactories.ContainsKey(type), "Actor type already registered.");
 
         this._actorFactories.Add(type, factoryFunc);

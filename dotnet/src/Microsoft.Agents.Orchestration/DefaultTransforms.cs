@@ -6,68 +6,58 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Orchestration;
 
 internal static class DefaultTransforms
 {
-    public static ValueTask<IEnumerable<ChatMessage>> FromInput<TInput>(TInput input, CancellationToken cancellationToken = default) =>
-        new(input switch
+    public static ValueTask<IEnumerable<ChatMessage>> FromInput<TInput>(TInput input, JsonSerializerOptions? serializerOptions = null, CancellationToken cancellationToken = default)
+    {
+        serializerOptions ??= AgentAbstractionsJsonUtilities.DefaultOptions;
+        return new(input switch
         {
             IEnumerable<ChatMessage> messages => messages,
             ChatMessage message => [message],
             string text => [new ChatMessage(ChatRole.User, text)],
-            _ => [new ChatMessage(ChatRole.User, JsonSerializer.Serialize(input))]
+            _ => [new ChatMessage(ChatRole.User, JsonSerializer.Serialize(input, serializerOptions.GetTypeInfo(typeof(TInput))))]
         });
+    }
 
-    public static ValueTask<TOutput> ToOutput<TOutput>(IList<ChatMessage> result, CancellationToken cancellationToken = default)
+    public static ValueTask<TOutput> ToOutput<TOutput>(IList<ChatMessage> result, JsonSerializerOptions? serializerOptions = null, CancellationToken cancellationToken = default)
     {
+        Throw.IfNull(result);
+
+        serializerOptions ??= AgentAbstractionsJsonUtilities.DefaultOptions;
         bool isSingleResult = result.Count == 1;
 
-        TOutput output =
-            GetDefaultOutput() ??
-            GetObjectOutput() ??
-            throw new InvalidOperationException($"Unable to transform output to {typeof(TOutput)}.");
-
-        return new ValueTask<TOutput>(output);
-
-        TOutput? GetObjectOutput()
+        if (result is TOutput)
         {
-            if (isSingleResult)
-            {
-                try
-                {
-                    return JsonSerializer.Deserialize<TOutput>(result[0].Text);
-                }
-                catch (JsonException)
-                {
-                }
-            }
-
-            return default;
+            return new((TOutput)(object)result);
         }
 
-        TOutput? GetDefaultOutput()
+        if (isSingleResult)
         {
-            if (typeof(TOutput).IsInstanceOfType(result))
+            if (typeof(ChatMessage).IsAssignableFrom(typeof(TOutput)))
             {
-                return (TOutput)(object)result;
+                return new((TOutput)(object)result[0]);
             }
 
-            if (isSingleResult)
+            if (typeof(string) == typeof(TOutput))
             {
-                if (typeof(ChatMessage).IsAssignableFrom(typeof(TOutput)))
-                {
-                    return (TOutput)(object)result[0];
-                }
-
-                if (typeof(string) == typeof(TOutput))
-                {
-                    return (TOutput)(object)(result[0].Text ?? string.Empty);
-                }
+                return new((TOutput)(object)(result[0].Text ?? string.Empty));
             }
 
-            return default;
+            try
+            {
+                return new((TOutput)JsonSerializer.Deserialize(result[0].Text, serializerOptions.GetTypeInfo(typeof(TOutput)))!);
+            }
+            catch (JsonException)
+            {
+            }
         }
+
+        throw new InvalidOperationException($"Unable to transform output to {typeof(TOutput)}.");
     }
 }
