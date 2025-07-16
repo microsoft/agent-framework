@@ -24,12 +24,7 @@ public sealed class ChatClientAgent_With_OpenAIChatCompletion(ITestOutputHelper 
             .AsIChatClient();
 
         // Define the agent
-        ChatClientAgent agent =
-            new(chatClient, new()
-            {
-                Name = JokerName,
-                Instructions = JokerInstructions,
-            });
+        ChatClientAgent agent = new(chatClient, JokerInstructions, JokerName);
 
         // Start a new thread for the agent conversation.
         AgentThread thread = agent.GetNewThread();

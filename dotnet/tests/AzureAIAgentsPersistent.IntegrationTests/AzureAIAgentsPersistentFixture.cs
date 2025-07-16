@@ -73,7 +73,7 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
 
         return new ChatClientAgent(
             this._persistentAgentsClient.AsIChatClient(persistentAgent.Id),
-            new()
+            options: new()
             {
                 Id = persistentAgent.Id,
                 ChatOptions = new() { Tools = aiTools }

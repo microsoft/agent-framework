@@ -50,7 +50,7 @@ public class OpenAIChatCompletionFixture : IChatClientAgentFixture
             .GetChatClient(this._useReasoningModel ? s_config.ChatReasoningModelId : s_config.ChatModelId)
             .AsIChatClient();
 
-        return Task.FromResult(new ChatClientAgent(chatClient, new()
+        return Task.FromResult(new ChatClientAgent(chatClient, options: new()
         {
             Name = name,
             Instructions = instructions,
