@@ -31,26 +31,20 @@ public sealed class ChatClientAgent : Agent
     /// <param name="tools">Optional list of tools that the agent can use during invocation.</param>
     /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
     public ChatClientAgent(IChatClient chatClient, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null)
+        : this(
+              chatClient,
+              new ChatClientAgentOptions()
+              {
+                  Name = name,
+                  Description = description,
+                  Instructions = instructions,
+                  ChatOptions = tools is null ? null : new ChatOptions()
+                  {
+                      Tools = tools,
+                  }
+              },
+              loggerFactory)
     {
-        Throw.IfNull(chatClient);
-
-        this._agentOptions = new ChatClientAgentOptions()
-        {
-            Name = name,
-            Description = description,
-            Instructions = instructions,
-            ChatOptions = tools is null ? null : new ChatOptions()
-            {
-                Tools = tools,
-            }
-        };
-
-        // Get the type of the chat client before wrapping it as an agent invoking chat client.
-        this._chatClientType = chatClient.GetType();
-
-        this.ChatClient = chatClient.AsAgentInvokingChatClient();
-
-        this._logger = (loggerFactory ?? chatClient.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance).CreateLogger<ChatClientAgent>();
     }
 
     /// <summary>
