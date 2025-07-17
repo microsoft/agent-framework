@@ -1,8 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
-from collections.abc import MutableMapping
-from typing import Any, AsyncIterable, MutableSequence
+from collections.abc import AsyncIterable, MutableMapping, MutableSequence
+from typing import Any
 
 from agent_framework import (
     AIContents,
@@ -55,8 +55,8 @@ from azure.ai.projects.aio import AIProjectClient
 @use_tool_calling
 class FoundryChatClient(ChatClientBase):
     client: AIProjectClient
-    default_thread_id: str | None = None
     agent_id: str | None = None
+    default_thread_id: str | None = None
 
     async def _inner_get_response(
         self,

@@ -6,6 +6,7 @@ from typing import Annotated
 
 from agent_framework import ChatClientAgent
 from agent_framework.openai import OpenAIChatClient
+from dotenv import load_dotenv
 from pydantic import Field
 
 
@@ -17,11 +18,12 @@ def get_weather(
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
-async def main():
+async def main() -> None:
     instructions = "You are a helpful assistant, you can help the user with weather information."
     agent = ChatClientAgent(OpenAIChatClient(), instructions=instructions, tools=get_weather)
     print(str(await agent.run("What's the weather in Amsterdam?")))
 
 
 if __name__ == "__main__":
+    load_dotenv()
     asyncio.run(main())

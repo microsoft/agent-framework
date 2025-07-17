@@ -32,7 +32,7 @@ async def main() -> None:
     )
 
     agent = ChatClientAgent(
-        FoundryChatClient(ai_model_id="gpt-4.1", client=client, agent_id=created_agent.id),
+        FoundryChatClient(client=client, agent_id=created_agent.id),
         instructions=instructions,
         tools=get_weather,
     )
@@ -40,4 +40,5 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    load_dotenv()
     asyncio.run(main())

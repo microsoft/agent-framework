@@ -241,7 +241,7 @@ def _coalesce_text_content(
                 first_new_content = i
         else:
             if first_new_content is not None:
-                new_content = type_(text=" ".join(current_texts))
+                new_content = type_(text="".join(current_texts))
                 new_content.raw_representation = contents[first_new_content].raw_representation
                 new_content.additional_properties = contents[first_new_content].additional_properties
                 # Store the replacement node. We inherit the properties of the first text node. We don't
@@ -252,7 +252,7 @@ def _coalesce_text_content(
                 first_new_content = None
             coalesced_contents.append(content)
     if current_texts:
-        coalesced_contents.append(type_(text=" ".join(current_texts)))
+        coalesced_contents.append(type_(text="".join(current_texts)))
     contents.clear()
     contents.extend(coalesced_contents)
 

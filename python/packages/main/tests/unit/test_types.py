@@ -350,7 +350,7 @@ def test_chat_response_updates_to_chat_response_one():
 
     # Check the type and content
     assert len(chat_response.messages) == 1
-    assert chat_response.text == "I'm doing well,  thank you!"
+    assert chat_response.text == "I'm doing well, thank you!"
     assert isinstance(chat_response.messages[0], ChatMessage)
     assert len(chat_response.messages[0].contents) == 1
     assert chat_response.messages[0].message_id == "1"
@@ -429,13 +429,13 @@ def test_chat_response_updates_to_chat_response_multiple_multiple():
 
     assert len(chat_response.messages[0].contents) == 3
     assert isinstance(chat_response.messages[0].contents[0], TextContent)
-    assert chat_response.messages[0].contents[0].text == "I'm doing well,  thank you!"
+    assert chat_response.messages[0].contents[0].text == "I'm doing well, thank you!"
     assert isinstance(chat_response.messages[0].contents[1], TextReasoningContent)
     assert chat_response.messages[0].contents[1].text == "Additional context"
     assert isinstance(chat_response.messages[0].contents[2], TextContent)
-    assert chat_response.messages[0].contents[2].text == "More context Final part"
+    assert chat_response.messages[0].contents[2].text == "More contextFinal part"
 
-    assert chat_response.text == "I'm doing well,  thank you! More context Final part"
+    assert chat_response.text == "I'm doing well, thank you! More contextFinal part"
 
 
 # region: ChatToolMode
@@ -643,7 +643,7 @@ def test_agent_run_response_from_updates(agent_run_response_update: AgentRunResp
     updates = [agent_run_response_update, agent_run_response_update]
     response = AgentRunResponse.from_agent_run_response_updates(updates)
     assert len(response.messages) > 0
-    assert response.text == "Test content Test content"
+    assert response.text == "Test contentTest content"
 
 
 def test_agent_run_response_str_method(chat_message: ChatMessage) -> None:

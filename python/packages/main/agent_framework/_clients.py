@@ -4,9 +4,9 @@ import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, MutableSequence, Sequence
 from functools import wraps
-from typing import Annotated, Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
+from typing import Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
 
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel
 
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
@@ -390,8 +390,6 @@ class ChatClient(Protocol):
 
 class ChatClientBase(AFBaseModel, ABC):
     """Base class for chat clients."""
-
-    ai_model_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
     def _prepare_messages(
         self, messages: str | ChatMessage | list[str] | list[ChatMessage]
