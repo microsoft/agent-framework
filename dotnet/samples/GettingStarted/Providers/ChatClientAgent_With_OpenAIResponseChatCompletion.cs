@@ -6,8 +6,6 @@ using Microsoft.Shared.Samples;
 using OpenAI;
 using OpenAI.Responses;
 
-#pragma warning disable CS8524 // The switch expression does not handle some values of its input type (it is not exhaustive) involving an unnamed enum value.
-
 namespace Providers;
 
 /// <summary>
@@ -18,29 +16,63 @@ public sealed class ChatClientAgent_With_OpenAIResponsesChatCompletion(ITestOutp
     private const string JokerName = "Joker";
     private const string JokerInstructions = "You are good at telling jokes.";
 
-    [Theory]
-    [InlineData(false)] // This will use in-memory messages to store the thread state.
-    [InlineData(true)] // This will use the conversation id to reference the thread state on the server side.
-    public async Task RunWithChatCompletion(bool useConversationIdThread)
+    /// <summary>
+    /// This will use the conversation id to reference the thread state on the server side.
+    /// </summary>
+    [Fact]
+    public async Task RunWithChatCompletionServiceManagedThread()
     {
         // Get the chat client to use for the agent.
-#pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
+        using var chatClient = new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
+            .GetOpenAIResponseClient(TestConfiguration.OpenAI.ChatModelId)
+            .AsIChatClient();
+
+        // Define the agent
+        ChatClientAgent agent = new(chatClient, JokerInstructions, JokerName);
+
+        // Start a new thread for the agent conversation based on the type.
+        AgentThread thread = agent.GetNewThread();
+
+        // Respond to user input.
+        await RunAgentAsync("Tell me a joke about a pirate.");
+        await RunAgentAsync("Now add some emojis to the joke.");
+
+        // Local function to invoke agent and display the conversation messages for the thread.
+        async Task RunAgentAsync(string input)
+        {
+            this.WriteUserMessage(input);
+
+            var response = await agent.RunAsync(input, thread);
+
+            this.WriteResponseOutput(response);
+        }
+    }
+
+    /// <summary>
+    /// This will use in-memory messages to store the thread state.
+    /// </summary>
+    [Fact]
+    public async Task RunWithChatCompletionInMemoryThread()
+    {
+        // Get the chat client to use for the agent.
         using var chatClient = new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
             .GetOpenAIResponseClient(TestConfiguration.OpenAI.ChatModelId)
             .AsIChatClient();
 
         // Define the agent
         ChatClientAgent agent =
-            new(chatClient, new()
+            new(chatClient, options: new()
             {
                 Name = JokerName,
                 Instructions = JokerInstructions,
                 ChatOptions = new ChatOptions
                 {
-                    RawRepresentationFactory = (_) => new ResponseCreationOptions() { StoredOutputEnabled = useConversationIdThread }
+                    // We can use the RawRepresentationFactory to provide Response service specific
+                    // options. Here we can indicate that we do not want the service to store the
+                    // conversation in a service managed thread.
+                    RawRepresentationFactory = (_) => new ResponseCreationOptions() { StoredOutputEnabled = false }
                 }
             });
-#pragma warning restore OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
         // Start a new thread for the agent conversation based on the type.
         AgentThread thread = agent.GetNewThread();

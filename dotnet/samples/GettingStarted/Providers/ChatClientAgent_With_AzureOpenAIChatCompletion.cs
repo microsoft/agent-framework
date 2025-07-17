@@ -29,12 +29,7 @@ public sealed class ChatClientAgent_With_AzureOpenAIChatCompletion(ITestOutputHe
                 .AsIChatClient();
 
         // Define the agent
-        ChatClientAgent agent =
-            new(chatClient, new()
-            {
-                Name = JokerName,
-                Instructions = JokerInstructions,
-            });
+        ChatClientAgent agent = new(chatClient, JokerInstructions, JokerName);
 
         // Start a new thread for the agent conversation.
         AgentThread thread = agent.GetNewThread();

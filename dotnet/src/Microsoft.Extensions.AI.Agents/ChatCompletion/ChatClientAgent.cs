@@ -25,9 +25,35 @@ public sealed class ChatClientAgent : Agent
     /// Initializes a new instance of the <see cref="ChatClientAgent"/> class.
     /// </summary>
     /// <param name="chatClient">The chat client to use for invoking the agent.</param>
-    /// <param name="options">Optional agent options to configure the agent.</param>
+    /// <param name="instructions">Optional instructions for the agent.</param>
+    /// <param name="name">Optional name for the agent.</param>
+    /// <param name="description">Optional description for the agent.</param>
+    /// <param name="tools">Optional list of tools that the agent can use during invocation.</param>
     /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
-    public ChatClientAgent(IChatClient chatClient, ChatClientAgentOptions? options = null, ILoggerFactory? loggerFactory = null)
+    public ChatClientAgent(IChatClient chatClient, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null)
+        : this(
+              chatClient,
+              new ChatClientAgentOptions()
+              {
+                  Name = name,
+                  Description = description,
+                  Instructions = instructions,
+                  ChatOptions = tools is null ? null : new ChatOptions()
+                  {
+                      Tools = tools,
+                  }
+              },
+              loggerFactory)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ChatClientAgent"/> class.
+    /// </summary>
+    /// <param name="chatClient">The chat client to use for invoking the agent.</param>
+    /// <param name="options">Full set of options to configure the agent.</param>
+    /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
+    public ChatClientAgent(IChatClient chatClient, ChatClientAgentOptions options, ILoggerFactory? loggerFactory = null)
     {
         Throw.IfNull(chatClient);
 
@@ -78,7 +104,7 @@ public sealed class ChatClientAgent : Agent
         (ChatClientAgentThread chatClientThread, ChatOptions? chatOptions, List<ChatMessage> threadMessages) =
             await this.PrepareThreadAndMessagesAsync(thread, messages, options, cancellationToken).ConfigureAwait(false);
 
-        var agentName = this.GetAgentName();
+        var agentName = this.GetLoggingAgentName();
 
         this._logger.LogAgentChatClientInvokingAgent(nameof(RunAsync), this.Id, agentName, this._chatClientType);
 
@@ -120,14 +146,14 @@ public sealed class ChatClientAgent : Agent
             await this.PrepareThreadAndMessagesAsync(thread, inputMessages, options, cancellationToken).ConfigureAwait(false);
 
         int messageCount = threadMessages.Count;
-        var agentName = this.GetAgentName();
+        var loggingAgentName = this.GetLoggingAgentName();
 
-        this._logger.LogAgentChatClientInvokingAgent(nameof(RunStreamingAsync), this.Id, agentName, this._chatClientType);
+        this._logger.LogAgentChatClientInvokingAgent(nameof(RunStreamingAsync), this.Id, loggingAgentName, this._chatClientType);
 
         // Using the enumerator to ensure we consider the case where no updates are returned for notification.
         var responseUpdatesEnumerator = this.ChatClient.GetStreamingResponseAsync(threadMessages, chatOptions, cancellationToken).GetAsyncEnumerator(cancellationToken);
 
-        this._logger.LogAgentChatClientInvokedStreamingAgent(nameof(RunStreamingAsync), this.Id, agentName, this._chatClientType);
+        this._logger.LogAgentChatClientInvokedStreamingAgent(nameof(RunStreamingAsync), this.Id, loggingAgentName, this._chatClientType);
 
         List<ChatResponseUpdate> responseUpdates = [];
 
@@ -140,7 +166,7 @@ public sealed class ChatClientAgent : Agent
             if (update is not null)
             {
                 responseUpdates.Add(update);
-                update.AuthorName ??= agentName;
+                update.AuthorName ??= this.Name;
                 yield return update.ToAgentRunResponseUpdate(this.Id);
             }
 
@@ -362,6 +388,6 @@ public sealed class ChatClientAgent : Agent
         }
     }
 
-    private string GetAgentName() => this.Name ?? "UnnamedAgent";
+    private string GetLoggingAgentName() => this.Name ?? "UnnamedAgent";
     #endregion
 }

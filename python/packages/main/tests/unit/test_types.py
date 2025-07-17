@@ -10,7 +10,9 @@ from agent_framework import (
     AgentRunResponseUpdate,
     AIContent,
     AIContents,
+    AITool,
     ChatMessage,
+    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     ChatRole,
@@ -492,6 +494,99 @@ def test_generated_embeddings():
     assert issubclass(GeneratedEmbeddings, MutableSequence)
 
 
+# region: ChatOptions
+
+
+def test_chat_options_init() -> None:
+    options = ChatOptions()
+    assert options.ai_model_id is None
+
+
+def test_chat_options_init_with_args(ai_function_tool, ai_tool) -> None:
+    options = ChatOptions(
+        ai_model_id="gpt-4",
+        max_tokens=1024,
+        temperature=0.7,
+        top_p=0.9,
+        presence_penalty=0.0,
+        frequency_penalty=0.0,
+        user="user-123",
+        tools=[ai_function_tool, ai_tool],
+    )
+    assert options.ai_model_id == "gpt-4"
+    assert options.max_tokens == 1024
+    assert options.temperature == 0.7
+    assert options.top_p == 0.9
+    assert options.presence_penalty == 0.0
+    assert options.frequency_penalty == 0.0
+    assert options.user == "user-123"
+    for tool in options._ai_tools:
+        assert isinstance(tool, AITool)
+        assert tool.name is not None
+        assert tool.description is not None
+        assert tool.parameters() is not None
+
+
+def test_chat_options_and(ai_function_tool, ai_tool) -> None:
+    options1 = ChatOptions(ai_model_id="gpt-4o", tools=[ai_function_tool])
+    options2 = ChatOptions(ai_model_id="gpt-4.1", tools=[ai_tool])
+    assert options1 != options2
+    options3 = options1 & options2
+
+    assert options3.ai_model_id == "gpt-4.1"
+    assert len(options3._ai_tools) == 2
+    assert options3._ai_tools == [ai_function_tool, ai_tool]
+    assert options3.tools == [ai_function_tool, ai_tool]
+
+
+def test_chat_options_parsing_tools(ai_function_tool, ai_tool) -> None:
+    from agent_framework._clients import _prepare_tools_and_tool_choice
+
+    def echo() -> str:
+        """Echo the input."""
+        return "Echo"
+
+    dict_function = {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Retrieves current weather for the given location.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string", "description": "City and country e.g. Bogotá, Colombia"},
+                    "units": {
+                        "type": "string",
+                        "enum": ["celsius", "fahrenheit"],
+                        "description": "Units the temperature will be returned in.",
+                    },
+                },
+                "required": ["location", "units"],
+                "additionalProperties": False,
+            },
+            "strict": True,
+        },
+    }
+
+    options = ChatOptions(tools=[ai_function_tool, ai_tool, echo, dict_function], tool_choice="auto")
+    assert len(options.tools) == 4
+    assert options.tools[0] == ai_function_tool
+    assert options.tools[1] == ai_tool
+    assert options.tools[2] != echo
+    assert options.tools[3] == dict_function
+    # after prepare, the tools should be represented as dicts
+    # while ai_tools is still the same.
+    _prepare_tools_and_tool_choice(options)
+    assert options._ai_tools[0] == ai_function_tool
+    assert options._ai_tools[1] == ai_tool
+    assert options._ai_tools[3] == dict_function
+    assert len(options.tools) == 4
+    assert options.tools[0]["function"]["name"] == "simple_function"
+    assert options.tools[1]["function"]["name"] == "generic_tool"
+    assert options.tools[2]["function"]["name"] == "echo"
+    assert options.tools[3]["function"]["name"] == "get_weather"
+
+
 # region Agent Response Fixtures
 
 
@@ -548,7 +643,7 @@ def test_agent_run_response_from_updates(agent_run_response_update: AgentRunResp
     updates = [agent_run_response_update, agent_run_response_update]
     response = AgentRunResponse.from_agent_run_response_updates(updates)
     assert len(response.messages) > 0
-    assert response.text == "Test content\nTest content"
+    assert response.text == "Test content Test content"
 
 
 def test_agent_run_response_str_method(chat_message: ChatMessage) -> None:

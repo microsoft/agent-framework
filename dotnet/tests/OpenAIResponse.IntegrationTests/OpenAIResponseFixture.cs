@@ -12,8 +12,6 @@ using OpenAI;
 using OpenAI.Responses;
 using Shared.IntegrationTests;
 
-#pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-
 namespace OpenAIResponse.IntegrationTests;
 
 public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
@@ -80,7 +78,7 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
     {
         return Task.FromResult(new ChatClientAgent(
             this._openAIResponseClient.AsIChatClient(),
-            new()
+            options: new()
             {
                 Name = name,
                 Instructions = instructions,

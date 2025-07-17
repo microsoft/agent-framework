@@ -1,9 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Azure.AI.Agents.Persistent;
-using Microsoft.Extensions.AI.AzureAIAgentsPersistent;
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
 
-namespace Microsoft.Extensions.AI;
+namespace Azure.AI.Agents.Persistent;
 
 /// <summary>
 /// Provides extension methods for <see cref="PersistentAgentsClient"/>.
@@ -11,16 +14,31 @@ namespace Microsoft.Extensions.AI;
 public static class PersistentAgentsClientExtensions
 {
     /// <summary>
-    /// Creates an <see cref="IChatClient"/> for a <see cref="PersistentAgentsClient"/> client for interacting with a specific agent.
+    /// Retrieves an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="PersistentAgentsClient"/>.
     /// </summary>
-    /// <param name="client">The <see cref="PersistentAgentsClient"/> instance to be accessed as an <see cref="IChatClient"/>.</param>
-    /// <param name="agentId">The unique identifier of the agent with which to interact.</param>
-    /// <param name="threadId">
-    /// An optional existing thread identifier for the chat session. This serves as a default, and may be overridden per call to
-    /// <see cref="IChatClient.GetResponseAsync"/> or <see cref="IChatClient.GetStreamingResponseAsync"/> via the <see cref="ChatOptions.ConversationId"/>
-    /// property. If not thread ID is provided via either mechanism, a new thread will be created for the request.
-    /// </param>
-    /// <returns>An <see cref="IChatClient"/> instance configured to interact with the specified agent and thread.</returns>
-    public static IChatClient AsIChatClient(this PersistentAgentsClient client, string agentId, string? threadId = null) =>
-        new PersistentAgentsChatClient(client, agentId, threadId);
+    /// <param name="persistentAgentsClient">The <see cref="PersistentAgentsClient"/> to create the <see cref="ChatClientAgent"/> with.</param>
+    /// <returns>A <see cref="ChatClientAgent"/> for the persistent agent.</returns>
+    /// <param name="agentId"> The ID of the server side agent to create a <see cref="ChatClientAgent"/> for.</param>
+    /// <param name="chatOptions">Options that should apply to all runs of the agent.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the persistent agent.</returns>
+    public static async Task<ChatClientAgent> GetRunnableAgentAsync(
+        this PersistentAgentsClient persistentAgentsClient,
+        string agentId,
+        ChatOptions? chatOptions = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (persistentAgentsClient is null)
+        {
+            throw new ArgumentNullException(nameof(persistentAgentsClient));
+        }
+
+        if (string.IsNullOrWhiteSpace(agentId))
+        {
+            throw new ArgumentException($"{nameof(agentId)} should not be null or whitespace.", nameof(agentId));
+        }
+
+        var persistentAgentResponse = await persistentAgentsClient.Administration.GetAgentAsync(agentId, cancellationToken).ConfigureAwait(false);
+        return persistentAgentResponse.AsRunnableAgent(persistentAgentsClient, chatOptions);
+    }
 }
