@@ -52,6 +52,7 @@ from azure.ai.agents.models import (
     ToolOutput,
 )
 from azure.ai.projects.aio import AIProjectClient
+from azure.core.credentials_async import AsyncTokenCredential
 from pydantic import Field, PrivateAttr, ValidationError
 
 
@@ -96,6 +97,7 @@ class FoundryChatClient(ChatClientBase):
         default_thread_id: str | None = None,
         project_endpoint: str | None = None,
         model_deployment_name: str | None = None,
+        credential: AsyncTokenCredential | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         **kwargs: Any,
@@ -111,9 +113,11 @@ class FoundryChatClient(ChatClientBase):
             default_thread_id: Default thread ID to use for conversations.
             project_endpoint: The Azure AI Foundry project endpoint URL. Used if client is not provided.
             model_deployment_name: The model deployment name to use for agent creation.
+            credential: Azure async credential to use for authentication. If not provided,
+                DefaultAzureCredential will be used.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
-            kwargs: Additional keyword arguments.
+            **kwargs: Additional keyword arguments passed to the parent class.
         """
         try:
             foundry_settings = FoundrySettings(
@@ -131,14 +135,16 @@ class FoundryChatClient(ChatClientBase):
             if not foundry_settings.project_endpoint:
                 raise ServiceInitializationError("Project endpoint is required when client is not provided.")
 
-            from azure.identity.aio import DefaultAzureCredential
+            # Use provided credential or fallback to DefaultAzureCredential
+            if credential is None:
+                from azure.identity.aio import DefaultAzureCredential
 
-            client = AIProjectClient(endpoint=foundry_settings.project_endpoint, credential=DefaultAzureCredential())
+                credential = DefaultAzureCredential()
 
-        # Initialize the Pydantic model
+            client = AIProjectClient(endpoint=foundry_settings.project_endpoint, credential=credential)
+
         super().__init__(client=client, agent_id=agent_id, default_thread_id=default_thread_id, **kwargs)
 
-        # Set private attributes
         self._created_agent_id = None
         self._foundry_settings = foundry_settings
 
@@ -156,6 +162,7 @@ class FoundryChatClient(ChatClientBase):
             project_endpoint=settings.get("project_endpoint"),
             model_deployment_name=settings.get("model_deployment_name"),
             agent_name=settings.get("agent_name"),
+            credential=settings.get("credential"),
             env_file_path=settings.get("env_file_path"),
         )
 
