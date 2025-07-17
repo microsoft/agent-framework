@@ -148,6 +148,18 @@ class FoundryChatClient(ChatClientBase):
         self._should_delete_agent = False
         self._foundry_settings = foundry_settings
 
+    async def __aenter__(self) -> "FoundryChatClient":
+        """Async context manager entry."""
+        return self
+
+    async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
+        """Async context manager exit - clean up any agents we created."""
+        await self.aclose()
+
+    async def aclose(self) -> None:
+        """Close the client and clean up any agents we created."""
+        await self._cleanup_agent_if_needed()
+
     @classmethod
     def from_dict(cls, settings: dict[str, Any]) -> "FoundryChatClient":
         """Initialize a FoundryChatClient from a dictionary of settings.
@@ -198,17 +210,12 @@ class FoundryChatClient(ChatClientBase):
         # Determine which agent to use and create if needed
         agent_id = await self._ensure_agent_exists()
 
-        try:
-            # Create the streaming response
-            stream, thread_id = await self._create_agent_stream(thread_id, agent_id, run_options, tool_results)
+        # Create the streaming response
+        stream, thread_id = await self._create_agent_stream(thread_id, agent_id, run_options, tool_results)
 
-            # Process and yield each update from the stream
-            async for update in self._process_stream_events(stream, thread_id):
-                yield update
-
-        finally:
-            # Clean up the created agent if we created one
-            await self._cleanup_agent_if_needed()
+        # Process and yield each update from the stream
+        async for update in self._process_stream_events(stream, thread_id):
+            yield update
 
     async def _ensure_agent_exists(self) -> str:
         """Ensure an agent exists, creating one if necessary.

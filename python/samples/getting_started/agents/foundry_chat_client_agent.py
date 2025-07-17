@@ -24,32 +24,34 @@ def get_weather(
 async def example_1_simplest() -> None:
     print("=== Example 1: Simplest ===")
 
-    agent = ChatClientAgent(
-        FoundryChatClient(),
-        instructions="You are a helpful weather agent.",
-        tools=get_weather,
-    )
+    async with FoundryChatClient() as chat_client:
+        agent = ChatClientAgent(
+            chat_client,
+            instructions="You are a helpful weather agent.",
+            tools=get_weather,
+        )
 
-    result = await agent.run("What's the weather like in Seattle?")
-    print(f"Result: {result}\n")
+        result = await agent.run("What's the weather like in Seattle?")
+        print(f"Result: {result}\n")
 
 
 async def example_2_with_explicit_settings() -> None:
     print("=== Example 2: Explicit settings ===")
 
-    agent = ChatClientAgent(
-        FoundryChatClient(
-            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model_deployment_name=os.environ["FOUNDRY_MODEL_DEPLOYMENT_NAME"],
-            credential=AzureCliCredential(),
-            agent_name="WeatherAgent",
-        ),
-        instructions="You are a helpful weather agent.",
-        tools=get_weather,
-    )
+    async with FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model_deployment_name=os.environ["FOUNDRY_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+        agent_name="WeatherAgent",
+    ) as chat_client:
+        agent = ChatClientAgent(
+            chat_client,
+            instructions="You are a helpful weather agent.",
+            tools=get_weather,
+        )
 
-    result = await agent.run("What's the weather like in New York?")
-    print(f"Result: {result}\n")
+        result = await agent.run("What's the weather like in New York?")
+        print(f"Result: {result}\n")
 
 
 async def example_3_with_existing_client() -> None:
@@ -58,18 +60,19 @@ async def example_3_with_existing_client() -> None:
     # Create the client yourself
     client = AIProjectClient(endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=AzureCliCredential())
 
-    agent = ChatClientAgent(
-        FoundryChatClient(
-            client=client,
-            model_deployment_name=os.environ["FOUNDRY_MODEL_DEPLOYMENT_NAME"],
-            agent_name="WeatherAgent",
-        ),
-        instructions="You are a helpful weather agent.",
-        tools=get_weather,
-    )
+    async with FoundryChatClient(
+        client=client,
+        model_deployment_name=os.environ["FOUNDRY_MODEL_DEPLOYMENT_NAME"],
+        agent_name="WeatherAgent",
+    ) as chat_client:
+        agent = ChatClientAgent(
+            chat_client,
+            instructions="You are a helpful weather agent.",
+            tools=get_weather,
+        )
 
-    result = await agent.run("What's the weather like in London?")
-    print(f"Result: {result}\n")
+        result = await agent.run("What's the weather like in London?")
+        print(f"Result: {result}\n")
 
 
 async def example_4_with_existing_agent() -> None:
@@ -98,11 +101,10 @@ async def example_4_with_existing_agent() -> None:
 
 
 async def main() -> None:
-    # Run all examples
     await example_1_simplest()
-    # await example_2_with_explicit_settings()
-    # await example_3_with_existing_client()
-    # await example_4_with_existing_agent()
+    await example_2_with_explicit_settings()
+    await example_3_with_existing_client()
+    await example_4_with_existing_agent()
 
 
 if __name__ == "__main__":
