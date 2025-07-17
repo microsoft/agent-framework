@@ -11,6 +11,4 @@ namespace Microsoft.Extensions.AI.Agents.Runtime;
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     WriteIndented = false)]
 [JsonSerializable(typeof(string))]
-internal sealed partial class ActorRuntimeJsonContext : JsonSerializerContext
-{
-}
+internal sealed partial class ActorRuntimeJsonContext : JsonSerializerContext;
