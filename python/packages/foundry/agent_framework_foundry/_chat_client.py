@@ -92,10 +92,10 @@ class FoundryChatClient(ChatClientBase):
         self,
         client: AIProjectClient | None = None,
         agent_id: str | None = None,
+        agent_name: str | None = None,
         default_thread_id: str | None = None,
         project_endpoint: str | None = None,
         model_deployment_name: str | None = None,
-        agent_name: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         **kwargs: Any,
@@ -107,10 +107,10 @@ class FoundryChatClient(ChatClientBase):
             agent_id: The ID of an existing agent to use. If not provided and client is provided,
                 a new agent will be created (and deleted after the request). If neither client
                 nor agent_id is provided, both will be created and managed automatically.
+            agent_name: The name to use when creating new agents.
             default_thread_id: Default thread ID to use for conversations.
             project_endpoint: The Azure AI Foundry project endpoint URL. Used if client is not provided.
             model_deployment_name: The model deployment name to use for agent creation.
-            agent_name: The name to use when creating new agents.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
             kwargs: Additional keyword arguments.
