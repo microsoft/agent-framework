@@ -86,7 +86,7 @@ class FoundryChatClient(ChatClientBase):
     client: AIProjectClient = Field(...)
     agent_id: str | None = Field(default=None)
     default_thread_id: str | None = Field(default=None)
-    _created_agent_id: str | None = PrivateAttr(default=None)  # Track agents we create so we can clean them up
+    _should_delete_agent: bool = PrivateAttr(default=False)  # Track whether we should delete the agent
     _foundry_settings: FoundrySettings = PrivateAttr()
 
     def __init__(
@@ -145,7 +145,7 @@ class FoundryChatClient(ChatClientBase):
 
         super().__init__(client=client, agent_id=agent_id, default_thread_id=default_thread_id, **kwargs)
 
-        self._created_agent_id = None
+        self._should_delete_agent = False
         self._foundry_settings = foundry_settings
 
     @classmethod
@@ -196,7 +196,7 @@ class FoundryChatClient(ChatClientBase):
             raise ValueError("No thread ID was provided, but chat messages includes tool results.")
 
         # Determine which agent to use and create if needed
-        agent_id, created_agent_id = await self._ensure_agent_exists()
+        agent_id = await self._ensure_agent_exists()
 
         try:
             # Create the streaming response
@@ -208,19 +208,16 @@ class FoundryChatClient(ChatClientBase):
 
         finally:
             # Clean up the created agent if we created one
-            await self._cleanup_created_agent(created_agent_id)
+            await self._cleanup_agent_if_needed()
 
-    async def _ensure_agent_exists(self) -> tuple[str, str | None]:
+    async def _ensure_agent_exists(self) -> str:
         """Ensure an agent exists, creating one if necessary.
 
         Returns:
-            tuple: (agent_id, created_agent_id) where created_agent_id is None if we didn't create one
+            str: The agent_id to use
         """
-        agent_id = self.agent_id
-        created_agent_id = None
-
         # If no agent_id is provided, create a temporary agent
-        if agent_id is None:
+        if self.agent_id is None:
             if not self._foundry_settings.model_deployment_name:
                 raise ServiceInitializationError("Model deployment name is required for agent creation.")
 
@@ -228,10 +225,10 @@ class FoundryChatClient(ChatClientBase):
             created_agent = await self.client.agents.create_agent(
                 model=self._foundry_settings.model_deployment_name, name=agent_name
             )
-            agent_id = created_agent.id
-            created_agent_id = agent_id
+            self.agent_id = created_agent.id
+            self._should_delete_agent = True
 
-        return agent_id, created_agent_id
+        return self.agent_id
 
     async def _create_agent_stream(
         self,
@@ -407,11 +404,13 @@ class FoundryChatClient(ChatClientBase):
 
         return contents
 
-    async def _cleanup_created_agent(self, created_agent_id: str | None) -> None:
-        """Clean up a created agent, if any."""
-        if created_agent_id is not None:
-            try:  # noqa: SIM105
-                await self.client.agents.delete_agent(created_agent_id)
+    async def _cleanup_agent_if_needed(self) -> None:
+        """Clean up the agent if we created it."""
+        if self._should_delete_agent and self.agent_id is not None:
+            try:
+                await self.client.agents.delete_agent(self.agent_id)
+                self.agent_id = None
+                self._should_delete_agent = False
             except:  # noqa: E722, S110
                 # Do not block getting a response, but log the cleanup issue
                 # TODO (dmytrostruk): Add logging
