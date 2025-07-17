@@ -12,6 +12,7 @@ namespace Microsoft.Extensions.AI.Agents;
 /// Base abstraction for all agents. An agent instance may participate in one or more conversations.
 /// A conversation may include one or more agents.
 /// </summary>
+/// AIAgent
 public abstract class Agent
 {
     /// <summary>
@@ -26,6 +27,8 @@ public abstract class Agent
     /// Gets the name of the agent (optional).
     /// </summary>
     public virtual string? Name { get; }
+
+    //public virtual string NameOrId / DisplayName;
 
     /// <summary>
     /// Gets the description of the agent (optional).

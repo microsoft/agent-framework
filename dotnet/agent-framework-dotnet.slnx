@@ -24,12 +24,14 @@
       <BuildType Solution="Publish|*" Project="Release" />
     </Project>
   </Folder>
+  <Folder Name="/Demos/">
+    <Project Path="demos/MinimumConsoleDemo/MinimumConsoleDemo.csproj">
+      <BuildType Solution="Publish|*" Project="Release" />
+    </Project>
+  </Folder>
   <Folder Name="/Samples/">
     <Project Path="samples/GettingStarted/GettingStarted.csproj">
       <BuildType Solution="Publish|*" Project="Debug" />
-    </Project>
-    <Project Path="samples/MinimumConsoleDemo/MinimumConsoleDemo.csproj">
-      <BuildType Solution="Publish|*" Project="Release" />
     </Project>
   </Folder>
   <Folder Name="/Solution Items/">
