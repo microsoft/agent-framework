@@ -2,9 +2,10 @@
 
 import json
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence
-from typing import Any
+from typing import Any, ClassVar
 
 from agent_framework import (
+    AFBaseSettings,
     AIContents,
     AITool,
     ChatClientBase,
@@ -24,6 +25,7 @@ from agent_framework import (
     use_tool_calling,
 )
 from agent_framework._clients import tool_to_json_schema_spec
+from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.agents.models import (
     AgentsNamedToolChoice,
     AgentsNamedToolChoiceType,
@@ -50,13 +52,112 @@ from azure.ai.agents.models import (
     ToolOutput,
 )
 from azure.ai.projects.aio import AIProjectClient
+from pydantic import Field, PrivateAttr, ValidationError
+
+
+class FoundrySettings(AFBaseSettings):
+    """Foundry model settings.
+
+    The settings are first loaded from environment variables with the prefix 'FOUNDRY_'.
+    If the environment variables are not found, the settings can be loaded from a .env file
+    with the encoding 'utf-8'. If the settings are not found in the .env file, the settings
+    are ignored; however, validation will fail alerting that the settings are missing.
+
+    Optional settings for prefix 'FOUNDRY_' are:
+    - project_endpoint: str | None - The Azure AI Foundry project endpoint URL.
+        (Env var FOUNDRY_PROJECT_ENDPOINT)
+    - model_deployment_name: str | None - The name of the model deployment to use.
+        (Env var FOUNDRY_MODEL_DEPLOYMENT_NAME)
+    - agent_name: str | None - Default name for automatically created agents.
+        (Env var FOUNDRY_AGENT_NAME)
+    - env_file_path: str | None - if provided, the .env settings are read from this file path location
+    """
+
+    env_prefix: ClassVar[str] = "FOUNDRY_"
+
+    project_endpoint: str | None = None
+    model_deployment_name: str | None = None
+    agent_name: str | None = "UnnamedAgent"
 
 
 @use_tool_calling
 class FoundryChatClient(ChatClientBase):
-    client: AIProjectClient
-    agent_id: str | None = None
-    default_thread_id: str | None = None
+    client: AIProjectClient = Field(...)
+    agent_id: str | None = Field(default=None)
+    default_thread_id: str | None = Field(default=None)
+    _created_agent_id: str | None = PrivateAttr(default=None)  # Track agents we create so we can clean them up
+    _foundry_settings: FoundrySettings = PrivateAttr()
+
+    def __init__(
+        self,
+        client: AIProjectClient | None = None,
+        agent_id: str | None = None,
+        default_thread_id: str | None = None,
+        project_endpoint: str | None = None,
+        model_deployment_name: str | None = None,
+        agent_name: str | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize a FoundryChatClient.
+
+        Args:
+            client: An existing AIProjectClient to use. If not provided, one will be created.
+            agent_id: The ID of an existing agent to use. If not provided and client is provided,
+                a new agent will be created (and deleted after the request). If neither client
+                nor agent_id is provided, both will be created and managed automatically.
+            default_thread_id: Default thread ID to use for conversations.
+            project_endpoint: The Azure AI Foundry project endpoint URL. Used if client is not provided.
+            model_deployment_name: The model deployment name to use for agent creation.
+            agent_name: The name to use when creating new agents.
+            env_file_path: Path to environment file for loading settings.
+            env_file_encoding: Encoding of the environment file.
+            kwargs: Additional keyword arguments.
+        """
+        try:
+            foundry_settings = FoundrySettings(
+                project_endpoint=project_endpoint,
+                model_deployment_name=model_deployment_name,
+                agent_name=agent_name,
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
+            )
+        except ValidationError as ex:
+            raise ServiceInitializationError("Failed to create Foundry settings.", ex) from ex
+
+        # If no client is provided, create one
+        if client is None:
+            if not foundry_settings.project_endpoint:
+                raise ServiceInitializationError("Project endpoint is required when client is not provided.")
+
+            from azure.identity.aio import DefaultAzureCredential
+
+            client = AIProjectClient(endpoint=foundry_settings.project_endpoint, credential=DefaultAzureCredential())
+
+        # Initialize the Pydantic model
+        super().__init__(client=client, agent_id=agent_id, default_thread_id=default_thread_id, **kwargs)
+
+        # Set private attributes
+        self._created_agent_id = None
+        self._foundry_settings = foundry_settings
+
+    @classmethod
+    def from_dict(cls, settings: dict[str, Any]) -> "FoundryChatClient":
+        """Initialize a FoundryChatClient from a dictionary of settings.
+
+        Args:
+            settings: A dictionary of settings for the service.
+        """
+        return cls(
+            client=settings.get("client"),
+            agent_id=settings.get("agent_id"),
+            default_thread_id=settings.get("default_thread_id"),
+            project_endpoint=settings.get("project_endpoint"),
+            model_deployment_name=settings.get("model_deployment_name"),
+            agent_name=settings.get("agent_name"),
+            env_file_path=settings.get("env_file_path"),
+        )
 
     async def _inner_get_response(
         self,
@@ -87,23 +188,60 @@ class FoundryChatClient(ChatClientBase):
         if thread_id is None and tool_results is not None:
             raise ValueError("No thread ID was provided, but chat messages includes tool results.")
 
-        # Get any active run for this thread
-        thread_run: ThreadRun | None = None
+        # Determine which agent to use and create if needed
+        agent_id, created_agent_id = await self._ensure_agent_exists()
 
-        if thread_id is not None:
-            async for run in self.client.agents.runs.list(thread_id=thread_id, limit=1, order=ListSortOrder.DESCENDING):
-                if (
-                    run.status is not RunStatus.COMPLETED
-                    and run.status is not RunStatus.CANCELLED
-                    and run.status is not RunStatus.FAILED
-                    and run.status is not RunStatus.EXPIRED
-                ):
-                    thread_run = run
-                    break
+        try:
+            # Create the streaming response
+            stream, thread_id = await self._create_agent_stream(thread_id, agent_id, run_options, tool_results)
+
+            # Process and yield each update from the stream
+            async for update in self._process_stream_events(stream, thread_id):
+                yield update
+
+        finally:
+            # Clean up the created agent if we created one
+            await self._cleanup_created_agent(created_agent_id)
+
+    async def _ensure_agent_exists(self) -> tuple[str, str | None]:
+        """Ensure an agent exists, creating one if necessary.
+
+        Returns:
+            tuple: (agent_id, created_agent_id) where created_agent_id is None if we didn't create one
+        """
+        agent_id = self.agent_id
+        created_agent_id = None
+
+        # If no agent_id is provided, create a temporary agent
+        if agent_id is None:
+            if not self._foundry_settings.model_deployment_name:
+                raise ServiceInitializationError("Model deployment name is required for agent creation.")
+
+            agent_name = self._foundry_settings.agent_name
+            created_agent = await self.client.agents.create_agent(
+                model=self._foundry_settings.model_deployment_name, name=agent_name
+            )
+            agent_id = created_agent.id
+            created_agent_id = agent_id
+
+        return agent_id, created_agent_id
+
+    async def _create_agent_stream(
+        self,
+        thread_id: str | None,
+        agent_id: str,
+        run_options: dict[str, Any],
+        tool_results: list[FunctionResultContent] | None,
+    ) -> tuple[AsyncAgentRunStream[AsyncAgentEventHandler[Any]] | AsyncAgentEventHandler[Any], str]:
+        """Create the agent stream for processing.
+
+        Returns:
+            tuple: (stream, final_thread_id)
+        """
+        # Get any active run for this thread
+        thread_run = await self._get_active_thread_run(thread_id)
 
         handler: AsyncAgentEventHandler[Any] = AsyncAgentEventHandler()
-        stream: AsyncAgentRunStream[AsyncAgentEventHandler[Any]] | None = None
-
         tool_run_id, tool_outputs = self._convert_function_results_to_tool_output(tool_results)
 
         if thread_run is not None and tool_run_id is not None and tool_run_id == thread_run.id and tool_outputs:
@@ -111,31 +249,63 @@ class FoundryChatClient(ChatClientBase):
             await self.client.agents.runs.submit_tool_outputs_stream(  # type: ignore[reportUnknownMemberType]
                 thread_run.thread_id, tool_run_id, tool_outputs=tool_outputs, event_handler=handler
             )
-
             # Pass the handler to the stream to continue processing
             stream = handler  # type: ignore
+            final_thread_id = thread_run.thread_id
         else:
-            if thread_id is None:
-                # No thread ID was provided, so create a new thread.
-                thread = await self.client.agents.threads.create(
-                    messages=run_options["additional_messages"],
-                    tool_resources=run_options.get("tool_resources", None),
-                    metadata=run_options.get("metadata", None),
-                )
-                run_options["additional_messages"] = []
-                thread_id = thread.id
-            elif thread_run is not None:
-                # There was an active run; we need to cancel it before starting a new run.
-                await self.client.agents.runs.cancel(thread_id, thread_run.id)
-                thread_run = None
+            # Handle thread creation or cancellation
+            final_thread_id = await self._prepare_thread(thread_id, thread_run, run_options)
 
             # Now create a new run and stream the results.
             stream = await self.client.agents.runs.stream(  # type: ignore[reportUnknownMemberType]
-                thread_id,
-                agent_id=self.agent_id,
+                final_thread_id,
+                agent_id=agent_id,
                 **run_options,
             )
-        # Process and yield each update.
+
+        return stream, final_thread_id
+
+    async def _get_active_thread_run(self, thread_id: str | None) -> ThreadRun | None:
+        """Get any active run for the given thread."""
+        if thread_id is None:
+            return None
+
+        async for run in self.client.agents.runs.list(thread_id=thread_id, limit=1, order=ListSortOrder.DESCENDING):
+            if (
+                run.status is not RunStatus.COMPLETED
+                and run.status is not RunStatus.CANCELLED
+                and run.status is not RunStatus.FAILED
+                and run.status is not RunStatus.EXPIRED
+            ):
+                return run
+        return None
+
+    async def _prepare_thread(
+        self, thread_id: str | None, thread_run: ThreadRun | None, run_options: dict[str, Any]
+    ) -> str:
+        """Prepare the thread for a new run, creating or cleaning up as needed."""
+        if thread_id is None:
+            # No thread ID was provided, so create a new thread.
+            thread = await self.client.agents.threads.create(
+                messages=run_options["additional_messages"],
+                tool_resources=run_options.get("tool_resources"),
+                metadata=run_options.get("metadata"),
+            )
+            run_options["additional_messages"] = []
+            return thread.id
+
+        if thread_run is not None:
+            # There was an active run; we need to cancel it before starting a new run.
+            await self.client.agents.runs.cancel(thread_id, thread_run.id)
+
+        return thread_id
+
+    async def _process_stream_events(
+        self,
+        stream: AsyncAgentRunStream[AsyncAgentEventHandler[Any]] | AsyncAgentEventHandler[Any],
+        thread_id: str,
+    ) -> AsyncIterable[ChatResponseUpdate]:
+        """Process events from the agent stream and yield ChatResponseUpdate objects."""
         response_id: str | None = None
 
         if stream is not None:
@@ -149,17 +319,15 @@ class FoundryChatClient(ChatClientBase):
 
             async for event_type, event_data, _ in stream_iter:  # type: ignore
                 if event_type == AgentStreamEvent.THREAD_RUN_CREATED and isinstance(event_data, ThreadRun):
-                    thread_id = event_data.thread_id
                     yield ChatResponseUpdate(
                         contents=[],
-                        conversation_id=thread_id,
+                        conversation_id=event_data.thread_id,
                         message_id=response_id,
                         raw_representation=event_data,
                         response_id=response_id,
                         role=ChatRole.ASSISTANT,
                     )
                 elif event_type == AgentStreamEvent.THREAD_RUN_STEP_CREATED and isinstance(event_data, RunStep):
-                    thread_id = event_data.thread_id
                     response_id = event_data.run_id
                 elif event_type == AgentStreamEvent.THREAD_MESSAGE_DELTA and isinstance(event_data, MessageDeltaChunk):
                     role = ChatRole.USER if event_data.delta.role == MessageRole.USER else ChatRole.ASSISTANT
@@ -176,18 +344,8 @@ class FoundryChatClient(ChatClientBase):
                     and isinstance(event_data, ThreadRun)
                     and isinstance(event_data.required_action, SubmitToolOutputsAction)
                 ):
-                    contents: list[AIContents] = []
-
-                    for tool_call in event_data.required_action.submit_tool_outputs.tool_calls:
-                        if isinstance(tool_call, RequiredFunctionToolCall):
-                            call_id = json.dumps([response_id, tool_call.id])
-                            function_name = tool_call.function.name
-                            function_arguments = json.loads(tool_call.function.arguments)
-                            contents.append(
-                                FunctionCallContent(call_id=call_id, name=function_name, arguments=function_arguments)
-                            )
-
-                    if len(contents) > 0:
+                    contents = self._create_function_call_contents(event_data, response_id)
+                    if contents:
                         yield ChatResponseUpdate(
                             role=ChatRole.ASSISTANT,
                             contents=contents,
@@ -208,7 +366,6 @@ class FoundryChatClient(ChatClientBase):
                             total_token_count=event_data.usage.total_tokens,
                         )
                     )
-
                     yield ChatResponseUpdate(
                         role=ChatRole.ASSISTANT,
                         contents=[usage_content],
@@ -226,6 +383,32 @@ class FoundryChatClient(ChatClientBase):
                         response_id=response_id,
                         role=ChatRole.ASSISTANT,
                     )
+
+    def _create_function_call_contents(self, event_data: ThreadRun, response_id: str | None) -> list[AIContents]:
+        """Create function call contents from a tool action event."""
+        contents: list[AIContents] = []
+
+        if isinstance(event_data.required_action, SubmitToolOutputsAction):
+            for tool_call in event_data.required_action.submit_tool_outputs.tool_calls:
+                if isinstance(tool_call, RequiredFunctionToolCall):
+                    call_id = json.dumps([response_id, tool_call.id])
+                    function_name = tool_call.function.name
+                    function_arguments = json.loads(tool_call.function.arguments)
+                    contents.append(
+                        FunctionCallContent(call_id=call_id, name=function_name, arguments=function_arguments)
+                    )
+
+        return contents
+
+    async def _cleanup_created_agent(self, created_agent_id: str | None) -> None:
+        """Clean up a created agent, if any."""
+        if created_agent_id is not None:
+            try:  # noqa: SIM105
+                await self.client.agents.delete_agent(created_agent_id)
+            except:  # noqa: E722, S110
+                # Do not block getting a response, but log the cleanup issue
+                # TODO (dmytrostruk): Add logging
+                pass
 
     def _create_run_options(
         self,
