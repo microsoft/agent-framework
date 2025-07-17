@@ -27,7 +27,7 @@ public class ChatClientAgentExtensionsTests
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
-        ChatClientAgent agent = new(mockService.Object, new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
         var messages = new List<ChatMessage> { new(ChatRole.User, "test message") };
 
         // Act & Assert - Should not throw
@@ -59,7 +59,7 @@ public class ChatClientAgentExtensionsTests
     {
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
-        ChatClientAgent agent = new(chatClient, new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(chatClient, options: new() { Instructions = "test instructions" });
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
@@ -82,7 +82,7 @@ public class ChatClientAgentExtensionsTests
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
-        ChatClientAgent agent = new(mockService.Object, new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
 
         // Act - Call extension method (should not throw)
@@ -115,7 +115,7 @@ public class ChatClientAgentExtensionsTests
             })
             .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
-        ChatClientAgent agent = new(mockService.Object, new() { Instructions = "base instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "base instructions" });
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
         var runOptions = new AgentRunOptions();
 
@@ -142,7 +142,7 @@ public class ChatClientAgentExtensionsTests
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
-        ChatClientAgent agent = new(mockService.Object, new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
         var thread = agent.GetNewThread();
 
@@ -177,7 +177,7 @@ public class ChatClientAgentExtensionsTests
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>())).ThrowsAsync(new OperationCanceledException());
 
-        ChatClientAgent agent = new(mockService.Object, new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
 
         // Act & Assert
@@ -202,7 +202,7 @@ public class ChatClientAgentExtensionsTests
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
-        ChatClientAgent agent = new(mockService.Object, new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
         const string TestPrompt = "test prompt";
 
         // Act
@@ -244,7 +244,7 @@ public class ChatClientAgentExtensionsTests
     {
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
-        ChatClientAgent agent = new(chatClient, new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(chatClient, options: new() { Instructions = "test instructions" });
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
@@ -260,7 +260,7 @@ public class ChatClientAgentExtensionsTests
     {
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
-        ChatClientAgent agent = new(chatClient, new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(chatClient, options: new() { Instructions = "test instructions" });
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
@@ -286,7 +286,7 @@ public class ChatClientAgentExtensionsTests
                 capturedMessages.AddRange(msgs))
             .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
-        ChatClientAgent agent = new(mockService.Object, new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
         const string TestPrompt = "test prompt";
 
         // Act
@@ -312,7 +312,7 @@ public class ChatClientAgentExtensionsTests
                 It.Is<ChatOptions>(opts => opts.MaxOutputTokens == 200),
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
-        ChatClientAgent agent = new(mockService.Object, new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
         const string TestPrompt = "test prompt";
 
         // Act
@@ -345,7 +345,7 @@ public class ChatClientAgentExtensionsTests
                 capturedMessages.AddRange(msgs))
             .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
-        ChatClientAgent agent = new(mockService.Object, new() { Instructions = "base instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "base instructions" });
         const string TestPrompt = "test prompt";
         var runOptions = new AgentRunOptions();
 
@@ -371,7 +371,7 @@ public class ChatClientAgentExtensionsTests
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
-        ChatClientAgent agent = new(mockService.Object, new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
         const string TestPrompt = "test prompt";
         var thread = agent.GetNewThread();
 
@@ -406,7 +406,7 @@ public class ChatClientAgentExtensionsTests
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>())).ThrowsAsync(new OperationCanceledException());
 
-        ChatClientAgent agent = new(mockService.Object, new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
         const string TestPrompt = "test prompt";
 
         // Act & Assert
@@ -437,7 +437,7 @@ public class ChatClientAgentExtensionsTests
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>())).Returns(returnUpdates.ToAsyncEnumerable());
 
-        ChatClientAgent agent = new(mockService.Object, new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
         var messages = new List<ChatMessage> { new(ChatRole.User, "test message") };
 
         // Act
@@ -488,7 +488,7 @@ public class ChatClientAgentExtensionsTests
     {
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
-        ChatClientAgent agent = new(chatClient, new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(chatClient, options: new() { Instructions = "test instructions" });
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<ArgumentNullException>(async () =>
@@ -518,7 +518,7 @@ public class ChatClientAgentExtensionsTests
                 It.Is<ChatOptions>(opts => opts.MaxOutputTokens == 100),
                 It.IsAny<CancellationToken>())).Returns(returnUpdates.ToAsyncEnumerable());
 
-        ChatClientAgent agent = new(mockService.Object, new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
 
         // Act
@@ -554,7 +554,7 @@ public class ChatClientAgentExtensionsTests
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>())).Returns(returnUpdates.ToAsyncEnumerable());
 
-        ChatClientAgent agent = new(mockService.Object, new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
         var thread = agent.GetNewThread();
 
@@ -592,7 +592,7 @@ public class ChatClientAgentExtensionsTests
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>())).Throws(new OperationCanceledException());
 
-        ChatClientAgent agent = new(mockService.Object, new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
 
         // Act & Assert
@@ -629,7 +629,7 @@ public class ChatClientAgentExtensionsTests
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>())).Returns(returnUpdates.ToAsyncEnumerable());
 
-        ChatClientAgent agent = new(mockService.Object, new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
         const string TestPrompt = "test prompt";
 
         // Act
@@ -680,7 +680,7 @@ public class ChatClientAgentExtensionsTests
     {
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
-        ChatClientAgent agent = new(chatClient, new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(chatClient, options: new() { Instructions = "test instructions" });
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<ArgumentNullException>(async () =>
@@ -701,7 +701,7 @@ public class ChatClientAgentExtensionsTests
     {
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
-        ChatClientAgent agent = new(chatClient, new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(chatClient, options: new() { Instructions = "test instructions" });
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -734,7 +734,7 @@ public class ChatClientAgentExtensionsTests
                 capturedMessages.AddRange(msgs))
             .Returns(returnUpdates.ToAsyncEnumerable());
 
-        ChatClientAgent agent = new(mockService.Object, new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
         const string TestPrompt = "test prompt";
 
         // Act
@@ -767,7 +767,7 @@ public class ChatClientAgentExtensionsTests
                 It.Is<ChatOptions>(opts => opts.MaxOutputTokens == 200),
                 It.IsAny<CancellationToken>())).Returns(returnUpdates.ToAsyncEnumerable());
 
-        ChatClientAgent agent = new(mockService.Object, new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
         const string TestPrompt = "test prompt";
 
         // Act
@@ -803,7 +803,7 @@ public class ChatClientAgentExtensionsTests
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>())).Returns(returnUpdates.ToAsyncEnumerable());
 
-        ChatClientAgent agent = new(mockService.Object, new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
         const string TestPrompt = "test prompt";
         var thread = agent.GetNewThread();
 
@@ -841,7 +841,7 @@ public class ChatClientAgentExtensionsTests
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>())).Throws(new OperationCanceledException());
 
-        ChatClientAgent agent = new(mockService.Object, new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
         const string TestPrompt = "test prompt";
 
         // Act & Assert

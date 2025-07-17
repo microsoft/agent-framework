@@ -15,6 +15,11 @@
     <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="9.0.7" />
     <PackageVersion Include="System.Threading.Channels" Version="9.0.7" />
     <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
+    <!-- OpenTelemetry -->
+    <PackageVersion Include="OpenTelemetry" Version="1.9.0" />
+    <PackageVersion Include="OpenTelemetry.Exporter.Console" Version="1.9.0" />
+    <PackageVersion Include="OpenTelemetry.Exporter.InMemory" Version="1.9.0" />
+    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.9.0" />
     <!-- Microsoft.Extensions.* -->
     <PackageVersion Include="Microsoft.Bcl.HashCode" Version="6.0.0" />
     <PackageVersion Include="Microsoft.Extensions.AI" Version="9.7.0" />
@@ -31,6 +36,7 @@
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
     <PackageVersion Include="Microsoft.Extensions.Logging" Version="8.0.1" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.7" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Testing" Version="9.0.7" />
     <!-- Agent SDKs -->
     <PackageVersion Include="Microsoft.Agents.CopilotStudio.Client" Version="1.1.125-beta" />
     <!-- Identity -->

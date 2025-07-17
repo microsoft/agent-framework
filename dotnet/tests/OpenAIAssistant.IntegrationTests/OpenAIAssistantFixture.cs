@@ -13,8 +13,6 @@ using Shared.IntegrationTests;
 
 namespace OpenAIAssistant.IntegrationTests;
 
-#pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-
 public class OpenAIAssistantFixture : IChatClientAgentFixture
 {
     private static readonly OpenAIConfiguration s_config = TestConfiguration.LoadSection<OpenAIConfiguration>();
@@ -67,7 +65,7 @@ public class OpenAIAssistantFixture : IChatClientAgentFixture
 
         return new ChatClientAgent(
             this._assistantClient.AsIChatClient(assistant.Value.Id),
-            new()
+            options: new()
             {
                 Id = assistant.Value.Id,
                 ChatOptions = new() { Tools = aiTools }

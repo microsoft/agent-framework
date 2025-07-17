@@ -105,7 +105,6 @@ public sealed class Step03_ChatClientAgent_UsingCodeInterpreterTools(ITestOutput
     /// <returns>The code interpreter output as a string.</returns>
     private static string? GetCodeInterpreterOutput(object rawRepresentation, ChatClientProviders provider)
     {
-#pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
         switch (provider)
         {
             case ChatClientProviders.OpenAIAssistant
@@ -114,7 +113,6 @@ public sealed class Step03_ChatClientAgent_UsingCodeInterpreterTools(ITestOutput
                         string.Empty,
                         stepDetails.CodeInterpreterOutputs.SelectMany(l => l.Logs)
                         )}";
-#pragma warning restore OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
             case ChatClientProviders.AzureAIAgentsPersistent
                 when rawRepresentation is Azure.AI.Agents.Persistent.RunStepDetailsUpdate stepDetails:
