@@ -143,7 +143,12 @@ class FoundryChatClient(ChatClientBase):
 
             client = AIProjectClient(endpoint=foundry_settings.project_endpoint, credential=credential)
 
-        super().__init__(client=client, agent_id=agent_id, default_thread_id=default_thread_id, **kwargs)
+        super().__init__(
+            client=client,  # type: ignore[reportCallIssue]
+            agent_id=agent_id,  # type: ignore[reportCallIssue]
+            default_thread_id=default_thread_id,  # type: ignore[reportCallIssue]
+            **kwargs,
+        )
 
         self._should_delete_agent = False
         self._foundry_settings = foundry_settings
@@ -322,8 +327,8 @@ class FoundryChatClient(ChatClientBase):
         if stream is not None:
             # Use 'async with' only if the stream supports async context management (main agent stream).
             # Tool output handlers only support async iteration, not context management.
-            if hasattr(stream, "__aenter__") and hasattr(stream, "__aexit__"):
-                async with stream as response_stream:
+            if hasattr(stream, "__aenter__") and hasattr(stream, "__aexit__"):  # type: ignore
+                async with stream as response_stream:  # type: ignore
                     stream_iter = response_stream
             else:
                 stream_iter = stream
@@ -414,14 +419,9 @@ class FoundryChatClient(ChatClientBase):
     async def _cleanup_agent_if_needed(self) -> None:
         """Clean up the agent if we created it."""
         if self._should_delete_agent and self.agent_id is not None:
-            try:
-                await self.client.agents.delete_agent(self.agent_id)
-                self.agent_id = None
-                self._should_delete_agent = False
-            except:  # noqa: E722, S110
-                # Do not block getting a response, but log the cleanup issue
-                # TODO (dmytrostruk): Add logging
-                pass
+            await self.client.agents.delete_agent(self.agent_id)
+            self.agent_id = None
+            self._should_delete_agent = False
 
     def _create_run_options(
         self,
