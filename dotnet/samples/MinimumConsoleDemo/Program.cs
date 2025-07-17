@@ -10,11 +10,14 @@ using Microsoft.Extensions.AI.Agents;
 [Description("Get the weather for a given location.")]
 static string GetWeather([Description("The location to get the weather for.")] string location)
 {
-    var conditions = new[] { "sunny", "cloudy", "rainy", "stormy" };
-    return $"The weather in {location} is {conditions[new Random().Next(0, 4)]} with a high of {new Random().Next(10, 31)}°C.";
+    return $"The weather in {location} is cloudy with a high of 15°C.";
 }
 
-IChatClient chatClient = new AzureOpenAIClient(new Uri("https://oai-sk-integration-test-eastus.openai.azure.com/"), new AzureCliCredential()).GetChatClient("gpt-4o-mini").AsIChatClient();
+IChatClient chatClient = new AzureOpenAIClient(
+    new Uri(Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")!),
+    new AzureCliCredential())
+     .GetChatClient("gpt-4o-mini")
+     .AsIChatClient();
 
 Agent agent = new ChatClientAgent(
     chatClient,
