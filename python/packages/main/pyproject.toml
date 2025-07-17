@@ -33,6 +33,9 @@ dependencies = [
 azure = [
     "agent-framework-azure"
 ]
+foundry = [
+    "agent-framework-foundry"
+]
 
 [dependency-groups]
 dev = [

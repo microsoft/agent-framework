@@ -1440,9 +1440,12 @@ ChatToolMode.NONE = ChatToolMode(mode="none")  # type: ignore[assignment]
 class ChatOptions(AFBaseModel):
     """Common request settings for AI services."""
 
-    conversation_id: str | None = None
-    allow_multiple_tool_calls: bool | None = None
+    additional_properties: MutableMapping[str, Any] = Field(
+        default_factory=dict, description="Provider-specific additional properties."
+    )
     ai_model_id: Annotated[str | None, Field(serialization_alias="model")] = None
+    allow_multiple_tool_calls: bool | None = None
+    conversation_id: str | None = None
     frequency_penalty: Annotated[float | None, Field(ge=-2.0, le=2.0)] = None
     logit_bias: MutableMapping[str | int, float] | None = None
     max_tokens: Annotated[int | None, Field(gt=0)] = None
@@ -1457,12 +1460,9 @@ class ChatOptions(AFBaseModel):
     temperature: Annotated[float | None, Field(ge=0.0, le=2.0)] = None
     tool_choice: ChatToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None = None
     tools: list[AITool | MutableMapping[str, Any]] | None = None
-    _ai_tools: list[AITool | MutableMapping[str, Any]] | None = PrivateAttr(default=None)
     top_p: Annotated[float | None, Field(ge=0.0, le=1.0)] = None
     user: str | None = None
-    additional_properties: MutableMapping[str, Any] = Field(
-        default_factory=dict, description="Provider-specific additional properties."
-    )
+    _ai_tools: list[AITool | MutableMapping[str, Any]] | None = PrivateAttr(default=None)
 
     @model_validator(mode="after")
     def _copy_to_ai_tools(self) -> Self:

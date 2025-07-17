@@ -10,6 +10,8 @@ _IMPORTS = {
     "FoundryChatClient": "agent_framework_foundry",
 }
 
+__all__ = ["FoundryChatClient", "__version__"]
+
 
 def __getattr__(name: str) -> Any:
     if name in _IMPORTS:
@@ -30,4 +32,7 @@ def __dir__() -> list[str]:
 
 
 if TYPE_CHECKING:
-    from agent_framework_foundry import __version__  # noqa: F401
+    from agent_framework_foundry import (
+        FoundryChatClient,
+        __version__,
+    )

@@ -50,6 +50,9 @@ dependencies = [
 azure = [
     { name = "agent-framework-azure", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
+foundry = [
+    { name = "agent-framework-foundry", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -87,12 +90,13 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-azure", marker = "extra == 'azure'", editable = "packages/azure" },
+    { name = "agent-framework-foundry", marker = "extra == 'foundry'", editable = "packages/foundry" },
     { name = "openai", specifier = ">=1.94.0" },
     { name = "pydantic", specifier = ">=2.11.7" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
     { name = "typing-extensions", specifier = ">=4.14.0" },
 ]
-provides-extras = ["azure"]
+provides-extras = ["azure", "foundry"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -299,6 +303,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "agent-framework", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-azure", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-foundry", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [package.dev-dependencies]
@@ -340,6 +345,7 @@ dev = [
 requires-dist = [
     { name = "agent-framework", editable = "packages/main" },
     { name = "agent-framework-azure", editable = "packages/azure" },
+    { name = "agent-framework-foundry", editable = "packages/foundry" },
 ]
 
 [package.metadata.requires-dev]
