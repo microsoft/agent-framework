@@ -25,7 +25,7 @@
     </Project>
   </Folder>
   <Folder Name="/Demos/">
-    <Project Path="demos/MinimumConsoleDemo/MinimumConsoleDemo.csproj">
+    <Project Path="demos/MinimalConsoleDemo/MinimalConsoleDemo.csproj">
       <BuildType Solution="Publish|*" Project="Release" />
     </Project>
   </Folder>

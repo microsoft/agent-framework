@@ -21,10 +21,7 @@ IChatClient chatClient = new AzureOpenAIClient(
 
 Agent agent = new ChatClientAgent(
     chatClient,
-    options: new()
-    {
-        Instructions = "You are a helpful assistant, you can help the user with weather information.",
-        ChatOptions = new() { Tools = [AIFunctionFactory.Create(GetWeather)] }
-    });
+    instructions: "You are a helpful assistant, you can help the user with weather information.",
+    tools: [AIFunctionFactory.Create(GetWeather)]);
 
 Console.WriteLine(await agent.RunAsync("What's the weather in Amsterdam?"));
