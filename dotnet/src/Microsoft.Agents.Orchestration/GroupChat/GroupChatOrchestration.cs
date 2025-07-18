@@ -26,7 +26,7 @@ public class GroupChatOrchestration<TInput, TOutput> :
     /// </summary>
     /// <param name="manager">The manages the flow of the group-chat.</param>
     /// <param name="agents">The agents participating in the orchestration.</param>
-    public GroupChatOrchestration(GroupChatManager manager, params Agent[] agents)
+    public GroupChatOrchestration(GroupChatManager manager, params AIAgent[] agents)
         : base(agents)
     {
         Throw.IfNull(manager, nameof(manager));
@@ -51,7 +51,7 @@ public class GroupChatOrchestration<TInput, TOutput> :
 
         int agentCount = 0;
         GroupChatTeam team = [];
-        foreach (Agent agent in this.Members)
+        foreach (AIAgent agent in this.Members)
         {
             ++agentCount;
             ActorType agentType = await RegisterAgentAsync(agent, agentCount).ConfigureAwait(false);
@@ -79,7 +79,7 @@ public class GroupChatOrchestration<TInput, TOutput> :
 
         return managerType;
 
-        ValueTask<ActorType> RegisterAgentAsync(Agent agent, int agentCount) =>
+        ValueTask<ActorType> RegisterAgentAsync(AIAgent agent, int agentCount) =>
             runtime.RegisterOrchestrationAgentAsync(
                 this.FormatAgentType(context.Topic, $"Agent_{agentCount}"),
                 (agentId, runtime) =>

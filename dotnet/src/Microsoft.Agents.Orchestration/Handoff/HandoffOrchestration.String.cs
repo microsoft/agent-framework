@@ -15,7 +15,7 @@ public sealed class HandoffOrchestration : HandoffOrchestration<string, string>
     /// </summary>
     /// <param name="handoffs">Defines the handoff connections for each agent.</param>
     /// <param name="members">The agents to be orchestrated.</param>
-    public HandoffOrchestration(OrchestrationHandoffs handoffs, params Agent[] members)
+    public HandoffOrchestration(OrchestrationHandoffs handoffs, params AIAgent[] members)
         : base(handoffs, members)
     {
     }

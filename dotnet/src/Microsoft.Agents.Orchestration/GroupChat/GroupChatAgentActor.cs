@@ -23,9 +23,9 @@ internal sealed class GroupChatAgentActor : AgentActor
     /// <param name="id">The unique identifier of the agent.</param>
     /// <param name="runtime">The runtime associated with the agent.</param>
     /// <param name="context">The orchestration context.</param>
-    /// <param name="agent">An <see cref="Agent"/>.</param>
+    /// <param name="agent">An <see cref="AIAgent"/>.</param>
     /// <param name="logger">The logger to use for the actor</param>
-    public GroupChatAgentActor(ActorId id, IAgentRuntime runtime, OrchestrationContext context, Agent agent, ILogger<GroupChatAgentActor>? logger = null)
+    public GroupChatAgentActor(ActorId id, IAgentRuntime runtime, OrchestrationContext context, AIAgent agent, ILogger<GroupChatAgentActor>? logger = null)
         : base(id, runtime, context, agent, logger)
     {
         this._cache = [];

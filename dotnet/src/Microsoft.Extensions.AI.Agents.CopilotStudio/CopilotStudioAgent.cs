@@ -16,7 +16,7 @@ namespace Microsoft.Extensions.AI.Agents.CopilotStudio;
 /// <summary>
 /// Represents a Copilot Studio agent in the cloud.
 /// </summary>
-public class CopilotStudioAgent : Agent
+public class CopilotStudioAgent : AIAgent
 {
     private readonly ILogger _logger;
 

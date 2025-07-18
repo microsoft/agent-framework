@@ -19,10 +19,10 @@ namespace CopilotStudio.IntegrationTests;
 public class CopilotStudioFixture : IAgentFixture
 {
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
-    private Agent _agent;
+    private AIAgent _agent;
 #pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
 
-    public Agent Agent => this._agent;
+    public AIAgent Agent => this._agent;
 
     public Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
     {

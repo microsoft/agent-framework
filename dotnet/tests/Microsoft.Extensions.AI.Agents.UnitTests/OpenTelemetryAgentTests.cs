@@ -402,7 +402,7 @@ public class OpenTelemetryAgentTests
     public void WithOpenTelemetry_ExtensionMethod_CreatesOpenTelemetryAgent()
     {
         // Arrange
-        var mockAgent = new Mock<Agent>();
+        var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-id");
         mockAgent.Setup(a => a.Name).Returns("TestAgent");
 
@@ -434,9 +434,9 @@ public class OpenTelemetryAgentTests
         mockAgent.Verify(a => a.RunAsync(messages, null, null, It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    private static Mock<Agent> CreateMockAgent(bool throwError)
+    private static Mock<AIAgent> CreateMockAgent(bool throwError)
     {
-        var mockAgent = new Mock<Agent>();
+        var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent-id");
         mockAgent.Setup(a => a.Name).Returns("TestAgent");
         mockAgent.Setup(a => a.Description).Returns("Test Description");
@@ -465,9 +465,9 @@ public class OpenTelemetryAgentTests
         return mockAgent;
     }
 
-    private static Mock<Agent> CreateMockStreamingAgent(bool throwError)
+    private static Mock<AIAgent> CreateMockStreamingAgent(bool throwError)
     {
-        var mockAgent = new Mock<Agent>();
+        var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent-id");
         mockAgent.Setup(a => a.Name).Returns("TestAgent");
         mockAgent.Setup(a => a.Description).Returns("Test Description");
@@ -531,7 +531,7 @@ public class OpenTelemetryAgentTests
     public void Constructor_WithParameters_SetsProperties()
     {
         // Arrange
-        var mockAgent = new Mock<Agent>();
+        var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-id");
         mockAgent.Setup(a => a.Name).Returns("TestAgent");
         mockAgent.Setup(a => a.Description).Returns("Test Description");
@@ -553,7 +553,7 @@ public class OpenTelemetryAgentTests
     {
         // Arrange
         var mockThread = new Mock<AgentThread>().Object;
-        var mockAgent = new Mock<Agent>();
+        var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.GetNewThread()).Returns(mockThread);
 
         using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object);
@@ -570,7 +570,7 @@ public class OpenTelemetryAgentTests
     public void Dispose_DisposesResources()
     {
         // Arrange
-        var mockAgent = new Mock<Agent>();
+        var mockAgent = new Mock<AIAgent>();
         var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object);
 
         // Act & Assert - Should not throw
@@ -589,7 +589,7 @@ public class OpenTelemetryAgentTests
             .AddInMemoryExporter(activities)
             .Build();
 
-        var mockAgent = new Mock<Agent>();
+        var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent-id");
         mockAgent.Setup(a => a.Name).Returns("TestAgent");
 
@@ -631,7 +631,7 @@ public class OpenTelemetryAgentTests
             .AddInMemoryExporter(activities)
             .Build();
 
-        var mockAgent = new Mock<Agent>();
+        var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent-id");
         mockAgent.Setup(a => a.Name).Returns((string?)null); // Null name
 
@@ -665,7 +665,7 @@ public class OpenTelemetryAgentTests
             .AddInMemoryExporter(activities)
             .Build();
 
-        var mockAgent = new Mock<Agent>();
+        var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent-id");
         mockAgent.Setup(a => a.Name).Returns("TestAgent");
 
@@ -899,7 +899,7 @@ public class OpenTelemetryAgentTests
             .AddInMemoryExporter(exportedMetrics)
             .Build();
 
-        var mockAgent = new Mock<Agent>();
+        var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent-id");
         mockAgent.Setup(a => a.Name).Returns("TestAgent");
 
@@ -981,7 +981,7 @@ public class OpenTelemetryAgentTests
             .AddInMemoryExporter(exportedMetrics)
             .Build();
 
-        var mockAgent = new Mock<Agent>();
+        var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent-id");
         mockAgent.Setup(a => a.Name).Returns("TestAgent");
 
@@ -1028,7 +1028,7 @@ public class OpenTelemetryAgentTests
             .AddInMemoryExporter(activities)
             .Build();
 
-        var mockAgent = new Mock<Agent>();
+        var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent-id");
         mockAgent.Setup(a => a.Name).Returns("TestAgent");
         mockAgent.Setup(a => a.Description).Returns((string?)null); // Null description

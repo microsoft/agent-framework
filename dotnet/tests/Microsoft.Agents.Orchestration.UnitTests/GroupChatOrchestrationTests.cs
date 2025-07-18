@@ -42,7 +42,7 @@ public class GroupChatOrchestrationTests
         Assert.Equal("lmn", response);
     }
 
-    private static async Task<string> ExecuteOrchestrationAsync(params Agent[] mockAgents)
+    private static async Task<string> ExecuteOrchestrationAsync(params AIAgent[] mockAgents)
     {
         // Act
         GroupChatOrchestration orchestration = new(new RoundRobinGroupChatManager() { MaximumInvocationCount = mockAgents.Length }, mockAgents);

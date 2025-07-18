@@ -14,7 +14,7 @@ public sealed class SequentialOrchestration : SequentialOrchestration<string, st
     /// Initializes a new instance of the <see cref="SequentialOrchestration"/> class.
     /// </summary>
     /// <param name="members">The agents to be orchestrated.</param>
-    public SequentialOrchestration(params Agent[] members)
+    public SequentialOrchestration(params AIAgent[] members)
         : base(members)
     {
     }

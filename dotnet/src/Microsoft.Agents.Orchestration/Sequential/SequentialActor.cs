@@ -23,10 +23,10 @@ internal sealed class SequentialActor : AgentActor
     /// <param name="id">The unique identifier of the agent.</param>
     /// <param name="runtime">The runtime associated with the agent.</param>
     /// <param name="context">The orchestration context.</param>
-    /// <param name="agent">An <see cref="Agent"/>.</param>
+    /// <param name="agent">An <see cref="AIAgent"/>.</param>
     /// <param name="nextAgent">The identifier of the next agent for which to handoff the result</param>
     /// <param name="logger">The logger to use for the actor</param>
-    public SequentialActor(ActorId id, IAgentRuntime runtime, OrchestrationContext context, Agent agent, ActorType nextAgent, ILogger<SequentialActor>? logger = null)
+    public SequentialActor(ActorId id, IAgentRuntime runtime, OrchestrationContext context, AIAgent agent, ActorType nextAgent, ILogger<SequentialActor>? logger = null)
         : base(id, runtime, context, agent, logger)
     {
         logger?.LogInformation("ACTOR {ActorId} {NextAgent}", this.Id, nextAgent);

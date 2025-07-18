@@ -22,10 +22,10 @@ internal sealed class ConcurrentActor : AgentActor
     /// <param name="id">The unique identifier of the agent.</param>
     /// <param name="runtime">The runtime associated with the agent.</param>
     /// <param name="context">The orchestration context.</param>
-    /// <param name="agent">An <see cref="Agent"/>.</param>
+    /// <param name="agent">An <see cref="AIAgent"/>.</param>
     /// <param name="resultActor">Identifies the actor collecting results.</param>
     /// <param name="logger">The logger to use for the actor</param>
-    public ConcurrentActor(ActorId id, IAgentRuntime runtime, OrchestrationContext context, Agent agent, ActorType resultActor, ILogger<ConcurrentActor>? logger = null)
+    public ConcurrentActor(ActorId id, IAgentRuntime runtime, OrchestrationContext context, AIAgent agent, ActorType resultActor, ILogger<ConcurrentActor>? logger = null)
         : base(id, runtime, context, agent, logger)
     {
         this._handoffActor = resultActor;

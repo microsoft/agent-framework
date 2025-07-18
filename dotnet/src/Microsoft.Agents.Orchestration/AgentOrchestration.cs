@@ -32,7 +32,7 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
     /// Initializes a new instance of the <see cref="AgentOrchestration{TInput, TOutput}"/> class.
     /// </summary>
     /// <param name="members">Specifies the member agents or orchestrations participating in this orchestration.</param>
-    protected AgentOrchestration(params Agent[] members)
+    protected AgentOrchestration(params AIAgent[] members)
     {
         _ = Throw.IfNull(members);
 
@@ -87,7 +87,7 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
     /// <summary>
     /// Gets the list of member targets involved in the orchestration.
     /// </summary>
-    protected IReadOnlyList<Agent> Members { get; }
+    protected IReadOnlyList<AIAgent> Members { get; }
 
     /// <summary>
     /// Orchestration identifier without generic parameters for use in
