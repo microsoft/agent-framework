@@ -3,7 +3,7 @@
 import importlib
 from typing import Any
 
-PACKAGE_NAME = "azure_framework_foundry"
+PACKAGE_NAME = "agent_framework_foundry"
 PACKAGE_EXTRA = "foundry"
 _IMPORTS = ["__version__", "FoundryChatClient"]
 
