@@ -6,6 +6,8 @@ from typing import Generic, Protocol, TypeVar, runtime_checkable
 TInput = TypeVar("TInput")
 TResponse = TypeVar("TResponse")
 
+__all__ = ["InputGuardrail", "OutputGuardrail"]
+
 
 @runtime_checkable
 class InputGuardrail(Protocol, Generic[TInput]):

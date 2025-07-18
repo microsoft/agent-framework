@@ -26,7 +26,7 @@ from .._pydantic import AFBaseModel, AFBaseSettings
 from .._types import ChatOptions, SpeechToTextOptions, TextToSpeechOptions
 from ..exceptions import ServiceInitializationError, ServiceInvalidRequestError, ServiceResponseException
 from ..telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
-from .exceptions import OpenAIContentFilterException
+from ._exceptions import OpenAIContentFilterException
 
 logger: logging.Logger = get_logger("agent_framework.openai")
 
@@ -46,6 +46,13 @@ OPTION_TYPE = Union[
     ChatOptions,
     SpeechToTextOptions,
     TextToSpeechOptions,
+]
+
+
+__all__ = [
+    "OpenAIHandler",
+    "OpenAIModelTypes",
+    "OpenAISettings",
 ]
 
 

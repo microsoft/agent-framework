@@ -14,7 +14,7 @@ from agent_framework import (
     TextContent,
 )
 from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
-from agent_framework.openai.exceptions import (
+from agent_framework.openai import (
     ContentFilterResultSeverity,
     OpenAIContentFilterException,
 )

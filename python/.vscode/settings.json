@@ -8,8 +8,8 @@
     ],
     "[python]": {
         "editor.codeActionsOnSave": {
-            "source.organizeImports": "explicit",
-            "source.fixAll": "explicit"
+            "source.organizeImports.ruff": "always",
+            "source.fixAll.ruff": "always"
         },
         "editor.formatOnSave": true,
         "editor.formatOnPaste": true,
