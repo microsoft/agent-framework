@@ -8,9 +8,7 @@ from openai import BadRequestError
 
 from ..exceptions import ServiceContentFilterException
 
-__all__ = [
-    "OpenAIContentFilterException",
-]
+__all__ = ["ContentFilterResultSeverity", "OpenAIContentFilterException"]
 
 
 class ContentFilterResultSeverity(Enum):
