@@ -34,6 +34,13 @@ TChatClientBase = TypeVar("TChatClientBase", bound="ChatClientBase")
 
 logger = get_logger()
 
+__all__ = [
+    "ChatClient",
+    "ChatClientBase",
+    "EmbeddingGenerator",
+    "use_tool_calling",
+]
+
 # region: Tool Calling Functions and Decorators
 
 

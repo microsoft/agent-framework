@@ -49,6 +49,13 @@ OPTION_TYPE = Union[
 ]
 
 
+__all__ = [
+    "OpenAIHandler",
+    "OpenAIModelTypes",
+    "OpenAISettings",
+]
+
+
 class OpenAISettings(AFBaseSettings):
     """OpenAI model settings.
 
