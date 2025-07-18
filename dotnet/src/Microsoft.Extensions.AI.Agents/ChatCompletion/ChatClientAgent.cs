@@ -15,7 +15,7 @@ namespace Microsoft.Extensions.AI.Agents;
 /// <summary>
 /// Represents an agent that can be invoked using a chat client.
 /// </summary>
-public sealed class ChatClientAgent : Agent
+public sealed class ChatClientAgent : AIAgent
 {
     private readonly ChatClientAgentOptions? _agentOptions;
     private readonly ILogger _logger;

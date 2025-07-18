@@ -42,7 +42,7 @@ public class SequentialOrchestrationTests
         Assert.Equal("lmn", response);
     }
 
-    private static async Task<string> ExecuteOrchestrationAsync(params Agent[] mockAgents)
+    private static async Task<string> ExecuteOrchestrationAsync(params AIAgent[] mockAgents)
     {
         // Act
         SequentialOrchestration orchestration = new(mockAgents);

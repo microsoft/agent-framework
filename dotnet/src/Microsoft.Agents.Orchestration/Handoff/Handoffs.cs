@@ -36,7 +36,7 @@ public sealed class OrchestrationHandoffs : Dictionary<string, AgentHandoffs>
     /// Initializes a new instance of the <see cref="OrchestrationHandoffs"/> class with no handoff relationships.
     /// </summary>
     /// <param name="firstAgent">The first agent to be invoked (prior to any handoff).</param>
-    public OrchestrationHandoffs(Agent firstAgent)
+    public OrchestrationHandoffs(AIAgent firstAgent)
         : this(firstAgent.Name ?? firstAgent.Id)
     {
         this.Agents.Add(firstAgent);
@@ -63,7 +63,7 @@ public sealed class OrchestrationHandoffs : Dictionary<string, AgentHandoffs>
     /// </summary>
     /// <param name="source">The source agent.</param>
     /// <returns>The updated <see cref="OrchestrationHandoffs"/> instance.</returns>
-    public static OrchestrationHandoffs StartWith(Agent source) => new(source);
+    public static OrchestrationHandoffs StartWith(AIAgent source) => new(source);
 
     /// <summary>
     /// Adds handoff relationships from a source agent to one or more target agents.
@@ -72,13 +72,13 @@ public sealed class OrchestrationHandoffs : Dictionary<string, AgentHandoffs>
     /// <param name="source">The source agent.</param>
     /// <param name="targets">The target agents to add as handoff targets for the source agent.</param>
     /// <returns>The updated <see cref="OrchestrationHandoffs"/> instance.</returns>
-    public OrchestrationHandoffs Add(Agent source, params Agent[] targets)
+    public OrchestrationHandoffs Add(AIAgent source, params AIAgent[] targets)
     {
         string key = source.Name ?? source.Id;
 
         AgentHandoffs agentHandoffs = this.GetAgentHandoffs(key);
 
-        foreach (Agent target in targets)
+        foreach (AIAgent target in targets)
         {
             if (string.IsNullOrWhiteSpace(target.Description) && string.IsNullOrWhiteSpace(target.Name))
             {
@@ -101,7 +101,7 @@ public sealed class OrchestrationHandoffs : Dictionary<string, AgentHandoffs>
     /// <param name="target">The target agent.</param>
     /// <param name="description">The handoff description.</param>
     /// <returns>The updated <see cref="OrchestrationHandoffs"/> instance.</returns>
-    public OrchestrationHandoffs Add(Agent source, Agent target, string description)
+    public OrchestrationHandoffs Add(AIAgent source, AIAgent target, string description)
         => this.Add(source.Name ?? source.Id, target.Name ?? target.Id, description);
 
     /// <summary>
@@ -111,7 +111,7 @@ public sealed class OrchestrationHandoffs : Dictionary<string, AgentHandoffs>
     /// <param name="targetName">The target agent's name or ID.</param>
     /// <param name="description">The handoff description.</param>
     /// <returns>The updated <see cref="OrchestrationHandoffs"/> instance.</returns>
-    public OrchestrationHandoffs Add(Agent source, string targetName, string description)
+    public OrchestrationHandoffs Add(AIAgent source, string targetName, string description)
         => this.Add(source.Name ?? source.Id, targetName, description);
 
     /// <summary>
@@ -139,7 +139,7 @@ public sealed class OrchestrationHandoffs : Dictionary<string, AgentHandoffs>
         return agentHandoffs;
     }
 
-    internal HashSet<Agent> Agents { get; } = [];
+    internal HashSet<AIAgent> Agents { get; } = [];
 }
 
 /// <summary>

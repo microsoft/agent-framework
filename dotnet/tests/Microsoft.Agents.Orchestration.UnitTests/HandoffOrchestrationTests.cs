@@ -42,7 +42,7 @@ public sealed class HandoffOrchestrationTests : IDisposable
     public async Task HandoffOrchestrationWithSingleAgentAsync()
     {
         // Arrange
-        Agent mockAgent1 =
+        AIAgent mockAgent1 =
             this.CreateMockAgent(
                 "Agent1",
                 "Test Agent",
@@ -59,17 +59,17 @@ public sealed class HandoffOrchestrationTests : IDisposable
     public async Task HandoffOrchestrationWithMultipleAgentsAsync()
     {
         // Arrange
-        Agent mockAgent1 =
+        AIAgent mockAgent1 =
             this.CreateMockAgent(
                 "Agent1",
                 "Test Agent",
                 Responses.Handoff("Agent2"));
-        Agent mockAgent2 =
+        AIAgent mockAgent2 =
             this.CreateMockAgent(
                 "Agent2",
                 "Test Agent",
                 Responses.Result("Final response"));
-        Agent mockAgent3 =
+        AIAgent mockAgent3 =
             this.CreateMockAgent(
                 "Agent3",
                 "Test Agent",

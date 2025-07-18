@@ -13,7 +13,7 @@ namespace AgentConformance.IntegrationTests;
 /// </summary>
 public interface IAgentFixture : IAsyncLifetime
 {
-    Agent Agent { get; }
+    AIAgent Agent { get; }
 
     Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread);
 

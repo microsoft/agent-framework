@@ -23,7 +23,7 @@ public class ConcurrentOrchestration<TInput, TOutput>
     /// Initializes a new instance of the <see cref="ConcurrentOrchestration{TInput, TOutput}"/> class.
     /// </summary>
     /// <param name="agents">The agents participating in the orchestration.</param>
-    public ConcurrentOrchestration(params Agent[] agents)
+    public ConcurrentOrchestration(params AIAgent[] agents)
         : base(agents)
     {
     }
@@ -52,7 +52,7 @@ public class ConcurrentOrchestration<TInput, TOutput>
 
         // Register member actors - All agents respond to the same message.
         int agentCount = 0;
-        foreach (Agent agent in this.Members)
+        foreach (AIAgent agent in this.Members)
         {
             ++agentCount;
 
