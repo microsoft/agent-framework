@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Shared.Diagnostics;
@@ -46,6 +47,14 @@ public abstract class Agent
     /// </para>
     /// </remarks>
     public abstract AgentThread GetNewThread();
+
+    /// <summary>
+    /// Deserialize the thread from JSON.
+    /// </summary>
+    /// <param name="threadStateJson">The JSON string representing the thread state.</param>
+    /// <param name="jsonSerializerOptions">Optional <see cref="JsonSerializerOptions"/> to use for deserializing the thread state.</param>
+    /// <returns>The deserialized <see cref="AgentThread"/> instance.</returns>
+    public abstract AgentThread DeserializeThread(string threadStateJson, JsonSerializerOptions? jsonSerializerOptions = default);
 
     /// <summary>
     /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the thread.

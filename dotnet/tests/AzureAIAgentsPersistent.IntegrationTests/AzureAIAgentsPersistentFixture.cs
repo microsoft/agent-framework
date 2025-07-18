@@ -29,9 +29,9 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
 
     public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
     {
-        if (thread is not ChatClientAgentThread chatClientThread)
+        if (thread is not MessageStoringAgentThread messageStoringAgentThread)
         {
-            throw new InvalidOperationException($"The thread must be of type {nameof(ChatClientAgentThread)} to retrieve chat history.");
+            throw new InvalidOperationException($"The thread must be of type {nameof(MessageStoringAgentThread)} to retrieve chat history.");
         }
 
         List<ChatMessage> messages = [];

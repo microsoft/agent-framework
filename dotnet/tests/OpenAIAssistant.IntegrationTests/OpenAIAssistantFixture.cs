@@ -28,13 +28,13 @@ public class OpenAIAssistantFixture : IChatClientAgentFixture
 
     public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
     {
-        if (thread is not ChatClientAgentThread chatClientThread)
+        if (thread is not MessageStoringAgentThread messageStoringAgentThread)
         {
-            throw new InvalidOperationException("The thread must be of type ChatClientAgentThread to retrieve chat history.");
+            throw new InvalidOperationException("The thread must be of type MessageStoringAgentThread to retrieve chat history.");
         }
 
         List<ChatMessage> messages = [];
-        await foreach (var agentMessage in this._assistantClient!.GetMessagesAsync(chatClientThread.Id, new() { Order = MessageCollectionOrder.Ascending }))
+        await foreach (var agentMessage in this._assistantClient!.GetMessagesAsync(messageStoringAgentThread.Id, new() { Order = MessageCollectionOrder.Ascending }))
         {
             messages.Add(new()
             {

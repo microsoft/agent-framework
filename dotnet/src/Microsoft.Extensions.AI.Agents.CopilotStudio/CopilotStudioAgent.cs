@@ -3,6 +3,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.CopilotStudio.Client;
@@ -38,10 +39,10 @@ public class CopilotStudioAgent : Agent
     }
 
     /// <inheritdoc/>
-    public override AgentThread GetNewThread()
-    {
-        return new CopilotStudioAgentThread();
-    }
+    public override AgentThread GetNewThread() => new();
+
+    /// <inheritdoc/>
+    public override AgentThread DeserializeThread(string threadStateJson, JsonSerializerOptions? jsonSerializerOptions) => new(threadStateJson, jsonSerializerOptions);
 
     /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(
@@ -53,7 +54,7 @@ public class CopilotStudioAgent : Agent
         Throw.IfNull(messages);
 
         // Ensure that we have a valid thread to work with.
-        CopilotStudioAgentThread copilotStudioAgentThread = base.ValidateOrCreateThreadType(thread, () => new CopilotStudioAgentThread());
+        AgentThread copilotStudioAgentThread = base.ValidateOrCreateThreadType(thread, () => new AgentThread());
         if (copilotStudioAgentThread.Id is null)
         {
             // If the thread ID is null, we need to start a new conversation and set the thread ID accordingly.
@@ -89,7 +90,7 @@ public class CopilotStudioAgent : Agent
         Throw.IfNull(messages);
 
         // Ensure that we have a valid thread to work with.
-        CopilotStudioAgentThread copilotStudioAgentThread = base.ValidateOrCreateThreadType(thread, () => new CopilotStudioAgentThread());
+        AgentThread copilotStudioAgentThread = base.ValidateOrCreateThreadType(thread, () => new AgentThread());
         if (copilotStudioAgentThread.Id is null)
         {
             // If the thread ID is null, we need to start a new conversation and set the thread ID accordingly.

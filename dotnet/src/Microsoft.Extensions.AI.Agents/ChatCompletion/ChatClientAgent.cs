@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -101,7 +102,7 @@ public sealed class ChatClientAgent : Agent
     {
         Throw.IfNull(messages);
 
-        (ChatClientAgentThread chatClientThread, ChatOptions? chatOptions, List<ChatMessage> threadMessages) =
+        (MessageStoringAgentThread messageStoringThread, ChatOptions? chatOptions, List<ChatMessage> threadMessages) =
             await this.PrepareThreadAndMessagesAsync(thread, messages, options, cancellationToken).ConfigureAwait(false);
 
         var agentName = this.GetLoggingAgentName();
@@ -114,10 +115,10 @@ public sealed class ChatClientAgent : Agent
 
         // We can derive the type of supported thread from whether we have a conversation id,
         // so let's update it and set the conversation id for the service thread case.
-        this.UpdateThreadWithTypeAndConversationId(chatClientThread, chatResponse.ConversationId);
+        this.UpdateThreadWithTypeAndConversationId(messageStoringThread, chatResponse.ConversationId);
 
         // Only notify the thread of new messages if the chatResponse was successful to avoid inconsistent messages state in the thread.
-        await this.NotifyThreadOfNewMessagesAsync(chatClientThread, messages, cancellationToken).ConfigureAwait(false);
+        await this.NotifyThreadOfNewMessagesAsync(messageStoringThread, messages, cancellationToken).ConfigureAwait(false);
 
         // Ensure that the author name is set for each message in the response.
         foreach (ChatMessage chatResponseMessage in chatResponse.Messages)
@@ -128,7 +129,7 @@ public sealed class ChatClientAgent : Agent
         // Convert the chat response messages to a valid IReadOnlyCollection for notification signatures below.
         var chatResponseMessages = chatResponse.Messages as IReadOnlyCollection<ChatMessage> ?? chatResponse.Messages.ToArray();
 
-        await this.NotifyThreadOfNewMessagesAsync(chatClientThread, chatResponseMessages, cancellationToken).ConfigureAwait(false);
+        await this.NotifyThreadOfNewMessagesAsync(messageStoringThread, chatResponseMessages, cancellationToken).ConfigureAwait(false);
 
         return chatResponse.ToAgentRunResponse(this.Id);
     }
@@ -142,7 +143,7 @@ public sealed class ChatClientAgent : Agent
     {
         var inputMessages = Throw.IfNull(messages);
 
-        (ChatClientAgentThread chatClientThread, ChatOptions? chatOptions, List<ChatMessage> threadMessages) =
+        (MessageStoringAgentThread messageStoringThread, ChatOptions? chatOptions, List<ChatMessage> threadMessages) =
             await this.PrepareThreadAndMessagesAsync(thread, inputMessages, options, cancellationToken).ConfigureAwait(false);
 
         int messageCount = threadMessages.Count;
@@ -178,16 +179,20 @@ public sealed class ChatClientAgent : Agent
 
         // We can derive the type of supported thread from whether we have a conversation id,
         // so let's update it and set the conversation id for the service thread case.
-        this.UpdateThreadWithTypeAndConversationId(chatClientThread, chatResponse.ConversationId);
+        this.UpdateThreadWithTypeAndConversationId(messageStoringThread, chatResponse.ConversationId);
 
         // To avoid inconsistent state we only notify the thread of the input messages if no error occurs after the initial request.
-        await this.NotifyThreadOfNewMessagesAsync(chatClientThread, inputMessages, cancellationToken).ConfigureAwait(false);
+        await this.NotifyThreadOfNewMessagesAsync(messageStoringThread, inputMessages, cancellationToken).ConfigureAwait(false);
 
-        await this.NotifyThreadOfNewMessagesAsync(chatClientThread, chatResponseMessages, cancellationToken).ConfigureAwait(false);
+        await this.NotifyThreadOfNewMessagesAsync(messageStoringThread, chatResponseMessages, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
-    public override AgentThread GetNewThread() => new ChatClientAgentThread();
+    public override AgentThread GetNewThread() => new MessageStoringAgentThread(this._agentOptions?.ChatMessagesStorableFactory?.Invoke(), null, null);
+
+    /// <inheritdoc/>
+    public override AgentThread DeserializeThread(string threadStateJson, JsonSerializerOptions? jsonSerializerOptions = default) =>
+        new MessageStoringAgentThread(this._agentOptions?.ChatMessagesStorableFactory?.Invoke(), threadStateJson, jsonSerializerOptions);
 
     #region Private
 
@@ -313,7 +318,7 @@ public sealed class ChatClientAgent : Agent
     /// <param name="runOptions">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A tuple containing the thread, chat options, and thread messages.</returns>
-    private async Task<(ChatClientAgentThread, ChatOptions?, List<ChatMessage>)> PrepareThreadAndMessagesAsync(
+    private async Task<(MessageStoringAgentThread, ChatOptions?, List<ChatMessage>)> PrepareThreadAndMessagesAsync(
         AgentThread? thread,
         IReadOnlyCollection<ChatMessage> inputMessages,
         AgentRunOptions? runOptions,
@@ -321,16 +326,13 @@ public sealed class ChatClientAgent : Agent
     {
         ChatOptions? chatOptions = this.CreateConfiguredChatOptions(runOptions);
 
-        var chatClientThread = this.ValidateOrCreateThreadType<ChatClientAgentThread>(thread, () => new());
+        var messageStoringThread = this.ValidateOrCreateThreadType<MessageStoringAgentThread>(thread, () => new());
 
         // Add any existing messages from the thread to the messages to be sent to the chat client.
         List<ChatMessage> threadMessages = [];
-        if (chatClientThread is IMessagesRetrievableThread messagesRetrievableThread)
+        await foreach (ChatMessage message in messageStoringThread.GetMessagesAsync(cancellationToken).ConfigureAwait(false))
         {
-            await foreach (ChatMessage message in messagesRetrievableThread.GetMessagesAsync(cancellationToken).ConfigureAwait(false))
-            {
-                threadMessages.Add(message);
-            }
+            threadMessages.Add(message);
         }
 
         // Update the messages with agent instructions.
@@ -341,42 +343,42 @@ public sealed class ChatClientAgent : Agent
 
         // If a user provided two different thread ids, via the thread object and options, we should throw
         // since we don't know which one to use.
-        if (!string.IsNullOrWhiteSpace(chatClientThread.Id) && !string.IsNullOrWhiteSpace(chatOptions?.ConversationId) && chatClientThread.Id != chatOptions.ConversationId)
+        if (!string.IsNullOrWhiteSpace(messageStoringThread.Id) && !string.IsNullOrWhiteSpace(chatOptions?.ConversationId) && messageStoringThread.Id != chatOptions.ConversationId)
         {
             throw new InvalidOperationException(
                 $"The {nameof(chatOptions.ConversationId)} provided via {nameof(Microsoft.Extensions.AI.ChatOptions)} is different to the id of the provided {nameof(AgentThread)}. Only one thread id can be used for a run.");
         }
 
         // Only clone and update ChatOptions if we have an id on the thread and we don't have the same one already in ChatOptions.
-        if (!string.IsNullOrWhiteSpace(chatClientThread.Id) && chatClientThread.Id != chatOptions?.ConversationId)
+        if (!string.IsNullOrWhiteSpace(messageStoringThread.Id) && messageStoringThread.Id != chatOptions?.ConversationId)
         {
             chatOptions ??= new();
-            chatOptions.ConversationId = chatClientThread.Id;
+            chatOptions.ConversationId = messageStoringThread.Id;
         }
 
-        return (chatClientThread, chatOptions, threadMessages);
+        return (messageStoringThread, chatOptions, threadMessages);
     }
 
-    private void UpdateThreadWithTypeAndConversationId(ChatClientAgentThread chatClientThread, string? responseConversationId)
+    private void UpdateThreadWithTypeAndConversationId(MessageStoringAgentThread messageStoringThread, string? responseConversationId)
     {
         // Set the thread's storage location, the first time that we use it.
-        if (chatClientThread.StorageLocation is null)
+        if (messageStoringThread.StorageLocation == MessageStoringThreadStorageLocation.Unknown)
         {
-            chatClientThread.StorageLocation = string.IsNullOrWhiteSpace(responseConversationId)
-                ? ChatClientAgentThreadType.InMemoryMessages
-                : ChatClientAgentThreadType.ConversationId;
+            messageStoringThread.StorageLocation = string.IsNullOrWhiteSpace(responseConversationId)
+                ? MessageStoringThreadStorageLocation.AgentThreadManaged
+                : MessageStoringThreadStorageLocation.ConversationId;
         }
 
         // If we got a conversation id back from the chat client, it means that the service supports server side thread storage
         // so we should capture the id and update the thread with the new id.
-        if (chatClientThread.StorageLocation == ChatClientAgentThreadType.ConversationId)
+        if (messageStoringThread.StorageLocation == MessageStoringThreadStorageLocation.ConversationId)
         {
             if (string.IsNullOrWhiteSpace(responseConversationId))
             {
                 throw new InvalidOperationException("Service did not return a valid conversation id when using a service managed thread.");
             }
 
-            chatClientThread.Id = responseConversationId;
+            messageStoringThread.Id = responseConversationId;
         }
     }
 

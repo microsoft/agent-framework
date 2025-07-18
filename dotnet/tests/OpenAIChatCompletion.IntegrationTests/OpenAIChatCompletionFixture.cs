@@ -33,12 +33,12 @@ public class OpenAIChatCompletionFixture : IChatClientAgentFixture
 
     public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
     {
-        if (thread is not ChatClientAgentThread chatClientThread)
+        if (thread is not MessageStoringAgentThread messageStoringAgentThread)
         {
-            throw new InvalidOperationException("The thread must be of type ChatClientAgentThread to retrieve chat history.");
+            throw new InvalidOperationException("The thread must be of type MessageStoringAgentThread to retrieve chat history.");
         }
 
-        return await chatClientThread.GetMessagesAsync().ToListAsync();
+        return await messageStoringAgentThread.GetMessagesAsync().ToListAsync();
     }
 
     public Task<ChatClientAgent> CreateChatClientAgentAsync(

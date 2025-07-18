@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -13,6 +14,35 @@ namespace Microsoft.Extensions.AI.Agents;
 /// </summary>
 public class AgentThread
 {
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AgentThread"/> class.
+    /// </summary>
+    public AgentThread()
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AgentThread"/> class.
+    /// </summary>
+    /// <param name="threadStateJson">A JSON string representing the state of the thread.</param>
+    /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
+    /// <exception cref="InvalidOperationException">Thrown if the provided <paramref name="threadStateJson"/> is not valid or cannot be deserialized into a string.</exception>
+    public AgentThread(string threadStateJson, JsonSerializerOptions? jsonSerializerOptions)
+    {
+#pragma warning disable IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
+#pragma warning disable IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
+        var id = JsonSerializer.Deserialize(threadStateJson, typeof(string), jsonSerializerOptions) as string;
+#pragma warning restore IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
+#pragma warning restore IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
+
+        if (id is null)
+        {
+            throw new InvalidOperationException("The provided thread state is not valid.");
+        }
+
+        this.Id = id;
+    }
+
     /// <summary>
     /// Gets or sets the id of the current thread.
     /// </summary>
@@ -42,5 +72,19 @@ public class AgentThread
     protected internal virtual Task OnNewMessagesAsync(IReadOnlyCollection<ChatMessage> newMessages, CancellationToken cancellationToken = default)
     {
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Serializes the current object's state to a JSON string using the specified serialization options.
+    /// </summary>
+    /// <param name="jsonSerializerOptions">The JSON serialization options to use.</param>
+    /// <returns>A JSON string representation of the object's state.</returns>
+    public virtual string Serialize(JsonSerializerOptions? jsonSerializerOptions = default)
+    {
+#pragma warning disable IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
+#pragma warning disable IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
+        return JsonSerializer.Serialize(this.Id, typeof(string), jsonSerializerOptions);
+#pragma warning restore IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
+#pragma warning restore IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
     }
 }

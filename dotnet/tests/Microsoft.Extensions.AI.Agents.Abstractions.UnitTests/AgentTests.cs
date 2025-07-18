@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Moq;
@@ -278,6 +279,11 @@ public class AgentTests
         }
 
         public override AgentThread GetNewThread()
+        {
+            throw new NotImplementedException();
+        }
+
+        public override AgentThread DeserializeThread(string threadStateJson, JsonSerializerOptions? jsonSerializerOptions = null)
         {
             throw new NotImplementedException();
         }
