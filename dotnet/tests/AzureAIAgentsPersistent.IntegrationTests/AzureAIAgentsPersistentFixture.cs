@@ -25,7 +25,7 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
 
     public IChatClient ChatClient => this._agent.ChatClient;
 
-    public Agent Agent => this._agent;
+    public AIAgent Agent => this._agent;
 
     public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
     {

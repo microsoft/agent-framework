@@ -31,7 +31,7 @@ public sealed class ChatClientAgent_With_AzureAIAgentsPersistent(ITestOutputHelp
             instructions: JokerInstructions);
 
         // Get a local proxy for the agent to work with.
-        Agent agent = await persistentAgentsClient.GetRunnableAgentAsync(createPersistentAgentResponse.Value.Id);
+        AIAgent agent = await persistentAgentsClient.GetRunnableAgentAsync(createPersistentAgentResponse.Value.Id);
 
         // Start a new thread for the agent conversation.
         AgentThread thread = agent.GetNewThread();

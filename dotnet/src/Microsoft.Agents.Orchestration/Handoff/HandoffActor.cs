@@ -32,7 +32,7 @@ internal sealed partial class HandoffActor : AgentActor
     /// <param name="id">The unique identifier of the agent.</param>
     /// <param name="runtime">The runtime associated with the agent.</param>
     /// <param name="context">The orchestration context.</param>
-    /// <param name="agent">An <see cref="Agent"/>.</param>>
+    /// <param name="agent">An <see cref="AIAgent"/>.</param>>
     /// <param name="handoffs">The handoffs available to this agent</param>
     /// <param name="resultHandoff">The handoff agent for capturing the result.</param>
     /// <param name="logger">The logger to use for the actor</param>

@@ -11,9 +11,9 @@ using Moq;
 namespace Microsoft.Agents.Orchestration.UnitTest;
 
 /// <summary>
-/// Mock definition of <see cref="Agent"/>.
+/// Mock definition of <see cref="AIAgent"/>.
 /// </summary>
-internal sealed class MockAgent(int index) : Agent
+internal sealed class MockAgent(int index) : AIAgent
 {
     public static MockAgent CreateWithResponse(int index, string response)
     {

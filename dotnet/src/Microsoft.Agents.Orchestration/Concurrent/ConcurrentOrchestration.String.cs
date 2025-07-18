@@ -16,7 +16,7 @@ public sealed class ConcurrentOrchestration : ConcurrentOrchestration<string, st
     /// Initializes a new instance of the <see cref="ConcurrentOrchestration"/> class.
     /// </summary>
     /// <param name="members">The agents to be orchestrated.</param>
-    public ConcurrentOrchestration(params Agent[] members)
+    public ConcurrentOrchestration(params AIAgent[] members)
         : base(members)
     {
         this.ResultTransform =

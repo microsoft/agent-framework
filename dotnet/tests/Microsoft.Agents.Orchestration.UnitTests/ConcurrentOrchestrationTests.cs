@@ -44,7 +44,7 @@ public class ConcurrentOrchestrationTests
         Assert.Contains("abc", response);
     }
 
-    private static async Task<string[]> ExecuteOrchestrationAsync(params Agent[] mockAgents)
+    private static async Task<string[]> ExecuteOrchestrationAsync(params AIAgent[] mockAgents)
     {
         // Act
         ConcurrentOrchestration orchestration = new(mockAgents);

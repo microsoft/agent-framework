@@ -18,9 +18,9 @@ namespace Microsoft.Extensions.AI.Agents;
 /// This class provides telemetry instrumentation for agent operations including activities, metrics, and logging.
 /// The telemetry output follows OpenTelemetry semantic conventions in <see href="https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-agent-spans/"/> and is subject to change as the conventions evolve.
 /// </remarks>
-public sealed class OpenTelemetryAgent : Agent, IDisposable
+public sealed class OpenTelemetryAgent : AIAgent, IDisposable
 {
-    private readonly Agent _innerAgent;
+    private readonly AIAgent _innerAgent;
     private readonly ActivitySource _activitySource;
     private readonly Meter _meter;
     private readonly Histogram<double> _operationDurationHistogram;
@@ -32,7 +32,7 @@ public sealed class OpenTelemetryAgent : Agent, IDisposable
     /// </summary>
     /// <param name="innerAgent">The underlying agent to wrap with telemetry.</param>
     /// <param name="sourceName">An optional source name that will be used on the telemetry data.</param>
-    public OpenTelemetryAgent(Agent innerAgent, string? sourceName = null)
+    public OpenTelemetryAgent(AIAgent innerAgent, string? sourceName = null)
     {
         this._innerAgent = Throw.IfNull(innerAgent);
 

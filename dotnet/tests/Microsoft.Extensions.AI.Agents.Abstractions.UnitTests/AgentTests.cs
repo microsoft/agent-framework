@@ -11,11 +11,11 @@ using Moq.Protected;
 namespace Microsoft.Extensions.AI.Agents.Abstractions.UnitTests;
 
 /// <summary>
-/// Unit tests for the <see cref="Agent"/> class.
+/// Unit tests for the <see cref="AIAgent"/> class.
 /// </summary>
 public class AgentTests
 {
-    private readonly Mock<Agent> _agentMock;
+    private readonly Mock<AIAgent> _agentMock;
     private readonly Mock<AgentThread> _agentThreadMock;
     private readonly AgentRunResponse _invokeResponse = new();
     private readonly List<AgentRunResponseUpdate> _invokeStreamingResponses = [];
@@ -30,7 +30,7 @@ public class AgentTests
         this._invokeResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Hi"));
         this._invokeStreamingResponses.Add(new AgentRunResponseUpdate(ChatRole.Assistant, "Hi"));
 
-        this._agentMock = new Mock<Agent>() { CallBase = true };
+        this._agentMock = new Mock<AIAgent>() { CallBase = true };
         this._agentMock
             .Setup(x => x.RunAsync(
                 It.IsAny<IReadOnlyCollection<ChatMessage>>(),
@@ -258,9 +258,9 @@ public class AgentTests
     public abstract class TestAgentThread : AgentThread;
 
     /// <summary>
-    /// Mock class to test the <see cref="Agent.ValidateOrCreateThreadType{TThreadType}"/> method.
+    /// Mock class to test the <see cref="AIAgent.ValidateOrCreateThreadType{TThreadType}"/> method.
     /// </summary>
-    private sealed class MockAgent : Agent
+    private sealed class MockAgent : AIAgent
     {
         public new TThreadType ValidateOrCreateThreadType<TThreadType>(
             AgentThread? thread,
