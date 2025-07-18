@@ -95,7 +95,8 @@ def _prepare_tools_and_tool_choice(chat_options: ChatOptions) -> None:
         chat_options.tool_choice = ChatToolMode.NONE.mode
         return
     chat_options.tools = [
-        (_tool_to_json_schema_spec(t) if isinstance(t, AITool) else t) for t in chat_options._ai_tools or []
+        (_tool_to_json_schema_spec(t) if isinstance(t, AITool) else t)
+        for t in chat_options._ai_tools or []  # type: ignore[reportPrivateUsage]
     ]
     if not chat_options.tools:
         chat_options.tool_choice = ChatToolMode.NONE.mode
@@ -133,7 +134,7 @@ def _tool_call_non_streaming(func: TInnerGetResponse) -> TInnerGetResponse:
                     _auto_invoke_function(
                         function_call,
                         custom_args=kwargs,
-                        tool_map={t.name: t for t in chat_options._ai_tools or [] if isinstance(t, AIFunction)},
+                        tool_map={t.name: t for t in chat_options._ai_tools or [] if isinstance(t, AIFunction)},  # type: ignore[reportPrivateUsage]
                         sequence_index=seq_idx,
                         request_index=attempt_idx,
                     )
@@ -210,7 +211,7 @@ def _tool_call_streaming(func: TInnerGetStreamingResponse) -> TInnerGetStreaming
                     _auto_invoke_function(
                         function_call,
                         custom_args=kwargs,
-                        tool_map={t.name: t for t in chat_options._ai_tools or [] if isinstance(t, AIFunction)},
+                        tool_map={t.name: t for t in chat_options._ai_tools or [] if isinstance(t, AIFunction)},  # type: ignore[reportPrivateUsage]
                         sequence_index=seq_idx,
                         request_index=attempt_idx,
                     )

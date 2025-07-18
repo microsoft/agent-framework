@@ -2,4 +2,5 @@
 
 
 from ._chat_client import *  # noqa: F403
+from ._exceptions import *  # noqa: F403
 from ._shared import *  # noqa: F403
