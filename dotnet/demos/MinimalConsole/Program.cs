@@ -19,7 +19,7 @@ IChatClient chatClient = new AzureOpenAIClient(
      .GetChatClient("gpt-4o-mini")
      .AsIChatClient();
 
-Agent agent = new ChatClientAgent(
+AIAgent agent = new ChatClientAgent(
     chatClient,
     instructions: "You are a helpful assistant, you can help the user with weather information.",
     tools: [AIFunctionFactory.Create(GetWeather)]);
