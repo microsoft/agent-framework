@@ -23,18 +23,16 @@ def get_weather(
 async def main() -> None:
     print("=== Foundry Chat Client with Explicit Settings ===")
 
-    async with FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model_deployment_name=os.environ["FOUNDRY_MODEL_DEPLOYMENT_NAME"],
-        credential=AzureCliCredential(),
-        agent_name="WeatherAgent",
-    ) as chat_client:
-        agent = ChatClientAgent(
-            chat_client,
-            instructions="You are a helpful weather agent.",
-            tools=get_weather,
-        )
-
+    async with ChatClientAgent(
+        chat_client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model_deployment_name=os.environ["FOUNDRY_MODEL_DEPLOYMENT_NAME"],
+            credential=AzureCliCredential(),
+            agent_name="WeatherAgent",
+        ),
+        instructions="You are a helpful weather agent.",
+        tools=get_weather,
+    ) as agent:
         result = await agent.run("What's the weather like in New York?")
         print(f"Result: {result}\n")
 

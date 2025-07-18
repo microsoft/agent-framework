@@ -78,7 +78,7 @@ class FoundrySettings(AFBaseSettings):
     env_prefix: ClassVar[str] = "FOUNDRY_"
 
     project_endpoint: str | None = None
-    model_deployment_name: str
+    model_deployment_name: str | None = None
     agent_name: str | None = "UnnamedAgent"
 
 
@@ -88,7 +88,7 @@ class FoundryChatClient(ChatClientBase):
     agent_id: str | None = Field(default=None)
     thread_id: str | None = Field(default=None)
     _should_delete_agent: bool = PrivateAttr(default=False)  # Track whether we should delete the agent
-    _foundry_settings: FoundrySettings = PrivateAttr()
+    _foundry_settings: FoundrySettings | None = PrivateAttr()
 
     def __init__(
         self,
@@ -121,6 +121,8 @@ class FoundryChatClient(ChatClientBase):
             env_file_encoding: Encoding of the environment file.
             **kwargs: Additional keyword arguments passed to the parent class.
         """
+        foundry_settings: FoundrySettings | None = None
+
         # If no client is provided, create one
         if client is None:
             try:
@@ -235,6 +237,12 @@ class FoundryChatClient(ChatClientBase):
         """
         # If no agent_id is provided, create a temporary agent
         if self.agent_id is None:
+            if not self._foundry_settings:
+                raise ValueError("Foundry settings are not initialized.")
+
+            if not self._foundry_settings.model_deployment_name:
+                raise ServiceInitializationError("Model deployment name is required for agent creation.")
+
             agent_name = self._foundry_settings.agent_name
             created_agent = await self.client.agents.create_agent(
                 model=self._foundry_settings.model_deployment_name, name=agent_name

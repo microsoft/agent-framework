@@ -12,7 +12,7 @@ from agent_framework_foundry import FoundryChatClient, FoundrySettings
 def create_test_foundry_chat_client(
     mock_ai_project_client: MagicMock,
     agent_id: str | None = None,
-    default_thread_id: str | None = None,
+    thread_id: str | None = None,
     foundry_settings: FoundrySettings | None = None,
     should_delete_agent: bool = False,
 ) -> FoundryChatClient:
@@ -23,7 +23,7 @@ def create_test_foundry_chat_client(
     return FoundryChatClient.model_construct(
         client=mock_ai_project_client,
         agent_id=agent_id,
-        default_thread_id=default_thread_id,
+        thread_id=thread_id,
         _should_delete_agent=should_delete_agent,
         _foundry_settings=foundry_settings,
     )
@@ -54,12 +54,12 @@ def test_foundry_settings_init_with_explicit_values() -> None:
 def test_foundry_chat_client_init_with_client(mock_ai_project_client: MagicMock) -> None:
     """Test FoundryChatClient initialization with existing client."""
     chat_client = create_test_foundry_chat_client(
-        mock_ai_project_client, agent_id="existing-agent-id", default_thread_id="test-thread-id"
+        mock_ai_project_client, agent_id="existing-agent-id", thread_id="test-thread-id"
     )
 
     assert chat_client.client is mock_ai_project_client
     assert chat_client.agent_id == "existing-agent-id"
-    assert chat_client.default_thread_id == "test-thread-id"
+    assert chat_client.thread_id == "test-thread-id"
     assert not chat_client._should_delete_agent  # type: ignore
     assert isinstance(chat_client, ChatClient)
 
@@ -73,7 +73,7 @@ def test_foundry_chat_client_init_auto_create_client(
     chat_client = FoundryChatClient.model_construct(
         client=mock_ai_project_client,
         agent_id=None,
-        default_thread_id=None,
+        thread_id=None,
         _should_delete_agent=False,
         _foundry_settings=foundry_settings,
     )
@@ -88,7 +88,7 @@ def test_foundry_chat_client_from_dict(mock_ai_project_client: MagicMock) -> Non
     settings = {
         "client": mock_ai_project_client,
         "agent_id": "test-agent-id",
-        "default_thread_id": "test-thread-id",
+        "thread_id": "test-thread-id",
         "project_endpoint": "https://test-endpoint.com/",
         "model_deployment_name": "test-model",
         "agent_name": "TestAgent",
@@ -100,57 +100,57 @@ def test_foundry_chat_client_from_dict(mock_ai_project_client: MagicMock) -> Non
         agent_name=settings["agent_name"],
     )
 
-    chat_client = create_test_foundry_chat_client(
+    chat_client: FoundryChatClient = create_test_foundry_chat_client(
         mock_ai_project_client,
         agent_id=settings["agent_id"],  # type: ignore
-        default_thread_id=settings["default_thread_id"],  # type: ignore
+        thread_id=settings["thread_id"],  # type: ignore
         foundry_settings=foundry_settings,
     )
 
     assert chat_client.client is mock_ai_project_client
     assert chat_client.agent_id == "test-agent-id"
-    assert chat_client.default_thread_id == "test-thread-id"
+    assert chat_client.thread_id == "test-thread-id"
 
 
 @pytest.mark.asyncio
-async def test_foundry_chat_client_ensure_agent_exists_existing_agent(
+async def test_foundry_chat_client_get_agent_id_or_create_existing_agent(
     mock_ai_project_client: MagicMock,
 ) -> None:
-    """Test _ensure_agent_exists when agent_id is already provided."""
+    """Test _get_agent_id_or_create when agent_id is already provided."""
     chat_client = create_test_foundry_chat_client(mock_ai_project_client, agent_id="existing-agent-id")
 
-    agent_id = await chat_client._ensure_agent_exists()  # type: ignore
+    agent_id = await chat_client._get_agent_id_or_create()  # type: ignore
 
     assert agent_id == "existing-agent-id"
     assert not chat_client._should_delete_agent  # type: ignore
 
 
 @pytest.mark.asyncio
-async def test_foundry_chat_client_ensure_agent_exists_create_new(
+async def test_foundry_chat_client_get_agent_id_or_create_create_new(
     mock_ai_project_client: MagicMock,
     foundry_unit_test_env: dict[str, str],
 ) -> None:
-    """Test _ensure_agent_exists when creating a new agent."""
+    """Test _get_agent_id_or_create when creating a new agent."""
     foundry_settings = FoundrySettings(
         model_deployment_name=foundry_unit_test_env["FOUNDRY_MODEL_DEPLOYMENT_NAME"], agent_name="TestAgent"
     )
     chat_client = create_test_foundry_chat_client(mock_ai_project_client, foundry_settings=foundry_settings)
 
-    agent_id = await chat_client._ensure_agent_exists()  # type: ignore
+    agent_id = await chat_client._get_agent_id_or_create()  # type: ignore
 
     assert agent_id == "test-agent-id"
     assert chat_client._should_delete_agent  # type: ignore
 
 
 @pytest.mark.asyncio
-async def test_foundry_chat_client_ensure_agent_exists_missing_model(
+async def test_foundry_chat_client_get_agent_id_or_create_missing_model(
     mock_ai_project_client: MagicMock,
 ) -> None:
-    """Test _ensure_agent_exists when model_deployment_name is missing."""
+    """Test _get_agent_id_or_create when model_deployment_name is missing."""
     chat_client = create_test_foundry_chat_client(mock_ai_project_client)
 
     with pytest.raises(ServiceInitializationError, match="Model deployment name is required"):
-        await chat_client._ensure_agent_exists()  # type: ignore
+        await chat_client._get_agent_id_or_create()  # type: ignore
 
 
 @pytest.mark.asyncio
@@ -206,7 +206,7 @@ async def test_foundry_chat_client_aclose(mock_ai_project_client: MagicMock) -> 
         mock_ai_project_client, agent_id="agent-to-delete", should_delete_agent=True
     )
 
-    await chat_client.aclose()
+    await chat_client.close()
 
     # Verify agent deletion was called
     mock_ai_project_client.agents.delete_agent.assert_called_once_with("agent-to-delete")

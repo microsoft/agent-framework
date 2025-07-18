@@ -33,14 +33,13 @@ async def main() -> None:
     )
 
     try:
-        agent = ChatClientAgent(
-            FoundryChatClient(client=client, agent_id=created_agent.id),
+        async with ChatClientAgent(
+            chat_client=FoundryChatClient(client=client, agent_id=created_agent.id),
             instructions="You are a helpful weather agent.",
             tools=get_weather,
-        )
-
-        result = await agent.run("What's the weather like in Tokyo?")
-        print(f"Result: {result}\n")
+        ) as agent:
+            result = await agent.run("What's the weather like in Tokyo?")
+            print(f"Result: {result}\n")
     finally:
         # Clean up the agent manually
         await client.agents.delete_agent(created_agent.id)

@@ -349,6 +349,23 @@ class ChatClientAgent(AgentBase):
 
         super().__init__(**args)
 
+    async def __aenter__(self) -> "ChatClientAgent":
+        """Async context manager entry.
+
+        If the chat_client supports async context management, enter its context.
+        """
+        if hasattr(self.chat_client, "__aenter__") and hasattr(self.chat_client, "__aexit__"):
+            await self.chat_client.__aenter__()  # type: ignore[reportUnknownMemberType]
+        return self
+
+    async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
+        """Async context manager exit.
+
+        If the chat_client supports async context management, exit its context.
+        """
+        if hasattr(self.chat_client, "__aenter__") and hasattr(self.chat_client, "__aexit__"):
+            await self.chat_client.__aexit__(exc_type, exc_val, exc_tb)  # type: ignore[reportUnknownMemberType]
+
     async def run(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,

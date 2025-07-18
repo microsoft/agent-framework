@@ -21,13 +21,11 @@ def get_weather(
 async def main() -> None:
     print("=== Basic Foundry Chat Client Example ===")
 
-    async with FoundryChatClient() as chat_client:
-        agent = ChatClientAgent(
-            chat_client,
-            instructions="You are a helpful weather agent.",
-            tools=get_weather,
-        )
-
+    async with ChatClientAgent(
+        chat_client=FoundryChatClient(),
+        instructions="You are a helpful weather agent.",
+        tools=get_weather,
+    ) as agent:
         result = await agent.run("What's the weather like in Seattle?")
         print(f"Result: {result}\n")
 
