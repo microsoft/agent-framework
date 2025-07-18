@@ -33,7 +33,7 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
         IChatClient chatClient = base.GetChatClient(provider);
 
         // Define the agent
-        Agent agent = new ChatClientAgent(chatClient, ParrotInstructions, ParrotName);
+        AIAgent agent = new ChatClientAgent(chatClient, ParrotInstructions, ParrotName);
 
         // Invoke the agent and output the text result.
         Console.WriteLine(await agent.RunAsync("Fortune favors the bold."));

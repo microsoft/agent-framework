@@ -24,7 +24,7 @@ public class HandoffOrchestration<TInput, TOutput> : AgentOrchestration<TInput, 
     /// </summary>
     /// <param name="handoffs">Defines the handoff connections for each agent.</param>
     /// <param name="agents">Additional agents participating in the orchestration that weren't passed to <paramref name="handoffs"/>.</param>
-    public HandoffOrchestration(OrchestrationHandoffs handoffs, params Agent[] agents) : base(
+    public HandoffOrchestration(OrchestrationHandoffs handoffs, params AIAgent[] agents) : base(
             agents is { Length: 0 } ? handoffs.Agents.ToArray() :
             handoffs.Agents is { Count: 0 } ? agents :
             handoffs.Agents.Concat(agents).Distinct().ToArray())
@@ -74,7 +74,7 @@ public class HandoffOrchestration<TInput, TOutput> : AgentOrchestration<TInput, 
         ActorType agentType = outputType;
         for (int index = this.Members.Count - 1; index >= 0; --index)
         {
-            Agent agent = this.Members[index];
+            AIAgent agent = this.Members[index];
             HandoffLookup map = [];
             handoffMap[agent.Name ?? agent.Id] = map;
             agentType =

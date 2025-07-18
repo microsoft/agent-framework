@@ -22,7 +22,7 @@ public class OpenAIAssistantFixture : IChatClientAgentFixture
     private ChatClientAgent _agent;
 #pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
 
-    public Agent Agent => this._agent;
+    public AIAgent Agent => this._agent;
 
     public IChatClient ChatClient => this._agent.ChatClient;
 

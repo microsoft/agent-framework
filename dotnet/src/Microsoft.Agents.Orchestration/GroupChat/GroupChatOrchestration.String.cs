@@ -14,7 +14,7 @@ public sealed class GroupChatOrchestration : GroupChatOrchestration<string, stri
     /// </summary>
     /// <param name="manager">The manages the flow of the group-chat.</param>
     /// <param name="members">The agents to be orchestrated.</param>
-    public GroupChatOrchestration(GroupChatManager manager, params Agent[] members)
+    public GroupChatOrchestration(GroupChatManager manager, params AIAgent[] members)
         : base(manager, members)
     {
     }

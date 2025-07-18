@@ -34,9 +34,9 @@ public class HandoffsTests
         // Arrange
         OrchestrationHandoffs handoffs = new("source");
 
-        Agent sourceAgent = CreateAgent("source", "Source Agent");
-        Agent targetAgent1 = CreateAgent("target1", "Target Agent 1");
-        Agent targetAgent2 = CreateAgent("target2", "Target Agent 2");
+        AIAgent sourceAgent = CreateAgent("source", "Source Agent");
+        AIAgent targetAgent1 = CreateAgent("target1", "Target Agent 1");
+        AIAgent targetAgent2 = CreateAgent("target2", "Target Agent 2");
 
         // Act
         handoffs.Add(sourceAgent, targetAgent1, targetAgent2);
@@ -58,8 +58,8 @@ public class HandoffsTests
         // Arrange
         OrchestrationHandoffs handoffs = new("source");
 
-        Agent sourceAgent = CreateAgent("source", "Source Agent");
-        Agent targetAgent = CreateAgent("target", "Target Agent");
+        AIAgent sourceAgent = CreateAgent("source", "Source Agent");
+        AIAgent targetAgent = CreateAgent("target", "Target Agent");
         string customDescription = "Custom handoff description";
 
         // Act
@@ -79,7 +79,7 @@ public class HandoffsTests
         // Arrange
         OrchestrationHandoffs handoffs = new("source");
 
-        Agent sourceAgent = CreateAgent("source", "Source Agent");
+        AIAgent sourceAgent = CreateAgent("source", "Source Agent");
         string targetName = "targetName";
         string description = "Target description";
 
@@ -121,12 +121,12 @@ public class HandoffsTests
         // Arrange
         OrchestrationHandoffs handoffs = new("source1");
 
-        Agent source1 = CreateAgent("source1", "Source Agent 1");
-        Agent source2 = CreateAgent("source2", "Source Agent 2");
+        AIAgent source1 = CreateAgent("source1", "Source Agent 1");
+        AIAgent source2 = CreateAgent("source2", "Source Agent 2");
 
-        Agent target1 = CreateAgent("target1", "Target Agent 1");
-        Agent target2 = CreateAgent("target2", "Target Agent 2");
-        Agent target3 = CreateAgent("target3", "Target Agent 3");
+        AIAgent target1 = CreateAgent("target1", "Target Agent 1");
+        AIAgent target2 = CreateAgent("target2", "Target Agent 2");
+        AIAgent target3 = CreateAgent("target3", "Target Agent 3");
 
         // Act
         handoffs.Add(source1, target1, target2);
@@ -155,9 +155,9 @@ public class HandoffsTests
     public void StaticAddCreatesNewOrchestrationHandoffs()
     {
         // Arrange
-        Agent source = CreateAgent("source", "Source Agent");
-        Agent target1 = CreateAgent("target1", "Target Agent 1");
-        Agent target2 = CreateAgent("target2", "Target Agent 2");
+        AIAgent source = CreateAgent("source", "Source Agent");
+        AIAgent target1 = CreateAgent("target1", "Target Agent 1");
+        AIAgent target2 = CreateAgent("target2", "Target Agent 2");
 
         // Act
         OrchestrationHandoffs handoffs =
@@ -183,8 +183,8 @@ public class HandoffsTests
         // Arrange
         OrchestrationHandoffs handoffs = new("source-id");
 
-        Agent sourceAgent = CreateAgent(id: "source-id", name: null);
-        Agent targetAgent = CreateAgent(id: "target-id", name: null, description: "Target Description");
+        AIAgent sourceAgent = CreateAgent(id: "source-id", name: null);
+        AIAgent targetAgent = CreateAgent(id: "target-id", name: null, description: "Target Description");
 
         // Act
         handoffs.Add(sourceAgent, targetAgent);
@@ -205,8 +205,8 @@ public class HandoffsTests
         // Arrange
         OrchestrationHandoffs handoffs = new("source");
 
-        Agent sourceAgent = CreateAgent("source", "Source Agent");
-        Agent targetAgent1 = CreateAgent("target1", name: "target 1");
+        AIAgent sourceAgent = CreateAgent("source", "Source Agent");
+        AIAgent targetAgent1 = CreateAgent("target1", name: "target 1");
 
         // Act
         handoffs.Add(sourceAgent, targetAgent1);
@@ -227,8 +227,8 @@ public class HandoffsTests
         // Arrange
         OrchestrationHandoffs handoffs = new("source");
 
-        Agent sourceAgent = CreateAgent("source", "Source Agent");
-        Agent targetAgent1 = CreateAgent("target1");
+        AIAgent sourceAgent = CreateAgent("source", "Source Agent");
+        AIAgent targetAgent1 = CreateAgent("target1");
 
         // Act
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => handoffs.Add(sourceAgent, targetAgent1));

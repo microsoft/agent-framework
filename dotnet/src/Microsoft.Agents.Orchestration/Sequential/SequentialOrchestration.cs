@@ -20,7 +20,7 @@ public class SequentialOrchestration<TInput, TOutput> : AgentOrchestration<TInpu
     /// Initializes a new instance of the <see cref="SequentialOrchestration{TInput, TOutput}"/> class.
     /// </summary>
     /// <param name="agents">The agents participating in the orchestration.</param>
-    public SequentialOrchestration(params Agent[] agents)
+    public SequentialOrchestration(params AIAgent[] agents)
         : base(agents)
     {
     }
@@ -44,7 +44,7 @@ public class SequentialOrchestration<TInput, TOutput> : AgentOrchestration<TInpu
         ActorType nextAgent = outputType;
         for (int index = this.Members.Count - 1; index >= 0; --index)
         {
-            Agent agent = this.Members[index];
+            AIAgent agent = this.Members[index];
             nextAgent = await RegisterAgentAsync(agent, index, nextAgent).ConfigureAwait(false);
 
             logger.LogRegisterActor(this.OrchestrationLabel, nextAgent, "MEMBER", index + 1);
@@ -52,7 +52,7 @@ public class SequentialOrchestration<TInput, TOutput> : AgentOrchestration<TInpu
 
         return nextAgent;
 
-        ValueTask<ActorType> RegisterAgentAsync(Agent agent, int index, ActorType nextAgent) =>
+        ValueTask<ActorType> RegisterAgentAsync(AIAgent agent, int index, ActorType nextAgent) =>
             runtime.RegisterOrchestrationAgentAsync(
                 this.GetAgentType(context.Topic, index),
                 (agentId, runtime) =>

@@ -9,7 +9,7 @@ using System.Text.Json.Serialization;
 namespace Microsoft.Extensions.AI.Agents;
 
 /// <summary>
-/// Represents a single streaming response chunk from an <see cref="Agent"/>.
+/// Represents a single streaming response chunk from an <see cref="AIAgent"/>.
 /// </summary>
 /// <remarks>
 /// <para>
