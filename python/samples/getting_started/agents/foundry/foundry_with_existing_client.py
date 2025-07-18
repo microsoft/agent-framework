@@ -24,9 +24,11 @@ def get_weather(
 async def main() -> None:
     print("=== Foundry Chat Client with Existing AIProjectClient ===")
 
-    # Create the client yourself
+    # Create the client
     client = AIProjectClient(endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=AzureCliCredential())
 
+    # Since no Agent ID is provided, the agent will be automatically created
+    # and deleted after getting a response
     async with ChatClientAgent(
         chat_client=FoundryChatClient(
             client=client,

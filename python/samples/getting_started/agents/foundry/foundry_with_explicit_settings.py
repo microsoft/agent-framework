@@ -23,6 +23,8 @@ def get_weather(
 async def main() -> None:
     print("=== Foundry Chat Client with Explicit Settings ===")
 
+    # Since no Agent ID is provided, the agent will be automatically created
+    # and deleted after getting a response
     async with ChatClientAgent(
         chat_client=FoundryChatClient(
             project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],

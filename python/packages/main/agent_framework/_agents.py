@@ -1,9 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import sys
 from collections.abc import AsyncIterable, Callable, MutableMapping, Sequence
 from enum import Enum
 from typing import Any, Literal, Protocol, TypeVar, runtime_checkable
 from uuid import uuid4
+
+if sys.version_info >= (3, 11):
+    from typing import Self  # pragma: no cover
+else:
+    from typing_extensions import Self  # pragma: no cover
 
 from pydantic import BaseModel, Field
 
@@ -359,7 +365,7 @@ class ChatClientAgent(AgentBase):
 
         super().__init__(**args)
 
-    async def __aenter__(self) -> "ChatClientAgent":
+    async def __aenter__(self) -> "Self":
         """Async context manager entry.
 
         If the chat_client supports async context management, enter its context.

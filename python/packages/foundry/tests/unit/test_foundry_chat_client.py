@@ -112,7 +112,6 @@ def test_foundry_chat_client_from_dict(mock_ai_project_client: MagicMock) -> Non
     assert chat_client.thread_id == "test-thread-id"
 
 
-@pytest.mark.asyncio
 async def test_foundry_chat_client_get_agent_id_or_create_existing_agent(
     mock_ai_project_client: MagicMock,
 ) -> None:
@@ -125,7 +124,6 @@ async def test_foundry_chat_client_get_agent_id_or_create_existing_agent(
     assert not chat_client._should_delete_agent  # type: ignore
 
 
-@pytest.mark.asyncio
 async def test_foundry_chat_client_get_agent_id_or_create_create_new(
     mock_ai_project_client: MagicMock,
     foundry_unit_test_env: dict[str, str],
@@ -142,7 +140,6 @@ async def test_foundry_chat_client_get_agent_id_or_create_create_new(
     assert chat_client._should_delete_agent  # type: ignore
 
 
-@pytest.mark.asyncio
 async def test_foundry_chat_client_get_agent_id_or_create_missing_model(
     mock_ai_project_client: MagicMock,
 ) -> None:
@@ -153,7 +150,6 @@ async def test_foundry_chat_client_get_agent_id_or_create_missing_model(
         await chat_client._get_agent_id_or_create()  # type: ignore
 
 
-@pytest.mark.asyncio
 async def test_foundry_chat_client_cleanup_agent_if_needed_should_delete(
     mock_ai_project_client: MagicMock,
 ) -> None:
@@ -169,7 +165,6 @@ async def test_foundry_chat_client_cleanup_agent_if_needed_should_delete(
     assert not chat_client._should_delete_agent  # type: ignore
 
 
-@pytest.mark.asyncio
 async def test_foundry_chat_client_cleanup_agent_if_needed_should_not_delete(
     mock_ai_project_client: MagicMock,
 ) -> None:
@@ -185,7 +180,6 @@ async def test_foundry_chat_client_cleanup_agent_if_needed_should_not_delete(
     assert not chat_client._should_delete_agent  # type: ignore
 
 
-@pytest.mark.asyncio
 async def test_foundry_chat_client_cleanup_agent_if_needed_exception_handling(
     mock_ai_project_client: MagicMock,
 ) -> None:
@@ -199,7 +193,6 @@ async def test_foundry_chat_client_cleanup_agent_if_needed_exception_handling(
         await chat_client._cleanup_agent_if_needed()  # type: ignore
 
 
-@pytest.mark.asyncio
 async def test_foundry_chat_client_aclose(mock_ai_project_client: MagicMock) -> None:
     """Test aclose method calls cleanup."""
     chat_client = create_test_foundry_chat_client(
@@ -212,7 +205,6 @@ async def test_foundry_chat_client_aclose(mock_ai_project_client: MagicMock) -> 
     mock_ai_project_client.agents.delete_agent.assert_called_once_with("agent-to-delete")
 
 
-@pytest.mark.asyncio
 async def test_foundry_chat_client_async_context_manager(mock_ai_project_client: MagicMock) -> None:
     """Test async context manager functionality."""
     chat_client = create_test_foundry_chat_client(

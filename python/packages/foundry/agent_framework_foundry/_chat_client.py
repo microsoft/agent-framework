@@ -494,8 +494,11 @@ class FoundryChatClient(ChatClientBase):
 
         additional_messages: list[ThreadMessageOptions] | None = None
 
+        # System/developer messages are turned into instructions, since there is no such message roles in Foundry.
+        # All other messages are added 1:1, treating assistant messages as agent messages
+        # and everything else as user messages.
         for chat_message in messages:
-            if chat_message.role == ChatRole.SYSTEM or chat_message.role.value == "developer":
+            if chat_message.role.value in ["system", "developer"]:
                 for text_content in [content for content in chat_message.contents if isinstance(content, TextContent)]:
                     instructions.append(text_content.text)
 
