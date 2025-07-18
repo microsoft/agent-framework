@@ -137,7 +137,7 @@ class FoundryChatClient(ChatClientBase):
             if not foundry_settings.project_endpoint:
                 raise ServiceInitializationError("Project endpoint is required when client is not provided.")
 
-            if self.agent_id is None and not foundry_settings.model_deployment_name:
+            if agent_id is None and not foundry_settings.model_deployment_name:
                 raise ServiceInitializationError("Model deployment name is required for agent creation.")
 
             # Use provided credential or fallback to DefaultAzureCredential
