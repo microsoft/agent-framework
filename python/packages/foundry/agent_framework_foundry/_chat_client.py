@@ -88,7 +88,7 @@ class FoundryChatClient(ChatClientBase):
     agent_id: str | None = Field(default=None)
     thread_id: str | None = Field(default=None)
     _should_delete_agent: bool = PrivateAttr(default=False)  # Track whether we should delete the agent
-    _foundry_settings: FoundrySettings | None = PrivateAttr()
+    _foundry_settings: FoundrySettings = PrivateAttr()
 
     def __init__(
         self,
@@ -121,21 +121,19 @@ class FoundryChatClient(ChatClientBase):
             env_file_encoding: Encoding of the environment file.
             **kwargs: Additional keyword arguments passed to the parent class.
         """
-        foundry_settings: FoundrySettings | None = None
+        try:
+            foundry_settings = FoundrySettings(
+                project_endpoint=project_endpoint,
+                model_deployment_name=model_deployment_name,
+                agent_name=agent_name,
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
+            )
+        except ValidationError as ex:
+            raise ServiceInitializationError("Failed to create Foundry settings.", ex) from ex
 
         # If no client is provided, create one
         if client is None:
-            try:
-                foundry_settings = FoundrySettings(
-                    project_endpoint=project_endpoint,
-                    model_deployment_name=model_deployment_name,
-                    agent_name=agent_name,
-                    env_file_path=env_file_path,
-                    env_file_encoding=env_file_encoding,
-                )
-            except ValidationError as ex:
-                raise ServiceInitializationError("Failed to create Foundry settings.", ex) from ex
-
             if not foundry_settings.project_endpoint:
                 raise ServiceInitializationError("Project endpoint is required when client is not provided.")
 
@@ -237,9 +235,6 @@ class FoundryChatClient(ChatClientBase):
         """
         # If no agent_id is provided, create a temporary agent
         if self.agent_id is None:
-            if not self._foundry_settings:
-                raise ValueError("Foundry settings are not initialized.")
-
             if not self._foundry_settings.model_deployment_name:
                 raise ServiceInitializationError("Model deployment name is required for agent creation.")
 
@@ -339,76 +334,87 @@ class FoundryChatClient(ChatClientBase):
             # Tool output handlers only support async iteration, not context management.
             if isinstance(stream, contextlib.AbstractAsyncContextManager):
                 async with stream as response_stream:  # type: ignore
-                    stream_iter = response_stream
+                    async for update in self._process_stream_events_from_iterator(
+                        response_stream, thread_id, response_id
+                    ):
+                        yield update
             else:
-                stream_iter = stream
+                async for update in self._process_stream_events_from_iterator(stream, thread_id, response_id):
+                    yield update
 
-            async for event_type, event_data, _ in stream_iter:  # type: ignore
-                if event_type == AgentStreamEvent.THREAD_RUN_CREATED and isinstance(event_data, ThreadRun):
+    async def _process_stream_events_from_iterator(
+        self,
+        stream_iter: Any,
+        thread_id: str,
+        response_id: str | None,
+    ) -> AsyncIterable[ChatResponseUpdate]:
+        """Process events from the stream iterator and yield ChatResponseUpdate objects."""
+        async for event_type, event_data, _ in stream_iter:  # type: ignore
+            if event_type == AgentStreamEvent.THREAD_RUN_CREATED and isinstance(event_data, ThreadRun):
+                yield ChatResponseUpdate(
+                    contents=[],
+                    conversation_id=event_data.thread_id,
+                    message_id=response_id,
+                    raw_representation=event_data,
+                    response_id=response_id,
+                    role=ChatRole.ASSISTANT,
+                )
+            elif event_type == AgentStreamEvent.THREAD_RUN_STEP_CREATED and isinstance(event_data, RunStep):
+                response_id = event_data.run_id
+            elif event_type == AgentStreamEvent.THREAD_MESSAGE_DELTA and isinstance(event_data, MessageDeltaChunk):
+                role = ChatRole.USER if event_data.delta.role == MessageRole.USER else ChatRole.ASSISTANT
+                yield ChatResponseUpdate(
+                    role=role,
+                    text=event_data.text,
+                    conversation_id=thread_id,
+                    message_id=response_id,
+                    raw_representation=event_data,
+                    response_id=response_id,
+                )
+            elif (
+                event_type == AgentStreamEvent.THREAD_RUN_REQUIRES_ACTION
+                and isinstance(event_data, ThreadRun)
+                and isinstance(event_data.required_action, SubmitToolOutputsAction)
+            ):
+                contents = self._create_function_call_contents(event_data, response_id)
+                if contents:
                     yield ChatResponseUpdate(
-                        contents=[],
-                        conversation_id=event_data.thread_id,
-                        message_id=response_id,
-                        raw_representation=event_data,
-                        response_id=response_id,
                         role=ChatRole.ASSISTANT,
-                    )
-                elif event_type == AgentStreamEvent.THREAD_RUN_STEP_CREATED and isinstance(event_data, RunStep):
-                    response_id = event_data.run_id
-                elif event_type == AgentStreamEvent.THREAD_MESSAGE_DELTA and isinstance(event_data, MessageDeltaChunk):
-                    role = ChatRole.USER if event_data.delta.role == MessageRole.USER else ChatRole.ASSISTANT
-                    yield ChatResponseUpdate(
-                        role=role,
-                        text=event_data.text,
+                        contents=contents,
                         conversation_id=thread_id,
                         message_id=response_id,
                         raw_representation=event_data,
                         response_id=response_id,
                     )
-                elif (
-                    event_type == AgentStreamEvent.THREAD_RUN_REQUIRES_ACTION
-                    and isinstance(event_data, ThreadRun)
-                    and isinstance(event_data.required_action, SubmitToolOutputsAction)
-                ):
-                    contents = self._create_function_call_contents(event_data, response_id)
-                    if contents:
-                        yield ChatResponseUpdate(
-                            role=ChatRole.ASSISTANT,
-                            contents=contents,
-                            conversation_id=thread_id,
-                            message_id=response_id,
-                            raw_representation=event_data,
-                            response_id=response_id,
-                        )
-                elif (
-                    event_type == AgentStreamEvent.THREAD_RUN_COMPLETED
-                    and isinstance(event_data, RunStep)
-                    and event_data.usage is not None
-                ):
-                    usage_content = UsageContent(
-                        UsageDetails(
-                            input_token_count=event_data.usage.prompt_tokens,
-                            output_token_count=event_data.usage.completion_tokens,
-                            total_token_count=event_data.usage.total_tokens,
-                        )
+            elif (
+                event_type == AgentStreamEvent.THREAD_RUN_COMPLETED
+                and isinstance(event_data, RunStep)
+                and event_data.usage is not None
+            ):
+                usage_content = UsageContent(
+                    UsageDetails(
+                        input_token_count=event_data.usage.prompt_tokens,
+                        output_token_count=event_data.usage.completion_tokens,
+                        total_token_count=event_data.usage.total_tokens,
                     )
-                    yield ChatResponseUpdate(
-                        role=ChatRole.ASSISTANT,
-                        contents=[usage_content],
-                        conversation_id=thread_id,
-                        message_id=response_id,
-                        raw_representation=event_data,
-                        response_id=response_id,
-                    )
-                else:
-                    yield ChatResponseUpdate(
-                        contents=[],
-                        conversation_id=thread_id,
-                        message_id=response_id,
-                        raw_representation=event_data,  # type: ignore
-                        response_id=response_id,
-                        role=ChatRole.ASSISTANT,
-                    )
+                )
+                yield ChatResponseUpdate(
+                    role=ChatRole.ASSISTANT,
+                    contents=[usage_content],
+                    conversation_id=thread_id,
+                    message_id=response_id,
+                    raw_representation=event_data,
+                    response_id=response_id,
+                )
+            else:
+                yield ChatResponseUpdate(
+                    contents=[],
+                    conversation_id=thread_id,
+                    message_id=response_id,
+                    raw_representation=event_data,  # type: ignore
+                    response_id=response_id,
+                    role=ChatRole.ASSISTANT,
+                )
 
     def _create_function_call_contents(self, event_data: ThreadRun, response_id: str | None) -> list[AIContents]:
         """Create function call contents from a tool action event."""
