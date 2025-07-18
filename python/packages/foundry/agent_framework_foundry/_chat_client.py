@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import contextlib
 import json
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence
 from typing import Any, ClassVar
@@ -77,7 +78,7 @@ class FoundrySettings(AFBaseSettings):
     env_prefix: ClassVar[str] = "FOUNDRY_"
 
     project_endpoint: str | None = None
-    model_deployment_name: str | None = None
+    model_deployment_name: str
     agent_name: str | None = "UnnamedAgent"
 
 
@@ -85,7 +86,7 @@ class FoundrySettings(AFBaseSettings):
 class FoundryChatClient(ChatClientBase):
     client: AIProjectClient = Field(...)
     agent_id: str | None = Field(default=None)
-    default_thread_id: str | None = Field(default=None)
+    thread_id: str | None = Field(default=None)
     _should_delete_agent: bool = PrivateAttr(default=False)  # Track whether we should delete the agent
     _foundry_settings: FoundrySettings = PrivateAttr()
 
@@ -94,7 +95,7 @@ class FoundryChatClient(ChatClientBase):
         client: AIProjectClient | None = None,
         agent_id: str | None = None,
         agent_name: str | None = None,
-        default_thread_id: str | None = None,
+        thread_id: str | None = None,
         project_endpoint: str | None = None,
         model_deployment_name: str | None = None,
         credential: AsyncTokenCredential | None = None,
@@ -110,7 +111,8 @@ class FoundryChatClient(ChatClientBase):
                 a new agent will be created (and deleted after the request). If neither client
                 nor agent_id is provided, both will be created and managed automatically.
             agent_name: The name to use when creating new agents.
-            default_thread_id: Default thread ID to use for conversations.
+            thread_id: Default thread ID to use for conversations. Can be overridden by
+                conversation_id property from ChatOptions, when making a request.
             project_endpoint: The Azure AI Foundry project endpoint URL. Used if client is not provided.
             model_deployment_name: The model deployment name to use for agent creation.
             credential: Azure async credential to use for authentication. If not provided,
@@ -119,21 +121,24 @@ class FoundryChatClient(ChatClientBase):
             env_file_encoding: Encoding of the environment file.
             **kwargs: Additional keyword arguments passed to the parent class.
         """
-        try:
-            foundry_settings = FoundrySettings(
-                project_endpoint=project_endpoint,
-                model_deployment_name=model_deployment_name,
-                agent_name=agent_name,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create Foundry settings.", ex) from ex
-
         # If no client is provided, create one
         if client is None:
+            try:
+                foundry_settings = FoundrySettings(
+                    project_endpoint=project_endpoint,
+                    model_deployment_name=model_deployment_name,
+                    agent_name=agent_name,
+                    env_file_path=env_file_path,
+                    env_file_encoding=env_file_encoding,
+                )
+            except ValidationError as ex:
+                raise ServiceInitializationError("Failed to create Foundry settings.", ex) from ex
+
             if not foundry_settings.project_endpoint:
                 raise ServiceInitializationError("Project endpoint is required when client is not provided.")
+
+            if self.agent_id is None and not foundry_settings.model_deployment_name:
+                raise ServiceInitializationError("Model deployment name is required for agent creation.")
 
             # Use provided credential or fallback to DefaultAzureCredential
             if credential is None:
@@ -146,7 +151,7 @@ class FoundryChatClient(ChatClientBase):
         super().__init__(
             client=client,  # type: ignore[reportCallIssue]
             agent_id=agent_id,  # type: ignore[reportCallIssue]
-            default_thread_id=default_thread_id,  # type: ignore[reportCallIssue]
+            thread_id=thread_id,  # type: ignore[reportCallIssue]
             **kwargs,
         )
 
@@ -159,9 +164,9 @@ class FoundryChatClient(ChatClientBase):
 
     async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
         """Async context manager exit - clean up any agents we created."""
-        await self.aclose()
+        await self.close()
 
-    async def aclose(self) -> None:
+    async def close(self) -> None:
         """Close the client and clean up any agents we created."""
         await self._cleanup_agent_if_needed()
 
@@ -175,7 +180,7 @@ class FoundryChatClient(ChatClientBase):
         return cls(
             client=settings.get("client"),
             agent_id=settings.get("agent_id"),
-            default_thread_id=settings.get("default_thread_id"),
+            thread_id=settings.get("thread_id"),
             project_endpoint=settings.get("project_endpoint"),
             model_deployment_name=settings.get("model_deployment_name"),
             agent_name=settings.get("agent_name"),
@@ -206,14 +211,14 @@ class FoundryChatClient(ChatClientBase):
 
         # Get the thread ID
         thread_id: str | None = (
-            chat_options.conversation_id if chat_options.conversation_id is not None else self.default_thread_id
+            chat_options.conversation_id if chat_options.conversation_id is not None else self.thread_id
         )
 
         if thread_id is None and tool_results is not None:
             raise ValueError("No thread ID was provided, but chat messages includes tool results.")
 
         # Determine which agent to use and create if needed
-        agent_id = await self._ensure_agent_exists()
+        agent_id = await self._get_agent_id_or_create()
 
         # Create the streaming response
         stream, thread_id = await self._create_agent_stream(thread_id, agent_id, run_options, tool_results)
@@ -222,17 +227,14 @@ class FoundryChatClient(ChatClientBase):
         async for update in self._process_stream_events(stream, thread_id):
             yield update
 
-    async def _ensure_agent_exists(self) -> str:
-        """Ensure an agent exists, creating one if necessary.
+    async def _get_agent_id_or_create(self) -> str:
+        """Determine which agent to use and create if needed.
 
         Returns:
             str: The agent_id to use
         """
         # If no agent_id is provided, create a temporary agent
         if self.agent_id is None:
-            if not self._foundry_settings.model_deployment_name:
-                raise ServiceInitializationError("Model deployment name is required for agent creation.")
-
             agent_name = self._foundry_settings.agent_name
             created_agent = await self.client.agents.create_agent(
                 model=self._foundry_settings.model_deployment_name, name=agent_name
@@ -287,12 +289,12 @@ class FoundryChatClient(ChatClientBase):
             return None
 
         async for run in self.client.agents.runs.list(thread_id=thread_id, limit=1, order=ListSortOrder.DESCENDING):
-            if (
-                run.status is not RunStatus.COMPLETED
-                and run.status is not RunStatus.CANCELLED
-                and run.status is not RunStatus.FAILED
-                and run.status is not RunStatus.EXPIRED
-            ):
+            if run.status not in [
+                RunStatus.COMPLETED,
+                RunStatus.CANCELLED,
+                RunStatus.FAILED,
+                RunStatus.EXPIRED,
+            ]:
                 return run
         return None
 
@@ -327,7 +329,7 @@ class FoundryChatClient(ChatClientBase):
         if stream is not None:
             # Use 'async with' only if the stream supports async context management (main agent stream).
             # Tool output handlers only support async iteration, not context management.
-            if hasattr(stream, "__aenter__") and hasattr(stream, "__aexit__"):  # type: ignore
+            if isinstance(stream, contextlib.AbstractAsyncContextManager):
                 async with stream as response_stream:  # type: ignore
                     stream_iter = response_stream
             else:
