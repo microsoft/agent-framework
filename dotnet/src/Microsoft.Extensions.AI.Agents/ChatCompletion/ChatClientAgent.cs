@@ -130,7 +130,7 @@ public sealed class ChatClientAgent : AIAgent
 
         await this.NotifyThreadOfNewMessagesAsync(chatClientThread, chatResponseMessages, cancellationToken).ConfigureAwait(false);
 
-        return chatResponse.ToAgentRunResponse(this.Id);
+        return new(chatResponse) { AgentId = this.Id };
     }
 
     /// <inheritdoc/>
@@ -167,7 +167,7 @@ public sealed class ChatClientAgent : AIAgent
             {
                 responseUpdates.Add(update);
                 update.AuthorName ??= this.Name;
-                yield return update.ToAgentRunResponseUpdate(this.Id);
+                yield return new(update) { AgentId = this.Id };
             }
 
             hasUpdates = await responseUpdatesEnumerator.MoveNextAsync().ConfigureAwait(false);

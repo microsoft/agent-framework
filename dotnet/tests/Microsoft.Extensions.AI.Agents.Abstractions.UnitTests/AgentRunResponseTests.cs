@@ -44,6 +44,28 @@ public class AgentRunResponseTests
     }
 
     [Fact]
+    public void ConstructorWithChatResponseRoundtrips()
+    {
+        ChatResponse chatResponse = new()
+        {
+            AdditionalProperties = new(),
+            CreatedAt = new DateTimeOffset(2022, 1, 1, 0, 0, 0, TimeSpan.Zero),
+            Messages = [new(ChatRole.Assistant, "This is a test message.")],
+            RawRepresentation = new object(),
+            ResponseId = "responseId",
+            Usage = new UsageDetails(),
+        };
+
+        AgentRunResponse response = new(chatResponse);
+        Assert.Same(chatResponse.AdditionalProperties, response.AdditionalProperties);
+        Assert.Equal(chatResponse.CreatedAt, response.CreatedAt);
+        Assert.Same(chatResponse.Messages, response.Messages);
+        Assert.Equal(chatResponse.ResponseId, response.ResponseId);
+        Assert.Same(chatResponse.RawRepresentation, response.RawRepresentation);
+        Assert.Same(chatResponse.Usage, response.Usage);
+    }
+
+    [Fact]
     public void PropertiesRoundtrip()
     {
         AgentRunResponse response = new();
