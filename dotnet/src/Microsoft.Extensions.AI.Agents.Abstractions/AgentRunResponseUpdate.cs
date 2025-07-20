@@ -60,7 +60,7 @@ public class AgentRunResponseUpdate
     }
 
     /// <summary>Initializes a new instance of the <see cref="AgentRunResponseUpdate"/> class.</summary>
-    /// <param name="chatResponseUpdate">The <see cref="ChatResponse"/> from which to seed this <see cref="AgentRunResponse"/>.</param>
+    /// <param name="chatResponseUpdate">The <see cref="ChatResponseUpdate"/> from which to seed this <see cref="AgentRunResponseUpdate"/>.</param>
     public AgentRunResponseUpdate(ChatResponseUpdate chatResponseUpdate)
     {
         _ = Throw.IfNull(chatResponseUpdate);
