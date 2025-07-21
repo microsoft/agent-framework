@@ -39,10 +39,10 @@ public class ChatClientAgentOptions
     public ChatOptions? ChatOptions { get; set; }
 
     /// <summary>
-    /// Gets or sets a factory function to create an instance of <see cref="IChatMessagesStorable"/>
+    /// Gets or sets a factory function to create an instance of <see cref="IChatMessageStore"/>
     /// which will be used to store chat messages for this agent.
     /// </summary>
-    public Func<IChatMessagesStorable>? ChatMessagesStorableFactory { get; set; } = null;
+    public Func<IChatMessageStore>? ChatMessagesStorableFactory { get; set; } = null;
 
     /// <summary>
     /// Creates a new instance of <see cref="ChatClientAgentOptions"/> with the same values as this instance.

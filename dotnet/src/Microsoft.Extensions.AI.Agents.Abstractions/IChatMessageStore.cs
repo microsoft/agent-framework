@@ -13,7 +13,7 @@ namespace Microsoft.Extensions.AI.Agents;
 /// Implementations of this interface are responsible for managing the storage of chat messages,
 /// including handling large volumes of data by truncating or summarizing messages as necessary.
 /// </remarks>
-public interface IChatMessagesStorable
+public interface IChatMessageStore
 {
     /// <summary>
     /// Gets all the messages from the store that should be used for the next agent invocation.

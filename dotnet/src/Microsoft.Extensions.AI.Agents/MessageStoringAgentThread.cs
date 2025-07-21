@@ -19,7 +19,7 @@ namespace Microsoft.Extensions.AI.Agents;
 public sealed class MessageStoringAgentThread : AgentThread
 {
     private readonly List<ChatMessage> _chatMessages = [];
-    private readonly IChatMessagesStorable? _chatMessagesStorable;
+    private readonly IChatMessageStore? _chatMessagesStorable;
     private MessageStoringThreadStorageLocation _type = MessageStoringThreadStorageLocation.Unknown;
 
     /// <summary>
@@ -63,10 +63,10 @@ public sealed class MessageStoringAgentThread : AgentThread
     /// <summary>
     /// Initializes a new instance of the <see cref="MessageStoringAgentThread"/> class.
     /// </summary>
-    /// <param name="chatMessagesStorable">An implementation of <see cref="IChatMessagesStorable"/> to use for storing messages.</param>
+    /// <param name="chatMessagesStorable">An implementation of <see cref="IChatMessageStore"/> to use for storing messages.</param>
     /// <param name="threadState">A <see cref="JsonElement"/> representing the thread state, if any.</param>
     /// <param name="jsonSerializerOptions">Optional <see cref="JsonSerializerOptions"/> to use for deserializing the thread state.</param>
-    public MessageStoringAgentThread(IChatMessagesStorable? chatMessagesStorable, JsonElement? threadState, JsonSerializerOptions? jsonSerializerOptions)
+    public MessageStoringAgentThread(IChatMessageStore? chatMessagesStorable, JsonElement? threadState, JsonSerializerOptions? jsonSerializerOptions)
     {
         this._chatMessagesStorable = chatMessagesStorable;
         this.StorageLocation = MessageStoringThreadStorageLocation.Unknown;
