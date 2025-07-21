@@ -50,12 +50,12 @@ print(response)
 Overall the following structure is proposed:
 
 * agent-framework
-    * tier 0; components, will be exposed directly from `agent_framework`:
+    * core components, will be exposed directly from `agent_framework`:
         * (single) agents (includes threads)
         * tools (includes MCP and OpenAPI)
         * models/types (name tbd, will include the equivalent of MEAI for dotnet; content types and client abstractions)
         * logging
-    * tier 1; components, will be exposed from `agent_framework.<component>`:
+    * advanced components, will be exposed from `agent_framework.<component>`:
         * context_providers (tbd)
         * guardrails / filters
         * vector_data (vector stores and other MEVD pieces)
@@ -65,10 +65,9 @@ Overall the following structure is proposed:
         * utils (optional)
         * telemetry (could also be observability or monitoring)
         * workflows (includes multi-agent orchestration)
-        * openai
-        * azure (LLM integrations for Azure)
-    * tier 2; extensions 
-        * Extensions are any additional functionality that is useful for a user, to reduce friction they will imported in a similar way as tier 1, however the code for them will be in a separate package, so that they can be installed separately, they must have everything in a folder with the same name as the package, and without a `__init__.py` file in the root, so that they can be used as a namespace package.
+    * connectors; subpackages
+        * Subpackages are any additional functionality that is useful for a user, to reduce friction they will imported in a similar way as advanced components, however the code for them will be in a separate package, so that they can be installed separately, they must expose all public items, in their main `__init__.py` file, so that they can be imported from the main package without additional import levels.
+        In the main package a corresponding folder will be created, with a `__init__.py` file that lazy imports the public items from the subpackage, so that they can be exposed from the main package.
         * Some examples are:
             * azure (non LLM integrations)
             * will be exposed through i.e. `agent_framework.azure`
@@ -131,7 +130,7 @@ packages/
                 ...
     redis/
         ...
-    google/        
+    google/
         agent_framework/
             google/
                 __init__.py
@@ -162,10 +161,10 @@ uv.lock
 
 We might add a template subpackage as well, to make it easy to setup, this could be based on the first one that is added.
 
-In the `DEV_SETUP.md` we will add instructions for how to deal with the path depth issues, especially on Windows, where the maximum path length can be a problem.
+In the [`DEV_SETUP.md`](../../python/DEV_SETUP.md) we will add instructions for how to deal with the path depth issues, especially on Windows, where the maximum path length can be a problem.
 
 #### Evolving the package structure
-For each of the tier 1 components, we have two reason why we may split them into a folder, with an `__init__.py` and optionally a `_files.py`:
+For each of the advanced components, we have two reason why we may split them into a folder, with an `__init__.py` and optionally a `_files.py`:
 1. If the file becomes too large, we can split it into multiple `_files`, while still keeping the public interface in the `__init__.py` file, this is a non-breaking change
 2. If we want to partially or fully move that code into a separate package.
 In this case we do need to lazy load anything that was moved from the main package to the subpackage, so that existing code still works, and if the subpackage is not installed we can raise a meaningful error.
@@ -185,14 +184,7 @@ agent_framework/
 
 ## Coding standards
 
-* We use google docstyles for docstrings. 
-* We use the following setup for ruff:
-```toml
-[tool.ruff]
-line-length = 120
-target-version = "py310"
-include = ["*.py", "*.pyi", "**/pyproject.toml", "*.ipynb"]
-preview = true
+Coding standards will be maintained in the [`DEV_SETUP.md`](../../python/DEV_SETUP.md) file.
 
 [tool.ruff.lint]
 fixable = ["ALL"]
@@ -269,8 +261,8 @@ The logging will be simplified, there will be one logger in the base package:
 * name: `agent_framework` - used for all logging in the abstractions and base components
 
 Each of the other subpackages for connectors will have a similar single logger.
-* name: `agent_framework.openai` 
-* name: `agent_framework.azure` 
+* name: `agent_framework.openai`
+* name: `agent_framework.azure`
 
 This means that when a logger is needed, it should be created like this:
 ```python
@@ -288,10 +280,10 @@ import logging
 def get_logger(name: str = "agent_framework") -> logging.Logger:
     """
     Get a logger with the specified name, defaulting to 'agent_framework'.
-    
+
     Args:
         name (str): The name of the logger. Defaults to 'agent_framework'.
-    
+
     Returns:
         logging.Logger: The configured logger instance.
     """
@@ -299,7 +291,7 @@ def get_logger(name: str = "agent_framework") -> logging.Logger:
     # create the specifics for the logger, such as setting the level, handlers, etc.
     return logger
 ```
-This will ensure that the logger is created with the correct name and configuration, and it will be consistent across the package. 
+This will ensure that the logger is created with the correct name and configuration, and it will be consistent across the package.
 
 Further there should be a easy way to configure the log levels, either through a environment variable or with a similar function as the get_logger.
 
@@ -308,7 +300,7 @@ This will not be allowed:
 import logging
 
 logger = logging.getLogger(__name__)
-``` 
+```
 
 This is allowed but discouraged, if the get_logger function has been called at least once then this will return the same logger as the get_logger function, however that might not have happened and then the logging experience (in terms of formats and handlers, etc) is not consistent across the package:
 ```python

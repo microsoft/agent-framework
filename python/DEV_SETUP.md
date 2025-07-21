@@ -66,7 +66,7 @@ Make sure you have an
 
 There are two methods to manage keys, secrets, and endpoints:
 
-1. Store them in environment variables. AF Python leverages pydantic settings to load keys, secrets, and endpoints from the environment. 
+1. Store them in environment variables. AF Python leverages pydantic settings to load keys, secrets, and endpoints from the environment.
     > When you are using VSCode and have the python extension setup, it automatically loads environment variables from a `.env` file, so you don't have to manually set them in the terminal.
     > During runtime on different platforms, environment settings set as part of the deployments should be used.
 
@@ -87,6 +87,44 @@ OPENAI_CHAT_MODEL_ID="gpt-4o-mini"
 
 You will then configure the ChatCompletion class with the keyword argument `env_file_path`:
 
+Pre-commit hooks will automatically run checks before each commit. You can also run them manually:
+
+```bash
+uv run pre-commit run -a
+```
+
+## Coding Standards
+
+### Code Style and Formatting
+
+We use [ruff](https://github.com/astral-sh/ruff) for both linting and formatting with the following configuration:
+
+- **Line length**: 120 characters
+- **Target Python version**: 3.10+
+- **Google-style docstrings**: All public functions, classes, and modules should have docstrings following Google conventions
+
+### Function Parameter Guidelines
+
+To make the code easier to use and maintain:
+
+- **Positional parameters**: Only use for up to 3 fully expected parameters
+- **Keyword parameters**: Use for all other parameters, especially when there are multiple required parameters without obvious ordering
+- **Avoid additional imports**: Do not require the user to import additional modules to use the function, so provide string based overrides when applicable, for instance:
+```python
+def create_agent(name: str, tool_mode: ChatToolMode) -> Agent:
+    # Implementation here
+```
+Should be:
+```python
+def create_agent(name: str, tool_mode: Literal['auto', 'required', 'none'] | ChatToolMode) -> Agent:
+    # Implementation here
+    if isinstance(tool_mode, str):
+        tool_mode = ChatToolMode(tool_mode)
+```
+- **Document kwargs**: Always document how `kwargs` are used, either by referencing external documentation or explaining their purpose
+- **Separate kwargs**: When combining kwargs for multiple purposes, use specific parameters like `client_kwargs: dict[str, Any]` instead of mixing everything in `**kwargs`
+
+Example:
 ```python
 chat_completion = OpenAIChatClient(env_file_path="openai.env")
 ```
@@ -160,9 +198,122 @@ def equal(arg1: str, arg2: str) -> bool:
     Here is extra explanation of the logic involved.
 
     Args:
-        arg1: The first string to compare.
-        arg2: The second string to compare.
-            This string requires extra explanation.
+        name: The agent name (positional OK - single clear parameter)
+        chat_client: The chat client to use
+        tools: Optional list of tools
+        description: Optional agent description
+        client_kwargs: Passed directly to the chat client constructor
+        **agent_kwargs: Additional agent configuration options
+    """
+```
+
+### Attributes vs Inheritance
+
+Prefer attributes over inheritance when parameters are mostly the same:
+
+```python
+# ✅ Preferred - using attributes
+from agent_framework import ChatMessage
+
+user_msg = ChatMessage(role="user", content="Hello, world!")
+asst_msg = ChatMessage(role="assistant", content="Hello, world!")
+
+# ❌ Not preferred - unnecessary inheritance
+from agent_framework import UserMessage, AssistantMessage
+
+user_msg = UserMessage(content="Hello, world!")
+asst_msg = AssistantMessage(content="Hello, world!")
+```
+
+### Logging
+
+Use the centralized logging system:
+
+```python
+from agent_framework import get_logger
+
+# For main package
+logger = get_logger()
+
+# For subpackages
+logger = get_logger('agent_framework.azure')
+```
+
+**Do not use** direct logging module imports:
+```python
+# ❌ Avoid this
+import logging
+logger = logging.getLogger(__name__)
+```
+
+### Import Structure
+
+The package follows a flat import structure:
+
+- **Core**: Import directly from `agent_framework`
+  ```python
+  from agent_framework import ChatClientAgent, ai_function
+  ```
+
+- **Components**: Import from `agent_framework.<component>`
+  ```python
+  from agent_framework.vector_data import VectorStoreModel
+  from agent_framework.guardrails import ContentFilter
+  ```
+
+- **Connectors**: Import from `agent_framework.<vendor/platform>`
+  ```python
+  from agent_framework.openai import OpenAIChatClient
+  from agent_framework.azure import AzureChatClient
+  ```
+
+## Testing
+
+### Running Tests
+
+```bash
+# Run all tests with coverage
+uv run poe test
+
+# Run specific test file
+uv run pytest tests/test_agents.py
+
+# Run with verbose output
+uv run pytest -v
+```
+
+### Test Coverage
+
+- Target: Minimum 80% test coverage for all packages
+- Coverage reports are generated automatically during test runs
+- Tests should be in corresponding `test_*.py` files in the `tests/` directory
+
+## Documentation
+
+### Building Documentation
+
+```bash
+# Build documentation
+uv run poe docs-build
+
+# Serve documentation locally with auto-reload
+uv run poe docs-serve
+
+# Check documentation for warnings
+uv run poe docs-check
+```
+
+### Docstring Style
+
+Use Google-style docstrings for all public APIs:
+
+```python
+def create_agent(name: str, chat_client: ChatClient) -> Agent:
+    """Create a new agent with the specified configuration.
+
+    Args:
+        name: The name of the agent.
+        chat_client: The chat client to use for communication.
 
     Returns:
         True if the strings are the same, False otherwise.
@@ -177,37 +328,19 @@ If in doubt, use the link above to read much more considerations of what to do a
 
 ## Coding standards
 
-### Function definitions
-To make the code easier to use, we will be very deliberate about the ordering and marking of function parameters.
-This means that we will use the following conventions:
-* Only parameters that are fully expected to be passed and only if there are a very limited number of them, let's say 3 or less, can they be supplied as positional parameters (still with a keyword, _almost_ never positional only).
-* All other parameters should be supplied as keyword parameters, this is especially important to configure correctly when using Pydantic or dataclasses.
-* If there are multiple required parameters, and they do not have a order that is common sense, then they will all use keyword parameters.
-* If we use `kwargs` we will document how and what we use them for, this might be a reference to a outside package's documentation or an explanation of what the `kwargs` are used for.
-* If we want to combine `kwargs` for multiple things, such as partly for a external client constructor, and partly for our own use, we will try to keep those separate, by adding a parameter, such as `client_kwargs` with type `dict[str, Any]`, and then use that to pass the kwargs to the client constructor (by using `Client(**client_kwargs)`), while using the `**kwargs` parameters for other uses, which are then also well documented.
-
-### Attributes vs inheritance
-
-When the parameters are the same except for one, we will use attributes, instead of inheritance, to minimize the conceptual overhead of understanding the code. Off course there are exceptions and these things will be decided on a case by case basis, but the general rule is that if the parameters are the same, we will use attributes.
-```python
-# ✅ preferred
-from agent_framework import ChatMessage
-user_msg = ChatMessage(
-    role="user",
-    content="Hello, world!"
-)
-asst_msg = ChatMessage(
-    role="assistant",
-    content="Hello, world!"
-)
-# ❌ not preferred
-from agent_framework import UserMessage, AssistantMessage
-user_msg = UserMessage(
-    content="Hello, world!"
-)
-asst_msg = AssistantMessage(
-    content="Hello, world!"
-)
+```plaintext
+agent_framework/
+├── __init__.py              # Tier 0: Core components
+├── _agents.py              # Agent implementations
+├── _tools.py               # Tool definitions
+├── _models.py              # Type definitions
+├── _logging.py             # Logging utilities
+├── context_providers.py    # Tier 1: Context providers
+├── guardrails.py          # Tier 1: Guardrails and filters
+├── vector_data.py         # Tier 1: Vector stores
+├── workflows.py           # Tier 1: Multi-agent orchestration
+└── azure/                 # Tier 2: Azure connectors (lazy loaded)
+    └── __init__.py        # Imports from agent-framework-azure
 ```
 
 ### Pydantic and Serialization
