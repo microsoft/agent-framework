@@ -18,7 +18,7 @@ def get_weather(
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
-async def main():
+async def main() -> None:
     client = OpenAIChatClient()
     message = "What's the weather in Amsterdam and in Paris?"
     stream = False
