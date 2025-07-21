@@ -9,6 +9,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Orchestration;
 
@@ -39,21 +40,19 @@ internal sealed partial class HandoffActor : AgentActor
     public HandoffActor(ActorId id, IAgentRuntime runtime, OrchestrationContext context, ChatClientAgent agent, HandoffLookup handoffs, ActorType resultHandoff, ILogger<HandoffActor>? logger = null)
         : base(id, runtime, context, agent, logger)
     {
+        Throw.IfNull(handoffs);
+        Throw.IfNull(resultHandoff);
+
         if (handoffs.ContainsKey(agent.Name ?? agent.Id))
         {
-            throw new ArgumentException($"The agent {agent.Name ?? agent.Id} cannot have a handoff to itself.", nameof(handoffs));
+            Throw.ArgumentException(nameof(handoffs), $"The agent {agent.Name ?? agent.Id} cannot have a handoff to itself.");
         }
 
         this._cache = [];
         this._chatAgent = agent;
         this._handoffs = handoffs;
         this._resultHandoff = resultHandoff;
-        this._options =
-            new ChatOptions
-            {
-                Tools = [.. this.CreateHandoffFunctions()],
-                ToolMode = ChatToolMode.Auto
-            };
+        this._options = new() { Tools = this.CreateHandoffFunctions() };
 
         this.RegisterMessageHandler<HandoffMessages.InputTask>(this.Handle);
         this.RegisterMessageHandler<HandoffMessages.Request>(this.HandleAsync);
@@ -73,7 +72,7 @@ internal sealed partial class HandoffActor : AgentActor
     /// <summary>
     /// Gets or sets the callback to be invoked for interactive input.
     /// </summary>
-    public OrchestrationInteractiveCallback? InteractiveCallback { get; init; }
+    public Func<ValueTask<ChatMessage>>? InteractiveCallback { get; init; }
 
     private void Handle(HandoffMessages.InputTask item, MessageContext messageContext)
     {
@@ -144,23 +143,24 @@ internal sealed partial class HandoffActor : AgentActor
         }
     }
 
-    private IEnumerable<AIFunction> CreateHandoffFunctions()
+    private List<AITool> CreateHandoffFunctions()
     {
-        yield return AIFunctionFactory.Create(
+        List<AITool> functions = [];
+
+        functions.Add(AIFunctionFactory.Create(
             this.EndAsync,
             name: "end_task",
-            description: "Complete the task with a summary when no further requests are given.");
+            description: "Complete the task with a summary when no further requests are given."));
 
         foreach (KeyValuePair<string, (ActorType AgentType, string Description)> handoff in this._handoffs)
         {
-            AIFunction handoffFunction =
-                AIFunctionFactory.Create(
+            functions.Add(AIFunctionFactory.Create(
                     () => this.Handoff(handoff.Key),
                     name: $"transfer_to_{InvalidNameCharsRegex().Replace(handoff.Key, "_")}",
-                    description: handoff.Value.Description);
-
-            yield return handoffFunction;
+                    description: handoff.Value.Description));
         }
+
+        return functions;
     }
 
     private void Handoff(string agentName)

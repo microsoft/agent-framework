@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -19,7 +20,7 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
     {
         private readonly TaskCompletionSource<TOutput> _completionSource;
         private readonly Func<TResult, IList<ChatMessage>> _transformResult;
-        private readonly Func<IList<ChatMessage>, CancellationToken, ValueTask<TOutput>> _transform;
+        private readonly Func<IList<ChatMessage>, JsonSerializerOptions?, CancellationToken, ValueTask<TOutput>> _transform;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AgentOrchestration{TInput, TOutput}.ResultActor{TResult}"/> class.
@@ -36,7 +37,7 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
             IAgentRuntime runtime,
             OrchestrationContext context,
             Func<TResult, IList<ChatMessage>> transformResult,
-            Func<IList<ChatMessage>, CancellationToken, ValueTask<TOutput>> transformOutput,
+            Func<IList<ChatMessage>, JsonSerializerOptions?, CancellationToken, ValueTask<TOutput>> transformOutput,
             TaskCompletionSource<TOutput> completionSource,
             ILogger<ResultActor<TResult>>? logger = null)
             : base(id, runtime, context, $"{id.Type}_Actor", logger)
@@ -66,7 +67,7 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
                 if (!this._completionSource.Task.IsCompleted)
                 {
                     IList<ChatMessage> result = this._transformResult.Invoke(item);
-                    TOutput output = await this._transform.Invoke(result, cancellationToken).ConfigureAwait(false);
+                    TOutput output = await this._transform.Invoke(result, messageContext.SerializerOptions, cancellationToken).ConfigureAwait(false);
                     this._completionSource.TrySetResult(output);
                 }
             }

@@ -75,6 +75,34 @@ KNOWN_MEDIA_TYPES = [
 ]
 
 
+__all__ = [
+    "AIContent",
+    "AIContents",
+    "AgentRunResponse",
+    "AgentRunResponseUpdate",
+    "ChatFinishReason",
+    "ChatMessage",
+    "ChatOptions",
+    "ChatResponse",
+    "ChatResponseUpdate",
+    "ChatRole",
+    "ChatToolMode",
+    "DataContent",
+    "ErrorContent",
+    "FunctionCallContent",
+    "FunctionResultContent",
+    "GeneratedEmbeddings",
+    "SpeechToTextOptions",
+    "StructuredResponse",
+    "TextContent",
+    "TextReasoningContent",
+    "TextToSpeechOptions",
+    "UriContent",
+    "UsageContent",
+    "UsageDetails",
+]
+
+
 class UsageDetails(AFBaseModel):
     """Provides usage details about a request/response.
 
@@ -241,7 +269,7 @@ def _coalesce_text_content(
                 first_new_content = i
         else:
             if first_new_content is not None:
-                new_content = type_(text=" ".join(current_texts))
+                new_content = type_(text="".join(current_texts))
                 new_content.raw_representation = contents[first_new_content].raw_representation
                 new_content.additional_properties = contents[first_new_content].additional_properties
                 # Store the replacement node. We inherit the properties of the first text node. We don't
@@ -252,7 +280,7 @@ def _coalesce_text_content(
                 first_new_content = None
             coalesced_contents.append(content)
     if current_texts:
-        coalesced_contents.append(type_(text=" ".join(current_texts)))
+        coalesced_contents.append(type_(text="".join(current_texts)))
     contents.clear()
     contents.extend(coalesced_contents)
 
@@ -370,6 +398,7 @@ class DataContent(AIContent):
         uri: The URI of the data represented by this instance, typically in the form of a data URI.
             Should be in the form: "data:{media_type};base64,{base64_data}".
         type: The type of content, which is always "data" for this class.
+        media_type: The media type of the data.
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content.
 
@@ -377,6 +406,7 @@ class DataContent(AIContent):
 
     type: Literal["data"] = "data"  # type: ignore[assignment]
     uri: str
+    media_type: str | None = None
 
     @overload
     def __init__(
@@ -458,6 +488,7 @@ class DataContent(AIContent):
             uri = f"data:{media_type};base64,{base64.b64encode(data).decode('utf-8')}"
         super().__init__(
             uri=uri,  # type: ignore[reportCallIssue]
+            media_type=media_type,  # type: ignore[reportCallIssue]
             raw_representation=raw_representation,
             additional_properties=additional_properties,
             **kwargs,
@@ -477,6 +508,9 @@ class DataContent(AIContent):
         if media_type not in KNOWN_MEDIA_TYPES:
             raise ValueError(f"Unknown media type: {media_type}")
         return uri
+
+    def has_top_level_media_type(self, top_level_media_type: str) -> bool:
+        return _has_top_level_media_type(self.media_type, top_level_media_type)
 
 
 class UriContent(AIContent):
@@ -530,6 +564,19 @@ class UriContent(AIContent):
             raw_representation=raw_representation,
             **kwargs,
         )
+
+    def has_top_level_media_type(self, top_level_media_type: str) -> bool:
+        return _has_top_level_media_type(self.media_type, top_level_media_type)
+
+
+def _has_top_level_media_type(media_type: str | None, top_level_media_type: str) -> bool:
+    if media_type is None:
+        return False
+
+    slash_index = media_type.find("/")
+    span = media_type[:slash_index] if slash_index >= 0 else media_type
+    span = span.strip()
+    return span.lower() == top_level_media_type.lower()
 
 
 class ErrorContent(AIContent):
@@ -1421,7 +1468,12 @@ ChatToolMode.NONE = ChatToolMode(mode="none")  # type: ignore[assignment]
 class ChatOptions(AFBaseModel):
     """Common request settings for AI services."""
 
+    additional_properties: MutableMapping[str, Any] = Field(
+        default_factory=dict, description="Provider-specific additional properties."
+    )
     ai_model_id: Annotated[str | None, Field(serialization_alias="model")] = None
+    allow_multiple_tool_calls: bool | None = None
+    conversation_id: str | None = None
     frequency_penalty: Annotated[float | None, Field(ge=-2.0, le=2.0)] = None
     logit_bias: MutableMapping[str | int, float] | None = None
     max_tokens: Annotated[int | None, Field(gt=0)] = None
@@ -1436,12 +1488,9 @@ class ChatOptions(AFBaseModel):
     temperature: Annotated[float | None, Field(ge=0.0, le=2.0)] = None
     tool_choice: ChatToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None = None
     tools: list[AITool | MutableMapping[str, Any]] | None = None
-    _ai_tools: list[AITool | MutableMapping[str, Any]] | None = PrivateAttr(default=None)
     top_p: Annotated[float | None, Field(ge=0.0, le=1.0)] = None
     user: str | None = None
-    additional_properties: MutableMapping[str, Any] = Field(
-        default_factory=dict, description="Provider-specific additional properties."
-    )
+    _ai_tools: list[AITool | MutableMapping[str, Any]] | None = PrivateAttr(default=None)
 
     @model_validator(mode="after")
     def _copy_to_ai_tools(self) -> Self:

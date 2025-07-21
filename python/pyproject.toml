@@ -6,6 +6,7 @@ requires-python = ">=3.10"
 dependencies = [
     "agent-framework",
     "agent-framework-azure",
+    "agent-framework-foundry",
 ]
 
 [dependency-groups]
@@ -61,6 +62,7 @@ exclude = [ "packages/agent_framework_project.egg-info" ]
 [tool.uv.sources]
 agent-framework = { workspace = true }
 agent-framework-azure = { workspace = true }
+agent-framework-foundry = { workspace = true }
 
 [tool.ruff]
 line-length = 120

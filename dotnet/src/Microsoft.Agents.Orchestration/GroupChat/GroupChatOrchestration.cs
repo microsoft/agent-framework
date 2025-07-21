@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -39,8 +38,9 @@ public class GroupChatOrchestration<TInput, TOutput> :
     {
         if (!entryAgent.HasValue)
         {
-            throw new ArgumentException("Entry agent is not defined.", nameof(entryAgent));
+            Throw.ArgumentException(nameof(entryAgent), "Entry agent is not defined.");
         }
+
         return runtime.PublishMessageAsync(new GroupChatMessages.InputTask(input), entryAgent.Value);
     }
 

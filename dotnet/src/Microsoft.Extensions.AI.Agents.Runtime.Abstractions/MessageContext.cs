@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Text.Json;
 using System.Threading;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI.Agents.Runtime;
 
@@ -21,15 +23,7 @@ public sealed class MessageContext
     public string MessageId
     {
         get => this._messageId ?? Interlocked.CompareExchange(ref this._messageId, Guid.NewGuid().ToString(), null) ?? this._messageId;
-        set
-        {
-            if (string.IsNullOrEmpty(value))
-            {
-                throw new ArgumentException("MessageId cannot be null or empty.", nameof(value));
-            }
-
-            this._messageId = value;
-        }
+        set => this._messageId = Throw.IfNullOrEmpty(value);
     }
 
     /// <summary>
@@ -48,4 +42,7 @@ public sealed class MessageContext
     /// Gets or sets a value indicating whether this message is part of an RPC (Remote Procedure Call).
     /// </summary>
     public bool IsRpc { get; set; }
+
+    /// <summary>Gets or sets the serializer options to be used when performing JSON serialization associated with this message.</summary>
+    public JsonSerializerOptions? SerializerOptions { get; set; }
 }

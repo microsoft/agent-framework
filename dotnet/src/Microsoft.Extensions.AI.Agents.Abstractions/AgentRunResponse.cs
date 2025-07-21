@@ -1,10 +1,14 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+#if NET9_0_OR_GREATER
 using System.Buffers;
+#endif
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+#if NET9_0_OR_GREATER
 using System.Text;
+#endif
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
@@ -22,13 +26,6 @@ namespace Microsoft.Extensions.AI.Agents;
 /// </remarks>
 public class AgentRunResponse
 {
-    private static readonly JsonReaderOptions s_allowMultipleValuesJsonReaderOptions = new()
-    {
-#if NET9_0_OR_GREATER
-        AllowMultipleValues = true
-#endif
-    };
-
     /// <summary>The response messages.</summary>
     private IList<ChatMessage>? _messages;
 
@@ -184,15 +181,16 @@ public class AgentRunResponse
         }
 #pragma warning disable CA1031 // Do not catch general exception types
         catch
+#pragma warning restore CA1031
         {
             structuredOutput = default;
             return false;
         }
-#pragma warning restore CA1031 // Do not catch general exception types
     }
 
     private static T? DeserializeFirstTopLevelObject<T>(string json, JsonTypeInfo<T> typeInfo)
     {
+#if NET9_0_OR_GREATER
         // We need to deserialize only the first top-level object as a workaround for a common LLM backend
         // issue. GPT 3.5 Turbo commonly returns multiple top-level objects after doing a function call.
         // See https://community.openai.com/t/2-json-objects-returned-when-using-function-calling-and-json-mode/574348
@@ -201,14 +199,16 @@ public class AgentRunResponse
         try
         {
             var utf8SpanLength = Encoding.UTF8.GetBytes(json, 0, json.Length, buffer, 0);
-            var utf8Span = new ReadOnlySpan<byte>(buffer, 0, utf8SpanLength);
-            var reader = new Utf8JsonReader(utf8Span, s_allowMultipleValuesJsonReaderOptions);
+            var reader = new Utf8JsonReader(new ReadOnlySpan<byte>(buffer, 0, utf8SpanLength), new() { AllowMultipleValues = true });
             return JsonSerializer.Deserialize(ref reader, typeInfo);
         }
         finally
         {
             ArrayPool<byte>.Shared.Return(buffer);
         }
+#else
+        return JsonSerializer.Deserialize(json, typeInfo);
+#endif
     }
 
     private T? GetResultCore<T>(JsonSerializerOptions serializerOptions, out FailureReason? failureReason)

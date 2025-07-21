@@ -609,7 +609,7 @@ internal static class OpenAIClientExtensions2
 
         // Roundtrip the schema through the ToolJson model type to remove extra properties
         // and force missing ones into existence, then return the serialized UTF8 bytes as BinaryData.
-        var tool = JsonSerializer.Deserialize(jsonSchema, OpenAIJsonContext.Default.ToolJson)!;
+        var tool = jsonSchema.Deserialize(OpenAIJsonContext.Default.ToolJson)!;
         var functionParameters = BinaryData.FromBytes(JsonSerializer.SerializeToUtf8Bytes(tool, OpenAIJsonContext.Default.ToolJson));
 
         return functionParameters;

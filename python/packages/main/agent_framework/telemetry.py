@@ -24,6 +24,13 @@ USER_AGENT_KEY: Final[str] = "User-Agent"
 HTTP_USER_AGENT: Final[str] = "agent-framework-python"
 AGENT_FRAMEWORK_USER_AGENT = f"{HTTP_USER_AGENT}/{version_info}"
 
+__all__ = [
+    "AGENT_FRAMEWORK_USER_AGENT",
+    "APP_INFO",
+    "USER_AGENT_KEY",
+    "prepend_agent_framework_to_user_agent",
+]
+
 
 def prepend_agent_framework_to_user_agent(headers: dict[str, Any]) -> dict[str, Any]:
     """Prepend "agent-framework" to the User-Agent in the headers.

@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -15,11 +16,6 @@ using Microsoft.Shared.Diagnostics;
 #pragma warning disable CA2000 // Dispose objects before losing scope
 
 namespace Microsoft.Agents.Orchestration;
-
-/// <summary>
-/// Called when human interaction is requested.
-/// </summary>
-public delegate ValueTask<ChatMessage> OrchestrationInteractiveCallback();
 
 /// <summary>
 /// Base class for multi-agent agent orchestration patterns.
@@ -67,22 +63,22 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
     /// <summary>
     /// Transforms the orchestration input into a source input suitable for processing.
     /// </summary>
-    public Func<TInput, CancellationToken, ValueTask<IEnumerable<ChatMessage>>> InputTransform { get; init; } = DefaultTransforms.FromInput<TInput>;
+    public Func<TInput, JsonSerializerOptions?, CancellationToken, ValueTask<IEnumerable<ChatMessage>>>? InputTransform { get; set; }
 
     /// <summary>
     /// Transforms the processed result into the final output form.
     /// </summary>
-    public Func<IList<ChatMessage>, CancellationToken, ValueTask<TOutput>> ResultTransform { get; init; } = DefaultTransforms.ToOutput<TOutput>;
+    public Func<IList<ChatMessage>, JsonSerializerOptions?, CancellationToken, ValueTask<TOutput>>? ResultTransform { get; set; }
 
     /// <summary>
     /// Optional callback that is invoked for every agent response.
     /// </summary>
-    public Func<IEnumerable<ChatMessage>, ValueTask>? ResponseCallback { get; init; }
+    public Func<IEnumerable<ChatMessage>, ValueTask>? ResponseCallback { get; set; }
 
     /// <summary>
     /// Optional callback that is invoked for every agent update.
     /// </summary>
-    public Func<AgentRunResponseUpdate, ValueTask>? StreamingResponseCallback { get; init; }
+    public Func<AgentRunResponseUpdate, ValueTask>? StreamingResponseCallback { get; set; }
 
     /// <summary>
     /// Gets the list of member targets involved in the orchestration.
@@ -183,7 +179,7 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
         logger.LogOrchestrationRegistrationStart(context.Orchestration, context.Topic);
 
         // Register orchestration
-        RegistrationContext registrar = new(this.FormatAgentType(context.Topic, "Root"), runtime, context, completion, this.ResultTransform);
+        RegistrationContext registrar = new(this.FormatAgentType(context.Topic, "Root"), runtime, context, completion, this.ResultTransform ?? DefaultTransforms.ToOutput<TOutput>);
         ActorType? entryAgent = await this.RegisterOrchestrationAsync(runtime, context, registrar, logger).ConfigureAwait(false);
 
         // Register actor for orchestration entry-point
@@ -196,7 +192,7 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
                         new(agentId,
                             runtime,
                             context,
-                            this.InputTransform,
+                            this.InputTransform ?? DefaultTransforms.FromInput<TInput>,
                             completion,
                             input => this.StartAsync(runtime, context.Topic, input, entryAgent),
                             context.LoggerFactory.CreateLogger<RequestActor>());
@@ -216,7 +212,7 @@ public abstract partial class AgentOrchestration<TInput, TOutput>
         IAgentRuntime runtime,
         OrchestrationContext context,
         TaskCompletionSource<TOutput> completion,
-        Func<IList<ChatMessage>, CancellationToken, ValueTask<TOutput>> outputTransform)
+        Func<IList<ChatMessage>, JsonSerializerOptions?, CancellationToken, ValueTask<TOutput>> outputTransform)
     {
         /// <summary>
         /// Register the final result type.

@@ -13,9 +13,7 @@ public class AgentRunOptionsTests
     public void CloningConstructorCopiesProperties()
     {
         // Arrange
-        var options = new AgentRunOptions
-        {
-        };
+        var options = new AgentRunOptions();
 
         // Act
         var clone = new AgentRunOptions(options);

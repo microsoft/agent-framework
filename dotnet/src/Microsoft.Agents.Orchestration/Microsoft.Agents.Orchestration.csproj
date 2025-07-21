@@ -5,7 +5,6 @@
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
     <RootNamespace>Microsoft.Agents.Orchestration</RootNamespace>
     <VersionSuffix>alpha</VersionSuffix>
-    <IsAotCompatible>false</IsAotCompatible>
   </PropertyGroup>
 
   <PropertyGroup>

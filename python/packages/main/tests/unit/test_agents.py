@@ -49,7 +49,7 @@ class MockAgent(Agent):
 
     async def run(
         self,
-        messages: str | ChatMessage | list[str | ChatMessage] | None = None,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -58,7 +58,7 @@ class MockAgent(Agent):
 
     async def run_stream(
         self,
-        messages: str | ChatMessage | list[str | ChatMessage] | None = None,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,

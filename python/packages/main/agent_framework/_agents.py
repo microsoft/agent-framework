@@ -1,9 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import sys
 from collections.abc import AsyncIterable, Callable, MutableMapping, Sequence
 from enum import Enum
 from typing import Any, Literal, Protocol, TypeVar, runtime_checkable
 from uuid import uuid4
+
+if sys.version_info >= (3, 11):
+    from typing import Self  # pragma: no cover
+else:
+    from typing_extensions import Self  # pragma: no cover
 
 from pydantic import BaseModel, Field
 
@@ -25,6 +31,16 @@ from .exceptions import AgentExecutionException
 TThreadType = TypeVar("TThreadType", bound="AgentThread")
 
 # region AgentThread
+
+__all__ = [
+    "Agent",
+    "AgentBase",
+    "AgentThread",
+    "ChatClientAgent",
+    "ChatClientAgentThread",
+    "ChatClientAgentThreadType",
+    "MessagesRetrievableThread",
+]
 
 
 class AgentThread(AFBaseModel):
@@ -348,6 +364,23 @@ class ChatClientAgent(AgentBase):
             args["id"] = id
 
         super().__init__(**args)
+
+    async def __aenter__(self) -> "Self":
+        """Async context manager entry.
+
+        If the chat_client supports async context management, enter its context.
+        """
+        if hasattr(self.chat_client, "__aenter__") and hasattr(self.chat_client, "__aexit__"):
+            await self.chat_client.__aenter__()  # type: ignore[reportUnknownMemberType]
+        return self
+
+    async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
+        """Async context manager exit.
+
+        If the chat_client supports async context management, exit its context.
+        """
+        if hasattr(self.chat_client, "__aenter__") and hasattr(self.chat_client, "__aexit__"):
+            await self.chat_client.__aexit__(exc_type, exc_val, exc_tb)  # type: ignore[reportUnknownMemberType]
 
     async def run(
         self,

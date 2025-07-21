@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI.Agents.Runtime;
@@ -82,7 +81,7 @@ public sealed class OrchestrationHandoffs : Dictionary<string, AgentHandoffs>
         {
             if (string.IsNullOrWhiteSpace(target.Description) && string.IsNullOrWhiteSpace(target.Name))
             {
-                throw new InvalidOperationException($"The provided target agent with Id '{target.Id}' has no description or name, and no handoff description has been provided. At least one of these are required to register a handoff so that the appropriate target agent can be chosen.");
+                Throw.InvalidOperationException($"The provided target agent with Id '{target.Id}' has no description or name, and no handoff description has been provided. At least one of these are required to register a handoff so that the appropriate target agent can be chosen.");
             }
 
             this.Agents.Add(target);

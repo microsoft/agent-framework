@@ -145,7 +145,7 @@ public class AgentRunResponseUpdateExtensionsTests
     public async Task ToAgentRunResponseCoalescesTextContentAndTextReasoningContentSeparatelyAsync(bool useAsync)
     {
         AgentRunResponseUpdate[] updates =
-        {
+        [
             new(null, "A"),
             new(null, "B"),
             new(null, "C"),
@@ -162,7 +162,7 @@ public class AgentRunResponseUpdateExtensionsTests
             new(null, "N"),
             new() { Contents = [new TextReasoningContent("O")] },
             new() { Contents = [new TextReasoningContent("P")] },
-        };
+        ];
 
         AgentRunResponse response = useAsync ? await YieldAsync(updates).ToAgentRunResponseAsync() : updates.ToAgentRunResponse();
         ChatMessage message = Assert.Single(response.Messages);
@@ -181,11 +181,11 @@ public class AgentRunResponseUpdateExtensionsTests
     public async Task ToAgentRunResponseUsesContentExtractedFromContentsAsync()
     {
         AgentRunResponseUpdate[] updates =
-        {
+        [
             new(null, "Hello, "),
             new(null, "world!"),
             new() { Contents = [new UsageContent(new() { TotalTokenCount = 42 })] },
-        };
+        ];
 
         AgentRunResponse response = await YieldAsync(updates).ToAgentRunResponseAsync();
 

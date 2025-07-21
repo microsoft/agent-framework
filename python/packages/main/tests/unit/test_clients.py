@@ -121,7 +121,7 @@ def chat_client() -> MockChatClient:
 
 @fixture
 def chat_client_base() -> MockChatClientBase:
-    return MockChatClientBase(ai_model_id="test")
+    return MockChatClientBase()
 
 
 @fixture

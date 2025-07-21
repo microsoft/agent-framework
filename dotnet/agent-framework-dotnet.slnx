@@ -24,6 +24,11 @@
       <BuildType Solution="Publish|*" Project="Release" />
     </Project>
   </Folder>
+  <Folder Name="/Demos/">
+    <Project Path="demos/MinimalConsole/MinimalConsole.csproj">
+      <BuildType Solution="Publish|*" Project="Release" />
+    </Project>
+  </Folder>
   <Folder Name="/Samples/">
     <Project Path="samples/GettingStarted/GettingStarted.csproj">
       <BuildType Solution="Publish|*" Project="Debug" />

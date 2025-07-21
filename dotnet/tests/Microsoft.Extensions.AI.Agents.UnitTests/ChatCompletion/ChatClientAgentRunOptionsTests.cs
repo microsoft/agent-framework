@@ -40,9 +40,7 @@ public class ChatClientAgentRunOptionsTests
     public void ConstructorCopiesPropertiesFromSourceAgentRunOptions()
     {
         // Arrange
-        var sourceRunOptions = new AgentRunOptions
-        {
-        };
+        var sourceRunOptions = new AgentRunOptions();
         var chatOptions = new ChatOptions { MaxOutputTokens = 200 };
 
         // Act
@@ -59,9 +57,7 @@ public class ChatClientAgentRunOptionsTests
     public void ConstructorWorksWithSourceButNullChatOptions()
     {
         // Arrange
-        var sourceRunOptions = new AgentRunOptions
-        {
-        };
+        var sourceRunOptions = new AgentRunOptions();
 
         // Act
         var runOptions = new ChatClientAgentRunOptions(sourceRunOptions, null);

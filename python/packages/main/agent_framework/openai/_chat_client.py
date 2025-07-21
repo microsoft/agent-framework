@@ -31,6 +31,8 @@ from .._types import (
 from ..exceptions import ServiceInitializationError, ServiceInvalidResponseError
 from ._shared import OpenAIConfigBase, OpenAIHandler, OpenAIModelTypes, OpenAISettings
 
+__all__ = ["OpenAIChatClient"]
+
 
 # Implements agent_framework.ChatClient protocol, through ChatClientBase
 @use_tool_calling

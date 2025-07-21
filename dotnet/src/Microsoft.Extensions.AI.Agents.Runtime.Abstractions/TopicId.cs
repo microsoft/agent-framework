@@ -3,6 +3,7 @@
 using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.RegularExpressions;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI.Agents.Runtime;
 
@@ -32,14 +33,11 @@ public readonly partial struct TopicId : IEquatable<TopicId>
     /// <param name="source">The source of the event.</param>
     public TopicId(string type, string? source = null)
     {
-        if (type is null)
-        {
-            throw new ArgumentNullException(nameof(type));
-        }
+        Throw.IfNull(type);
 
         if (!TypeRegex().IsMatch(type))
         {
-            throw new ArgumentException("Invalid type format.", nameof(type));
+            Throw.ArgumentException(nameof(type), "Invalid type format.");
         }
 
         // TODO: What validation should be performed on source? The cited cloudevents spec suggests it should be a URI reference.

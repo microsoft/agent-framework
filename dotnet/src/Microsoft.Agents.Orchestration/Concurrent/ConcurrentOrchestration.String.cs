@@ -20,7 +20,7 @@ public sealed class ConcurrentOrchestration : ConcurrentOrchestration<string, st
         : base(members)
     {
         this.ResultTransform =
-            (response, cancellationToken) =>
+            (response, _, cancellationToken) =>
             {
                 string[] result = [.. response.Select(r => r.Text)];
                 return new ValueTask<string[]>(result);
