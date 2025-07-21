@@ -22,8 +22,13 @@ public interface IChatMessageStore
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A collection of chat messages.</returns>
     /// <remarks>
+    /// <para>
+    /// Messages are returned in ascending chronological order, with the oldest message first.
+    /// </para>
+    /// <para>
     /// If the messages stored in the store become very large, it is up to the store to
     /// truncate, summarize or otherwise limit the number of messages returned.
+    /// </para>
     /// </remarks>
     Task<ICollection<ChatMessage>> GetMessagesAsync(string threadId, CancellationToken cancellationToken);
 
