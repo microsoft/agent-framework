@@ -23,7 +23,7 @@ public interface IChatMessageStore
     /// <returns>A collection of chat messages.</returns>
     /// <remarks>
     /// If the messages stored in the store become very large, it is up to the store to
-    /// trucate, summarize or otherwise limit the number of messages returned.
+    /// truncate, summarize or otherwise limit the number of messages returned.
     /// </remarks>
     Task<ICollection<ChatMessage>> GetMessagesAsync(string threadId, CancellationToken cancellationToken);
 

@@ -777,7 +777,7 @@ public class MessageStoringAgentThreadTests
 
     #endregion
 
-    #region Serlization Tests
+    #region Serialization Tests
 
     /// <summary>
     /// Verify thread serialization to JSON when the thread has an id.

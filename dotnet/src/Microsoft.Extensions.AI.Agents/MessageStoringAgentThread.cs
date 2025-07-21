@@ -33,7 +33,7 @@ public sealed class MessageStoringAgentThread : AgentThread
     /// <summary>
     /// Initializes a new instance of the <see cref="MessageStoringAgentThread"/> class.
     /// </summary>
-    /// <param name="id">The id of an existing server side thread to continue.</param>
+    /// <param name="id">The id of an existing server-side thread to continue.</param>
     /// <remarks>
     /// This constructor creates a <see cref="MessageStoringAgentThread"/> that supports in-service message storage.
     /// </remarks>
