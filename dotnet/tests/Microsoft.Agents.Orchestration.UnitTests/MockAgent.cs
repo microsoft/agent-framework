@@ -37,9 +37,9 @@ internal sealed class MockAgent(int index) : AIAgent
         return new AgentThread() { Id = Guid.NewGuid().ToString() };
     }
 
-    public override AgentThread DeserializeThread(string threadStateJson, JsonSerializerOptions? jsonSerializerOptions = null)
+    public override AgentThread DeserializeThread(JsonElement threadState, JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        return new AgentThread(threadStateJson, jsonSerializerOptions);
+        return new AgentThread(threadState, jsonSerializerOptions);
     }
 
     public override Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)

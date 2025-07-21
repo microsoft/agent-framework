@@ -64,22 +64,27 @@ public sealed class MessageStoringAgentThread : AgentThread
     /// Initializes a new instance of the <see cref="MessageStoringAgentThread"/> class.
     /// </summary>
     /// <param name="chatMessagesStorable">An implementation of <see cref="IChatMessagesStorable"/> to use for storing messages.</param>
-    /// <param name="threadStateJson">A string representing the thread state, if any.</param>
+    /// <param name="threadState">A <see cref="JsonElement"/> representing the thread state, if any.</param>
     /// <param name="jsonSerializerOptions">Optional <see cref="JsonSerializerOptions"/> to use for deserializing the thread state.</param>
-    public MessageStoringAgentThread(IChatMessagesStorable? chatMessagesStorable, string? threadStateJson, JsonSerializerOptions? jsonSerializerOptions)
+    public MessageStoringAgentThread(IChatMessagesStorable? chatMessagesStorable, JsonElement? threadState, JsonSerializerOptions? jsonSerializerOptions)
     {
         this._chatMessagesStorable = chatMessagesStorable;
         this.StorageLocation = MessageStoringThreadStorageLocation.Unknown;
 
-        if (threadStateJson is not null)
+        if (threadState is not null)
         {
-            jsonSerializerOptions ??= new JsonSerializerOptions();
-            jsonSerializerOptions.TypeInfoResolver = JsonTypeInfoResolver.Combine(jsonSerializerOptions?.TypeInfoResolver, ThreadStateJsonSerializerContext.Default);
+            // If options are provided, add our built in type resolver to the options.
+            if (jsonSerializerOptions is not null)
+            {
+                jsonSerializerOptions.TypeInfoResolver = JsonTypeInfoResolver.Combine(jsonSerializerOptions?.TypeInfoResolver, ThreadStateJsonSerializerContext.Default);
+            }
+
+            jsonSerializerOptions ??= ThreadStateJsonSerializerContext.Default.Options;
 
 #pragma warning disable IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
 #pragma warning disable IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
             var parsedThreadState = JsonSerializer.Deserialize(
-                threadStateJson,
+                (JsonElement)threadState,
                 typeof(ThreadState),
                 jsonSerializerOptions) as ThreadState;
 #pragma warning restore IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
@@ -143,10 +148,15 @@ public sealed class MessageStoringAgentThread : AgentThread
     }
 
     /// <inheritdoc/>
-    public override string Serialize(JsonSerializerOptions? jsonSerializerOptions = default)
+    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = default)
     {
-        jsonSerializerOptions ??= new JsonSerializerOptions();
-        jsonSerializerOptions.TypeInfoResolver = JsonTypeInfoResolver.Combine(jsonSerializerOptions?.TypeInfoResolver, ThreadStateJsonSerializerContext.Default);
+        // If options are provided, add our built in type resolver to the options.
+        if (jsonSerializerOptions is not null)
+        {
+            jsonSerializerOptions.TypeInfoResolver = JsonTypeInfoResolver.Combine(jsonSerializerOptions?.TypeInfoResolver, ThreadStateJsonSerializerContext.Default);
+        }
+
+        jsonSerializerOptions ??= ThreadStateJsonSerializerContext.Default.Options;
 
         ThreadState state = new()
         {
@@ -157,7 +167,7 @@ public sealed class MessageStoringAgentThread : AgentThread
 
 #pragma warning disable IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
 #pragma warning disable IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
-        return JsonSerializer.Serialize(state, typeof(ThreadState), jsonSerializerOptions);
+        return JsonSerializer.SerializeToElement(state, typeof(ThreadState), jsonSerializerOptions);
 #pragma warning restore IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
 #pragma warning restore IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
     }

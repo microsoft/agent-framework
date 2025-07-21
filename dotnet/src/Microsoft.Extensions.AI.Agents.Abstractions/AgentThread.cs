@@ -24,14 +24,14 @@ public class AgentThread
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentThread"/> class.
     /// </summary>
-    /// <param name="threadStateJson">A JSON string representing the state of the thread.</param>
+    /// <param name="threadState">A <see cref="JsonElement"/> representing the state of the thread.</param>
     /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
-    /// <exception cref="InvalidOperationException">Thrown if the provided <paramref name="threadStateJson"/> is not valid or cannot be deserialized into a string.</exception>
-    public AgentThread(string threadStateJson, JsonSerializerOptions? jsonSerializerOptions)
+    /// <exception cref="InvalidOperationException">Thrown if the provided <paramref name="threadState"/> is not valid or cannot be deserialized into a string.</exception>
+    public AgentThread(JsonElement threadState, JsonSerializerOptions? jsonSerializerOptions)
     {
 #pragma warning disable IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
 #pragma warning disable IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
-        var id = JsonSerializer.Deserialize(threadStateJson, typeof(string), jsonSerializerOptions) as string;
+        var id = JsonSerializer.Deserialize(threadState, typeof(string), jsonSerializerOptions) as string;
 #pragma warning restore IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
 #pragma warning restore IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
 
@@ -78,12 +78,12 @@ public class AgentThread
     /// Serializes the current object's state to a JSON string using the specified serialization options.
     /// </summary>
     /// <param name="jsonSerializerOptions">The JSON serialization options to use.</param>
-    /// <returns>A JSON string representation of the object's state.</returns>
-    public virtual string Serialize(JsonSerializerOptions? jsonSerializerOptions = default)
+    /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
+    public virtual JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = default)
     {
 #pragma warning disable IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
 #pragma warning disable IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
-        return JsonSerializer.Serialize(this.Id, typeof(string), jsonSerializerOptions);
+        return JsonSerializer.SerializeToElement(this.Id, typeof(string), jsonSerializerOptions);
 #pragma warning restore IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
 #pragma warning restore IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
     }

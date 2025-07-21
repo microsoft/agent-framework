@@ -59,10 +59,10 @@ public abstract class AIAgent
     /// <summary>
     /// Deserialize the thread from JSON.
     /// </summary>
-    /// <param name="threadStateJson">The JSON string representing the thread state.</param>
+    /// <param name="threadState">The <see cref="JsonElement"/> representing the thread state.</param>
     /// <param name="jsonSerializerOptions">Optional <see cref="JsonSerializerOptions"/> to use for deserializing the thread state.</param>
     /// <returns>The deserialized <see cref="AgentThread"/> instance.</returns>
-    public abstract AgentThread DeserializeThread(string threadStateJson, JsonSerializerOptions? jsonSerializerOptions = default);
+    public abstract AgentThread DeserializeThread(JsonElement threadState, JsonSerializerOptions? jsonSerializerOptions = default);
 
     /// <summary>
     /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the thread.

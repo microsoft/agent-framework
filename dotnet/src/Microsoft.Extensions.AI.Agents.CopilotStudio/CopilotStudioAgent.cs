@@ -42,7 +42,7 @@ public class CopilotStudioAgent : AIAgent
     public override AgentThread GetNewThread() => new();
 
     /// <inheritdoc/>
-    public override AgentThread DeserializeThread(string threadStateJson, JsonSerializerOptions? jsonSerializerOptions) => new(threadStateJson, jsonSerializerOptions);
+    public override AgentThread DeserializeThread(JsonElement threadState, JsonSerializerOptions? jsonSerializerOptions) => new(threadState, jsonSerializerOptions);
 
     /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(

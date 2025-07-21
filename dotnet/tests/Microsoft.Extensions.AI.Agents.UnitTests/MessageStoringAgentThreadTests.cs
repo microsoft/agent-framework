@@ -3,13 +3,14 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Moq;
 
 #pragma warning disable CS0162 // Unreachable code detected
 
-namespace Microsoft.Extensions.AI.Agents.UnitTests.ChatCompletion;
+namespace Microsoft.Extensions.AI.Agents.UnitTests;
 
 public class MessageStoringAgentThreadTests
 {
@@ -157,6 +158,31 @@ public class MessageStoringAgentThreadTests
 
         var messages = await thread.GetMessagesAsync().ToListAsync();
         Assert.Empty(messages);
+    }
+
+    /// <summary>
+    /// Verify that <see cref="MessageStoringAgentThread"/> initializes with expected default values.
+    /// </summary>
+    [Fact]
+    public async Task VerifyThreadWithJsonInitialStateAsync()
+    {
+        // Act
+        var json = JsonSerializer.Deserialize<JsonElement>("""
+            {
+                "id": "TestConvId",
+                "storageLocation": "AgentThreadManaged",
+                "messages": [{"authorName": "testAuthor"}]
+            }
+            """);
+        var thread = new MessageStoringAgentThread(null, json, null);
+
+        // Assert
+        Assert.Equal("TestConvId", thread.Id);
+        Assert.Equal(MessageStoringThreadStorageLocation.AgentThreadManaged, thread.StorageLocation);
+
+        var messages = await thread.GetMessagesAsync().ToListAsync();
+        Assert.Single(messages);
+        Assert.Equal("testAuthor", messages[0].AuthorName);
     }
 
     #region Core Override Method Tests
@@ -701,6 +727,65 @@ public class MessageStoringAgentThreadTests
         // Assert - Verify that the thread was NOT notified of any messages due to the exception
         // Even though some updates were received, the exception should prevent thread notification
         Assert.Empty(retrievedMessages);
+    }
+
+    #endregion
+
+    #region Serlization Tests
+
+    [Fact]
+    public async Task VerifyThreadSerializationWithIdToJsonAsync()
+    {
+        // Arrange
+        var thread = new MessageStoringAgentThread("TestConvId");
+
+        // Act
+        var json = thread.Serialize();
+
+        // Assert
+        Assert.Equal(JsonValueKind.Object, json.ValueKind);
+
+        Assert.True(json.TryGetProperty("id", out var idProperty));
+        Assert.Equal("TestConvId", idProperty.GetString());
+
+        Assert.True(json.TryGetProperty("storageLocation", out var storageLocationProperty));
+        Assert.Equal("ConversationId", storageLocationProperty.GetString());
+
+        Assert.True(json.TryGetProperty("messages", out var messagesProperty));
+        Assert.Equal(JsonValueKind.Array, messagesProperty.ValueKind);
+        Assert.Empty(messagesProperty.EnumerateArray()); // Should be empty since no messages added yet
+    }
+
+    [Fact]
+    public async Task VerifyThreadSerializationWithMessagesToJsonAsync()
+    {
+        // Arrange
+        var thread = new MessageStoringAgentThread([new ChatMessage(ChatRole.User, "TestContent") { AuthorName = "TestAuthor" }]);
+
+        // Act
+        var json = thread.Serialize();
+
+        // Assert
+        Assert.Equal(JsonValueKind.Object, json.ValueKind);
+
+        Assert.False(json.TryGetProperty("id", out var idProperty));
+
+        Assert.True(json.TryGetProperty("storageLocation", out var storageLocationProperty));
+        Assert.Equal("AgentThreadManaged", storageLocationProperty.GetString());
+
+        Assert.True(json.TryGetProperty("messages", out var messagesProperty));
+        Assert.Equal(JsonValueKind.Array, messagesProperty.ValueKind);
+        Assert.Single(messagesProperty.EnumerateArray());
+        var message = messagesProperty.EnumerateArray().First();
+
+        Assert.Equal("TestAuthor", message.GetProperty("authorName").GetString());
+
+        Assert.True(message.TryGetProperty("contents", out var contentsProperty));
+        Assert.Equal(JsonValueKind.Array, contentsProperty.ValueKind);
+
+        Assert.Single(contentsProperty.EnumerateArray());
+        var textContent = contentsProperty.EnumerateArray().First();
+        Assert.Equal("TestContent", textContent.GetProperty("text").GetString());
     }
 
     #endregion

@@ -77,7 +77,7 @@ public sealed class OpenTelemetryAgent : AIAgent, IDisposable
     public override AgentThread GetNewThread() => this._innerAgent.GetNewThread();
 
     /// <inheritdoc/>
-    public override AgentThread DeserializeThread(string threadStateJson, JsonSerializerOptions? jsonSerializerOptions) => this._innerAgent.DeserializeThread(threadStateJson, jsonSerializerOptions);
+    public override AgentThread DeserializeThread(JsonElement threadState, JsonSerializerOptions? jsonSerializerOptions) => this._innerAgent.DeserializeThread(threadState, jsonSerializerOptions);
 
     /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(
