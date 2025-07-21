@@ -1,4 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
+import os
 from typing import Any
 
 from agent_framework import ChatMessage
@@ -37,7 +38,6 @@ def azure_openai_unit_test_env(monkeypatch, exclude_list, override_env_param_dic
         "AZURE_OPENAI_TEXT_TO_AUDIO_DEPLOYMENT_NAME": "test_text_to_audio_deployment",
         "AZURE_OPENAI_REALTIME_DEPLOYMENT_NAME": "test_realtime_deployment",
         "AZURE_OPENAI_API_KEY": "test_api_key",
-        "AZURE_OPENAI_ENDPOINT": "https://test-endpoint.com",
         "AZURE_OPENAI_API_VERSION": "2023-03-15-preview",
         "AZURE_OPENAI_BASE_URL": "https://test_text_deployment.test-base-url.com",
         "AZURE_OPENAI_TOKEN_ENDPOINT": "https://test-token-endpoint.com",
@@ -50,7 +50,11 @@ def azure_openai_unit_test_env(monkeypatch, exclude_list, override_env_param_dic
             monkeypatch.setenv(key, value)  # type: ignore
         else:
             monkeypatch.delenv(key, raising=False)  # type: ignore
-
+    if not os.getenv("AZURE_OPENAI_ENDPOINT"):
+        monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://test-endpoint.com")  # type: ignore
+    if "AZURE_OPENAI_ENDPOINT" in exclude_list:
+        monkeypatch.delenv("AZURE_OPENAI_ENDPOINT", raising=False)  # type: ignore
+    env_vars["AZURE_OPENAI_ENDPOINT"] = os.getenv("AZURE_OPENAI_ENDPOINT", "https://test-endpoint.com")
     return env_vars
 
 
