@@ -1,4 +1,4 @@
-name: Python - Unit Tests
+name: Python - Tests - No Env
 
 on:
   pull_request:
@@ -10,14 +10,15 @@ env:
   UV_CACHE_DIR: /tmp/.uv-cache
 
 jobs:
-  python-unit-tests:
-    name: Python Unit Tests
+  python-tests:
+    name: Python Tests - No Env
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: true
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
         os: [ubuntu-latest, windows-latest, macos-latest]
+        package: [ "./packages/main", "./packages/azure", "./packages/foundry"]
     env:
       UV_PYTHON: ${{ matrix.python-version }}
     permissions:
@@ -35,14 +36,26 @@ jobs:
           cache-suffix: ${{ runner.os }}-${{ matrix.python-version }}
           cache-dependency-glob: "**/uv.lock"
       - name: Install the project
-        run: uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
+        run: |
+          uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
+          echo "PKG_NAME=$(basename '${{ matrix.package }}')" >> $GITHUB_ENV
       - name: Test with pytest
-        run: uv run --frozen poe test --junitxml=pytest.xml
+        run: uv run poe --directory ${{ matrix.package }} test --junitxml=coverage.xml
+        working-directory: ./python
+      - name: Move coverage file
+        run: |
+          mv ${{ matrix.package }}/coverage.xml coverage_${{ env.PKG_NAME }}.xml
+        working-directory: ./python
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ env.PKG_NAME }}
+          path: ./python/coverage_${{ env.PKG_NAME }}.xml
       - name: Surface failing tests
         if: always()
         uses: pmeier/pytest-results-action@v0.7.2
         with:
-          path: python/**/pytest.xml
+          path: python/${{ matrix.package }}/coverage.xml
           summary: true
           display-options: fEX
           fail-on-empty: true

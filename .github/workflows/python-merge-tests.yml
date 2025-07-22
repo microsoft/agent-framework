@@ -1,0 +1,120 @@
+name: Python - Tests - Merge
+
+on:
+  workflow_dispatch:
+  merge_group:
+    branches: ["main"]
+
+permissions:
+  contents: read
+  id-token: "write"
+
+env:
+  # Configure a constant location for the uv cache
+  UV_CACHE_DIR: /tmp/.uv-cache
+
+jobs:
+  python-tests-main:
+    name: Python Tests - Main
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        python-version: ["3.10"]
+        os: [ubuntu-latest]
+        package: [ "./packages/main"]
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.7.x"
+          enable-cache: true
+          cache-suffix: ${{ runner.os }}-${{ matrix.python-version }}
+          cache-dependency-glob: "**/uv.lock"
+      - name: Install the project
+        run: |
+          uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
+          echo "PKG_NAME=$(basename '${{ matrix.package }}')" >> $GITHUB_ENV
+      - name: Test with pytest
+        run: uv run poe --directory ${{ matrix.package }} test --junitxml=coverage.xml
+        working-directory: ./python
+      - name: Move coverage file
+        run: |
+          mv ${{ matrix.package }}/coverage.xml coverage_${{ env.PKG_NAME }}.xml
+        working-directory: ./python
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ env.PKG_NAME }}
+          path: ./python/coverage_${{ env.PKG_NAME }}.xml
+      - name: Surface failing tests
+        if: always()
+        uses: pmeier/pytest-results-action@v0.7.2
+        with:
+          path: python/${{ matrix.package }}/coverage.xml
+          summary: true
+          display-options: fEX
+          fail-on-empty: true
+          title: Test results
+  python-tests-azure:
+    name: Python Tests - Azure
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        python-version: ["3.10"]
+        os: [ubuntu-latest]
+        package: [ "./packages/azure"]
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
+      AZURE_OPENAI_ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.7.x"
+          enable-cache: true
+          cache-suffix: ${{ runner.os }}-${{ matrix.python-version }}
+          cache-dependency-glob: "**/uv.lock"
+      - name: Install the project
+        run: |
+          uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
+          echo "PKG_NAME=$(basename '${{ matrix.package }}')" >> $GITHUB_ENV
+      - name: Test with pytest
+        run: uv run poe --directory ${{ matrix.package }} test --junitxml=coverage.xml
+        working-directory: ./python
+      - name: Move coverage file
+        run: |
+          mv ${{ matrix.package }}/coverage.xml coverage_${{ env.PKG_NAME }}.xml
+        working-directory: ./python
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ env.PKG_NAME }}
+          path: ./python/coverage_${{ env.PKG_NAME }}.xml
+      - name: Surface failing tests
+        if: always()
+        uses: pmeier/pytest-results-action@v0.7.2
+        with:
+          path: python/${{ matrix.package }}/coverage.xml
+          summary: true
+          display-options: fEX
+          fail-on-empty: true
+          title: Test results
