@@ -38,6 +38,8 @@ jobs:
       - name: Install the project
         run: |
           uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
+      - name: Set environment variables
+        run: |
           echo "PKG_NAME=$(basename '${{ matrix.package }}')" >> $GITHUB_ENV
       - name: Test with pytest
         run: uv run poe --directory ${{ matrix.package }} test --junitxml=coverage.xml
@@ -51,12 +53,12 @@ jobs:
         with:
           name: coverage-${{ matrix.OS }}-${{ matrix.python-version }}-${{ env.PKG_NAME }}
           path: ./python/coverage_${{ matrix.OS }}_${{ matrix.python-version }}_${{ env.PKG_NAME }}.xml
-      # - name: Surface failing tests
-      #   if: always()
-      #   uses: pmeier/pytest-results-action@v0.7.2
-      #   with:
-      #     path: ${{ matrix.package }}/coverage.xml
-      #     summary: true
-      #     display-options: fEX
-      #     fail-on-empty: true
-      #     title: Test results
+      - name: Surface failing tests
+        if: always()
+        uses: pmeier/pytest-results-action@v0.7.2
+        with:
+          path: coverage_${{ matrix.OS }}_${{ matrix.python-version }}._${{ env.PKG_NAME }}xml
+          summary: true
+          display-options: fEX
+          fail-on-empty: true
+          title: Test results
