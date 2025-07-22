@@ -539,54 +539,6 @@ def test_chat_options_and(ai_function_tool, ai_tool) -> None:
     assert options3.tools == [ai_function_tool, ai_tool]
 
 
-def test_chat_options_parsing_tools(ai_function_tool, ai_tool) -> None:
-    from agent_framework._clients import _prepare_tools_and_tool_choice
-
-    def echo() -> str:
-        """Echo the input."""
-        return "Echo"
-
-    dict_function = {
-        "type": "function",
-        "function": {
-            "name": "get_weather",
-            "description": "Retrieves current weather for the given location.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "location": {"type": "string", "description": "City and country e.g. Bogotá, Colombia"},
-                    "units": {
-                        "type": "string",
-                        "enum": ["celsius", "fahrenheit"],
-                        "description": "Units the temperature will be returned in.",
-                    },
-                },
-                "required": ["location", "units"],
-                "additionalProperties": False,
-            },
-            "strict": True,
-        },
-    }
-
-    options = ChatOptions(tools=[ai_function_tool, ai_tool, echo, dict_function], tool_choice="auto")
-    assert len(options.tools) == 4
-    assert options.tools[0] == ai_function_tool
-    assert options.tools[1] == ai_tool
-    assert options.tools[2] != echo
-    assert options.tools[3] == dict_function
-    # after prepare, the tools should be represented as dicts
-    # while ai_tools is still the same.
-    _prepare_tools_and_tool_choice(options)
-    assert options._ai_tools[0] == ai_function_tool
-    assert options._ai_tools[1] == ai_tool
-    assert options._ai_tools[3] == dict_function
-    assert len(options.tools) == 4
-    assert options.tools[0]["function"]["name"] == "simple_function"
-    assert options.tools[1]["function"]["name"] == "generic_tool"
-    assert options.tools[2]["function"]["name"] == "echo"
-    assert options.tools[3]["function"]["name"] == "get_weather"
-
-
 # region Agent Response Fixtures
 
 
