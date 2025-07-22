@@ -49,7 +49,7 @@ namespace Azure.AI.Agents.Persistent
             }
             if (string.IsNullOrWhiteSpace(agentId))
             {
-                throw new ArgumentException("Value cannot be empty or contain only white-space characters.", agentId);
+                throw new ArgumentException("Value cannot be empty or contain only white-space characters.", nameof(agentId));
             }
 
             _client = client;
