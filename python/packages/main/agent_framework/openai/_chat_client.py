@@ -53,7 +53,7 @@ from .._types import (
 from ..exceptions import ServiceInitializationError, ServiceInvalidResponseError
 from ._shared import OpenAIConfigBase, OpenAIHandler, OpenAIModelTypes, OpenAISettings
 
-__all__ = ["OpenAIChatClient"]
+__all__ = ["OpenAIChatClient", "OpenAIResponsesClient"]
 
 
 # region OpenAIChatClientBase
@@ -713,6 +713,7 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
         for message in chat_messages:
             for content in message.contents:
                 if isinstance(content, FunctionCallContent):
+                    assert content.additional_properties and "call_id" in content.additional_properties
                     call_id = content.additional_properties["call_id"]
                     tool_id_to_call_id[content.call_id] = call_id
         list_of_list = [self._openai_chat_message_parser(message, tool_id_to_call_id) for message in chat_messages]
