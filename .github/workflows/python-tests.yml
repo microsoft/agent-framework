@@ -37,48 +37,48 @@ jobs:
       - name: Install the project
         run: |
           uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
+      # Main package tests
       - name: Set environment variables
         run: |
           echo "PACKAGE_NAME=main" >> $GITHUB_ENV
-          echo "PACKAGE=./packages/${{ env.PACKAGE_NAME }}" >> $GITHUB_ENV
       - name: Test with pytest
-        run: uv run poe --directory ${{ env.PACKAGE }} test --junitxml=coverage.xml
+        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
         working-directory: ./python
       - name: Move coverage file
         run: |
-          mv ${{ env.PACKAGE }}/coverage.xml coverage_${{ matrix.OS }}_${{ matrix.python-version }}._${{ env.PACKAGE_NAME }}.xml
+          mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml coverage_${{ matrix.OS }}_${{ matrix.python-version }}._${{ env.PACKAGE_NAME }}.xml
         working-directory: ./python
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
           name: coverage-${{ matrix.OS }}-${{ matrix.python-version }}-${{ env.PACKAGE_NAME }}
           path: ./python/coverage_${{ matrix.OS }}_${{ matrix.python-version }}_${{ env.PACKAGE_NAME }}.xml
+      # Azure package tests
       - name: Set environment variables
         run: |
           echo "PACKAGE_NAME=azure" >> $GITHUB_ENV
-          echo "PACKAGE=./packages/${{ env.PACKAGE_NAME }}" >> $GITHUB_ENV
       - name: Test with pytest
-        run: uv run poe --directory ${{ env.PACKAGE }} test --junitxml=coverage.xml
+        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
         working-directory: ./python
       - name: Move coverage file
         run: |
-          mv ${{ env.PACKAGE }}/coverage.xml coverage_${{ matrix.OS }}_${{ matrix.python-version }}._${{ env.PACKAGE_NAME }}.xml
+          mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml coverage_${{ matrix.OS }}_${{ matrix.python-version }}._${{ env.PACKAGE_NAME }}.xml
         working-directory: ./python
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
           name: coverage-${{ matrix.OS }}-${{ matrix.python-version }}-${{ env.PACKAGE_NAME }}
           path: ./python/coverage_${{ matrix.OS }}_${{ matrix.python-version }}_${{ env.PACKAGE_NAME }}.xml
+      # Foundry package tests
       - name: Set environment variables
         run: |
           echo "PACKAGE_NAME=foundry" >> $GITHUB_ENV
-          echo "PACKAGE=./packages/${{ env.PACKAGE_NAME }}" >> $GITHUB_ENV
       - name: Test with pytest
-        run: uv run poe --directory ${{ env.PACKAGE }} test --junitxml=coverage.xml
+        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
         working-directory: ./python
       - name: Move coverage file
         run: |
-          mv ${{ env.PACKAGE }}/coverage.xml coverage_${{ matrix.OS }}_${{ matrix.python-version }}._${{ env.PACKAGE_NAME }}.xml
+          mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml coverage_${{ matrix.OS }}_${{ matrix.python-version }}._${{ env.PACKAGE_NAME }}.xml
         working-directory: ./python
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
