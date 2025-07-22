@@ -28,7 +28,7 @@ jobs:
             if ((body != null && body.match(/python/i)) || (title != null && title.match(/python/i))) {
               // Add the 'python' label to the array
               labels.push("python")
-            }/Users/edvan/Work/semantic-kernel/.github/workflows/label-pr.yml
+            }
 
             // Check if the body or the title contains the words 'dotnet', '.net', 'c#' or 'csharp' (case-insensitive)
             if ((body != null && body.match(/.net/i)) || (title != null && title.match(/.net/i)) ||

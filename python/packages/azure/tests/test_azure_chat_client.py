@@ -36,10 +36,12 @@ from agent_framework_azure import AzureChatClient
 
 # region Service Setup
 
-skip_if_no_real_azure_endpoint = pytest.mark.skipif(
+skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
     or os.getenv("AZURE_OPENAI_ENDPOINT", "") in ("", "https://test-endpoint.com"),
-    reason="No real AZURE_OPENAI_ENDPOINT provided; skipping integration tests.",
+    reason="No real AZURE_OPENAI_ENDPOINT provided; skipping integration tests."
+    if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
+    else "Integration tests are disabled.",
 )
 
 
@@ -641,7 +643,7 @@ def get_story_text() -> str:
     )
 
 
-@skip_if_no_real_azure_endpoint
+@skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_response() -> None:
     """Test Azure OpenAI chat completion responses."""
     azure_chat_client = AzureChatClient(deployment_name="gpt-4o")
@@ -668,7 +670,7 @@ async def test_azure_openai_chat_client_response() -> None:
     assert "scientists" in response.text
 
 
-@skip_if_no_real_azure_endpoint
+@skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_response_tools() -> None:
     """Test AzureOpenAI chat completion responses."""
     azure_chat_client = AzureChatClient(deployment_name="gpt-4o")
@@ -690,7 +692,7 @@ async def test_azure_openai_chat_client_response_tools() -> None:
     assert "scientists" in response.text
 
 
-@skip_if_no_real_azure_endpoint
+@skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_streaming() -> None:
     """Test Azure OpenAI chat completion responses."""
     azure_chat_client = AzureChatClient(deployment_name="gpt-4o")
@@ -723,7 +725,7 @@ async def test_azure_openai_chat_client_streaming() -> None:
     assert "scientists" in full_message
 
 
-@skip_if_no_real_azure_endpoint
+@skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_streaming_tools() -> None:
     """Test AzureOpenAI chat completion responses."""
     azure_chat_client = AzureChatClient(deployment_name="gpt-4o")

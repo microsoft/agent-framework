@@ -1,5 +1,4 @@
 # Copyright (c) Microsoft. All rights reserved.
-import os
 from typing import Any
 
 from agent_framework import ChatMessage
@@ -24,8 +23,6 @@ def override_env_param_dict(request: Any) -> dict[str, str]:
 def azure_openai_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):  # type: ignore
     """Fixture to set environment variables for AzureOpenAISettings."""
 
-    SPECIAL_KEY = "AZURE_OPENAI_ENDPOINT"
-
     if exclude_list is None:
         exclude_list = []
 
@@ -33,7 +30,7 @@ def azure_openai_unit_test_env(monkeypatch, exclude_list, override_env_param_dic
         override_env_param_dict = {}
 
     env_vars = {
-        SPECIAL_KEY: "https://test-endpoint.com",
+        "AZURE_OPENAI_ENDPOINT": "https://test-endpoint.com",
         "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME": "test_chat_deployment",
         "AZURE_OPENAI_TEXT_DEPLOYMENT_NAME": "test_text_deployment",
         "AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME": "test_embedding_deployment",
@@ -50,13 +47,10 @@ def azure_openai_unit_test_env(monkeypatch, exclude_list, override_env_param_dic
     env_vars.update(override_env_param_dict)  # type: ignore
 
     for key, value in env_vars.items():
-        if key not in exclude_list:
-            if key == SPECIAL_KEY and not os.getenv(SPECIAL_KEY):
-                monkeypatch.setenv(key, value)
-            else:
-                monkeypatch.setenv(key, value)  # type: ignore
-        else:
+        if key in exclude_list:
             monkeypatch.delenv(key, raising=False)  # type: ignore
+            continue
+        monkeypatch.setenv(key, value)  # type: ignore
 
     return env_vars
 

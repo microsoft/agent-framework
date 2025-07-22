@@ -8,10 +8,12 @@ from agent_framework import ChatClient, ChatMessage, ChatResponse, ChatResponseU
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai import OpenAIChatClient
 
-skip_if_no_real_openai_key = pytest.mark.skipif(
+skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
-    or os.getenv("OPENAI_API_KEY", "") in ("", "sk-test-dummy-key"),
-    reason="No real OPENAI_API_KEY provided; skipping integration tests.",
+    or os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
+    reason="No real OPENAI_API_KEY provided; skipping integration tests."
+    if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
+    else "Integration tests are disabled.",
 )
 
 
@@ -122,7 +124,7 @@ def get_story_text() -> str:
     )
 
 
-@skip_if_no_real_openai_key
+@skip_if_openai_integration_tests_disabled
 async def test_openai_chat_completion_response() -> None:
     """Test OpenAI chat completion responses."""
     openai_chat_client = OpenAIChatClient(ai_model_id="gpt-4.1-mini")
@@ -149,7 +151,7 @@ async def test_openai_chat_completion_response() -> None:
     assert "scientists" in response.text
 
 
-@skip_if_no_real_openai_key
+@skip_if_openai_integration_tests_disabled
 async def test_openai_chat_completion_response_tools() -> None:
     """Test OpenAI chat completion responses."""
     openai_chat_client = OpenAIChatClient(ai_model_id="gpt-4.1-mini")
@@ -171,7 +173,7 @@ async def test_openai_chat_completion_response_tools() -> None:
     assert "scientists" in response.text
 
 
-@skip_if_no_real_openai_key
+@skip_if_openai_integration_tests_disabled
 async def test_openai_chat_client_streaming() -> None:
     """Test Azure OpenAI chat completion responses."""
     openai_chat_client = OpenAIChatClient(ai_model_id="gpt-4.1-mini")
@@ -204,7 +206,7 @@ async def test_openai_chat_client_streaming() -> None:
     assert "scientists" in full_message
 
 
-@skip_if_no_real_openai_key
+@skip_if_openai_integration_tests_disabled
 async def test_openai_chat_client_streaming_tools() -> None:
     """Test AzureOpenAI chat completion responses."""
     openai_chat_client = OpenAIChatClient(ai_model_id="gpt-4.1-mini")

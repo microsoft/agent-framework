@@ -1,12 +1,31 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import os
+from typing import Annotated
 from unittest.mock import MagicMock
 
 import pytest
-from agent_framework import ChatClient, ChatMessage, ChatOptions, ChatRole
+from agent_framework import (
+    ChatClient,
+    ChatMessage,
+    ChatOptions,
+    ChatResponse,
+    ChatResponseUpdate,
+    ChatRole,
+    TextContent,
+)
 from agent_framework.exceptions import ServiceInitializationError
+from pydantic import Field
 
 from agent_framework_foundry import FoundryChatClient, FoundrySettings
+
+skip_if_foundry_integration_tests_disabled = pytest.mark.skipif(
+    os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
+    or os.getenv("FOUNDRY_PROJECT_ENDPOINT", "") in ("", "https://test-project.cognitiveservices.azure.com/"),
+    reason="No real FOUNDRY_PROJECT_ENDPOINT provided; skipping integration tests."
+    if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
+    else "Integration tests are disabled.",
+)
 
 
 def create_test_foundry_chat_client(
@@ -18,7 +37,7 @@ def create_test_foundry_chat_client(
 ) -> FoundryChatClient:
     """Helper function to create FoundryChatClient instances for testing, bypassing Pydantic validation."""
     if foundry_settings is None:
-        foundry_settings = FoundrySettings()
+        foundry_settings = FoundrySettings(env_file_path="test.env")
 
     return FoundryChatClient.model_construct(
         client=mock_ai_project_client,
@@ -140,8 +159,9 @@ async def test_foundry_chat_client_get_agent_id_or_create_create_new(
     assert chat_client._should_delete_agent  # type: ignore
 
 
+@pytest.mark.parametrize("exclude_list", [["FOUNDRY_MODEL_DEPLOYMENT_NAME"]], indirect=True)
 async def test_foundry_chat_client_get_agent_id_or_create_missing_model(
-    mock_ai_project_client: MagicMock,
+    mock_ai_project_client: MagicMock, foundry_unit_test_env: dict[str, str]
 ) -> None:
     """Test _get_agent_id_or_create when model_deployment_name is missing."""
     chat_client = create_test_foundry_chat_client(mock_ai_project_client)
@@ -270,3 +290,111 @@ def test_foundry_chat_client_convert_function_results_to_tool_output_none(mock_a
 
     assert run_id is None
     assert tool_outputs is None
+
+
+def get_weather(
+    location: Annotated[str, Field(description="The location to get the weather for.")],
+) -> str:
+    """Get the weather for a given location."""
+    return f"The weather in {location} is sunny with a high of 25°C."
+
+
+@skip_if_foundry_integration_tests_disabled
+async def test_foundry_chat_client_get_response() -> None:
+    """Test Foundry Chat Client response."""
+    async with FoundryChatClient() as foundry_chat_client:
+        assert isinstance(foundry_chat_client, ChatClient)
+
+        messages: list[ChatMessage] = []
+        messages.append(
+            ChatMessage(
+                role="user",
+                text="The weather in Seattle is currently sunny with a high of 25°C. "
+                "It's a beautiful day for outdoor activities.",
+            )
+        )
+        messages.append(ChatMessage(role="user", text="What's the weather like today?"))
+
+        # Test that the client can be used to get a response
+        response = await foundry_chat_client.get_response(messages=messages)
+
+        assert response is not None
+        assert isinstance(response, ChatResponse)
+        assert any(word in response.text.lower() for word in ["sunny", "25"])
+
+
+@skip_if_foundry_integration_tests_disabled
+async def test_foundry_chat_client_get_response_tools() -> None:
+    """Test Foundry Chat Client response with tools."""
+    async with FoundryChatClient() as foundry_chat_client:
+        assert isinstance(foundry_chat_client, ChatClient)
+
+        messages: list[ChatMessage] = []
+        messages.append(ChatMessage(role="user", text="What's the weather like in Seattle?"))
+
+        # Test that the client can be used to get a response
+        response = await foundry_chat_client.get_response(
+            messages=messages,
+            tools=[get_weather],
+            tool_choice="auto",
+        )
+
+        assert response is not None
+        assert isinstance(response, ChatResponse)
+        assert any(word in response.text.lower() for word in ["sunny", "25"])
+
+
+@skip_if_foundry_integration_tests_disabled
+async def test_foundry_chat_client_streaming() -> None:
+    """Test Foundry Chat Client streaming response."""
+    async with FoundryChatClient() as foundry_chat_client:
+        assert isinstance(foundry_chat_client, ChatClient)
+
+        messages: list[ChatMessage] = []
+        messages.append(
+            ChatMessage(
+                role="user",
+                text="The weather in Seattle is currently sunny with a high of 25°C. "
+                "It's a beautiful day for outdoor activities.",
+            )
+        )
+        messages.append(ChatMessage(role="user", text="What's the weather like today?"))
+
+        # Test that the client can be used to get a response
+        response = foundry_chat_client.get_streaming_response(messages=messages)
+
+        full_message: str = ""
+        async for chunk in response:
+            assert chunk is not None
+            assert isinstance(chunk, ChatResponseUpdate)
+            for content in chunk.contents:
+                if isinstance(content, TextContent) and content.text:
+                    full_message += content.text
+
+        assert any(word in full_message.lower() for word in ["sunny", "25"])
+
+
+@skip_if_foundry_integration_tests_disabled
+async def test_foundry_chat_client_streaming_tools() -> None:
+    """Test Foundry Chat Client streaming response with tools."""
+    async with FoundryChatClient() as foundry_chat_client:
+        assert isinstance(foundry_chat_client, ChatClient)
+
+        messages: list[ChatMessage] = []
+        messages.append(ChatMessage(role="user", text="What's the weather like in Seattle?"))
+
+        # Test that the client can be used to get a response
+        response = foundry_chat_client.get_streaming_response(
+            messages=messages,
+            tools=[get_weather],
+            tool_choice="auto",
+        )
+        full_message: str = ""
+        async for chunk in response:
+            assert chunk is not None
+            assert isinstance(chunk, ChatResponseUpdate)
+            for content in chunk.contents:
+                if isinstance(content, TextContent) and content.text:
+                    full_message += content.text
+
+        assert any(word in full_message.lower() for word in ["sunny", "25"])
