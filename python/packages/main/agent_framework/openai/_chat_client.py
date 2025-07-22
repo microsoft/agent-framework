@@ -103,6 +103,7 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
         if not isinstance(response, AsyncStream):
             raise ServiceInvalidResponseError("Expected an AsyncStream[ChatCompletionChunk] response.")
         async for chunk in response:
+            assert isinstance(chunk, ChatCompletionChunk)  # nosec  # noqa: S101
             if len(chunk.choices) == 0 and chunk.usage is None:
                 continue
 
@@ -505,11 +506,14 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
             **kwargs,
         )
 
-    def _chat_to_response_tool_spec(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _chat_to_response_tool_spec(self, tools: list[AITool | MutableMapping[str, Any]]) -> list[dict[str, Any]]:
         response_tools: list[dict[str, Any]] = []
         for tool in tools:
+            if isinstance(tool, AITool):
+                # TODO(peterychang): Support AITools
+                continue
             if "function" not in tool:
-                response_tools.append(tool)
+                response_tools.append(tool if isinstance(tool, dict) else dict(tool))
             parameters = {"additionalProperties": False}
             parameters.update(tool.get("function", {}).get("parameters", {}))
             response_tools.append({
@@ -555,7 +559,6 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
         if not isinstance(response, AsyncStream):
             raise ServiceInvalidResponseError("Expected an AsyncStream[ResponseStreamEvent] response.")
         async for chunk in response:
-            assert isinstance(chunk, OpenAIResponseStreamEvent)  # nosec  # noqa: S101
             if not isinstance(chunk, ResponseContentPartAddedEvent):
                 continue
 
@@ -635,7 +638,7 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
         for content in message.contents:
             match content:
                 case FunctionResultContent():
-                    new_args = {}
+                    new_args: dict[str, Any] = {}
                     new_args.update(self._openai_content_parser(content, tool_id_to_call_id))
                     all_messages.append(new_args)
                 case FunctionCallContent():
