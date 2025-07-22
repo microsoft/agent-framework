@@ -1,12 +1,18 @@
 # Add 'python' label to any change within the 'python' directory
 python:
-  - python/**/*
+- changed_files:
+  - any-glob-to-any-file:
+    - python/**
 
 # Add '.NET' label to any change within samples or kernel 'dotnet' directories.
 .NET:
-  - dotnet/**/*
+- changed_files:
+  - any-glob-to-any-file:
+    - dotnet/**
 
 # Add 'documentation' label to any change within the 'docs' directory, or any '.md' files
 documentation:
-  - docs/**/*
-  - '**/*.md'
+- changed_files:
+  - any-glob-to-any-file:
+    - docs/**
+    - '**/*.md'
