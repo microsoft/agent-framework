@@ -21,6 +21,10 @@ This document aims to provide options and capture the decision on how to model t
 
 ## Decision Drivers
 
+- Agents should encapsulate their internal logic and not leak it to the caller.
+- We need to support approvals for local actions as well as remote actions.
+- We need to support approvals for existing protocols and services, such as OpenAI's MCP and function calling.
+
 ## Considered Options
 
 ### Return a FunctionCallContent to the agent caller, that it executes
@@ -172,6 +176,6 @@ so that it can identify which function calls should be returned as an `ApprovalR
 1. Agent removes its ApprovalRequestContent from its AgentThread ActiveApprovalRequests.
 1. Agent responds to caller with result message and thread is updated with the result message.
 
-## Open Questions
-
 ## Decision Outcome
+
+Chosen approach: Introduce new ApprovalRequestContent and ApprovalResponseContent types.
