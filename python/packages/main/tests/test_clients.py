@@ -337,7 +337,7 @@ def test_chat_options_parsing_tools(chat_client_base, ai_function_tool) -> None:
     }
 
     options = ChatOptions(tools=[ai_function_tool, echo, dict_function], tool_choice="auto")
-    assert len(options.tools) == 4
+    assert len(options.tools) == 3
     assert options.tools[0] == ai_function_tool
     assert options.tools[1] != echo
     assert options.tools[2] == dict_function
@@ -346,7 +346,7 @@ def test_chat_options_parsing_tools(chat_client_base, ai_function_tool) -> None:
     chat_client_base._prepare_tools_and_tool_choice(chat_options=options)
     assert options._ai_tools[0] == ai_function_tool
     assert options._ai_tools[2] == dict_function
-    assert len(options.tools) == 4
+    assert len(options.tools) == 3
     assert options.tools[0]["function"]["name"] == "simple_function"
     assert options.tools[1]["function"]["name"] == "echo"
     assert options.tools[2]["function"]["name"] == "get_weather"
