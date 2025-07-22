@@ -22,6 +22,7 @@ public sealed class Step04_ChatClientAgent_UsingFileSearchTools(ITestOutputHelpe
     [InlineData(ChatClientProviders.OpenAIAssistant)]
     public async Task RunningWithFileReferenceAsync(ChatClientProviders provider)
     {
+        // Upload a file to the specified provider.
         var fileId = await UploadFileAsync("Resources/employees.pdf", provider);
 
         // Create a vector store for the uploaded file to enable file search capabilities.
@@ -48,7 +49,7 @@ public sealed class Step04_ChatClientAgent_UsingFileSearchTools(ITestOutputHelpe
         var thread = agent.GetNewThread();
 
         // Prompt which allows to verify that the file search functionality works correctly with the uploaded document.
-        const string Prompt = "What are the main themes in Hamlet? Please provide specific examples from the text and cite relevant passages.";
+        const string Prompt = "Who is the youngest employee?";
 
         var assistantOutput = new StringBuilder();
         var fileSearchOutput = new StringBuilder();
@@ -59,22 +60,10 @@ public sealed class Step04_ChatClientAgent_UsingFileSearchTools(ITestOutputHelpe
             {
                 assistantOutput.Append(update.Text);
             }
-
-            if (update.RawRepresentation is not null)
-            {
-                var searchOutput = GetFileSearchOutput(update.RawRepresentation, provider);
-                if (!string.IsNullOrWhiteSpace(searchOutput))
-                {
-                    fileSearchOutput.Append(searchOutput);
-                }
-            }
         }
 
         Console.WriteLine("Assistant Output:");
         Console.WriteLine(assistantOutput.ToString());
-
-        Console.WriteLine("File Search Output:");
-        Console.WriteLine(fileSearchOutput.ToString());
 
         // Clean up the server-side agent after use when applicable (depending on the provider).
         await base.AgentCleanUpAsync(provider, agent, thread);
@@ -140,32 +129,6 @@ public sealed class Step04_ChatClientAgent_UsingFileSearchTools(ITestOutputHelpe
         var client = new PersistentAgentsClient(TestConfiguration.AzureAI.Endpoint, new AzureCliCredential());
         var vectorStore = await client.VectorStores.CreateVectorStoreAsync(fileIds);
         return vectorStore.Value.Id;
-    }
-
-    /// <summary>
-    /// Depending on the provider, different strategies are used to extract the file search output from the response raw representation.
-    /// </summary>
-    /// <param name="rawRepresentation">Raw representation of the response containing file search output.</param>
-    /// <param name="provider">Provider of the chat client that is used to determine how to extract the output.</param>
-    /// <returns>The file search output as a string.</returns>
-    private static string? GetFileSearchOutput(object rawRepresentation, ChatClientProviders provider)
-    {
-        switch (provider)
-        {
-            case ChatClientProviders.OpenAIAssistant
-                when rawRepresentation is OpenAI.Assistants.RunStepDetailsUpdate stepDetails:
-                // For OpenAI, file search results may be included in the step details
-                // This is a simplified implementation that shows when file search steps occur
-                return "[File Search Step] OpenAI Assistant step detected";
-
-            case ChatClientProviders.AzureAIAgentsPersistent
-                when rawRepresentation is Azure.AI.Agents.Persistent.RunStepDetailsUpdate stepDetails:
-                // For Azure AI Agents, file search results may be included in the step details
-                // This is a simplified implementation that shows when file search steps occur
-                return "[File Search Step] Azure AI Agents step detected";
-        }
-
-        return null;
     }
 
     #endregion

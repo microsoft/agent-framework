@@ -14,22 +14,6 @@ public class NewHostedFileSearchTool : AITool
     // ChatClients must rely on the AdditionalProperties to check and set correctly the File Search Resource avoiding a customized RawRepresentationFactory implementation.
     private readonly Dictionary<string, object?> _additionalProperties = [];
 
-    /// <summary>Gets or sets the list of file IDs that the file search tool can access.</summary>
-    public IList<string> FileIds
-    {
-        get
-        {
-            // Only create the property in the dictionary when it is actually used
-            if (!this._additionalProperties.TryGetValue("fileIds", out var value) || value is null)
-            {
-                value = new List<string>();
-                this._additionalProperties["fileIds"] = value;
-            }
-
-            return (IList<string>)value;
-        }
-    }
-
     /// <summary>Gets or sets the list of vector store IDs that the file search tool can access.</summary>
     public IList<string> VectorStoreIds
     {

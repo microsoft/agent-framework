@@ -3,6 +3,7 @@
 using System.Text;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Samples;
 using OpenAI.Assistants;
@@ -52,9 +53,9 @@ public sealed class Step03_ChatClientAgent_UsingCodeInterpreterTools(ITestOutput
                 assistantOutput.Append(update.Text);
             }
 
-            if (update.RawRepresentation is not null)
+            if (update.RawRepresentation is ChatResponseUpdate chatUpdate && chatUpdate.RawRepresentation is not null)
             {
-                codeInterpreterOutput.Append(GetCodeInterpreterOutput(update.RawRepresentation, provider));
+                codeInterpreterOutput.Append(GetCodeInterpreterOutput(chatUpdate.RawRepresentation, provider));
             }
         }
 

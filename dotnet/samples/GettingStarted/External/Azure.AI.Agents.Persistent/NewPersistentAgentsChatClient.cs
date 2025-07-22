@@ -15,6 +15,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
+using OpenAI.Assistants;
 
 namespace Azure.AI.Agents.Persistent
 {
@@ -302,6 +303,16 @@ namespace Azure.AI.Agents.Persistent
                                     {
                                         (toolResources ??= new() { CodeInterpreter = new() }).CodeInterpreter.FileIds.Add(fileId);
                                     }
+                                }
+                                break;
+
+                            case NewHostedFileSearchTool:
+                                toolDefinitions.Add(new FileSearchToolDefinition());
+
+                                // Once available, NewHostedFileSearchTool.VectorStoreIds properties will be used instead of the AdditionalProperties.
+                                if (tool.AdditionalProperties.TryGetValue("vectorStoreIds", out object? vectorStoreIdsObject) && vectorStoreIdsObject is IEnumerable<string> vectorStoreIds)
+                                {
+                                    (toolResources ??= new()).FileSearch = new(vectorStoreIds.ToList(), null);
                                 }
                                 break;
 
