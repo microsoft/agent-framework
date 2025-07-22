@@ -17,8 +17,9 @@ def get_weather(
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
-async def main() -> None:
-    print("=== Basic Foundry Chat Client Example ===")
+async def non_streaming_example() -> None:
+    """Example of non-streaming response (get the complete result at once)."""
+    print("=== Non-streaming Response Example ===")
 
     # Since no Agent ID is provided, the agent will be automatically created
     # and deleted after getting a response
@@ -27,8 +28,37 @@ async def main() -> None:
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     ) as agent:
-        result = await agent.run("What's the weather like in Seattle?")
+        query = "What's the weather like in Seattle?"
+        print(f"User: {query}")
+        result = await agent.run(query)
         print(f"Result: {result}\n")
+
+
+async def streaming_example() -> None:
+    """Example of streaming response (get results as they are generated)."""
+    print("=== Streaming Response Example ===")
+
+    # Since no Agent ID is provided, the agent will be automatically created
+    # and deleted after getting a response
+    async with ChatClientAgent(
+        chat_client=FoundryChatClient(),
+        instructions="You are a helpful weather agent.",
+        tools=get_weather,
+    ) as agent:
+        query = "What's the weather like in Portland?"
+        print(f"User: {query}")
+        print("Assistant: ", end="", flush=True)
+        async for chunk in agent.run_stream(query):
+            if chunk.text:
+                print(chunk.text, end="", flush=True)
+        print("\n")
+
+
+async def main() -> None:
+    print("=== Basic Foundry Chat Client Example ===")
+
+    await non_streaming_example()
+    await streaming_example()
 
 
 if __name__ == "__main__":
