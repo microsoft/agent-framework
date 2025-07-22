@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Azure.AI.Inference;
 using Azure;
+using Azure.AI.Inference;
 using HelloHttpApi.ApiService.Utilities;
 using Microsoft.Extensions.AI;
 using OllamaSharp;
