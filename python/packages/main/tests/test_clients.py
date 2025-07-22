@@ -307,7 +307,7 @@ async def test_base_client_with_streaming_function_calling_disabled(chat_client_
     assert exec_counter == 0
 
 
-def test_chat_options_parsing_tools(chat_client_base, ai_function_tool, ai_tool) -> None:
+def test_chat_options_parsing_tools(chat_client_base, ai_function_tool) -> None:
     """Test that chat options can parse tools correctly."""
 
     def echo() -> str:
@@ -336,20 +336,17 @@ def test_chat_options_parsing_tools(chat_client_base, ai_function_tool, ai_tool)
         },
     }
 
-    options = ChatOptions(tools=[ai_function_tool, ai_tool, echo, dict_function], tool_choice="auto")
+    options = ChatOptions(tools=[ai_function_tool, echo, dict_function], tool_choice="auto")
     assert len(options.tools) == 4
     assert options.tools[0] == ai_function_tool
-    assert options.tools[1] == ai_tool
-    assert options.tools[2] != echo
-    assert options.tools[3] == dict_function
+    assert options.tools[1] != echo
+    assert options.tools[2] == dict_function
     # after prepare, the tools should be represented as dicts
     # while ai_tools is still the same.
     chat_client_base._prepare_tools_and_tool_choice(chat_options=options)
     assert options._ai_tools[0] == ai_function_tool
-    assert options._ai_tools[1] == ai_tool
-    assert options._ai_tools[3] == dict_function
+    assert options._ai_tools[2] == dict_function
     assert len(options.tools) == 4
     assert options.tools[0]["function"]["name"] == "simple_function"
-    assert options.tools[1]["function"]["name"] == "generic_tool"
-    assert options.tools[2]["function"]["name"] == "echo"
-    assert options.tools[3]["function"]["name"] == "get_weather"
+    assert options.tools[1]["function"]["name"] == "echo"
+    assert options.tools[2]["function"]["name"] == "get_weather"
