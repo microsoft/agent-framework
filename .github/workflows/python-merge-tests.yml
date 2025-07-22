@@ -22,11 +22,11 @@ jobs:
       matrix:
         python-version: ["3.10"]
         os: [ubuntu-latest]
-        package: [ "./packages/main"]
     env:
       UV_PYTHON: ${{ matrix.python-version }}
       OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
       OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
+      PACKAGE_NAME: "main"
     permissions:
       contents: write
     defaults:
@@ -44,28 +44,28 @@ jobs:
       - name: Install the project
         run: |
           uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
-          echo "PKG_NAME=$(basename '${{ matrix.package }}')" >> $GITHUB_ENV
       - name: Test with pytest
-        run: uv run poe --directory ${{ matrix.package }} test --junitxml=coverage.xml
+        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
         working-directory: ./python
       - name: Move coverage file
         run: |
-          mv ${{ matrix.package }}/coverage.xml coverage_${{ env.PKG_NAME }}.xml
+          mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml coverage_${{ env.PACKAGE_NAME }}.xml
         working-directory: ./python
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-${{ env.PKG_NAME }}
-          path: ./python/coverage_${{ env.PKG_NAME }}.xml
+          name: coverage-${{ env.PACKAGE_NAME }}
+          path: ./python/coverage_${{ env.PACKAGE_NAME }}.xml
       - name: Surface failing tests
         if: always()
         uses: pmeier/pytest-results-action@v0.7.2
         with:
-          path: python/${{ matrix.package }}/coverage.xml
+          path: ./python/**.xml
           summary: true
           display-options: fEX
           fail-on-empty: true
           title: Test results
+
   python-tests-azure:
     name: Python Tests - Azure
     runs-on: ${{ matrix.os }}
@@ -74,11 +74,11 @@ jobs:
       matrix:
         python-version: ["3.10"]
         os: [ubuntu-latest]
-        package: [ "./packages/azure"]
     env:
       UV_PYTHON: ${{ matrix.python-version }}
       AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
       AZURE_OPENAI_ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
+      PACKAGE_NAME: "azure"
     permissions:
       contents: write
     defaults:
@@ -96,24 +96,75 @@ jobs:
       - name: Install the project
         run: |
           uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
-          echo "PKG_NAME=$(basename '${{ matrix.package }}')" >> $GITHUB_ENV
       - name: Test with pytest
-        run: uv run poe --directory ${{ matrix.package }} test --junitxml=coverage.xml
+        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
         working-directory: ./python
       - name: Move coverage file
         run: |
-          mv ${{ matrix.package }}/coverage.xml coverage_${{ env.PKG_NAME }}.xml
+          mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml coverage_${{ env.PACKAGE_NAME }}.xml
         working-directory: ./python
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-${{ env.PKG_NAME }}
-          path: ./python/coverage_${{ env.PKG_NAME }}.xml
+          name: coverage-${{ env.PACKAGE_NAME }}
+          path: ./python/coverage_${{ env.PACKAGE_NAME }}.xml
       - name: Surface failing tests
         if: always()
         uses: pmeier/pytest-results-action@v0.7.2
         with:
-          path: python/${{ matrix.package }}/coverage.xml
+          path: ./python/**.xml
+          summary: true
+          display-options: fEX
+          fail-on-empty: true
+          title: Test results
+
+  python-tests-foundry:
+    name: Python Tests - Foundry
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        python-version: ["3.10"]
+        os: [ubuntu-latest]
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
+      AZURE_OPENAI_ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
+      PACKAGE_NAME: "foundry"
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.7.x"
+          enable-cache: true
+          cache-suffix: ${{ runner.os }}-${{ matrix.python-version }}
+          cache-dependency-glob: "**/uv.lock"
+      - name: Install the project
+        run: |
+          uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
+      - name: Test with pytest
+        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
+        working-directory: ./python
+      - name: Move coverage file
+        run: |
+          mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml coverage_${{ env.PACKAGE_NAME }}.xml
+        working-directory: ./python
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ env.PACKAGE_NAME }}
+          path: ./python/coverage_${{ env.PACKAGE_NAME }}.xml
+      - name: Surface failing tests
+        if: always()
+        uses: pmeier/pytest-results-action@v0.7.2
+        with:
+          path: ./python/**.xml
           summary: true
           display-options: fEX
           fail-on-empty: true
