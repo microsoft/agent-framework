@@ -31,6 +31,7 @@ This approach is problematic for a number of reasons:
 
 - This may not work for remote agents (e.g. via A2A), where the function that the agent wants to call does not reside on the caller's machine.
 - The main value prop of an agent is to encapsulate the internal logic of the agent, but this leaks that logic to the caller, requiring the caller to know how to invoke the agent's function calls.
+- Inference services are introducing their own approval content types for server side tool or function invocation, and will not be addressed by this approach.
 
 ### Introduce new ApprovalRequestContent and ApprovalResponseContent types
 
