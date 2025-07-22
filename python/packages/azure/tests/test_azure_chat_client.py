@@ -38,7 +38,7 @@ from agent_framework_azure import AzureChatClient
 
 skip_if_no_real_azure_endpoint = pytest.mark.skipif(
     os.getenv("AZURE_OPENAI_ENDPOINT", "") in ("", "https://test-endpoint.com"),
-    reason="No real AZURE_OPENAI_ENDPOINT provided; skipping integration test.",
+    reason="No real AZURE_OPENAI_ENDPOINT provided; skipping integration tests.",
 )
 
 

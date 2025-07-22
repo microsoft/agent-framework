@@ -8,17 +8,9 @@ from agent_framework import ChatClient, ChatMessage, ChatResponse, ChatResponseU
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai import OpenAIChatClient
 
-# @pytest.fixture(autouse=True)
-# def set_dummy_openai_key(monkeypatch: MonkeyPatch) -> None:
-#     """Ensure tests have a dummy OPENAI_API_KEY by default."""
-#     # Only set a dummy key if no api key is provided
-#     if not os.getenv("OPENAI_API_KEY"):
-#         monkeypatch.setenv("OPENAI_API_KEY", "sk-test-dummy-key")
-
-
 skip_if_no_real_openai_key = pytest.mark.skipif(
     os.getenv("OPENAI_API_KEY", "") in ("", "sk-test-dummy-key"),
-    reason="No real OPENAI_API_KEY provided; skipping integration test.",
+    reason="No real OPENAI_API_KEY provided; skipping integration tests.",
 )
 
 
