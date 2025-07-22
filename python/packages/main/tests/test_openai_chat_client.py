@@ -9,7 +9,8 @@ from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai import OpenAIChatClient
 
 skip_if_no_real_openai_key = pytest.mark.skipif(
-    os.getenv("OPENAI_API_KEY", "") in ("", "sk-test-dummy-key"),
+    os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
+    or os.getenv("OPENAI_API_KEY", "") in ("", "sk-test-dummy-key"),
     reason="No real OPENAI_API_KEY provided; skipping integration tests.",
 )
 
