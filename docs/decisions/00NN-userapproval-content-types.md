@@ -130,7 +130,7 @@ class AgentThread
     ...
 
     // The thread state may need to store the approval requests and responses.
-    // TODO: CConsider whether we should have a more generic ActiveUserRequests list, which could include other types of user requests in the future.
+    // TODO: Consider whether we should have a more generic ActiveUserRequests list, which could include other types of user requests in the future.
     // This may mean a base class for all user requests.
     public List<ApprovalRequestContent> ActiveApprovalRequests { get; set; }
 
