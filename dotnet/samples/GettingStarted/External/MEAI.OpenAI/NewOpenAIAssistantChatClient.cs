@@ -107,7 +107,6 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
                 {
                     case NewHostedCodeInterpreterTool codeTool:
 
-                        // Once available, HostedCodeInterpreterTool.FileIds property will be used instead of the AdditionalProperties.
                         if (codeTool.Inputs is { Count: > 0 })
                         {
                             codeInterpreterResources ??= new();
@@ -389,7 +388,6 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
                             var codeInterpreterToolDefinition = new CodeInterpreterToolDefinition();
                             runOptions.ToolsOverride.Add(codeInterpreterToolDefinition);
 
-                            // Once available, HostedCodeInterpreterTool.FileIds property will be used instead of the AdditionalProperties.
                             if (codeTool.Inputs is { Count: > 0 })
                             {
                                 var threadInitializationMessage = new ThreadInitializationMessage(OpenAI.Assistants.MessageRole.User, [OpenAI.Assistants.MessageContent.FromText("attachments")]);

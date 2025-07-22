@@ -295,7 +295,6 @@ namespace Azure.AI.Agents.Persistent
                             case NewHostedCodeInterpreterTool codeTool:
                                 toolDefinitions.Add(new CodeInterpreterToolDefinition());
 
-                                // Once available, HostedCodeInterpreterTool.FileIds property will be used instead of the AdditionalProperties.
                                 if (codeTool.Inputs is { Count: > 0 })
                                 {
                                     foreach (var input in codeTool.Inputs)
