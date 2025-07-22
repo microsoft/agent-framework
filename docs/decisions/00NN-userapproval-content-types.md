@@ -13,7 +13,9 @@ informed:
 ## Context and Problem Statement
 
 When agents are operating on behalf of a user, there may be cases where the agent requires user approval to continue an operation.
-This is complicated by the fact that an agent may be remote and the user may not immediately be availale to provide the approval.
+This is complicated by the fact that an agent may be remote and the user may not immediately be available to provide the approval.
+
+Inference services are also increasingly supporting built-in tools or service side MCP invocation, which may require user approval before the tool can be invoked.
 
 This document aims to provide options and capture the decision on how to model this user approval interaction with the agent caller.
 
