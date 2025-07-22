@@ -1,4 +1,6 @@
-﻿using System.Data.Common;
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
 
 namespace HelloHttpApi.ApiService.Utilities;
