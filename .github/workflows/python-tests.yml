@@ -38,7 +38,12 @@ jobs:
         run: |
           uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
       # Main package tests
+      - name: Set environment variables - main - win
+        if: ${{ matrix.os == 'windows-latest' }}
+        run: |
+          echo "PACKAGE_NAME=main" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Set environment variables - main
+        if: ${{ matrix.os != 'windows-latest' }}
         run: |
           echo "PACKAGE_NAME=main" >> $GITHUB_ENV
       - name: Test with pytest - main
@@ -46,7 +51,7 @@ jobs:
         working-directory: ./python
       - name: Move coverage file - main
         run: |
-          mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml coverage_${{ matrix.OS }}_${{ matrix.python-version }}._${{ env.PACKAGE_NAME }}.xml
+          mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml coverage_${{ matrix.OS }}_${{ matrix.python-version }}_${{ env.PACKAGE_NAME }}.xml
         working-directory: ./python
       - name: Upload coverage artifact - main
         uses: actions/upload-artifact@v4
@@ -54,7 +59,12 @@ jobs:
           name: coverage-${{ matrix.OS }}-${{ matrix.python-version }}-${{ env.PACKAGE_NAME }}
           path: ./python/coverage_${{ matrix.OS }}_${{ matrix.python-version }}_${{ env.PACKAGE_NAME }}.xml
       # Azure package tests
+      - name: Set environment variables - azure - win
+        if: ${{ matrix.os == 'windows-latest' }}
+        run: |
+          echo "PACKAGE_NAME=azure" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Set environment variables - azure
+        if: ${{ matrix.os != 'windows-latest' }}
         run: |
           echo "PACKAGE_NAME=azure" >> $GITHUB_ENV
       - name: Test with pytest - azure
@@ -62,7 +72,7 @@ jobs:
         working-directory: ./python
       - name: Move coverage file - azure
         run: |
-          mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml coverage_${{ matrix.OS }}_${{ matrix.python-version }}._${{ env.PACKAGE_NAME }}.xml
+          mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml coverage_${{ matrix.OS }}_${{ matrix.python-version }}_${{ env.PACKAGE_NAME }}.xml
         working-directory: ./python
       - name: Upload coverage artifact - azure
         uses: actions/upload-artifact@v4
@@ -70,7 +80,12 @@ jobs:
           name: coverage-${{ matrix.OS }}-${{ matrix.python-version }}-${{ env.PACKAGE_NAME }}
           path: ./python/coverage_${{ matrix.OS }}_${{ matrix.python-version }}_${{ env.PACKAGE_NAME }}.xml
       # Foundry package tests
+      - name: Set environment variables - foundry - win
+        if: ${{ matrix.os == 'windows-latest' }}
+        run: |
+          echo "PACKAGE_NAME=foundry" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Set environment variables - foundry
+        if: ${{ matrix.os != 'windows-latest' }}
         run: |
           echo "PACKAGE_NAME=foundry" >> $GITHUB_ENV
       - name: Test with pytest - foundry
