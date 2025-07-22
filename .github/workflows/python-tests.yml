@@ -94,5 +94,3 @@ jobs:
           display-options: fEX
           fail-on-empty: true
           title: Test results
-      - name: test
-        uses: actions/glob
