@@ -3,9 +3,9 @@
 using System.Text;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Samples;
-using OpenAI.Assistants;
 using OpenAI.Files;
 using OpenAI.VectorStores;
 
@@ -29,8 +29,10 @@ public sealed class Step04_ChatClientAgent_UsingFileSearchTools(ITestOutputHelpe
         var vectorStoreId = await CreateVectorStoreAsync([fileId], provider);
 
         // Create a file search tool that can access the vector store.
-        var fileSearchTool = new NewHostedFileSearchTool();
-        fileSearchTool.VectorStoreIds.Add(vectorStoreId);
+        var fileSearchTool = new NewHostedFileSearchTool()
+        {
+            Inputs = [new HostedVectorStoreContent(vectorStoreId)],
+        };
 
         var agentOptions = new ChatClientAgentOptions
         {

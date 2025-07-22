@@ -6,7 +6,6 @@ using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Samples;
-using OpenAI.Assistants;
 using OpenAI.Files;
 
 namespace Steps;
@@ -22,8 +21,11 @@ public sealed class Step03_ChatClientAgent_UsingCodeInterpreterTools(ITestOutput
     [InlineData(ChatClientProviders.OpenAIAssistant)]
     public async Task RunningWithFileReferenceAsync(ChatClientProviders provider)
     {
-        var codeInterpreterTool = new NewHostedCodeInterpreterTool();
-        codeInterpreterTool.FileIds.Add(await UploadFileAsync("Resources/groceries.txt", provider));
+        var codeInterpreterTool = new NewHostedCodeInterpreterTool()
+        {
+            Inputs = [new HostedFileContent(await UploadFileAsync("Resources/groceries.txt", provider))]
+        };
+
         var agentOptions = new ChatClientAgentOptions
         {
             Name = "HelpfulAssistant",

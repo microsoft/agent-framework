@@ -15,7 +15,6 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
-using OpenAI.Assistants;
 
 namespace Azure.AI.Agents.Persistent
 {
@@ -293,27 +292,42 @@ namespace Azure.AI.Agents.Persistent
                                     BinaryData.FromBytes(JsonSerializer.SerializeToUtf8Bytes(aiFunction.JsonSchema, AgentsChatClientJsonContext.Default.JsonElement))));
                                 break;
 
-                            case HostedCodeInterpreterTool:
+                            case NewHostedCodeInterpreterTool codeTool:
                                 toolDefinitions.Add(new CodeInterpreterToolDefinition());
 
                                 // Once available, HostedCodeInterpreterTool.FileIds property will be used instead of the AdditionalProperties.
-                                if (tool.AdditionalProperties.TryGetValue("fileIds", out object? fileIdsObject) && fileIdsObject is IEnumerable<string> fileIds)
+                                if (codeTool.Inputs is { Count: > 0 })
                                 {
-                                    foreach (var fileId in fileIds)
+                                    foreach (var input in codeTool.Inputs)
                                     {
-                                        (toolResources ??= new() { CodeInterpreter = new() }).CodeInterpreter.FileIds.Add(fileId);
+                                        switch (input)
+                                        {
+                                            case HostedFileContent hostedFile:
+                                                // If the input is a HostedFileContent, we can use its ID directly.
+                                                (toolResources ??= new() { CodeInterpreter = new() }).CodeInterpreter.FileIds.Add(hostedFile.FileId);
+                                                break;
+                                        }
                                     }
                                 }
                                 break;
 
-                            case NewHostedFileSearchTool:
+                            case NewHostedFileSearchTool fileSearchTool:
                                 toolDefinitions.Add(new FileSearchToolDefinition());
 
-                                // Once available, NewHostedFileSearchTool.VectorStoreIds properties will be used instead of the AdditionalProperties.
-                                if (tool.AdditionalProperties.TryGetValue("vectorStoreIds", out object? vectorStoreIdsObject) && vectorStoreIdsObject is IEnumerable<string> vectorStoreIds)
+                                if (fileSearchTool.Inputs is { Count: > 0 })
                                 {
-                                    (toolResources ??= new()).FileSearch = new(vectorStoreIds.ToList(), null);
+                                    foreach (var input in fileSearchTool.Inputs)
+                                    {
+                                        switch (input)
+                                        {
+                                            case HostedVectorStoreContent hostedVectorStore:
+                                                // If the input is a HostedFileContent, we can use its ID directly.
+                                                (toolResources ??= new() { FileSearch = new() }).FileSearch.VectorStoreIds.Add(hostedVectorStore.VectorStoreId);
+                                                break;
+                                        }
+                                    }
                                 }
+
                                 break;
 
                             case HostedWebSearchTool webSearch when webSearch.AdditionalProperties?.TryGetValue("connectionId", out object? connectionId) is true:
