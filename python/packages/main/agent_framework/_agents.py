@@ -453,6 +453,7 @@ class ChatClientAgent(AgentBase):
             chat_options=self.chat_options
             & ChatOptions(
                 ai_model_id=model,
+                conversation_id=thread.id,
                 frequency_penalty=frequency_penalty,
                 logit_bias=logit_bias,
                 max_tokens=max_tokens,
@@ -561,6 +562,7 @@ class ChatClientAgent(AgentBase):
             messages=thread_messages,
             chat_options=self.chat_options
             & ChatOptions(
+                conversation_id=thread.id,
                 frequency_penalty=frequency_penalty,
                 logit_bias=logit_bias,
                 max_tokens=max_tokens,
