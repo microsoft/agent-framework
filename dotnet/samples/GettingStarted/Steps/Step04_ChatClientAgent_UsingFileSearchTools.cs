@@ -52,7 +52,6 @@ public sealed class Step04_ChatClientAgent_UsingFileSearchTools(ITestOutputHelpe
         const string Prompt = "Who is the youngest employee?";
 
         var assistantOutput = new StringBuilder();
-        var fileSearchOutput = new StringBuilder();
 
         await foreach (var update in agent.RunStreamingAsync(Prompt, thread))
         {
