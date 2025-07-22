@@ -75,14 +75,14 @@ async def _auto_invoke_function(
     )
 
 
-def tool_to_json_schema_spec(tool: AITool) -> dict[str, Any]:
-    """Convert a AITool to the JSON Schema function specification format."""
+def ai_function_to_json_schema_spec(function: AIFunction[BaseModel, Any]) -> dict[str, Any]:
+    """Convert a AIFunction to the JSON Schema function specification format."""
     return {
         "type": "function",
         "function": {
-            "name": tool.name,
-            "description": tool.description,
-            "parameters": tool.parameters(),
+            "name": function.name,
+            "description": function.description,
+            "parameters": function.parameters(),
         },
     }
 
@@ -615,7 +615,8 @@ class ChatClientBase(AFBaseModel, ABC):
     def _prepare_tools_and_tool_choice(self, chat_options: ChatOptions) -> None:
         """Prepare the tools and tool choice for the chat options.
 
-        This function can be overridden by subclasses to customize tool handling.
+        This function should be overridden by subclasses to customize tool handling.
+        Because it currently parses only AIFunctions.
         """
         chat_tool_mode: ChatToolMode | None = chat_options.tool_choice  # type: ignore
         if chat_tool_mode is None or chat_tool_mode == ChatToolMode.NONE:
@@ -623,7 +624,7 @@ class ChatClientBase(AFBaseModel, ABC):
             chat_options.tool_choice = ChatToolMode.NONE.mode
             return
         chat_options.tools = [
-            (tool_to_json_schema_spec(t) if isinstance(t, AITool) else t)
+            (ai_function_to_json_schema_spec(t) if isinstance(t, AIFunction) else t)  # type: ignore[reportUnknownArgumentType]
             for t in chat_options._ai_tools or []  # type: ignore[reportPrivateUsage]
         ]
         if not chat_options.tools:
