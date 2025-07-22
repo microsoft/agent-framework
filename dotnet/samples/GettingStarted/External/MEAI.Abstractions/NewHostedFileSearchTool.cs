@@ -2,7 +2,7 @@
 
 using Microsoft.Extensions.AI;
 
-namespace OpenAI.Assistants;
+namespace Microsoft.Extensions.AI;
 
 /// <summary>
 /// Proposal for abstraction updates based on the common file search tool properties.
