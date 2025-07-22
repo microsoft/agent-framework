@@ -89,7 +89,7 @@ jobs:
         if: always()
         uses: pmeier/pytest-results-action@v0.7.2
         with:
-          path: ./python
+          path: ./python/**.xml
           summary: true
           display-options: fEX
           fail-on-empty: true
