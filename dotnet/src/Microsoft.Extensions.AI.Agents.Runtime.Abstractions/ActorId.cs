@@ -71,7 +71,7 @@ public readonly struct ActorId : IEquatable<ActorId>
     }
 
     /// <inheritdoc />
-    public override readonly string ToString() => $"{this.Type}/{this.Key}";
+    public override readonly string ToString()=> $"{this.Type}/{this.Key}";
 
     /// <inheritdoc />
     public override readonly bool Equals([NotNullWhen(true)] object? obj) =>
