@@ -34,6 +34,20 @@
       <BuildType Solution="Publish|*" Project="Debug" />
     </Project>
   </Folder>
+  <Folder Name="/Samples/HelloHttpApi/">
+    <Project Path="samples/HelloHttpApi/HelloHttpApi.ApiService/HelloHttpApi.ApiService.csproj">
+      <BuildType Solution="Publish|*" Project="Release" />
+    </Project>
+    <Project Path="samples/HelloHttpApi/HelloHttpApi.AppHost/HelloHttpApi.AppHost.csproj" Id="17db642e-bf19-413c-bdb1-ccbccc753d7b">
+      <BuildType Solution="Publish|*" Project="Release" />
+    </Project>
+    <Project Path="samples/HelloHttpApi/HelloHttpApi.ServiceDefaults/HelloHttpApi.ServiceDefaults.csproj">
+      <BuildType Solution="Publish|*" Project="Release" />
+    </Project>
+    <Project Path="samples/HelloHttpApi/HelloHttpApi.Web/HelloHttpApi.Web.csproj">
+      <BuildType Solution="Publish|*" Project="Release" />
+    </Project>
+  </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
     <File Path=".gitignore" />
@@ -130,6 +144,9 @@
     <Project Path="src/Microsoft.Extensions.AI.Agents.AzureAI/Microsoft.Extensions.AI.Agents.AzureAI.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.CopilotStudio/Microsoft.Extensions.AI.Agents.CopilotStudio.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.Runtime.Abstractions/Microsoft.Extensions.AI.Agents.Runtime.Abstractions.csproj" />
+    <Project Path="src/Microsoft.Extensions.AI.Agents.Runtime/Microsoft.Extensions.AI.Agents.Runtime.csproj" Id="35d72ad5-61e1-45cc-a9ad-fa8490dbd146">
+      <BuildType Solution="Publish|*" Project="Release" />
+    </Project>
     <Project Path="src/Microsoft.Extensions.AI.Agents/Microsoft.Extensions.AI.Agents.csproj" />
   </Folder>
   <Folder Name="/UnitTests/">

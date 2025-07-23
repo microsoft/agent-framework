@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI.Agents;
 
@@ -56,6 +57,22 @@ public class AgentRunResponseUpdate
     {
         this.Role = role;
         this._contents = contents;
+    }
+
+    /// <summary>Initializes a new instance of the <see cref="AgentRunResponseUpdate"/> class.</summary>
+    /// <param name="chatResponseUpdate">The <see cref="ChatResponseUpdate"/> from which to seed this <see cref="AgentRunResponseUpdate"/>.</param>
+    public AgentRunResponseUpdate(ChatResponseUpdate chatResponseUpdate)
+    {
+        _ = Throw.IfNull(chatResponseUpdate);
+
+        this.AdditionalProperties = chatResponseUpdate.AdditionalProperties;
+        this.AuthorName = chatResponseUpdate.AuthorName;
+        this.Contents = chatResponseUpdate.Contents;
+        this.CreatedAt = chatResponseUpdate.CreatedAt;
+        this.MessageId = chatResponseUpdate.MessageId;
+        this.RawRepresentation = chatResponseUpdate.RawRepresentation;
+        this.ResponseId = chatResponseUpdate.ResponseId;
+        this.Role = chatResponseUpdate.Role;
     }
 
     /// <summary>Gets or sets the name of the author of the response update.</summary>

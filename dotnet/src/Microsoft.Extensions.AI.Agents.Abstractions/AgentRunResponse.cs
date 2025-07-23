@@ -45,6 +45,21 @@ public class AgentRunResponse
     }
 
     /// <summary>Initializes a new instance of the <see cref="AgentRunResponse"/> class.</summary>
+    /// <param name="response">The <see cref="ChatResponse"/> from which to seed this <see cref="AgentRunResponse"/>.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="response"/> is <see langword="null"/>.</exception>
+    public AgentRunResponse(ChatResponse response)
+    {
+        _ = Throw.IfNull(response);
+
+        this.AdditionalProperties = response.AdditionalProperties;
+        this.CreatedAt = response.CreatedAt;
+        this.Messages = response.Messages;
+        this.RawRepresentation = response.RawRepresentation;
+        this.ResponseId = response.ResponseId;
+        this.Usage = response.Usage;
+    }
+
+    /// <summary>Initializes a new instance of the <see cref="AgentRunResponse"/> class.</summary>
     /// <param name="messages">The response messages.</param>
     public AgentRunResponse(IList<ChatMessage>? messages)
     {

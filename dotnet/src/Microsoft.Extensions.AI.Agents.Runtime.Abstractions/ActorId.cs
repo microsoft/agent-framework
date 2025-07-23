@@ -2,6 +2,8 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Microsoft.Extensions.AI.Agents.Runtime;
 
@@ -9,6 +11,7 @@ namespace Microsoft.Extensions.AI.Agents.Runtime;
 /// Provides a unique identifier for an actor instance within an agent runtime,
 /// serving as the "address" of the actor instance for receiving messages.
 /// </summary>
+[JsonConverter(typeof(Converter))]
 public readonly struct ActorId : IEquatable<ActorId>
 {
     /// <summary>
@@ -112,5 +115,29 @@ public readonly struct ActorId : IEquatable<ActorId>
 
         return true;
 #endif
+    }
+
+    /// <summary>
+    /// JSON converter for <see cref="ActorId"/>.
+    /// </summary>
+    public sealed class Converter : JsonConverter<ActorId>
+    {
+        /// <inheritdoc/>
+        public override ActorId Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType != JsonTokenType.String)
+            {
+                throw new JsonException("Expected string value for ActorId");
+            }
+
+            string? actorIdString = reader.GetString() ?? throw new JsonException("ActorId cannot be null");
+            return ActorId.Parse(actorIdString);
+        }
+
+        /// <inheritdoc/>
+        public override void Write(Utf8JsonWriter writer, ActorId value, JsonSerializerOptions options)
+        {
+            writer.WriteStringValue(value.ToString());
+        }
     }
 }

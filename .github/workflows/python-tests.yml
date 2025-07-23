@@ -1,0 +1,111 @@
+name: Python - Tests
+
+on:
+  pull_request:
+    branches: ["main", "feature*"]
+    paths:
+      - "python/**"
+env:
+  # Configure a constant location for the uv cache
+  UV_CACHE_DIR: /tmp/.uv-cache
+
+jobs:
+  python-tests:
+    name: Python Tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.7.x"
+          enable-cache: true
+          cache-suffix: ${{ runner.os }}-${{ matrix.python-version }}
+          cache-dependency-glob: "**/uv.lock"
+      - name: Install the project
+        run: |
+          uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
+      # Main package tests
+      - name: Set environment variables - main - win
+        if: ${{ matrix.os == 'windows-latest' }}
+        run: |
+          echo "PACKAGE_NAME=main" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Set environment variables - main
+        if: ${{ matrix.os != 'windows-latest' }}
+        run: |
+          echo "PACKAGE_NAME=main" >> $GITHUB_ENV
+      - name: Test with pytest - main
+        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
+        working-directory: ./python
+      - name: Move coverage file - main
+        run: |
+          mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml coverage_${{ matrix.OS }}_${{ matrix.python-version }}_${{ env.PACKAGE_NAME }}.xml
+        working-directory: ./python
+      - name: Upload coverage artifact - main
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.OS }}-${{ matrix.python-version }}-${{ env.PACKAGE_NAME }}
+          path: ./python/coverage_${{ matrix.OS }}_${{ matrix.python-version }}_${{ env.PACKAGE_NAME }}.xml
+      # Azure package tests
+      - name: Set environment variables - azure - win
+        if: ${{ matrix.os == 'windows-latest' }}
+        run: |
+          echo "PACKAGE_NAME=azure" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Set environment variables - azure
+        if: ${{ matrix.os != 'windows-latest' }}
+        run: |
+          echo "PACKAGE_NAME=azure" >> $GITHUB_ENV
+      - name: Test with pytest - azure
+        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
+        working-directory: ./python
+      - name: Move coverage file - azure
+        run: |
+          mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml coverage_${{ matrix.OS }}_${{ matrix.python-version }}_${{ env.PACKAGE_NAME }}.xml
+        working-directory: ./python
+      - name: Upload coverage artifact - azure
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.OS }}-${{ matrix.python-version }}-${{ env.PACKAGE_NAME }}
+          path: ./python/coverage_${{ matrix.OS }}_${{ matrix.python-version }}_${{ env.PACKAGE_NAME }}.xml
+      # Foundry package tests
+      - name: Set environment variables - foundry - win
+        if: ${{ matrix.os == 'windows-latest' }}
+        run: |
+          echo "PACKAGE_NAME=foundry" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Set environment variables - foundry
+        if: ${{ matrix.os != 'windows-latest' }}
+        run: |
+          echo "PACKAGE_NAME=foundry" >> $GITHUB_ENV
+      - name: Test with pytest - foundry
+        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
+        working-directory: ./python
+      - name: Move coverage file - foundry
+        run: |
+          mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml coverage_${{ matrix.OS }}_${{ matrix.python-version }}_${{ env.PACKAGE_NAME }}.xml
+        working-directory: ./python
+      - name: Upload coverage artifact - foundry
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.OS }}-${{ matrix.python-version }}-${{ env.PACKAGE_NAME }}
+          path: ./python/coverage_${{ matrix.OS }}_${{ matrix.python-version }}_${{ env.PACKAGE_NAME }}.xml
+      - name: Surface failing tests
+        if: always()
+        uses: pmeier/pytest-results-action@v0.7.2
+        with:
+          path: ./python/**.xml
+          summary: true
+          display-options: fEX
+          fail-on-empty: true
+          title: Test results

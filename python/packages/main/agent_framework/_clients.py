@@ -75,33 +75,16 @@ async def _auto_invoke_function(
     )
 
 
-def tool_to_json_schema_spec(tool: AITool) -> dict[str, Any]:
-    """Convert a AITool to the JSON Schema function specification format."""
+def ai_function_to_json_schema_spec(function: AIFunction[BaseModel, Any]) -> dict[str, Any]:
+    """Convert a AIFunction to the JSON Schema function specification format."""
     return {
         "type": "function",
         "function": {
-            "name": tool.name,
-            "description": tool.description,
-            "parameters": tool.parameters(),
+            "name": function.name,
+            "description": function.description,
+            "parameters": function.parameters(),
         },
     }
-
-
-def _prepare_tools_and_tool_choice(chat_options: ChatOptions) -> None:
-    """Prepare the tools and tool choice for the chat options."""
-    chat_tool_mode: ChatToolMode | None = chat_options.tool_choice  # type: ignore
-    if chat_tool_mode is None or chat_tool_mode == ChatToolMode.NONE:
-        chat_options.tools = None
-        chat_options.tool_choice = ChatToolMode.NONE.mode
-        return
-    chat_options.tools = [
-        (tool_to_json_schema_spec(t) if isinstance(t, AITool) else t)
-        for t in chat_options._ai_tools or []  # type: ignore[reportPrivateUsage]
-    ]
-    if not chat_options.tools:
-        chat_options.tool_choice = ChatToolMode.NONE.mode
-    else:
-        chat_options.tool_choice = chat_tool_mode.mode
 
 
 def _tool_call_non_streaming(func: TInnerGetResponse) -> TInnerGetResponse:
@@ -163,7 +146,7 @@ def _tool_call_non_streaming(func: TInnerGetResponse) -> TInnerGetResponse:
 
         # Failsafe: give up on tools, ask model for plain answer
         chat_options.tool_choice = "none"
-        _prepare_tools_and_tool_choice(chat_options=chat_options)
+        self._prepare_tools_and_tool_choice(chat_options=chat_options)  # type: ignore[reportPrivateUsage]
         response = await func(self, messages=messages, chat_options=chat_options)
         if fcc_messages:
             for msg in reversed(fcc_messages):
@@ -231,7 +214,7 @@ def _tool_call_streaming(func: TInnerGetStreamingResponse) -> TInnerGetStreaming
 
         # Failsafe: give up on tools, ask model for plain answer
         chat_options.tool_choice = "none"
-        _prepare_tools_and_tool_choice(chat_options=chat_options)
+        self._prepare_tools_and_tool_choice(chat_options=chat_options)  # type: ignore[reportPrivateUsage]
         async for update in func(self, messages=messages, chat_options=chat_options, **kwargs):
             yield update
 
@@ -542,7 +525,7 @@ class ChatClientBase(AFBaseModel, ABC):
                 additional_properties=additional_properties or {},
             )
         prepped_messages = self._prepare_messages(messages)
-        _prepare_tools_and_tool_choice(chat_options=chat_options)
+        self._prepare_tools_and_tool_choice(chat_options=chat_options)
         return await self._inner_get_response(messages=prepped_messages, chat_options=chat_options, **kwargs)
 
     async def get_streaming_response(
@@ -623,11 +606,31 @@ class ChatClientBase(AFBaseModel, ABC):
                 **kwargs,
             )
         prepped_messages = self._prepare_messages(messages)
-        _prepare_tools_and_tool_choice(chat_options=chat_options)
+        self._prepare_tools_and_tool_choice(chat_options=chat_options)
         async for update in self._inner_get_streaming_response(
             messages=prepped_messages, chat_options=chat_options, **kwargs
         ):
             yield update
+
+    def _prepare_tools_and_tool_choice(self, chat_options: ChatOptions) -> None:
+        """Prepare the tools and tool choice for the chat options.
+
+        This function should be overridden by subclasses to customize tool handling.
+        Because it currently parses only AIFunctions.
+        """
+        chat_tool_mode: ChatToolMode | None = chat_options.tool_choice  # type: ignore
+        if chat_tool_mode is None or chat_tool_mode == ChatToolMode.NONE:
+            chat_options.tools = None
+            chat_options.tool_choice = ChatToolMode.NONE.mode
+            return
+        chat_options.tools = [
+            (ai_function_to_json_schema_spec(t) if isinstance(t, AIFunction) else t)  # type: ignore[reportUnknownArgumentType]
+            for t in chat_options._ai_tools or []  # type: ignore[reportPrivateUsage]
+        ]
+        if not chat_options.tools:
+            chat_options.tool_choice = ChatToolMode.NONE.mode
+        else:
+            chat_options.tool_choice = chat_tool_mode.mode
 
 
 # region: Embedding Client

@@ -9,7 +9,6 @@ from agent_framework import ChatClientAgent
 from agent_framework.foundry import FoundryChatClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
-from dotenv import load_dotenv
 from pydantic import Field
 
 
@@ -46,5 +45,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    load_dotenv()
     asyncio.run(main())
