@@ -76,11 +76,11 @@ jobs:
         id: find-projects
         run: |
           # Find all solution files first
-          solutions=$(find ./dotnet -name "*.sln" -o -name "*.slnx" | head -1)
+          solutions=$(find ./dotnet -name "*.sln" -o -name "*.slnx" | tr '\n' ' ')
           
           if [[ -n "$solutions" ]]; then
             echo "projects=$solutions" >> $GITHUB_OUTPUT
-            echo "Found solution: $solutions"
+            echo "Found solutions: $solutions"
           else
             # Fallback to individual projects (excluding test projects for performance)
             projects=$(find ./dotnet -name "*.csproj" | grep -v -E "(Test|Tests)" | tr '\n' ' ')
