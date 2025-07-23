@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Text.Json;
 using Microsoft.Agents.Orchestration;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
@@ -32,7 +31,6 @@ public static class HostApplicationBuilderAgentExtensions
             new ActorType(agentKey),
             (sp, ctx) => new ChatClientAgentActor(
                 sp.GetRequiredKeyedService<AIAgent>(agentKey),
-                sp.GetService<JsonSerializerOptions>() ?? JsonSerializerOptions.Web,
                 ctx,
                 sp.GetRequiredService<ILogger<ChatClientAgentActor>>()));
 

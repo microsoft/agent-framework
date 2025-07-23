@@ -2,13 +2,16 @@
 
 using System.Diagnostics;
 using System.Text.Json;
-using System.Text.Json.Serialization.Metadata;
-using HelloHttpApi.ApiService;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI.Agents.Runtime;
 
-internal sealed class ChatClientAgentActor(AIAgent agent, JsonSerializerOptions jsonSerializerOptions, IActorRuntimeContext context, ILogger<ChatClientAgentActor> logger) : IActor
+namespace HelloHttpApi.ApiService;
+
+internal sealed class ChatClientAgentActor(
+    AIAgent agent,
+    IActorRuntimeContext context,
+    ILogger<ChatClientAgentActor> logger) : IActor
 {
     private string? _etag;
     private ChatClientAgentThread? _thread;
@@ -31,8 +34,7 @@ internal sealed class ChatClientAgentActor(AIAgent agent, JsonSerializerOptions 
             if (threadResult.Value is { } threadJson)
             {
                 // Deserialize the thread state if it exist
-                this._thread = threadJson.Deserialize<ChatClientAgentThread>(
-                    (JsonTypeInfo<ChatClientAgentThread>)jsonSerializerOptions.GetTypeInfo(typeof(ChatClientAgentThread)));
+                this._thread = threadJson.Deserialize(ChatClientAgentActorJsonContext.Default.ChatClientAgentThread);
             }
         }
 
@@ -76,8 +78,7 @@ internal sealed class ChatClientAgentActor(AIAgent agent, JsonSerializerOptions 
         List<ChatMessage>? messages;
         if (message.Params is { } payload)
         {
-            var arg = payload.Deserialize<ChatClientAgentRunRequest>(
-                (JsonTypeInfo<ChatClientAgentRunRequest>)jsonSerializerOptions.GetTypeInfo(typeof(ChatClientAgentRunRequest)));
+            var arg = payload.Deserialize(ChatClientAgentActorJsonContext.Default.ChatClientAgentRunRequest);
             messages = arg?.Messages;
         }
 
@@ -86,12 +87,11 @@ internal sealed class ChatClientAgentActor(AIAgent agent, JsonSerializerOptions 
         Log.ProcessingAgentRequest(logger, requestId, context.ActorId.ToString(), messages.Count);
         try
         {
-            var typeInfo = (JsonTypeInfo<AgentRunResponseUpdate>)jsonSerializerOptions.GetTypeInfo(typeof(AgentRunResponseUpdate));
             var i = 0;
             var updates = new List<AgentRunResponseUpdate>();
             await foreach (var update in agent.RunStreamingAsync(messages, this._thread, cancellationToken: cancellationToken).ConfigureAwait(false))
             {
-                var updateJson = JsonSerializer.SerializeToElement(update, typeInfo);
+                var updateJson = JsonSerializer.SerializeToElement(update, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentRunResponseUpdate)));
                 context.OnProgressUpdate(requestId, i++, updateJson);
                 updates.Add(update);
                 Log.AgentStreamingUpdate(logger, requestId, i);
@@ -99,7 +99,7 @@ internal sealed class ChatClientAgentActor(AIAgent agent, JsonSerializerOptions 
 
             var serializedRunResponse = JsonSerializer.SerializeToElement(
                 updates.ToAgentRunResponse(),
-                (JsonTypeInfo<AgentRunResponse>)jsonSerializerOptions.GetTypeInfo(typeof(AgentRunResponse)));
+                AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentRunResponseUpdate)));
             var writeResponse = await context.WriteAsync(
                 new(this._etag, [new UpdateRequestOperation(requestId, RequestStatus.Completed, serializedRunResponse)]), cancellationToken)
                 .ConfigureAwait(false);
