@@ -71,8 +71,7 @@ class GenAIAttributes(str, Enum):
     # Operation names
     CHAT_COMPLETION_OPERATION = "chat.completions"
     CHAT_STREAMING_COMPLETION_OPERATION = "chat.streaming_completions"
-    TEXT_COMPLETION_OPERATION = "text.completions"
-    TEXT_STREAMING_COMPLETION_OPERATION = "text.streaming_completions"
+    TOOL_EXECUTION_OPERATION = "execute_tool"
 
 
 ROLE_EVENT_MAP = {
@@ -148,11 +147,6 @@ class ModelDiagnosticSettings(AFBaseSettings):
     enable_otel_diagnostics_sensitive: bool = False
 
 
-# The operation name is defined by OTeL GenAI semantic conventions:
-# https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/#execute-tool-span
-OPERATION_NAME = "execute_tool"
-
-
 def start_as_current_span(
     tracer: trace.Tracer,
     function: "AIFunction[Any, Any]",
@@ -169,7 +163,7 @@ def start_as_current_span(
         trace.Span: The started span as a context manager.
     """
     attributes = {
-        GenAIAttributes.OPERATION.value: OPERATION_NAME,
+        GenAIAttributes.OPERATION.value: GenAIAttributes.TOOL_EXECUTION_OPERATION,
         GenAIAttributes.TOOL_NAME.value: function.name,
     }
 
@@ -179,7 +173,9 @@ def start_as_current_span(
     if function.description:
         attributes[GenAIAttributes.TOOL_DESCRIPTION.value] = function.description
 
-    return tracer.start_as_current_span(f"{OPERATION_NAME} {function.name}", attributes=attributes)
+    return tracer.start_as_current_span(
+        f"{GenAIAttributes.TOOL_EXECUTION_OPERATION} {function.name}", attributes=attributes
+    )
 
 
 MODEL_DIAGNOSTICS_SETTINGS = ModelDiagnosticSettings()
