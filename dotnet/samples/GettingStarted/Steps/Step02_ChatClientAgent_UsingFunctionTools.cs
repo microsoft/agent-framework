@@ -24,16 +24,10 @@ public sealed class Step02_ChatClientAgent_UsingFunctionTools(ITestOutputHelper 
         var menuTools = new MenuTools();
 
         // Create the server-side agent Id when applicable (depending on the provider).
-        var agentOptions = new ChatClientAgentOptions
-        {
-            Name = "Host",
-            Instructions = "Answer questions about the menu.",
-            // Provide the tools that are available to the agent
-            ChatOptions = new()
-            {
-                Tools = [AIFunctionFactory.Create(menuTools.GetSpecials)]
-            },
-        };
+        var agentOptions = new ChatClientAgentOptions(
+            name: "Host",
+            instructions: "Answer questions about the menu",
+            tools: [AIFunctionFactory.Create(menuTools.GetSpecials)]);
 
         // Create the server-side agent Id when applicable (depending on the provider).
         agentOptions.Id = await base.AgentCreateAsync(provider, agentOptions);
@@ -60,21 +54,14 @@ public sealed class Step02_ChatClientAgent_UsingFunctionTools(ITestOutputHelper 
         var menuTools = new MenuTools();
 
         // Define the options for the chat client agent.
-        var agentOptions = new ChatClientAgentOptions
-        {
-            Name = "Host",
-            Instructions = "Answer questions about the menu.",
-
-            // Provide the tools that are available to the agent
-            ChatOptions = new()
-            {
-                Tools = [
-                    AIFunctionFactory.Create(menuTools.GetMenu),
-                    AIFunctionFactory.Create(menuTools.GetSpecials),
-                    AIFunctionFactory.Create(menuTools.GetItemPrice)
-                ]
-            },
-        };
+        var agentOptions = new ChatClientAgentOptions(
+            name: "Host",
+            instructions: "Answer questions about the menu",
+            tools: [
+                AIFunctionFactory.Create(menuTools.GetMenu),
+                AIFunctionFactory.Create(menuTools.GetSpecials),
+                AIFunctionFactory.Create(menuTools.GetItemPrice)
+            ]);
 
         // Create the server-side agent Id when applicable (depending on the provider).
         agentOptions.Id = await base.AgentCreateAsync(provider, agentOptions);
@@ -117,21 +104,14 @@ public sealed class Step02_ChatClientAgent_UsingFunctionTools(ITestOutputHelper 
         var menuTools = new MenuTools();
 
         // Define the options for the chat client agent.
-        var agentOptions = new ChatClientAgentOptions
-        {
-            Name = "Host",
-            Instructions = "Answer questions about the menu.",
-
-            // Provide the tools that are available to the agent
-            ChatOptions = new()
-            {
-                Tools = [
-                    AIFunctionFactory.Create(menuTools.GetMenu),
-                    AIFunctionFactory.Create(menuTools.GetSpecials),
-                    AIFunctionFactory.Create(menuTools.GetItemPrice)
-                ]
-            },
-        };
+        var agentOptions = new ChatClientAgentOptions(
+            name: "Host",
+            instructions: "Answer questions about the menu",
+            tools: [
+                AIFunctionFactory.Create(menuTools.GetMenu),
+                AIFunctionFactory.Create(menuTools.GetSpecials),
+                AIFunctionFactory.Create(menuTools.GetItemPrice)
+            ]);
 
         // Create the server-side agent Id when applicable (depending on the provider).
         agentOptions.Id = await base.AgentCreateAsync(provider, agentOptions);
