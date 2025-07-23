@@ -14,7 +14,7 @@ builder.Services.AddProblemDetails();
 // Configure the chat model and our agent.
 builder.AddKeyedChatClient("chat-model");
 
-builder.AddChatClientAgent(
+builder.AddAIAgent(
     name: "pirate",
     instructions: "You are a pirate. Speak like a pirate.",
     chatClientKey: "chat-model");

@@ -1,91 +1,116 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
-using Microsoft.Extensions.AI.Agents.Runtime;
-using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Orchestration;
 
 /// <summary>
-/// An orchestration that coordinates a group-chat.
+/// An orchestration that coordinates a group-chat using a manager to control conversation flow.
 /// </summary>
-public class GroupChatOrchestration<TInput, TOutput> :
-    AgentOrchestration<TInput, TOutput>
+public sealed partial class GroupChatOrchestration : OrchestratingAgent
 {
-    internal const string DefaultAgentDescription = "A helpful agent.";
-
     private readonly GroupChatManager _manager;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="GroupChatOrchestration{TInput, TOutput}"/> class.
+    /// Initializes a new instance of the <see cref="GroupChatOrchestration"/> class.
     /// </summary>
-    /// <param name="manager">The manages the flow of the group-chat.</param>
+    /// <param name="manager">The manager that controls the flow of the group-chat.</param>
     /// <param name="agents">The agents participating in the orchestration.</param>
-    public GroupChatOrchestration(GroupChatManager manager, params AIAgent[] agents)
-        : base(agents)
+    public GroupChatOrchestration(GroupChatManager manager, params AIAgent[] agents) : base(agents)
     {
-        Throw.IfNull(manager, nameof(manager));
+        this._manager = Throw.IfNull(manager);
+    }
 
-        this._manager = manager;
+    /// <summary>Gets or sets a callback invoked when user input is requested.</summary>
+    public Func<ValueTask<ChatMessage>>? InteractiveCallback { get; set; }
+
+    /// <inheritdoc />
+    protected override Task<AgentRunResponse> RunCoreAsync(IReadOnlyCollection<ChatMessage> messages, OrchestratingAgentContext context, CancellationToken cancellationToken)
+    {
+        List<ChatMessage> allMessages = [.. messages];
+        int originalMessageCount = allMessages.Count;
+        return this.ResumeAsync(allMessages, originalMessageCount, context, cancellationToken);
     }
 
     /// <inheritdoc />
-    protected override ValueTask StartAsync(IAgentRuntime runtime, TopicId topic, IEnumerable<ChatMessage> input, ActorType? entryAgent)
+    protected override Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, OrchestratingAgentContext context, CancellationToken cancellationToken)
     {
-        if (!entryAgent.HasValue)
-        {
-            Throw.ArgumentException(nameof(entryAgent), "Entry agent is not defined.");
-        }
-
-        return runtime.PublishMessageAsync(new GroupChatMessages.InputTask(input), entryAgent.Value);
+        var state = checkpointState.Deserialize(OrchestrationJsonContext.Default.GroupChatState) ?? throw new InvalidOperationException("The checkpoint state is invalid.");
+        return this.ResumeAsync(state.AllMessages, state.OriginalMessageCount, context, cancellationToken);
     }
 
-    /// <inheritdoc />
-    protected override async ValueTask<ActorType?> RegisterOrchestrationAsync(IAgentRuntime runtime, OrchestrationContext context, RegistrationContext registrar, ILogger logger)
+    private async Task<AgentRunResponse> ResumeAsync(
+        List<ChatMessage> allMessages, int originalMessageCount, OrchestratingAgentContext context, CancellationToken cancellationToken)
     {
-        ActorType outputType = await registrar.RegisterResultTypeAsync<GroupChatMessages.Result>(response => [response.Message]).ConfigureAwait(false);
-
-        int agentCount = 0;
         GroupChatTeam team = [];
-        foreach (AIAgent agent in this.Members)
+        foreach (AIAgent agent in this.Agents)
         {
-            ++agentCount;
-            ActorType agentType = await RegisterAgentAsync(agent, agentCount).ConfigureAwait(false);
-            string name = agent.Name ?? agent.Id ?? agentType.Name;
-            string? description = agent.Description;
-
-            team[name] = (agentType.Name, description ?? DefaultAgentDescription);
-
-            logger.LogRegisterActor(this.OrchestrationLabel, agentType, "MEMBER", agentCount);
-
-            await runtime.SubscribeAsync(agentType, context.Topic).ConfigureAwait(false);
+            team[agent.DisplayName] = (agent.GetType().Name, agent.Description ?? agent.Name ?? "A helpful agent.");
         }
 
-        ActorType managerType =
-            await runtime.RegisterOrchestrationAgentAsync(
-                this.FormatAgentType(context.Topic, "Manager"),
-                (agentId, runtime) =>
+        var interactiveCallback = this.InteractiveCallback ?? this._manager.InteractiveCallback;
+        while (true)
+        {
+            // First, check if we should request user input.
+            if (interactiveCallback is not null)
+            {
+                var userInputResult = await this._manager.ShouldRequestUserInput(allMessages, cancellationToken).ConfigureAwait(false);
+                if (userInputResult.Value)
                 {
-                    GroupChatManagerActor actor = new(agentId, runtime, context, this._manager, team, outputType, context.LoggerFactory.CreateLogger<GroupChatManagerActor>());
-                    return new ValueTask<IRuntimeActor>(actor);
-                }).ConfigureAwait(false);
-        logger.LogRegisterActor(this.OrchestrationLabel, managerType, "MANAGER");
+                    if (interactiveCallback is not null)
+                    {
+                        ChatMessage userMessage = await interactiveCallback().ConfigureAwait(false);
+                        allMessages.Add(userMessage);
 
-        await runtime.SubscribeAsync(managerType, context.Topic).ConfigureAwait(false);
+                        // Broadcast the user input
+                        if (this.ResponseCallback is not null)
+                        {
+                            await this.ResponseCallback([userMessage]).ConfigureAwait(false);
+                        }
 
-        return managerType;
+                        await this.CheckpointAsync(allMessages, originalMessageCount, context, cancellationToken).ConfigureAwait(false);
+                        continue;
+                    }
+                }
+            }
 
-        ValueTask<ActorType> RegisterAgentAsync(AIAgent agent, int agentCount) =>
-            runtime.RegisterOrchestrationAgentAsync(
-                this.FormatAgentType(context.Topic, $"Agent_{agentCount}"),
-                (agentId, runtime) =>
-                {
-                    GroupChatAgentActor actor = new(agentId, runtime, context, agent, context.LoggerFactory.CreateLogger<GroupChatAgentActor>());
-                    return new ValueTask<IRuntimeActor>(actor);
-                });
+            // Check if we should terminate the conversation
+            var terminateResult = await this._manager.ShouldTerminate(allMessages, cancellationToken).ConfigureAwait(false);
+            if (terminateResult.Value)
+            {
+                // Filter and return final results
+                var filterResult = await this._manager.FilterResults(allMessages, cancellationToken).ConfigureAwait(false);
+                return new AgentRunResponse([new ChatMessage(ChatRole.Assistant, filterResult.Value) { AuthorName = this.DisplayName }]);
+            }
+
+            // Select the next agent to speak
+            var nextAgentResult = await this._manager.SelectNextAgent(allMessages, team, cancellationToken).ConfigureAwait(false);
+            AIAgent nextAgent = this.FindAgentByName(nextAgentResult.Value) ??
+                throw new InvalidOperationException($"AIAgent '{nextAgentResult.Value}' not found in the orchestration.");
+
+            // Run the selected agent with all messages.
+            this.LogOrchestrationSubagentRunning(context, nextAgent);
+            AgentRunResponse response = await RunAsync(nextAgent, context, allMessages, options: null, cancellationToken).ConfigureAwait(false);
+            allMessages.AddRange(response.Messages); // Add the agent's response to the conversation.
+            this.LogOrchestrationSubagentCompleted(context, nextAgent);
+
+            await this.CheckpointAsync(allMessages, originalMessageCount, context, cancellationToken).ConfigureAwait(false);
+        }
     }
+
+    private AIAgent? FindAgentByName(string name) => this.Agents.FirstOrDefault(a => a.DisplayName == name);
+
+    private Task CheckpointAsync(List<ChatMessage> allMessages, int originalMessageCount, OrchestratingAgentContext context, CancellationToken cancellationToken) =>
+        context.Runtime is not null ? base.WriteCheckpointAsync(JsonSerializer.SerializeToElement(new(allMessages, originalMessageCount), OrchestrationJsonContext.Default.GroupChatState), context, cancellationToken) :
+        Task.CompletedTask;
+
+    internal sealed record GroupChatState(List<ChatMessage> AllMessages, int OriginalMessageCount);
 }

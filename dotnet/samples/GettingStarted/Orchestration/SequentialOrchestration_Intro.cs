@@ -65,8 +65,8 @@ public class SequentialOrchestration_Intro(ITestOutputHelper output) : Orchestra
         // Run the orchestration
         string input = "An eco-friendly stainless steel water bottle that keeps drinks cold for 24 hours";
         Console.WriteLine($"\n# INPUT: {input}\n");
-        OrchestrationResult<string> result = await orchestration.InvokeAsync(input);
-        Console.WriteLine($"\n# RESULT: {await result}");
+        AgentRunResponse result = await orchestration.RunAsync(input);
+        Console.WriteLine($"\n# RESULT: {result}");
 
         this.DisplayHistory(monitor.History);
     }

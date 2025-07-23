@@ -9,7 +9,7 @@ namespace Microsoft.Extensions.AI.Agents.Runtime;
 /// Represents the result of a get value operation containing the retrieved value.
 /// </summary>
 /// <param name="value">The value retrieved from the actor's state, or null if not found.</param>
-public class GetValueResult(JsonElement? value) : ActorReadResult
+public sealed class GetValueResult(JsonElement? value) : ActorReadResult
 {
     /// <summary>
     /// Gets the value retrieved from the actor's state.

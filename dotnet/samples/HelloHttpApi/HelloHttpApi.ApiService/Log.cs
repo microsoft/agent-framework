@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using HelloHttpApi.ApiService;
 using Microsoft.Extensions.AI.Agents.Runtime;
+
+namespace HelloHttpApi.ApiService;
+
 /// <summary>
 /// High-performance logging messages using LoggerMessage source generator.
 /// </summary>

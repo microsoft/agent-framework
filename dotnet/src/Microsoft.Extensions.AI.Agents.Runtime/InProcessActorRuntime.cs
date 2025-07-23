@@ -5,7 +5,6 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using static Microsoft.Extensions.AI.Agents.Runtime.ActivityExtensions;
@@ -16,8 +15,7 @@ namespace Microsoft.Extensions.AI.Agents.Runtime;
 internal sealed class InProcessActorRuntime(
     IServiceProvider serviceProvider,
     IReadOnlyDictionary<ActorType, Func<IServiceProvider, IActorRuntimeContext, IActor>> actorFactories,
-    IActorStateStorage storage,
-    JsonSerializerOptions jsonSerializerOptions)
+    IActorStateStorage storage)
 {
     private static readonly ActivitySource ActivitySource = new(ActorRuntimeOpenTelemetryConsts.InProcessSourceName);
     private static readonly Meter Meter = new(ActorRuntimeOpenTelemetryConsts.InProcessSourceName);
@@ -38,7 +36,6 @@ internal sealed class InProcessActorRuntime(
     private readonly ConcurrentDictionary<ActorId, InProcessActorContext> _actors = [];
 
     public IActorStateStorage Storage { get; } = storage;
-    public JsonSerializerOptions JsonSerializerOptions { get; } = jsonSerializerOptions;
     public IServiceProvider Services { get; } = serviceProvider;
 
     internal InProcessActorContext GetOrCreateActor(ActorId actorId)

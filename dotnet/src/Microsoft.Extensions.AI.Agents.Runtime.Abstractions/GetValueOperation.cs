@@ -8,7 +8,7 @@ namespace Microsoft.Extensions.AI.Agents.Runtime;
 /// Represents a request to read a value from the actor's state by its key.
 /// </summary>
 /// <param name="key">The key corresponding to the value to read from the actor's state.</param>
-public class GetValueOperation(string key) : ActorStateReadOperation
+public sealed class GetValueOperation(string key) : ActorStateReadOperation
 {
     /// <summary>
     /// Gets the key corresponding to the value to read from the actor's state.

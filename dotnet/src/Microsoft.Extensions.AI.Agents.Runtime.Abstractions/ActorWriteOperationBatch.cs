@@ -10,7 +10,7 @@ namespace Microsoft.Extensions.AI.Agents.Runtime;
 /// </summary>
 /// <param name="eTag">The ETag for optimistic concurrency control.</param>
 /// <param name="operations">The collection of write operations to perform.</param>
-public class ActorWriteOperationBatch(string eTag, IReadOnlyCollection<ActorWriteOperation> operations)
+public sealed class ActorWriteOperationBatch(string eTag, IReadOnlyCollection<ActorWriteOperation> operations)
 {
     /// <summary>
     /// Gets the collection of write operations to perform.
