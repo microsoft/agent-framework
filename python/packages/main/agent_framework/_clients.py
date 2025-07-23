@@ -382,6 +382,9 @@ class ChatClient(Protocol):
 class ChatClientBase(AFBaseModel, ABC):
     """Base class for chat clients."""
 
+    MODEL_PROVIDER_NAME: str = "unknown"
+    # This is used for OTel setup, should be overridden in subclasses
+
     def _prepare_messages(
         self, messages: str | ChatMessage | list[str] | list[ChatMessage]
     ) -> MutableSequence[ChatMessage]:
@@ -631,6 +634,14 @@ class ChatClientBase(AFBaseModel, ABC):
             chat_options.tool_choice = ChatToolMode.NONE.mode
         else:
             chat_options.tool_choice = chat_tool_mode.mode
+
+    def service_url(self) -> str | None:
+        """Get the URL of the service.
+
+        Override this in the subclass to return the proper URL.
+        If the service does not have a URL, return None.
+        """
+        return None
 
 
 # region: Embedding Client

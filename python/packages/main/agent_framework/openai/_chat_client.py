@@ -4,7 +4,7 @@ import json
 from collections.abc import AsyncIterable, Mapping, MutableSequence, Sequence
 from datetime import datetime
 from itertools import chain
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 from openai import AsyncOpenAI, AsyncStream
 from openai.types import CompletionUsage
@@ -29,6 +29,7 @@ from .._types import (
     UsageDetails,
 )
 from ..exceptions import ServiceInitializationError, ServiceInvalidResponseError
+from ..telemetry import use_telemetry
 from ._shared import OpenAIConfigBase, OpenAIHandler, OpenAIModelTypes, OpenAISettings
 
 __all__ = ["OpenAIChatClient"]
@@ -38,9 +39,12 @@ __all__ = ["OpenAIChatClient"]
 
 
 # Implements agent_framework.ChatClient protocol, through ChatClientBase
+@use_telemetry
 @use_tool_calling
 class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
     """OpenAI Chat completion class."""
+
+    MODEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride]
 
     # region Overriding base class methods
     # most of the methods are overridden from the ChatClientBase class, otherwise it is mentioned
@@ -267,6 +271,14 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
                 }
             case _:
                 return content.model_dump(exclude_none=True)
+
+    def service_url(self) -> str | None:
+        """Get the URL of the service.
+
+        Override this in the subclass to return the proper URL.
+        If the service does not have a URL, return None.
+        """
+        return str(self.client.base_url) if self.client else None
 
 
 # endregion
