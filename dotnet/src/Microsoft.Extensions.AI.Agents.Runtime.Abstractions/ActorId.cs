@@ -58,16 +58,34 @@ public readonly struct ActorId : IEquatable<ActorId>
     /// <summary>
     /// Convert a string of the format "type/key" into an <see cref="ActorId"/>.
     /// </summary>
-    /// <param name="actorId">The actor ID string.</param>
+    /// <param name="value">The actor ID string.</param>
     /// <returns>An instance of <see cref="ActorId"/>.</returns>
-    public static ActorId Parse(string actorId)
+    public static ActorId Parse(string value)
     {
-        if (!KeyValueParser.TryParse(actorId, out string? type, out string? key))
+        if (!TryParse(value, out var result))
         {
-            throw new FormatException($"Invalid actor ID: '{actorId}'. Expected format is 'type/key'.");
+            throw new FormatException($"Invalid actor ID: '{value}'. Expected format is 'type/key'.");
         }
 
-        return new ActorId(type, key);
+        return result;
+    }
+
+    private static bool TryParse(string input, out ActorId actorId)
+    {
+        if (!string.IsNullOrEmpty(input))
+        {
+            int separatorIndex = input.IndexOf('/');
+            if (separatorIndex >= 0)
+            {
+                var type = input.Substring(0, separatorIndex);
+                var key = input.Substring(separatorIndex + 1);
+                actorId = new ActorId(type, key);
+                return true;
+            }
+        }
+
+        actorId = default;
+        return false;
     }
 
     /// <inheritdoc />
