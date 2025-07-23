@@ -7,9 +7,9 @@ using OpenAI;
 namespace Providers;
 
 /// <summary>
-/// End-to-end sample showing how to use <see cref="ChatClientAgent"/> with OpenAI Chat Completion.
+/// End-to-end sample showing how to use <see cref="AIAgent"/> with OpenAI Chat Completion and Responses.
 /// </summary>
-public sealed class ChatClientAgent_With_OpenAIChatCompletion_Extensions(ITestOutputHelper output) : AgentSample(output)
+public sealed class ChatClientAgent_With_OpenAIClient(ITestOutputHelper output) : AgentSample(output)
 {
     private const string JokerName = "Joker";
     private const string JokerInstructions = "You are good at telling jokes.";

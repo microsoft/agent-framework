@@ -8,7 +8,7 @@ using Microsoft.Shared.Samples;
 namespace Providers;
 
 /// <summary>
-/// Shows how to use <see cref="ChatClientAgent"/> with Azure AI Persistent Agents.
+/// Shows how to use <see cref="AIAgent"/> with Azure AI Persistent Agents.
 /// </summary>
 /// <remarks>
 /// Running "az login" command in terminal is required for authentication with Azure AI service.
