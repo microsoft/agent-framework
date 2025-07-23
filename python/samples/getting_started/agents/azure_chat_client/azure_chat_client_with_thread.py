@@ -130,8 +130,8 @@ async def example_with_existing_thread_messages() -> None:
 async def main() -> None:
     print("=== Azure Chat Client Agent Thread Management Examples ===\n")
 
-    # await example_with_automatic_thread_creation()
-    # await example_with_thread_persistence()
+    await example_with_automatic_thread_creation()
+    await example_with_thread_persistence()
     await example_with_existing_thread_messages()
 
 
