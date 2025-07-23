@@ -16,6 +16,4 @@ namespace HelloHttpApi.ApiService;
     WriteIndented = false)]
 [JsonSerializable(typeof(ChatClientAgentThread))]
 [JsonSerializable(typeof(ChatClientAgentRunRequest))]
-[JsonSerializable(typeof(AgentRunResponse))]
-[JsonSerializable(typeof(AgentRunResponseUpdate))]
 internal sealed partial class ChatClientAgentActorJsonContext : JsonSerializerContext;

@@ -91,7 +91,7 @@ internal sealed class ChatClientAgentActor(
             var updates = new List<AgentRunResponseUpdate>();
             await foreach (var update in agent.RunStreamingAsync(messages, this._thread, cancellationToken: cancellationToken).ConfigureAwait(false))
             {
-                var updateJson = JsonSerializer.SerializeToElement(update, ChatClientAgentActorJsonContext.Default.AgentRunResponseUpdate);
+                var updateJson = JsonSerializer.SerializeToElement(update, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentRunResponseUpdate)));
                 context.OnProgressUpdate(requestId, i++, updateJson);
                 updates.Add(update);
                 Log.AgentStreamingUpdate(logger, requestId, i);
@@ -99,7 +99,7 @@ internal sealed class ChatClientAgentActor(
 
             var serializedRunResponse = JsonSerializer.SerializeToElement(
                 updates.ToAgentRunResponse(),
-                ChatClientAgentActorJsonContext.Default.AgentRunResponse);
+                AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentRunResponseUpdate)));
             var writeResponse = await context.WriteAsync(
                 new(this._etag, [new UpdateRequestOperation(requestId, RequestStatus.Completed, serializedRunResponse)]), cancellationToken)
                 .ConfigureAwait(false);
