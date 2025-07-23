@@ -8,6 +8,9 @@ permissions:
   contents: write
   id-token: write
 
+env:
+  UV_SEMVER: "0.8.x"
+
 jobs:
   python-build-assets:
     if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'python-')
@@ -24,7 +27,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
-          version: "0.8.x"
+          version: ${{ env.UV_SEMVER }}
           enable-cache: true
           cache-suffix: ${{ runner.os }}-${{ env.UV_PYTHON }}
           cache-dependency-glob: "**/uv.lock"
