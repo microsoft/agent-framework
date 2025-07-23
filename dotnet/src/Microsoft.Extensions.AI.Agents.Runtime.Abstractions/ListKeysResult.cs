@@ -10,7 +10,7 @@ namespace Microsoft.Extensions.AI.Agents.Runtime;
 /// </summary>
 /// <param name="keys">The collection of keys found in the actor's state.</param>
 /// <param name="continuationToken">Optional token for pagination to retrieve additional keys.</param>
-public class ListKeysResult(IReadOnlyCollection<string> keys, string? continuationToken) : ActorReadResult
+public sealed class ListKeysResult(IReadOnlyCollection<string> keys, string? continuationToken) : ActorReadResult
 {
     /// <summary>
     /// Gets the collection of keys found in the actor's state.

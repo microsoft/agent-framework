@@ -36,7 +36,7 @@ public sealed class OrchestrationHandoffs : Dictionary<string, AgentHandoffs>
     /// </summary>
     /// <param name="firstAgent">The first agent to be invoked (prior to any handoff).</param>
     public OrchestrationHandoffs(AIAgent firstAgent)
-        : this(firstAgent.Name ?? firstAgent.Id)
+        : this(firstAgent.DisplayName)
     {
         this.Agents.Add(firstAgent);
     }
@@ -73,7 +73,7 @@ public sealed class OrchestrationHandoffs : Dictionary<string, AgentHandoffs>
     /// <returns>The updated <see cref="OrchestrationHandoffs"/> instance.</returns>
     public OrchestrationHandoffs Add(AIAgent source, params AIAgent[] targets)
     {
-        string key = source.Name ?? source.Id;
+        string key = source.DisplayName;
 
         AgentHandoffs agentHandoffs = this.GetAgentHandoffs(key);
 
@@ -85,7 +85,7 @@ public sealed class OrchestrationHandoffs : Dictionary<string, AgentHandoffs>
             }
 
             this.Agents.Add(target);
-            agentHandoffs[target.Name ?? target.Id] = target.Description ?? target.Name!;
+            agentHandoffs[target.DisplayName] = target.Description ?? target.Name!;
         }
 
         this.Agents.Add(source);
@@ -101,7 +101,11 @@ public sealed class OrchestrationHandoffs : Dictionary<string, AgentHandoffs>
     /// <param name="description">The handoff description.</param>
     /// <returns>The updated <see cref="OrchestrationHandoffs"/> instance.</returns>
     public OrchestrationHandoffs Add(AIAgent source, AIAgent target, string description)
-        => this.Add(source.Name ?? source.Id, target.Name ?? target.Id, description);
+    {
+        this.Agents.Add(source);
+        this.Agents.Add(target);
+        return this.Add(source.DisplayName, target.DisplayName, description);
+    }
 
     /// <summary>
     /// Adds a handoff relationship from a source agent to a target agent name/ID with a custom description.
@@ -111,7 +115,10 @@ public sealed class OrchestrationHandoffs : Dictionary<string, AgentHandoffs>
     /// <param name="description">The handoff description.</param>
     /// <returns>The updated <see cref="OrchestrationHandoffs"/> instance.</returns>
     public OrchestrationHandoffs Add(AIAgent source, string targetName, string description)
-        => this.Add(source.Name ?? source.Id, targetName, description);
+    {
+        this.Agents.Add(source);
+        return this.Add(source.DisplayName, targetName, description);
+    }
 
     /// <summary>
     /// Adds a handoff relationship from a source agent name/ID to a target agent name/ID with a custom description.

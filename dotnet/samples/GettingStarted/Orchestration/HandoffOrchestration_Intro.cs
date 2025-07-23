@@ -80,9 +80,9 @@ public class HandoffOrchestration_Intro(ITestOutputHelper output) : Orchestratio
 
         // Run the orchestration
         Console.WriteLine($"\n# INPUT:\n{task}\n");
-        OrchestrationResult<string> result = await orchestration.InvokeAsync(task);
+        AgentRunResponse result = await orchestration.RunAsync(task);
 
-        Console.WriteLine($"\n# RESULT: {await result}");
+        Console.WriteLine($"\n# RESULT: {result}");
 
         this.DisplayHistory(monitor.History);
     }

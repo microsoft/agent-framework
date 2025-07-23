@@ -8,7 +8,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI.Agents.Runtime;
 
-internal sealed class ChatClientAgentActor(ChatClientAgent agent, JsonSerializerOptions jsonSerializerOptions, IActorRuntimeContext context, ILogger<ChatClientAgentActor> logger) : IActor
+internal sealed class ChatClientAgentActor(AIAgent agent, JsonSerializerOptions jsonSerializerOptions, IActorRuntimeContext context, ILogger<ChatClientAgentActor> logger) : IActor
 {
     private string? _etag;
     private ChatClientAgentThread? _thread;
@@ -36,7 +36,7 @@ internal sealed class ChatClientAgentActor(ChatClientAgent agent, JsonSerializer
             }
         }
 
-        this._thread ??= (ChatClientAgentThread)agent.GetNewThread();
+        this._thread ??= agent.GetNewThread() as ChatClientAgentThread ?? throw new InvalidOperationException("The agent did not provide a valid thread instance.");
         Log.ThreadStateRestored(logger, context.ActorId.ToString(), response.Results[0] is GetValueResult { Value: not null });
 
         while (!cancellationToken.IsCancellationRequested)

@@ -32,21 +32,14 @@ public class ConcurrentOrchestration_With_StructuredOutput(ITestOutputHelper out
                 description: "An expert in entity recognition");
 
         // Define the orchestration with transform
-        StructuredOutputTransform<Analysis> outputTransform = new(this.CreateChatClient());
-        ConcurrentOrchestration<string, Analysis> orchestration =
-            new(agent1, agent2, agent3)
-            {
-                LoggerFactory = this.LoggerFactory,
-                ResultTransform = outputTransform.TransformAsync,
-            };
+        ConcurrentOrchestration orchestration = new(agent1, agent2, agent3) { LoggerFactory = this.LoggerFactory };
 
         // Run the orchestration
         const string resourceId = "Hamlet_full_play_summary.txt";
         string input = Resources.Read(resourceId);
         Console.WriteLine($"\n# INPUT: @{resourceId}\n");
-        OrchestrationResult<Analysis> result = await orchestration.InvokeAsync(input);
 
-        Analysis output = await result;
+        var output = await orchestration.RunAsync<Analysis>(this.CreateChatClient(), input);
         Console.WriteLine($"\n# RESULT:\n{JsonSerializer.Serialize(output, s_options)}");
     }
 
