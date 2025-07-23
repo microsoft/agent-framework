@@ -25,13 +25,10 @@ public sealed class ChatClientAgent_With_AzureAIAgentsPersistent(ITestOutputHelp
         var persistentAgentsClient = new PersistentAgentsClient(TestConfiguration.AzureAI.Endpoint, new AzureCliCredential());
 
         // Create a server side persistent agent.
-        var createPersistentAgentResponse = await persistentAgentsClient.Administration.CreateAgentAsync(
-            model: TestConfiguration.AzureAI.DeploymentName,
+        AIAgent agent = await persistentAgentsClient.CreateAIAgentAsync(
+            model: TestConfiguration.AzureAI.DeploymentName!,
             name: JokerName,
             instructions: JokerInstructions);
-
-        // Get a local proxy for the agent to work with.
-        AIAgent agent = await persistentAgentsClient.GetRunnableAgentAsync(createPersistentAgentResponse.Value.Id);
 
         // Start a new thread for the agent conversation.
         AgentThread thread = agent.GetNewThread();
@@ -43,15 +40,15 @@ public sealed class ChatClientAgent_With_AzureAIAgentsPersistent(ITestOutputHelp
         // Local function to run agent and display the conversation messages for the thread.
         async Task RunAgentAsync(string input)
         {
-            this.WriteUserMessage(input);
+            Console.WriteLine(input);
 
             var response = await agent.RunAsync(input, thread);
 
-            this.WriteResponseOutput(response);
+            Console.WriteLine(response.Messages.Last().Text);
         }
 
         // Cleanup
         await persistentAgentsClient.Threads.DeleteThreadAsync(thread.Id);
-        await persistentAgentsClient.Administration.DeleteAgentAsync(createPersistentAgentResponse.Value.Id);
+        await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
     }
 }
