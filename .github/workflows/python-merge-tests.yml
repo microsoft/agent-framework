@@ -7,7 +7,7 @@ on:
 
 permissions:
   contents: read
-  id-token: "write"
+  id-token: write
 
 env:
   # Configure a constant location for the uv cache
@@ -19,11 +19,13 @@ jobs:
   python-tests-main:
     name: Python Tests - Main
     runs-on: ${{ matrix.os }}
+    environment: ${{ matrix.environment }}
     strategy:
       fail-fast: true
       matrix:
         python-version: ["3.10"]
         os: [ubuntu-latest]
+        environment: ["integration"]
     env:
       UV_PYTHON: ${{ matrix.python-version }}
       OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
@@ -71,12 +73,13 @@ jobs:
   python-tests-azure:
     name: Python Tests - Azure
     runs-on: ${{ matrix.os }}
-    environment: "integration"
+    environment: ${{ matrix.environment }}
     strategy:
       fail-fast: true
       matrix:
         python-version: ["3.10"]
         os: [ubuntu-latest]
+        environment: ["integration"]
     env:
       UV_PYTHON: ${{ matrix.python-version }}
       AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
@@ -99,6 +102,12 @@ jobs:
       - name: Install the project
         run: |
           uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
+      - name: Check setup
+        run: |
+          az version
+          echo "ACTIONS_ID_TOKEN_REQUEST_URL = $ACTIONS_ID_TOKEN_REQUEST_URL"
+          echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN = $ACTIONS_ID_TOKEN_REQUEST_TOKEN"
+          echo "TENANT_ID=${{ secrets.AZURE_TENANT_ID }}"
       - name: Azure CLI Login
         if: github.event_name != 'pull_request'
         uses: azure/login@v2
@@ -131,12 +140,13 @@ jobs:
   python-tests-foundry:
     name: Python Tests - Foundry
     runs-on: ${{ matrix.os }}
-    environment: "integration"
+    environment: ${{ matrix.environment }}
     strategy:
       fail-fast: true
       matrix:
         python-version: ["3.10"]
         os: [ubuntu-latest]
+        environment: ["integration"]
     env:
       UV_PYTHON: ${{ matrix.python-version }}
       FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
