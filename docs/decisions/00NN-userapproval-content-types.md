@@ -3,7 +3,7 @@
 status: proposed
 contact: westey-m
 date: 2025-07-16 {YYYY-MM-DD when the decision was last updated}
-deciders: sergeymenshykh, markwallace, rbarreto, dmytrostruk, westey-m, eavanvalkenburg, stephentoub
+deciders: sergeymenshykh, markwallace, rbarreto, dmytrostruk, westey-m, eavanvalkenburg, stephentoub, peterychang
 consulted: 
 informed: 
 ---
@@ -27,7 +27,7 @@ This document aims to provide options and capture the decision on how to model t
 
 ## Considered Options
 
-### Return a FunctionCallContent to the agent caller, that it executes
+### 1. Return a FunctionCallContent to the agent caller, that it executes
 
 This introduces a manual function calling element to agents, where the caller of the agent is expected to invoke the function if the user approves it.
 
@@ -37,7 +37,7 @@ This approach is problematic for a number of reasons:
 - The main value prop of an agent is to encapsulate the internal logic of the agent, but this leaks that logic to the caller, requiring the caller to know how to invoke the agent's function calls.
 - Inference services are introducing their own approval content types for server side tool or function invocation, and will not be addressed by this approach.
 
-### Introduce an ApprovalCallback in AgentRunOptions and ChatOptions
+### 2. Introduce an ApprovalCallback in AgentRunOptions and ChatOptions
 
 This approach allows a caller to provide a callback that the agent can invoke when it requires user approval.
 
@@ -68,7 +68,7 @@ agent.RunAsync("Please book me a flight for Friday to Paris.", thread, new Agent
 });
 ```
 
-### Introduce new ApprovalRequestContent and ApprovalResponseContent types
+### 3. Introduce new ApprovalRequestContent and ApprovalResponseContent types
 
 The agent would return an `ApprovalRequestContent` to the caller, which would then be responsible for getting approval from the user in whatever way is appropriate for the application.
 The caller would then invoke the agent again with an `ApprovalResponseContent` to the agent containing the user decision.
@@ -136,7 +136,7 @@ class ApprovalResponseContent : AIContent
 }
 
 var response = await agent.RunAsync("Please book me a flight for Friday to Paris.", thread);
-while (response is not null && response.ApprovalRequests.Count > 0)
+while (response.ApprovalRequests.Count > 0)
 {
     List<ChatMessage> messages = new List<ChatMessage>();
     foreach (var approvalRequest in response.ApprovalRequests)
@@ -172,8 +172,6 @@ class AgentThread
     ...
 
     // The thread state may need to store the approval requests and responses.
-    // TODO: Consider whether we should have a more generic ActiveUserRequests list, which could include other types of user requests in the future.
-    // This may mean a base class for all user requests.
     public List<ApprovalRequestContent> ActiveApprovalRequests { get; set; }
 
     ...
@@ -187,7 +185,7 @@ class AgentThread
 - Also see [Azure AI Foundry MCP Approvals](https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/model-context-protocol-samples?pivots=rest#submit-your-approval).
 - Also see [MCP Elicitation requests](https://modelcontextprotocol.io/specification/draft/client/elicitation)
 
-### ChatClientAgent Approval Process Flow
+#### ChatClientAgent Approval Process Flow
 
 1. User asks agent to perform a task and request is added to the thread.
 1. Agent calls model with registered functions.
@@ -208,7 +206,7 @@ class AgentThread
 At construction time the set of functions that require user approval will need to be registered with the `ConfirmingFunctionInvokingChatClient` decorator
 so that it can identify which function calls should be returned as an `ApprovalRequestContent`.
 
-### CustomAgent Approval Process Flow
+#### CustomAgent Approval Process Flow
 
 1. User asks agent to perform a task and request is added to the thread.
 1. Agent executes various steps.
@@ -220,6 +218,114 @@ so that it can identify which function calls should be returned as an `ApprovalR
 1. Agent removes its ApprovalRequestContent from its AgentThread ActiveApprovalRequests.
 1. Agent responds to caller with result message and thread is updated with the result message.
 
+### 4. Introduce new UserInputRequestContent and UserInputResponseContent types
+
+This approach is similar to the `ApprovalRequestContent` and `ApprovalResponseContent` types, but is more generic and can be used for any type of user input request, not just approvals.
+
+There is some ambiguity with this approach. When using an LLM based agent the LLM may return a text response about missing user input.
+E.g the LLM may need to invoke a function but the user did not supply all necessary information to fill out all arguments.
+Typically an LLM would just respond with a text message asking the user for the missing information.
+In this case, the message is not distinguishable from any other result message, and therefore cannot be returned to the caller as a `UserInputRequestContent`, even though it is conceptually a type of unstructured user input request.
+
+Open Questions:
+
+- Should unstructured user input requests (e.g. text messages asking for more information, with a freeform response) be modeled as `UserInputRequestContent`, and if so how do we identify these for conversion from the underlying services?
+- Alternatively, should structured user input requests (e.g. schematized input, approvals, etc.) also be considered Results, similar to `TextContent`? `TextContent` is currently returned for unstructured input requests and treated as a Result.
+- Why would an unstructured user input request be considered a result, but a structured user input request not be considered a result? Both mean that the run is finished, and a new run must be started with the user input requested.
+- Are structured user input requests similar to unstructured when it comes to user agency? E.g. The user can choose not to answer and change the subject.
+  Or are they more like function calls where the caller must provide a `FunctionResponseContent` to avoid leaving the thread in an incomplete state?
+
+Suggested Types:
+
+```csharp
+class UserInputRequestContent
+{
+    // An ID to uniquely identify the approval request/response pair.
+    public string ApprovalId { get; set; }
+
+    // DecisionTarget could contain:
+    // FunctionCallContent: The function call that the agent wants to invoke.
+    // TextContent: Text that describes the question for that the user should answer.
+    object? DecisionTarget { get; set; } // Anything else the user may need to make a decision about.
+
+    // Possible InputFormat subclasses:
+    //   SchemaInputFormat: Contains a schema for the user input.
+    //   ApprovalInputFormat: Indicates that the user needs to approve something.
+    //   FreeformTextInputFormat: Indicates that the user can provide freeform text input.
+    // Other formats can be added as needed, e.g. cards when using activity protocol.
+    public InputFormat InputFormat { get; set; } // How the user should provide input (e.g., form, options, etc.).
+}
+
+class UserInputResponseContent : AIContent
+{
+    // An ID to uniquely identify the approval request/response pair.
+    public string ApprovalId { get; set; }
+
+    // Possible UserInputResult subclasses:
+    //   SchemaInputResult: Contains the structured data provided by the user.
+    //   ApprovalResult: Contains a bool with approved / rejected.
+    //   FreeformTextResult: Contains the freeform text input provided by the user.
+    public UserInputResult Result { get; set; } // The user input.
+
+    public object? DecisionTarget { get; set; } // A copy of the DecisionTarget from the UserInputRequestContent, if applicable.
+}
+
+var response = await agent.RunAsync("Please book me a flight for Friday to Paris.", thread);
+while (response.UserInputRequests.Count > 0)
+{
+    List<ChatMessage> messages = new List<ChatMessage>();
+    foreach (var userInputRequest in response.UserInputRequests)
+    {
+        // Show the user input request to the user in the appropriate format.
+        // The DecisionTarget can be used to show the user what function the agent wants to call with the parameter set.
+        // The InputFormat property can be used to determine the type of UX when allowing users to provide input.
+
+        if (userInputRequest.InputFormat is ApprovalInputFormat approvalInputFormat)
+        {
+            // Here we need to show the user an approval request.
+            // We can use the DecisionTarget to show e.g. the function call that the agent wants to invoke.
+            // The user can then approve or reject the request.
+    
+            // If the user approves:
+            var approvalMessage = new ChatMessage(ChatRole.User, new UserInputResponseContent {  
+                ApprovalId = userInputRequest.ApprovalId,
+                Result = new ApprovalResult { Approved = true },
+                DecisionTarget = userInputRequest.DecisionTarget
+            });
+            messages.Add(approvalMessage);
+        }
+        else
+        {
+            throw new NotSupportedException("Unsupported InputFormat type.");
+        }
+    }
+
+    // Get the next response from the agent.
+    response = await agent.RunAsync(messages, thread);
+}
+
+class AgentRunResponse
+{
+    ...
+
+    // A new property on AgentRunResponse to aggregate the UserInputRequestContent items from
+    // the response messages (Similar to the Text property).
+    public IReadOnlyList<UserInputRequestContent> UserInputRequests { get; set; }
+
+    ...
+}
+
+class AgentThread
+{
+    ...
+
+    // The thread state may need to store the user input requests.
+    public List<UserInputRequestContent> ActiveUserInputRequests { get; set; }
+
+    ...
+}
+```
+
 ## Decision Outcome
 
-Chosen approach: Introduce new ApprovalRequestContent and ApprovalResponseContent types.
+Approach TBD.
