@@ -1,0 +1,144 @@
+#
+# This workflow runs daily to maintain code formatting across the repository
+#
+
+name: Daily .NET format maintenance
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Run every day at 2 AM UTC
+    - cron: '0 2 * * *'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  format-maintenance:
+    name: Format maintenance
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        branch: [main]
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.branch }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0'
+
+      - name: Find .NET projects
+        id: find-projects
+        run: |
+          # Find the main solution file
+          solution=$(find ./dotnet -name "*.sln" -o -name "*.slnx" | head -1)
+          
+          if [[ -n "$solution" ]]; then
+            echo "target=$solution" >> $GITHUB_OUTPUT
+            echo "Found solution: $solution"
+          else
+            # If no solution, find all projects (excluding experimental ones)
+            projects=$(find ./dotnet -name "*.csproj" | grep -v -E "(Experimental|Test)" | tr '\n' ' ')
+            echo "target=$projects" >> $GITHUB_OUTPUT
+            echo "Found projects: $projects"
+          fi
+
+      - name: Restore dependencies
+        if: steps.find-projects.outputs.target != ''
+        run: |
+          if [[ "${{ steps.find-projects.outputs.target }}" == *.sln* ]]; then
+            echo "Restoring solution: ${{ steps.find-projects.outputs.target }}"
+            dotnet restore "${{ steps.find-projects.outputs.target }}" --verbosity minimal
+          else
+            for project in ${{ steps.find-projects.outputs.target }}; do
+              echo "Restoring project: $project"
+              dotnet restore "$project" --verbosity minimal
+            done
+          fi
+
+      - name: Reset workspace
+        run: |
+          git reset --hard HEAD
+          git clean -fd
+
+      - name: Run dotnet format
+        if: steps.find-projects.outputs.target != ''
+        run: |
+          if [[ "${{ steps.find-projects.outputs.target }}" == *.sln* ]]; then
+            echo "Formatting solution: ${{ steps.find-projects.outputs.target }}"
+            dotnet format "${{ steps.find-projects.outputs.target }}" --verbosity normal
+          else
+            for project in ${{ steps.find-projects.outputs.target }}; do
+              echo "Formatting project: $project"
+              dotnet format "$project" --verbosity normal
+            done
+          fi
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if git diff --quiet; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "No formatting changes needed"
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "Formatting changes detected:"
+            git diff --name-only
+            echo ""
+            echo "Summary of changes:"
+            git diff --stat
+          fi
+
+      - name: Create Pull Request
+        if: steps.changes.outputs.has_changes == 'true'
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: |
+            🔧 [housekeeping] Automated code formatting for ${{ matrix.branch }}
+            
+            This PR contains automated formatting changes to maintain code consistency.
+            
+            Changes applied by: dotnet format
+          title: '[housekeeping] Automated code formatting for ${{ matrix.branch }}'
+          body: |
+            ## 🔧 Automated Code Formatting
+            
+            This PR contains automatic formatting changes to ensure code consistency across the repository.
+            
+            ### What was done:
+            - Ran `dotnet format` on all .NET projects
+            - Applied consistent code styling
+            - No functional changes were made
+            
+            ### Review checklist:
+            - [ ] Verify that only formatting changes are included
+            - [ ] Check that no functional logic was altered
+            - [ ] Ensure all tests still pass
+            
+            This PR was automatically created by the daily maintenance workflow.
+          branch: housekeeping/auto-format-${{ matrix.branch }}-${{ github.run_number }}
+          base: ${{ matrix.branch }}
+          labels: |
+            housekeeping
+            automated
+            formatting
+          assignees: |
+            ${{ github.repository_owner }}
+          draft: false
+
+      - name: Summary
+        run: |
+          if [[ "${{ steps.changes.outputs.has_changes }}" == "true" ]]; then
+            echo "✅ Code formatting maintenance completed. PR created with formatting changes."
+          else
+            echo "✅ Code formatting maintenance completed. No changes needed."
+          fi

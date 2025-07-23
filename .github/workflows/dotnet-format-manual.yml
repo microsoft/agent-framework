@@ -1,0 +1,182 @@
+#
+# Manual workflow to format all .NET code in the repository
+#
+
+name: Format all .NET code
+
+on:
+  workflow_dispatch:
+    inputs:
+      create_pr:
+        description: 'Create a pull request with changes'
+        type: boolean
+        default: true
+      target_branch:
+        description: 'Target branch to format'
+        type: choice
+        options:
+          - main
+          - develop
+        default: main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  format-all:
+    name: Format all .NET code
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_branch }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0'
+
+      - name: Find all .NET projects
+        id: find-projects
+        run: |
+          echo "🔍 Discovering .NET projects..."
+          
+          # Find solution files
+          solutions=$(find ./dotnet -name "*.sln" -o -name "*.slnx" 2>/dev/null || true)
+          
+          # Find all csproj files
+          projects=$(find ./dotnet -name "*.csproj" 2>/dev/null || true)
+          
+          if [[ -n "$solutions" ]]; then
+            target=$(echo "$solutions" | head -1)
+            echo "Using solution: $target"
+          elif [[ -n "$projects" ]]; then
+            # Exclude test and experimental projects for main formatting
+            target=$(echo "$projects" | grep -v -E "(Test|Tests|Experimental)" | tr '\n' ' ')
+            echo "Using projects: $target"
+          else
+            echo "❌ No .NET projects found!"
+            exit 1
+          fi
+          
+          echo "target=$target" >> $GITHUB_OUTPUT
+
+      - name: Restore dependencies
+        run: |
+          echo "📦 Restoring dependencies..."
+          
+          if [[ "${{ steps.find-projects.outputs.target }}" == *.sln* ]]; then
+            dotnet restore "${{ steps.find-projects.outputs.target }}" --verbosity minimal
+          else
+            for project in ${{ steps.find-projects.outputs.target }}; do
+              dotnet restore "$project" --verbosity minimal
+            done
+          fi
+
+      - name: Run dotnet format
+        run: |
+          echo "🔧 Running dotnet format..."
+          
+          if [[ "${{ steps.find-projects.outputs.target }}" == *.sln* ]]; then
+            echo "Formatting solution: ${{ steps.find-projects.outputs.target }}"
+            dotnet format "${{ steps.find-projects.outputs.target }}" --verbosity normal
+          else
+            for project in ${{ steps.find-projects.outputs.target }}; do
+              echo "Formatting project: $project"
+              dotnet format "$project" --verbosity normal
+            done
+          fi
+
+      - name: Show formatting results
+        id: results
+        run: |
+          echo "📊 Formatting results:"
+          
+          if git diff --quiet; then
+            echo "✅ No formatting changes needed - code is already properly formatted!"
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "📝 The following files were formatted:"
+            git diff --name-only | sed 's/^/  - /'
+            echo ""
+            echo "📈 Summary of changes:"
+            git diff --stat
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Pull Request
+        if: inputs.create_pr && steps.results.outputs.has_changes == 'true'
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: |
+            🔧 Format all .NET code
+            
+            Applied comprehensive code formatting using dotnet format.
+            
+            This commit ensures consistent code style across all .NET projects.
+          title: '🔧 Format all .NET code (${{ inputs.target_branch }})'
+          body: |
+            ## 🔧 Comprehensive .NET Code Formatting
+            
+            This PR applies consistent formatting to all .NET code in the repository.
+            
+            ### Changes:
+            - Applied `dotnet format` to all .NET projects
+            - Ensured consistent code styling and indentation
+            - Fixed spacing, line endings, and other formatting issues
+            
+            ### What to review:
+            - ✅ Verify only formatting changes are included
+            - ✅ Check that no functional logic was altered
+            - ✅ Ensure the changes improve code readability
+            
+            ### Benefits:
+            - 📈 Improved code consistency
+            - 🔍 Better code readability
+            - 🛠️ Easier maintenance and reviews
+            
+            > **Note**: This is a manual formatting run triggered via workflow dispatch.
+          branch: format/comprehensive-dotnet-formatting-${{ github.run_number }}
+          base: ${{ inputs.target_branch }}
+          labels: |
+            formatting
+            enhancement
+            automated
+          draft: false
+
+      - name: Commit changes directly (no PR)
+        if: ${{ !inputs.create_pr && steps.results.outputs.has_changes == 'true' }}
+        run: |
+          echo "💾 Committing changes directly to ${{ inputs.target_branch }}..."
+          
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          git add .
+          git commit -m "🔧 Format all .NET code
+          
+          Applied comprehensive code formatting using dotnet format.
+          
+          Co-authored-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+          
+          git push origin ${{ inputs.target_branch }}
+
+      - name: Summary
+        run: |
+          echo "🎉 Workflow completed!"
+          
+          if [[ "${{ steps.results.outputs.has_changes }}" == "true" ]]; then
+            if [[ "${{ inputs.create_pr }}" == "true" ]]; then
+              echo "✅ Code formatting applied and PR created for review."
+            else
+              echo "✅ Code formatting applied and committed directly to ${{ inputs.target_branch }}."
+            fi
+          else
+            echo "✅ No formatting changes were needed. Code is already properly formatted!"
+          fi
