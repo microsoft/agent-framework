@@ -124,12 +124,14 @@ jobs:
           git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
           git add .
-          git commit -m "Format .NET code
+          echo "Format .NET code" > commit_message.txt
+          echo "" >> commit_message.txt
+          echo "Applied code formatting using dotnet format." >> commit_message.txt
+          echo "" >> commit_message.txt
+          echo "Co-authored-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>" >> commit_message.txt
           
-          Applied code formatting using dotnet format.
-          
-          Co-authored-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
-          
+          git commit -F commit_message.txt
+          rm commit_message.txt
           git push origin HEAD
 
       - name: Comment on PR (success)
