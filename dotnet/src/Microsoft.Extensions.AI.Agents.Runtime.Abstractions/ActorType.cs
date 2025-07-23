@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
 namespace Microsoft.Extensions.AI.Agents.Runtime;
@@ -8,6 +10,7 @@ namespace Microsoft.Extensions.AI.Agents.Runtime;
 /// <summary>
 /// Represents the type of an actor.
 /// </summary>
+[JsonConverter(typeof(Converter))]
 public readonly partial struct ActorType : IEquatable<ActorType>
 {
     /// <summary>
@@ -60,9 +63,33 @@ public readonly partial struct ActorType : IEquatable<ActorType>
         type is not null && TypeRegex().IsMatch(type);
 
 #if NET
-    [GeneratedRegex("^[a-zA-Z_][a-zA-Z_0-9]*$")]
+    [GeneratedRegex("^[a-zA-Z_][a-zA-Z_:0-9]*$")]
     private static partial Regex TypeRegex();
 #else
-    private static Regex TypeRegex() => new("^[a-zA-Z_][a-zA-Z_0-9]*$", RegexOptions.Compiled);
+    private static Regex TypeRegex() => new("^[a-zA-Z_][a-zA-Z_:0-9:]*$", RegexOptions.Compiled);
 #endif
+
+    /// <summary>
+    /// JSON converter for <see cref="ActorType"/>.
+    /// </summary>
+    public sealed class Converter : JsonConverter<ActorType>
+    {
+        /// <inheritdoc/>
+        public override ActorType Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType != JsonTokenType.String)
+            {
+                throw new JsonException("Expected string value for ActorType");
+            }
+
+            string? actorTypeString = reader.GetString() ?? throw new JsonException("ActorType cannot be null");
+            return new ActorType(actorTypeString);
+        }
+
+        /// <inheritdoc/>
+        public override void Write(Utf8JsonWriter writer, ActorType value, JsonSerializerOptions options)
+        {
+            writer.WriteStringValue(value.Name);
+        }
+    }
 }

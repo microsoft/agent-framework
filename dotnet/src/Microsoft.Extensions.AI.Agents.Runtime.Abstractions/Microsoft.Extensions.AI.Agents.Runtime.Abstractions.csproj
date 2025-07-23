@@ -5,12 +5,14 @@
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
     <NoWarn>$(NoWarn);IDE1006;IDE0130</NoWarn>
     <VersionSuffix>alpha</VersionSuffix>
+    <RootNamespace>Microsoft.Extensions.AI.Agents.Runtime</RootNamespace>
   </PropertyGroup>
 
   <PropertyGroup>
     <InjectSharedThrow>true</InjectSharedThrow>
     <InjectDiagnosticAttributesOnLegacy>true</InjectDiagnosticAttributesOnLegacy>
     <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>
+    <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
@@ -21,6 +23,10 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
+    <PackageReference Include="System.Text.Json" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFrameworkIdentifier)' != '.NETCoreApp'">
