@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import inspect
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 from functools import wraps
 from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
 
@@ -32,10 +32,6 @@ class AITool(Protocol):
 
     def __str__(self) -> str:
         """Return a string representation of the tool."""
-        ...
-
-    def parameters(self) -> Mapping[str, Any]:
-        """Return the parameters of the tool as a JSON schema."""
         ...
 
 
@@ -188,6 +184,3 @@ class HostedCodeInterpreterTool(AITool):
     def __str__(self) -> str:
         """Return a string representation of the tool."""
         return f"HostedCodeInterpreterTool(name={self.name})"
-
-    def parameters(self) -> dict[str, Any]:
-        return {}

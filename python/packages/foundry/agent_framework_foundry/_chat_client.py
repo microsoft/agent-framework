@@ -2,6 +2,7 @@
 
 import contextlib
 import json
+import sys
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence
 from typing import Any, ClassVar
 
@@ -57,6 +58,11 @@ from azure.ai.agents.models import (
 from azure.ai.projects.aio import AIProjectClient
 from azure.core.credentials_async import AsyncTokenCredential
 from pydantic import Field, PrivateAttr, ValidationError
+
+if sys.version_info >= (3, 11):
+    from typing import Self  # pragma: no cover
+else:
+    from typing_extensions import Self  # pragma: no cover
 
 
 class FoundrySettings(AFBaseSettings):
@@ -170,7 +176,7 @@ class FoundryChatClient(ChatClientBase):
         self._should_close_credential = should_close_credential
         self._foundry_settings = foundry_settings
 
-    async def __aenter__(self) -> "FoundryChatClient":
+    async def __aenter__(self) -> "Self":
         """Async context manager entry."""
         return self
 
