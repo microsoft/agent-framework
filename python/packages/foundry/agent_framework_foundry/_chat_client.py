@@ -8,7 +8,7 @@ from typing import Any, ClassVar
 from agent_framework import (
     AFBaseSettings,
     AIContents,
-    AITool,
+    AIFunction,
     ChatClientBase,
     ChatMessage,
     ChatOptions,
@@ -25,7 +25,7 @@ from agent_framework import (
     UsageDetails,
     use_tool_calling,
 )
-from agent_framework._clients import tool_to_json_schema_spec
+from agent_framework._clients import ai_function_to_json_schema_spec
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.agents.models import (
     AgentsNamedToolChoice,
@@ -455,13 +455,14 @@ class FoundryChatClient(ChatClientBase):
             run_options["parallel_tool_calls"] = chat_options.allow_multiple_tool_calls
 
             if chat_options.tools is not None:
+                # TODO (eavanvalkenburg): replace with _prepare_tools_and_tool_choice overload
                 tool_definitions: list[MutableMapping[str, Any]] = []
 
                 for tool in chat_options.tools:
-                    if isinstance(tool, AITool):
-                        tool_definitions.append(tool_to_json_schema_spec(tool))
+                    if isinstance(tool, AIFunction):
+                        tool_definitions.append(ai_function_to_json_schema_spec(tool))
                     else:
-                        tool_definitions.append(tool)
+                        tool_definitions.append(tool)  # type: ignore
 
                 if len(tool_definitions) > 0:
                     run_options["tools"] = tool_definitions

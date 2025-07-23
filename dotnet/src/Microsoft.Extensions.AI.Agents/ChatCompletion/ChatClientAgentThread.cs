@@ -1,8 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Shared.Diagnostics;
@@ -12,6 +16,7 @@ namespace Microsoft.Extensions.AI.Agents;
 /// <summary>
 /// Chat client agent thread.
 /// </summary>
+[JsonConverter(typeof(Converter))]
 public sealed class ChatClientAgentThread : AgentThread, IMessagesRetrievableThread
 {
     private readonly List<ChatMessage> _chatMessages = [];
@@ -88,5 +93,93 @@ public sealed class ChatClientAgentThread : AgentThread, IMessagesRetrievableThr
         }
 
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Provides a <see cref="JsonConverter"/> for <see cref="ChatClientAgentThread"/> objects.
+    /// </summary>
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public sealed class Converter : JsonConverter<ChatClientAgentThread>
+    {
+        /// <inheritdoc/>
+        public override ChatClientAgentThread? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType != JsonTokenType.StartObject)
+            {
+                throw new JsonException("Expected StartObject token");
+            }
+
+            using var doc = JsonDocument.ParseValue(ref reader);
+            var root = doc.RootElement;
+
+            // Extract properties from JSON
+            string? id = null;
+            if (root.TryGetProperty("id", out var idProperty))
+            {
+                id = idProperty.GetString();
+            }
+
+            List<ChatMessage>? messages = null;
+            if (root.TryGetProperty("messages", out var messagesProperty))
+            {
+                if (messagesProperty.ValueKind == JsonValueKind.Array)
+                {
+                    messages = [];
+                    foreach (var messageElement in messagesProperty.EnumerateArray())
+                    {
+                        var message = messageElement.Deserialize(options.GetTypeInfo<ChatMessage>(AgentsJsonContext.Default));
+                        if (message != null)
+                        {
+                            messages.Add(message);
+                        }
+                    }
+                }
+            }
+
+            // Create the appropriate instance based on available data
+            // StorageLocation will be set automatically by the constructors
+            ChatClientAgentThread thread;
+            if (messages?.Count > 0)
+            {
+                thread = new ChatClientAgentThread(messages);
+            }
+            else if (!string.IsNullOrWhiteSpace(id))
+            {
+                thread = new ChatClientAgentThread(id);
+            }
+            else
+            {
+                thread = new ChatClientAgentThread();
+            }
+
+            // Override Id if it was explicitly set in JSON (for cases where messages exist but ID is also provided)
+            if (id != null)
+            {
+                thread.Id = id;
+            }
+
+            return thread;
+        }
+
+        /// <inheritdoc/>
+        public override void Write(Utf8JsonWriter writer, ChatClientAgentThread value, JsonSerializerOptions options)
+        {
+            writer.WriteStartObject();
+
+            // Write base properties
+            if (value.Id != null)
+            {
+                writer.WriteString("id", value.Id);
+            }
+
+            // Write messages if in memory storage (StorageLocation is determined by presence of messages vs ID)
+            if (value.StorageLocation == ChatClientAgentThreadType.InMemoryMessages)
+            {
+                writer.WritePropertyName("messages");
+                JsonSerializer.Serialize(writer, value._chatMessages, options.GetTypeInfo<List<ChatMessage>>(AgentsJsonContext.Default));
+            }
+
+            writer.WriteEndObject();
+        }
     }
 }
