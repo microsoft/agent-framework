@@ -42,7 +42,7 @@ async def main() -> None:
     ) as agent:
         query = "What is current datetime?"
         print(f"User: {query}")
-        print("Assistant: ", end="", flush=True)
+        print("Agent: ", end="", flush=True)
         generated_code = ""
         async for chunk in agent.run_stream(query):
             if chunk.text:

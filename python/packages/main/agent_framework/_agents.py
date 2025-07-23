@@ -441,9 +441,11 @@ class ChatClientAgent(AgentBase):
             kwargs: Additional keyword arguments for the agent.
                 will only be passed to functions that are called.
         """
+        input_messages = self._normalize_messages(messages)
+
         thread, thread_messages = await self._prepare_thread_and_messages(
             thread=thread,
-            input_messages=messages,
+            input_messages=input_messages,
             construct_thread=lambda: ChatClientAgentThread(),
             expected_type=ChatClientAgentThread,
         )
@@ -477,7 +479,7 @@ class ChatClientAgent(AgentBase):
 
         # Only notify the thread of new messages if the chatResponse was successful
         # to avoid inconsistent messages state in the thread.
-        await self._notify_thread_of_new_messages(thread, thread_messages)
+        await self._notify_thread_of_new_messages(thread, input_messages)
         await self._notify_thread_of_new_messages(thread, response.messages)
 
         return AgentRunResponse(
@@ -549,9 +551,11 @@ class ChatClientAgent(AgentBase):
                 will only be passed to functions that are called.
 
         """
+        input_messages = self._normalize_messages(messages)
+
         thread, thread_messages = await self._prepare_thread_and_messages(
             thread=thread,
-            input_messages=messages,
+            input_messages=input_messages,
             construct_thread=lambda: ChatClientAgentThread(),
             expected_type=ChatClientAgentThread,
         )
@@ -600,7 +604,7 @@ class ChatClientAgent(AgentBase):
 
         # Only notify the thread of new messages if the chatResponse was successful
         # to avoid inconsistent messages state in the thread.
-        await self._notify_thread_of_new_messages(thread, thread_messages)
+        await self._notify_thread_of_new_messages(thread, input_messages)
         await self._notify_thread_of_new_messages(thread, response.messages)
 
     def get_new_thread(self) -> AgentThread:
@@ -639,7 +643,7 @@ class ChatClientAgent(AgentBase):
         self,
         *,
         thread: AgentThread | None,
-        input_messages: str | ChatMessage | Sequence[str] | Sequence[ChatMessage] | None = None,
+        input_messages: list[ChatMessage] | None = None,
         construct_thread: Callable[[], TThreadType],
         expected_type: type[TThreadType],
     ) -> tuple[TThreadType, list[ChatMessage]]:
@@ -647,7 +651,7 @@ class ChatClientAgent(AgentBase):
 
         Args:
             thread: The conversation thread, or None to create a new one.
-            input_messages: Messages to process, can be string, ChatMessage, or sequence.
+            input_messages: Messages to process.
             construct_thread: Factory function to create a new thread.
             expected_type: Expected thread type for validation.
 
@@ -673,15 +677,24 @@ class ChatClientAgent(AgentBase):
         if isinstance(thread, MessagesRetrievableThread):
             async for message in thread.get_messages():
                 messages.append(message)
+
         if input_messages is None:
             return thread, messages
-        if isinstance(input_messages, str):
-            messages.append(ChatMessage(role=ChatRole.USER, text=input_messages))
-            return thread, messages
-        if isinstance(input_messages, ChatMessage):
-            messages.append(input_messages)
-            return thread, messages
-        messages.extend([
-            ChatMessage(role=ChatRole.USER, text=msg) if isinstance(msg, str) else msg for msg in input_messages
-        ])
+
+        messages.extend(input_messages)
         return thread, messages
+
+    def _normalize_messages(
+        self,
+        messages: str | ChatMessage | Sequence[str] | Sequence[ChatMessage] | None = None,
+    ) -> list[ChatMessage]:
+        if messages is None:
+            return []
+
+        if isinstance(messages, str):
+            return [ChatMessage(role=ChatRole.USER, text=messages)]
+
+        if isinstance(messages, ChatMessage):
+            return [messages]
+
+        return [ChatMessage(role=ChatRole.USER, text=msg) if isinstance(msg, str) else msg for msg in messages]

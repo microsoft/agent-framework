@@ -22,14 +22,14 @@ async def main() -> None:
     stream = False
     print(f"User: {message}")
     if stream:
-        print("Assistant: ", end="")
+        print("Agent: ", end="")
         async for chunk in client.get_streaming_response(message, tools=get_weather):
             if str(chunk):
                 print(str(chunk), end="")
         print("")
     else:
         response = await client.get_response(message, tools=get_weather)
-        print(f"Assistant: {response}")
+        print(f"Agent: {response}")
 
 
 if __name__ == "__main__":

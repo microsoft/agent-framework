@@ -39,19 +39,19 @@ async def tools_on_agent_level() -> None:
         query1 = "What's the weather like in New York?"
         print(f"User: {query1}")
         result1 = await agent.run(query1)
-        print(f"Assistant: {result1}\n")
+        print(f"Agent: {result1}\n")
 
         # Second query - agent can use time tool
         query2 = "What's the current UTC time?"
         print(f"User: {query2}")
         result2 = await agent.run(query2)
-        print(f"Assistant: {result2}\n")
+        print(f"Agent: {result2}\n")
 
         # Third query - agent can use both tools if needed
         query3 = "What's the weather in London and what's the current UTC time?"
         print(f"User: {query3}")
         result3 = await agent.run(query3)
-        print(f"Assistant: {result3}\n")
+        print(f"Agent: {result3}\n")
 
 
 async def tools_on_run_level() -> None:
@@ -68,19 +68,19 @@ async def tools_on_run_level() -> None:
         query1 = "What's the weather like in Seattle?"
         print(f"User: {query1}")
         result1 = await agent.run(query1, tools=[get_weather])  # Tool passed to run method
-        print(f"Assistant: {result1}\n")
+        print(f"Agent: {result1}\n")
 
         # Second query with time tool
         query2 = "What's the current UTC time?"
         print(f"User: {query2}")
         result2 = await agent.run(query2, tools=[get_time])  # Different tool for this query
-        print(f"Assistant: {result2}\n")
+        print(f"Agent: {result2}\n")
 
         # Third query with multiple tools
         query3 = "What's the weather in Chicago and what's the current UTC time?"
         print(f"User: {query3}")
         result3 = await agent.run(query3, tools=[get_weather, get_time])  # Multiple tools
-        print(f"Assistant: {result3}\n")
+        print(f"Agent: {result3}\n")
 
 
 async def mixed_tools_example() -> None:
@@ -102,7 +102,7 @@ async def mixed_tools_example() -> None:
             query,
             tools=[get_time],  # Additional tools for this specific query
         )
-        print(f"Assistant: {result}\n")
+        print(f"Agent: {result}\n")
 
 
 async def main() -> None:

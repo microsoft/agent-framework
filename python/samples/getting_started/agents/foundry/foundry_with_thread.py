@@ -30,13 +30,13 @@ async def example_with_automatic_thread_creation() -> None:
         query1 = "What's the weather like in Seattle?"
         print(f"User: {query1}")
         result1 = await agent.run(query1)
-        print(f"Assistant: {result1.text}")
+        print(f"Agent: {result1.text}")
 
         # Second conversation - still no thread provided, will create another new thread
         query2 = "What was the last city I asked about?"
         print(f"\nUser: {query2}")
         result2 = await agent.run(query2)
-        print(f"Assistant: {result2.text}")
+        print(f"Agent: {result2.text}")
         print("Note: Each call creates a separate thread, so the agent doesn't remember previous context.\n")
 
 
@@ -47,7 +47,7 @@ async def example_with_thread_persistence() -> None:
 
     async with ChatClientAgent(
         chat_client=FoundryChatClient(),
-        instructions="You are a helpful weather agent. Remember previous cities asked about.",
+        instructions="You are a helpful weather agent.",
         tools=get_weather,
     ) as agent:
         # Create a new thread that will be reused
@@ -57,19 +57,19 @@ async def example_with_thread_persistence() -> None:
         query1 = "What's the weather like in Tokyo?"
         print(f"User: {query1}")
         result1 = await agent.run(query1, thread=thread)
-        print(f"Assistant: {result1.text}")
+        print(f"Agent: {result1.text}")
 
         # Second conversation using the same thread - maintains context
         query2 = "How about comparing it to London?"
         print(f"\nUser: {query2}")
         result2 = await agent.run(query2, thread=thread)
-        print(f"Assistant: {result2.text}")
+        print(f"Agent: {result2.text}")
 
         # Third conversation - agent should remember both previous cities
         query3 = "Which of the cities I asked about has better weather?"
         print(f"\nUser: {query3}")
         result3 = await agent.run(query3, thread=thread)
-        print(f"Assistant: {result3.text}")
+        print(f"Agent: {result3.text}")
         print("Note: The agent remembers context from previous messages in the same thread.\n")
 
 
@@ -91,7 +91,7 @@ async def example_with_existing_thread_id() -> None:
         query1 = "What's the weather in Paris?"
         print(f"User: {query1}")
         result1 = await agent.run(query1, thread=thread)
-        print(f"Assistant: {result1.text}")
+        print(f"Agent: {result1.text}")
 
         # The thread ID is set after the first response
         existing_thread_id = thread.id
@@ -112,7 +112,7 @@ async def example_with_existing_thread_id() -> None:
             query2 = "What was the last city I asked about?"
             print(f"User: {query2}")
             result2 = await agent.run(query2, thread=thread)
-            print(f"Assistant: {result2.text}")
+            print(f"Agent: {result2.text}")
             print("Note: The agent continues the conversation from the previous thread.\n")
 
 
