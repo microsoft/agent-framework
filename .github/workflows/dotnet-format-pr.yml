@@ -83,7 +83,7 @@ jobs:
             echo "Found solution: $solutions"
           else
             # Fallback to individual projects (excluding test projects for performance)
-            projects=$(find ./dotnet -name "*.csproj" | grep -v -E "(Test|Tests)" | head -20 | tr '\n' ' ')
+            projects=$(find ./dotnet -name "*.csproj" | grep -v -E "(Test|Tests)" | tr '\n' ' ')
             echo "projects=$projects" >> $GITHUB_OUTPUT
             echo "Found projects: $projects"
           fi
