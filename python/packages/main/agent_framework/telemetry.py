@@ -277,8 +277,8 @@ def _trace_chat_get_response(completion_func: Callable[..., Any]) -> Callable[..
 
 
 def _trace_chat_get_streaming_response(
-    completion_func: Callable[..., AsyncIterable[ChatResponseUpdate]],
-) -> Callable[..., AsyncIterable[ChatResponseUpdate]]:
+    completion_func: Callable[..., AsyncIterable["ChatResponseUpdate"]],
+) -> Callable[..., AsyncIterable["ChatResponseUpdate"]]:
     """Decorator to trace streaming chat completion activities.
 
     Args:
