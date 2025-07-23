@@ -74,11 +74,11 @@ jobs:
         run: |
           if [[ "${{ steps.find-projects.outputs.target }}" == *.sln* ]]; then
             echo "Formatting solution: ${{ steps.find-projects.outputs.target }}"
-            dotnet format "${{ steps.find-projects.outputs.target }}" --verbosity normal
+            dotnet format "${{ steps.find-projects.outputs.target }}" --verbosity diagnostic
           else
             for project in ${{ steps.find-projects.outputs.target }}; do
               echo "Formatting project: $project"
-              dotnet format "$project" --verbosity normal
+              dotnet format "$project" --verbosity diagnostic
             done
           fi
 

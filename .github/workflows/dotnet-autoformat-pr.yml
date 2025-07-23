@@ -101,7 +101,7 @@ jobs:
           # Apply formatting to all found projects
           for project in ${{ steps.find-projects.outputs.projects }}; do
             echo "Formatting $project"
-            dotnet format "$project" --verbosity normal
+            dotnet format "$project" --verbosity diagnostic
           done
 
       - name: Check for changes

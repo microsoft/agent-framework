@@ -128,7 +128,7 @@ jobs:
           format_failed=false
           for project in ${{ steps.find-projects.outputs.projects }}; do
             echo "Checking format for $project"
-            if ! dotnet format "$project" --verify-no-changes --verbosity normal; then
+            if ! dotnet format "$project" --verify-no-changes --verbosity diagnostic; then
               echo "❌ Format check failed for $project"
               format_failed=true
             else
