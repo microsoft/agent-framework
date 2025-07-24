@@ -183,6 +183,72 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
             **kwargs,
         )
 
+    @override
+    async def get_streaming_response(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage],
+        *,
+        # TODO(peterychang): enable this option. background: bool | None = None,
+        include: list[ResponseIncludable] | None = None,
+        instruction: str | None = None,
+        max_tokens: int | None = None,
+        parallel_tool_calls: bool | None = None,
+        model: str | None = None,
+        previous_response_id: str | None = None,
+        reasoning: str | None = None,
+        service_tier: str | None = None,
+        response_format: type[BaseModel] | None = None,
+        seed: int | None = None,
+        store: bool | None = None,
+        temperature: float | None = None,
+        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
+        tools: AITool
+        | list[AITool]
+        | Callable[..., Any]
+        | list[Callable[..., Any]]
+        | MutableMapping[str, Any]
+        | list[MutableMapping[str, Any]]
+        | None = None,
+        top_p: float | None = None,
+        user: str | None = None,
+        truncation: str | None = None,
+        timeout: float | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterable[ChatResponseUpdate]:
+        """Get a response from the OpenAI API."""
+        filtered_options = self._filter_options(
+            background=False,
+            include=include,
+            instruction=instruction,
+            parallel_tool_calls=parallel_tool_calls,
+            previous_response_id=previous_response_id,
+            reasoning=reasoning,
+            service_tier=service_tier,
+            truncation=truncation,
+            timeout=timeout,
+        )
+        filtered_options.update(additional_properties or {})
+        chat_options = ChatOptions(
+            ai_model_id=model,
+            max_tokens=max_tokens,
+            response_format=response_format,
+            seed=seed,
+            store=store,
+            temperature=temperature,
+            top_p=top_p,
+            tool_choice=tool_choice,
+            tools=tools,  # type: ignore
+            user=user,
+            additional_properties=filtered_options,
+        )
+        async for update in super().get_streaming_response(
+            messages=messages,
+            chat_options=chat_options,
+            **kwargs,
+        ):
+            yield update
+
     def _chat_to_response_tool_spec(self, tools: list[AITool | MutableMapping[str, Any]]) -> list[dict[str, Any]]:
         response_tools: list[dict[str, Any]] = []
         for tool in tools:

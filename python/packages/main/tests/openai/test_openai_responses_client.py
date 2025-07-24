@@ -7,7 +7,7 @@ import pytest
 from pydantic import BaseModel
 
 from agent_framework import ChatClient, ChatMessage, ChatResponse, ChatResponseUpdate, TextContent, ai_function
-from agent_framework.exceptions import ServiceInitializationError
+from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
 from agent_framework.openai import OpenAIResponsesClient
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
@@ -248,7 +248,7 @@ async def test_openai_responses_client_streaming() -> None:
     messages.append(ChatMessage(role="user", text="What is the weather in New York?"))
 
     # This is currently broken. See https://github.com/openai/openai-python/issues/2305
-    with pytest.raises(AttributeError):
+    with pytest.raises(ServiceResponseException):
         response = openai_responses_client.get_streaming_response(
             messages=messages,
             response_format=OutputStruct,
@@ -295,7 +295,7 @@ async def test_openai_responses_client_streaming_tools() -> None:
     messages.append(ChatMessage(role="user", text="What is the weather in New York?"))
 
     # This is currently broken. See https://github.com/openai/openai-python/issues/2305
-    with pytest.raises(AttributeError):
+    with pytest.raises(ServiceResponseException):
         response = openai_responses_client.get_streaming_response(
             messages=messages,
             tools=[get_weather],
