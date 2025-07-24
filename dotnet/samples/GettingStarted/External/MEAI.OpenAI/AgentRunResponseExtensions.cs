@@ -95,6 +95,6 @@ public static class AgentRunResponseExtensions
             }
             throw new ArgumentException("ChatResponse.RawRepresentation must be an OpenAIResponse");
         }
-        throw new ArgumentException("AgentRunResponse.RawRepresentation must be a OpenAIResponse");
+        throw new ArgumentException("AgentRunResponse.RawRepresentation must be a ChatResponse");
     }
 }
