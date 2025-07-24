@@ -12,13 +12,17 @@ from opentelemetry import trace
 from opentelemetry.trace import Span, StatusCode, get_tracer, use_span
 
 from . import __version__ as version_info
+from ._logging import get_logger
 from ._pydantic import AFBaseSettings
-from ._types import ChatMessage, ChatRole, UsageDetails
 
 if TYPE_CHECKING:
     from ._clients import ChatClientBase
     from ._tools import AIFunction
-    from ._types import ChatOptions, ChatResponse, ChatResponseUpdate
+    from ._types import ChatMessage, ChatOptions, ChatResponse, ChatResponseUpdate
+
+tracer = get_tracer("agent_framework")
+
+logger = get_logger()
 
 __all__ = [
     "AGENT_FRAMEWORK_USER_AGENT",
@@ -73,12 +77,15 @@ class GenAIAttributes(str, Enum):
     CHAT_STREAMING_COMPLETION_OPERATION = "chat.streaming_completions"
     TOOL_EXECUTION_OPERATION = "execute_tool"
 
+    # Agent Framework specific attributes
+    MEASUREMENT_FUNCTION_TAG_NAME = "agent_framework.function.name"
+
 
 ROLE_EVENT_MAP = {
-    ChatRole.SYSTEM.value: GenAIAttributes.SYSTEM_MESSAGE,
-    ChatRole.USER.value: GenAIAttributes.USER_MESSAGE,
-    ChatRole.ASSISTANT.value: GenAIAttributes.ASSISTANT_MESSAGE,
-    ChatRole.TOOL.value: GenAIAttributes.TOOL_MESSAGE,
+    "system": GenAIAttributes.SYSTEM_MESSAGE.value,
+    "user": GenAIAttributes.USER_MESSAGE.value,
+    "assistant": GenAIAttributes.ASSISTANT_MESSAGE.value,
+    "tool": GenAIAttributes.TOOL_MESSAGE.value,
 }
 
 
@@ -123,6 +130,33 @@ def prepend_agent_framework_to_user_agent(headers: dict[str, Any]) -> dict[str, 
     return headers
 
 
+# We're recording multiple events for the chat history, some of them are emitted within (hundreds of)
+# nanoseconds of each other. The default timestamp resolution is not high enough to guarantee unique
+# timestamps for each message. Also Azure Monitor truncates resolution to microseconds and some other
+# backends truncate to milliseconds.
+#
+# But we need to give users a way to restore chat message order, so we're incrementing the timestamp
+# by 1 microsecond for each message.
+#
+# This is a workaround, we'll find a generic and better solution - see
+# https://github.com/open-telemetry/semantic-conventions/issues/1701
+class ChatMessageListTimestampFilter(logging.Filter):
+    """A filter to increment the timestamp of INFO logs by 1 microsecond."""
+
+    INDEX_KEY: ClassVar[str] = "CHAT_MESSAGE_INDEX"
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Increment the timestamp of INFO logs by 1 microsecond."""
+        if hasattr(record, self.INDEX_KEY):
+            idx = getattr(record, self.INDEX_KEY)
+            record.created += idx * 1e-6
+        return True
+
+
+# Creates a tracer from the global tracer provider
+logger.addFilter(ChatMessageListTimestampFilter())
+
+
 class ModelDiagnosticSettings(AFBaseSettings):
     """Settings for model diagnostics.
 
@@ -147,68 +181,7 @@ class ModelDiagnosticSettings(AFBaseSettings):
     enable_otel_diagnostics_sensitive: bool = False
 
 
-def start_as_current_span(
-    tracer: trace.Tracer,
-    function: "AIFunction[Any, Any]",
-    metadata: dict[str, Any] | None = None,
-):
-    """Starts a span for the given function using the provided tracer.
-
-    Args:
-        tracer: The OpenTelemetry tracer to use.
-        function: The function for which to start the span.
-        metadata: Optional metadata to include in the span attributes.
-
-    Returns:
-        trace.Span: The started span as a context manager.
-    """
-    attributes = {
-        GenAIAttributes.OPERATION.value: GenAIAttributes.TOOL_EXECUTION_OPERATION,
-        GenAIAttributes.TOOL_NAME.value: function.name,
-    }
-
-    tool_call_id = metadata.get("id", None) if metadata else None
-    if tool_call_id:
-        attributes[GenAIAttributes.TOOL_CALL_ID.value] = tool_call_id
-    if function.description:
-        attributes[GenAIAttributes.TOOL_DESCRIPTION.value] = function.description
-
-    return tracer.start_as_current_span(
-        f"{GenAIAttributes.TOOL_EXECUTION_OPERATION} {function.name}", attributes=attributes
-    )
-
-
 MODEL_DIAGNOSTICS_SETTINGS = ModelDiagnosticSettings()
-
-
-# We're recording multiple events for the chat history, some of them are emitted within (hundreds of)
-# nanoseconds of each other. The default timestamp resolution is not high enough to guarantee unique
-# timestamps for each message. Also Azure Monitor truncates resolution to microseconds and some other
-# backends truncate to milliseconds.
-#
-# But we need to give users a way to restore chat message order, so we're incrementing the timestamp
-# by 1 microsecond for each message.
-#
-# This is a workaround, we'll find a generic and better solution - see
-# https://github.com/open-telemetry/semantic-conventions/issues/1701
-class ChatHistoryMessageTimestampFilter(logging.Filter):
-    """A filter to increment the timestamp of INFO logs by 1 microsecond."""
-
-    INDEX_KEY: ClassVar[str] = "CHAT_MESSAGE_INDEX"
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        """Increment the timestamp of INFO logs by 1 microsecond."""
-        if hasattr(record, self.INDEX_KEY):
-            idx = getattr(record, self.INDEX_KEY)
-            record.created += idx * 1e-6
-        return True
-
-
-# Creates a tracer from the global tracer provider
-tracer = get_tracer(__name__)
-
-logger = logging.getLogger(__name__)
-logger.addFilter(ChatHistoryMessageTimestampFilter())
 
 
 def are_model_diagnostics_enabled() -> bool:
@@ -228,6 +201,37 @@ def are_sensitive_events_enabled() -> bool:
     Sensitive events are enabled if the diagnostic with sensitive events is enabled.
     """
     return MODEL_DIAGNOSTICS_SETTINGS.enable_otel_diagnostics_sensitive
+
+
+def start_as_current_span(
+    tracer: trace.Tracer,
+    function: "AIFunction[Any, Any]",
+    metadata: dict[str, Any] | None = None,
+):
+    """Starts a span for the given function using the provided tracer.
+
+    Args:
+        tracer: The OpenTelemetry tracer to use.
+        function: The function for which to start the span.
+        metadata: Optional metadata to include in the span attributes.
+
+    Returns:
+        trace.Span: The started span as a context manager.
+    """
+    attributes = {
+        GenAIAttributes.OPERATION.value: GenAIAttributes.TOOL_EXECUTION_OPERATION.value,
+        GenAIAttributes.TOOL_NAME.value: function.name,
+    }
+
+    tool_call_id = metadata.get("tool_call_id", None) if metadata else None
+    if tool_call_id:
+        attributes[GenAIAttributes.TOOL_CALL_ID.value] = tool_call_id
+    if function.description:
+        attributes[GenAIAttributes.TOOL_DESCRIPTION.value] = function.description
+
+    return tracer.start_as_current_span(
+        f"{GenAIAttributes.TOOL_EXECUTION_OPERATION.value} {function.name}", attributes=attributes
+    )
 
 
 def _trace_chat_get_response(completion_func: Callable[..., Any]) -> Callable[..., Any]:
@@ -250,8 +254,8 @@ def _trace_chat_get_response(completion_func: Callable[..., Any]) -> Callable[..
             return await completion_func(self, messages=messages, chat_options=chat_options, **kwargs)
 
         with use_span(
-            _get_completion_span(
-                GenAIAttributes.CHAT_COMPLETION_OPERATION,
+            _get_chat_response_span(
+                GenAIAttributes.CHAT_COMPLETION_OPERATION.value,
                 getattr(self, "ai_model_id", chat_options.ai_model_id or "unknown"),
                 self.MODEL_PROVIDER_NAME,
                 self.service_url(),
@@ -259,15 +263,15 @@ def _trace_chat_get_response(completion_func: Callable[..., Any]) -> Callable[..
             ),
             end_on_exit=True,
         ) as current_span:
-            _set_completion_input(self.MODEL_PROVIDER_NAME, messages)
+            _set_chat_response_input(self.MODEL_PROVIDER_NAME, messages)
             try:
                 response: "ChatResponse" = await completion_func(
                     self, messages=messages, chat_options=chat_options, **kwargs
                 )
-                _set_completion_response(current_span, response, self.MODEL_PROVIDER_NAME)
+                _set_chat_response_output(current_span, response, self.MODEL_PROVIDER_NAME)
                 return response
             except Exception as exception:
-                _set_completion_error(current_span, exception)
+                _set_chat_response_error(current_span, exception)
                 raise
 
     # Mark the wrapper decorator as a chat completion decorator
@@ -297,11 +301,13 @@ def _trace_chat_get_streaming_response(
                 yield streaming_chat_message_contents
             return
 
+        from ._types import ChatResponse
+
         all_updates: list["ChatResponseUpdate"] = []
 
         with use_span(
-            _get_completion_span(
-                GenAIAttributes.CHAT_STREAMING_COMPLETION_OPERATION,
+            _get_chat_response_span(
+                GenAIAttributes.CHAT_STREAMING_COMPLETION_OPERATION.value,
                 getattr(self, "ai_model_id", chat_options.ai_model_id or "unknown"),
                 self.MODEL_PROVIDER_NAME,
                 self.service_url(),
@@ -309,16 +315,16 @@ def _trace_chat_get_streaming_response(
             ),
             end_on_exit=True,
         ) as current_span:
-            _set_completion_input(self.MODEL_PROVIDER_NAME, messages)
+            _set_chat_response_input(self.MODEL_PROVIDER_NAME, messages)
             try:
                 async for response in completion_func(self, messages=messages, chat_options=chat_options, **kwargs):
                     all_updates.append(response)
                     yield response
 
                 all_messages_flattened = ChatResponse.from_chat_response_updates(all_updates)
-                _set_completion_response(current_span, all_messages_flattened, self.MODEL_PROVIDER_NAME)
+                _set_chat_response_output(current_span, all_messages_flattened, self.MODEL_PROVIDER_NAME)
             except Exception as exception:
-                _set_completion_error(current_span, exception)
+                _set_chat_response_error(current_span, exception)
                 raise
 
     # Mark the wrapper decorator as a streaming chat completion decorator
@@ -346,7 +352,7 @@ def use_telemetry(cls: type[TChatClientBase]) -> type[TChatClientBase]:
     return cls
 
 
-def _get_completion_span(
+def _get_chat_response_span(
     operation_name: str,
     model_name: str,
     model_provider: str,
@@ -362,36 +368,38 @@ def _get_completion_span(
 
     # Set attributes on the span
     span.set_attributes({
-        GenAIAttributes.OPERATION: operation_name,
-        GenAIAttributes.SYSTEM: model_provider,
-        GenAIAttributes.MODEL: model_name,
+        GenAIAttributes.OPERATION.value: operation_name,
+        GenAIAttributes.SYSTEM.value: model_provider,
+        GenAIAttributes.MODEL.value: model_name,
     })
 
     if service_url:
-        span.set_attribute(GenAIAttributes.ADDRESS, service_url)
+        span.set_attribute(GenAIAttributes.ADDRESS.value, service_url)
 
     if chat_options.seed is not None:
-        span.set_attribute(GenAIAttributes.SEED, chat_options.seed)
+        span.set_attribute(GenAIAttributes.SEED.value, chat_options.seed)
     if chat_options.frequency_penalty is not None:
-        span.set_attribute(GenAIAttributes.FREQUENCY_PENALTY, chat_options.frequency_penalty)
+        span.set_attribute(GenAIAttributes.FREQUENCY_PENALTY.value, chat_options.frequency_penalty)
     if chat_options.max_tokens is not None:
-        span.set_attribute(GenAIAttributes.MAX_TOKENS, chat_options.max_tokens)
+        span.set_attribute(GenAIAttributes.MAX_TOKENS.value, chat_options.max_tokens)
     if chat_options.stop is not None:
-        span.set_attribute(GenAIAttributes.STOP_SEQUENCES, chat_options.stop)
+        span.set_attribute(GenAIAttributes.STOP_SEQUENCES.value, chat_options.stop)
     if chat_options.temperature is not None:
-        span.set_attribute(GenAIAttributes.TEMPERATURE, chat_options.temperature)
+        span.set_attribute(GenAIAttributes.TEMPERATURE.value, chat_options.temperature)
     if chat_options.top_p is not None:
-        span.set_attribute(GenAIAttributes.TOP_P, chat_options.top_p)
+        span.set_attribute(GenAIAttributes.TOP_P.value, chat_options.top_p)
     if "top_k" in chat_options.additional_properties:
-        span.set_attribute(GenAIAttributes.TOP_K, chat_options.additional_properties["top_k"])
+        span.set_attribute(GenAIAttributes.TOP_K.value, chat_options.additional_properties["top_k"])
     if "encoding_formats" in chat_options.additional_properties:
-        span.set_attribute(GenAIAttributes.ENCODING_FORMATS, chat_options.additional_properties["encoding_formats"])
+        span.set_attribute(
+            GenAIAttributes.ENCODING_FORMATS.value, chat_options.additional_properties["encoding_formats"]
+        )
     return span
 
 
-def _set_completion_input(
+def _set_chat_response_input(
     model_provider: str,
-    messages: MutableSequence[ChatMessage],
+    messages: MutableSequence["ChatMessage"],
 ) -> None:
     """Set the input for a chat response.
 
@@ -404,19 +412,19 @@ def _set_completion_input(
                 logger.info(
                     message.model_dump_json(exclude_none=True),
                     extra={
-                        GenAIAttributes.EVENT_NAME: event_name,
-                        GenAIAttributes.SYSTEM: model_provider,
-                        ChatHistoryMessageTimestampFilter.INDEX_KEY: idx,
+                        GenAIAttributes.EVENT_NAME.value: event_name,
+                        GenAIAttributes.SYSTEM.value: model_provider,
+                        ChatMessageListTimestampFilter.INDEX_KEY: idx,
                     },
                 )
 
 
-def _set_completion_response(
+def _set_chat_response_output(
     current_span: Span,
     response: "ChatResponse",
     model_provider: str,
 ) -> None:
-    """Set the a text or chat completion response for a given span."""
+    """Set the response for a given span."""
     first_completion = response.messages[0]
 
     # Set the response ID
@@ -424,20 +432,21 @@ def _set_completion_response(
         first_completion.additional_properties.get("id") if first_completion.additional_properties is not None else None
     )
     if response_id:
-        current_span.set_attribute(GenAIAttributes.RESPONSE_ID, response_id)
+        current_span.set_attribute(GenAIAttributes.RESPONSE_ID.value, response_id)
 
     # Set the finish reason
     finish_reason = response.finish_reason
     if finish_reason:
-        current_span.set_attribute(GenAIAttributes.FINISH_REASON, finish_reason.value)
+        current_span.set_attribute(GenAIAttributes.FINISH_REASON.value, finish_reason.value)
 
     # Set usage attributes
+
     usage = response.usage_details
-    if isinstance(usage, UsageDetails):
+    if usage:
         if usage.input_token_count:
-            current_span.set_attribute(GenAIAttributes.INPUT_TOKENS, usage.input_token_count)
+            current_span.set_attribute(GenAIAttributes.INPUT_TOKENS.value, usage.input_token_count)
         if usage.output_token_count:
-            current_span.set_attribute(GenAIAttributes.OUTPUT_TOKENS, usage.output_token_count)
+            current_span.set_attribute(GenAIAttributes.OUTPUT_TOKENS.value, usage.output_token_count)
 
     # Set the completion event
     if are_sensitive_events_enabled():
@@ -449,13 +458,13 @@ def _set_completion_response(
             logger.info(
                 json.dumps(full_response),
                 extra={
-                    GenAIAttributes.EVENT_NAME: GenAIAttributes.CHOICE,
-                    GenAIAttributes.SYSTEM: model_provider,
+                    GenAIAttributes.EVENT_NAME.value: GenAIAttributes.CHOICE.value,
+                    GenAIAttributes.SYSTEM.value: model_provider,
                 },
             )
 
 
-def _set_completion_error(span: Span, error: Exception) -> None:
-    """Set an error for a text or chat completion ."""
-    span.set_attribute(GenAIAttributes.ERROR_TYPE, str(type(error)))
+def _set_chat_response_error(span: Span, error: Exception) -> None:
+    """Set an error for chat client responses."""
+    span.set_attribute(GenAIAttributes.ERROR_TYPE.value, str(type(error)))
     span.set_status(StatusCode.ERROR, repr(error))

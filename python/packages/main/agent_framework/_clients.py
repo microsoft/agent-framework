@@ -64,7 +64,7 @@ async def _auto_invoke_function(
     args = tool.input_model.model_validate(merged_args)
     exception = None
     try:
-        function_result = await tool.invoke(arguments=args)
+        function_result = await tool.invoke(arguments=args, tool_call_id=function_call_content.call_id)
     except Exception as ex:
         exception = ex
         function_result = None

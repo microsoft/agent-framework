@@ -229,29 +229,29 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
     def _openai_chat_message_parser(self, message: ChatMessage) -> list[dict[str, Any]]:
         """Parse a chat message into the openai format."""
         all_messages: list[dict[str, Any]] = []
-        args: dict[str, Any] = {
-            "role": message.role.value if isinstance(message.role, ChatRole) else message.role,
-        }
-        if message.additional_properties:
-            args["metadata"] = message.additional_properties
         for content in message.contents:
+            args: dict[str, Any] = {
+                "role": message.role.value if isinstance(message.role, ChatRole) else message.role,
+            }
+            if message.additional_properties:
+                args["metadata"] = message.additional_properties
             match content:
-                case FunctionResultContent():
-                    new_args = args.copy()
-                    new_args["tool_call_id"] = content.call_id
-                    new_args["content"] = content.result
-                    all_messages.append(new_args)
                 case FunctionCallContent():
-                    function_call = self._openai_content_parser(content)
-                    if "tool_calls" not in args:
-                        args["tool_calls"] = []
-                    args["tool_calls"].append(function_call)  # type: ignore
+                    if all_messages and "tool_calls" in all_messages[-1]:
+                        # If the last message already has tool calls, append to it
+                        all_messages[-1]["tool_calls"].append(self._openai_content_parser(content))
+                    else:
+                        args["tool_calls"] = [self._openai_content_parser(content)]  # type: ignore
+                case FunctionResultContent():
+                    args["tool_call_id"] = content.call_id
+                    args["content"] = content.result
                 case _:
                     if "content" not in args:
                         args["content"] = []
+                    # this is a list to allow multi-modal content
                     args["content"].append(self._openai_content_parser(content))  # type: ignore
-        if "content" in args or "tool_calls" in args:
-            all_messages.append(args)
+            if "content" in args or "tool_calls" in args:
+                all_messages.append(args)
         return all_messages
 
     def _openai_content_parser(self, content: AIContents) -> dict[str, Any]:
