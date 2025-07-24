@@ -33,14 +33,14 @@ __all__ = [
 ]
 
 
-# Constants for tracing activities with semantic conventions.
-# Ideally, we should use the attributes from the semcov package.
-# However, many of the attributes are not yet available in the package,
-# so we define them here for now.
-
-
-# Activity tags
 class GenAIAttributes(str, Enum):
+    """Enum to capture the attributes used in OpenTelemetry for Generative AI.
+
+    Based on: https://opentelemetry.io/docs/concepts/semantic-conventions/
+
+    Should always be used, with `.value` to get the string representation.
+    """
+
     OPERATION = "gen_ai.operation.name"
     SYSTEM = "gen_ai.system"
     ERROR_TYPE = "error.type"
