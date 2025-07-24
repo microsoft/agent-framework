@@ -19,14 +19,9 @@ public sealed class Step04_ChatClientAgent_DependencyInjection(ITestOutputHelper
         // Adding multiple chat clients to the service collection.
         var services = new ServiceCollection();
 
-        var agentOptions = new ChatClientAgentOptions
-        {
-            Name = "Parrot",
-            Instructions = "Repeat the user message in the voice of a pirate and then end with a parrot sound.",
-
-            // Get chat options based on the store type, if needed.
-            ChatOptions = base.GetChatOptions(provider),
-        };
+        var agentOptions = new ChatClientAgentOptions(
+            name: "Parrot",
+            instructions: "Repeat the user message in the voice of a pirate and then end with a parrot sound.");
 
         // Create the server-side agent Id when applicable (depending on the provider).
         agentOptions.Id = await base.AgentCreateAsync(provider, agentOptions);

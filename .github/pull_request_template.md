@@ -1,6 +1,6 @@
 ### Motivation and Context
 
-<!-- Thank you for your contribution to the semantic-kernel repo!
+<!-- Thank you for your contribution to the Agent Framework repo!
 Please help reviewers and future users, providing the following information:
   1. Why is this change required?
   2. What problem does it solve?
@@ -18,6 +18,6 @@ Please help reviewers and future users, providing the following information:
 <!-- Before submitting this PR, please make sure: -->
 
 - [ ] The code builds clean without any errors or warnings
-- [ ] The PR follows the [SK Contribution Guidelines](https://github.com/microsoft/agent-framework/blob/main/CONTRIBUTING.md)
+- [ ] The PR follows the [Contribution Guidelines](https://github.com/microsoft/agent-framework/blob/main/CONTRIBUTING.md)
 - [ ] All unit tests pass, and I have added new tests where possible
 - [ ] I didn't break anyone :smile:

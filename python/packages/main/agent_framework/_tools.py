@@ -1,13 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import inspect
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 from functools import wraps
 from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
 
 from pydantic import BaseModel, create_model
 
-__all__ = ["AIFunction", "AITool", "ai_function"]
+__all__ = ["AIFunction", "AITool", "HostedCodeInterpreterTool", "ai_function"]
 
 
 @runtime_checkable
@@ -32,10 +32,6 @@ class AITool(Protocol):
 
     def __str__(self) -> str:
         """Return a string representation of the tool."""
-        ...
-
-    def parameters(self) -> Mapping[str, Any]:
-        """Return the parameters of the tool as a JSON schema."""
         ...
 
 
@@ -159,3 +155,32 @@ def ai_function(
         return wrapper(func)
 
     return decorator(func) if func else decorator  # type: ignore[reportReturnType, return-value]
+
+
+class HostedCodeInterpreterTool(AITool):
+    """Represents a hosted tool that can be specified to an AI service to enable it to execute generated code.
+
+    This tool does not implement code interpretation itself. It serves as a marker to inform a service
+    that it is allowed to execute generated code if the service is capable of doing so.
+    """
+
+    def __init__(
+        self,
+        name: str = "code_interpreter",
+        description: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
+    ):
+        """Initialize a HostedCodeInterpreterTool.
+
+        Args:
+            name: The name of the tool. Defaults to "code_interpreter".
+            description: A description of the tool.
+            additional_properties: Additional properties associated with the tool, specific to the service used.
+        """
+        self.name = name
+        self.description = description
+        self.additional_properties = additional_properties
+
+    def __str__(self) -> str:
+        """Return a string representation of the tool."""
+        return f"HostedCodeInterpreterTool(name={self.name})"

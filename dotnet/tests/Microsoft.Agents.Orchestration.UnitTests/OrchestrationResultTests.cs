@@ -1,8 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.Collections.Generic;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.AI.Agents.Runtime;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Microsoft.Agents.Orchestration.UnitTest;
@@ -13,45 +17,54 @@ public class OrchestrationResultTests
     public async Task ConstructorInitializesPropertiesCorrectlyAsync()
     {
         // Arrange
-        OrchestrationContext context = new("TestOrchestration", new TopicId("testTopic"), null, null, NullLoggerFactory.Instance, CancellationToken.None);
-        TaskCompletionSource<string> tcs = new();
+        OrchestratingAgentContext context = new()
+        {
+            OrchestratingAgent = new MockOrchestratingAgent(),
+        };
+        TaskCompletionSource<AgentRunResponse> tcs = new();
 
         // Act
         using CancellationTokenSource cancelSource = new();
-        await using OrchestrationResult<string> result = new(context, tcs, cancelSource, NullLogger.Instance);
+        await using OrchestratingAgentResponse result = new(context, tcs.Task, cancelSource, NullLogger.Instance);
 
         // Assert
-        Assert.Equal("TestOrchestration", result.Orchestration);
-        Assert.Equal(new TopicId("testTopic"), result.Topic);
+        Assert.Same(context, result.Context);
+        Assert.Same(tcs.Task, result.Task);
     }
 
     [Fact]
     public async Task GetValueAsyncReturnsCompletedValueWhenTaskIsCompletedAsync()
     {
         // Arrange
-        OrchestrationContext context = new("TestOrchestration", new TopicId("testTopic"), null, null, NullLoggerFactory.Instance, CancellationToken.None);
-        TaskCompletionSource<string> tcs = new();
+        OrchestratingAgentContext context = new()
+        {
+            OrchestratingAgent = new MockOrchestratingAgent(),
+        };
+        TaskCompletionSource<AgentRunResponse> tcs = new();
         using CancellationTokenSource cancelSource = new();
-        await using OrchestrationResult<string> result = new(context, tcs, cancelSource, NullLogger.Instance);
-        string expectedValue = "Result value";
+        await using OrchestratingAgentResponse result = new(context, tcs.Task, cancelSource, NullLogger.Instance);
+        AgentRunResponse expectedValue = new();
 
         // Act
         tcs.SetResult(expectedValue);
-        string actualValue = await result.Task;
 
         // Assert
-        Assert.Equal(expectedValue, actualValue);
+        Assert.Same(expectedValue, await result);
     }
 
     [Fact]
     public async Task GetValueAsyncReturnsCompletedValueWhenCompletionIsDelayedAsync()
     {
         // Arrange
-        OrchestrationContext context = new("TestOrchestration", new TopicId("testTopic"), null, null, NullLoggerFactory.Instance, CancellationToken.None);
-        TaskCompletionSource<int> tcs = new();
+        OrchestratingAgentContext context = new()
+        {
+            OrchestratingAgent = new MockOrchestratingAgent(),
+        };
+
+        TaskCompletionSource<AgentRunResponse> tcs = new();
         using CancellationTokenSource cancelSource = new();
-        await using OrchestrationResult<int> result = new(context, tcs, cancelSource, NullLogger.Instance);
-        int expectedValue = 42;
+        await using OrchestratingAgentResponse result = new(context, tcs.Task, cancelSource, NullLogger.Instance);
+        AgentRunResponse expectedValue = new();
 
         // Act
         // Simulate delayed completion in a separate task
@@ -61,9 +74,26 @@ public class OrchestrationResultTests
             tcs.SetResult(expectedValue);
         });
 
-        int actualValue = await result.Task;
-
         // Assert
-        Assert.Equal(expectedValue, actualValue);
+        Assert.Same(expectedValue, await result);
+    }
+
+    private sealed class MockOrchestratingAgent() : OrchestratingAgent([new MockAgent()])
+    {
+        protected override Task<AgentRunResponse> RunCoreAsync(IReadOnlyCollection<ChatMessage> messages, OrchestratingAgentContext context, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        protected override Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, OrchestratingAgentContext context, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class MockAgent : AIAgent
+    {
+        public override AgentThread GetNewThread() =>
+            throw new NotSupportedException();
+        public override Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+        public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 }

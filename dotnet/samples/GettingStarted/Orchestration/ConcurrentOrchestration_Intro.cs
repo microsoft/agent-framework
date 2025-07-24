@@ -43,10 +43,9 @@ public class ConcurrentOrchestration_Intro(ITestOutputHelper output) : Orchestra
         // Run the orchestration
         string input = "What is temperature?";
         Console.WriteLine($"\n# INPUT: {input}\n");
-        OrchestrationResult<string[]> result = await orchestration.InvokeAsync(input);
+        AgentRunResponse result = await orchestration.RunAsync(input);
 
-        string[] output = await result;
-        Console.WriteLine($"\n# RESULT:\n{string.Join("\n\n", output.Select(text => $"{text}"))}");
+        Console.WriteLine($"\n# RESULT:\n{string.Join("\n\n", result.Messages.Select(r => $"{r.Text}"))}");
 
         this.DisplayHistory(monitor.History);
     }

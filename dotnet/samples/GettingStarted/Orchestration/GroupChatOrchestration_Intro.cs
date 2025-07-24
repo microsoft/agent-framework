@@ -68,8 +68,8 @@ public class GroupChatOrchestration_Intro(ITestOutputHelper output) : Orchestrat
 
         string input = "Create a slogon for a new eletric SUV that is affordable and fun to drive.";
         Console.WriteLine($"\n# INPUT: {input}\n");
-        OrchestrationResult<string> result = await orchestration.InvokeAsync(input);
-        Console.WriteLine($"\n# RESULT: {await result}");
+        AgentRunResponse result = await orchestration.RunAsync(input);
+        Console.WriteLine($"\n# RESULT: {result}");
 
         this.DisplayHistory(monitor.History);
     }

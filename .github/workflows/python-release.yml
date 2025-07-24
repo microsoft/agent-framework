@@ -1,0 +1,60 @@
+name: Python - Build Release Assets
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  UV_SEMVER: "0.8.x"
+
+jobs:
+  python-build-assets:
+    if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'python-')
+    name: Python Build Assets and add to Release
+    runs-on: ubuntu-latest
+    environment: "integration"
+    env:
+      UV_PYTHON: "3.13"
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_SEMVER }}
+          enable-cache: true
+          cache-suffix: ${{ runner.os }}-${{ env.UV_PYTHON }}
+          cache-dependency-glob: "**/uv.lock"
+      - name: Set environment variables
+        run: |
+          # Extract package name from tag (format: python-<package>-<version>)
+          TAG="${{ github.event.release.tag_name }}"
+          PACKAGE=$(echo "$TAG" | sed 's/^python-\([^-]*\)-.*$/\1/')
+
+          # Validate package exists
+          if [[ ! -d "packages/$PACKAGE" ]]; then
+            echo "Error: Package '$PACKAGE' not found in packages/ directory"
+            echo "Available packages: $(ls packages/)"
+            exit 1
+          fi
+
+          echo "PACKAGE=$PACKAGE" >> $GITHUB_ENV
+          echo "Building package: $PACKAGE"
+
+      - name: Check version
+        run: |
+          echo "Building and uploading Python package version: ${{ github.event.release.tag_name }}"
+          echo "Package directory: packages/${{ env.PACKAGE }}"
+      - name: Build the package
+        run: uv run poe --directory packages/${{ env.PACKAGE }} build
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            python/dist/*
