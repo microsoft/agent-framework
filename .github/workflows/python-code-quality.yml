@@ -7,6 +7,9 @@ on:
     paths:
       - "python/**"
 
+env:
+  UV_SEMVER: "0.8.x"
+
 jobs:
   pre-commit:
     name: Checks
@@ -29,7 +32,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
-          version: "0.7.x"
+          version: ${{ env.UV_SEMVER }}
           enable-cache: true
           cache-suffix: ${{ runner.os }}-${{ matrix.python-version }}
           cache-dependency-glob: "**/uv.lock"

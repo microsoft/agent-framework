@@ -155,14 +155,11 @@ async def main():
     response = await agent.run("What's the weather in Amsterdam and what are today's specials?")
     print(response)
 
-    """
-    Output:
-    The weather in Amsterdam is sunny with a high of 22°C. Today's specials include
-    Clam Chowder soup, Cobb Salad, and Chai Tea as the special drink.
-    """
+    # Output:
+    # The weather in Amsterdam is sunny with a high of 22°C. Today's specials include
+    # Clam Chowder soup, Cobb Salad, and Chai Tea as the special drink.
 
-if __name__ == "__main__":
-    asyncio.run(main())
+asyncio.run(main())
 ```
 
 You can explore additional agent samples [here](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/agents).
