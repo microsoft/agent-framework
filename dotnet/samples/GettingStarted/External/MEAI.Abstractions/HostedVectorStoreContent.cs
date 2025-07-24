@@ -6,13 +6,13 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Extensions.AI;
 
 /// <summary>
-/// Represents a file that is hosted by the AI service.
+/// Represents a vector store that is hosted by the AI service.
 /// </summary>
 /// <remarks>
-/// Unlike <see cref="DataContent"/> which contains the data for a file or blob, this class represents a file that is hosted
+/// Unlike <see cref="DataContent"/> which contains the data for a file or blob, this class represents a vector store that is hosted
 /// by the AI service and referenced by an identifier. Such identifiers are specific to the provider.
 /// </remarks>
-[DebuggerDisplay("FileId = {FileId}")]
+[DebuggerDisplay("VectorStoreId = {VectorStoreId}")]
 public sealed class HostedVectorStoreContent : AIContent
 {
     private string? _vectorStoreId;
