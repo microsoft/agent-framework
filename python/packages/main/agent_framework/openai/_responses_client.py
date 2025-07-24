@@ -1,9 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import sys
 from collections.abc import AsyncIterable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
 from datetime import datetime
 from itertools import chain
-from typing import Any, ClassVar, Literal, override
+from typing import Any, ClassVar, Literal
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore
+else:
+    from typing_extensions import override  # type: ignore[import]
 
 from openai import AsyncOpenAI, AsyncStream
 from openai.types.responses.response import Response as OpenAIResponse
