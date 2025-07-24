@@ -738,5 +738,19 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
             "logprobs": getattr(output, "logprobs", None),
         }
 
+    @classmethod
+    def from_dict(cls, settings: dict[str, Any]) -> "OpenAIResponsesClient":
+        """Initialize an Open AI service from a dictionary of settings.
+
+        Args:
+            settings: A dictionary of settings for the service.
+        """
+        return OpenAIResponsesClient(
+            ai_model_id=settings["ai_model_id"],
+            default_headers=settings.get("default_headers"),
+            api_key=settings.get("api_key"),
+            org_id=settings.get("org_id"),
+        )
+
 
 # endregion
