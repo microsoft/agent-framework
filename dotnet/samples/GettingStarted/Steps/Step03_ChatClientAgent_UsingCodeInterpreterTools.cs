@@ -26,12 +26,10 @@ public sealed class Step03_ChatClientAgent_UsingCodeInterpreterTools(ITestOutput
             Inputs = [new HostedFileContent(await UploadFileAsync("Resources/groceries.txt", provider))]
         };
 
-        var agentOptions = new ChatClientAgentOptions
-        {
-            Name = "HelpfulAssistant",
-            Instructions = "You are a helpful assistant.",
-            ChatOptions = new() { Tools = [codeInterpreterTool] }
-        };
+        var agentOptions = new ChatClientAgentOptions(
+            name: "HelpfulAssistant",
+            instructions: "You are a helpful assistant.",
+            tools: [codeInterpreterTool]);
 
         // Create the server-side agent Id when applicable (depending on the provider).
         agentOptions.Id = await base.AgentCreateAsync(provider, agentOptions);
