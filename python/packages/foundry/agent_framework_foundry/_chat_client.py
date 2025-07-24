@@ -484,21 +484,20 @@ class FoundryChatClient(ChatClientBase):
             run_options["temperature"] = chat_options.temperature
             run_options["parallel_tool_calls"] = chat_options.allow_multiple_tool_calls
 
-            if chat_options.tools is not None:
+            if chat_options.tool_choice is not None:
                 tool_definitions: list[MutableMapping[str, Any]] = []
-
-                for tool in chat_options.tools:
-                    if isinstance(tool, AIFunction):
-                        tool_definitions.append(ai_function_to_json_schema_spec(tool))
-                    elif isinstance(tool, HostedCodeInterpreterTool):
-                        tool_definitions.append(CodeInterpreterToolDefinition())
-                    elif isinstance(tool, MutableMapping):
-                        tool_definitions.append(tool)
+                if chat_options.tool_choice != "none" and chat_options.tools is not None:
+                    for tool in chat_options.tools:
+                        if isinstance(tool, AIFunction):
+                            tool_definitions.append(ai_function_to_json_schema_spec(tool))
+                        elif isinstance(tool, HostedCodeInterpreterTool):
+                            tool_definitions.append(CodeInterpreterToolDefinition())
+                        elif isinstance(tool, MutableMapping):
+                            tool_definitions.append(tool)
 
                 if len(tool_definitions) > 0:
                     run_options["tools"] = tool_definitions
 
-            if chat_options.tool_choice is not None:
                 if chat_options.tool_choice == "none":
                     run_options["tool_choice"] = AgentsToolChoiceOptionMode.NONE
                 elif chat_options.tool_choice == "auto":
