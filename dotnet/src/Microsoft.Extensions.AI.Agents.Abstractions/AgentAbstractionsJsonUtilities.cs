@@ -39,7 +39,7 @@ public static partial class AgentAbstractionsJsonUtilities
         // Copy the configuration from the source generated context.
         JsonSerializerOptions options = new(JsonContext.Default.Options);
 
-        // Chain with all supported types from MEAI.
+        // Chain with all supported types from Microsoft.Extensions.AI.Abstractions.
         options.TypeInfoResolverChain.Add(AIJsonUtilities.DefaultOptions.TypeInfoResolver!);
 
         options.MakeReadOnly();
@@ -54,7 +54,9 @@ public static partial class AgentAbstractionsJsonUtilities
     // Agent abstraction types
     [JsonSerializable(typeof(AgentRunOptions))]
     [JsonSerializable(typeof(AgentRunResponse))]
+    [JsonSerializable(typeof(AgentRunResponse[]))]
     [JsonSerializable(typeof(AgentRunResponseUpdate))]
+    [JsonSerializable(typeof(AgentRunResponseUpdate[]))]
     [JsonSerializable(typeof(AgentThread))]
 
     [ExcludeFromCodeCoverage]

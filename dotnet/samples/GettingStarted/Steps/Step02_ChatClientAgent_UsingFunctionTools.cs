@@ -14,49 +14,27 @@ public sealed class Step02_ChatClientAgent_UsingFunctionTools(ITestOutputHelper 
 {
     [Theory]
     [InlineData(ChatClientProviders.AzureOpenAI)]
+    [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
+    [InlineData(ChatClientProviders.OpenAIAssistant)]
     [InlineData(ChatClientProviders.OpenAIChatCompletion)]
-    public async Task RunningWithToolsBasic(ChatClientProviders provider)
-    {
-        // Creating a MenuTools instance to be used by the agent.
-        var menuTools = new MenuTools();
-
-        // Get the chat client to use for the agent.
-        var chatClient = base.GetChatClient(provider);
-
-        // Define the agent and add the GetSpecials tool.
-        var agent = new ChatClientAgent(
-            chatClient,
-            instructions: "Answer questions about the menu.",
-            tools: [AIFunctionFactory.Create(menuTools.GetSpecials)]);
-
-        // Respond to user input, invoking functions where appropriate.
-        Console.WriteLine(await agent.RunAsync("What is the special soup and its price?"));
-    }
-
-    [Theory]
-    [InlineData(ChatClientProviders.AzureOpenAI)]
-    [InlineData(ChatClientProviders.OpenAIChatCompletion)]
+    [InlineData(ChatClientProviders.OpenAIResponses)]
     public async Task RunningWithTools(ChatClientProviders provider)
     {
         // Creating a MenuTools instance to be used by the agent.
         var menuTools = new MenuTools();
 
         // Define the options for the chat client agent.
-        var agentOptions = new ChatClientAgentOptions
-        {
-            Name = "Host",
-            Instructions = "Answer questions about the menu.",
+        var agentOptions = new ChatClientAgentOptions(
+            name: "Host",
+            instructions: "Answer questions about the menu",
+            tools: [
+                AIFunctionFactory.Create(menuTools.GetMenu),
+                AIFunctionFactory.Create(menuTools.GetSpecials),
+                AIFunctionFactory.Create(menuTools.GetItemPrice)
+            ]);
 
-            // Provide the tools that are available to the agent
-            ChatOptions = new()
-            {
-                Tools = [
-                    AIFunctionFactory.Create(menuTools.GetMenu),
-                    AIFunctionFactory.Create(menuTools.GetSpecials),
-                    AIFunctionFactory.Create(menuTools.GetItemPrice)
-                ]
-            },
-        };
+        // Create the server-side agent Id when applicable (depending on the provider).
+        agentOptions.Id = await base.AgentCreateAsync(provider, agentOptions);
 
         // Get the chat client to use for the agent.
         using var chatClient = base.GetChatClient(provider, agentOptions);
@@ -79,32 +57,34 @@ public sealed class Step02_ChatClientAgent_UsingFunctionTools(ITestOutputHelper 
             var response = await agent.RunAsync(input, thread);
             this.WriteResponseOutput(response);
         }
+
+        // Clean up the server-side agent after use when applicable (depending on the provider).
+        await base.AgentCleanUpAsync(provider, agent, thread);
     }
 
     [Theory]
     [InlineData(ChatClientProviders.AzureOpenAI)]
+    [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
+    [InlineData(ChatClientProviders.OpenAIAssistant)]
     [InlineData(ChatClientProviders.OpenAIChatCompletion)]
+    [InlineData(ChatClientProviders.OpenAIResponses)]
     public async Task StreamingRunWithTools(ChatClientProviders provider)
     {
         // Creating a MenuTools instance to be used by the agent.
         var menuTools = new MenuTools();
 
         // Define the options for the chat client agent.
-        var agentOptions = new ChatClientAgentOptions
-        {
-            Name = "Host",
-            Instructions = "Answer questions about the menu.",
+        var agentOptions = new ChatClientAgentOptions(
+            name: "Host",
+            instructions: "Answer questions about the menu",
+            tools: [
+                AIFunctionFactory.Create(menuTools.GetMenu),
+                AIFunctionFactory.Create(menuTools.GetSpecials),
+                AIFunctionFactory.Create(menuTools.GetItemPrice)
+            ]);
 
-            // Provide the tools that are available to the agent
-            ChatOptions = new()
-            {
-                Tools = [
-                    AIFunctionFactory.Create(menuTools.GetMenu),
-                    AIFunctionFactory.Create(menuTools.GetSpecials),
-                    AIFunctionFactory.Create(menuTools.GetItemPrice)
-                ]
-            },
-        };
+        // Create the server-side agent Id when applicable (depending on the provider).
+        agentOptions.Id = await base.AgentCreateAsync(provider, agentOptions);
 
         // Get the chat client to use for the agent.
         using var chatClient = base.GetChatClient(provider, agentOptions);
@@ -129,6 +109,9 @@ public sealed class Step02_ChatClientAgent_UsingFunctionTools(ITestOutputHelper 
                 this.WriteAgentOutput(update);
             }
         }
+
+        // Clean up the server-side agent after use when applicable (depending on the provider).
+        await base.AgentCleanUpAsync(provider, agent, thread);
     }
 
     private sealed class MenuTools

@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI.Agents;
 
@@ -48,12 +49,12 @@ public class GroupChatOrchestrationTests
         GroupChatOrchestration orchestration = new(new RoundRobinGroupChatManager() { MaximumInvocationCount = mockAgents.Length }, mockAgents);
 
         const string InitialInput = "123";
-        OrchestrationResult<string> result = await orchestration.InvokeAsync(InitialInput);
+        AgentRunResponse result = await orchestration.RunAsync(InitialInput);
 
         // Assert
         Assert.NotNull(result);
 
         // Act
-        return await result.Task;
+        return result.Messages.Last().Text;
     }
 }

@@ -9,7 +9,7 @@ namespace Microsoft.Extensions.AI.Agents.Runtime;
 /// Represents a batch of read operations to be performed on an actor.
 /// </summary>
 /// <param name="operations">The collection of read operations to perform.</param>
-public class ActorReadOperationBatch(IReadOnlyList<ActorReadOperation> operations)
+public sealed class ActorReadOperationBatch(IReadOnlyList<ActorReadOperation> operations)
 {
     /// <summary>
     /// Gets the collection of read operations to perform.
