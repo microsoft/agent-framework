@@ -56,11 +56,12 @@ public class HandoffOrchestration_Intro(ITestOutputHelper output) : Orchestratio
         responses.Enqueue("Order ID 321");
         responses.Enqueue("Broken item");
         responses.Enqueue("No, bye");
+
         // Define the orchestration
         HandoffOrchestration orchestration =
-            new(OrchestrationHandoffs
+            new(Handoffs
                     .StartWith(triageAgent)
-                    .Add(triageAgent, statusAgent, returnAgent, refundAgent)
+                    .Add(triageAgent, [statusAgent, returnAgent, refundAgent])
                     .Add(statusAgent, triageAgent, "Transfer to this agent if the issue is not status related")
                     .Add(returnAgent, triageAgent, "Transfer to this agent if the issue is not return related")
                     .Add(refundAgent, triageAgent, "Transfer to this agent if the issue is not refund related"))
