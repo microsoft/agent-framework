@@ -6,36 +6,36 @@ using System.Text.Json.Serialization;
 namespace Microsoft.Extensions.AI.Agents.Runtime;
 
 /// <summary>
-/// Source-generated JSON type information for use by all Actor abstractions.
+/// Source-generated JSON type information for use by all agent runtime abstractions.
 /// </summary>
 [JsonSourceGenerationOptions(
     JsonSerializerDefaults.Web,
     UseStringEnumConverter = true,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     WriteIndented = false)]
+[JsonSerializable(typeof(ActorId))]
 [JsonSerializable(typeof(ActorMessage))]
-[JsonSerializable(typeof(ActorRequestMessage))]
-[JsonSerializable(typeof(ActorResponseMessage))]
-[JsonSerializable(typeof(ActorWriteOperation))]
-[JsonSerializable(typeof(SetValueOperation))]
-[JsonSerializable(typeof(RemoveKeyOperation))]
-[JsonSerializable(typeof(SendRequestOperation))]
-[JsonSerializable(typeof(UpdateRequestOperation))]
 [JsonSerializable(typeof(ActorReadOperation))]
-[JsonSerializable(typeof(ListKeysOperation))]
-[JsonSerializable(typeof(GetValueOperation))]
+[JsonSerializable(typeof(ActorReadOperationBatch))]
 [JsonSerializable(typeof(ActorReadResult))]
-[JsonSerializable(typeof(ListKeysResult))]
-[JsonSerializable(typeof(GetValueResult))]
 [JsonSerializable(typeof(ActorRequest))]
+[JsonSerializable(typeof(ActorRequestMessage))]
 [JsonSerializable(typeof(ActorRequestUpdate))]
 [JsonSerializable(typeof(ActorResponse))]
-[JsonSerializable(typeof(ActorId))]
-[JsonSerializable(typeof(RequestStatus))]
-[JsonSerializable(typeof(ActorWriteOperationBatch))]
-[JsonSerializable(typeof(ActorReadOperationBatch))]
-[JsonSerializable(typeof(ReadResponse))]
-[JsonSerializable(typeof(WriteResponse))]
+[JsonSerializable(typeof(ActorResponseMessage))]
 [JsonSerializable(typeof(ActorType))]
+[JsonSerializable(typeof(ActorWriteOperation))]
+[JsonSerializable(typeof(ActorWriteOperationBatch))]
+[JsonSerializable(typeof(GetValueOperation))]
+[JsonSerializable(typeof(GetValueResult))]
 [JsonSerializable(typeof(JsonElement))]
+[JsonSerializable(typeof(ListKeysOperation))]
+[JsonSerializable(typeof(ListKeysResult))]
+[JsonSerializable(typeof(ReadResponse))]
+[JsonSerializable(typeof(RemoveKeyOperation))]
+[JsonSerializable(typeof(RequestStatus))]
+[JsonSerializable(typeof(SendRequestOperation))]
+[JsonSerializable(typeof(SetValueOperation))]
+[JsonSerializable(typeof(UpdateRequestOperation))]
+[JsonSerializable(typeof(WriteResponse))]
 internal sealed partial class ActorJsonContext : JsonSerializerContext;

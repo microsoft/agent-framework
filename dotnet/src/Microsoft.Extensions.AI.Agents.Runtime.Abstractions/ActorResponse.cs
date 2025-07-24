@@ -8,7 +8,7 @@ namespace Microsoft.Extensions.AI.Agents.Runtime;
 /// <summary>
 /// Represents a response handle for an actor request, providing access to the result and status updates.
 /// </summary>
-public class ActorResponse
+public sealed class ActorResponse
 {
     /// <summary>
     /// Gets the identifier of the actor that is processing the request.

@@ -384,7 +384,7 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
                 {
                     ActorId = context.ActorId,
                     MessageId = entry.Request.MessageId,
-                    Data = JsonSerializer.SerializeToElement($"Error: {exception.Message}", context._runtime.JsonSerializerOptions.GetTypeInfo<string>(ActorRuntimeJsonContext.Default)),
+                    Data = JsonSerializer.SerializeToElement($"Error: {exception.Message}", ActorRuntimeJsonContext.Default.String),
                     Status = RequestStatus.Failed,
                 };
             }

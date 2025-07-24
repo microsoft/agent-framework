@@ -10,7 +10,7 @@ namespace Microsoft.Extensions.AI.Agents.Runtime;
 /// </summary>
 /// <param name="eTag">The actor's last-known ETag value.</param>
 /// <param name="results">The ordered collection of results.</param>
-public class ReadResponse(string eTag, IReadOnlyList<ActorReadResult> results)
+public sealed class ReadResponse(string eTag, IReadOnlyList<ActorReadResult> results)
 {
     /// <summary>
     /// Gets the version of the state update.

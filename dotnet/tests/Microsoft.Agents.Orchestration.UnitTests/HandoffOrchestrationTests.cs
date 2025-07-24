@@ -92,13 +92,13 @@ public sealed class HandoffOrchestrationTests : IDisposable
 
         // Act
         const string InitialInput = "123";
-        OrchestrationResult<string> result = await orchestration.InvokeAsync(InitialInput);
+        AgentRunResponse result = await orchestration.RunAsync(InitialInput);
 
         // Assert
         Assert.NotNull(result);
 
         // Act
-        return await result.Task;
+        return result.Text;
     }
 
     private ChatClientAgent CreateMockAgent(string name, string description, params string[] responses)

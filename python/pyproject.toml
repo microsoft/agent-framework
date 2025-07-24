@@ -11,6 +11,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "uv>=0.8.2,<0.9.0",
     "pre-commit >= 3.7",
     "ruff>=0.11.8",
     "pytest>=8.4.1",
@@ -42,8 +43,6 @@ dev = [
     "diskcache",
     "redis",
     "sphinx-autobuild",
-    "tox>=4.27.0",
-    "tox-uv>=1.26.1",
 ]
 
 [tool.uv]
@@ -152,7 +151,7 @@ exclude_dirs = ["tests", "./run_tasks_in_packages_if_exists.py", "./check_md_cod
 executor.type = "uv"
 
 [tool.poe.tasks]
-markdown-code-lint = """python check_md_code_blocks.py ../README.md ./docs/agent-framework/**/*.md README.md"""
+markdown-code-lint = """python check_md_code_blocks.py ./docs/agent-framework/**/*.md README.md"""
 samples-code-check = """pyright ./samples"""
 docs-clean = "rm -rf docs/build"
 docs-build = "sphinx-build docs/agent-framework docs/build"
@@ -173,7 +172,7 @@ check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint", "sample
 pre-commit-check = ["fmt", "lint", "pyright", "markdown-code-lint", "samples-code-check"]
 
 [tool.poe.tasks.venv]
-cmd = "uv venv --python $python"
+cmd = "uv venv --clear --python $python"
 args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
 [tool.poe.tasks.setup]
 sequence = [
@@ -204,4 +203,3 @@ deps = [
     "-e packages/main"
 ]
 commands = [["pytest", { replace = "posargs", default = ["packages/main/tests"], extend = true }]]
-
