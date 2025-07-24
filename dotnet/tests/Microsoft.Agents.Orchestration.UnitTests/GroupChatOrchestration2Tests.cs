@@ -9,10 +9,10 @@ namespace Microsoft.Agents.Orchestration.UnitTest;
 /// <summary>
 /// Tests for the <see cref="GroupChatOrchestration"/> class.
 /// </summary>
-public class GroupChatOrchestrationTests
+public class GroupChatOrchestration2Tests
 {
     [Fact]
-    public async Task GroupChatOrchestrationWithSingleAgentAsync()
+    public async Task GroupChatOrchestration2WithSingleAgentAsync()
     {
         // Arrange
         MockAgent mockAgent1 = MockAgent.CreateWithResponse(2, "xyz");
@@ -26,7 +26,7 @@ public class GroupChatOrchestrationTests
     }
 
     [Fact]
-    public async Task GroupChatOrchestrationWithMultipleAgentsAsync()
+    public async Task GroupChatOrchestration2WithMultipleAgentsAsync()
     {
         // Arrange
         MockAgent mockAgent1 = MockAgent.CreateWithResponse(1, "abc");
@@ -54,7 +54,7 @@ public class GroupChatOrchestrationTests
         // Assert
         Assert.NotNull(result);
 
-        // Act
-        return result.Messages.Last().Text;
+        // Return the text from the last message
+        return result.Messages.LastOrDefault()?.Text ?? string.Empty;
     }
 }

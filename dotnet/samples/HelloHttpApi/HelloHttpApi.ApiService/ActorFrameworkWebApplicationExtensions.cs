@@ -7,6 +7,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents.Runtime;
 
+namespace HelloHttpApi.ApiService;
+
 internal static class ActorFrameworkWebApplicationExtensions
 {
     public static void MapAgents(this WebApplication app)

@@ -30,10 +30,7 @@ public abstract class AIAgent
     /// <summary>
     /// Gets a display name for the agent, which is either the <see cref="Name"/> or <see cref="Id"/> if the name is not set.
     /// </summary>
-    public virtual string DisplayName
-    {
-        get => this.Name ?? this.Id;
-    }
+    public virtual string DisplayName => this.Name ?? this.Id;
 
     /// <summary>
     /// Gets the description of the agent (optional).

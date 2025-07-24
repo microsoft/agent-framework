@@ -10,7 +10,7 @@ namespace Microsoft.Extensions.AI.Agents.Runtime;
 /// <summary>
 /// Represents an update to an actor request's status and data.
 /// </summary>
-public class ActorRequestUpdate(RequestStatus status, JsonElement data)
+public sealed class ActorRequestUpdate(RequestStatus status, JsonElement data)
 {
     /// <summary>
     /// Gets the updated status of the request.

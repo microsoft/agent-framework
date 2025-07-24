@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Agents.Orchestration;
 using Microsoft.Extensions.AI;
@@ -44,7 +45,7 @@ public class HandoffOrchestration_With_StructuredInput(ITestOutputHelper output)
         OrchestrationMonitor monitor = new();
 
         // Define the orchestration
-        HandoffOrchestration<GithubIssue, string> orchestration =
+        HandoffOrchestration orchestration =
             new(OrchestrationHandoffs
                     .StartWith(triageAgent)
                     .Add(triageAgent, dotnetAgent, pythonAgent))
@@ -80,8 +81,8 @@ public class HandoffOrchestration_With_StructuredInput(ITestOutputHelper output)
 
         // Run the orchestration
         Console.WriteLine($"\n# INPUT:\n{input.Id}: {input.Title}\n");
-        OrchestrationResult<string> result = await orchestration.InvokeAsync(input);
-        Console.WriteLine($"\n# RESULT: {await result}");
+        AgentRunResponse result = await orchestration.RunAsync(JsonSerializer.Serialize(input));
+        Console.WriteLine($"\n# RESULT: {result}");
         Console.WriteLine($"\n# LABELS: {string.Join(",", githubPlugin.Labels["12345"])}\n");
     }
 

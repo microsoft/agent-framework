@@ -8,7 +8,7 @@ namespace Microsoft.Extensions.AI.Agents.Runtime;
 /// <summary>
 /// Represents a request to be sent to an actor.
 /// </summary>
-public class ActorRequest(ActorId actorId, string messageId, string method, JsonElement @params)
+public sealed class ActorRequest(ActorId actorId, string messageId, string method, JsonElement @params)
 {
     /// <summary>
     /// Gets or sets the identifier of the target actor.

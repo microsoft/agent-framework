@@ -48,12 +48,12 @@ public class SequentialOrchestrationTests
         SequentialOrchestration orchestration = new(mockAgents);
 
         const string InitialInput = "123";
-        OrchestrationResult<string> result = await orchestration.InvokeAsync(InitialInput);
+        AgentRunResponse result = await orchestration.RunAsync(InitialInput);
 
         // Assert
         Assert.NotNull(result);
 
         // Act
-        return await result.Task;
+        return result.Text;
     }
 }
