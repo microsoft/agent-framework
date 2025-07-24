@@ -18,36 +18,6 @@ public sealed class Step02_ChatClientAgent_UsingFunctionTools(ITestOutputHelper 
     [InlineData(ChatClientProviders.OpenAIAssistant)]
     [InlineData(ChatClientProviders.OpenAIChatCompletion)]
     [InlineData(ChatClientProviders.OpenAIResponses)]
-    public async Task RunningWithToolsBasic(ChatClientProviders provider)
-    {
-        // Creating a MenuTools instance to be used by the agent.
-        var menuTools = new MenuTools();
-
-        // Create the server-side agent Id when applicable (depending on the provider).
-        var agentOptions = new ChatClientAgentOptions(
-            name: "Host",
-            instructions: "Answer questions about the menu",
-            tools: [AIFunctionFactory.Create(menuTools.GetSpecials)]);
-
-        // Create the server-side agent Id when applicable (depending on the provider).
-        agentOptions.Id = await base.AgentCreateAsync(provider, agentOptions);
-
-        // Get the chat client to use for the agent.
-        using var chatClient = base.GetChatClient(provider);
-
-        // Define the agent and add the GetSpecials tool.
-        var agent = new ChatClientAgent(chatClient, agentOptions);
-
-        // Respond to user input, invoking functions where appropriate.
-        Console.WriteLine(await agent.RunAsync("What is the special soup and its price?"));
-    }
-
-    [Theory]
-    [InlineData(ChatClientProviders.AzureOpenAI)]
-    [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
-    [InlineData(ChatClientProviders.OpenAIAssistant)]
-    [InlineData(ChatClientProviders.OpenAIChatCompletion)]
-    [InlineData(ChatClientProviders.OpenAIResponses)]
     public async Task RunningWithTools(ChatClientProviders provider)
     {
         // Creating a MenuTools instance to be used by the agent.
