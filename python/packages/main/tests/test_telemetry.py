@@ -9,8 +9,15 @@ from unittest.mock import Mock, patch
 import pytest
 from opentelemetry.trace import StatusCode
 
-from agent_framework import ChatFinishReason, ChatMessage, ChatOptions, ChatResponse, ChatRole, UsageDetails
-from agent_framework._types import ChatResponseUpdate
+from agent_framework import (
+    ChatFinishReason,
+    ChatMessage,
+    ChatOptions,
+    ChatResponse,
+    ChatResponseUpdate,
+    ChatRole,
+    UsageDetails,
+)
 from agent_framework.telemetry import (
     AGENT_FRAMEWORK_USER_AGENT,
     MODEL_DIAGNOSTICS_SETTINGS,

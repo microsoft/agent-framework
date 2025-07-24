@@ -35,19 +35,13 @@ from ._shared import OpenAIConfigBase, OpenAIHandler, OpenAIModelTypes, OpenAISe
 __all__ = ["OpenAIChatClient"]
 
 
-# region OpenAIChatClientBase
-
-
-# Implements agent_framework.ChatClient protocol, through ChatClientBase
+# region Base Client
 @use_telemetry
 @use_tool_calling
 class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
     """OpenAI Chat completion class."""
 
     MODEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride]
-
-    # region Overriding base class methods
-    # most of the methods are overridden from the ChatClientBase class, otherwise it is mentioned
 
     async def _inner_get_response(
         self,
@@ -103,8 +97,6 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
                     self._create_streaming_chat_message_content(chunk, choice, chunk_metadata)
                     for choice in chunk.choices
                 )
-
-    # endregion
 
     # region content creation
 
@@ -224,7 +216,7 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
         # Flatten the list of lists into a single list
         return list(chain.from_iterable(list_of_list))
 
-    # endregion
+    # region Parsers
 
     def _openai_chat_message_parser(self, message: ChatMessage) -> list[dict[str, Any]]:
         """Parse a chat message into the openai format."""
@@ -281,9 +273,7 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
         return str(self.client.base_url) if self.client else None
 
 
-# endregion
-
-# region OpenAIChatClient
+# region Public client
 
 
 class OpenAIChatClient(OpenAIConfigBase, OpenAIChatClientBase):
