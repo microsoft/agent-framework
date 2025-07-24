@@ -175,7 +175,7 @@ class HostedCodeInterpreterTool(AITool):
         Args:
             name: The name of the tool. Defaults to "code_interpreter".
             description: A description of the tool.
-            additional_properties: Additional properties associated with the tool.
+            additional_properties: Additional properties associated with the tool, specific to the service used.
         """
         self.name = name
         self.description = description
