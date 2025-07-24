@@ -15,7 +15,7 @@ namespace Microsoft.Extensions.AI;
 [DebuggerDisplay("FileId = {FileId}")]
 public sealed class HostedFileContent : AIContent
 {
-    private string? _fileId;
+    private string _fileId;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="HostedFileContent"/> class.
@@ -35,7 +35,7 @@ public sealed class HostedFileContent : AIContent
     /// <exception cref="ArgumentException"><paramref name="value"/> is empty or composed entirely of whitespace.</exception>
     public string FileId
     {
-        get => _fileId ?? string.Empty;
+        get => _fileId;
         set => _fileId = Throw.IfNullOrWhitespace(value);
     }
 }
