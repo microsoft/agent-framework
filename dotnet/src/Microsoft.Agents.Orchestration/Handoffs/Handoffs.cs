@@ -1,155 +1,187 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.Collections;
 using System.Collections.Generic;
 using Microsoft.Extensions.AI.Agents;
-using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Shared.Diagnostics;
+
+#pragma warning disable CA1710 // Identifiers should have correct suffix
 
 namespace Microsoft.Agents.Orchestration;
 
 /// <summary>
-/// Defines the handoff relationships for a given agent.
-/// Maps target agent names/IDs to handoff descriptions.
-/// </summary>
-public sealed class AgentHandoffs : Dictionary<string, string>
-{
-    /// <summary>
-    /// Initializes a new instance of the <see cref="AgentHandoffs"/> class with no handoff relationships.
-    /// </summary>
-    public AgentHandoffs() { }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="AgentHandoffs"/> class with the specified handoff relationships.
-    /// </summary>
-    /// <param name="handoffs">A dictionary mapping target agent names/IDs to handoff descriptions.</param>
-    public AgentHandoffs(Dictionary<string, string> handoffs) : base(handoffs) { }
-}
-
-/// <summary>
 /// Defines the orchestration handoff relationships for all agents in the system.
-/// Maps source agent names/IDs to their <see cref="AgentHandoffs"/>.
 /// </summary>
-public sealed class OrchestrationHandoffs : Dictionary<string, AgentHandoffs>
+public sealed class Handoffs :
+    IReadOnlyDictionary<AIAgent, IEnumerable<Handoffs.HandoffTarget>>
 {
     /// <summary>
-    /// Initializes a new instance of the <see cref="OrchestrationHandoffs"/> class with no handoff relationships.
+    /// Initializes a new instance of the <see cref="Orchestration.Handoffs"/> class with no handoff relationships.
     /// </summary>
-    /// <param name="firstAgent">The first agent to be invoked (prior to any handoff).</param>
-    public OrchestrationHandoffs(AIAgent firstAgent)
-        : this(firstAgent.DisplayName)
+    /// <param name="initialAgent">The first agent to be invoked (prior to any handoff).</param>
+    private Handoffs(AIAgent initialAgent)
     {
-        this.Agents.Add(firstAgent);
+        Throw.IfNull(initialAgent);
+
+        this.Agents.Add(initialAgent);
+        this.InitialAgent = initialAgent;
     }
 
-    /// <summary>
-    /// Initializes a new instance of the <see cref="OrchestrationHandoffs"/> class with no handoff relationships.
-    /// </summary>
-    /// <param name="firstAgentName">The name of the first agent to be invoked (prior to any handoff).</param>
-    public OrchestrationHandoffs(string firstAgentName)
-    {
-        Throw.IfNullOrWhitespace(firstAgentName, nameof(firstAgentName));
-        this.FirstAgentName = firstAgentName;
-    }
+    /// <summary>Gets the initial agent to which the first messages will be sent.</summary>
+    public AIAgent InitialAgent { get; }
+
+    /// <summary>Gets a collection of all handoff targets, indexed by the source of the handoffs.</summary>
+    internal Dictionary<AIAgent, HashSet<HandoffTarget>> Targets { get; } = [];
+
+    /// <summary>Gets a set of all agents involved in the handoffs, sources and targets.</summary>
+    internal HashSet<AIAgent> Agents { get; } = [];
 
     /// <summary>
-    /// The name of the first agent to be invoked (prior to any handoff).
+    /// Creates a new collection of handoffs that start with the specified agent.
     /// </summary>
-    public string FirstAgentName { get; }
+    /// <param name="initialAgent">The initial agent.</param>
+    /// <returns>The new <see cref="Orchestration.Handoffs"/> instance.</returns>
+    public static Handoffs StartWith(AIAgent initialAgent) => new(initialAgent);
+
+    /// <summary>Creates a new <see cref="HandoffOrchestration"/> from the described handoffs.</summary>
+    /// <param name="name">An optional name for this orchestrating agent.</param>
+    /// <returns>The new <see cref="HandoffOrchestration"/>.</returns>
+    public HandoffOrchestration Build(string? name = null) => new(this, name);
 
     /// <summary>
     /// Adds handoff relationships from a source agent to one or more target agents.
-    /// Each target agent's name or ID is mapped to its description.
-    /// </summary>
-    /// <param name="source">The source agent.</param>
-    /// <returns>The updated <see cref="OrchestrationHandoffs"/> instance.</returns>
-    public static OrchestrationHandoffs StartWith(AIAgent source) => new(source);
-
-    /// <summary>
-    /// Adds handoff relationships from a source agent to one or more target agents.
-    /// Each target agent's name or ID is mapped to its description.
     /// </summary>
     /// <param name="source">The source agent.</param>
     /// <param name="targets">The target agents to add as handoff targets for the source agent.</param>
-    /// <returns>The updated <see cref="OrchestrationHandoffs"/> instance.</returns>
-    public OrchestrationHandoffs Add(AIAgent source, params AIAgent[] targets)
+    /// <returns>The updated <see cref="Orchestration.Handoffs"/> instance.</returns>
+    /// <remarks>The handoff reason for each target is derived from its description or name.</remarks>
+    public Handoffs Add(AIAgent source, AIAgent[] targets)
     {
-        string key = source.DisplayName;
-
-        AgentHandoffs agentHandoffs = this.GetAgentHandoffs(key);
-
-        foreach (AIAgent target in targets)
+        Throw.IfNull(source);
+        Throw.IfNull(targets);
+        if (Array.IndexOf(targets, null) >= 0)
         {
-            if (string.IsNullOrWhiteSpace(target.Description) && string.IsNullOrWhiteSpace(target.Name))
-            {
-                Throw.InvalidOperationException($"The provided target agent with Id '{target.Id}' has no description or name, and no handoff description has been provided. At least one of these are required to register a handoff so that the appropriate target agent can be chosen.");
-            }
-
-            this.Agents.Add(target);
-            agentHandoffs[target.DisplayName] = target.Description ?? target.Name!;
+            Throw.ArgumentNullException(nameof(targets), "One or more target agents are null.");
         }
 
-        this.Agents.Add(source);
+        foreach (var target in targets)
+        {
+            this.Add(source, target);
+        }
 
         return this;
     }
 
     /// <summary>
-    /// Adds a handoff relationship from a source agent to a target agent with a custom description.
+    /// Adds a handoff relationship from a source agent to a target agent with a custom handoff reason.
     /// </summary>
     /// <param name="source">The source agent.</param>
     /// <param name="target">The target agent.</param>
-    /// <param name="description">The handoff description.</param>
-    /// <returns>The updated <see cref="OrchestrationHandoffs"/> instance.</returns>
-    public OrchestrationHandoffs Add(AIAgent source, AIAgent target, string description)
+    /// <param name="handoffReason">The reason the <paramref name="source"/> should hand off to the <paramref name="target"/>.</param>
+    /// <returns>The updated <see cref="Orchestration.Handoffs"/> instance.</returns>
+    public Handoffs Add(AIAgent source, AIAgent target, string? handoffReason = null)
     {
+        Throw.IfNull(source);
+        Throw.IfNull(target);
+
         this.Agents.Add(source);
         this.Agents.Add(target);
-        return this.Add(source.DisplayName, target.DisplayName, description);
-    }
 
-    /// <summary>
-    /// Adds a handoff relationship from a source agent to a target agent name/ID with a custom description.
-    /// </summary>
-    /// <param name="source">The source agent.</param>
-    /// <param name="targetName">The target agent's name or ID.</param>
-    /// <param name="description">The handoff description.</param>
-    /// <returns>The updated <see cref="OrchestrationHandoffs"/> instance.</returns>
-    public OrchestrationHandoffs Add(AIAgent source, string targetName, string description)
-    {
-        this.Agents.Add(source);
-        return this.Add(source.DisplayName, targetName, description);
-    }
+        if (!this.Targets.TryGetValue(source, out var handoffs))
+        {
+            this.Targets[source] = handoffs = [];
+        }
 
-    /// <summary>
-    /// Adds a handoff relationship from a source agent name/ID to a target agent name/ID with a custom description.
-    /// </summary>
-    /// <param name="sourceName">The source agent's name or ID.</param>
-    /// <param name="targetName">The target agent's name or ID.</param>
-    /// <param name="description">The handoff description.</param>
-    /// <returns>The updated <see cref="OrchestrationHandoffs"/> instance.</returns>
-    public OrchestrationHandoffs Add(string sourceName, string targetName, string description)
-    {
-        AgentHandoffs agentHandoffs = this.GetAgentHandoffs(sourceName);
-        agentHandoffs[targetName] = description;
+        if (!handoffs.Add(new(target, handoffReason)))
+        {
+            Throw.InvalidOperationException($"A handoff from agent '{source.DisplayName}' to agent '{target.DisplayName}' has already been registered.");
+        }
 
         return this;
     }
 
-    private AgentHandoffs GetAgentHandoffs(string key)
-    {
-        if (!this.TryGetValue(key, out AgentHandoffs? agentHandoffs))
-        {
-            this[key] = agentHandoffs = [];
-        }
+    /// <inheritdoc />
+    IEnumerable<HandoffTarget> IReadOnlyDictionary<AIAgent, IEnumerable<HandoffTarget>>.this[AIAgent key] => this.Targets[key];
 
-        return agentHandoffs;
+    /// <inheritdoc />
+    IEnumerable<AIAgent> IReadOnlyDictionary<AIAgent, IEnumerable<HandoffTarget>>.Keys => this.Targets.Keys;
+
+    /// <inheritdoc />
+    IEnumerable<IEnumerable<HandoffTarget>> IReadOnlyDictionary<AIAgent, IEnumerable<HandoffTarget>>.Values => this.Targets.Values;
+
+    /// <inheritdoc />
+    int IReadOnlyCollection<KeyValuePair<AIAgent, IEnumerable<HandoffTarget>>>.Count => this.Targets.Count;
+
+    /// <inheritdoc />
+    bool IReadOnlyDictionary<AIAgent, IEnumerable<HandoffTarget>>.ContainsKey(AIAgent key) => this.Targets.ContainsKey(key);
+
+    /// <inheritdoc />
+    IEnumerator<KeyValuePair<AIAgent, IEnumerable<HandoffTarget>>> IEnumerable<KeyValuePair<AIAgent, IEnumerable<HandoffTarget>>>.GetEnumerator()
+    {
+        foreach (var kvp in this.Targets)
+        {
+            yield return new(kvp.Key, kvp.Value);
+        }
     }
 
-    internal HashSet<AIAgent> Agents { get; } = [];
-}
+    /// <inheritdoc />
+    IEnumerator IEnumerable.GetEnumerator() =>
+        ((IReadOnlyDictionary<AIAgent, IEnumerable<Handoffs.HandoffTarget>>)this).GetEnumerator();
 
-/// <summary>
-/// Handoff relationships post-processed into a name-based lookup table that includes the agent type and handoff description.
-/// Maps agent names/IDs to a tuple of <see cref="ActorType"/> and handoff description.
-/// </summary>
-internal sealed class HandoffLookup : Dictionary<string, (ActorType AgentType, string Description)>;
+    /// <inheritdoc />
+    bool IReadOnlyDictionary<AIAgent, IEnumerable<HandoffTarget>>.TryGetValue(AIAgent key, out IEnumerable<HandoffTarget> value)
+    {
+        if (this.Targets.TryGetValue(key, out var handoffs))
+        {
+            value = handoffs;
+            return true;
+        }
+
+        value = [];
+        return false;
+    }
+
+    /// <summary>Describes a handoff to a specific target <see cref="AIAgent"/>.</summary>
+    public readonly struct HandoffTarget : IEquatable<HandoffTarget>
+    {
+        internal HandoffTarget(AIAgent target, string? reason = null)
+        {
+            this.Target = Throw.IfNull(target);
+
+            if (string.IsNullOrWhiteSpace(reason))
+            {
+                reason = target.Description ?? target.Name;
+                if (string.IsNullOrWhiteSpace(reason))
+                {
+                    Throw.InvalidOperationException(
+                        $"The provided target agent with Id '{target.Id}' has no description or name, and no handoff description has been provided. " +
+                        "At least one of these are required to register a handoff so that the appropriate target agent can be chosen.");
+                }
+            }
+
+            this.Reason = reason!;
+        }
+
+        /// <summary>Gets the target <see cref="AIAgent"/> of the handoff.</summary>
+        public AIAgent Target { get; }
+
+        /// <summary>Gets the reason a handoff to <see cref="Target"/> should be performed.</summary>
+        public string Reason { get; }
+
+        /// <inheritdoc />
+        public bool Equals(HandoffTarget other) => this.Target == other.Target;
+
+        /// <inheritdoc />
+        public override bool Equals(object? obj) => obj is HandoffTarget other && this.Equals(other);
+
+        /// <inheritdoc />
+        public override int GetHashCode() => this.Target.GetHashCode();
+
+        /// <inheritdoc />
+        public static bool operator ==(HandoffTarget left, HandoffTarget right) => left.Equals(right);
+
+        /// <inheritdoc />
+        public static bool operator !=(HandoffTarget left, HandoffTarget right) => !left.Equals(right);
+    }
+}
