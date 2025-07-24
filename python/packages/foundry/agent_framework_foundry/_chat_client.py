@@ -2,6 +2,7 @@
 
 import contextlib
 import json
+import sys
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence
 from typing import Any, ClassVar
 
@@ -19,6 +20,7 @@ from agent_framework import (
     DataContent,
     FunctionCallContent,
     FunctionResultContent,
+    HostedCodeInterpreterTool,
     TextContent,
     UriContent,
     UsageContent,
@@ -34,6 +36,7 @@ from azure.ai.agents.models import (
     AgentStreamEvent,
     AsyncAgentEventHandler,
     AsyncAgentRunStream,
+    CodeInterpreterToolDefinition,
     FunctionName,
     ListSortOrder,
     MessageDeltaChunk,
@@ -55,6 +58,11 @@ from azure.ai.agents.models import (
 from azure.ai.projects.aio import AIProjectClient
 from azure.core.credentials_async import AsyncTokenCredential
 from pydantic import Field, PrivateAttr, ValidationError
+
+if sys.version_info >= (3, 11):
+    from typing import Self  # pragma: no cover
+else:
+    from typing_extensions import Self  # pragma: no cover
 
 
 class FoundrySettings(AFBaseSettings):
@@ -85,9 +93,12 @@ class FoundrySettings(AFBaseSettings):
 @use_tool_calling
 class FoundryChatClient(ChatClientBase):
     client: AIProjectClient = Field(...)
+    credential: AsyncTokenCredential | None = Field(...)
     agent_id: str | None = Field(default=None)
     thread_id: str | None = Field(default=None)
     _should_delete_agent: bool = PrivateAttr(default=False)  # Track whether we should delete the agent
+    _should_close_client: bool = PrivateAttr(default=False)  # Track whether we should close client connection
+    _should_close_credential: bool = PrivateAttr(default=False)  # Track whether we should close credential
     _foundry_settings: FoundrySettings = PrivateAttr()
 
     def __init__(
@@ -133,6 +144,8 @@ class FoundryChatClient(ChatClientBase):
             raise ServiceInitializationError("Failed to create Foundry settings.", ex) from ex
 
         # If no client is provided, create one
+        should_close_client = False
+        should_close_credential = False
         if client is None:
             if not foundry_settings.project_endpoint:
                 raise ServiceInitializationError("Project endpoint is required when client is not provided.")
@@ -145,20 +158,25 @@ class FoundryChatClient(ChatClientBase):
                 from azure.identity.aio import DefaultAzureCredential
 
                 credential = DefaultAzureCredential()
+                should_close_credential = True
 
             client = AIProjectClient(endpoint=foundry_settings.project_endpoint, credential=credential)
+            should_close_client = True
 
         super().__init__(
             client=client,  # type: ignore[reportCallIssue]
+            credential=credential,  # type: ignore[reportCallIssue]
             agent_id=agent_id,  # type: ignore[reportCallIssue]
             thread_id=thread_id,  # type: ignore[reportCallIssue]
             **kwargs,
         )
 
         self._should_delete_agent = False
+        self._should_close_client = should_close_client
+        self._should_close_credential = should_close_credential
         self._foundry_settings = foundry_settings
 
-    async def __aenter__(self) -> "FoundryChatClient":
+    async def __aenter__(self) -> "Self":
         """Async context manager entry."""
         return self
 
@@ -169,6 +187,8 @@ class FoundryChatClient(ChatClientBase):
     async def close(self) -> None:
         """Close the client and clean up any agents we created."""
         await self._cleanup_agent_if_needed()
+        await self._close_client_if_needed()
+        await self._close_credential_if_needed()
 
     @classmethod
     def from_dict(cls, settings: dict[str, Any]) -> "FoundryChatClient":
@@ -432,6 +452,16 @@ class FoundryChatClient(ChatClientBase):
 
         return contents
 
+    async def _close_credential_if_needed(self) -> None:
+        """Close credential if we created it."""
+        if self._should_close_credential and self.credential is not None:
+            await self.credential.close()
+
+    async def _close_client_if_needed(self) -> None:
+        """Close client session if we created it."""
+        if self._should_close_client:
+            await self.client.close()
+
     async def _cleanup_agent_if_needed(self) -> None:
         """Clean up the agent if we created it."""
         if self._should_delete_agent and self.agent_id is not None:
@@ -454,20 +484,20 @@ class FoundryChatClient(ChatClientBase):
             run_options["temperature"] = chat_options.temperature
             run_options["parallel_tool_calls"] = chat_options.allow_multiple_tool_calls
 
-            if chat_options.tools is not None:
-                # TODO (eavanvalkenburg): replace with _prepare_tools_and_tool_choice overload
+            if chat_options.tool_choice is not None:
                 tool_definitions: list[MutableMapping[str, Any]] = []
-
-                for tool in chat_options.tools:
-                    if isinstance(tool, AIFunction):
-                        tool_definitions.append(ai_function_to_json_schema_spec(tool))
-                    else:
-                        tool_definitions.append(tool)  # type: ignore
+                if chat_options.tool_choice != "none" and chat_options.tools is not None:
+                    for tool in chat_options.tools:
+                        if isinstance(tool, AIFunction):
+                            tool_definitions.append(ai_function_to_json_schema_spec(tool))
+                        elif isinstance(tool, HostedCodeInterpreterTool):
+                            tool_definitions.append(CodeInterpreterToolDefinition())
+                        elif isinstance(tool, MutableMapping):
+                            tool_definitions.append(tool)
 
                 if len(tool_definitions) > 0:
                     run_options["tools"] = tool_definitions
 
-            if chat_options.tool_choice is not None:
                 if chat_options.tool_choice == "none":
                     run_options["tool_choice"] = AgentsToolChoiceOptionMode.NONE
                 elif chat_options.tool_choice == "auto":

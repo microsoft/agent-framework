@@ -229,12 +229,12 @@ async def test_chat_client_agent_get_new_thread(chat_client: ChatClient) -> None
 
 async def test_chat_client_agent_prepare_thread_and_messages(chat_client: ChatClient) -> None:
     agent = ChatClientAgent(chat_client=chat_client)
-    message = ChatMessage(role=ChatRole.USER, contents=[TextContent("Hello")])
+    message = ChatMessage(role=ChatRole.USER, text="Hello")
     thread = ChatClientAgentThread(messages=[message])
 
     result_thread, result_messages = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
         thread=thread,
-        input_messages="Test",
+        input_messages=[ChatMessage(role=ChatRole.USER, text="Test")],
         construct_thread=lambda: ChatClientAgentThread(),
         expected_type=ChatClientAgentThread,
     )
