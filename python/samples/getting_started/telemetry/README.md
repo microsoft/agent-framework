@@ -1,6 +1,6 @@
-# Semantic Kernel Python Telemetry
+# Agent Framework Python Telemetry
 
-This sample project shows how a Python application can be configured to send Semantic Kernel telemetry to the Application Performance Management (APM) vendors of your choice.
+This sample project shows how a Python application can be configured to send Agent Framework telemetry to the Application Performance Management (APM) vendors of your choice.
 
 In this sample, we provide options to send telemetry to [Application Insights](https://learn.microsoft.com/en-us/azure/azure-monitor/app/app-insights-overview), [Aspire Dashboard](https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/dashboard/overview?tabs=bash), and console output.
 
@@ -14,7 +14,7 @@ For more information, please refer to the following resources:
 
 ## What to expect
 
-The Semantic Kernel Python SDK is designed to efficiently generate comprehensive logs, traces, and metrics throughout the flow of function execution and model invocation. This allows you to effectively monitor your AI application's performance and accurately track token consumption.
+The Agent Framework Python SDK is designed to efficiently generate comprehensive logs, traces, and metrics throughout the flow of function execution and model invocation. This allows you to effectively monitor your AI application's performance and accurately track token consumption.
 
 ## Configuration
 
@@ -26,31 +26,38 @@ The Semantic Kernel Python SDK is designed to efficiently generate comprehensive
 
 ### Dependencies
 You will also need to install the following dependencies to your virtual environment to run this sample:
-```
-// For Azure ApplicationInsights/AzureMonitor
-uv pip install azure-monitor-opentelemetry-exporter==1.0.0b24
-// For OTLP endpoint
+```bash
+# For Azure ApplicationInsights/AzureMonitor
+uv pip install azure-monitor-opentelemetry azure-monitor-opentelemetry-exporter
+# For OTLP endpoint
 uv pip install opentelemetry-exporter-otlp-proto-grpc
 ```
 
 ## Running the sample
 
-1. Open a terminal and navigate to this folder: `python/samples/demos/telemetry/`. This is necessary for the `.env` file to be read correctly.
+1. Open a terminal and navigate to this folder: `python/samples/getting_started/telemetry/`. This is necessary for the `.env` file to be read correctly.
 2. Create a `.env` file if one doesn't already exist in this folder. Please refer to the [example file](./.env.example).
-    > Note that `TELEMETRY_SAMPLE_CONNECTION_STRING` and `OTLP_ENDPOINT` are optional. If you don't configure them, everything will get outputted to the console.
-3. Activate your python virtual environment, and then run `python main.py`.
+    > Note that `CONNECTION_STRING` and `SAMPLE_OTLP_ENDPOINT` are optional. If you don't configure them, everything will get outputted to the console.
+    > Set `AGENT_FRAMEWORK_GENAI_ENABLE_OTEL_DIAGNOSTICS=true` to enable basic telemetry and `AGENT_FRAMEWORK_GENAI_ENABLE_OTEL_DIAGNOSTICS_SENSITIVE=true` to include sensitive information like prompts and responses.
+3. Activate your python virtual environment, and then run `python scenarios.py` or `python interactive.py`.
 
 > This will output the Operation/Trace ID, which can be used later for filtering.
 
 ### Scenarios
 
-This sample is organized into scenarios where the kernel will generate useful telemetry data:
+This sample includes two different applications demonstrating Agent Framework telemetry:
 
-- `ai_service`: This is when an AI service/connector is invoked directly (i.e. not via any kernel functions or prompts). **Information about the call to the underlying model will be recorded**.
-- `kernel_function`: This is when a kernel function is invoked. **Information about the kernel function and the call to the underlying model will be recorded**.
-- `auto_function_invocation`: This is when auto function invocation is triggered. **Information about the auto function invocation loop, the kernel functions that are executed, and calls to the underlying model will be recorded**.
+#### scenarios.py
+Organized into specific scenarios where the framework will generate useful telemetry data:
 
-By default, running `python main.py` will run all three scenarios. To run individual scenarios, use the `--scenario` command line argument. For example, `python main.py --scenario ai_service`. For more information, please run `python main.py -h`.
+- `chat_client`: This is when a chat client is invoked directly (i.e. not streaming) with a weather tool function. **Information about the call to the underlying model and tool usage will be recorded**.
+- `chat_client_stream`: This is when a chat client is invoked with streaming enabled and a weather tool function. **Information about the streaming call to the underlying model and tool usage will be recorded**.
+- `ai_function`: This is when an AI function (`get_weather`) is invoked directly. **Information about the AI function and the call to the underlying model will be recorded**.
+
+By default, running `python scenarios.py` will run all three scenarios. To run individual scenarios, use the `--scenario` command line argument. For example, `python scenarios.py --scenario chat_client`. For more information, please run `python scenarios.py -h`.
+
+#### interactive.py
+An interactive chat application that demonstrates telemetry collection in a conversational context. This sample includes the same `get_weather` tool function and allows for multi-turn conversations. Run `python interactive.py` and start chatting. Type 'exit' to quit the application. This sample only logs at the `WARNING` level, so you will not see as much telemetry data as in the `scenarios.py` sample.
 
 ## Application Insights/Azure Monitor
 
@@ -66,6 +73,30 @@ Running the application once will only generate one set of measurements (for eac
 
 Please refer to here on how to analyze metrics in [Azure Monitor](https://learn.microsoft.com/en-us/azure/azure-monitor/essentials/analyze-metrics).
 
+## Logs
+
+When you are in Azure Monitor and want to have a overall view of the span, use this query in the logs section:
+
+```kusto
+dependencies
+| where operation_Id in (dependencies
+    | project operation_Id, timestamp
+    | order by timestamp desc
+    | summarize operations = make_set(operation_Id), timestamp = max(timestamp) by operation_Id
+    | order by timestamp desc
+    | project operation_Id
+    | take 2)
+| evaluate bag_unpack(customDimensions)
+| extend tool_call_id = tostring(["gen_ai.tool.call.id"])
+| join kind=leftouter (customMetrics
+    | extend tool_call_id = tostring(customDimensions['gen_ai.tool.call.id'])
+    | where isnotempty(tool_call_id)
+    | project tool_call_duration = value, tool_call_id)
+    on tool_call_id
+| project-keep timestamp, target, operation_Id, tool_call_duration, duration, gen_ai*
+| order by timestamp asc
+```
+
 ## Aspire Dashboard
 
 > Make sure you have the dashboard running to receive telemetry data.
@@ -76,7 +107,7 @@ Once the the sample finishes running, navigate to http://localhost:18888 in a we
 
 You won't have to deploy an Application Insights resource or install Docker to run Aspire Dashboard if you choose to inspect telemetry data in a console. However, it is difficult to navigate through all the spans and logs produced, so **this method is only recommended when you are just getting started**.
 
-We recommend you to get started with the `ai_service` scenario as this generates the least amount of telemetry data. Below is similar to what you will see when you run `python main.py --scenario ai_service`:
+We recommend you to get started with the `chat_client` scenario as this generates the least amount of telemetry data. Below is similar to what you will see when you run `python scenarios.py --scenario chat_client`:
 ```Json
 {
     "name": "chat.completions gpt-4o",
@@ -129,7 +160,7 @@ We recommend you to get started with the `ai_service` scenario as this generates
     }
 }
 {
-    "name": "Scenario: AI Service",
+    "name": "Scenario: Chat Client",
     "context": {
         "trace_id": "0xbda1d9efcd65435653d18fa37aef7dd3",
         "span_id": "0xeca0a2ca7b7a8191",
@@ -156,7 +187,7 @@ We recommend you to get started with the `ai_service` scenario as this generates
     }
 }
 {
-    "name": "main",
+    "name": "Scenario's",
     "context": {
         "trace_id": "0xbda1d9efcd65435653d18fa37aef7dd3",
         "span_id": "0x48af7ad55f2f64b5",
@@ -183,11 +214,11 @@ We recommend you to get started with the `ai_service` scenario as this generates
     }
 }
 {
-    "body": "OpenAI usage: CompletionUsage(completion_tokens=28, prompt_tokens=16, total_tokens=44)",
+    "body": "Agent Framework usage: CompletionUsage(completion_tokens=28, prompt_tokens=16, total_tokens=44)",
     "severity_number": "<SeverityNumber.INFO: 9>",
     "severity_text": "INFO",
     "attributes": {
-        "code.filepath": "C:\\Users\\taochen\\Projects\\semantic-kernel-fork\\python\\semantic_kernel\\connectors\\ai\\open_ai\\services\\open_ai_handler.py",     
+        "code.filepath": "/path/to/agent_framework/openai/chat_client.py",
         "code.function": "store_usage",
         "code.lineno": 81
     },
@@ -209,4 +240,4 @@ We recommend you to get started with the `ai_service` scenario as this generates
 }
 ```
 
-In the output, you will find three spans: `main`, `Scenario: AI Service`, and `chat.completions gpt-4o`, each representing a different layer in the sample. In particular, `chat.completions gpt-4o` is generated by the ai service. Inside it, you will find information about the call, such as the timestamp of the operation, the response id and the finish reason. You will also find sensitive information such as the prompt and response to and from the model (only if you have `SEMANTICKERNEL_EXPERIMENTAL_GENAI_ENABLE_OTEL_DIAGNOSTICS_SENSITIVE` set to true). If you use Application Insights or Aspire Dashboard, these information will be available to you in an interactive UI.
+In the output, you will find three spans: `Scenario's`, `Scenario: Chat Client`, and `chat.completions gpt-4o`, each representing a different layer in the sample. In particular, `chat.completions gpt-4o` is generated by the chat client. Inside it, you will find information about the call, such as the timestamp of the operation, the response id and the finish reason. You will also find sensitive information such as the prompt and response to and from the model (only if you have `AGENT_FRAMEWORK__GENAI_ENABLE_OTEL_DIAGNOSTICS_SENSITIVE` set to true). If you use Application Insights or Aspire Dashboard, these information will be available to you in an interactive UI.

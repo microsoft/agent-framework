@@ -31,14 +31,14 @@ from pydantic_settings import BaseSettings
 class TelemetrySampleSettings(BaseSettings):
     """Settings for the telemetry sample application.
 
-    Optional settings for prefix 'TELEMETRY_SAMPLE_' are:
+    Optional settings are:
     - connection_string: str - The connection string for the Application Insights resource.
                 This value can be found in the Overview section when examining
                 your resource from the Azure portal.
-                (Env var TELEMETRY_SAMPLE_CONNECTION_STRING)
+                (Env var CONNECTION_STRING)
     - otlp_endpoint: str - The OTLP endpoint to send telemetry data to.
                 Depending on the exporter used, you may find this value in different places.
-                (Env var TELEMETRY_SAMPLE_OTLP_ENDPOINT)
+                (Env var OTLP_ENDPOINT)
 
     If no connection string or OTLP endpoint is provided, the telemetry data will be
     exported to the console.
@@ -65,7 +65,7 @@ if settings.connection_string:
 
 def set_up_logging():
     class LogFilter(logging.Filter):
-        """A filter to not process records from semantic_kernel."""
+        """A filter to not process records from several subpackages."""
 
         # These are the namespaces that we want to exclude from logging for the purposes of this demo.
         namespaces_to_exclude: list[str] = [
@@ -121,8 +121,6 @@ def set_up_tracing():
 
 def set_up_metrics():
     exporters = []
-    # if settings.connection_string:
-    #     exporters.append(AzureMonitorMetricExporter(connection_string=settings.connection_string))
     if settings.otlp_endpoint:
         exporters.append(OTLPMetricExporter(endpoint=settings.otlp_endpoint))
     if not exporters:
