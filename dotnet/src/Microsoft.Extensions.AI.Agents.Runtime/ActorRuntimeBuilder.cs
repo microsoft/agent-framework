@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
@@ -88,9 +87,8 @@ internal sealed class ActorRuntimeBuilder : IActorRuntimeBuilder
         services.AddSingleton<IActorClient, InProcessActorClient>();
         services.AddSingleton<InProcessActorRuntime>(sp =>
         {
-            var jsonSerializerOptions = sp.GetService<JsonSerializerOptions>() ?? new();
             var actorStateStorage = sp.GetRequiredService<IActorStateStorage>();
-            return new InProcessActorRuntime(sp, this.ActorFactories, actorStateStorage, jsonSerializerOptions);
+            return new InProcessActorRuntime(sp, this.ActorFactories, actorStateStorage);
         });
     }
 }

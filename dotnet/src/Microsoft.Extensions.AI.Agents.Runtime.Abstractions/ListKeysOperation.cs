@@ -9,7 +9,7 @@ namespace Microsoft.Extensions.AI.Agents.Runtime;
 /// </summary>
 /// <param name="continuationToken">Optional token for pagination to continue listing from a previous operation.</param>
 /// <param name="keyPrefix">Optional prefix to filter keys. Only keys starting with this prefix will be returned.</param>
-public class ListKeysOperation(string? continuationToken, string? keyPrefix = null) : ActorStateReadOperation
+public sealed class ListKeysOperation(string? continuationToken, string? keyPrefix = null) : ActorStateReadOperation
 {
     /// <summary>
     /// Gets the continuation token for pagination.

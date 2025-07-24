@@ -132,8 +132,8 @@ public class GroupChatOrchestration_With_AIManager(ITestOutputHelper output) : O
 
         // Run the orchestration
         Console.WriteLine($"\n# INPUT: {topic}\n");
-        OrchestrationResult<string> result = await orchestration.InvokeAsync(topic);
-        Console.WriteLine($"\n# RESULT: {await result}");
+        AgentRunResponse result = await orchestration.RunAsync(topic);
+        Console.WriteLine($"\n# RESULT: {result}");
 
         this.DisplayHistory(monitor.History);
     }

@@ -2,10 +2,10 @@
 name = "agent-framework"
 description = "Microsoft Agent Framework for building AI Agents with Python."
 authors = [{ name = "Microsoft", email = "SK-Support@microsoft.com"}]
-readme = "../../README.md"
+readme = "README.md"
 requires-python = ">=3.10"
 version = "0.1.0b1"
-license = {file = "../../LICENSE"}
+license-files = ["LICENSE"]
 urls.homepage = "https://learn.microsoft.com/en-us/semantic-kernel/overview/"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
 urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=tag%3Apython-1&expanded=true"
@@ -35,42 +35,6 @@ azure = [
 ]
 foundry = [
     "agent-framework-foundry"
-]
-
-[dependency-groups]
-dev = [
-    "pre-commit >= 3.7",
-    "ruff>=0.11.8",
-    "pytest>=8.4.1",
-    "pytest-asyncio>=1.0.0",
-    "pytest-cov>=6.2.1",
-    "pytest-xdist[psutil]>=3.8.0",
-    "pytest-timeout>=2.3.1",
-    "mypy>=1.16.1",
-    "pyright>=1.1.402",
-
-    #tasks
-    "poethepoet>=0.36.0",
-    "rich",
-    "tomli",
-    "tomli-w",
-    "markdownify",
-    # Documentation
-    "myst-nb==1.1.2",
-    "pydata-sphinx-theme==0.16.0",
-    "sphinx-copybutton",
-    "sphinx-design",
-    "sphinx",
-    "sphinxcontrib-apidoc",
-    "autodoc_pydantic~=2.2",
-    "pygments",
-    "sphinxext-rediraffe",
-    "opentelemetry-instrumentation-openai",
-    "markdown-it-py[linkify]",
-    # Documentation tooling
-    "diskcache",
-    "redis",
-    "sphinx-autobuild",
 ]
 
 [tool.uv]
@@ -127,5 +91,5 @@ module-name = "agent_framework"
 module-root = ""
 
 [build-system]
-requires = ["uv_build>=0.7.19,<0.8.0"]
+requires = ["uv_build>=0.8.2,<0.9.0"]
 build-backend = "uv_build"

@@ -33,7 +33,7 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
         IChatClient chatClient = base.GetChatClient(provider);
 
         // Define the agent
-        AIAgent agent = new ChatClientAgent(chatClient, ParrotInstructions, ParrotName);
+        AIAgent agent = new ChatClientAgent(chatClient, name: ParrotName, instructions: ParrotInstructions);
 
         // Invoke the agent and output the text result.
         Console.WriteLine(await agent.RunAsync("Fortune favors the bold."));
@@ -52,11 +52,7 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
     public async Task RunWithoutThread(ChatClientProviders provider)
     {
         // Define the options for the chat client agent.
-        var agentOptions = new ChatClientAgentOptions
-        {
-            Name = ParrotName,
-            Instructions = ParrotInstructions,
-        };
+        var agentOptions = new ChatClientAgentOptions(name: ParrotName, instructions: ParrotInstructions);
 
         // Create the server-side agent Id when applicable (depending on the provider).
         agentOptions.Id = await base.AgentCreateAsync(provider, agentOptions);
@@ -149,11 +145,8 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
     public async Task RunStreamingWithThread(ChatClientProviders provider)
     {
         // Define the options for the chat client agent.
-        var agentOptions = new ChatClientAgentOptions
+        var agentOptions = new ChatClientAgentOptions(name: ParrotName, instructions: ParrotInstructions)
         {
-            Name = ParrotName,
-            Instructions = ParrotInstructions,
-
             // Get chat options based on the store type, if needed.
             ChatOptions = base.GetChatOptions(provider),
         };

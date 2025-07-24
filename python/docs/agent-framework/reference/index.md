@@ -13,4 +13,5 @@ myst:
 
 python/agent_framework
 python/agent_framework.exceptions
+python/agent_framework.openai
 ```

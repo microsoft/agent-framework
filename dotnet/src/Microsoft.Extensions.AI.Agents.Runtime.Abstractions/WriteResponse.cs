@@ -9,7 +9,7 @@ namespace Microsoft.Extensions.AI.Agents.Runtime;
 /// </summary>
 /// <param name="eTag">The actor's updated ETag value after the write operation.</param>
 /// <param name="success">Whether the write operation was successful.</param>
-public class WriteResponse(string eTag, bool success)
+public sealed class WriteResponse(string eTag, bool success)
 {
     /// <summary>
     /// Gets the version of the state update.
