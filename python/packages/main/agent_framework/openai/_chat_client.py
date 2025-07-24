@@ -1,14 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
-from collections.abc import (
-    AsyncIterable,
-    Callable,
-    Mapping,
-    MutableMapping,
-    MutableSequence,
-    Sequence
-)
+from collections.abc import AsyncIterable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
 from datetime import datetime
 from itertools import chain
 from typing import Any, ClassVar, Literal, cast, override
@@ -19,19 +12,18 @@ from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, ChoiceDeltaToolCall
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall
-
 from openai.types.responses.response import Response as OpenAIResponse
+from openai.types.responses.response_completed_event import ResponseCompletedEvent
 from openai.types.responses.response_content_part_added_event import ResponseContentPartAddedEvent
-from openai.types.responses.response_stream_event import ResponseStreamEvent as OpenAIResponseStreamEvent
+from openai.types.responses.response_function_tool_call import ResponseFunctionToolCall
+from openai.types.responses.response_includable import ResponseIncludable
 from openai.types.responses.response_output_item import ResponseOutputItem
 from openai.types.responses.response_output_message import ResponseOutputMessage
-from openai.types.responses.response_output_text import ResponseOutputText
 from openai.types.responses.response_output_refusal import ResponseOutputRefusal
-from openai.types.responses.response_function_tool_call import ResponseFunctionToolCall
+from openai.types.responses.response_output_text import ResponseOutputText
+from openai.types.responses.response_stream_event import ResponseStreamEvent as OpenAIResponseStreamEvent
+from openai.types.responses.response_text_delta_event import ResponseTextDeltaEvent
 from openai.types.responses.response_usage import ResponseUsage
-
-from openai.types.responses.response_includable import ResponseIncludable
-
 from pydantic import BaseModel, SecretStr, ValidationError
 
 from .._clients import ChatClientBase, use_tool_calling
@@ -44,10 +36,10 @@ from .._types import (
     ChatResponse,
     ChatResponseUpdate,
     ChatRole,
+    ChatToolMode,
     FunctionCallContent,
     FunctionResultContent,
     TextContent,
-    ChatToolMode,
     UsageDetails,
 )
 from ..exceptions import ServiceInitializationError, ServiceInvalidResponseError
@@ -57,6 +49,7 @@ __all__ = ["OpenAIChatClient", "OpenAIResponsesClient"]
 
 
 # region OpenAIChatClientBase
+
 
 # Implements agent_framework.ChatClient protocol, through ChatClientBase
 @use_tool_calling
@@ -292,9 +285,12 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
                 }
             case _:
                 return content.model_dump(exclude_none=True)
+
+
 # endregion
 
 # region OpenAIChatClient
+
 
 class OpenAIChatClient(OpenAIConfigBase, OpenAIChatClientBase):
     """OpenAI Chat completion class."""
@@ -365,14 +361,16 @@ class OpenAIChatClient(OpenAIConfigBase, OpenAIChatClientBase):
             default_headers=settings.get("default_headers"),
         )
 
+
 # endregion
 
 # region ResponsesClient
 
+
 @use_tool_calling
 class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
     """OpenAI Responses client class."""
-        
+
     MODEL_PROVIDER_NAME: ClassVar[str] = "openai"
     SUPPORTS_FUNCTION_CALLING: ClassVar[bool] = True
 
@@ -434,9 +432,7 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
         """Filter options for the responses call."""
         # The responses call does not support all the options that the chat completion call does.
         # We filter out the unsupported options.
-        return {
-            key: value for key, value in kwargs.items() if value is not None
-        }
+        return {key: value for key, value in kwargs.items() if value is not None}
 
     # The responses create call takes very different parameters than the chat completion call,
     # so we override the get_response method to handle the specific parameters for responses.
@@ -474,7 +470,6 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
         **kwargs: Any,
     ) -> ChatResponse:
         """Get a response from the OpenAI API."""
-        
         filtered_options = self._filter_options(
             background=False,
             include=include,
@@ -536,12 +531,12 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
         if not chat_options.ai_model_id:
             chat_options.ai_model_id = self.ai_model_id
         if chat_options.tools:
-            chat_options.additional_properties.update({"response_tools": self._chat_to_response_tool_spec(chat_options.tools)})
+            chat_options.additional_properties.update({
+                "response_tools": self._chat_to_response_tool_spec(chat_options.tools)
+            })
         response = await self._send_request(chat_options, messages=self._prepare_chat_history_for_request(messages))
         assert isinstance(response, OpenAIResponse)  # nosec  # noqa: S101
-        return next(
-            self._create_response_content(response, item) for item in response.output
-        )
+        return next(self._create_response_content(response, item) for item in response.output)
 
     # @trace_streaming_chat_completion(MODEL_PROVIDER_NAME)
     async def _inner_get_streaming_response(
@@ -552,24 +547,22 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         chat_options.additional_properties["stream"] = True
-        chat_options.additional_properties["stream_options"] = {"include_usage": True}
         chat_options.ai_model_id = chat_options.ai_model_id or self.ai_model_id
 
+        if chat_options.tools:
+            chat_options.additional_properties.update({
+                "response_tools": self._chat_to_response_tool_spec(chat_options.tools)
+            })
         response = await self._send_request(chat_options, messages=self._prepare_chat_history_for_request(messages))
         if not isinstance(response, AsyncStream):
             raise ServiceInvalidResponseError("Expected an AsyncStream[ResponseStreamEvent] response.")
         async for chunk in response:
-            if not isinstance(chunk, ResponseContentPartAddedEvent):
+            update = self._create_streaming_response_content(chunk)  # type: ignore
+            if not update:
                 continue
+            yield update
 
-            else:
-                yield next(
-                    self._create_streaming_response_content(chunk)
-                )
-
-    def _create_response_content(
-        self, response: OpenAIResponse, item: ResponseOutputItem
-    ) -> "ChatResponse":
+    def _create_response_content(self, response: OpenAIResponse, item: ResponseOutputItem) -> "ChatResponse":
         """Create a chat message content object from a choice."""
         items: MutableSequence[ChatMessage] = []
         metadata: dict[str, Any] = response.metadata or {}
@@ -577,11 +570,11 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
         if parsed_tool_calls := [tool for tool in self._get_tool_calls_from_response(response)]:
             items.append(ChatMessage(role="assistant", contents=parsed_tool_calls))
         if isinstance(item, ResponseOutputMessage):
-           for content in item.content:
+            for content in item.content:
                 # TODO(peterychang): Add annotations when available
                 if isinstance(content, ResponseOutputText):
                     items.append(ChatMessage(role=item.role, text=content.text))
-                    metadata.update(self._get_metadata_from_response_output_text(content))
+                    metadata.update(self._get_metadata_from_response(content))
                 elif isinstance(content, ResponseOutputRefusal):
                     items.append(ChatMessage(role=item.role, text=content.refusal))
         return ChatResponse(
@@ -593,13 +586,35 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
             additional_properties=metadata,
         )
 
-
     def _create_streaming_response_content(
         self,
         event: OpenAIResponseStreamEvent,
-    ) -> ChatResponseUpdate:
-        pass
-
+    ) -> ChatResponseUpdate | None:
+        """Create a streaming chat message content object from a choice."""
+        metadata: dict[str, Any] = {}
+        items: list[AIContents] = []
+        # TODO(peterychang): Add support for other content types
+        if isinstance(event, ResponseContentPartAddedEvent):
+            if isinstance(event.part, ResponseOutputText):
+                items.append(TextContent(text=event.part.text))
+                metadata.update(self._get_metadata_from_response(event.part))
+            elif isinstance(event.part, ResponseOutputRefusal):
+                items.append(TextContent(text=event.part.refusal))
+        elif isinstance(event, ResponseTextDeltaEvent):
+            items.append(TextContent(text=event.delta))
+            metadata.update(self._get_metadata_from_response(event))
+        elif isinstance(event, ResponseCompletedEvent):
+            # Tool calls are available in the completed event
+            if parsed_tool_calls := [tool for tool in self._get_tool_calls_from_response(event.response)]:
+                items.extend(parsed_tool_calls)
+        else:
+            return None
+        return ChatResponseUpdate(
+            contents=items,
+            role=ChatRole.ASSISTANT,
+            ai_model_id=self.ai_model_id,
+            additional_properties=metadata,
+        )
 
     def _get_tool_calls_from_response(self, response: OpenAIResponse) -> list[AIContents]:
         resp: list[AIContents] = []
@@ -609,19 +624,18 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
                 call_id=item.id if item.id else "",
                 name=item.name,
                 arguments=item.arguments,
-                additional_properties={"call_id": item.call_id}
+                additional_properties={"call_id": item.call_id},
             )
             resp.append(fcc)
 
         return resp
-    
+
     def _usage_details_from_openai(self, usage: ResponseUsage) -> UsageDetails | None:
         return UsageDetails(
             prompt_tokens=usage.input_tokens,
             completion_tokens=usage.output_tokens,
             total_tokens=usage.total_tokens,
         )
-
 
     def _openai_chat_message_parser(
         self,
@@ -652,7 +666,6 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
             all_messages.append(args)
         return all_messages
 
-
     def _openai_content_parser(
         self,
         content: AIContents,
@@ -667,12 +680,10 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
                     "type": "function_call",
                     "name": content.name,
                     "arguments": content.arguments,
-                    "status": "completed",
                 }
             case FunctionResultContent():
                 # call_id for the result needs to be the same as the call_id for the function call
                 return {
-                    "id": content.call_id,
                     "call_id": tool_id_to_call_id[content.call_id],
                     "type": "function_call_output",
                     "output": content.result,
@@ -685,7 +696,6 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
             # TODO(peterychang): We'll probably need to specialize the other content types as well
             case _:
                 return content.model_dump(exclude_none=True)
-
 
     def _prepare_chat_history_for_request(
         self,
@@ -711,21 +721,22 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
         Returns:
             prepared_chat_history (Any): The prepared chat history for a request.
         """
-        # tool_id_to_call_id: dict[str, str] = {content.call_id: content.additional_properties["call_id"] for content in message.contents if isinstance(content, FunctionCallContent)}
         tool_id_to_call_id: dict[str, str] = {}
         for message in chat_messages:
             for content in message.contents:
                 if isinstance(content, FunctionCallContent):
-                    assert content.additional_properties and "call_id" in content.additional_properties
+                    assert content.additional_properties and "call_id" in content.additional_properties  # nosec  # noqa: S101
                     call_id = content.additional_properties["call_id"]
                     tool_id_to_call_id[content.call_id] = call_id
         list_of_list = [self._openai_chat_message_parser(message, tool_id_to_call_id) for message in chat_messages]
         # Flatten the list of lists into a single list
         return list(chain.from_iterable(list_of_list))
 
-    def _get_metadata_from_response_output_text(self, output: ResponseOutputText) -> dict[str, Any]:
+    def _get_metadata_from_response(self, output: Any) -> dict[str, Any]:
         """Get metadata from a chat choice."""
         return {
             "logprobs": getattr(output, "logprobs", None),
         }
+
+
 # endregion
