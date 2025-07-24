@@ -268,7 +268,7 @@ async def test_openai_responses_client_streaming() -> None:
 
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_streaming_tools() -> None:
-    """Test AzureOpenAI chat completion responses."""
+    """Test OpenAI chat completion responses."""
     openai_responses_client = OpenAIResponsesClient(ai_model_id="gpt-4o-mini")
 
     assert isinstance(openai_responses_client, ChatClient)
