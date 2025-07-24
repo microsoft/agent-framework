@@ -78,6 +78,7 @@ KNOWN_MEDIA_TYPES = [
 __all__ = [
     "AIContent",
     "AIContents",
+    "AITool",
     "AgentRunResponse",
     "AgentRunResponseUpdate",
     "ChatFinishReason",
