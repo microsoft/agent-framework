@@ -403,12 +403,12 @@ class StructuredDataInputRequestContent : UserInputRequestContent
     public string? Text { get; set; }
 
     // Contains the schema for the user input.
-    public string JsonSchema { get; set; }
+    public JsonElement JsonSchema { get; set; }
 }
 class StructuredDataInputResponseContent : UserInputResponseContent
 {
     // Contains the structured data provided by the user.
-    public string StructuredData { get; set; }
+    public JsonElement StructuredData { get; set; }
 }
 
 var response = await agent.RunAsync("Please book me a flight for Friday to Paris.", thread);
