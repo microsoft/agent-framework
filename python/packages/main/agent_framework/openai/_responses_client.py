@@ -189,8 +189,9 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
             timeout=timeout,
         )
         filtered_options.update(additional_properties or {})
-        chat_options = ChatOptions(
-            ai_model_id=model,
+        return await super().get_response(
+            messages=messages,
+            model=model,
             max_tokens=max_tokens,
             response_format=response_format,
             seed=seed,
@@ -198,13 +199,9 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
             temperature=temperature,
             top_p=top_p,
             tool_choice=tool_choice,
-            tools=tools,  # type: ignore
+            tools=tools,
             user=user,
             additional_properties=filtered_options,
-        )
-        return await super().get_response(
-            messages=messages,
-            chat_options=chat_options,
             **kwargs,
         )
 
@@ -282,8 +279,9 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
             timeout=timeout,
         )
         filtered_options.update(additional_properties or {})
-        chat_options = ChatOptions(
-            ai_model_id=model,
+        async for update in super().get_streaming_response(
+            messages=messages,
+            model=model,
             max_tokens=max_tokens,
             response_format=response_format,
             seed=seed,
@@ -291,13 +289,9 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
             temperature=temperature,
             top_p=top_p,
             tool_choice=tool_choice,
-            tools=tools,  # type: ignore
+            tools=tools,
             user=user,
             additional_properties=filtered_options,
-        )
-        async for update in super().get_streaming_response(
-            messages=messages,
-            chat_options=chat_options,
             **kwargs,
         ):
             yield update
