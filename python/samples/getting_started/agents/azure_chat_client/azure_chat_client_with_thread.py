@@ -62,7 +62,7 @@ async def example_with_thread_persistence() -> None:
     print(f"Agent: {result1.text}")
 
     # Second conversation using the same thread - maintains context
-    query2 = "How about comparing it to London?"
+    query2 = "How about London?"
     print(f"\nUser: {query2}")
     result2 = await agent.run(query2, thread=thread)
     print(f"Agent: {result2.text}")
