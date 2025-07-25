@@ -29,34 +29,49 @@ Check the [uv documentation](https://docs.astral.sh/uv/getting-started/installat
 powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
+### For WSL, Linux or MacOS
+
+Check the [uv documentation](https://docs.astral.sh/uv/getting-started/installation/) for the installation instructions. At the time of writing this is the command to install uv:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+### After installing uv
+
 You can then run the following commands manually:
 
-```powershell
+```bash
 # Install Python 3.10, 3.11, 3.12, and 3.13
 uv python install 3.10 3.11 3.12 3.13
-# Create a virtual environment with Python 3.10 (you can change this to 3.11 or 3.12)
+# Create a virtual environment with Python 3.10 (you can change this to 3.11, 3.12 or 3.13)
 $PYTHON_VERSION = "3.10"
 uv venv --python $PYTHON_VERSION
 # Install AF and all dependencies
-uv sync --all-packages --dev
+uv sync --dev
+# Install all the tools and dependencies
+uv run poe install
 # Install pre-commit hooks
-uv run poe pre-commit
+uv run poe pre-commit-install
 ```
 
-Or you can then run different commands through Poe the Poet, use `uv run poe` to discover which ones.
+Alternatively, you can reinstall the venv, pacakges, dependencies and pre-commit hooks with a single command (but this requires poe in the current env), this is especially useful if you want to switch python versions:
+
+```bash
+uv run poe setup -p 3.13
+```
+
+You can then run different commands through Poe the Poet, use `uv run poe` to discover which ones.
 
 ## VSCode Setup
 
 Install the [Python extension](https://marketplace.visualstudio.com/items?itemName=ms-python.python) for VSCode.
 
-Open the workspace in [VSCode](https://code.visualstudio.com/docs/editor/workspaces).
+Open the `python` folder in [VSCode](https://code.visualstudio.com/docs/editor/workspaces).
 > The workspace for python should be rooted in the `./python` folder.
 
-To work on one of the subpackages, open VSCode in the appropriate subfolder (e.g., `./python/packages/main`, `./python/packages/azure`, etc.), really any folder that contains a `pyproject.toml`.
-
 Open any of the `.py` files in the project and run the `Python: Select Interpreter`
-command from the command palette. Make sure the virtual env (default path is `.venv`) created by
-`uv` is selected.
+command from the command palette. Make sure the virtual env (default path is `.venv`) created by `uv` is selected.
 
 ## LLM setup
 
@@ -71,27 +86,28 @@ There are two methods to manage keys, secrets, and endpoints:
     > During runtime on different platforms, environment settings set as part of the deployments should be used.
 
 2. Store them in a separate `.env` file, like `dev.env`, you can then pass that name into the constructor for most services, to the `env_file_path` parameter, see below.
-    > Do not store `*.env` files in your repository, and make sure to add them to your `.gitignore` file.
+    > Make sure to add `*.env` to your `.gitignore` file.
 
 There are a lot of settings, for a more extensive list of settings, see [ALL_SETTINGS.md](./samples/concepts/setup/ALL_SETTINGS.md).
 
 ### Example for file-based setup with OpenAI Chat Completions
 To configure a `.env` file with just the keys needed for OpenAI Chat Completions, you can create a `openai.env` (this name is just as an example, a single `.env` with all required keys is more common) file in the root of the `python` folder with the following content:
 
-Content of `openai.env`:
+Content of `.env` or `openai.env`:
 
 ```env
 OPENAI_API_KEY=""
 OPENAI_CHAT_MODEL_ID="gpt-4o-mini"
 ```
 
-You will then configure the ChatCompletion class with the keyword argument `env_file_path`:
+You will then configure the ChatClient class with the keyword argument `env_file_path`:
 
-Pre-commit hooks will automatically run checks before each commit. You can also run them manually:
+```python
+from agent_framework.openai import OpenAIChatClient
 
-```bash
-uv run pre-commit run -a
+chat_client = OpenAIChatClient(env_file_path="openai.env")
 ```
+
 
 ## Coding Standards
 
@@ -131,26 +147,20 @@ chat_completion = OpenAIChatClient(env_file_path="openai.env")
 
 ## Tests
 
-You can run the unit tests under the [tests/unit](tests/unit/) folder.
+All the tests are located in the `tests` folder of each package. There are tests that are marked with a `@skip_if_..._integration_tests_disabled` decorator, these are integration tests that require an external service to be running, like OpenAI or Azure OpenAI.
 
-```bash
-    uv run poe test
-```
-
-You can run the integration tests under the [tests/integration](tests/integration/) folder.
-
-```bash
-    uv run poe <todo>
-```
-
-You can also run all the tests together under the [tests](tests/) folder.
-
-```bash
-    uv run poe <todo>
-```
+If you want to run these tests, you need to set the environment variable `RUN_INTEGRATION_TESTS` to `true` and have the appropriate key per services set in your environment or in a `.env` file.
 
 Alternatively, you can run them using VSCode Tasks. Open the command palette
-(`Ctrl+Shift+P`) and type `Tasks: Run Task`. Select `Python: Tests - All` from the list.
+(`Ctrl+Shift+P`) and type `Tasks: Run Task`. Select `Test` from the list.
+
+If you want to run the tests for a single package, you can use the `uv run poe test` command with the package name as an argument. For example, to run the tests for the `agent_framework` package, you can use:
+
+```bash
+uv run poe --directory packages/main test
+```
+
+These commands also output the coverage report.
 
 ## Implementation Decisions
 
@@ -198,12 +208,11 @@ def equal(arg1: str, arg2: str) -> bool:
     Here is extra explanation of the logic involved.
 
     Args:
-        name: The agent name (positional OK - single clear parameter)
-        chat_client: The chat client to use
-        tools: Optional list of tools
-        description: Optional agent description
-        client_kwargs: Passed directly to the chat client constructor
-        **agent_kwargs: Additional agent configuration options
+        arg1: The first string to compare.
+        arg2: The second string to compare.
+
+    Returns:
+        True if the strings are the same, False otherwise.
     """
 ```
 
@@ -361,7 +370,7 @@ class A:
         self.d = d
 ```
 
-You would convert this to a Pydantic class by sub-classing from the `KernelBaseModel` class.
+You would convert this to a Pydantic class by sub-classing from the `AFBaseModel` class.
 
 ```python
 from pydantic import Field
