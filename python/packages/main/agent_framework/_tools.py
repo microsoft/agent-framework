@@ -113,11 +113,6 @@ class AIFunction(AITool, Generic[ArgsT, ReturnT]):
         with start_as_current_span(
             tracer, self, metadata={"tool_call_id": tool_call_id, "kwargs": kwargs}
         ) as current_span:
-            histogram = meter.create_histogram(
-                "agent_framework.function.invocation.duration",
-                unit="s",
-                description="Measures the duration of a function's execution",
-            )
             attributes: dict[str, Any] = {
                 GenAIAttributes.MEASUREMENT_FUNCTION_TAG_NAME.value: self.name,
                 GenAIAttributes.TOOL_CALL_ID.value: tool_call_id,
@@ -138,7 +133,7 @@ class AIFunction(AITool, Generic[ArgsT, ReturnT]):
                 raise
             finally:
                 duration = perf_counter() - starting_time_stamp
-                histogram.record(duration, attributes=attributes)
+                self.invocation_duration_histogram.record(duration, attributes=attributes)
                 logger.info("Function completed. Duration: %fs", duration)
 
 

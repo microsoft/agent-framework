@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import logging
-import os
 from collections.abc import AsyncIterable, MutableSequence
 from typing import Any
 from unittest.mock import Mock, patch
@@ -16,19 +15,17 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     ChatRole,
+    TextContent,
+    UsageContent,
     UsageDetails,
 )
 from agent_framework.telemetry import (
     AGENT_FRAMEWORK_USER_AGENT,
-    MODEL_DIAGNOSTICS_SETTINGS,
     ROLE_EVENT_MAP,
     TELEMETRY_DISABLED_ENV_VAR,
     USER_AGENT_KEY,
     ChatMessageListTimestampFilter,
     GenAIAttributes,
-    ModelDiagnosticSettings,
-    are_model_diagnostics_enabled,
-    are_sensitive_events_enabled,
     prepend_agent_framework_to_user_agent,
     start_as_current_span,
     use_telemetry,
@@ -140,81 +137,38 @@ class TestPrependAgentFrameworkToUserAgent:
 class TestModelDiagnosticSettings:
     """Test ModelDiagnosticSettings class."""
 
-    def test_default_values(self):
+    @pytest.mark.parametrize("model_diagnostic_settings", [(None, None)], indirect=True)
+    def test_default_values(self, model_diagnostic_settings):
         """Test default values for ModelDiagnosticSettings."""
-        settings = ModelDiagnosticSettings()
-        assert settings.enable_otel_diagnostics is False
-        assert settings.enable_otel_diagnostics_sensitive is False
+        assert not model_diagnostic_settings.ENABLED
+        assert not model_diagnostic_settings.SENSITIVE_EVENTS_ENABLED
 
-    @patch.dict(
-        os.environ,
-        {
-            "AGENT_FRAMEWORK_GENAI_ENABLE_OTEL_DIAGNOSTICS": "true",
-            "AGENT_FRAMEWORK_GENAI_ENABLE_OTEL_DIAGNOSTICS_SENSITIVE": "false",
-        },
-    )
-    def test_env_var_loading(self):
-        """Test loading settings from environment variables."""
-        settings = ModelDiagnosticSettings()
-        assert settings.enable_otel_diagnostics is True
-        assert settings.enable_otel_diagnostics_sensitive is False
+    @pytest.mark.parametrize("model_diagnostic_settings", [(False, False)], indirect=True)
+    def test_disabled(self, model_diagnostic_settings):
+        """Test default values for ModelDiagnosticSettings."""
+        assert not model_diagnostic_settings.ENABLED
+        assert not model_diagnostic_settings.SENSITIVE_EVENTS_ENABLED
 
-    @patch.dict(
-        os.environ,
-        {
-            "AGENT_FRAMEWORK_GENAI_ENABLE_OTEL_DIAGNOSTICS": "false",
-            "AGENT_FRAMEWORK_GENAI_ENABLE_OTEL_DIAGNOSTICS_SENSITIVE": "true",
-        },
-    )
-    def test_sensitive_events_enabled(self):
-        """Test loading sensitive events setting from environment."""
-        settings = ModelDiagnosticSettings()
-        assert settings.enable_otel_diagnostics is False
-        assert settings.enable_otel_diagnostics_sensitive is True
+    @pytest.mark.parametrize("model_diagnostic_settings", [(True, False)], indirect=True)
+    def test_non_sensitive_events_enabled(self, model_diagnostic_settings):
+        """Test loading model_diagnostic_settings from environment variables."""
+        assert model_diagnostic_settings.ENABLED
+        assert not model_diagnostic_settings.SENSITIVE_EVENTS_ENABLED
 
+    @pytest.mark.parametrize("model_diagnostic_settings", [(True, True)], indirect=True)
+    def test_sensitive_events_enabled(self, model_diagnostic_settings):
+        """Test loading model_diagnostic_settings from environment variables."""
+        assert model_diagnostic_settings.ENABLED
+        assert model_diagnostic_settings.SENSITIVE_EVENTS_ENABLED
 
-class TestDiagnosticsFunctions:
-    """Test diagnostic functions."""
+    @pytest.mark.parametrize("model_diagnostic_settings", [(False, True)], indirect=True)
+    def test_sensitive_events_enabled_only(self, model_diagnostic_settings):
+        """Test loading sensitive events setting from environment.
 
-    def test_are_model_diagnostics_enabled_both_false(self):
-        """Test are_model_diagnostics_enabled when both settings are False."""
-        with (
-            patch.object(MODEL_DIAGNOSTICS_SETTINGS, "enable_otel_diagnostics", False),
-            patch.object(MODEL_DIAGNOSTICS_SETTINGS, "enable_otel_diagnostics_sensitive", False),
-        ):
-            assert are_model_diagnostics_enabled() is False
-
-    @patch("agent_framework.telemetry.MODEL_DIAGNOSTICS_SETTINGS")
-    def test_are_model_diagnostics_enabled_diagnostics_true(self, mock_settings):
-        """Test are_model_diagnostics_enabled when diagnostics is True."""
-        mock_settings.enable_otel_diagnostics = True
-        mock_settings.enable_otel_diagnostics_sensitive = False
-        assert are_model_diagnostics_enabled() is True
-
-    @patch("agent_framework.telemetry.MODEL_DIAGNOSTICS_SETTINGS")
-    def test_are_model_diagnostics_enabled_sensitive_true(self, mock_settings):
-        """Test are_model_diagnostics_enabled when sensitive is True."""
-        mock_settings.enable_otel_diagnostics = False
-        mock_settings.enable_otel_diagnostics_sensitive = True
-        assert are_model_diagnostics_enabled() is True
-
-    @patch("agent_framework.telemetry.MODEL_DIAGNOSTICS_SETTINGS")
-    def test_are_model_diagnostics_enabled_both_true(self, mock_settings):
-        """Test are_model_diagnostics_enabled when both settings are True."""
-        mock_settings.enable_otel_diagnostics = True
-        mock_settings.enable_otel_diagnostics_sensitive = True
-        assert are_model_diagnostics_enabled() is True
-
-    def test_are_sensitive_events_enabled_false(self):
-        """Test are_sensitive_events_enabled when setting is False."""
-        with patch.object(MODEL_DIAGNOSTICS_SETTINGS, "enable_otel_diagnostics_sensitive", False):
-            assert are_sensitive_events_enabled() is False
-
-    @patch("agent_framework.telemetry.MODEL_DIAGNOSTICS_SETTINGS")
-    def test_are_sensitive_events_enabled_true(self, mock_settings):
-        """Test are_sensitive_events_enabled when setting is True."""
-        mock_settings.enable_otel_diagnostics_sensitive = True
-        assert are_sensitive_events_enabled() is True
+        But when sensitive events are enabled, diagnostics are also enabled.
+        """
+        assert model_diagnostic_settings.ENABLED
+        assert model_diagnostic_settings.SENSITIVE_EVENTS_ENABLED
 
 
 class TestChatMessageListTimestampFilter:
@@ -419,16 +373,19 @@ class TestTelemetryIntegration:
                     from agent_framework._types import ChatResponseUpdate
 
                     yield ChatResponseUpdate(
-                        role=ChatRole.assistant,
-                        content="Test",
-                        usage_details=UsageDetails(input_token_count=5, output_token_count=10),
+                        role=ChatRole.ASSISTANT,
+                        contents=[
+                            TextContent(text="Test"),
+                            UsageContent(details=UsageDetails(input_token_count=5, output_token_count=10)),
+                        ],
                     )
 
                 return gen()
 
         return MockChatClient()
 
-    async def test_telemetry_disabled_bypasses_instrumentation(self, mock_chat_client):
+    @pytest.mark.parametrize("model_diagnostic_settings", [(False, False)], indirect=True)
+    async def test_telemetry_disabled_bypasses_instrumentation(self, mock_chat_client, model_diagnostic_settings):
         """Test that when diagnostics are disabled, telemetry is bypassed."""
         decorated_class = use_telemetry(type(mock_chat_client))
         client = decorated_class()
@@ -439,7 +396,7 @@ class TestTelemetryIntegration:
         messages = [ChatMessage(role=ChatRole.USER, text="Test message")]
         chat_options = ChatOptions()
 
-        with patch("agent_framework.telemetry.are_model_diagnostics_enabled", return_value=False):
+        with patch("agent_framework.telemetry.MODEL_DIAGNOSTICS_SETTINGS", model_diagnostic_settings):
             # This should not create any spans
             response = await client._inner_get_response(messages=messages, chat_options=chat_options)
             assert response is not None
@@ -487,7 +444,8 @@ class TestTelemetryHelperFunctions:
             mock_span.set_attributes.assert_called()
             mock_span.set_attribute.assert_called()
 
-    def test_set_chat_response_input_sensitive_enabled(self):
+    @pytest.mark.parametrize("model_diagnostic_settings", [(True, True)], indirect=True)
+    def test_set_chat_response_input_sensitive_enabled(self, model_diagnostic_settings):
         """Test _set_chat_response_input when sensitive events are enabled."""
         from agent_framework.telemetry import _set_chat_response_input
 
@@ -497,7 +455,7 @@ class TestTelemetryHelperFunctions:
         ]
 
         with (
-            patch("agent_framework.telemetry.are_sensitive_events_enabled", return_value=True),
+            patch("agent_framework.telemetry.MODEL_DIAGNOSTICS_SETTINGS", model_diagnostic_settings),
             patch("agent_framework.telemetry.logger") as mock_logger,
         ):
             _set_chat_response_input("test_provider", messages)
@@ -505,14 +463,15 @@ class TestTelemetryHelperFunctions:
             # Should log messages when sensitive events are enabled
             assert mock_logger.info.call_count == 2
 
-    def test_set_chat_response_input_sensitive_disabled(self):
+    @pytest.mark.parametrize("model_diagnostic_settings", [(False, False)], indirect=True)
+    def test_set_chat_response_input_sensitive_disabled(self, model_diagnostic_settings):
         """Test _set_chat_response_input when sensitive events are disabled."""
         from agent_framework.telemetry import _set_chat_response_input
 
         messages = [ChatMessage(role=ChatRole.USER, text="Hello")]
 
         with (
-            patch("agent_framework.telemetry.are_sensitive_events_enabled", return_value=False),
+            patch("agent_framework.telemetry.MODEL_DIAGNOSTICS_SETTINGS", model_diagnostic_settings),
             patch("agent_framework.telemetry.logger") as mock_logger,
         ):
             _set_chat_response_input("test_provider", messages)
@@ -520,7 +479,8 @@ class TestTelemetryHelperFunctions:
             # Should not log messages when sensitive events are disabled
             mock_logger.info.assert_not_called()
 
-    def test_set_chat_response_output(self):
+    @pytest.mark.parametrize("model_diagnostic_settings", [(True, True)], indirect=True)
+    def test_set_chat_response_output(self, model_diagnostic_settings):
         """Test _set_chat_response_output function."""
         from agent_framework.telemetry import _set_chat_response_output
 
@@ -537,7 +497,7 @@ class TestTelemetryHelperFunctions:
         )
 
         with (
-            patch("agent_framework.telemetry.are_sensitive_events_enabled", return_value=True),
+            patch("agent_framework.telemetry.MODEL_DIAGNOSTICS_SETTINGS", model_diagnostic_settings),
             patch("agent_framework.telemetry.logger") as mock_logger,
         ):
             _set_chat_response_output(mock_span, response, "test_provider")
@@ -563,7 +523,8 @@ class TestTelemetryHelperFunctions:
 class TestTelemetryWrapperFunctions:
     """Test the telemetry wrapper functions with mocked dependencies."""
 
-    async def test_trace_chat_get_response_with_diagnostics_enabled(self):
+    @pytest.mark.parametrize("model_diagnostic_settings", [(True, False)], indirect=True)
+    async def test_trace_chat_get_response_with_diagnostics_enabled(self, model_diagnostic_settings):
         """Test _trace_chat_get_response when diagnostics are enabled."""
         from agent_framework.telemetry import _trace_chat_get_response
 
@@ -587,7 +548,7 @@ class TestTelemetryWrapperFunctions:
         chat_options = ChatOptions()
 
         with (
-            patch("agent_framework.telemetry.are_model_diagnostics_enabled", return_value=True),
+            patch("agent_framework.telemetry.MODEL_DIAGNOSTICS_SETTINGS", model_diagnostic_settings),
             patch("agent_framework.telemetry.use_span") as mock_use_span,
             patch("agent_framework.telemetry._get_chat_response_span") as mock_get_span,
             patch("agent_framework.telemetry._set_chat_response_input") as mock_set_input,
@@ -608,7 +569,8 @@ class TestTelemetryWrapperFunctions:
 class TestStreamingTelemetryWrapper:
     """Test the streaming telemetry wrapper function extensively."""
 
-    async def test_streaming_response_with_diagnostics_enabled_via_decorator(self):
+    @pytest.mark.parametrize("model_diagnostic_settings", [(True, False)], indirect=True)
+    async def test_streaming_response_with_diagnostics_enabled_via_decorator(self, model_diagnostic_settings):
         """Test streaming telemetry through the use_telemetry decorator."""
         from agent_framework._types import ChatResponseUpdate
 
@@ -636,7 +598,7 @@ class TestStreamingTelemetryWrapper:
         chat_options = ChatOptions()
 
         with (
-            patch("agent_framework.telemetry.are_model_diagnostics_enabled", return_value=True),
+            patch("agent_framework.telemetry.MODEL_DIAGNOSTICS_SETTINGS", model_diagnostic_settings),
             patch("agent_framework.telemetry.use_span") as mock_use_span,
             patch("agent_framework.telemetry._get_chat_response_span") as mock_get_span,
             patch("agent_framework.telemetry._set_chat_response_input") as mock_set_input,
@@ -662,7 +624,8 @@ class TestStreamingTelemetryWrapper:
             mock_set_input.assert_called_once_with("test_provider", messages)
             mock_set_output.assert_called_once()
 
-    async def test_streaming_response_with_exception_via_decorator(self):
+    @pytest.mark.parametrize("model_diagnostic_settings", [(True, False)], indirect=True)
+    async def test_streaming_response_with_exception_via_decorator(self, model_diagnostic_settings):
         """Test streaming telemetry exception handling through decorator."""
 
         # Create a mock chat client that raises an exception during streaming
@@ -690,7 +653,7 @@ class TestStreamingTelemetryWrapper:
         chat_options = ChatOptions()
 
         with (
-            patch("agent_framework.telemetry.are_model_diagnostics_enabled", return_value=True),
+            patch("agent_framework.telemetry.MODEL_DIAGNOSTICS_SETTINGS", model_diagnostic_settings),
             patch("agent_framework.telemetry.use_span") as mock_use_span,
             patch("agent_framework.telemetry._get_chat_response_span"),
             patch("agent_framework.telemetry._set_chat_response_input"),
@@ -709,9 +672,10 @@ class TestStreamingTelemetryWrapper:
             mock_set_error.assert_called_once()
             assert isinstance(mock_set_error.call_args[0][1], ValueError)
 
-    async def test_streaming_response_diagnostics_disabled_via_decorator(self):
+    @pytest.mark.parametrize("model_diagnostic_settings", [(False, False)], indirect=True)
+    async def test_streaming_response_diagnostics_disabled_via_decorator(self, model_diagnostic_settings):
         """Test streaming response when diagnostics are disabled."""
-        from agent_framework._types import ChatResponseUpdate
+        from agent_framework import ChatResponseUpdate
 
         class MockStreamingClientNoDiagnostics:
             MODEL_PROVIDER_NAME = "test_provider"
@@ -728,7 +692,7 @@ class TestStreamingTelemetryWrapper:
         chat_options = ChatOptions()
 
         with (
-            patch("agent_framework.telemetry.are_model_diagnostics_enabled", return_value=False),
+            patch("agent_framework.telemetry.MODEL_DIAGNOSTICS_SETTINGS", model_diagnostic_settings),
             patch("agent_framework.telemetry._get_chat_response_span") as mock_get_span,
         ):
             # Should not create spans when diagnostics are disabled
@@ -744,7 +708,8 @@ class TestStreamingTelemetryWrapper:
 class TestExceptionHandling:
     """Test exception handling in telemetry wrapper functions."""
 
-    async def test_regular_response_with_exception_via_decorator(self):
+    @pytest.mark.parametrize("model_diagnostic_settings", [(True, False)], indirect=True)
+    async def test_regular_response_with_exception_via_decorator(self, model_diagnostic_settings):
         """Test exception handling in regular chat response through decorator."""
 
         # Create a mock chat client that raises an exception
@@ -769,7 +734,7 @@ class TestExceptionHandling:
         chat_options = ChatOptions()
 
         with (
-            patch("agent_framework.telemetry.are_model_diagnostics_enabled", return_value=True),
+            patch("agent_framework.telemetry.MODEL_DIAGNOSTICS_SETTINGS", model_diagnostic_settings),
             patch("agent_framework.telemetry.use_span") as mock_use_span,
             patch("agent_framework.telemetry._get_chat_response_span"),
             patch("agent_framework.telemetry._set_chat_response_input"),
@@ -790,7 +755,8 @@ class TestExceptionHandling:
             assert isinstance(args[1], RuntimeError)
             assert str(args[1]) == "Test completion error"
 
-    async def test_regular_response_diagnostics_disabled_with_exception(self):
+    @pytest.mark.parametrize("model_diagnostic_settings", [(False, False)], indirect=True)
+    async def test_regular_response_diagnostics_disabled_with_exception(self, model_diagnostic_settings):
         """Test that exceptions are still raised when diagnostics are disabled."""
 
         class MockFailingClientNoDiagnostics:
@@ -801,6 +767,9 @@ class TestExceptionHandling:
             ) -> ChatResponse:
                 raise ValueError("Test error with diagnostics disabled")
 
+            def service_url(self) -> str:
+                return "https://test.com"
+
         decorated_class = use_telemetry(MockFailingClientNoDiagnostics)
         client = decorated_class()
 
@@ -808,7 +777,7 @@ class TestExceptionHandling:
         chat_options = ChatOptions()
 
         with (
-            patch("agent_framework.telemetry.are_model_diagnostics_enabled", return_value=False),
+            patch("agent_framework.telemetry.MODEL_DIAGNOSTICS_SETTINGS", model_diagnostic_settings),
             # Should still raise the exception even when diagnostics are disabled
             pytest.raises(ValueError, match="Test error with diagnostics disabled"),
         ):
@@ -847,7 +816,8 @@ class TestWrapperFunctionMarkers:
 class TestChatResponseFromUpdates:
     """Test ChatResponse.from_chat_response_updates integration."""
 
-    async def test_streaming_response_aggregation_via_decorator(self):
+    @pytest.mark.parametrize("model_diagnostic_settings", [(True, False)], indirect=True)
+    async def test_streaming_response_aggregation_via_decorator(self, model_diagnostic_settings):
         """Test that streaming responses are properly aggregated."""
         from agent_framework._types import ChatResponseUpdate
 
@@ -875,7 +845,7 @@ class TestChatResponseFromUpdates:
         chat_options = ChatOptions()
 
         with (
-            patch("agent_framework.telemetry.are_model_diagnostics_enabled", return_value=True),
+            patch("agent_framework.telemetry.MODEL_DIAGNOSTICS_SETTINGS", model_diagnostic_settings),
             patch("agent_framework.telemetry.use_span") as mock_use_span,
             patch("agent_framework.telemetry._get_chat_response_span"),
             patch("agent_framework.telemetry._set_chat_response_input"),
@@ -900,7 +870,8 @@ class TestChatResponseFromUpdates:
 class TestModelIdFallback:
     """Test model ID fallback logic in span creation."""
 
-    async def test_model_id_fallback_from_chat_options(self):
+    @pytest.mark.parametrize("model_diagnostic_settings", [(True, False)], indirect=True)
+    async def test_model_id_fallback_from_chat_options(self, model_diagnostic_settings):
         """Test that model ID falls back to chat_options when not present on client."""
 
         class MockClientWithoutModelId:
@@ -924,7 +895,7 @@ class TestModelIdFallback:
         chat_options = ChatOptions(ai_model_id="fallback_model")
 
         with (
-            patch("agent_framework.telemetry.are_model_diagnostics_enabled", return_value=True),
+            patch("agent_framework.telemetry.MODEL_DIAGNOSTICS_SETTINGS", model_diagnostic_settings),
             patch("agent_framework.telemetry.use_span") as mock_use_span,
             patch("agent_framework.telemetry._get_chat_response_span") as mock_get_span,
             patch("agent_framework.telemetry._set_chat_response_input"),
@@ -942,7 +913,8 @@ class TestModelIdFallback:
             model_name = call_args[1]  # Second argument is the model name
             assert model_name == "fallback_model"
 
-    async def test_model_id_fallback_to_unknown(self):
+    @pytest.mark.parametrize("model_diagnostic_settings", [(True, False)], indirect=True)
+    async def test_model_id_fallback_to_unknown(self, model_diagnostic_settings):
         """Test that model ID falls back to 'unknown' when not available anywhere."""
 
         class MockClientWithoutModelId:
@@ -966,7 +938,7 @@ class TestModelIdFallback:
         chat_options = ChatOptions()  # No ai_model_id set
 
         with (
-            patch("agent_framework.telemetry.are_model_diagnostics_enabled", return_value=True),
+            patch("agent_framework.telemetry.MODEL_DIAGNOSTICS_SETTINGS", model_diagnostic_settings),
             patch("agent_framework.telemetry.use_span") as mock_use_span,
             patch("agent_framework.telemetry._get_chat_response_span") as mock_get_span,
             patch("agent_framework.telemetry._set_chat_response_input"),
@@ -988,7 +960,8 @@ class TestModelIdFallback:
 class TestEmptyStreamingResponse:
     """Test edge cases with empty streaming responses."""
 
-    async def test_empty_streaming_response_via_decorator(self):
+    @pytest.mark.parametrize("model_diagnostic_settings", [(True, False)], indirect=True)
+    async def test_empty_streaming_response_via_decorator(self, model_diagnostic_settings):
         """Test streaming wrapper with empty response."""
 
         class MockEmptyStreamingClient:
@@ -1014,7 +987,7 @@ class TestEmptyStreamingResponse:
         chat_options = ChatOptions()
 
         with (
-            patch("agent_framework.telemetry.are_model_diagnostics_enabled", return_value=True),
+            patch("agent_framework.telemetry.MODEL_DIAGNOSTICS_SETTINGS", model_diagnostic_settings),
             patch("agent_framework.telemetry.use_span") as mock_use_span,
             patch("agent_framework.telemetry._get_chat_response_span"),
             patch("agent_framework.telemetry._set_chat_response_input"),

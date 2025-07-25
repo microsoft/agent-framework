@@ -41,7 +41,7 @@ __all__ = ["OpenAIChatClient"]
 class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
     """OpenAI Chat completion class."""
 
-    MODEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride]
+    MODEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     async def _inner_get_response(
         self,

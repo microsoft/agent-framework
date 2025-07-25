@@ -4,7 +4,7 @@ import functools
 import json
 import logging
 import os
-from collections.abc import AsyncIterable, Callable, MutableSequence
+from collections.abc import AsyncIterable, Awaitable, Callable, MutableSequence
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Final, TypeVar
 
@@ -15,13 +15,16 @@ from . import __version__ as version_info
 from ._logging import get_logger
 from ._pydantic import AFBaseSettings
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no cover
+    from opentelemetry.util._decorator import _AgnosticContextManager  # type: ignore[reportPrivateUsage]
+
     from ._clients import ChatClientBase
     from ._tools import AIFunction
     from ._types import ChatMessage, ChatOptions, ChatResponse, ChatResponseUpdate
 
-tracer = get_tracer("agent_framework")
+TChatClientBase = TypeVar("TChatClientBase", bound="ChatClientBase")
 
+tracer = get_tracer("agent_framework")
 logger = get_logger()
 
 __all__ = [
@@ -31,6 +34,33 @@ __all__ = [
     "prepend_agent_framework_to_user_agent",
     "use_telemetry",
 ]
+
+
+# We're recording multiple events for the chat history, some of them are emitted within (hundreds of)
+# nanoseconds of each other. The default timestamp resolution is not high enough to guarantee unique
+# timestamps for each message. Also Azure Monitor truncates resolution to microseconds and some other
+# backends truncate to milliseconds.
+#
+# But we need to give users a way to restore chat message order, so we're incrementing the timestamp
+# by 1 microsecond for each message.
+#
+# This is a workaround, we'll find a generic and better solution - see
+# https://github.com/open-telemetry/semantic-conventions/issues/1701
+class ChatMessageListTimestampFilter(logging.Filter):
+    """A filter to increment the timestamp of INFO logs by 1 microsecond."""
+
+    INDEX_KEY: ClassVar[str] = "CHAT_MESSAGE_INDEX"
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Increment the timestamp of INFO logs by 1 microsecond."""
+        if hasattr(record, self.INDEX_KEY):
+            idx = getattr(record, self.INDEX_KEY)
+            record.created += idx * 1e-6
+        return True
+
+
+# Creates a tracer from the global tracer provider
+logger.addFilter(ChatMessageListTimestampFilter())
 
 
 class GenAIAttributes(str, Enum):
@@ -87,8 +117,6 @@ ROLE_EVENT_MAP = {
     "assistant": GenAIAttributes.ASSISTANT_MESSAGE.value,
     "tool": GenAIAttributes.TOOL_MESSAGE.value,
 }
-
-
 # Note that if this environment variable does not exist, telemetry is enabled.
 TELEMETRY_DISABLED_ENV_VAR = "AZURE_TELEMETRY_DISABLED"
 IS_TELEMETRY_ENABLED = os.environ.get(TELEMETRY_DISABLED_ENV_VAR, "false").lower() not in ["true", "1"]
@@ -103,13 +131,6 @@ APP_INFO = (
 USER_AGENT_KEY: Final[str] = "User-Agent"
 HTTP_USER_AGENT: Final[str] = "agent-framework-python"
 AGENT_FRAMEWORK_USER_AGENT = f"{HTTP_USER_AGENT}/{version_info}"
-
-__all__ = [
-    "AGENT_FRAMEWORK_USER_AGENT",
-    "APP_INFO",
-    "USER_AGENT_KEY",
-    "prepend_agent_framework_to_user_agent",
-]
 
 
 def prepend_agent_framework_to_user_agent(headers: dict[str, Any]) -> dict[str, Any]:
@@ -130,33 +151,6 @@ def prepend_agent_framework_to_user_agent(headers: dict[str, Any]) -> dict[str, 
     return headers
 
 
-# We're recording multiple events for the chat history, some of them are emitted within (hundreds of)
-# nanoseconds of each other. The default timestamp resolution is not high enough to guarantee unique
-# timestamps for each message. Also Azure Monitor truncates resolution to microseconds and some other
-# backends truncate to milliseconds.
-#
-# But we need to give users a way to restore chat message order, so we're incrementing the timestamp
-# by 1 microsecond for each message.
-#
-# This is a workaround, we'll find a generic and better solution - see
-# https://github.com/open-telemetry/semantic-conventions/issues/1701
-class ChatMessageListTimestampFilter(logging.Filter):
-    """A filter to increment the timestamp of INFO logs by 1 microsecond."""
-
-    INDEX_KEY: ClassVar[str] = "CHAT_MESSAGE_INDEX"
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        """Increment the timestamp of INFO logs by 1 microsecond."""
-        if hasattr(record, self.INDEX_KEY):
-            idx = getattr(record, self.INDEX_KEY)
-            record.created += idx * 1e-6
-        return True
-
-
-# Creates a tracer from the global tracer provider
-logger.addFilter(ChatMessageListTimestampFilter())
-
-
 class ModelDiagnosticSettings(AFBaseSettings):
     """Settings for model diagnostics.
 
@@ -167,6 +161,9 @@ class ModelDiagnosticSettings(AFBaseSettings):
     If the settings are not found in the .env file, the settings
     are ignored; however, validation will fail alerting that the
     settings are missing.
+
+    Warning:
+        Sensitive events should only be enabled on test and development environments.
 
     Required settings for prefix 'AGENT_FRAMEWORK_GENAI_' are:
     - enable_otel_diagnostics: bool - Enable OpenTelemetry diagnostics. Default is False.
@@ -180,34 +177,31 @@ class ModelDiagnosticSettings(AFBaseSettings):
     enable_otel_diagnostics: bool = False
     enable_otel_diagnostics_sensitive: bool = False
 
+    @property
+    def ENABLED(self) -> bool:
+        """Check if model diagnostics are enabled.
+
+        Model diagnostics are enabled if either diagnostic is enabled or diagnostic with sensitive events is enabled.
+        """
+        return self.enable_otel_diagnostics or self.enable_otel_diagnostics_sensitive
+
+    @property
+    def SENSITIVE_EVENTS_ENABLED(self) -> bool:
+        """Check if sensitive events are enabled.
+
+        Sensitive events are enabled if the diagnostic with sensitive events is enabled.
+        """
+        return self.enable_otel_diagnostics_sensitive
+
 
 MODEL_DIAGNOSTICS_SETTINGS = ModelDiagnosticSettings()
-
-
-def are_model_diagnostics_enabled() -> bool:
-    """Check if model diagnostics are enabled.
-
-    Model diagnostics are enabled if either diagnostic is enabled or diagnostic with sensitive events is enabled.
-    """
-    return (
-        MODEL_DIAGNOSTICS_SETTINGS.enable_otel_diagnostics
-        or MODEL_DIAGNOSTICS_SETTINGS.enable_otel_diagnostics_sensitive
-    )
-
-
-def are_sensitive_events_enabled() -> bool:
-    """Check if sensitive events are enabled.
-
-    Sensitive events are enabled if the diagnostic with sensitive events is enabled.
-    """
-    return MODEL_DIAGNOSTICS_SETTINGS.enable_otel_diagnostics_sensitive
 
 
 def start_as_current_span(
     tracer: trace.Tracer,
     function: "AIFunction[Any, Any]",
     metadata: dict[str, Any] | None = None,
-):
+) -> "_AgnosticContextManager[Span]":
     """Starts a span for the given function using the provided tracer.
 
     Args:
@@ -234,7 +228,9 @@ def start_as_current_span(
     )
 
 
-def _trace_chat_get_response(completion_func: Callable[..., Any]) -> Callable[..., Any]:
+def _trace_chat_get_response(
+    completion_func: Callable[..., Awaitable["ChatResponse"]],
+) -> Callable[..., Awaitable["ChatResponse"]]:
     """Decorator to trace chat completion activities.
 
     Args:
@@ -249,25 +245,28 @@ def _trace_chat_get_response(completion_func: Callable[..., Any]) -> Callable[..
         chat_options: "ChatOptions",
         **kwargs: Any,
     ) -> "ChatResponse":
-        if not are_model_diagnostics_enabled():
+        if not MODEL_DIAGNOSTICS_SETTINGS.ENABLED:
             # If model diagnostics are not enabled, just return the completion
-            return await completion_func(self, messages=messages, chat_options=chat_options, **kwargs)
+            return await completion_func(
+                self,
+                messages=messages,
+                chat_options=chat_options,
+                **kwargs,
+            )
 
         with use_span(
             _get_chat_response_span(
                 GenAIAttributes.CHAT_COMPLETION_OPERATION.value,
                 getattr(self, "ai_model_id", chat_options.ai_model_id or "unknown"),
                 self.MODEL_PROVIDER_NAME,
-                self.service_url(),
+                self.service_url() if hasattr(self, "service_url") else None,
                 chat_options,
             ),
             end_on_exit=True,
         ) as current_span:
             _set_chat_response_input(self.MODEL_PROVIDER_NAME, messages)
             try:
-                response: "ChatResponse" = await completion_func(
-                    self, messages=messages, chat_options=chat_options, **kwargs
-                )
+                response = await completion_func(self, messages=messages, chat_options=chat_options, **kwargs)
                 _set_chat_response_output(current_span, response, self.MODEL_PROVIDER_NAME)
                 return response
             except Exception as exception:
@@ -293,7 +292,7 @@ def _trace_chat_get_streaming_response(
     async def wrap_inner_get_streaming_response(
         self: "ChatClientBase", *, messages: MutableSequence["ChatMessage"], chat_options: "ChatOptions", **kwargs: Any
     ) -> AsyncIterable["ChatResponseUpdate"]:
-        if not are_model_diagnostics_enabled():
+        if not MODEL_DIAGNOSTICS_SETTINGS.ENABLED:
             # If model diagnostics are not enabled, just return the completion
             async for streaming_chat_message_contents in completion_func(
                 self, messages=messages, chat_options=chat_options, **kwargs
@@ -310,7 +309,7 @@ def _trace_chat_get_streaming_response(
                 GenAIAttributes.CHAT_STREAMING_COMPLETION_OPERATION.value,
                 getattr(self, "ai_model_id", chat_options.ai_model_id or "unknown"),
                 self.MODEL_PROVIDER_NAME,
-                self.service_url(),
+                self.service_url() if hasattr(self, "service_url") else None,
                 chat_options,
             ),
             end_on_exit=True,
@@ -330,9 +329,6 @@ def _trace_chat_get_streaming_response(
     # Mark the wrapper decorator as a streaming chat completion decorator
     wrap_inner_get_streaming_response.__model_diagnostics_streaming_chat_completion__ = True  # type: ignore
     return wrap_inner_get_streaming_response
-
-
-TChatClientBase = TypeVar("TChatClientBase", bound="ChatClientBase")
 
 
 def use_telemetry(cls: type[TChatClientBase]) -> type[TChatClientBase]:
@@ -405,7 +401,7 @@ def _set_chat_response_input(
 
     The logs will be associated to the current span.
     """
-    if are_sensitive_events_enabled():
+    if MODEL_DIAGNOSTICS_SETTINGS.SENSITIVE_EVENTS_ENABLED:
         for idx, message in enumerate(messages):
             event_name = ROLE_EVENT_MAP.get(message.role.value)
             if event_name:
@@ -449,7 +445,7 @@ def _set_chat_response_output(
             current_span.set_attribute(GenAIAttributes.OUTPUT_TOKENS.value, usage.output_token_count)
 
     # Set the completion event
-    if are_sensitive_events_enabled():
+    if MODEL_DIAGNOSTICS_SETTINGS.SENSITIVE_EVENTS_ENABLED:
         for completion in response.messages:
             full_response: dict[str, Any] = {
                 "message": completion.model_dump(exclude_none=True),

@@ -25,11 +25,6 @@ from ._types import (
 
 TInput = TypeVar("TInput", contravariant=True)
 TEmbedding = TypeVar("TEmbedding")
-TInnerGetResponse = TypeVar("TInnerGetResponse", bound=Callable[..., Awaitable[ChatResponse]])
-TInnerGetStreamingResponse = TypeVar(
-    "TInnerGetStreamingResponse", bound=Callable[..., AsyncIterable[ChatResponseUpdate]]
-)
-
 TChatClientBase = TypeVar("TChatClientBase", bound="ChatClientBase")
 
 logger = get_logger()
@@ -87,7 +82,9 @@ def ai_function_to_json_schema_spec(function: AIFunction[BaseModel, Any]) -> dic
     }
 
 
-def _tool_call_non_streaming(func: TInnerGetResponse) -> TInnerGetResponse:
+def _tool_call_non_streaming(
+    func: Callable[..., Awaitable["ChatResponse"]],
+) -> Callable[..., Awaitable["ChatResponse"]]:
     """Decorate the internal _inner_get_response method to enable tool calls."""
 
     @wraps(func)
@@ -153,10 +150,12 @@ def _tool_call_non_streaming(func: TInnerGetResponse) -> TInnerGetResponse:
                 response.messages.insert(0, msg)
         return response
 
-    return wrapper  # type: ignore[reportReturnType, return-value]
+    return wrapper
 
 
-def _tool_call_streaming(func: TInnerGetStreamingResponse) -> TInnerGetStreamingResponse:
+def _tool_call_streaming(
+    func: Callable[..., AsyncIterable["ChatResponseUpdate"]],
+) -> Callable[..., AsyncIterable["ChatResponseUpdate"]]:
     """Decorate the internal _inner_get_response method to enable tool calls."""
 
     @wraps(func)
@@ -218,7 +217,7 @@ def _tool_call_streaming(func: TInnerGetStreamingResponse) -> TInnerGetStreaming
         async for update in func(self, messages=messages, chat_options=chat_options, **kwargs):
             yield update
 
-    return wrapper  # type: ignore[reportReturnType, return-value]
+    return wrapper
 
 
 def use_tool_calling(cls: type[TChatClientBase]) -> type[TChatClientBase]:
