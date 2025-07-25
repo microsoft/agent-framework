@@ -403,7 +403,7 @@ class StructuredDataInputRequestContent : UserInputRequestContent
     public string? Text { get; set; }
 
     // Contains the schema for the user input.
-    public JsonElement JsonSchema { get; set; }
+    public JsonElement Schema { get; set; }
 }
 class StructuredDataInputResponseContent : UserInputResponseContent
 {
