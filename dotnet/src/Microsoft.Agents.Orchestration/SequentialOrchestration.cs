@@ -16,7 +16,14 @@ public sealed partial class SequentialOrchestration : OrchestratingAgent
 {
     /// <summary>Initializes a new instance of the <see cref="SequentialOrchestration"/> class.</summary>
     /// <param name="agents">The agents participating in the orchestration.</param>
-    public SequentialOrchestration(params AIAgent[] agents) : base(agents)
+    public SequentialOrchestration(params AIAgent[] agents) : this(agents, name: null)
+    {
+    }
+
+    /// <summary>Initializes a new instance of the <see cref="SequentialOrchestration"/> class.</summary>
+    /// <param name="agents">The agents participating in the orchestration.</param>
+    /// <param name="name">An optional name for this orchestrating agent.</param>
+    public SequentialOrchestration(AIAgent[] agents, string? name) : base(agents, name)
     {
     }
 

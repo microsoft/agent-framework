@@ -49,7 +49,7 @@ public sealed class HandoffOrchestrationTests : IDisposable
                 Responses.Message("Final response"));
 
         // Act: Create and execute the orchestration
-        string response = await ExecuteOrchestrationAsync(OrchestrationHandoffs.StartWith(mockAgent1));
+        string response = await ExecuteOrchestrationAsync(Handoffs.StartWith(mockAgent1));
 
         // Assert
         Assert.Equal("Final response", response);
@@ -77,15 +77,15 @@ public sealed class HandoffOrchestrationTests : IDisposable
 
         // Act: Create and execute the orchestration
         string response = await ExecuteOrchestrationAsync(
-            OrchestrationHandoffs
+            Handoffs
                 .StartWith(mockAgent1)
-                .Add(mockAgent1, mockAgent2, mockAgent3));
+                .Add(mockAgent1, [mockAgent2, mockAgent3]));
 
         // Assert
         Assert.Equal("Final response", response);
     }
 
-    private static async Task<string> ExecuteOrchestrationAsync(OrchestrationHandoffs handoffs)
+    private static async Task<string> ExecuteOrchestrationAsync(Handoffs handoffs)
     {
         // Arrange
         HandoffOrchestration orchestration = new(handoffs);

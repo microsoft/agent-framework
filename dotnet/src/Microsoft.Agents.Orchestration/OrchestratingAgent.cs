@@ -27,12 +27,17 @@ public abstract partial class OrchestratingAgent : AIAgent
     /// Initializes a new instance of the <see cref="OrchestratingAgent"/> class.
     /// </summary>
     /// <param name="agents">Specifies the agents participating in this orchestration.</param>
-    protected OrchestratingAgent(IReadOnlyList<AIAgent> agents)
+    /// <param name="name">An optional name for this agent.</param>
+    protected OrchestratingAgent(IReadOnlyList<AIAgent> agents, string? name = null)
     {
         _ = Throw.IfNullOrEmpty(agents);
 
         this.Agents = agents;
+        this.Name = name;
     }
+
+    /// <inheritdoc />
+    public override string? Name { get; }
 
     /// <summary>
     /// Gets the list of member targets involved in the orchestration.

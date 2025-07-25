@@ -20,10 +20,11 @@ public static class HostApplicationBuilderAgentExtensions
             ChatClientAgent target = new(chatClient, instructions, $"{name}_targetAgent");
             ChatClientAgent customerService = new(chatClient, "You are a customer service agent. You will handle rude, angry, or upset customer inquiries, asking them to be more calm and polite.", $"{name}_customerServiceAgent");
 
-            return new HandoffOrchestration(OrchestrationHandoffs
+            return Handoffs
                 .StartWith(triage)
                 .Add(triage, target, "Hand off to the target agent for handling normal customer requests.")
-                .Add(triage, customerService, "Hand off to the customer service agent for handling rude customer inquiries."));
+                .Add(triage, customerService, "Hand off to the customer service agent for handling rude customer inquiries.")
+                .Build("PirateWorkflow");
         });
         var actorBuilder = builder.AddActorRuntime();
 
