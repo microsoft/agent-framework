@@ -123,14 +123,14 @@ IS_TELEMETRY_ENABLED = os.environ.get(TELEMETRY_DISABLED_ENV_VAR, "false").lower
 
 APP_INFO = (
     {
-        "agent-framework-version": f"python/{version_info}",
+        "agent-framework-version": f"python/{version_info}",  # type: ignore[has-type]
     }
     if IS_TELEMETRY_ENABLED
     else None
 )
 USER_AGENT_KEY: Final[str] = "User-Agent"
 HTTP_USER_AGENT: Final[str] = "agent-framework-python"
-AGENT_FRAMEWORK_USER_AGENT = f"{HTTP_USER_AGENT}/{version_info}"
+AGENT_FRAMEWORK_USER_AGENT = f"{HTTP_USER_AGENT}/{version_info}"  # type: ignore[has-type]
 
 
 def prepend_agent_framework_to_user_agent(headers: dict[str, Any]) -> dict[str, Any]:
