@@ -13,6 +13,7 @@ else:
 
 from openai import AsyncOpenAI, AsyncStream
 from openai.types.responses.response import Response as OpenAIResponse
+from openai.types.responses.response_code_interpreter_tool_call import ResponseCodeInterpreterToolCall
 from openai.types.responses.response_completed_event import ResponseCompletedEvent
 from openai.types.responses.response_content_part_added_event import ResponseContentPartAddedEvent
 from openai.types.responses.response_function_tool_call import ResponseFunctionToolCall
@@ -27,6 +28,7 @@ from openai.types.responses.response_usage import ResponseUsage
 from pydantic import BaseModel, SecretStr, ValidationError
 
 from .._clients import ChatClientBase, use_tool_calling
+from .._tools import HostedCodeInterpreterTool
 from .._types import (
     AIContents,
     AITool,
@@ -301,6 +303,8 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
         for tool in tools:
             if isinstance(tool, AITool):
                 # TODO(peterychang): Support AITools
+                if isinstance(tool, HostedCodeInterpreterTool):
+                    response_tools.append({"type": "code_interpreter", "container": {"type": "auto"}})
                 continue
             if "function" not in tool:
                 response_tools.append(tool if isinstance(tool, dict) else dict(tool))
@@ -373,6 +377,8 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
                     metadata.update(self._get_metadata_from_response(content))
                 elif isinstance(content, ResponseOutputRefusal):
                     items.append(ChatMessage(role=item.role, text=content.refusal))
+        if isinstance(item, ResponseCodeInterpreterToolCall):
+            items.append(ChatMessage(role=ChatRole.ASSISTANT, text=response.output_text))
         return ChatResponse(
             response_id=response.id,
             conversation_id=response.id if store is True else None,

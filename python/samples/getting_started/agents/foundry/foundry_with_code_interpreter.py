@@ -33,7 +33,7 @@ def get_code_interpreter_chunk(chunk: AgentRunResponseUpdate) -> str | None:
 
 async def main() -> None:
     """Example showing how to use the HostedCodeInterpreterTool with Foundry."""
-    print("=== Foundry Chat Client with Code Interpreter Example ===")
+    print("=== Foundry Agent with Code Interpreter Example ===")
 
     async with ChatClientAgent(
         chat_client=FoundryChatClient(),
