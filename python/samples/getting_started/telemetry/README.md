@@ -39,6 +39,7 @@ uv pip install opentelemetry-exporter-otlp-proto-grpc
 2. Create a `.env` file if one doesn't already exist in this folder. Please refer to the [example file](./.env.example).
     > Note that `CONNECTION_STRING` and `SAMPLE_OTLP_ENDPOINT` are optional. If you don't configure them, everything will get outputted to the console.
     > Set `AGENT_FRAMEWORK_GENAI_ENABLE_OTEL_DIAGNOSTICS=true` to enable basic telemetry and `AGENT_FRAMEWORK_GENAI_ENABLE_OTEL_DIAGNOSTICS_SENSITIVE=true` to include sensitive information like prompts and responses.
+        > Sensitive information should only be enabled in a development or test environment. It is not recommended to enable this in production environments as it may expose sensitive data.
 3. Activate your python virtual environment, and then run `python scenarios.py` or `python interactive.py`.
 
 > This will output the Operation/Trace ID, which can be used later for filtering.
