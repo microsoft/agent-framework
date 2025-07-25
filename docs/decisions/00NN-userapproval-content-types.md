@@ -88,10 +88,13 @@ There will be no long term record of an approval request in the chat history, bu
 Suggested Types:
 
 ```csharp
-class ApprovalRequestContent : TextContent // TextContent.Text may contain text to explain to the user what they are approving. This is important if the approval is not for a function call.
+class ApprovalRequestContent : AIContent
 {
     // An ID to uniquely identify the approval request/response pair.
     public string ApprovalId { get; set; }
+
+    // An optional user targeted message to explain what needs to be approved.
+    public string? Text { get; set; }
 
     // Optional: If the approval is for a function call, this will contain the function call content.
     public FunctionCallContent? FunctionCall { get; set; }
