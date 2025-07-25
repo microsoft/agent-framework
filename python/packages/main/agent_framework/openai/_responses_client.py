@@ -4,7 +4,7 @@ import sys
 from collections.abc import AsyncIterable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
 from datetime import datetime
 from itertools import chain
-from typing import Any, ClassVar, Literal
+from typing import Any, Literal
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore
@@ -53,9 +53,6 @@ __all__ = ["OpenAIResponsesClient"]
 class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
     """OpenAI Responses client class."""
 
-    MODEL_PROVIDER_NAME: ClassVar[str] = "openai"
-    SUPPORTS_FUNCTION_CALLING: ClassVar[bool] = True
-
     def __init__(
         self,
         ai_model_id: str | None = None,
@@ -88,7 +85,7 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
             openai_settings = OpenAISettings(
                 api_key=SecretStr(api_key) if api_key else None,
                 org_id=org_id,
-                chat_model_id=ai_model_id,
+                responses_model_id=ai_model_id,
                 env_file_path=env_file_path,
                 env_file_encoding=env_file_encoding,
             )
@@ -97,11 +94,11 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
 
         if not async_client and not openai_settings.api_key:
             raise ServiceInitializationError("The OpenAI API key is required.")
-        if not openai_settings.chat_model_id:
+        if not openai_settings.responses_model_id:
             raise ServiceInitializationError("The OpenAI model ID is required.")
 
         super().__init__(
-            ai_model_id=openai_settings.chat_model_id,
+            ai_model_id=openai_settings.responses_model_id,
             api_key=openai_settings.api_key.get_secret_value() if openai_settings.api_key else None,
             org_id=openai_settings.org_id,
             ai_model_type=OpenAIModelTypes.RESPONSE,
@@ -286,7 +283,6 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
         assert isinstance(response, OpenAIResponse)  # nosec  # noqa: S101
         return next(self._create_response_content(response, item) for item in response.output)
 
-    # @trace_streaming_chat_completion(MODEL_PROVIDER_NAME)
     async def _inner_get_streaming_response(
         self,
         *,

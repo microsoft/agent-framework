@@ -4,7 +4,7 @@ import json
 from collections.abc import AsyncIterable, Mapping, MutableSequence, Sequence
 from datetime import datetime
 from itertools import chain
-from typing import Any, ClassVar, cast
+from typing import Any, cast
 
 from openai import AsyncOpenAI, AsyncStream
 from openai.types import CompletionUsage
@@ -42,9 +42,6 @@ __all__ = ["OpenAIChatClient"]
 class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
     """OpenAI Chat completion class."""
 
-    MODEL_PROVIDER_NAME: ClassVar[str] = "openai"
-    SUPPORTS_FUNCTION_CALLING: ClassVar[bool] = True
-
     # region Overriding base class methods
     # most of the methods are overridden from the ChatClientBase class, otherwise it is mentioned
 
@@ -66,7 +63,6 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
             self._create_chat_message_content(response, choice, response_metadata) for choice in response.choices
         )
 
-    # @trace_streaming_chat_completion(MODEL_PROVIDER_NAME)
     async def _inner_get_streaming_response(
         self,
         *,
