@@ -127,7 +127,7 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
         parallel_tool_calls: bool | None = None,
         model: str | None = None,
         previous_response_id: str | None = None,
-        reasoning: str | None = None,
+        reasoning: dict[str, str] | None = None,
         service_tier: str | None = None,
         response_format: type[BaseModel] | None = None,
         seed: int | None = None,
@@ -148,7 +148,35 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
-        """Get a response from the OpenAI API."""
+        """Get a response from the OpenAI API.
+
+        Args:
+            messages: the message or messages to send to the model
+            include: additional output data to include in the model response.
+            instruction: a system (or developer) message inserted into the model's context.
+            max_tokens: The maximum number of tokens to generate.
+            parallel_tool_calls: Whether to enable parallel tool calls.
+            model: The model to use for the agent.
+            previous_response_id: The ID of the previous response.
+            reasoning: The reasoning to use for the response.
+            service_tier: The service tier to use for the response.
+            response_format: The format of the response.
+            seed: The random seed to use for the response.
+            store: whether to store the response.
+            temperature: the sampling temperature to use.
+            tool_choice: the tool choice for the request.
+            tools: the tools to use for the request.
+            top_p: the nucleus sampling probability to use.
+            user: the user to associate with the request.
+            truncation: the truncation strategy to use.
+            timeout: the timeout for the request.
+            additional_properties: additional properties to include in the request.
+            kwargs: any additional keyword arguments,
+                will only be passed to functions that are called.
+
+        Returns:
+            A chat response from the model.
+        """
         filtered_options = self._filter_options(
             background=False,
             include=include,
@@ -192,7 +220,7 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
         parallel_tool_calls: bool | None = None,
         model: str | None = None,
         previous_response_id: str | None = None,
-        reasoning: str | None = None,
+        reasoning: dict[str, str] | None = None,
         service_tier: str | None = None,
         response_format: type[BaseModel] | None = None,
         seed: int | None = None,
@@ -213,7 +241,35 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
-        """Get a response from the OpenAI API."""
+        """Get a streaming response from the OpenAI API.
+
+        Args:
+            messages: the message or messages to send to the model
+            include: additional output data to include in the model response.
+            instruction: a system (or developer) message inserted into the model's context.
+            max_tokens: The maximum number of tokens to generate.
+            parallel_tool_calls: Whether to enable parallel tool calls.
+            model: The model to use for the agent.
+            previous_response_id: The ID of the previous response.
+            reasoning: The reasoning to use for the response.
+            service_tier: The service tier to use for the response.
+            response_format: The format of the response.
+            seed: The random seed to use for the response.
+            store: whether to store the response.
+            temperature: the sampling temperature to use.
+            tool_choice: the tool choice for the request.
+            tools: the tools to use for the request.
+            top_p: the nucleus sampling probability to use.
+            user: the user to associate with the request.
+            truncation: the truncation strategy to use.
+            timeout: the timeout for the request.
+            additional_properties: additional properties to include in the request.
+            kwargs: any additional keyword arguments,
+                will only be passed to functions that are called.
+
+        Returns:
+            A stream representing the response(s) from the LLM.
+        """
         filtered_options = self._filter_options(
             background=False,
             include=include,
