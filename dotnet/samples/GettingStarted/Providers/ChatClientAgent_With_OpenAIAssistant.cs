@@ -23,13 +23,13 @@ public sealed class ChatClientAgent_With_OpenAIAssistant(ITestOutputHelper outpu
         var openAIClient = new OpenAIClient(TestConfiguration.OpenAI.ApiKey);
 
         // Get the agent directly from OpenAIClient.
-        AIAgent agent = await new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
-            .CreateAssistantClientAgentAsync(TestConfiguration.OpenAI.ChatModelId,
-                options: new()
-                {
-                    Name = JokerName,
-                    Instructions = JokerInstructions,
-                });
+        AIAgent agent = await openAIClient.CreateAssistantClientAgentAsync(
+            TestConfiguration.OpenAI.ChatModelId,
+            options: new()
+            {
+                Name = JokerName,
+                Instructions = JokerInstructions,
+            });
 
         // Start a new thread for the agent conversation.
         AgentThread thread = agent.GetNewThread();
