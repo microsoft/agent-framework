@@ -167,7 +167,7 @@ jobs:
         environment: ["integration"]
     env:
       UV_PYTHON: ${{ matrix.python-version }}
-      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.AZUREAI__ENDPOINT }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
       FOUNDRY_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
       PACKAGE_NAME: "foundry"
     defaults:
