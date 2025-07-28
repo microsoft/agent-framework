@@ -86,11 +86,9 @@ public abstract class GroupChatManager
     /// <returns>A <see cref="GroupChatManagerResult{TValue}"/> indicating whether the chat should be terminated.</returns>
     protected internal virtual ValueTask<GroupChatManagerResult<bool>> ShouldTerminate(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default)
     {
-        Interlocked.Increment(ref this._invocationCount);
-
         bool resultValue = false;
         string reason = "Maximum number of invocations has not been reached.";
-        if (this.InvocationCount > this.MaximumInvocationCount)
+        if (Interlocked.Increment(ref this._invocationCount) > this.MaximumInvocationCount)
         {
             resultValue = true;
             reason = "Maximum number of invocations reached.";

@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.Orchestration;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 
 namespace Orchestration;
@@ -28,7 +29,7 @@ public class SequentialOrchestration_With_Cancellation(ITestOutputHelper output)
         string input = "42";
         Console.WriteLine($"\n# INPUT: {input}\n");
 
-        OrchestrationResult<string> result = await orchestration.InvokeAsync(input);
+        OrchestratingAgentResponse result = await orchestration.RunAsync([new ChatMessage(ChatRole.User, input)]);
 
         result.Cancel();
         await Task.Delay(TimeSpan.FromSeconds(3));

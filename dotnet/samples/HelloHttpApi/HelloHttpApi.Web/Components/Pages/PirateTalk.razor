@@ -1,0 +1,208 @@
+@page "/pirate-talk"
+@attribute [StreamRendering(true)]
+@inject AgentClient AgentClient
+@inject IJSRuntime JSRuntime
+@inject ILogger<PirateTalk> Logger
+@rendermode InteractiveServer
+@using System.Text
+@using System.Text.Json
+@using Microsoft.Extensions.AI
+@using Microsoft.Extensions.AI.Agents
+
+<PageTitle>Pirate Talk</PageTitle>
+
+<h1>🏴‍☠️ Pirate Talk</h1>
+
+<p>Chat with a pirate agent! Send a message and get a response in pirate speak.</p>
+
+<div class="chat-container">
+    <div class="chat-messages" id="chat-messages" style="height: 400px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; background-color: #f8f9fa;">
+        @foreach (var message in chatMessages)
+        {
+            <div class="message @(message.IsUser ? "user-message" : "pirate-message")" style="margin-bottom: 10px; padding: 8px; border-radius: 8px; @(message.IsUser ? "background-color: #007bff; color: white; text-align: right;" : "background-color: #e9ecef;")">
+                <strong>@(message.IsUser ? "You" : "🏴‍☠️ Pirate"):</strong>
+                <div style="margin-top: 4px;">@message.Content</div>
+            </div>
+        }
+        
+        @if (isStreaming && currentStreamedMessage.Length > 0)
+        {
+            <div class="message pirate-message streaming" style="margin-bottom: 10px; padding: 8px; border-radius: 8px; background-color: #e9ecef;">
+                <strong>🏴‍☠️ Pirate:</strong>
+                <div style="margin-top: 4px;">@currentStreamedMessage<span class="typing-indicator">▋</span></div>
+            </div>
+        }
+    </div>
+
+    <div class="input-group">
+        <input @bind="currentMessage" @onkeypress="HandleKeyPress" class="form-control" placeholder="Type your message here..." disabled="@isStreaming" />
+        <button @onclick="SendMessage" class="btn btn-primary" disabled="@(isStreaming || string.IsNullOrWhiteSpace(currentMessage))">
+            @if (isStreaming)
+            {
+                <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                <span>Sending...</span>
+            }
+            else
+            {
+                <span>Send</span>
+            }
+        </button>
+    </div>
+</div>
+
+<style>
+    .typing-indicator {
+        animation: blink 1s infinite;
+    }
+
+    @@keyframes blink {
+        0%, 50% { opacity: 1; }
+        51%, 100% { opacity: 0; }
+    }
+
+    .chat-container {
+        max-width: 800px;
+    }
+
+    .user-message {
+        margin-left: 20%;
+    }
+
+    .pirate-message {
+        margin-right: 20%;
+    }
+</style>
+
+@code {
+    private string currentMessage = "";
+    private bool isStreaming = false;
+    private string currentStreamedMessage = "";
+    private List<ChatMessage> chatMessages = new();
+    private string sessionId = Guid.NewGuid().ToString();
+    private const string AgentName = "agent:pirate";
+
+    protected override void OnInitialized()
+    {
+        Logger.LogDebug("Initializing PirateTalk component with session ID: {SessionId}", sessionId);
+    }
+
+    private async Task SendMessage()
+    {
+        if (string.IsNullOrWhiteSpace(currentMessage) || isStreaming)
+            return;
+
+        var userMessage = currentMessage.Trim();
+        currentMessage = "";
+
+        Logger.LogInformation("User sending message: '{UserMessage}' in session {SessionId}", userMessage, sessionId);
+
+        // Add user message to chat
+        chatMessages.Add(new ChatMessage { Content = userMessage, IsUser = true });
+        Logger.LogDebug("Chat message added to collection. Total messages: {MessageCount}, Is user message: {IsUserMessage}", chatMessages.Count, true);
+        Logger.LogTrace("StateHasChanged called during streaming for session {SessionId}", sessionId);
+        StateHasChanged();
+        await ScrollToBottom();
+
+        // Start streaming response
+        isStreaming = true;
+        currentStreamedMessage = "";
+        Logger.LogDebug("Starting streaming response for session {SessionId}", sessionId);
+        Logger.LogTrace("StateHasChanged called during streaming for session {SessionId}", sessionId);
+        StateHasChanged();
+
+        try
+        {
+            var responseContent = new StringBuilder();
+            
+            await foreach (var update in AgentClient.SendMessageStreamAsync(AgentName, userMessage, sessionId))
+            {
+                Logger.LogTrace("Received streaming update with text length: {TextLength} for session {SessionId}", update.Text?.Length ?? 0, sessionId);
+                
+                // Extract text content from the AgentRunResponseUpdate
+                var content = update.Text ?? "";
+                if (!string.IsNullOrEmpty(content))
+                {
+                    Logger.LogDebug("Extracted content from update: '{ExtractedContent}' for session {SessionId}", content, sessionId);
+                    responseContent.Append(content);
+                    currentStreamedMessage = responseContent.ToString();
+                    Logger.LogTrace("StateHasChanged called during streaming for session {SessionId}", sessionId);
+                    StateHasChanged();
+                    await ScrollToBottom();
+                }
+            }
+
+            // Add the complete pirate response to chat messages
+            if (responseContent.Length > 0)
+            {
+                Logger.LogInformation("Streaming completed with total response length: {ResponseLength} for session {SessionId}", responseContent.Length, sessionId);
+                chatMessages.Add(new ChatMessage { Content = responseContent.ToString(), IsUser = false });
+                Logger.LogDebug("Chat message added to collection. Total messages: {MessageCount}, Is user message: {IsUserMessage}", chatMessages.Count, false);
+            }
+            else
+            {
+                Logger.LogWarning("Empty response received from agent for session {SessionId}", sessionId);
+                chatMessages.Add(new ChatMessage { Content = "Arrr, something went wrong with me response, matey!", IsUser = false });
+                Logger.LogDebug("Chat message added to collection. Total messages: {MessageCount}, Is user message: {IsUserMessage}", chatMessages.Count, false);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error occurred while processing message in session {SessionId}: {ErrorMessage}", sessionId, ex.Message);
+            chatMessages.Add(new ChatMessage { Content = $"Arrr, encountered rough seas: {ex.Message}", IsUser = false });
+            Logger.LogDebug("Chat message added to collection. Total messages: {MessageCount}, Is user message: {IsUserMessage}", chatMessages.Count, false);
+        }
+        finally
+        {
+            isStreaming = false;
+            currentStreamedMessage = "";
+            Logger.LogTrace("StateHasChanged called during streaming for session {SessionId}", sessionId);
+            StateHasChanged();
+            await ScrollToBottom();
+        }
+    }
+
+    private async Task HandleKeyPress(KeyboardEventArgs e)
+    {
+        Logger.LogDebug("Handling key press event: {Key} for session {SessionId}", e.Key, sessionId);
+        if (e.Key == "Enter" && !e.ShiftKey)
+        {
+            await SendMessage();
+        }
+    }
+
+    private async Task ScrollToBottom()
+    {
+        try
+        {
+            Logger.LogTrace("Scrolling chat to bottom for session {SessionId}", sessionId);
+            await JSRuntime.InvokeVoidAsync("scrollToBottom", "chat-messages");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to scroll to bottom due to JavaScript error for session {SessionId}", sessionId);
+            // Ignore JS errors
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            Logger.LogDebug("Component first render completed, JavaScript functions initialized for session {SessionId}", sessionId);
+            await JSRuntime.InvokeVoidAsync("eval", @"
+                window.scrollToBottom = function(elementId) {
+                    const element = document.getElementById(elementId);
+                    if (element) {
+                        element.scrollTop = element.scrollHeight;
+                    }
+                };
+            ");
+        }
+    }
+
+    private class ChatMessage
+    {
+        public string Content { get; set; } = "";
+        public bool IsUser { get; set; }
+    }
+}

@@ -4,12 +4,10 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import ai_function
 from agent_framework.openai import OpenAIChatClient
 from pydantic import Field
 
 
-@ai_function
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -18,7 +16,7 @@ def get_weather(
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
-async def main():
+async def main() -> None:
     client = OpenAIChatClient()
     message = "What's the weather in Amsterdam and in Paris?"
     stream = False
