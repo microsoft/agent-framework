@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -48,7 +49,7 @@ public class InMemoryChatMessageStoreTests
             new ChatMessage(ChatRole.Assistant, "Test2")
         };
 
-        var result = await store.GetMessagesAsync(CancellationToken.None);
+        var result = (await store.GetMessagesAsync(CancellationToken.None)).ToList();
 
         Assert.Equal(2, result.Count);
         Assert.Contains(result, m => m.Text == "Test1");

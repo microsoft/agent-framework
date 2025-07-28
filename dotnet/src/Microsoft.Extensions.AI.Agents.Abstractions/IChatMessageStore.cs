@@ -36,7 +36,7 @@ public interface IChatMessageStore
     /// since they may contain state that is specific to a thread.
     /// </para>
     /// </remarks>
-    Task<ICollection<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken);
+    Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken);
 
     /// <summary>
     /// Adds messages to the store.

@@ -24,9 +24,9 @@ public class InMemoryChatMessageStore : List<ChatMessage>, IChatMessageStore
     }
 
     /// <inheritdoc />
-    public Task<ICollection<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken)
+    public Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken)
     {
-        return Task.FromResult<ICollection<ChatMessage>>(this);
+        return Task.FromResult<IEnumerable<ChatMessage>>(this);
     }
 
     /// <inheritdoc />

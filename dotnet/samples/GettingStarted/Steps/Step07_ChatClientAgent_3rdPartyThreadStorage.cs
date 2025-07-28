@@ -100,7 +100,7 @@ public sealed class Step07_ChatClientAgent_3rdPartyThreadStorage(ITestOutputHelp
             }), cancellationToken);
         }
 
-        public async Task<ICollection<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken)
+        public async Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken)
         {
             var collection = vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
             await collection.EnsureCollectionExistsAsync(cancellationToken);
