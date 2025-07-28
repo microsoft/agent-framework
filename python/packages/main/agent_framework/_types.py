@@ -78,6 +78,7 @@ KNOWN_MEDIA_TYPES = [
 __all__ = [
     "AIContent",
     "AIContents",
+    "AITool",
     "AgentRunResponse",
     "AgentRunResponseUpdate",
     "ChatFinishReason",
@@ -203,7 +204,11 @@ def _process_update(
 ) -> None:
     """Processes a single update and modifies the response in place."""
     is_new_message = False
-    if not response.messages or (update.message_id and response.messages[-1].message_id != update.message_id):
+    if (
+        not response.messages
+        or (update.message_id and response.messages[-1].message_id != update.message_id)
+        or (update.role and response.messages[-1].role != update.role)
+    ):
         is_new_message = True
 
     if is_new_message:

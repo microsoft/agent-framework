@@ -29,21 +29,19 @@ from .._types import (
     UsageDetails,
 )
 from ..exceptions import ServiceInitializationError, ServiceInvalidResponseError
+from ..telemetry import use_telemetry
 from ._shared import OpenAIConfigBase, OpenAIHandler, OpenAIModelTypes, OpenAISettings
 
 __all__ = ["OpenAIChatClient"]
 
 
-# Implements agent_framework.ChatClient protocol, through ChatClientBase
+# region Base Client
+@use_telemetry
 @use_tool_calling
 class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
     """OpenAI Chat completion class."""
 
-    MODEL_PROVIDER_NAME: ClassVar[str] = "openai"
-    SUPPORTS_FUNCTION_CALLING: ClassVar[bool] = True
-
-    # region Overriding base class methods
-    # most of the methods are overridden from the ChatCompletionClientBase class, otherwise it is mentioned
+    MODEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     async def _inner_get_response(
         self,
@@ -63,7 +61,6 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
             self._create_chat_message_content(response, choice, response_metadata) for choice in response.choices
         )
 
-    # @trace_streaming_chat_completion(MODEL_PROVIDER_NAME)
     async def _inner_get_streaming_response(
         self,
         *,
@@ -79,6 +76,7 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
         if not isinstance(response, AsyncStream):
             raise ServiceInvalidResponseError("Expected an AsyncStream[ChatCompletionChunk] response.")
         async for chunk in response:
+            assert isinstance(chunk, ChatCompletionChunk)  # nosec  # noqa: S101
             if len(chunk.choices) == 0 and chunk.usage is None:
                 continue
 
@@ -99,8 +97,6 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
                     self._create_streaming_chat_message_content(chunk, choice, chunk_metadata)
                     for choice in chunk.choices
                 )
-
-    # endregion
 
     # region content creation
 
@@ -220,34 +216,34 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
         # Flatten the list of lists into a single list
         return list(chain.from_iterable(list_of_list))
 
-    # endregion
+    # region Parsers
 
     def _openai_chat_message_parser(self, message: ChatMessage) -> list[dict[str, Any]]:
         """Parse a chat message into the openai format."""
         all_messages: list[dict[str, Any]] = []
-        args: dict[str, Any] = {
-            "role": message.role.value if isinstance(message.role, ChatRole) else message.role,
-        }
-        if message.additional_properties:
-            args["metadata"] = message.additional_properties
         for content in message.contents:
+            args: dict[str, Any] = {
+                "role": message.role.value if isinstance(message.role, ChatRole) else message.role,
+            }
+            if message.additional_properties:
+                args["metadata"] = message.additional_properties
             match content:
-                case FunctionResultContent():
-                    new_args = args.copy()
-                    new_args["tool_call_id"] = content.call_id
-                    new_args["content"] = content.result
-                    all_messages.append(new_args)
                 case FunctionCallContent():
-                    function_call = self._openai_content_parser(content)
-                    if "tool_calls" not in args:
-                        args["tool_calls"] = []
-                    args["tool_calls"].append(function_call)  # type: ignore
+                    if all_messages and "tool_calls" in all_messages[-1]:
+                        # If the last message already has tool calls, append to it
+                        all_messages[-1]["tool_calls"].append(self._openai_content_parser(content))
+                    else:
+                        args["tool_calls"] = [self._openai_content_parser(content)]  # type: ignore
+                case FunctionResultContent():
+                    args["tool_call_id"] = content.call_id
+                    args["content"] = content.result
                 case _:
                     if "content" not in args:
                         args["content"] = []
+                    # this is a list to allow multi-modal content
                     args["content"].append(self._openai_content_parser(content))  # type: ignore
-        if "content" in args or "tool_calls" in args:
-            all_messages.append(args)
+            if "content" in args or "tool_calls" in args:
+                all_messages.append(args)
         return all_messages
 
     def _openai_content_parser(self, content: AIContents) -> dict[str, Any]:
@@ -267,6 +263,17 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
                 }
             case _:
                 return content.model_dump(exclude_none=True)
+
+    def service_url(self) -> str | None:
+        """Get the URL of the service.
+
+        Override this in the subclass to return the proper URL.
+        If the service does not have a URL, return None.
+        """
+        return str(self.client.base_url) if self.client else None
+
+
+# region Public client
 
 
 class OpenAIChatClient(OpenAIConfigBase, OpenAIChatClientBase):
@@ -301,21 +308,13 @@ class OpenAIChatClient(OpenAIConfigBase, OpenAIChatClientBase):
             instruction_role (str | None): The role to use for 'instruction' messages, for example,
         """
         try:
-            if api_key:
-                openai_settings = OpenAISettings(
-                    api_key=SecretStr(api_key),
-                    org_id=org_id,
-                    chat_model_id=ai_model_id,
-                    env_file_path=env_file_path,
-                    env_file_encoding=env_file_encoding,
-                )
-            else:
-                openai_settings = OpenAISettings(
-                    org_id=org_id,
-                    chat_model_id=ai_model_id,
-                    env_file_path=env_file_path,
-                    env_file_encoding=env_file_encoding,
-                )
+            openai_settings = OpenAISettings(
+                api_key=SecretStr(api_key) if api_key else None,
+                org_id=org_id,
+                chat_model_id=ai_model_id,
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
+            )
         except ValidationError as ex:
             raise ServiceInitializationError("Failed to create OpenAI settings.", ex) from ex
 
@@ -345,3 +344,6 @@ class OpenAIChatClient(OpenAIConfigBase, OpenAIChatClientBase):
             ai_model_id=settings["ai_model_id"],
             default_headers=settings.get("default_headers"),
         )
+
+
+# endregion
