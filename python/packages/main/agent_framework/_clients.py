@@ -25,11 +25,6 @@ from ._types import (
 
 TInput = TypeVar("TInput", contravariant=True)
 TEmbedding = TypeVar("TEmbedding")
-TInnerGetResponse = TypeVar("TInnerGetResponse", bound=Callable[..., Awaitable[ChatResponse]])
-TInnerGetStreamingResponse = TypeVar(
-    "TInnerGetStreamingResponse", bound=Callable[..., AsyncIterable[ChatResponseUpdate]]
-)
-
 TChatClientBase = TypeVar("TChatClientBase", bound="ChatClientBase")
 
 logger = get_logger()
@@ -64,7 +59,7 @@ async def _auto_invoke_function(
     args = tool.input_model.model_validate(merged_args)
     exception = None
     try:
-        function_result = await tool.invoke(arguments=args)
+        function_result = await tool.invoke(arguments=args, tool_call_id=function_call_content.call_id)
     except Exception as ex:
         exception = ex
         function_result = None
@@ -87,7 +82,9 @@ def ai_function_to_json_schema_spec(function: AIFunction[BaseModel, Any]) -> dic
     }
 
 
-def _tool_call_non_streaming(func: TInnerGetResponse) -> TInnerGetResponse:
+def _tool_call_non_streaming(
+    func: Callable[..., Awaitable["ChatResponse"]],
+) -> Callable[..., Awaitable["ChatResponse"]]:
     """Decorate the internal _inner_get_response method to enable tool calls."""
 
     @wraps(func)
@@ -153,10 +150,12 @@ def _tool_call_non_streaming(func: TInnerGetResponse) -> TInnerGetResponse:
                 response.messages.insert(0, msg)
         return response
 
-    return wrapper  # type: ignore[reportReturnType, return-value]
+    return wrapper
 
 
-def _tool_call_streaming(func: TInnerGetStreamingResponse) -> TInnerGetStreamingResponse:
+def _tool_call_streaming(
+    func: Callable[..., AsyncIterable["ChatResponseUpdate"]],
+) -> Callable[..., AsyncIterable["ChatResponseUpdate"]]:
     """Decorate the internal _inner_get_response method to enable tool calls."""
 
     @wraps(func)
@@ -218,7 +217,7 @@ def _tool_call_streaming(func: TInnerGetStreamingResponse) -> TInnerGetStreaming
         async for update in func(self, messages=messages, chat_options=chat_options, **kwargs):
             yield update
 
-    return wrapper  # type: ignore[reportReturnType, return-value]
+    return wrapper
 
 
 def use_tool_calling(cls: type[TChatClientBase]) -> type[TChatClientBase]:
@@ -381,6 +380,9 @@ class ChatClient(Protocol):
 
 class ChatClientBase(AFBaseModel, ABC):
     """Base class for chat clients."""
+
+    MODEL_PROVIDER_NAME: str = "unknown"
+    # This is used for OTel setup, should be overridden in subclasses
 
     def _prepare_messages(
         self, messages: str | ChatMessage | list[str] | list[ChatMessage]
@@ -631,6 +633,14 @@ class ChatClientBase(AFBaseModel, ABC):
             chat_options.tool_choice = ChatToolMode.NONE.mode
         else:
             chat_options.tool_choice = chat_tool_mode.mode
+
+    def service_url(self) -> str | None:
+        """Get the URL of the service.
+
+        Override this in the subclass to return the proper URL.
+        If the service does not have a URL, return None.
+        """
+        return None
 
 
 # region: Embedding Client

@@ -26,6 +26,11 @@ async def mock_async_process_chat_stream_response(_):
     yield mock_content, None
 
 
+@pytest.fixture(scope="function")
+def chat_history() -> list[ChatMessage]:
+    return []
+
+
 @pytest.fixture
 def mock_chat_completion_response() -> ChatCompletion:
     return ChatCompletion(
