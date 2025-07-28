@@ -104,7 +104,7 @@ public sealed class MessageStoringAgentThread : AgentThread
         if (this.StorageLocation == MessageStoringThreadStorageLocation.ChatMessageStore)
         {
             // If a store has been provided, we need to retrieve the messages from the store.
-            var messages = await this._chatMessageStore!.GetMessagesAsync(this.Id, cancellationToken).ConfigureAwait(false);
+            var messages = await this._chatMessageStore!.GetMessagesAsync(cancellationToken).ConfigureAwait(false);
             foreach (var message in messages)
             {
                 yield return message;
@@ -121,7 +121,7 @@ public sealed class MessageStoringAgentThread : AgentThread
         {
             case MessageStoringThreadStorageLocation.ChatMessageStore:
                 // If a store has been provided, we need to add the messages to the store.
-                this.Id = await this._chatMessageStore!.AddMessagesAsync(this.Id, newMessages, cancellationToken).ConfigureAwait(false);
+                await this._chatMessageStore!.AddMessagesAsync(newMessages, cancellationToken).ConfigureAwait(false);
                 break;
 
             case MessageStoringThreadStorageLocation.AgentService:

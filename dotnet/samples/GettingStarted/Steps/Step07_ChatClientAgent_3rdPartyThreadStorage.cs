@@ -40,9 +40,10 @@ public sealed class Step07_ChatClientAgent_3rdPartyThreadStorage(ITestOutputHelp
 
             ChatMessageStoreFactory = () =>
             {
-                // Create a new in-memory chat message store for this agent.
-                // This store will be used to persist the chat messages of the thread.
-                return new ThirdPartyChatMessageStore(inMemoryVectorStore);
+                // Create a new chat message store for this agent that stores the messages in a vector store.
+                // Each thread must get its own copy of the VectorChatMessageStore, since the store
+                // also contains the id that the thread is stored under.
+                return new VectorChatMessageStore(inMemoryVectorStore);
             }
         };
 
@@ -59,9 +60,11 @@ public sealed class Step07_ChatClientAgent_3rdPartyThreadStorage(ITestOutputHelp
         Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", thread));
 
         // Serialize the thread state, so it can be stored for later use.
+        // Since the chat history is stored in the vector store, the serialized there
+        // only contains the guid that the messages are stored under in the vector store.
         var serializedThread = await thread.SerializeAsync();
 
-        // The thread can now be saved to a database, file, or any other storage mechanism
+        // The serialized thread can now be saved to a database, file, or any other storage mechanism
         // and loaded again later.
 
         // Deserialize the thread state after loading from storage.
@@ -70,35 +73,41 @@ public sealed class Step07_ChatClientAgent_3rdPartyThreadStorage(ITestOutputHelp
         Console.WriteLine(await agent.RunAsync("Now tell the same joke in the voice of a pirate, and add some emojis to the joke.", resumedThread));
     }
 
-    private sealed class ThirdPartyChatMessageStore(VectorStore vectorStore) : IChatMessageStore
+    /// <summary>
+    /// A sample implementation of <see cref="IChatMessageStore"/> that stores chat messages in a vector store.
+    /// </summary>
+    /// <param name="vectorStore">The vector store to store the messages in.</param>
+    private sealed class VectorChatMessageStore(VectorStore vectorStore) : IChatMessageStore
     {
-        public async Task<string?> AddMessagesAsync(string? threadId, IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken)
+        private string? _threadId;
+
+        public string? ThreadId => this._threadId;
+
+        public async Task AddMessagesAsync(IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken)
         {
-            threadId = Guid.NewGuid().ToString();
+            this._threadId ??= Guid.NewGuid().ToString();
 
             var collection = vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
             await collection.EnsureCollectionExistsAsync(cancellationToken);
 
             await collection.UpsertAsync(messages.Select(x => new ChatHistoryItem()
             {
-                Key = threadId + x.MessageId,
+                Key = this._threadId + x.MessageId,
                 Timestamp = DateTimeOffset.UtcNow,
-                ThreadId = threadId,
+                ThreadId = this._threadId,
                 SerializedMessage = JsonSerializer.Serialize(x),
                 MessageText = x.Text
             }), cancellationToken);
-
-            return threadId;
         }
 
-        public async Task<ICollection<ChatMessage>> GetMessagesAsync(string? threadId, CancellationToken cancellationToken)
+        public async Task<ICollection<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken)
         {
             var collection = vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
             await collection.EnsureCollectionExistsAsync(cancellationToken);
 
             var records = await collection
                 .GetAsync(
-                    x => x.ThreadId == threadId, 10,
+                    x => x.ThreadId == this._threadId, 10,
                     new() { OrderBy = x => x.Descending(y => y.Timestamp) },
                     cancellationToken)
                 .ToListAsync(cancellationToken);
@@ -110,12 +119,22 @@ public sealed class Step07_ChatClientAgent_3rdPartyThreadStorage(ITestOutputHelp
             return messages;
         }
 
-        public Task DeserializeAsync(JsonElement? stateElement, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-            => Task.CompletedTask;
-
         public Task<JsonElement?> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-            => Task.FromResult<JsonElement?>(null);
+        {
+            // We have to serialize the thread id, so that on deserialization we can retrieve the messages using the same thread id.
+            return Task.FromResult<JsonElement?>(JsonSerializer.SerializeToElement(this._threadId));
+        }
 
+        public Task DeserializeAsync(JsonElement? stateElement, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        {
+            // Here we can deserialize the thread id so that we can access the same messages as before the suspension.
+            this._threadId = JsonSerializer.Deserialize<string>((JsonElement)stateElement!);
+            return Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// The data structure used to store chat history items in the vector store.
+        /// </summary>
         private sealed class ChatHistoryItem
         {
             [VectorStoreKey]

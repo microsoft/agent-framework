@@ -13,18 +13,18 @@ namespace Microsoft.Extensions.AI.Agents;
 public class InMemoryChatMessageStore : List<ChatMessage>, IChatMessageStore
 {
     /// <inheritdoc />
-    public Task<string?> AddMessagesAsync(string? threadId, IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken)
+    public Task AddMessagesAsync(IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken)
     {
         if (messages is { Count: > 0 })
         {
             this.AddRange(messages);
         }
 
-        return Task.FromResult(threadId);
+        return Task.CompletedTask;
     }
 
     /// <inheritdoc />
-    public Task<ICollection<ChatMessage>> GetMessagesAsync(string? threadId, CancellationToken cancellationToken)
+    public Task<ICollection<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken)
     {
         return Task.FromResult<ICollection<ChatMessage>>(this);
     }

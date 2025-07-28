@@ -22,9 +22,8 @@ public class InMemoryChatMessageStoreTests
             new(ChatRole.Assistant, "Hi there!")
         };
 
-        string? threadId = await store.AddMessagesAsync(null, messages, CancellationToken.None);
+        await store.AddMessagesAsync(messages, CancellationToken.None);
 
-        Assert.Null(threadId);
         Assert.Equal(2, store.Count);
         Assert.Equal("Hello", store[0].Text);
         Assert.Equal("Hi there!", store[1].Text);
@@ -35,9 +34,8 @@ public class InMemoryChatMessageStoreTests
     {
         var store = new InMemoryChatMessageStore();
 
-        string? threadId = await store.AddMessagesAsync(null, [], CancellationToken.None);
+        await store.AddMessagesAsync([], CancellationToken.None);
 
-        Assert.Null(threadId);
         Assert.Empty(store);
     }
 
@@ -50,7 +48,7 @@ public class InMemoryChatMessageStoreTests
             new ChatMessage(ChatRole.Assistant, "Test2")
         };
 
-        var result = await store.GetMessagesAsync("anyThread", CancellationToken.None);
+        var result = await store.GetMessagesAsync(CancellationToken.None);
 
         Assert.Equal(2, result.Count);
         Assert.Contains(result, m => m.Text == "Test1");
@@ -94,9 +92,8 @@ public class InMemoryChatMessageStoreTests
         var store = new InMemoryChatMessageStore();
         var messages = new List<ChatMessage>();
 
-        string? threadId = await store.AddMessagesAsync("thread1", messages, CancellationToken.None);
+        await store.AddMessagesAsync(messages, CancellationToken.None);
 
-        Assert.Equal("thread1", threadId);
         Assert.Empty(store);
     }
 }
