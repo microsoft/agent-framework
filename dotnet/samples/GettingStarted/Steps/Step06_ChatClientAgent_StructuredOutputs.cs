@@ -9,12 +9,12 @@ using Microsoft.Extensions.AI.Agents;
 namespace Steps;
 
 /// <summary>
-/// Demonstrates how to use telemetry with <see cref="ChatClientAgent"/> using OpenTelemetry.
+/// Demonstrates how to use structured outputs with <see cref="ChatClientAgent"/> using JSON schemas.
 /// </summary>
 public sealed class Step06_ChatClientAgent_StructuredOutputs(ITestOutputHelper output) : AgentSample(output)
 {
     /// <summary>
-    /// Demonstrates OpenTelemetry tracing with Agent Framework.
+    /// Demonstrates processing structured outputs using JSON schemas to extract information about a person.
     /// </summary>
     [Theory]
     [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
