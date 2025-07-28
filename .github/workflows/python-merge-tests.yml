@@ -80,8 +80,8 @@ jobs:
         environment: ["integration"]
     env:
       UV_PYTHON: ${{ matrix.python-version }}
-      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
-      AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
+      AZURE_OPENAI_ENDPOINT: ${{ secrets.AZUREOPENAI__ENDPOINT }}
       PACKAGE_NAME: "azure"
     defaults:
       run:
@@ -139,8 +139,8 @@ jobs:
         environment: ["integration"]
     env:
       UV_PYTHON: ${{ matrix.python-version }}
-      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
-      FOUNDRY_MODEL_DEPLOYMENT_NAME: ${{ vars.FOUNDRY_MODEL_DEPLOYMENT_NAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.AZUREAI__ENDPOINT }}
+      FOUNDRY_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
       PACKAGE_NAME: "foundry"
     defaults:
       run:
