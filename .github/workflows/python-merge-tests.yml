@@ -4,6 +4,8 @@ on:
   workflow_dispatch:
   merge_group:
     branches: ["main"]
+  schedule:
+    - cron: "0 0 * * *" # Run at midnight UTC daily
 
 permissions:
   contents: write
@@ -16,8 +18,30 @@ env:
   UV_SEMVER: "0.8.x"
 
 jobs:
+  paths-filter:
+    runs-on: ubuntu-latest
+    outputs:
+      pythonChanges: ${{ steps.filter.outputs.python}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            python:
+              - 'python/**'
+      # run only if 'python' files were changed
+      - name: python tests
+        if: steps.filter.outputs.python == 'true'
+        run: echo "Python file"
+      # run only if not 'python' files were changed
+      - name: not python tests
+        if: steps.filter.outputs.python != 'true'
+        run: echo "NOT python file"
   python-tests-main:
     name: Python Tests - Main
+    needs: paths-filter
+    if: needs.paths-filter.outputs.pythonChanges == 'true'
     runs-on: ${{ matrix.os }}
     environment: ${{ matrix.environment }}
     strategy:
@@ -70,6 +94,8 @@ jobs:
 
   python-tests-azure:
     name: Python Tests - Azure
+    needs: paths-filter
+    if: needs.paths-filter.outputs.pythonChanges == 'true'
     runs-on: ${{ matrix.os }}
     environment: ${{ matrix.environment }}
     strategy:
@@ -129,6 +155,8 @@ jobs:
 
   python-tests-foundry:
     name: Python Tests - Foundry
+    needs: paths-filter
+    if: needs.paths-filter.outputs.pythonChanges == 'true'
     runs-on: ${{ matrix.os }}
     environment: ${{ matrix.environment }}
     strategy:
@@ -185,3 +213,27 @@ jobs:
           display-options: fEX
           fail-on-empty: true
           title: Test results
+  python-integration-tests-check:
+    if: always()
+    runs-on: ubuntu-latest
+    needs:
+      [
+        python-tests-main,
+        python-tests-azure,
+        python-tests-foundry
+      ]
+    steps:
+
+      - name: Fail workflow if tests failed
+        id: check_tests_failed
+        if: contains(join(needs.*.result, ','), 'failure')
+        uses: actions/github-script@v7
+        with:
+          script: core.setFailed('Integration Tests Failed!')
+
+      - name: Fail workflow if tests cancelled
+        id: check_tests_cancelled
+        if: contains(join(needs.*.result, ','), 'cancelled')
+        uses: actions/github-script@v7
+        with:
+          script: core.setFailed('Integration Tests Cancelled!')
