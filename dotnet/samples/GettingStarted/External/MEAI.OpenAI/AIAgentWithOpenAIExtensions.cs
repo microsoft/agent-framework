@@ -18,7 +18,7 @@ namespace OpenAI;
 /// The methods handle the conversion between OpenAI chat message types and Microsoft Extensions AI types,
 /// and return OpenAI <see cref="ChatCompletion"/> objects directly from the agent's <see cref="AgentRunResponse"/>.
 /// </remarks>
-public static class OpenAIAgentExtensions
+public static class AIAgentWithOpenAIExtensions
 {
     /// <summary>
     /// Runs the AI agent with a single OpenAI chat message and returns the response as a native OpenAI <see cref="ChatCompletion"/>.
@@ -36,7 +36,7 @@ public static class OpenAIAgentExtensions
     /// This method converts the OpenAI chat message to the Microsoft Extensions AI format using the appropriate conversion method,
     /// runs the agent, and then extracts the native OpenAI <see cref="ChatCompletion"/> from the response using <see cref="AgentRunResponseExtensions.AsChatCompletion"/>.
     /// </remarks>
-    internal static async Task<ChatCompletion> RunAsync(this AIAgent agent, OpenAI.Chat.ChatMessage message, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public static async Task<ChatCompletion> RunAsync(this AIAgent agent, OpenAI.Chat.ChatMessage message, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agent);
         Throw.IfNull(message);
@@ -63,7 +63,7 @@ public static class OpenAIAgentExtensions
     /// This method converts each OpenAI chat message to the Microsoft Extensions AI format using <see cref="AsChatMessages"/>,
     /// runs the agent with the converted message collection, and then extracts the native OpenAI <see cref="ChatCompletion"/> from the response using <see cref="AgentRunResponseExtensions.AsChatCompletion"/>.
     /// </remarks>
-    internal static async Task<ChatCompletion> RunAsync(this AIAgent agent, IEnumerable<OpenAI.Chat.ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public static async Task<ChatCompletion> RunAsync(this AIAgent agent, IEnumerable<OpenAI.Chat.ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agent);
         Throw.IfNull(messages);
