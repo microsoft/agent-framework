@@ -19,32 +19,7 @@ public sealed class ChatClientAgent_With_OpenAIClient(ITestOutputHelper output) 
     {
         // Get the agent directly from OpenAIClient.
         AIAgent agent = new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
-            .GetChatClientAgent(TestConfiguration.OpenAI.ChatModelId, JokerInstructions, JokerName);
-
-        // Start a new thread for the agent conversation.
-        AgentThread thread = agent.GetNewThread();
-
-        // Respond to user input.
-        await RunAgentAsync("Tell me a joke about a pirate.");
-        await RunAgentAsync("Now add some emojis to the joke.");
-
-        // Local function to invoke agent and display the conversation messages for the thread.
-        async Task RunAgentAsync(string input)
-        {
-            Console.WriteLine(input);
-
-            var response = await agent.RunAsync(input, thread);
-
-            Console.WriteLine(response.Messages.Last().Text);
-        }
-    }
-
-    [Fact]
-    public async Task RunWithResponses()
-    {
-        // Get the agent directly from OpenAIClient.
-        AIAgent agent = new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
-            .GetOpenAIResponseClientAgent(TestConfiguration.OpenAI.ChatModelId, JokerInstructions, JokerName);
+            .CreateChatClientAgent(TestConfiguration.OpenAI.ChatModelId, JokerInstructions, JokerName);
 
         // Start a new thread for the agent conversation.
         AgentThread thread = agent.GetNewThread();
@@ -69,7 +44,7 @@ public sealed class ChatClientAgent_With_OpenAIClient(ITestOutputHelper output) 
     {
         // Get the agent directly from OpenAIClient.
         var agent = new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
-            .GetChatClientAgent(TestConfiguration.OpenAI.ChatModelId, JokerInstructions, JokerName);
+            .CreateChatClientAgent(TestConfiguration.OpenAI.ChatModelId, JokerInstructions, JokerName);
 
         // Start a new thread for the agent conversation.
         AgentThread thread = agent.GetNewThread();
@@ -95,7 +70,7 @@ public sealed class ChatClientAgent_With_OpenAIClient(ITestOutputHelper output) 
     {
         // Get the agent directly from OpenAIClient.
         var agent = new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
-            .GetChatClientAgent(TestConfiguration.OpenAI.ChatModelId, JokerInstructions, JokerName);
+            .CreateChatClientAgent(TestConfiguration.OpenAI.ChatModelId, JokerInstructions, JokerName);
 
         // Start a new thread for the agent conversation.
         AgentThread thread = agent.GetNewThread();

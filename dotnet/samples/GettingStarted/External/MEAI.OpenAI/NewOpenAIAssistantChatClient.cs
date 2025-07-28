@@ -49,7 +49,7 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
     private IReadOnlyList<ToolDefinition>? _assistantTools;
 
     /// <summary>Initializes a new instance of the <see cref="OpenAIAssistantChatClient"/> class for the specified <see cref="AssistantClient"/>.</summary>
-    public NewOpenAIAssistantChatClient(AssistantClient assistantClient, string assistantId, string? defaultThreadId)
+    public NewOpenAIAssistantChatClient(AssistantClient assistantClient, string assistantId, string? defaultThreadId = null)
     {
         _client = Throw.IfNull(assistantClient);
         _assistantId = Throw.IfNullOrWhitespace(assistantId);

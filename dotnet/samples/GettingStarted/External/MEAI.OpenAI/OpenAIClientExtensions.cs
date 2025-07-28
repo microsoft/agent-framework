@@ -3,6 +3,8 @@
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.Logging;
+using Microsoft.Shared.Diagnostics;
+using OpenAI.Assistants;
 using OpenAI.Chat;
 using OpenAI.Responses;
 
@@ -33,53 +35,40 @@ public static class OpenAIClientExtensions
     /// <returns>An <see cref="AIAgent"/> instance backed by the OpenAI Chat Completion service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="model"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> is empty or whitespace.</exception>
-    /// <remarks>
-    /// <para>
-    /// This method creates an agent that uses OpenAI's Chat Completion API, which is suitable for most conversational AI scenarios.
-    /// The agent will be able to maintain conversation context and use any provided tools to enhance its capabilities.
-    /// </para>
-    /// <para>
-    /// The <paramref name="instructions"/> parameter serves as the system message that guides the agent's behavior.
-    /// This should contain clear instructions about the agent's role, personality, and any specific guidelines it should follow.
-    /// </para>
-    /// <para>
-    /// If <paramref name="tools"/> are provided, the agent will be able to call these functions during conversation
-    /// to retrieve information, perform calculations, or interact with external systems.
-    /// </para>
-    /// </remarks>
-    public static AIAgent GetChatClientAgent(this OpenAIClient client, string model, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null)
+    public static AIAgent CreateChatClientAgent(this OpenAIClient client, string model, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null)
     {
-        var chatClient = client.GetChatClient(model).AsIChatClient();
-        ChatClientAgent agent = new(chatClient, instructions, name, description, tools, loggerFactory);
-        return agent;
+        return client.CreateChatClientAgent(
+            model,
+            new ChatClientAgentOptions()
+            {
+                Name = name,
+                Description = description,
+                Instructions = instructions,
+                ChatOptions = tools is null ? null : new ChatOptions()
+                {
+                    Tools = tools,
+                }
+            },
+            loggerFactory);
     }
 
     /// <summary>
-    /// Creates an AI agent from an OpenAI <see cref="ChatClient"/>.
+    /// Creates an AI agent from an <see cref="OpenAIClient"/> using the OpenAI Chat Completion API.
     /// </summary>
-    /// <param name="client">The OpenAI chat client to use for the agent.</param>
-    /// <param name="instructions">Optional system instructions that define the agent's behavior and personality.</param>
-    /// <param name="name">Optional name for the agent for identification purposes.</param>
-    /// <param name="description">Optional description of the agent's capabilities and purpose.</param>
-    /// <param name="tools">Optional collection of AI tools that the agent can use during conversations.</param>
+    /// <param name="client">The OpenAI client to use for the agent.</param>
+    /// <param name="model">The model identifier to use for chat completions (e.g., "gpt-4", "gpt-3.5-turbo").</param>
+    /// <param name="options">Full set of options to configure the agent.</param>
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
-    /// <returns>An <see cref="AIAgent"/> instance backed by the provided chat client.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> is <see langword="null"/>.</exception>
-    /// <remarks>
-    /// <para>
-    /// This method is useful when you already have a configured <see cref="ChatClient"/> instance and want to
-    /// wrap it in an AI agent. This provides more control over the chat client configuration compared to
-    /// <see cref="GetChatClientAgent(OpenAIClient, string, string?, string?, string?, IList{AITool}?, ILoggerFactory?)"/>.
-    /// </para>
-    /// <para>
-    /// The resulting agent will inherit all the configuration and behavior of the underlying chat client,
-    /// including any pre-configured options for model selection, temperature, token limits, etc.
-    /// </para>
-    /// </remarks>
-    public static AIAgent GetAgent(this ChatClient client, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null)
+    /// <returns>An <see cref="AIAgent"/> instance backed by the OpenAI Chat Completion service.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="model"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> is empty or whitespace.</exception>
+    public static AIAgent CreateChatClientAgent(this OpenAIClient client, string model, ChatClientAgentOptions options, ILoggerFactory? loggerFactory = null)
     {
-        var chatClient = client.AsIChatClient();
-        ChatClientAgent agent = new(chatClient, instructions, name, description, tools, loggerFactory);
+        Throw.IfNull(client);
+        Throw.IfNull(model);
+
+        var chatClient = client.GetChatClient(model).AsIChatClient();
+        ChatClientAgent agent = new(chatClient, options, loggerFactory);
         return agent;
     }
 
@@ -96,59 +85,132 @@ public static class OpenAIClientExtensions
     /// <returns>An <see cref="AIAgent"/> instance backed by the OpenAI Response service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="model"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> is empty or whitespace.</exception>
-    /// <remarks>
-    /// <para>
-    /// This method creates an agent that uses OpenAI's Response API, which provides additional features
-    /// and response formats compared to the standard Chat Completion API. This is particularly useful
-    /// for scenarios that require structured outputs or specific response formats.
-    /// </para>
-    /// <para>
-    /// The Response API may offer different capabilities than the Chat Completion API, such as
-    /// enhanced structured output support, different streaming behaviors, or access to specialized
-    /// response formats that are not available through the standard chat completion endpoint.
-    /// </para>
-    /// <para>
-    /// Choose this method over <see cref="GetChatClientAgent(OpenAIClient, string, string?, string?, string?, IList{AITool}?, ILoggerFactory?)"/>
-    /// when you specifically need the features provided by the OpenAI Response API.
-    /// </para>
-    /// </remarks>
-    public static AIAgent GetOpenAIResponseClientAgent(this OpenAIClient client, string model, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null)
+    public static AIAgent CreateResponseClientAgent(this OpenAIClient client, string model, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null)
     {
+        return client.CreateResponseClientAgent(
+            model,
+            new ChatClientAgentOptions()
+            {
+                Name = name,
+                Description = description,
+                Instructions = instructions,
+                ChatOptions = tools is null ? null : new ChatOptions()
+                {
+                    Tools = tools,
+                }
+            },
+            loggerFactory);
+    }
+
+    /// <summary>
+    /// Creates an AI agent from an <see cref="OpenAIClient"/> using the OpenAI Response API.
+    /// </summary>
+    /// <param name="client">The OpenAI client to use for the agent.</param>
+    /// <param name="model">The model identifier to use for responses (e.g., "gpt-4", "gpt-3.5-turbo").</param>
+    /// <param name="options">Full set of options to configure the agent.</param>
+    /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
+    /// <returns>An <see cref="AIAgent"/> instance backed by the OpenAI Response service.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="model"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> is empty or whitespace.</exception>
+    public static AIAgent CreateResponseClientAgent(this OpenAIClient client, string model, ChatClientAgentOptions options, ILoggerFactory? loggerFactory = null)
+    {
+        Throw.IfNull(client);
+        Throw.IfNull(model);
+
         var chatClient = client.GetOpenAIResponseClient(model).AsIChatClient();
-        ChatClientAgent agent = new(chatClient, instructions, name, description, tools, loggerFactory);
+        ChatClientAgent agent = new(chatClient, options, loggerFactory);
         return agent;
     }
 
     /// <summary>
-    /// Creates an AI agent from an <see cref="OpenAIResponseClient"/>.
+    /// Creates an AI agent from an <see cref="OpenAIClient"/> using the OpenAI Assistant API.
     /// </summary>
-    /// <param name="client">The OpenAI response client to use for the agent.</param>
+    /// <param name="client">The OpenAI client to use for the agent.</param>
+    /// <param name="model">The model identifier to use for responses (e.g., "gpt-4", "gpt-3.5-turbo").</param>
     /// <param name="instructions">Optional system instructions that define the agent's behavior and personality.</param>
     /// <param name="name">Optional name for the agent for identification purposes.</param>
     /// <param name="description">Optional description of the agent's capabilities and purpose.</param>
     /// <param name="tools">Optional collection of AI tools that the agent can use during conversations.</param>
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
-    /// <returns>An <see cref="AIAgent"/> instance backed by the provided response client.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> is <see langword="null"/>.</exception>
-    /// <remarks>
-    /// <para>
-    /// This method is useful when you already have a configured <see cref="OpenAIResponseClient"/> instance
-    /// and want to wrap it in an AI agent. This provides more control over the response client configuration
-    /// compared to <see cref="GetOpenAIResponseClientAgent(OpenAIClient, string, string?, string?, string?, IList{AITool}?, ILoggerFactory?)"/>.
-    /// </para>
-    /// <para>
-    /// The resulting agent will inherit all the configuration and behavior of the underlying response client,
-    /// including any pre-configured options for response formats, model parameters, and API-specific settings.
-    /// </para>
-    /// <para>
-    /// Use this method when you need fine-grained control over the OpenAI Response API configuration
-    /// or when you want to reuse an existing response client instance across multiple agents.
-    /// </para>
-    /// </remarks>
-    public static AIAgent GetAgent(this OpenAIResponseClient client, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null)
+    /// <returns>An <see cref="AIAgent"/> instance backed by the OpenAI Response service.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="model"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> is empty or whitespace.</exception>
+    public static async Task<AIAgent> CreateAssistantClientAgentAsync(this OpenAIClient client, string model, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null)
     {
-        var chatClient = client.AsIChatClient();
-        ChatClientAgent agent = new(chatClient, instructions, name, description, tools, loggerFactory);
-        return agent;
+        return await client.CreateAssistantClientAgentAsync(
+            model,
+            new ChatClientAgentOptions()
+            {
+                Name = name,
+                Description = description,
+                Instructions = instructions,
+                ChatOptions = tools is null ? null : new ChatOptions()
+                {
+                    Tools = tools,
+                }
+            },
+            loggerFactory);
+    }
+
+    /// <summary>
+    /// Creates an AI agent from an <see cref="OpenAIClient"/> using the OpenAI Assistant API.
+    /// </summary>
+    /// <param name="client">The OpenAI client to use for the agent.</param>
+    /// <param name="model">The model identifier to use for responses (e.g., "gpt-4", "gpt-3.5-turbo").</param>
+    /// <param name="options">Full set of options to configure the agent.</param>
+    /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
+    /// <returns>An <see cref="AIAgent"/> instance backed by the OpenAI Response service.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="model"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> is empty or whitespace.</exception>
+    public static async Task<AIAgent> CreateAssistantClientAgentAsync(this OpenAIClient client, string model, ChatClientAgentOptions options, ILoggerFactory? loggerFactory = null)
+    {
+        Throw.IfNull(client);
+        Throw.IfNull(model);
+        Throw.IfNull(options);
+
+        var assistantOptions = new AssistantCreationOptions()
+        {
+            Name = options.Name,
+            Description = options.Description,
+            Instructions = options.Instructions,
+        };
+
+        if (options.ChatOptions?.Tools is not null)
+        {
+            foreach (AITool tool in options.ChatOptions.Tools)
+            {
+                switch (tool)
+                {
+                    case AIFunction aiFunction:
+                        assistantOptions.Tools.Add(NewOpenAIAssistantChatClient.ToOpenAIAssistantsFunctionToolDefinition(aiFunction));
+                        break;
+
+                    case HostedCodeInterpreterTool:
+                        var codeInterpreterToolDefinition = new CodeInterpreterToolDefinition();
+                        assistantOptions.Tools.Add(codeInterpreterToolDefinition);
+                        break;
+                }
+            }
+        }
+
+        var assistantClient = client.GetAssistantClient();
+
+        var assistantCreateResult = await assistantClient.CreateAssistantAsync(model, assistantOptions);
+        var assistantId = assistantCreateResult.Value.Id;
+
+        var agentOptions = new ChatClientAgentOptions()
+        {
+            Id = assistantId,
+            Name = options.Name,
+            Description = options.Description,
+            Instructions = options.Instructions,
+            ChatOptions = options.ChatOptions?.Tools is null ? null : new ChatOptions()
+            {
+                Tools = options.ChatOptions.Tools,
+            }
+        };
+
+        var chatClient = new NewOpenAIAssistantChatClient(assistantClient, assistantId);
+        return new ChatClientAgent(chatClient, agentOptions, loggerFactory);
     }
 }

@@ -2,6 +2,7 @@
 
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
+using Microsoft.Shared.Diagnostics;
 using OpenAI.Chat;
 using OpenAI.Responses;
 
@@ -44,11 +45,11 @@ public static class AgentRunResponseExtensions
     /// </remarks>
     public static ChatCompletion AsChatCompletion(this AgentRunResponse agentResponse)
     {
-        if (agentResponse.RawRepresentation is ChatCompletion chatCompletion)
-        {
-            return chatCompletion;
-        }
-        throw new ArgumentException("ChatResponse.RawRepresentation must be a ChatCompletion");
+        Throw.IfNull(agentResponse);
+
+        return agentResponse.RawRepresentation is ChatCompletion chatCompletion
+            ? chatCompletion
+            : throw new ArgumentException("ChatResponse.RawRepresentation must be a ChatCompletion");
     }
 
     /// <summary>
@@ -87,13 +88,13 @@ public static class AgentRunResponseExtensions
     /// </remarks>
     public static OpenAIResponse AsOpenAIResponse(this AgentRunResponse agentResponse)
     {
+        Throw.IfNull(agentResponse);
+
         if (agentResponse.RawRepresentation is ChatResponse chatResponse)
         {
-            if (chatResponse.RawRepresentation is OpenAIResponse openAIResponse)
-            {
-                return openAIResponse;
-            }
-            throw new ArgumentException("ChatResponse.RawRepresentation must be an OpenAIResponse");
+            return chatResponse.RawRepresentation is OpenAIResponse openAIResponse
+                ? openAIResponse
+                : throw new ArgumentException("ChatResponse.RawRepresentation must be an OpenAIResponse");
         }
         throw new ArgumentException("AgentRunResponse.RawRepresentation must be a ChatResponse");
     }

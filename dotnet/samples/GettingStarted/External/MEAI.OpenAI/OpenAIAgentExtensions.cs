@@ -3,6 +3,7 @@
 using System.Text;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
+using Microsoft.Shared.Diagnostics;
 using OpenAI.Chat;
 
 namespace OpenAI;
@@ -17,7 +18,7 @@ namespace OpenAI;
 /// The methods handle the conversion between OpenAI chat message types and Microsoft Extensions AI types,
 /// and return OpenAI <see cref="ChatCompletion"/> objects directly from the agent's <see cref="AgentRunResponse"/>.
 /// </remarks>
-internal static class OpenAIAgentExtensions
+public static class OpenAIAgentExtensions
 {
     /// <summary>
     /// Runs the AI agent with a single OpenAI chat message and returns the response as a native OpenAI <see cref="ChatCompletion"/>.
@@ -37,6 +38,9 @@ internal static class OpenAIAgentExtensions
     /// </remarks>
     internal static async Task<ChatCompletion> RunAsync(this AIAgent agent, OpenAI.Chat.ChatMessage message, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
+        Throw.IfNull(agent);
+        Throw.IfNull(message);
+
         var response = await agent.RunAsync(message.AsChatMessage(), thread, options, cancellationToken);
 
         var chatCompletion = response.AsChatCompletion();
@@ -61,6 +65,9 @@ internal static class OpenAIAgentExtensions
     /// </remarks>
     internal static async Task<ChatCompletion> RunAsync(this AIAgent agent, IEnumerable<OpenAI.Chat.ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
+        Throw.IfNull(agent);
+        Throw.IfNull(messages);
+
         var response = await agent.RunAsync([.. messages.AsChatMessages()], thread, options, cancellationToken);
 
         var chatCompletion = response.AsChatCompletion();
@@ -87,6 +94,8 @@ internal static class OpenAIAgentExtensions
     /// </remarks>
     public static IEnumerable<Microsoft.Extensions.AI.ChatMessage> AsChatMessages(this IEnumerable<OpenAI.Chat.ChatMessage> messages)
     {
+        Throw.IfNull(messages);
+
         foreach (OpenAI.Chat.ChatMessage message in messages)
         {
             switch (message)
@@ -129,6 +138,8 @@ internal static class OpenAIAgentExtensions
     /// </remarks>
     public static Microsoft.Extensions.AI.ChatMessage AsChatMessage(this OpenAI.Chat.ChatMessage chatMessage)
     {
+        Throw.IfNull(chatMessage);
+
         return chatMessage switch
         {
             AssistantChatMessage assistantMessage => assistantMessage.AsChatMessage(),
@@ -157,6 +168,8 @@ internal static class OpenAIAgentExtensions
     /// </remarks>
     private static IEnumerable<AIContent> AsAIContent(this OpenAI.Chat.ChatMessageContent content)
     {
+        Throw.IfNull(content);
+
         foreach (OpenAI.Chat.ChatMessageContentPart part in content)
         {
             switch (part.Kind)
@@ -217,6 +230,8 @@ internal static class OpenAIAgentExtensions
     /// </remarks>
     private static string AsText(this OpenAI.Chat.ChatMessageContent content)
     {
+        Throw.IfNull(content);
+
         StringBuilder text = new();
         foreach (OpenAI.Chat.ChatMessageContentPart part in content)
         {
@@ -246,6 +261,8 @@ internal static class OpenAIAgentExtensions
     /// </remarks>
     private static Microsoft.Extensions.AI.ChatMessage AsChatMessage(this AssistantChatMessage assistantMessage)
     {
+        Throw.IfNull(assistantMessage);
+
         return new Microsoft.Extensions.AI.ChatMessage(Microsoft.Extensions.AI.ChatRole.Assistant, [.. assistantMessage.Content.AsAIContent()])
         {
             AuthorName = assistantMessage.ParticipantName,
@@ -264,6 +281,8 @@ internal static class OpenAIAgentExtensions
     /// </remarks>
     private static Microsoft.Extensions.AI.ChatMessage AsChatMessage(this DeveloperChatMessage developerMessage)
     {
+        Throw.IfNull(developerMessage);
+
         return new Microsoft.Extensions.AI.ChatMessage(Microsoft.Extensions.AI.ChatRole.System, [.. developerMessage.Content.AsAIContent()])
         {
             AuthorName = developerMessage.ParticipantName,
@@ -282,6 +301,8 @@ internal static class OpenAIAgentExtensions
     /// </remarks>
     private static Microsoft.Extensions.AI.ChatMessage AsChatMessage(this SystemChatMessage systemMessage)
     {
+        Throw.IfNull(systemMessage);
+
         return new Microsoft.Extensions.AI.ChatMessage(Microsoft.Extensions.AI.ChatRole.System, [.. systemMessage.Content.AsAIContent()])
         {
             AuthorName = systemMessage.ParticipantName,
@@ -300,6 +321,8 @@ internal static class OpenAIAgentExtensions
     /// </remarks>
     private static Microsoft.Extensions.AI.ChatMessage AsChatMessage(this ToolChatMessage toolMessage)
     {
+        Throw.IfNull(toolMessage);
+
         var content = new FunctionResultContent(toolMessage.ToolCallId, toolMessage.Content.AsText())
         {
             RawRepresentation = toolMessage
@@ -322,6 +345,8 @@ internal static class OpenAIAgentExtensions
     /// </remarks>
     private static Microsoft.Extensions.AI.ChatMessage AsChatMessage(this UserChatMessage userMessage)
     {
+        Throw.IfNull(userMessage);
+
         return new Microsoft.Extensions.AI.ChatMessage(Microsoft.Extensions.AI.ChatRole.User, [.. userMessage.Content.AsAIContent()])
         {
             AuthorName = userMessage.ParticipantName,
