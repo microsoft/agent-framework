@@ -22,6 +22,8 @@ env:
 jobs:
   paths-filter:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       pythonChanges: ${{ steps.filter.outputs.python}}
     steps:
