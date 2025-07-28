@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
@@ -9,7 +8,7 @@ using Microsoft.Extensions.AI.Agents;
 namespace Steps;
 
 /// <summary>
-/// Demonstrates how to use structured outputs with <see cref="ChatClientAgent"/> using JSON schemas.
+/// Demonstrates how to use structured outputs with <see cref="ChatClientAgent"/>.
 /// </summary>
 public sealed class Step06_ChatClientAgent_StructuredOutputs(ITestOutputHelper output) : AgentSample(output)
 {
@@ -22,7 +21,7 @@ public sealed class Step06_ChatClientAgent_StructuredOutputs(ITestOutputHelper o
     [InlineData(ChatClientProviders.OpenAIAssistant)]
     [InlineData(ChatClientProviders.OpenAIChatCompletion)]
     [InlineData(ChatClientProviders.OpenAIResponses)]
-    public async Task RunWithTelemetry(ChatClientProviders provider)
+    public async Task RunWithCustomSchema(ChatClientProviders provider)
     {
         var jsonSchema = """
         {
@@ -61,11 +60,7 @@ public sealed class Step06_ChatClientAgent_StructuredOutputs(ITestOutputHelper o
 
         var thread = agent.GetNewThread();
 
-        // Prompt which allows to verify that the data was processed from file correctly and current datetime is returned.
         const string Prompt = "Please provide information about John Smith, who is a 35-year-old software engineer.";
-
-        var assistantOutput = new StringBuilder();
-        var codeInterpreterOutput = new StringBuilder();
 
         var updates = agent.RunStreamingAsync(Prompt, thread);
         var agentResponse = await updates.ToAgentRunResponseAsync();
@@ -81,6 +76,9 @@ public sealed class Step06_ChatClientAgent_StructuredOutputs(ITestOutputHelper o
         await base.AgentCleanUpAsync(provider, agent, thread);
     }
 
+    /// <summary>
+    /// Represents information about a person, including their name, age, and occupation, matched to the JSON schema used in the agent.
+    /// </summary>
     public class PersonInfo
     {
         [JsonPropertyName("name")]
