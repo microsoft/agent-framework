@@ -92,6 +92,9 @@ class FoundrySettings(AFBaseSettings):
 
 @use_tool_calling
 class FoundryChatClient(ChatClientBase):
+    """Azure AI Foundry Chat client."""
+
+    MODEL_PROVIDER_NAME: ClassVar[str] = "azure_ai_foundry"  # type: ignore[reportIncompatibleVariableOverride]
     client: AIProjectClient = Field(...)
     credential: AsyncTokenCredential | None = Field(...)
     agent_id: str | None = Field(default=None)
