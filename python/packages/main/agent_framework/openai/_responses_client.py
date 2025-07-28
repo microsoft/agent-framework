@@ -4,12 +4,7 @@ import sys
 from collections.abc import AsyncIterable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
 from datetime import datetime
 from itertools import chain
-from typing import Any, Literal
-
-if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore
-else:
-    from typing_extensions import override  # type: ignore[import]
+from typing import Any, ClassVar, Literal
 
 from openai import AsyncOpenAI, AsyncStream
 from openai.types.responses.response import Response as OpenAIResponse
@@ -42,16 +37,25 @@ from .._types import (
     UsageDetails,
 )
 from ..exceptions import ServiceInitializationError, ServiceInvalidResponseError
+from ..telemetry import use_telemetry
 from ._shared import OpenAIConfigBase, OpenAIHandler, OpenAIModelTypes, OpenAISettings
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 __all__ = ["OpenAIResponsesClient"]
 
 # region ResponsesClient
 
 
+@use_telemetry
 @use_tool_calling
 class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
     """OpenAI Responses client class."""
+
+    MODEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     def __init__(
         self,

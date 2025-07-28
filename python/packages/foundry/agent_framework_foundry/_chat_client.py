@@ -29,6 +29,7 @@ from agent_framework import (
 )
 from agent_framework._clients import ai_function_to_json_schema_spec
 from agent_framework.exceptions import ServiceInitializationError
+from agent_framework.telemetry import use_telemetry
 from azure.ai.agents.models import (
     AgentsNamedToolChoice,
     AgentsNamedToolChoiceType,
@@ -90,6 +91,7 @@ class FoundrySettings(AFBaseSettings):
     agent_name: str | None = "UnnamedAgent"
 
 
+@use_telemetry
 @use_tool_calling
 class FoundryChatClient(ChatClientBase):
     """Azure AI Foundry Chat client."""
