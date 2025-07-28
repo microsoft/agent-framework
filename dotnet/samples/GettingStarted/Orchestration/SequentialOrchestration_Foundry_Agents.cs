@@ -1,29 +1,31 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Azure.AI.Agents.Persistent;
+using Azure.Identity;
 using Microsoft.Agents.Orchestration;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Samples;
-using OpenAI;
 
 namespace Orchestration;
 
 /// <summary>
 /// Demonstrates how to use the <see cref="SequentialOrchestration"/> for
-/// executing multiple heterogeneous agents in sequence.
+/// executing multiple Foundry agents in sequence.
 /// </summary>
-public class SequentialOrchestration_Multi_Agent(ITestOutputHelper output) : OrchestrationSample(output)
+public class SequentialOrchestration_Foundry_Agents(ITestOutputHelper output) : OrchestrationSample(output)
 {
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task RunOrchestrationAsync(bool streamedResponse)
     {
-        var openAIClient = new OpenAIClient(TestConfiguration.OpenAI.ApiKey);
+        // Get a client to create server side agents with.
+        var persistentAgentsClient = new PersistentAgentsClient(TestConfiguration.AzureAI.Endpoint, new AzureCliCredential());
         var model = TestConfiguration.OpenAI.ChatModelId;
 
         // Define the agents
         AIAgent analystAgent =
-            openAIClient.CreateChatClientAgent(
+            await persistentAgentsClient.CreateAIAgentAsync(
                 model,
                 name: "Analyst",
                 instructions:
@@ -35,7 +37,7 @@ public class SequentialOrchestration_Multi_Agent(ITestOutputHelper output) : Orc
                 """,
                 description: "A agent that extracts key concepts from a product description.");
         AIAgent writerAgent =
-            openAIClient.CreateResponseClientAgent(
+            await persistentAgentsClient.CreateAIAgentAsync(
                 model,
                 name: "copywriter",
                 instructions:
@@ -46,7 +48,7 @@ public class SequentialOrchestration_Multi_Agent(ITestOutputHelper output) : Orc
                 """,
                 description: "An agent that writes a marketing copy based on the extracted concepts.");
         AIAgent editorAgent =
-            await openAIClient.CreateAssistantClientAgentAsync(
+            await persistentAgentsClient.CreateAIAgentAsync(
                 model,
                 name: "editor",
                 instructions:
@@ -78,8 +80,8 @@ public class SequentialOrchestration_Multi_Agent(ITestOutputHelper output) : Orc
         this.DisplayHistory(monitor.History);
 
         // Cleanup
-        var assistantClient = openAIClient.GetAssistantClient();
-        await assistantClient.DeleteAssistantAsync(editorAgent.Id);
-        // Need to know how to get the assistant thread ID to delete the thread (issue #260)
+        await persistentAgentsClient.Administration.DeleteAgentAsync(editorAgent.Id);
+        await persistentAgentsClient.Administration.DeleteAgentAsync(writerAgent.Id);
+        await persistentAgentsClient.Administration.DeleteAgentAsync(analystAgent.Id);
     }
 }
