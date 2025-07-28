@@ -81,7 +81,7 @@ jobs:
     env:
       UV_PYTHON: ${{ matrix.python-version }}
       AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
-      AZURE_OPENAI_ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
+      AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
       PACKAGE_NAME: "azure"
     defaults:
       run:

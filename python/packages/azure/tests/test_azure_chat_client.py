@@ -647,9 +647,7 @@ def get_story_text() -> str:
 async def test_azure_openai_chat_client_response() -> None:
     """Test Azure OpenAI chat completion responses."""
     azure_chat_client = AzureChatClient()
-
     assert isinstance(azure_chat_client, ChatClient)
-    print(f"Using Azure OpenAI endpoint: {azure_chat_client.client._azure_endpoint}")  # noqa
 
     messages: list[ChatMessage] = []
     messages.append(
@@ -675,7 +673,6 @@ async def test_azure_openai_chat_client_response() -> None:
 async def test_azure_openai_chat_client_response_tools() -> None:
     """Test AzureOpenAI chat completion responses."""
     azure_chat_client = AzureChatClient()
-
     assert isinstance(azure_chat_client, ChatClient)
 
     messages: list[ChatMessage] = []
@@ -697,7 +694,6 @@ async def test_azure_openai_chat_client_response_tools() -> None:
 async def test_azure_openai_chat_client_streaming() -> None:
     """Test Azure OpenAI chat completion responses."""
     azure_chat_client = AzureChatClient()
-
     assert isinstance(azure_chat_client, ChatClient)
 
     messages: list[ChatMessage] = []
@@ -730,7 +726,6 @@ async def test_azure_openai_chat_client_streaming() -> None:
 async def test_azure_openai_chat_client_streaming_tools() -> None:
     """Test AzureOpenAI chat completion responses."""
     azure_chat_client = AzureChatClient()
-
     assert isinstance(azure_chat_client, ChatClient)
 
     messages: list[ChatMessage] = []
