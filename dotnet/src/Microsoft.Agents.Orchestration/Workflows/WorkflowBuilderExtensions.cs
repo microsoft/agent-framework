@@ -28,12 +28,11 @@ internal enum Activation
 
 internal static class WorkflowBuilderExtensions
 {
-    public static WorkflowBuilder AddLoop(this WorkflowBuilder builder, ExecutorIsh source, ExecutorIsh loopBody, Func<object?, bool> condition)
+    public static WorkflowBuilder AddLoop(this WorkflowBuilder builder, ExecutorIsh source, ExecutorIsh loopBody, Func<object?, bool>? condition = null)
     {
         Check.NotNull(builder);
         Check.NotNull(source);
         Check.NotNull(loopBody);
-        Check.NotNull(condition);
 
         builder.AddEdge(source, loopBody, condition);
         builder.AddEdge(loopBody, source);
