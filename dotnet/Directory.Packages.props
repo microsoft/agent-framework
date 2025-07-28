@@ -10,7 +10,7 @@
     <PackageVersion Include="Aspire.Azure.AI.OpenAI" Version="9.3.1-preview.1.25305.6" />
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="9.3.1" />
     <PackageVersion Include="Aspire.Hosting.Azure.CognitiveServices" Version="9.3.1" />
-    <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.1.0" />
+    <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.1" />
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.2.0-beta.5" />
     <PackageVersion Include="Azure.Identity" Version="1.14.2" />
     <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="9.6.0" />
