@@ -188,11 +188,16 @@ public sealed class ChatClientAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public override AgentThread GetNewThread() => new MessageStoringAgentThread(this._agentOptions?.ChatMessagesStorableFactory?.Invoke(), null, null);
+    public override AgentThread GetNewThread() => new MessageStoringAgentThread();
 
     /// <inheritdoc/>
-    public override AgentThread DeserializeThread(JsonElement threadState, JsonSerializerOptions? jsonSerializerOptions = default) =>
-        new MessageStoringAgentThread(this._agentOptions?.ChatMessagesStorableFactory?.Invoke(), threadState, jsonSerializerOptions);
+    public override async Task<AgentThread> DeserializeThreadAsync(JsonElement stateElement, JsonSerializerOptions? jsonSerializerOptions = default, CancellationToken cancellationToken = default)
+    {
+        var chatMessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke();
+        var thread = chatMessageStore is null ? new MessageStoringAgentThread() : new MessageStoringAgentThread(chatMessageStore);
+        await thread.DeserializeAsync(stateElement, jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
+        return thread;
+    }
 
     #region Private
 
@@ -364,14 +369,19 @@ public sealed class ChatClientAgent : AIAgent
         // Set the thread's storage location, the first time that we use it.
         if (messageStoringThread.StorageLocation == MessageStoringThreadStorageLocation.Unknown)
         {
-            messageStoringThread.StorageLocation = string.IsNullOrWhiteSpace(responseConversationId)
-                ? MessageStoringThreadStorageLocation.AgentThreadManaged
-                : MessageStoringThreadStorageLocation.ConversationId;
+            if (string.IsNullOrWhiteSpace(responseConversationId))
+            {
+                messageStoringThread.UseChatMessageStoreStorage(this._agentOptions?.ChatMessageStoreFactory?.Invoke());
+            }
+            else
+            {
+                messageStoringThread.UseAgentServiceStorage(responseConversationId);
+            }
         }
 
         // If we got a conversation id back from the chat client, it means that the service supports server side thread storage
         // so we should capture the id and update the thread with the new id.
-        if (messageStoringThread.StorageLocation == MessageStoringThreadStorageLocation.ConversationId)
+        if (messageStoringThread.StorageLocation == MessageStoringThreadStorageLocation.AgentService)
         {
             if (string.IsNullOrWhiteSpace(responseConversationId))
             {

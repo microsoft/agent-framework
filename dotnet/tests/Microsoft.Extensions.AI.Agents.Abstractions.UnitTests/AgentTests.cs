@@ -283,7 +283,7 @@ public class AgentTests
             throw new NotImplementedException();
         }
 
-        public override AgentThread DeserializeThread(JsonElement threadState, JsonSerializerOptions? jsonSerializerOptions = null)
+        public override Task<AgentThread> DeserializeThreadAsync(JsonElement stateElement, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         {
             throw new NotImplementedException();
         }

@@ -20,41 +20,43 @@ public class AgentThreadTests
     }
 
     [Fact]
-    public void ConstructorFromJsonSetsValues()
+    public async Task DeserializeFromJsonSetsValuesAsync()
     {
         // Arrange
-        var json = JsonSerializer.Deserialize<JsonElement>("\"thread-123\"");
+        var json = JsonSerializer.Deserialize<JsonElement>("{\"id\":\"thread-123\"}");
+        var thread = new AgentThread();
 
         // Act
-        var thread = new AgentThread(json, null);
+        await thread.DeserializeAsync(json);
 
         // Assert
         Assert.Equal("thread-123", thread.Id);
     }
 
     [Fact]
-    public void ConstructorWithInvalidJsonThrows()
+    public async Task DeserializeWithInvalidJsonThrowsAsync()
     {
         // Arrange
-        var invalidJson = JsonSerializer.Deserialize<JsonElement>("{\"notAString\":42}");
+        var invalidJson = JsonSerializer.Deserialize<JsonElement>("[42]");
+        var thread = new AgentThread();
 
         // Act & Assert
-        Assert.Throws<JsonException>(() => new AgentThread(invalidJson, null));
+        await Assert.ThrowsAsync<JsonException>(() => thread.DeserializeAsync(invalidJson));
     }
 
     [Fact]
-    public void SerializeReturnsJsonStringOfId()
+    public async Task SerializeReturnsJsonStringOfIdAsync()
     {
         // Arrange
         var thread = new AgentThread();
         thread.Id = "abc";
 
         // Act
-        var json = thread.Serialize();
+        var json = await thread.SerializeAsync();
 
         // Assert
-        Assert.Equal(JsonValueKind.String, json.ValueKind);
-        Assert.Equal("abc", json.ToString());
+        Assert.Equal(JsonValueKind.Object, json.ValueKind);
+        Assert.Equal("{\"id\":\"abc\"}", json.ToString());
     }
 
     [Fact]

@@ -22,28 +22,6 @@ public class AgentThread
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="AgentThread"/> class.
-    /// </summary>
-    /// <param name="threadState">A <see cref="JsonElement"/> representing the state of the thread.</param>
-    /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
-    /// <exception cref="InvalidOperationException">Thrown if the provided <paramref name="threadState"/> is not valid or cannot be deserialized into a string.</exception>
-    public AgentThread(JsonElement threadState, JsonSerializerOptions? jsonSerializerOptions)
-    {
-#pragma warning disable IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
-#pragma warning disable IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
-        var id = JsonSerializer.Deserialize(threadState, typeof(string), jsonSerializerOptions) as string;
-#pragma warning restore IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
-#pragma warning restore IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
-
-        if (id is null)
-        {
-            throw new InvalidOperationException("The provided thread state is not valid.");
-        }
-
-        this.Id = id;
-    }
-
-    /// <summary>
     /// Gets or sets the id of the current thread.
     /// </summary>
     /// <remarks>
@@ -75,16 +53,45 @@ public class AgentThread
     }
 
     /// <summary>
-    /// Serializes the current object's state to a JSON string using the specified serialization options.
+    /// Deserializes the state contained in the provided <see cref="JsonElement"/> into the properties on this thread.
+    /// </summary>
+    /// <param name="stateElement">A <see cref="JsonElement"/> representing the state of the thread.</param>
+    /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    public virtual Task DeserializeAsync(JsonElement stateElement, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    {
+        jsonSerializerOptions ??= AgentAbstractionsJsonUtilities.DefaultOptions;
+
+        // Deserialize the first element as the thread ID.
+        var state = JsonSerializer.Deserialize(
+            stateElement,
+            jsonSerializerOptions.GetTypeInfo(typeof(ThreadState))) as ThreadState;
+
+        this.Id = state?.Id;
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
     /// </summary>
     /// <param name="jsonSerializerOptions">The JSON serialization options to use.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
-    public virtual JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = default)
+    public virtual Task<JsonElement> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-#pragma warning disable IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
-#pragma warning disable IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
-        return JsonSerializer.SerializeToElement(this.Id, typeof(string), jsonSerializerOptions);
-#pragma warning restore IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
-#pragma warning restore IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
+        jsonSerializerOptions ??= AgentAbstractionsJsonUtilities.DefaultOptions;
+
+        var state = new ThreadState
+        {
+            Id = this.Id
+        };
+
+        return Task.FromResult(JsonSerializer.SerializeToElement(state, jsonSerializerOptions.GetTypeInfo(typeof(ThreadState))));
+    }
+
+    internal class ThreadState
+    {
+        public string? Id { get; set; }
     }
 }

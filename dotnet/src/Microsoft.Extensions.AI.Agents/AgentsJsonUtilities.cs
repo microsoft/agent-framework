@@ -7,7 +7,7 @@ using System.Text.Json.Serialization;
 namespace Microsoft.Extensions.AI.Agents;
 
 /// <summary>Provides a collection of utility methods for working with JSON data in the context of agents.</summary>
-public static partial class AgentAbstractionsJsonUtilities
+public static partial class AgentsJsonUtilities
 {
     /// <summary>
     /// Gets the <see cref="JsonSerializerOptions"/> singleton used as the default in JSON serialization operations.
@@ -39,8 +39,8 @@ public static partial class AgentAbstractionsJsonUtilities
         // Copy the configuration from the source generated context.
         JsonSerializerOptions options = new(JsonContext.Default.Options);
 
-        // Chain with all supported types from MEAI.
-        options.TypeInfoResolverChain.Add(AIJsonUtilities.DefaultOptions.TypeInfoResolver!);
+        // Chain with all supported types from Agents.Abstractions.
+        options.TypeInfoResolverChain.Add(AgentAbstractionsJsonUtilities.DefaultOptions.TypeInfoResolver!);
 
         options.MakeReadOnly();
         return options;
@@ -52,10 +52,10 @@ public static partial class AgentAbstractionsJsonUtilities
         NumberHandling = JsonNumberHandling.AllowReadingFromString)]
 
     // Agent abstraction types
-    [JsonSerializable(typeof(AgentRunOptions))]
-    [JsonSerializable(typeof(AgentRunResponse))]
-    [JsonSerializable(typeof(AgentRunResponseUpdate))]
-    [JsonSerializable(typeof(AgentThread.ThreadState))]
+    [JsonSerializable(typeof(ChatClientAgentOptions))]
+    [JsonSerializable(typeof(ChatClientAgentRunOptions))]
+    [JsonSerializable(typeof(MessageStoringAgentThread.ThreadState))]
+    [JsonSerializable(typeof(InMemoryChatMessageStore.StoreState))]
 
     [ExcludeFromCodeCoverage]
     internal sealed partial class JsonContext : JsonSerializerContext;

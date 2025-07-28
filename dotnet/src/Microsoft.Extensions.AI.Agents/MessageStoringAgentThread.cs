@@ -1,12 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
-using System.Text.Json.Serialization;
-using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Shared.Diagnostics;
@@ -18,16 +15,15 @@ namespace Microsoft.Extensions.AI.Agents;
 /// </summary>
 public sealed class MessageStoringAgentThread : AgentThread
 {
-    private readonly List<ChatMessage> _chatMessages = [];
-    private readonly IChatMessageStore? _chatMessagesStorable;
-    private MessageStoringThreadStorageLocation _type = MessageStoringThreadStorageLocation.Unknown;
+    private IChatMessageStore? _chatMessageStore;
+    private MessageStoringThreadStorageLocation _storageLocation = MessageStoringThreadStorageLocation.Unknown;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="MessageStoringAgentThread"/> class.
     /// </summary>
     public MessageStoringAgentThread()
     {
-        this.StorageLocation = MessageStoringThreadStorageLocation.Unknown;
+        this._storageLocation = MessageStoringThreadStorageLocation.Unknown;
     }
 
     /// <summary>
@@ -39,66 +35,57 @@ public sealed class MessageStoringAgentThread : AgentThread
     /// </remarks>
     public MessageStoringAgentThread(string id)
     {
-        Throw.IfNullOrWhitespace(id);
+        this.Id = Throw.IfNullOrWhitespace(id);
+        this._storageLocation = MessageStoringThreadStorageLocation.AgentService;
+    }
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="MessageStoringAgentThread"/> class.
+    /// </summary>
+    /// <param name="chatMessageStore">The <see cref="IChatMessageStore"/> used to store chat messages.</param>
+    /// <param name="id">An optional id for this thread. If not provided, the thread will get an id assigned by the message store, when the first message is added to the message store and the thread is assumed to be empty until such time.</param>
+    public MessageStoringAgentThread(IChatMessageStore chatMessageStore, string? id = null)
+    {
+        this._chatMessageStore = chatMessageStore;
+        this._storageLocation = MessageStoringThreadStorageLocation.ChatMessageStore;
         this.Id = id;
-        this.StorageLocation = MessageStoringThreadStorageLocation.ConversationId;
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="MessageStoringAgentThread"/> class.
+    /// Gets the chat message store used by this thread, if any.
     /// </summary>
-    /// <param name="messages">A set of initial messages to seed the thread with.</param>
-    /// <remarks>
-    /// This constructor creates a <see cref="MessageStoringAgentThread"/> that supports local in-memory message storage.
-    /// </remarks>
-    public MessageStoringAgentThread(IEnumerable<ChatMessage> messages)
-    {
-        Throw.IfNull(messages);
-
-        this._chatMessages.AddRange(messages);
-        this.StorageLocation = MessageStoringThreadStorageLocation.AgentThreadManaged;
-    }
+    public IChatMessageStore? ChatMessageStore => this._chatMessageStore;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="MessageStoringAgentThread"/> class.
+    /// Updates a thread with <see cref="MessageStoringThreadStorageLocation"/> of <see cref="MessageStoringThreadStorageLocation.Unknown"/>
+    /// to use an external <see cref="IChatMessageStore"/> for storing messages.
     /// </summary>
-    /// <param name="chatMessagesStorable">An implementation of <see cref="IChatMessageStore"/> to use for storing messages.</param>
-    /// <param name="threadState">A <see cref="JsonElement"/> representing the thread state, if any.</param>
-    /// <param name="jsonSerializerOptions">Optional <see cref="JsonSerializerOptions"/> to use for deserializing the thread state.</param>
-    public MessageStoringAgentThread(IChatMessageStore? chatMessagesStorable, JsonElement? threadState, JsonSerializerOptions? jsonSerializerOptions)
+    /// <param name="chatMessageStore">The <see cref="IChatMessageStore"/> to use for storing messages. Defaults to <see cref="InMemoryChatMessageStore"/> if not provided.</param>
+    public void UseChatMessageStoreStorage(IChatMessageStore? chatMessageStore = null)
     {
-        this._chatMessagesStorable = chatMessagesStorable;
-        this.StorageLocation = MessageStoringThreadStorageLocation.Unknown;
-
-        if (threadState is not null)
+        if (this._storageLocation != MessageStoringThreadStorageLocation.Unknown)
         {
-            // If options are provided, add our built in type resolver to the options.
-            if (jsonSerializerOptions is not null)
-            {
-                jsonSerializerOptions.TypeInfoResolver = JsonTypeInfoResolver.Combine(jsonSerializerOptions?.TypeInfoResolver, ThreadStateJsonSerializerContext.Default);
-            }
-
-            jsonSerializerOptions ??= ThreadStateJsonSerializerContext.Default.Options;
-
-#pragma warning disable IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
-#pragma warning disable IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
-            var parsedThreadState = JsonSerializer.Deserialize(
-                (JsonElement)threadState,
-                typeof(ThreadState),
-                jsonSerializerOptions) as ThreadState;
-#pragma warning restore IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
-#pragma warning restore IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
-
-            if (parsedThreadState is null)
-            {
-                throw new InvalidOperationException("The provided thread state is not valid.");
-            }
-
-            this.Id = parsedThreadState.Id;
-            this.StorageLocation = parsedThreadState.StorageLocation;
-            this._chatMessages.AddRange(parsedThreadState.Messages);
+            Throw.InvalidOperationException($"{nameof(UseChatMessageStoreStorage)} can only be called on threads with a storage location of {nameof(MessageStoringThreadStorageLocation.Unknown)}.");
         }
+
+        this._storageLocation = MessageStoringThreadStorageLocation.ChatMessageStore;
+        this._chatMessageStore = chatMessageStore ?? new InMemoryChatMessageStore();
+    }
+
+    /// <summary>
+    /// Updates a thread with <see cref="MessageStoringThreadStorageLocation"/> of <see cref="MessageStoringThreadStorageLocation.Unknown"/>
+    /// to indicate that the messages are stored in the agent service under the provided conversation id.
+    /// </summary>
+    /// <param name="id">The conversation id under which the messages are stored.</param>
+    public void UseAgentServiceStorage(string id)
+    {
+        if (this._storageLocation != MessageStoringThreadStorageLocation.Unknown)
+        {
+            Throw.InvalidOperationException($"{nameof(UseAgentServiceStorage)} can only be called on threads with a storage location of {nameof(MessageStoringThreadStorageLocation.Unknown)}.");
+        }
+
+        this._storageLocation = MessageStoringThreadStorageLocation.AgentService;
+        this.Id = Throw.IfNullOrWhitespace(id);
     }
 
     /// <summary>
@@ -106,16 +93,7 @@ public sealed class MessageStoringAgentThread : AgentThread
     /// </summary>
     public MessageStoringThreadStorageLocation StorageLocation
     {
-        get { return this._type; }
-        set
-        {
-            if (this._type != MessageStoringThreadStorageLocation.Unknown && this._type != value)
-            {
-                Throw.InvalidOperationException($"The thread {nameof(this.StorageLocation)} cannot be changed from {this._type} to {value} after it has been set.");
-            }
-
-            this._type = value;
-        }
+        get { return this._storageLocation; }
     }
 
 #pragma warning disable CS1998 // Async method lacks 'await' operators and will run synchronously
@@ -123,75 +101,30 @@ public sealed class MessageStoringAgentThread : AgentThread
     /// <inheritdoc/>
     public async IAsyncEnumerable<ChatMessage> GetMessagesAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        if (this._chatMessagesStorable is not null)
+        if (this.StorageLocation == MessageStoringThreadStorageLocation.ChatMessageStore)
         {
-            if (this.Id is null)
-            {
-                // If the thread has no id, there are no message to retrieve.
-                yield break;
-            }
-
             // If a store has been provided, we need to retrieve the messages from the store.
-            var messages = await this._chatMessagesStorable.GetMessagesAsync(this.Id, cancellationToken).ConfigureAwait(false);
+            var messages = await this._chatMessageStore!.GetMessagesAsync(this.Id, cancellationToken).ConfigureAwait(false);
             foreach (var message in messages)
             {
                 yield return message;
             }
+
             yield break;
         }
-
-        // If we have no store, we return the messages from the in-memory list.
-        foreach (var message in this._chatMessages)
-        {
-            yield return message;
-        }
     }
-
-    /// <inheritdoc/>
-    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = default)
-    {
-        // If options are provided, add our built in type resolver to the options.
-        if (jsonSerializerOptions is not null)
-        {
-            jsonSerializerOptions.TypeInfoResolver = JsonTypeInfoResolver.Combine(jsonSerializerOptions?.TypeInfoResolver, ThreadStateJsonSerializerContext.Default);
-        }
-
-        jsonSerializerOptions ??= ThreadStateJsonSerializerContext.Default.Options;
-
-        ThreadState state = new()
-        {
-            Id = this.Id,
-            StorageLocation = this.StorageLocation,
-            Messages = this._chatMessages
-        };
-
-#pragma warning disable IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
-#pragma warning disable IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
-        return JsonSerializer.SerializeToElement(state, typeof(ThreadState), jsonSerializerOptions);
-#pragma warning restore IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
-#pragma warning restore IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
-    }
-
-#pragma warning restore CS1998 // Async method lacks 'await' operators and will run synchronously
 
     /// <inheritdoc/>
     protected override async Task OnNewMessagesAsync(IReadOnlyCollection<ChatMessage> newMessages, CancellationToken cancellationToken = default)
     {
         switch (this.StorageLocation)
         {
-            case MessageStoringThreadStorageLocation.AgentThreadManaged:
+            case MessageStoringThreadStorageLocation.ChatMessageStore:
                 // If a store has been provided, we need to add the messages to the store.
-                if (this._chatMessagesStorable is not null)
-                {
-                    await this._chatMessagesStorable.AddMessagesAsync(this.Id, newMessages, cancellationToken).ConfigureAwait(false);
-                    break;
-                }
-
-                // If we have no store, we add the messages to the in-memory list.
-                this._chatMessages.AddRange(newMessages);
+                this.Id = await this._chatMessageStore!.AddMessagesAsync(this.Id, newMessages, cancellationToken).ConfigureAwait(false);
                 break;
 
-            case MessageStoringThreadStorageLocation.ConversationId:
+            case MessageStoringThreadStorageLocation.AgentService:
                 // If the thread messages are stored in the service
                 // there is nothing to do here, since invoking the
                 // service should already update the thread.
@@ -202,17 +135,69 @@ public sealed class MessageStoringAgentThread : AgentThread
         }
     }
 
+    /// <inheritdoc/>
+    public override async Task DeserializeAsync(JsonElement stateElement, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    {
+        Throw.IfNull(stateElement);
+
+        jsonSerializerOptions ??= AgentsJsonUtilities.DefaultOptions;
+
+        var threadState = JsonSerializer.Deserialize(
+            stateElement,
+            jsonSerializerOptions.GetTypeInfo(typeof(ThreadState))) as ThreadState;
+
+        if (threadState?.BaseState.ValueKind is not JsonValueKind.Undefined)
+        {
+            await base.DeserializeAsync(threadState!.BaseState, jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
+        }
+
+        this._storageLocation = threadState?.StorageLocation ?? MessageStoringThreadStorageLocation.Unknown;
+
+        // Only ChatMessageStore related deserialization left, so shortcut here if not ChatMessageStore.
+        if (this._storageLocation != MessageStoringThreadStorageLocation.ChatMessageStore)
+        {
+            return;
+        }
+
+        this._chatMessageStore ??= new InMemoryChatMessageStore();
+
+        // If we don't have any ChatMessageStore messages exit here.
+        if (threadState?.StoreState is null || threadState?.StoreState?.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+        {
+            return;
+        }
+
+        // Deserialize the ChatMessageStore messages from the thread state.
+        await this._chatMessageStore.DeserializeAsync(threadState!.StoreState.Value, jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public override async Task<JsonElement> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    {
+        var baseElement = await base.SerializeAsync(jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
+
+        jsonSerializerOptions ??= AgentsJsonUtilities.DefaultOptions;
+
+        var storeState = this._chatMessageStore is null ?
+            (JsonElement?)null :
+            await this._chatMessageStore.SerializeAsync(jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
+
+        ThreadState state = new()
+        {
+            BaseState = baseElement,
+            StoreState = storeState,
+            StorageLocation = this.StorageLocation
+        };
+
+        return JsonSerializer.SerializeToElement(state, jsonSerializerOptions.GetTypeInfo(typeof(ThreadState)));
+    }
+
     internal class ThreadState
     {
-        public string? Id { get; set; }
+        public JsonElement BaseState { get; set; }
+
+        public JsonElement? StoreState { get; set; }
+
         public MessageStoringThreadStorageLocation StorageLocation { get; set; } = MessageStoringThreadStorageLocation.Unknown;
-        public List<ChatMessage> Messages { get; set; } = [];
     }
 }
-
-[JsonSourceGenerationOptions(
-    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
-    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    UseStringEnumConverter = true)]
-[JsonSerializable(typeof(MessageStoringAgentThread.ThreadState))]
-internal sealed partial class ThreadStateJsonSerializerContext : JsonSerializerContext;

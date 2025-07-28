@@ -37,6 +37,9 @@
     <PackageVersion Include="Microsoft.Extensions.Logging" Version="8.0.1" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.7" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Testing" Version="9.0.7" />
+    <PackageVersion Include="Microsoft.Extensions.VectorData.Abstractions" Version="9.7.0" />
+    <!-- Vector Stores -->
+    <PackageVersion Include="Microsoft.SemanticKernel.Connectors.InMemory" Version="1.61.0-preview" />
     <!-- Agent SDKs -->
     <PackageVersion Include="Microsoft.Agents.CopilotStudio.Client" Version="1.1.125-beta" />
     <!-- Identity -->

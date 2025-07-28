@@ -131,13 +131,14 @@ public class MessageStoringAgentThreadTests
     {
         // Arrange
         var message = new ChatMessage(ChatRole.User, "Hello");
+        var store = new InMemoryChatMessageStore();
+        store.Add(message);
 
         // Act
-        var thread = new MessageStoringAgentThread([message]);
+        var thread = new MessageStoringAgentThread(store, "convId");
 
         // Assert
-        Assert.Null(thread.Id); // Id should be null when we add messages, since it's a local thread.
-        Assert.Equal(MessageStoringThreadStorageLocation.AgentThreadManaged, thread.StorageLocation); // StorageLocation should be set to local since we are adding messages already.
+        Assert.Equal(MessageStoringThreadStorageLocation.ChatMessageStore, thread.StorageLocation); // StorageLocation should be set to ChatMessageStore since we are adding messages already.
 
         var messages = await thread.GetMessagesAsync().ToListAsync();
         Assert.Contains(message, messages);
@@ -154,7 +155,7 @@ public class MessageStoringAgentThreadTests
 
         // Assert
         Assert.Equal("TestConvId", thread.Id);
-        Assert.Equal(MessageStoringThreadStorageLocation.ConversationId, thread.StorageLocation);
+        Assert.Equal(MessageStoringThreadStorageLocation.AgentService, thread.StorageLocation);
 
         var messages = await thread.GetMessagesAsync().ToListAsync();
         Assert.Empty(messages);
@@ -164,21 +165,22 @@ public class MessageStoringAgentThreadTests
     /// Verify that <see cref="MessageStoringAgentThread"/> initializes with expected values when provided json to deserialize from.
     /// </summary>
     [Fact]
-    public async Task VerifyThreadWithJsonInitialStateAsync()
+    public async Task VerifyDeseriailzedThreadInitialStateAsync()
     {
         // Act
         var json = JsonSerializer.Deserialize<JsonElement>("""
             {
-                "id": "TestConvId",
-                "storageLocation": "AgentThreadManaged",
-                "messages": [{"authorName": "testAuthor"}]
+                "baseState": { "id": "TestConvId" },
+                "storageLocation": 1,
+                "storeState": { "messages": [{"authorName": "testAuthor"}] }
             }
             """);
-        var thread = new MessageStoringAgentThread(null, json, null);
+        var thread = new MessageStoringAgentThread();
+        await thread.DeserializeAsync(json);
 
         // Assert
         Assert.Equal("TestConvId", thread.Id);
-        Assert.Equal(MessageStoringThreadStorageLocation.AgentThreadManaged, thread.StorageLocation);
+        Assert.Equal(MessageStoringThreadStorageLocation.ChatMessageStore, thread.StorageLocation);
 
         var messages = await thread.GetMessagesAsync().ToListAsync();
         Assert.Single(messages);
@@ -191,19 +193,24 @@ public class MessageStoringAgentThreadTests
     [Fact]
     public async Task VerifyThreadWithJsonAndOptionsInitialStateAsync()
     {
-        // Act
+        // Arrange
         var json = JsonSerializer.Deserialize<JsonElement>("""
             {
-                "id": "TestConvId",
-                "storage_location": "AgentThreadManaged",
-                "messages": [{"author_name": "testAuthor"}]
+                "base_state": { "id": "TestConvId" },
+                "storage_location": 1,
+                "store_state": { "thread_id": "TestConvId", "messages": [{"author_name": "testAuthor"}] }
             }
             """);
-        var thread = new MessageStoringAgentThread(null, json, new JsonSerializerOptions() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower });
+        var options = new JsonSerializerOptions() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
+        options.TypeInfoResolverChain.Add(AgentsJsonUtilities.DefaultOptions.TypeInfoResolver!);
+        var thread = new MessageStoringAgentThread();
+
+        // Act
+        await thread.DeserializeAsync(json, options);
 
         // Assert
         Assert.Equal("TestConvId", thread.Id);
-        Assert.Equal(MessageStoringThreadStorageLocation.AgentThreadManaged, thread.StorageLocation);
+        Assert.Equal(MessageStoringThreadStorageLocation.ChatMessageStore, thread.StorageLocation);
 
         var messages = await thread.GetMessagesAsync().ToListAsync();
         Assert.Single(messages);
@@ -211,7 +218,7 @@ public class MessageStoringAgentThreadTests
     }
 
     /// <summary>
-    /// Verifies that the StorageLocation can only be changed from Unknown to AgentThreadManaged or ConversationId.
+    /// Verifies that the StorageLocation can only be changed from Unknown to ChatMessageStore or AgentService.
     /// </summary>
     [Fact]
     public void VerifyThreadThrowsWhenStorageLocationAlreadySet()
@@ -219,16 +226,16 @@ public class MessageStoringAgentThreadTests
         // Arrange
         var thread = new MessageStoringAgentThread();
 
-        // Act & Assert - Attempt to change StorageLocation from Unknown to AgentThreadManaged
-        thread.StorageLocation = MessageStoringThreadStorageLocation.AgentThreadManaged;
-        Assert.Throws<InvalidOperationException>(() => thread.StorageLocation = MessageStoringThreadStorageLocation.ConversationId);
+        // Act & Assert - Attempt to change StorageLocation from ChatMessageStore to AgentService
+        thread.UseChatMessageStoreStorage();
+        Assert.Throws<InvalidOperationException>(() => thread.UseAgentServiceStorage("123"));
 
         // Arrange
         thread = new MessageStoringAgentThread();
 
-        // Act & Assert - Attempt to change StorageLocation from AgentThreadManaged to ConversationId
-        thread.StorageLocation = MessageStoringThreadStorageLocation.ConversationId;
-        Assert.Throws<InvalidOperationException>(() => thread.StorageLocation = MessageStoringThreadStorageLocation.AgentThreadManaged);
+        // Act & Assert - Attempt to change StorageLocation from AgentService to ChatMessageStore
+        thread.UseAgentServiceStorage("123");
+        Assert.Throws<InvalidOperationException>(() => thread.UseChatMessageStoreStorage());
     }
 
     #region Core Override Method Tests
@@ -324,11 +331,14 @@ public class MessageStoringAgentThreadTests
         }
 
         var messageStoringAgentThread = Assert.IsType<MessageStoringAgentThread>(thread);
-        Assert.Equal(responseConversationId, thread.Id);  // Id should match the returned conversation id.
+        if (responseConversationId is not null)
+        {
+            Assert.Equal(responseConversationId, thread.Id);  // Id should match the returned conversation id.
+        }
         Assert.Equal(
             messagesStored
-                ? MessageStoringThreadStorageLocation.AgentThreadManaged
-                : MessageStoringThreadStorageLocation.ConversationId,
+                ? MessageStoringThreadStorageLocation.ChatMessageStore
+                : MessageStoringThreadStorageLocation.AgentService,
             messageStoringAgentThread.StorageLocation);       // StorageLocation should be based on whether we got back a conversation id
     }
 
@@ -789,20 +799,21 @@ public class MessageStoringAgentThreadTests
         var thread = new MessageStoringAgentThread("TestConvId");
 
         // Act
-        var json = thread.Serialize();
+        var json = await thread.SerializeAsync();
 
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);
 
-        Assert.True(json.TryGetProperty("id", out var idProperty));
+        Assert.True(json.TryGetProperty("baseState", out var baseStateProperty));
+        Assert.Equal(JsonValueKind.Object, baseStateProperty.ValueKind);
+
+        Assert.True(baseStateProperty.TryGetProperty("id", out var idProperty));
         Assert.Equal("TestConvId", idProperty.GetString());
 
         Assert.True(json.TryGetProperty("storageLocation", out var storageLocationProperty));
-        Assert.Equal("ConversationId", storageLocationProperty.GetString());
+        Assert.Equal((int)MessageStoringThreadStorageLocation.AgentService, storageLocationProperty.GetInt32());
 
-        Assert.True(json.TryGetProperty("messages", out var messagesProperty));
-        Assert.Equal(JsonValueKind.Array, messagesProperty.ValueKind);
-        Assert.Empty(messagesProperty.EnumerateArray()); // Should be empty since no messages added yet
+        Assert.False(json.TryGetProperty("storeState", out var messagesProperty));
     }
 
     /// <summary>
@@ -812,20 +823,30 @@ public class MessageStoringAgentThreadTests
     public async Task VerifyThreadSerializationWithMessagesToJsonAsync()
     {
         // Arrange
-        var thread = new MessageStoringAgentThread([new ChatMessage(ChatRole.User, "TestContent") { AuthorName = "TestAuthor" }]);
+        var store = new InMemoryChatMessageStore();
+        store.Add(new ChatMessage(ChatRole.User, "TestContent") { AuthorName = "TestAuthor" });
+        var threadId = Guid.NewGuid().ToString();
+        var thread = new MessageStoringAgentThread(store, threadId);
 
         // Act
-        var json = thread.Serialize();
+        var json = await thread.SerializeAsync();
 
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);
 
-        Assert.False(json.TryGetProperty("id", out var idProperty));
+        Assert.True(json.TryGetProperty("baseState", out var baseStateProperty));
+        Assert.Equal(JsonValueKind.Object, baseStateProperty.ValueKind);
+
+        Assert.True(baseStateProperty.TryGetProperty("id", out var idProperty));
+        Assert.Equal(threadId, idProperty.GetString());
 
         Assert.True(json.TryGetProperty("storageLocation", out var storageLocationProperty));
-        Assert.Equal("AgentThreadManaged", storageLocationProperty.GetString());
+        Assert.Equal((int)MessageStoringThreadStorageLocation.ChatMessageStore, storageLocationProperty.GetInt32());
 
-        Assert.True(json.TryGetProperty("messages", out var messagesProperty));
+        Assert.True(json.TryGetProperty("storeState", out var storeStateProperty));
+        Assert.Equal(JsonValueKind.Object, storeStateProperty.ValueKind);
+
+        Assert.True(storeStateProperty.TryGetProperty("messages", out var messagesProperty));
         Assert.Equal(JsonValueKind.Array, messagesProperty.ValueKind);
         Assert.Single(messagesProperty.EnumerateArray());
         var message = messagesProperty.EnumerateArray().First();
@@ -849,21 +870,26 @@ public class MessageStoringAgentThreadTests
         // Arrange
         var thread = new MessageStoringAgentThread("TestConvId");
 
+        JsonSerializerOptions options = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
+        options.TypeInfoResolverChain.Add(AgentsJsonUtilities.DefaultOptions.TypeInfoResolver!);
+
         // Act
-        var json = thread.Serialize(new JsonSerializerOptions() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower });
+        var json = await thread.SerializeAsync(options);
 
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);
 
-        Assert.True(json.TryGetProperty("id", out var idProperty));
+        Assert.True(json.TryGetProperty("base_state", out var baseStateProperty));
+        Assert.Equal(JsonValueKind.Object, baseStateProperty.ValueKind);
+
+        Assert.True(baseStateProperty.TryGetProperty("id", out var idProperty));
         Assert.Equal("TestConvId", idProperty.GetString());
 
         Assert.True(json.TryGetProperty("storage_location", out var storageLocationProperty));
-        Assert.Equal("ConversationId", storageLocationProperty.GetString());
+        Assert.Equal((int)MessageStoringThreadStorageLocation.AgentService, storageLocationProperty.GetInt32());
 
-        Assert.True(json.TryGetProperty("messages", out var messagesProperty));
-        Assert.Equal(JsonValueKind.Array, messagesProperty.ValueKind);
-        Assert.Empty(messagesProperty.EnumerateArray()); // Should be empty since no messages added yet
+        Assert.True(json.TryGetProperty("store_state", out var storeStateProperty));
+        Assert.Equal(JsonValueKind.Null, storeStateProperty.ValueKind); // Should be null since no messages are stored.
     }
 
     #endregion

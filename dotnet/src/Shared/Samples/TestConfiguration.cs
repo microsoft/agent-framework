@@ -18,6 +18,9 @@ public sealed class TestConfiguration
     /// <summary>Gets the configuration settings for the Azure OpenAI integration.</summary>
     public static AzureOpenAIConfig AzureOpenAI => LoadSection<AzureOpenAIConfig>();
 
+    /// <summary>Gets the configuration settings for the Azure OpenAI Embeddings integration.</summary>
+    public static AzureOpenAIEmbeddingsConfig AzureOpenAIEmbeddings => LoadSection<AzureOpenAIEmbeddingsConfig>();
+
     /// <summary>Represents the configuration settings required to interact with the OpenAI service.</summary>
     public class OpenAIConfig
     {
@@ -41,6 +44,21 @@ public sealed class TestConfiguration
 
         /// <summary>Gets or sets the API key used for authentication with the OpenAI service.</summary>
         public string? ApiKey { get; set; }
+    }
+
+    /// <summary>
+    /// Represents the configuration settings required to interact with the Azure OpenAI Embeddings service.
+    /// </summary>
+    public class AzureOpenAIEmbeddingsConfig
+    {
+        /// <summary>Gets or sets the URI endpoint used to connect to the service.</summary>
+        public Uri Endpoint { get; set; }
+
+        /// <summary>Gets or sets the name of the deployment for embeddings.</summary>
+        public string DeploymentName { get; set; }
+
+        /// <summary>Gets or sets the API key used for authentication with the OpenAI service.</summary>
+        public string ApiKey { get; set; }
     }
 
     /// <summary>Represents the configuration settings required to interact with the Azure AI service.</summary>

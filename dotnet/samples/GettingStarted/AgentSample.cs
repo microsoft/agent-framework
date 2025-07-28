@@ -94,6 +94,18 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
         };
     }
 
+    /// <summary>
+    /// Retrieves an <see cref="IEmbeddingGenerator"/> instance configured with Azure OpenAI credentials.
+    /// </summary>
+    /// <returns>An <see cref="IEmbeddingGenerator"/> instance configured to generate embeddings using the Azure OpenAI service.</returns>
+    protected IEmbeddingGenerator GetAzureOpenAIEmbeddingGenerator()
+        => ((TestConfiguration.AzureOpenAI.ApiKey is null)
+            // Use Azure CLI credentials if API key is not provided.
+            ? new AzureOpenAIClient(TestConfiguration.AzureOpenAIEmbeddings.Endpoint, new AzureCliCredential())
+            : new AzureOpenAIClient(TestConfiguration.AzureOpenAIEmbeddings.Endpoint, new ApiKeyCredential(TestConfiguration.AzureOpenAIEmbeddings.ApiKey)))
+                .GetEmbeddingClient(TestConfiguration.AzureOpenAIEmbeddings.DeploymentName)
+                .AsIEmbeddingGenerator();
+
     #region Private GetChatClient
 
     private IChatClient GetOpenAIChatClient()

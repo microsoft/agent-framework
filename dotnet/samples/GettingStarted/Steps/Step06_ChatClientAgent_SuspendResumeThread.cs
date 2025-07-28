@@ -9,11 +9,13 @@ namespace GettingStarted.Steps;
 /// </summary>
 public sealed class Step06_ChatClientAgent_SuspendResumeThread(ITestOutputHelper output) : AgentSample(output)
 {
-    private const string ParrotName = "Parrot";
-    private const string ParrotInstructions = "Repeat the user message in the voice of a pirate and then end with a parrot sound.";
+    private const string JokerName = "Joker";
+    private const string JokerInstructions = "You are good at telling jokes.";
 
     /// <summary>
-    /// Demonstrate the usage of <see cref="ChatClientAgent"/> where a conversation history is maintained.
+    /// Demonstrate the usage of <see cref="ChatClientAgent"/> where a thread is suspended.
+    /// The thread is serialized and can be stored to a database, file, or any other storage mechanism,
+    /// and then deserialized later to resume the conversation with the agent.
     /// </summary>
     [Theory]
     [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
@@ -21,13 +23,13 @@ public sealed class Step06_ChatClientAgent_SuspendResumeThread(ITestOutputHelper
     [InlineData(ChatClientProviders.OpenAIAssistant)]
     [InlineData(ChatClientProviders.OpenAIResponses_InMemoryMessageThread)]
     [InlineData(ChatClientProviders.OpenAIResponses_ConversationIdThread)]
-    public async Task RunWithThread(ChatClientProviders provider)
+    public async Task SuspendResumeThread(ChatClientProviders provider)
     {
         // Define the options for the chat client agent.
         var agentOptions = new ChatClientAgentOptions
         {
-            Name = ParrotName,
-            Instructions = ParrotInstructions,
+            Name = JokerName,
+            Instructions = JokerInstructions,
 
             // Get chat options based on the store type, if needed.
             ChatOptions = base.GetChatOptions(provider),
@@ -49,15 +51,15 @@ public sealed class Step06_ChatClientAgent_SuspendResumeThread(ITestOutputHelper
         Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", thread));
 
         // Serialize the thread state, so it can be stored for later use.
-        var serializedThread = thread.Serialize();
+        var serializedThread = await thread.SerializeAsync();
 
         // The thread can now be saved to a database, file, or any other storage mechanism
         // and loaded again later.
 
         // Deserialize the thread state after loading from storage.
-        var resumedThread = agent.DeserializeThread(serializedThread);
+        var resumedThread = await agent.DeserializeThreadAsync(serializedThread);
 
-        Console.WriteLine(await agent.RunAsync("Now add some emojis to the joke.", resumedThread));
+        Console.WriteLine(await agent.RunAsync("Now tell the same joke in the voice of a pirate, and add some emojis to the joke.", resumedThread));
 
         // Clean up the server-side agent and thread after use when applicable (depending on the provider).
         await base.AgentCleanUpAsync(provider, agent, thread);
