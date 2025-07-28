@@ -1,10 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Diagnostics.CodeAnalysis;
+using System.Text;
+using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
-using OpenTelemetry;
-using OpenTelemetry.Trace;
 
 namespace Steps;
 
@@ -24,47 +24,72 @@ public sealed class Step06_ChatClientAgent_StructuredOutputs(ITestOutputHelper o
     [InlineData(ChatClientProviders.OpenAIResponses)]
     public async Task RunWithTelemetry(ChatClientProviders provider)
     {
-        // Enable telemetry
-        AppContext.SetSwitch("Microsoft.Extensions.AI.Agents.EnableTelemetry", true);
+        var jsonSchema = """
+        {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "The full name of the person."
+                },
+                "age": {
+                    "type": "integer",
+                    "description": "The age of the person in years."
+                },
+                "occupation": {
+                    "type": "string",
+                    "description": "The primary occupation or job title of the person."
+                }
+            },
+            "required": ["name", "age", "occupation"]
+        }
+        """;
 
-        // Create TracerProvider with console exporter
-        string sourceName = Guid.NewGuid().ToString();
-
-        using var tracerProvider = Sdk.CreateTracerProviderBuilder()
-            .AddSource(sourceName)
-            .AddConsoleExporter()
-            .Build();
-
-        // Define agent options
-        var agentOptions = new ChatClientAgentOptions(name: "TelemetryAgent", instructions: "You are a helpful assistant.");
+        var agentOptions = new ChatClientAgentOptions(name: "HelpfulAssistant", instructions: "You are a helpful assistant.");
+        agentOptions.ChatOptions = new()
+        {
+            ResponseFormat = ChatResponseFormatJson.ForJsonSchema(JsonDocument.Parse(jsonSchema).RootElement, "PersonInformation", "Information about a person including their name, age, and occupation")
+        };
 
         // Create the server-side agent Id when applicable (depending on the provider).
         agentOptions.Id = await base.AgentCreateAsync(provider, agentOptions);
 
         using var chatClient = base.GetChatClient(provider, agentOptions);
-        var baseAgent = new ChatClientAgent(chatClient, agentOptions);
 
-        // Wrap the agent with OpenTelemetry instrumentation
-        using var agent = baseAgent.WithOpenTelemetry(sourceName: sourceName);
+        ChatClientAgent agent = new(chatClient, agentOptions);
+
         var thread = agent.GetNewThread();
 
-        // Run agent interactions
-        await agent.RunAsync("What is artificial intelligence?", thread);
-        await agent.RunAsync("How does machine learning work?", thread);
+        // Prompt which allows to verify that the data was processed from file correctly and current datetime is returned.
+        const string Prompt = "Please provide information about John Smith, who is a 35-year-old software engineer.";
 
-        // Clean up
-        await base.AgentCleanUpAsync(provider, baseAgent, thread);
+        var assistantOutput = new StringBuilder();
+        var codeInterpreterOutput = new StringBuilder();
+
+        var updates = agent.RunStreamingAsync(Prompt, thread);
+        var agentResponse = await updates.ToAgentRunResponseAsync();
+
+        var personInfo = agentResponse.Deserialize<PersonInfo>(JsonSerializerOptions.Web);
+
+        Console.WriteLine("Assistant Output:");
+        Console.WriteLine($"Name: {personInfo.Name}");
+        Console.WriteLine($"Age: {personInfo.Age}");
+        Console.WriteLine($"Occupation: {personInfo.Occupation}");
+
+        // Clean up the server-side agent after use when applicable (depending on the provider).
+        await base.AgentCleanUpAsync(provider, agent, thread);
     }
 
-    public class Scoring
+    public class PersonInfo
     {
-        [JsonRequired]
-        [JsonPropertyName("score")]
-        public double Score { get; set; }
+        [JsonPropertyName("name")]
+        public string? Name { get; set; }
 
-        [AllowNull]
-        [JsonRequired]
-        [JsonPropertyName("notes")]
-        public string Notes { get; set; }
+        [JsonPropertyName("age")]
+        public int? Age { get; set; }
+
+        [JsonPropertyName("occupation")]
+        public string? Occupation { get; set; }
     }
 }
