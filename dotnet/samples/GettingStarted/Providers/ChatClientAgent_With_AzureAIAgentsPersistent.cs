@@ -44,7 +44,7 @@ public sealed class ChatClientAgent_With_AzureAIAgentsPersistent(ITestOutputHelp
 
             var response = await agent.RunAsync(input, thread);
 
-            Console.WriteLine(response.Messages.Last().Text);
+            Console.WriteLine(response);
         }
 
         // Cleanup

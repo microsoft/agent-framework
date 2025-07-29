@@ -3,6 +3,7 @@
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Samples;
 using OpenAI;
+using OpenAI.Chat;
 
 namespace Providers;
 
@@ -84,7 +85,8 @@ public sealed class ChatClientAgent_With_OpenAIClient(ITestOutputHelper output) 
         {
             Console.WriteLine(input);
 
-            var chatMessage = new OpenAI.Chat.UserChatMessage(input);
+            // Use the OpenAI.Chat message types directly
+            var chatMessage = new UserChatMessage(input);
             var chatCompletion = await agent.RunAsync(chatMessage, thread);
 
             Console.WriteLine(chatCompletion.Content.Last().Text);
