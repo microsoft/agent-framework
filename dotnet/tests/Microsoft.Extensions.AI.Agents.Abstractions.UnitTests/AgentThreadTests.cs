@@ -80,7 +80,7 @@ public class AgentThreadTests
         Assert.Null(thread.Id);
     }
 
-    #endregion
+    #endregion Constructor and Property Tests
 
     #region GetMessagesAsync Tests
 
@@ -130,7 +130,7 @@ public class AgentThreadTests
         Assert.Equal("Hi there!", messages[1].Text);
     }
 
-    #endregion
+    #endregion GetMessagesAsync Tests
 
     #region OnNewMessagesAsync Tests
 
@@ -180,7 +180,7 @@ public class AgentThreadTests
         await Assert.ThrowsAsync<UnreachableException>(() => thread.OnNewMessagesAsync(new List<ChatMessage>(), CancellationToken.None));
     }
 
-    #endregion
+    #endregion OnNewMessagesAsync Tests
 
     #region Deserialize Tests
 
@@ -209,7 +209,7 @@ public class AgentThreadTests
         await Assert.ThrowsAsync<JsonException>(() => thread.DeserializeAsync(invalidJson));
     }
 
-    #endregion
+    #endregion Deserialize Tests
 
     #region Serialize Tests
 
@@ -228,7 +228,7 @@ public class AgentThreadTests
         Assert.Equal("{\"id\":\"abc\"}", json.ToString());
     }
 
-    #endregion
+    #endregion Serialize Tests
 
     [Fact]
     public async Task OnNewMessagesAsyncSucceedsAsync()
