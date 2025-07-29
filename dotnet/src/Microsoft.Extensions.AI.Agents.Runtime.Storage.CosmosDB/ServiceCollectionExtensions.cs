@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.ObjectModel;
+using System.Text.Json;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -35,7 +36,11 @@ public static class ServiceCollectionExtensions
             {
                 ApplicationName = "AgentFramework",
                 ConnectionMode = ConnectionMode.Direct,
-                ConsistencyLevel = ConsistencyLevel.Session
+                ConsistencyLevel = ConsistencyLevel.Session,
+                UseSystemTextJsonSerializerWithOptions = new JsonSerializerOptions()
+                {
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                }
             };
 
             return new CosmosClient(connectionString, cosmosClientOptions);

@@ -11,8 +11,6 @@ using Microsoft.Azure.Cosmos;
 
 namespace Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB;
 
-#pragma warning disable IL3050, IL2026
-
 /// <summary>
 ///
 /// TODO: partitionkey can be hierarchical - actortype + actorkey
@@ -186,9 +184,7 @@ public class CosmosActorStateStorage : IActorStateStorage
                             cancellationToken: cancellationToken)
                             .ConfigureAwait(false);
 
-                        var jsonElement = JsonSerializer.SerializeToElement(response.Resource.Value);
-
-                        results.Add(new GetValueResult(jsonElement));
+                        results.Add(new GetValueResult(response.Resource.Value));
                     }
                     catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
                     {
@@ -287,7 +283,7 @@ public class CosmosActorStateStorage : IActorStateStorage
         public string Key { get; set; } = default!;
 
         [JsonPropertyName("value")]
-        public object Value { get; set; } = default!;
+        public JsonElement Value { get; set; } = default!;
     }
 
     private static string Sanitize(string input)

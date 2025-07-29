@@ -177,7 +177,7 @@ public class CosmosActorStateStorageTests
 
         // Assert
         Assert.False(result.Success);
-        Assert.Null(result.ETag);
+        Assert.Empty(result.ETag);
 
         // Verify original value is unchanged
         var readOperations = new List<ActorStateReadOperation>
