@@ -1,11 +1,15 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.Orchestration;
+using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI.Agents.Runtime;
+using Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB;
 
 namespace HelloHttpApi.ApiService;
+
+#pragma warning disable VSTHRD002
 
 public static class HostApplicationBuilderAgentExtensions
 {
@@ -26,7 +30,27 @@ public static class HostApplicationBuilderAgentExtensions
                 .Add(triage, customerService, "Hand off to the customer service agent for handling rude customer inquiries.")
                 .Build("PirateWorkflow");
         });
+
         var actorBuilder = builder.AddActorRuntime();
+
+        // Add CosmosDB state storage to override default storage
+        builder.Services.AddSingleton<IActorStateStorage>(serviceProvider =>
+        {
+            var cosmosClient = serviceProvider.GetRequiredService<CosmosClient>();
+
+            // Use the database from Aspire configuration
+            var database = cosmosClient.GetDatabase("actor-state-db");
+
+            // Create container if it doesn't exist with proper configuration
+            var containerProperties = new ContainerProperties
+            {
+                Id = "ActorState",
+                PartitionKeyPath = "/actorId"
+            };
+
+            var container = database.CreateContainerIfNotExistsAsync(containerProperties).GetAwaiter().GetResult();
+            return new CosmosActorStateStorage(container.Container);
+        });
 
         actorBuilder.AddActorType(
             new ActorType(agentKey),
