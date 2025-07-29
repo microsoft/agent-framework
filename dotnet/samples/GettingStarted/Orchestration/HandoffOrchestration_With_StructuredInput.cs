@@ -46,9 +46,9 @@ public class HandoffOrchestration_With_StructuredInput(ITestOutputHelper output)
 
         // Define the orchestration
         HandoffOrchestration orchestration =
-            new(OrchestrationHandoffs
+            new(Handoffs
                     .StartWith(triageAgent)
-                    .Add(triageAgent, dotnetAgent, pythonAgent))
+                    .Add(triageAgent, [dotnetAgent, pythonAgent]))
             {
                 LoggerFactory = this.LoggerFactory,
                 ResponseCallback = monitor.ResponseCallback,
