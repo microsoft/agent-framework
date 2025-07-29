@@ -43,12 +43,10 @@ public sealed class MessageStoringAgentThread : AgentThread
     /// Initializes a new instance of the <see cref="MessageStoringAgentThread"/> class.
     /// </summary>
     /// <param name="chatMessageStore">The <see cref="IChatMessageStore"/> used to store chat messages.</param>
-    /// <param name="id">An optional id for this thread. If not provided, the thread will get an id assigned by the message store, when the first message is added to the message store and the thread is assumed to be empty until such time.</param>
-    public MessageStoringAgentThread(IChatMessageStore chatMessageStore, string? id = null)
+    public MessageStoringAgentThread(IChatMessageStore? chatMessageStore)
     {
         this._chatMessageStore = chatMessageStore;
-        this._storageLocation = MessageStoringThreadStorageLocation.ChatMessageStore;
-        this.Id = id;
+        this._storageLocation = chatMessageStore is null ? MessageStoringThreadStorageLocation.Unknown : MessageStoringThreadStorageLocation.ChatMessageStore;
     }
 
     /// <summary>
@@ -89,7 +87,7 @@ public sealed class MessageStoringAgentThread : AgentThread
     }
 
     /// <summary>
-    /// Gets or sets the storage location of the thread.
+    /// Gets the storage location of the thread.
     /// </summary>
     public MessageStoringThreadStorageLocation StorageLocation
     {

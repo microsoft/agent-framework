@@ -193,8 +193,7 @@ public sealed class ChatClientAgent : AIAgent
     /// <inheritdoc/>
     public override async Task<AgentThread> DeserializeThreadAsync(JsonElement stateElement, JsonSerializerOptions? jsonSerializerOptions = default, CancellationToken cancellationToken = default)
     {
-        var chatMessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke();
-        var thread = chatMessageStore is null ? new MessageStoringAgentThread() : new MessageStoringAgentThread(chatMessageStore);
+        var thread = new MessageStoringAgentThread(this._agentOptions?.ChatMessageStoreFactory?.Invoke());
         await thread.DeserializeAsync(stateElement, jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
         return thread;
     }

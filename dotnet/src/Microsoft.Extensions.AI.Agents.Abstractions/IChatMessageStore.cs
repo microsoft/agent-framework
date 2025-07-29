@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
@@ -21,7 +20,6 @@ public interface IChatMessageStore
     /// Gets all the messages from the store that should be used for the next agent invocation.
     /// </summary>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <exception cref="InvalidOperationException">No thread id was provided, but the store requires one to function.</exception>
     /// <returns>A collection of chat messages.</returns>
     /// <remarks>
     /// <para>

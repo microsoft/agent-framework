@@ -135,7 +135,7 @@ public class MessageStoringAgentThreadTests
         store.Add(message);
 
         // Act
-        var thread = new MessageStoringAgentThread(store, "convId");
+        var thread = new MessageStoringAgentThread(store);
 
         // Assert
         Assert.Equal(MessageStoringThreadStorageLocation.ChatMessageStore, thread.StorageLocation); // StorageLocation should be set to ChatMessageStore since we are adding messages already.
@@ -825,8 +825,7 @@ public class MessageStoringAgentThreadTests
         // Arrange
         var store = new InMemoryChatMessageStore();
         store.Add(new ChatMessage(ChatRole.User, "TestContent") { AuthorName = "TestAuthor" });
-        var threadId = Guid.NewGuid().ToString();
-        var thread = new MessageStoringAgentThread(store, threadId);
+        var thread = new MessageStoringAgentThread(store);
 
         // Act
         var json = await thread.SerializeAsync();
@@ -837,8 +836,7 @@ public class MessageStoringAgentThreadTests
         Assert.True(json.TryGetProperty("baseState", out var baseStateProperty));
         Assert.Equal(JsonValueKind.Object, baseStateProperty.ValueKind);
 
-        Assert.True(baseStateProperty.TryGetProperty("id", out var idProperty));
-        Assert.Equal(threadId, idProperty.GetString());
+        Assert.False(baseStateProperty.TryGetProperty("id", out var idProperty));
 
         Assert.True(json.TryGetProperty("storageLocation", out var storageLocationProperty));
         Assert.Equal((int)MessageStoringThreadStorageLocation.ChatMessageStore, storageLocationProperty.GetInt32());

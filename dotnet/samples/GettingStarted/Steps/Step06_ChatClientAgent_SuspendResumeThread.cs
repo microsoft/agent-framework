@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Text.Json;
 using Microsoft.Extensions.AI.Agents;
 
 namespace GettingStarted.Steps;
@@ -51,13 +52,13 @@ public sealed class Step06_ChatClientAgent_SuspendResumeThread(ITestOutputHelper
         Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", thread));
 
         // Serialize the thread state, so it can be stored for later use.
-        var serializedThread = await thread.SerializeAsync();
+        JsonElement serializedThread = await thread.SerializeAsync();
 
         // The thread can now be saved to a database, file, or any other storage mechanism
         // and loaded again later.
 
         // Deserialize the thread state after loading from storage.
-        var resumedThread = await agent.DeserializeThreadAsync(serializedThread);
+        AgentThread resumedThread = await agent.DeserializeThreadAsync(serializedThread);
 
         Console.WriteLine(await agent.RunAsync("Now tell the same joke in the voice of a pirate, and add some emojis to the joke.", resumedThread));
 
