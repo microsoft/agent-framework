@@ -27,7 +27,7 @@ public sealed class Step07_ChatClientAgent_3rdPartyThreadStorage(ITestOutputHelp
     [InlineData(ChatClientProviders.OpenAIResponses_InMemoryMessageThread)]
     public async Task ThirdPartyStorageThread(ChatClientProviders provider)
     {
-        var inMemoryVectorStore = new InMemoryVectorStore(new() { EmbeddingGenerator = this.GetAzureOpenAIEmbeddingGenerator() });
+        var inMemoryVectorStore = new InMemoryVectorStore();
 
         // Define the options for the chat client agent.
         var agentOptions = new ChatClientAgentOptions
@@ -151,9 +151,6 @@ public sealed class Step07_ChatClientAgent_3rdPartyThreadStorage(ITestOutputHelp
 
             [VectorStoreData]
             public string? MessageText { get; set; }
-
-            [VectorStoreVector(1536)]
-            public string? MessageEmbedding => MessageText;
         }
     }
 }
