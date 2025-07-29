@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests;
@@ -29,11 +28,6 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
 
     public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
     {
-        if (thread is not MessageStoringAgentThread messageStoringAgentThread)
-        {
-            throw new InvalidOperationException($"The thread must be of type {nameof(MessageStoringAgentThread)} to retrieve chat history.");
-        }
-
         List<ChatMessage> messages = [];
 
         AsyncPageable<PersistentThreadMessage> threadMessages = this._persistentAgentsClient.Messages.GetMessagesAsync(threadId: thread.Id, order: ListSortOrder.Ascending);

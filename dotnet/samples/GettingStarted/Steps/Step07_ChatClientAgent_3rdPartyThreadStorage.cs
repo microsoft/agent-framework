@@ -6,7 +6,7 @@ using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.VectorData;
 using Microsoft.SemanticKernel.Connectors.InMemory;
 
-namespace GettingStarted.Steps;
+namespace Steps;
 
 /// <summary>
 /// Demonstrates how to store the chat history of a thread in a 3rd party store when using <see cref="ChatClientAgent"/>.

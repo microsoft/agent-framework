@@ -70,18 +70,13 @@ public abstract partial class OrchestratingAgent : AIAgent
 
         if (thread is not null)
         {
-            if (thread is not MessageStoringAgentThread retrievableThread)
+            if (thread.ChatMessageStore is null)
             {
-                throw new InvalidOperationException($"The thread type '{thread.GetType().Name}' is not supported by this agent. Use {nameof(GetNewThread)} to create a thread when needed.");
-            }
-
-            if (retrievableThread.StorageLocation != MessageStoringThreadStorageLocation.ChatMessageStore)
-            {
-                throw new InvalidOperationException($"The thread StorageLocation '{retrievableThread.StorageLocation}' is not supported by this agent.");
+                throw new InvalidOperationException("An agent service managed thread is not supported by this agent.");
             }
 
             List<ChatMessage> messagesList = [];
-            await foreach (var threadMessage in retrievableThread.GetMessagesAsync(cancellationToken).ConfigureAwait(false))
+            await foreach (var threadMessage in thread.GetMessagesAsync(cancellationToken).ConfigureAwait(false))
             {
                 messagesList.Add(threadMessage);
             }
@@ -107,7 +102,7 @@ public abstract partial class OrchestratingAgent : AIAgent
     }
 
     /// <inheritdoc />
-    public sealed override AgentThread GetNewThread() => new MessageStoringAgentThread();
+    public sealed override AgentThread GetNewThread() => new();
 
     /// <inheritdoc/>
     public override async Task<AgentThread> DeserializeThreadAsync(JsonElement stateElement, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
@@ -219,10 +214,6 @@ public abstract partial class OrchestratingAgent : AIAgent
 
         return response;
     }
-
-    /// <inheritdoc />
-    protected sealed override TThreadType ValidateOrCreateThreadType<TThreadType>(AgentThread? thread, Func<TThreadType> constructThread) =>
-        base.ValidateOrCreateThreadType(thread, constructThread);
 
     /// <summary>Writes the specified checkpoint state to the runtime.</summary>
     /// <param name="state">The state to persist.</param>

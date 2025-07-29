@@ -3,7 +3,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.AI.Agents;
 
-namespace GettingStarted.Steps;
+namespace Steps;
 
 /// <summary>
 /// Demonstrates how to suspend and resume a thread with the <see cref="ChatClientAgent"/>.

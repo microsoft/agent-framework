@@ -222,23 +222,6 @@ public class AgentTests
     }
 
     [Fact]
-    public void ValidateOrCreateThreadTypeVerifiesAndCreatesThread()
-    {
-        // Custom thread type for type checking
-        var threadMock = new Mock<TestAgentThread>() { CallBase = true };
-
-        var agent = new MockAgent();
-
-        // Should create
-        var result = agent.ValidateOrCreateThreadType<TestAgentThread>(null, () => threadMock.Object);
-        Assert.Same(threadMock.Object, result);
-
-        // Should throw if wrong type
-        var wrongThread = new Mock<AgentThread>().Object;
-        Assert.Throws<NotSupportedException>(() => agent.ValidateOrCreateThreadType<TestAgentThread>(wrongThread, () => threadMock.Object));
-    }
-
-    [Fact]
     public async Task NotifyThreadOfNewMessagesNotifiesThreadAsync()
     {
         var cancellationToken = new CancellationToken();
@@ -246,6 +229,8 @@ public class AgentTests
         var messages = new[] { new ChatMessage(ChatRole.User, "msg1"), new ChatMessage(ChatRole.User, "msg2") };
 
         var threadMock = new Mock<TestAgentThread>() { CallBase = true };
+        threadMock.SetupAllProperties();
+        threadMock.Object.Id = "test-thread-id";
         var agent = new MockAgent();
 
         await agent.NotifyThreadOfNewMessagesAsync(threadMock.Object, messages, cancellationToken);
@@ -258,21 +243,8 @@ public class AgentTests
     /// </summary>
     public abstract class TestAgentThread : AgentThread;
 
-    /// <summary>
-    /// Mock class to test the <see cref="AIAgent.ValidateOrCreateThreadType{TThreadType}"/> method.
-    /// </summary>
     private sealed class MockAgent : AIAgent
     {
-        public new TThreadType ValidateOrCreateThreadType<TThreadType>(
-            AgentThread? thread,
-            Func<TThreadType> constructThread)
-            where TThreadType : AgentThread
-        {
-            return base.ValidateOrCreateThreadType<TThreadType>(
-                thread,
-                constructThread);
-        }
-
         public new Task NotifyThreadOfNewMessagesAsync(AgentThread thread, IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken)
         {
             return base.NotifyThreadOfNewMessagesAsync(thread, messages, cancellationToken);

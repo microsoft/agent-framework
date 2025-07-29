@@ -37,7 +37,7 @@ public class InMemoryChatMessageStore : List<ChatMessage>, IChatMessageStore
             return Task.CompletedTask;
         }
 
-        jsonSerializerOptions ??= AgentsJsonUtilities.DefaultOptions;
+        jsonSerializerOptions ??= AgentAbstractionsJsonUtilities.DefaultOptions;
 
         var state = JsonSerializer.Deserialize(
             stateElement.Value,
@@ -54,7 +54,7 @@ public class InMemoryChatMessageStore : List<ChatMessage>, IChatMessageStore
     /// <inheritdoc />
     public Task<JsonElement?> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        jsonSerializerOptions ??= AgentsJsonUtilities.DefaultOptions;
+        jsonSerializerOptions ??= AgentAbstractionsJsonUtilities.DefaultOptions;
 
         StoreState state = new()
         {

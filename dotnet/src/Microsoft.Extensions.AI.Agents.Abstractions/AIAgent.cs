@@ -203,30 +203,6 @@ public abstract class AIAgent
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Checks that the thread is of the expected type, or if null, creates the default thread type.
-    /// </summary>
-    /// <typeparam name="TThreadType">The expected type of the thead.</typeparam>
-    /// <param name="thread">The thread to create if it's null and validate its type if not null.</param>
-    /// <param name="constructThread">A callback to use to construct the thread if it's null.</param>
-    /// <returns>An async task that completes once all update are complete.</returns>
-    protected virtual TThreadType ValidateOrCreateThreadType<TThreadType>(
-        AgentThread? thread,
-        Func<TThreadType> constructThread)
-        where TThreadType : AgentThread
-    {
-        Throw.IfNull(constructThread);
-
-        thread ??= constructThread();
-
-        if (thread is not TThreadType concreteThreadType)
-        {
-            throw new NotSupportedException($"{this.GetType().Name} currently only supports agent threads of type {typeof(TThreadType).Name}.");
-        }
-
-        return concreteThreadType;
-    }
-
-    /// <summary>
     /// Notfiy the given thread that new messages are available.
     /// </summary>
     /// <remarks>

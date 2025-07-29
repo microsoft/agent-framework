@@ -6,7 +6,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Microsoft.Extensions.AI.Agents.UnitTests;
+namespace Microsoft.Extensions.AI.Agents.Abstractions.UnitTests;
 
 /// <summary>
 /// Contains tests for the <see cref="InMemoryChatMessageStore"/> class.
