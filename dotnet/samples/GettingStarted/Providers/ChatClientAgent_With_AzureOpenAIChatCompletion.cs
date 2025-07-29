@@ -3,9 +3,9 @@
 using System.ClientModel;
 using Azure.AI.OpenAI;
 using Azure.Identity;
-using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Samples;
+using OpenAI;
 
 namespace Providers;
 
@@ -20,16 +20,14 @@ public sealed class ChatClientAgent_With_AzureOpenAIChatCompletion(ITestOutputHe
     [Fact]
     public async Task RunWithChatCompletion()
     {
-        // Get the chat client to use for the agent.
-        using var chatClient = ((TestConfiguration.AzureOpenAI.ApiKey is null)
+        // Get the OpenAI client to use for the agent.
+        var openAIClient = (TestConfiguration.AzureOpenAI.ApiKey is null)
             // Use Azure CLI credentials if API key is not provided.
             ? new AzureOpenAIClient(TestConfiguration.AzureOpenAI.Endpoint, new AzureCliCredential())
-            : new AzureOpenAIClient(TestConfiguration.AzureOpenAI.Endpoint, new ApiKeyCredential(TestConfiguration.AzureOpenAI.ApiKey)))
-                .GetChatClient(TestConfiguration.AzureOpenAI.DeploymentName)
-                .AsIChatClient();
+            : new AzureOpenAIClient(TestConfiguration.AzureOpenAI.Endpoint, new ApiKeyCredential(TestConfiguration.AzureOpenAI.ApiKey));
 
-        // Define the agent
-        AIAgent agent = new ChatClientAgent(chatClient, JokerInstructions, JokerName);
+        // Create the agent
+        AIAgent agent = openAIClient.CreateChatClientAgent(TestConfiguration.AzureOpenAI.DeploymentName, JokerInstructions, JokerName);
 
         // Start a new thread for the agent conversation.
         AgentThread thread = agent.GetNewThread();

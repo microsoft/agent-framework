@@ -7,29 +7,39 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Samples;
 using OpenAI.Files;
+using OpenAI.VectorStores;
 
 namespace Steps;
 
 /// <summary>
-/// Demonstrates how to use <see cref="ChatClientAgent"/> with code interpreter tools and file references.
-/// Shows uploading files to different providers and using them with code interpreter capabilities to analyze data and generate responses.
+/// Demonstrates how to use <see cref="ChatClientAgent"/> with file search tools and file references.
+/// Shows uploading files to different providers and using them with file search capabilities to retrieve and analyze information from documents.
 /// </summary>
-public sealed class Step03_ChatClientAgent_UsingCodeInterpreterTools(ITestOutputHelper output) : AgentSample(output)
+public sealed class Step04_ChatClientAgent_UsingFileSearchTools(ITestOutputHelper output) : AgentSample(output)
 {
     [Theory]
     [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
     [InlineData(ChatClientProviders.OpenAIAssistant)]
     public async Task RunningWithFileReferenceAsync(ChatClientProviders provider)
     {
-        var codeInterpreterTool = new NewHostedCodeInterpreterTool()
+        // Upload a file to the specified provider.
+        var fileId = await UploadFileAsync("Resources/employees.pdf", provider);
+
+        // Create a vector store for the uploaded file to enable file search capabilities.
+        var vectorStoreId = await CreateVectorStoreAsync([fileId], provider);
+
+        // Create a file search tool that can access the vector store.
+        var fileSearchTool = new NewHostedFileSearchTool()
         {
-            Inputs = [new HostedFileContent(await UploadFileAsync("Resources/groceries.txt", provider))]
+            Inputs = [new HostedVectorStoreContent(vectorStoreId)],
         };
 
-        var agentOptions = new ChatClientAgentOptions(
-            name: "HelpfulAssistant",
-            instructions: "You are a helpful assistant.",
-            tools: [codeInterpreterTool]);
+        var agentOptions = new ChatClientAgentOptions
+        {
+            Name = "FileSearchAssistant",
+            Instructions = "You are a helpful assistant that can search through uploaded documents to answer questions. Use the file search tool to find relevant information from the uploaded files.",
+            ChatOptions = new() { Tools = [fileSearchTool] }
+        };
 
         // Create the server-side agent Id when applicable (depending on the provider).
         agentOptions.Id = await base.AgentCreateAsync(provider, agentOptions);
@@ -40,11 +50,10 @@ public sealed class Step03_ChatClientAgent_UsingCodeInterpreterTools(ITestOutput
 
         var thread = agent.GetNewThread();
 
-        // Prompt which allows to verify that the data was processed from file correctly and current datetime is returned.
-        const string Prompt = "Calculate the total number of items, identify the most frequently purchased item and return the result with today's datetime.";
+        // Prompt which allows to verify that the file search functionality works correctly with the uploaded document.
+        const string Prompt = "Who is the youngest employee?";
 
         var assistantOutput = new StringBuilder();
-        var codeInterpreterOutput = new StringBuilder();
 
         await foreach (var update in agent.RunStreamingAsync(Prompt, thread))
         {
@@ -52,18 +61,10 @@ public sealed class Step03_ChatClientAgent_UsingCodeInterpreterTools(ITestOutput
             {
                 assistantOutput.Append(update.Text);
             }
-
-            if (update.RawRepresentation is ChatResponseUpdate chatUpdate && chatUpdate.RawRepresentation is not null)
-            {
-                codeInterpreterOutput.Append(GetCodeInterpreterOutput(chatUpdate.RawRepresentation, provider));
-            }
         }
 
         Console.WriteLine("Assistant Output:");
         Console.WriteLine(assistantOutput.ToString());
-
-        Console.WriteLine("Code interpreter Output:");
-        Console.WriteLine(codeInterpreterOutput.ToString());
 
         // Clean up the server-side agent after use when applicable (depending on the provider).
         await base.AgentCleanUpAsync(provider, agent, thread);
@@ -98,32 +99,37 @@ public sealed class Step03_ChatClientAgent_UsingCodeInterpreterTools(ITestOutput
         }
     }
 
-    /// <summary>
-    /// Depending on the provider, different strategies are used to extract the code interpreter output from the response raw representation.
-    /// </summary>
-    /// <param name="rawRepresentation">Raw representation of the response containing code interpreter output.</param>
-    /// <param name="provider">Provider of the chat client that is used to determine how to extract the output.</param>
-    /// <returns>The code interpreter output as a string.</returns>
-    private static string? GetCodeInterpreterOutput(object rawRepresentation, ChatClientProviders provider)
+    private Task<string> CreateVectorStoreAsync(IEnumerable<string> fileIds, ChatClientProviders provider)
     {
         switch (provider)
         {
-            case ChatClientProviders.OpenAIAssistant
-                when rawRepresentation is OpenAI.Assistants.RunStepDetailsUpdate stepDetails:
-                return $"{stepDetails.CodeInterpreterInput}{string.Join(
-                        string.Empty,
-                        stepDetails.CodeInterpreterOutputs.SelectMany(l => l.Logs)
-                        )}";
+            case ChatClientProviders.OpenAIAssistant:
+                return CreateVectorStoreOpenAIAssistantAsync(fileIds);
+            case ChatClientProviders.AzureAIAgentsPersistent:
+                return CreateVectorStoreAzureAIAgentsPersistentAsync(fileIds);
+            default:
+                throw new NotSupportedException($"Client provider {provider} is not supported.");
+        }
+    }
 
-            case ChatClientProviders.AzureAIAgentsPersistent
-                when rawRepresentation is Azure.AI.Agents.Persistent.RunStepDetailsUpdate stepDetails:
-                return $"{stepDetails.CodeInterpreterInput}{string.Join(
-                    string.Empty,
-                    stepDetails.CodeInterpreterOutputs.OfType<RunStepDeltaCodeInterpreterLogOutput>().SelectMany(l => l.Logs)
-                    )}";
+    private async Task<string> CreateVectorStoreOpenAIAssistantAsync(IEnumerable<string> fileIds)
+    {
+        var vectorStoreClient = new VectorStoreClient(TestConfiguration.OpenAI.ApiKey);
+        VectorStoreCreationOptions options = new();
+        foreach (var fileId in fileIds)
+        {
+            options.FileIds.Add(fileId);
         }
 
-        return null;
+        var vectorStore = await vectorStoreClient.CreateVectorStoreAsync(waitUntilCompleted: true, options);
+        return vectorStore.VectorStoreId;
+    }
+
+    private async Task<string> CreateVectorStoreAzureAIAgentsPersistentAsync(IEnumerable<string> fileIds)
+    {
+        var client = new PersistentAgentsClient(TestConfiguration.AzureAI.Endpoint, new AzureCliCredential());
+        var vectorStore = await client.VectorStores.CreateVectorStoreAsync(fileIds);
+        return vectorStore.Value.Id;
     }
 
     #endregion

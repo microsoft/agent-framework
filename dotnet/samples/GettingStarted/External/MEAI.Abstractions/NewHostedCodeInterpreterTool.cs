@@ -1,8 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Extensions.AI;
-
-namespace OpenAI.Assistants;
+namespace Microsoft.Extensions.AI;
 
 /// <summary>
 /// Proposal for abstraction updates based on the common code interpreter tool properties.
@@ -10,26 +8,11 @@ namespace OpenAI.Assistants;
 /// </summary>
 public class NewHostedCodeInterpreterTool : HostedCodeInterpreterTool
 {
-    // Usage of an internal dictionary is temporary and only used here because the MEAI.Abstractions does not have this specialization yet and the
-    // ChatClients must rely on the AdditionalProperties to check and set correctly the Code Interpreter Resource avoiding a customized RawRepresentationFactory implementation.
-    private readonly Dictionary<string, object?> _additionalProperties = [];
-
-    /// <summary>Gets or sets the list of file IDs that the code interpreter tool can access.</summary>
-    public IList<string> FileIds
-    {
-        get
-        {
-            // Only create the property in the dictionary when it is actually used
-            if (!this._additionalProperties.TryGetValue("fileIds", out var value) || value is null)
-            {
-                value = new List<string>();
-                this._additionalProperties["fileIds"] = value;
-            }
-
-            return (IList<string>)value;
-        }
-    }
-
-    /// <inheritdoc/>
-    public override IReadOnlyDictionary<string, object?> AdditionalProperties => this._additionalProperties;
+    /// <summary>Gets or sets a collection of <see cref="AIContent"/> to be used as input to the code interpreter tool.</summary>
+    /// <remarks>
+    /// Services support different varied kinds of inputs. Most support the IDs of files that are hosted by the service,
+    /// represented via <see cref="HostedFileContent"/>. Some also support binary data, represented via <see cref="DataContent"/>.
+    /// Unsupported inputs will be ignored by the <see cref="IChatClient"/> to which the tool is passed.
+    /// </remarks>
+    public IList<AIContent>? Inputs { get; set; }
 }
