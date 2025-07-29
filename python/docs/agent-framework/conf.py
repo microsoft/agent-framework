@@ -15,6 +15,8 @@ from sphinx.application import Sphinx
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 import agent_framework
+import agent_framework_foundry
+import agent_framework_azure
 
 project = "agent_framework"
 copyright = "2025, Microsoft"
@@ -35,6 +37,7 @@ sys.path.append(str(Path(".").resolve()))
 extensions = [
     "sphinx.ext.napoleon",
     "sphinx.ext.autodoc",
+    "sphinx.ext.coverage",
     "sphinx.ext.autosummary",
     "sphinx.ext.todo",
     "sphinx.ext.viewcode",
@@ -50,13 +53,16 @@ extensions = [
 ]
 suppress_warnings = ["myst.header"]
 
-napoleon_custom_sections = [("Returns", "params_style")]
+# Napoleon settings
+napoleon_google_docstring = True
+napoleon_use_admonition_for_examples = False
+napoleon_include_init_with_doc = True
+napoleon_custom_sections = [("returns_style", "params_style")]
 
 templates_path = ["_templates"]
 
-autoclass_content = "class"
 
-# TODO: incldue all notebooks excluding those requiring remote API access.
+# TODO: include all notebooks excluding those requiring remote API access.
 nb_execution_mode = "off"
 
 # Guides and tutorials must succeed.
@@ -134,11 +140,15 @@ html_context = {
     "doc_path": "python/docs/agent-framework/",
 }
 
+autoclass_content = "both"
 autodoc_default_options = {
     "members": True,
+    "member-order": "alphabetical",
     "undoc-members": True,
+    "show-inheritance": True,
+    "imported-members": True,
 }
-
+autodoc_pydantic_model_show_json = False
 autodoc_pydantic_model_show_config_summary = False
 autodoc_pydantic_model_show_json_error_strategy = "coerce"
 python_use_unqualified_type_names = True
