@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -174,17 +175,44 @@ public class AgentThreadTests
     #region Deserialize Tests
 
     [Fact]
-    public async Task DeserializeFromJsonSetsValuesAsync()
+    public async Task VerifyDeserializeWithMessagesAsync()
     {
         // Arrange
-        var json = JsonSerializer.Deserialize<JsonElement>("{\"id\":\"thread-123\"}");
+        var chatMessageStore = new InMemoryChatMessageStore();
+        var json = JsonSerializer.Deserialize<JsonElement>("""
+            {
+                "storeState": { "messages": [{"authorName": "testAuthor"}] }
+            }
+            """);
+        var thread = new AgentThread(chatMessageStore);
+
+        // Act.
+        await thread.DeserializeAsync(json);
+
+        // Assert
+        Assert.Null(thread.Id);
+
+        Assert.Single(chatMessageStore);
+        Assert.Equal("testAuthor", chatMessageStore[0].AuthorName);
+    }
+
+    [Fact]
+    public async Task VerifyDeserializeWithIdAsync()
+    {
+        // Arrange
+        var json = JsonSerializer.Deserialize<JsonElement>("""
+            {
+                "id": "TestConvId"
+            }
+            """);
         var thread = new AgentThread();
 
         // Act
         await thread.DeserializeAsync(json);
 
         // Assert
-        Assert.Equal("thread-123", thread.Id);
+        Assert.Equal("TestConvId", thread.Id);
+        Assert.Null(thread.ChatMessageStore);
     }
 
     [Fact]
@@ -202,32 +230,86 @@ public class AgentThreadTests
 
     #region Serialize Tests
 
+    /// <summary>
+    /// Verify thread serialization to JSON when the thread has an id.
+    /// </summary>
     [Fact]
-    public async Task SerializeReturnsJsonStringOfIdAsync()
+    public async Task VerifyThreadSerializationWithIdAsync()
     {
         // Arrange
-        var thread = new AgentThread();
-        thread.Id = "abc";
+        var thread = new AgentThread("TestConvId");
 
         // Act
         var json = await thread.SerializeAsync();
 
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);
-        Assert.Equal("{\"id\":\"abc\"}", json.ToString());
+
+        Assert.True(json.TryGetProperty("id", out var idProperty));
+        Assert.Equal("TestConvId", idProperty.GetString());
+
+        Assert.False(json.TryGetProperty("storeState", out var storeStateProperty));
+    }
+
+    /// <summary>
+    /// Verify thread serialization to JSON when the thread has messages.
+    /// </summary>
+    [Fact]
+    public async Task VerifyThreadSerializationWithMessagesAsync()
+    {
+        // Arrange
+        var store = new InMemoryChatMessageStore();
+        store.Add(new ChatMessage(ChatRole.User, "TestContent") { AuthorName = "TestAuthor" });
+        var thread = new AgentThread(store);
+
+        // Act
+        var json = await thread.SerializeAsync();
+
+        // Assert
+        Assert.Equal(JsonValueKind.Object, json.ValueKind);
+
+        Assert.False(json.TryGetProperty("id", out var idProperty));
+
+        Assert.True(json.TryGetProperty("storeState", out var storeStateProperty));
+        Assert.Equal(JsonValueKind.Object, storeStateProperty.ValueKind);
+
+        Assert.True(storeStateProperty.TryGetProperty("messages", out var messagesProperty));
+        Assert.Equal(JsonValueKind.Array, messagesProperty.ValueKind);
+        Assert.Single(messagesProperty.EnumerateArray());
+
+        var message = messagesProperty.EnumerateArray().First();
+        Assert.Equal("TestAuthor", message.GetProperty("authorName").GetString());
+        Assert.True(message.TryGetProperty("contents", out var contentsProperty));
+        Assert.Equal(JsonValueKind.Array, contentsProperty.ValueKind);
+        Assert.Single(contentsProperty.EnumerateArray());
+
+        var textContent = contentsProperty.EnumerateArray().First();
+        Assert.Equal("TestContent", textContent.GetProperty("text").GetString());
+    }
+
+    /// <summary>
+    /// Verify thread serialization to JSON with custom options.
+    /// </summary>
+    [Fact]
+    public async Task VerifyThreadSerializationWithCustomOptionsAsync()
+    {
+        // Arrange
+        var thread = new AgentThread("TestConvId");
+        JsonSerializerOptions options = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
+        options.TypeInfoResolverChain.Add(AgentAbstractionsJsonUtilities.DefaultOptions.TypeInfoResolver!);
+
+        // Act
+        var json = await thread.SerializeAsync(options);
+
+        // Assert
+        Assert.Equal(JsonValueKind.Object, json.ValueKind);
+
+        Assert.True(json.TryGetProperty("id", out var idProperty));
+        Assert.Equal("TestConvId", idProperty.GetString());
+
+        Assert.True(json.TryGetProperty("store_state", out var storeStateProperty));
+        Assert.Equal(JsonValueKind.Null, storeStateProperty.ValueKind); // Should be null since no messages are stored.
     }
 
     #endregion Serialize Tests
-
-    [Fact]
-    public async Task OnNewMessagesAsyncSucceedsAsync()
-    {
-        // Arrange
-        var thread = new AgentThread();
-        thread.Id = "test-thread";
-        var messages = new List<ChatMessage>();
-
-        // Act
-        await thread.OnNewMessagesAsync(messages, CancellationToken.None);
-    }
 }
