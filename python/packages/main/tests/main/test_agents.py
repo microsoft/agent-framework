@@ -239,7 +239,7 @@ async def test_chat_client_agent_prepare_thread_and_messages(chat_client: ChatCl
     assert result_thread == thread
     assert isinstance(result_thread, ChatClientAgentThread)
 
-    result_messages = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
+    _, result_messages = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
         thread=result_thread,
         input_messages=[ChatMessage(role=ChatRole.USER, text="Test")],
     )
