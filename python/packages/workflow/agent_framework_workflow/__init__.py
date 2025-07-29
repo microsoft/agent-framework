@@ -33,7 +33,6 @@ __all__ = [
     "ExecutorInvokeEvent",
     "HumanInTheLoopEvent",
     "WorkflowBuilder",
-    "WorkflowBuilder",
     "WorkflowCompletedEvent",
     "WorkflowEvent",
     "WorkflowStartedEvent",

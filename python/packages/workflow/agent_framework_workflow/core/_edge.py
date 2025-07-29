@@ -76,9 +76,9 @@ class Edge:
                         await held_shared_state.get_within_hold(edge_id) for edge_id in self._edge_group_ids
                     ] + [data]
                     # Remove the data from the shared state after retrieving it
-                    await asyncio.gather(*[
-                        held_shared_state.delete_within_hold(edge_id) for edge_id in self._edge_group_ids
-                    ])
+                    await asyncio.gather(
+                        *(held_shared_state.delete_within_hold(edge_id) for edge_id in self._edge_group_ids)
+                    )
 
             if messages:
                 await self.target.execute(messages, ExecutorContext(self.target.id, shared_state, ctx))

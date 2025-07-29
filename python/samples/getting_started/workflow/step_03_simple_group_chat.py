@@ -29,7 +29,7 @@ class GroupChatMessage:
 
 @dataclass
 class AgentSelectionDecision(GroupChatMessage):
-    """A data class to hold the decision made by the HILDe executor."""
+    """A data class to hold the decision made by the manager executor."""
 
     selection: str
 
