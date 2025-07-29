@@ -7,7 +7,7 @@ from typing import Any, Generic, TypeVar, get_args
 from ._shared_state import SharedState
 from ._typing_utils import is_instance_of
 from .events import ExecutorCompleteEvent, ExecutorInvokeEvent, WorkflowEvent
-from .execution_context import ExecutionContext, NoopExecutionContext
+from .workflow_context import NoopWorkflowContext, WorkflowContext
 
 T = TypeVar("T")
 
@@ -15,23 +15,23 @@ T = TypeVar("T")
 class ExecutorContext:
     """Context for executing an executor.
 
-    This class provides a way to execute an executor with a specific context.
-    It is used to manage the execution of tasks in a workflow.
+    This class is used to provide a way for executors to interact with the workflow
+    context and shared state, while preventing direct access to the workflow context.
     """
 
-    def __init__(self, executor_id: str, shared_state: SharedState, execution_context: ExecutionContext):
-        """Initialize the executor context with the given execution context."""
-        self._execution_context = execution_context
+    def __init__(self, executor_id: str, shared_state: SharedState, workflow_context: WorkflowContext):
+        """Initialize the executor context with the given workflow context."""
+        self._workflow_context = workflow_context
         self._executor_id = executor_id
         self._shared_state = shared_state
 
     async def send_message(self, message: Any) -> None:
-        """Send a message to the execution context."""
-        await self._execution_context.send_message(self._executor_id, message)
+        """Send a message to the workflow context."""
+        await self._workflow_context.send_message(self._executor_id, message)
 
     async def add_event(self, event: WorkflowEvent) -> None:
-        """Add an event to the execution context."""
-        await self._execution_context.add_event(event)
+        """Add an event to the workflow context."""
+        await self._workflow_context.add_event(event)
 
     async def get_shared_state(self, key: str) -> Any:
         """Get a value from the shared state."""
@@ -41,13 +41,18 @@ class ExecutorContext:
         """Set a value in the shared state."""
         await self._shared_state.set(key, value)
 
+    @property
+    def shared_state(self) -> SharedState:
+        """Get the shared state."""
+        return self._shared_state
+
 
 class NoopExecutorContext(ExecutorContext):
     """A no-operation executor context that does nothing."""
 
     def __init__(self):
         """Initialize the noop executor context."""
-        super().__init__(executor_id="", shared_state=SharedState(), execution_context=NoopExecutionContext())
+        super().__init__(executor_id="", shared_state=SharedState(), workflow_context=NoopWorkflowContext())
 
 
 class Executor(Generic[T], ABC):

@@ -8,8 +8,8 @@ from ._edge import Edge
 from ._runner import Runner
 from ._shared_state import SharedState
 from .events import WorkflowEvent
-from .execution_context import ExecutionContext, InProcExecutionContext
 from .executor import Executor, ExecutorContext
+from .workflow_context import InProcWorkflowContext, WorkflowContext
 
 
 class Workflow:
@@ -23,20 +23,20 @@ class Workflow:
         self,
         edges: list[Edge],
         start_executor: Executor[Any] | str,
-        execution_context: ExecutionContext,
+        workflow_context: WorkflowContext,
     ):
         """Initialize the workflow with a list of edges.
 
         Args:
             edges: A list of directed edges representing the connections between nodes in the workflow.
             start_executor: The starting executor for the workflow, which can be an Executor instance or its ID.
-            execution_context: The ExecutionContext instance to be used during workflow execution.
+            workflow_context: The WorkflowContext instance to be used during workflow execution.
         """
         self._edges = edges
         self._start_executor = start_executor
 
         self._shared_state = SharedState()
-        self._runner = Runner(self._edges, self._shared_state, execution_context)
+        self._runner = Runner(self._edges, self._shared_state, workflow_context)
 
     async def run_stream(
         self,
@@ -60,7 +60,7 @@ class Workflow:
             ExecutorContext(
                 executor.id,
                 self._shared_state,
-                self._runner.execution_context,
+                self._runner.workflow_context,
             ),
         )
         async for event in self._runner.run_until_convergence():
@@ -84,7 +84,7 @@ class WorkflowBuilder:
         """Initialize the WorkflowBuilder with an empty list of edges and no starting executor."""
         self._edges: list[Edge] = []
         self._start_executor: Executor[Any] | str | None = None
-        self._execution_context: ExecutionContext | None = None
+        self._workflow_context: WorkflowContext | None = None
 
     def add_edge(
         self,
@@ -182,13 +182,13 @@ class WorkflowBuilder:
         self._start_executor = executor
         return self
 
-    def set_execution_context(self, execution_context: ExecutionContext) -> "Self":
-        """Set the execution context for the workflow.
+    def set_workflow_context(self, workflow_context: WorkflowContext) -> "Self":
+        """Set the workflow context for the workflow.
 
         Args:
-            execution_context: The ExecutionContext instance to be used during workflow execution.
+            workflow_context: The WorkflowContext instance to be used during workflow execution.
         """
-        self._execution_context = execution_context
+        self._workflow_context = workflow_context
         return self
 
     def build(self) -> Workflow:
@@ -200,6 +200,6 @@ class WorkflowBuilder:
         if not self._start_executor:
             raise ValueError("Starting executor must be set before building the workflow.")
 
-        execution_context = self._execution_context or InProcExecutionContext()
+        workflow_context = self._workflow_context or InProcWorkflowContext()
 
-        return Workflow(self._edges, self._start_executor, execution_context)
+        return Workflow(self._edges, self._start_executor, workflow_context)

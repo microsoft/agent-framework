@@ -5,8 +5,8 @@ from collections.abc import Callable
 from typing import Any, ClassVar
 
 from ._shared_state import SharedState
-from .execution_context import ExecutionContext
 from .executor import Executor, ExecutorContext
+from .workflow_context import WorkflowContext
 
 
 class Edge:
@@ -54,7 +54,7 @@ class Edge:
             raise ValueError(f"Invalid edge ID format: {edge_id}")
         return ids[0], ids[1]
 
-    async def send_message(self, data: Any, shared_state: SharedState, ctx: ExecutionContext) -> None:
+    async def send_message(self, data: Any, shared_state: SharedState, ctx: WorkflowContext) -> None:
         """Send a message along this edge."""
         if not self._edge_group_ids and self._should_route(data):
             await self.target.execute(data, ExecutorContext(self.target.id, shared_state, ctx))

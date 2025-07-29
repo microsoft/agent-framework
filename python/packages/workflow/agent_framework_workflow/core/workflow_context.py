@@ -7,8 +7,8 @@ from .events import WorkflowEvent
 
 
 @runtime_checkable
-class ExecutionContext(Protocol):
-    """Protocol for execution context used by executors."""
+class WorkflowContext(Protocol):
+    """Protocol for workflow context used by executors."""
 
     async def send_message(self, source_id: str, message: Any) -> None:
         """Send a message from the executor to the context.
@@ -60,7 +60,7 @@ class ExecutionContext(Protocol):
         ...
 
 
-class InProcExecutionContext(ExecutionContext):
+class InProcWorkflowContext(WorkflowContext):
     """In-process execution context for testing purposes."""
 
     def __init__(self):
@@ -101,7 +101,7 @@ class InProcExecutionContext(ExecutionContext):
         return bool(self._events)
 
 
-class NoopExecutionContext(ExecutionContext):
+class NoopWorkflowContext(WorkflowContext):
     """A no-operation execution context that does nothing."""
 
     async def send_message(self, source_id: str, message: Any) -> None:

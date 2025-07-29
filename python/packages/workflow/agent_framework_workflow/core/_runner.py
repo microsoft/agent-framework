@@ -9,8 +9,8 @@ from typing import Any
 from ._edge import Edge
 from ._shared_state import SharedState
 from .events import WorkflowEvent
-from .execution_context import ExecutionContext
 from .executor import Executor
+from .workflow_context import WorkflowContext
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class Runner:
         self,
         edges: list[Edge],
         shared_state: SharedState,
-        ctx: ExecutionContext,
+        ctx: WorkflowContext,
         max_iterations: int = 100,
     ):
         self._edge_map = self._parse_edges(edges)
@@ -35,8 +35,8 @@ class Runner:
         }
 
     @property
-    def execution_context(self) -> ExecutionContext:
-        """Get the execution context."""
+    def workflow_context(self) -> WorkflowContext:
+        """Get the workflow context."""
         return self._ctx
 
     async def run_until_convergence(self) -> AsyncIterable[WorkflowEvent]:
