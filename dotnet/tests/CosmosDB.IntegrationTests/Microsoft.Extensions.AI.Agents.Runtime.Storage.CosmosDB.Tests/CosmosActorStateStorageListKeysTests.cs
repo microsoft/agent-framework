@@ -229,7 +229,7 @@ public class CosmosActorStateStorageListKeysTests
         var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
 
         // Create keys with different prefixes
-        string[] userKeys = ["user_profile", "user_settings", "user_preferences"];///// do the other ones
+        string[] userKeys = ["user_profile", "user_settings", "user_preferences"];
         string[] sessionKeys = ["session_token", "session_data"];
         string[] cacheKeys = ["cache_item1", "cache_item2", "cache_item3"];
         string[] miscKeys = ["config", "metadata"];

@@ -3,7 +3,7 @@
 namespace Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests;
 
 /// <summary>
-/// Skip test if running on helix (or a particular helix queue).
+/// Skip test if running on CosmosDB emulator.
 /// </summary>
 [AttributeUsage(AttributeTargets.Method | AttributeTargets.Class, AllowMultiple = false)]
 public sealed class SkipOnEmulatorFactAttribute : FactAttribute

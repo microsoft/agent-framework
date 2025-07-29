@@ -15,7 +15,7 @@ namespace Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB;
 
 /// <summary>
 ///
-/// TODO: partitionkey can be heirarchical - actortype + actorkey
+/// TODO: partitionkey can be hierarchical - actortype + actorkey
 ///
 /// Cosmos DB implementation of actor state storage.
 ///
