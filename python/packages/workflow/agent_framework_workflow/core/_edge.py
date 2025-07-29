@@ -96,8 +96,8 @@ class Edge:
     def set_edge_group(self, edge_group_ids: list[str]) -> None:
         """Set the edge group IDs for this edge."""
         # Validate that the edges in the edge group contain the same target executor as this edge
-        # TODO: An edge cannot be part of multiple edge groups.
-        # TODO: Can an edge have both a condition and an edge group?
+        # TODO(@taochen): An edge cannot be part of multiple edge groups.
+        # TODO(@taochen): Can an edge have both a condition and an edge group?
         if edge_group_ids:
             for edge_id in edge_group_ids:
                 if Edge.source_and_target_from_id(edge_id)[1] != self.target.id:

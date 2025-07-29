@@ -115,7 +115,7 @@ TExecutor = TypeVar("TExecutor", bound=Executor[Any])
 def output_message_types(*output_types: type):
     """Decorator to specify the output types of an executor."""
 
-    def decorator(cls: TExecutor) -> TExecutor:
+    def decorator(cls: type[TExecutor]) -> type[TExecutor]:
         cls._declare_output_types = output_types  # type: ignore
         return cls
 

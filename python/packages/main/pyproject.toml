@@ -38,6 +38,9 @@ azure = [
 foundry = [
     "agent-framework-foundry"
 ]
+workflow = [
+    "agent-framework-workflow"
+]
 
 [tool.uv]
 prerelease = "if-necessary-or-explicit"

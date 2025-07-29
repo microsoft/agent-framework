@@ -97,7 +97,8 @@ class WorkflowBuilder:
         Args:
             source: The source executor of the edge.
             target: The target executor of the edge.
-            condition: An optional condition function that determines whether the edge should be traversed based on the message type.
+            condition: An optional condition function that determines whether the edge
+                       should be traversed based on the message type.
         """
         # TODO(@taochen): Support executor factories for lazy initialization
         self._edges.append(Edge(source, target, condition))
