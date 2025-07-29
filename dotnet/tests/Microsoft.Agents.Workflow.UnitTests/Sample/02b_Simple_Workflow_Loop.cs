@@ -1,9 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Threading.Tasks;
-using Microsoft.Agents.Orchestration.Workflows.Core;
+using Microsoft.Agents.Workflows.Core;
 
-namespace Microsoft.Agents.Orchestration.Workflows.Sample;
+namespace Microsoft.Agents.Workflows.Sample;
 
 internal static class Step2bEntryPoint
 {
@@ -31,7 +31,7 @@ internal enum NumberSignal
     Matched
 }
 
-internal class GuessNumberExecutor : Executor, IMessageHandler<NumberSignal, int>
+internal sealed class GuessNumberExecutor : Executor, IMessageHandler<NumberSignal, int>
 {
     public int LowerBound { get; private set; }
     public int UpperBound { get; private set; }
@@ -66,7 +66,7 @@ internal class GuessNumberExecutor : Executor, IMessageHandler<NumberSignal, int
     }
 }
 
-internal class JudgeExecutor : Executor, IMessageHandler<int, NumberSignal>
+internal sealed class JudgeExecutor : Executor, IMessageHandler<int, NumberSignal>
 {
     private readonly int _targetNumber;
 

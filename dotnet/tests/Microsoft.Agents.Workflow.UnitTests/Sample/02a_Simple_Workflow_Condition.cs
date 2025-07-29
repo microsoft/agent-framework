@@ -3,9 +3,9 @@
 using System;
 using System.Linq;
 using System.Threading.Tasks;
-using Microsoft.Agents.Orchestration.Workflows.Core;
+using Microsoft.Agents.Workflows.Core;
 
-namespace Microsoft.Agents.Orchestration.Workflows.Sample;
+namespace Microsoft.Agents.Workflows.Sample;
 
 internal static class Step2aEntryPoint
 {
@@ -29,7 +29,7 @@ internal static class Step2aEntryPoint
     }
 }
 
-internal class DetectSpamExecutor : Executor, IMessageHandler<string, bool>
+internal sealed class DetectSpamExecutor : Executor, IMessageHandler<string, bool>
 {
     public string[] SpamKeywords { get; }
 
@@ -50,7 +50,7 @@ internal class DetectSpamExecutor : Executor, IMessageHandler<string, bool>
     }
 }
 
-internal class RespondToMessageExecutor : Executor, IMessageHandler<bool>
+internal sealed class RespondToMessageExecutor : Executor, IMessageHandler<bool>
 {
     public async ValueTask HandleAsync(bool message, IExecutionContext context)
     {
@@ -67,7 +67,7 @@ internal class RespondToMessageExecutor : Executor, IMessageHandler<bool>
     }
 }
 
-internal class RemoveSpamExecutor : Executor, IMessageHandler<bool>
+internal sealed class RemoveSpamExecutor : Executor, IMessageHandler<bool>
 {
     public async ValueTask HandleAsync(bool message, IExecutionContext context)
     {

@@ -11,10 +11,10 @@ using System.Threading.Tasks;
 using HandlerInfosT =
     System.Collections.Generic.Dictionary<
         System.Type,
-        Microsoft.Agents.Orchestration.Workflows.Core.MessageHandlerInfo
+        Microsoft.Agents.Workflows.Core.MessageHandlerInfo
     >;
 
-namespace Microsoft.Agents.Orchestration.Workflows.Core;
+namespace Microsoft.Agents.Workflows.Core;
 
 /// <summary>
 /// This attribute indicates that a message handler streams messages during its execution.

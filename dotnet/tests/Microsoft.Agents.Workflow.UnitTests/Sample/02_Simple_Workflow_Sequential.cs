@@ -1,9 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Threading.Tasks;
-using Microsoft.Agents.Orchestration.Workflows.Core;
+using Microsoft.Agents.Workflows.Core;
 
-namespace Microsoft.Agents.Orchestration.Workflows.Sample;
+namespace Microsoft.Agents.Workflows.Sample;
 
 internal static class Step2EntryPoint
 {
@@ -23,7 +23,7 @@ internal static class Step2EntryPoint
     }
 }
 
-internal class UppercaseExecutor : Executor, IMessageHandler<string, string>
+internal sealed class UppercaseExecutor : Executor, IMessageHandler<string, string>
 {
     public ValueTask<string> HandleAsync(string message, IExecutionContext context)
     {
@@ -31,7 +31,7 @@ internal class UppercaseExecutor : Executor, IMessageHandler<string, string>
     }
 }
 
-internal class ReverseTextExecutor : Executor, IMessageHandler<string, string>
+internal sealed class ReverseTextExecutor : Executor, IMessageHandler<string, string>
 {
     public ValueTask<string> HandleAsync(string message, IExecutionContext context)
     {
