@@ -11,7 +11,7 @@ namespace Providers;
 /// <summary>
 /// End-to-end sample showing how to use <see cref="AIAgent"/> with OpenAI Assistants.
 /// </summary>
-public sealed class ChatClientAgent_With_OpenAIAssistant(ITestOutputHelper output) : AgentSample(output)
+public sealed class AIAgent_With_OpenAIAssistant(ITestOutputHelper output) : AgentSample(output)
 {
     private const string JokerName = "Joker";
     private const string JokerInstructions = "You are good at telling jokes.";

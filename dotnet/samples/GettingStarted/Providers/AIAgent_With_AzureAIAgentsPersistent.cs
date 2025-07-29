@@ -13,7 +13,7 @@ namespace Providers;
 /// <remarks>
 /// Running "az login" command in terminal is required for authentication with Azure AI service.
 /// </remarks>
-public sealed class ChatClientAgent_With_AzureAIAgentsPersistent(ITestOutputHelper output) : AgentSample(output)
+public sealed class AIAgent_With_AzureAIAgentsPersistent(ITestOutputHelper output) : AgentSample(output)
 {
     private const string JokerName = "Joker";
     private const string JokerInstructions = "You are good at telling jokes.";
