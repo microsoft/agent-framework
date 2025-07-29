@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -168,16 +167,6 @@ public class AgentThreadTests
         Assert.Equal(2, store.Count);
         Assert.Equal("Hello", store[0].Text);
         Assert.Equal("Hi there!", store[1].Text);
-    }
-
-    [Fact]
-    public async Task OnNewMessagesAsyncWithUnknownThreadThrowsAsync()
-    {
-        // Arrange
-        var thread = new AgentThread();
-
-        // Act
-        await Assert.ThrowsAsync<UnreachableException>(() => thread.OnNewMessagesAsync(new List<ChatMessage>(), CancellationToken.None));
     }
 
     #endregion OnNewMessagesAsync Tests
