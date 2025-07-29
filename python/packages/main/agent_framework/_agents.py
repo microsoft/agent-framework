@@ -638,7 +638,7 @@ class ChatClientAgent(AgentBase):
         await self._notify_thread_of_new_messages(thread, input_messages)
         await self._notify_thread_of_new_messages(thread, response.messages)
 
-    def get_new_thread(self) -> AgentThread:
+    def get_new_thread(self) -> ChatClientAgentThread:
         return ChatClientAgentThread()
 
     def _update_thread_with_type_and_conversation_id(
