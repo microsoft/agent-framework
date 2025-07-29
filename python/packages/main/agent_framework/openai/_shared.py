@@ -238,6 +238,11 @@ class OpenAIHandler(AFBaseModel, ABC):
                     **options_dict,
                     text_format=resp_format,
                 )
+            if "store" not in options_dict:
+                options_dict["store"] = False
+            if "conversation_id" in options_dict:
+                options_dict["previous_response_id"] = options_dict["conversation_id"]
+                options_dict.pop("conversation_id")
             return await self.client.responses.create(**options_dict)  # type: ignore
         except BadRequestError as ex:
             if ex.code == "content_filter":
