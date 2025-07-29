@@ -167,12 +167,14 @@ class AgentBase(AFBaseModel):
     Attributes:
        id: The unique identifier of the agent  If no id is provided,
            a new UUID will be generated.
-       name: The name of the agent
-       description: The description of the agent
+       name: The name of the agent, can be None.
+       description: The description of the agent.
+       display_name: The display name of the agent, which is either the name or id.
+
     """
 
     id: str = Field(default_factory=lambda: str(uuid4()))
-    name: str = Field(default="UnnamedAgent")
+    name: str | None = None
     description: str | None = None
 
     async def _notify_thread_of_new_messages(

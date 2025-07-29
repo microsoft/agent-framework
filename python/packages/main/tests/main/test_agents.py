@@ -199,8 +199,19 @@ async def test_chat_client_agent_init(chat_client: ChatClient) -> None:
     agent = ChatClientAgent(chat_client=chat_client, id=agent_id, description="Test")
 
     assert agent.id == agent_id
-    assert agent.name == "UnnamedAgent"
+    assert agent.name is None
     assert agent.description == "Test"
+    assert agent.display_name == agent_id  # Display name defaults to id if name is None
+
+
+async def test_chat_client_agent_init_with_name(chat_client: ChatClient) -> None:
+    agent_id = str(uuid4())
+    agent = ChatClientAgent(chat_client=chat_client, id=agent_id, name="Test Agent", description="Test")
+
+    assert agent.id == agent_id
+    assert agent.name == "Test Agent"
+    assert agent.description == "Test"
+    assert agent.display_name == "Test Agent"  # Display name is the name if present
 
 
 async def test_chat_client_agent_run(chat_client: ChatClient) -> None:
