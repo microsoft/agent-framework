@@ -2,7 +2,7 @@
 
 using System.Threading.Tasks;
 
-namespace Microsoft.Agents.Orchestration.Workflows.Core;
+namespace Microsoft.Agents.Workflows.Core;
 
 /// <summary>
 /// Helper class to work around lack of proper ValueTask support in .NET Framework.

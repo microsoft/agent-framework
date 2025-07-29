@@ -2,7 +2,7 @@
 
 using System;
 
-namespace Microsoft.Agents.Orchestration.Workflows.Core;
+namespace Microsoft.Agents.Workflows.Core;
 
 /// <summary>
 /// .
@@ -58,10 +58,7 @@ public record ExecutorInvokeEvent : ExecutorEvent
     /// <summary>
     /// .
     /// </summary>
-    public ExecutorInvokeEvent(string executorId, object? data = null) : base(data)
-    {
-        this.ExecutorId = executorId ?? throw new ArgumentNullException(nameof(executorId), "Executor ID cannot be null.");
-    }
+    public ExecutorInvokeEvent(string executorId, object? data = null) : base(executorId, data) { }
 
 #if NET9_0_OR_GREATER
     /// <summary>
@@ -80,10 +77,7 @@ public record ExecutorCompleteEvent : ExecutorEvent
     /// <summary>
     /// .
     /// </summary>
-    public ExecutorCompleteEvent(string executorId, object? data = null) : base(data)
-    {
-        this.ExecutorId = executorId ?? throw new ArgumentNullException(nameof(executorId), "Executor ID cannot be null.");
-    }
+    public ExecutorCompleteEvent(string executorId, object? data = null) : base(executorId, data) { }
 
 #if NET9_0_OR_GREATER
     /// <summary>

@@ -5,7 +5,7 @@ using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Microsoft.Agents.Orchestration.Workflows.Core;
+namespace Microsoft.Agents.Workflows.Core;
 
 /// <summary>
 /// Provides a base class implementing the <see cref="IAsyncDisposable"/> interface using

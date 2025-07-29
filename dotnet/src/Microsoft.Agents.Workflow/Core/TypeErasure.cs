@@ -4,7 +4,7 @@ using System;
 using System.Reflection;
 using System.Threading.Tasks;
 
-namespace Microsoft.Agents.Orchestration.Workflows.Core;
+namespace Microsoft.Agents.Workflows.Core;
 
 internal static class ValueTaskTypeErasure
 {

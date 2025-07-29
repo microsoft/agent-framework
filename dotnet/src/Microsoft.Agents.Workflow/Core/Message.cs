@@ -9,7 +9,7 @@ using MetadataValueT = object;
 using RetryExceptionT = System.InvalidOperationException;
 using TopicId = string;
 
-namespace Microsoft.Agents.Orchestration.Workflows.Core;
+namespace Microsoft.Agents.Workflows.Core;
 
 /// <summary>
 /// .

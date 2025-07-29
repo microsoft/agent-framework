@@ -2,7 +2,7 @@
 
 using System.Threading.Tasks;
 
-namespace Microsoft.Agents.Orchestration.Workflows.Core;
+namespace Microsoft.Agents.Workflows.Core;
 
 /// <summary>
 /// A message handler interface for handling messages of type <typeparamref name="TMessage"/>.

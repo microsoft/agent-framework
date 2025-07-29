@@ -6,12 +6,12 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using Microsoft.Agents.Orchestration.Workflows.Core;
+using Microsoft.Agents.Workflows.Core;
 #pragma warning restore IDE0005 // Using directive is unnecessary.
 
 using ConditionalT = System.Func<object?, bool>;
 
-namespace Microsoft.Agents.Orchestration.Workflows;
+namespace Microsoft.Agents.Workflows;
 
 internal delegate TExecutor ExecutorProvider<out TExecutor>()
     where TExecutor : Executor;
