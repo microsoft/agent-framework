@@ -250,16 +250,6 @@ public class AgentTests
             return base.NotifyThreadOfNewMessagesAsync(thread, messages, cancellationToken);
         }
 
-        public override AgentThread GetNewThread()
-        {
-            throw new NotImplementedException();
-        }
-
-        public override Task<AgentThread> DeserializeThreadAsync(JsonElement stateElement, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-        {
-            throw new NotImplementedException();
-        }
-
         public override Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             throw new System.NotImplementedException();

@@ -190,14 +190,6 @@ public sealed class ChatClientAgent : AIAgent
     /// <inheritdoc/>
     public override AgentThread GetNewThread() => new(this._agentOptions?.ChatMessageStoreFactory?.Invoke());
 
-    /// <inheritdoc/>
-    public override async Task<AgentThread> DeserializeThreadAsync(JsonElement stateElement, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-    {
-        var thread = this.GetNewThread();
-        await thread.DeserializeAsync(stateElement, jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
-        return thread;
-    }
-
     #region Private
 
     /// <summary>

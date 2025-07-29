@@ -2,7 +2,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -35,13 +34,6 @@ internal sealed class MockAgent(int index) : AIAgent
     public override AgentThread GetNewThread()
     {
         return new AgentThread() { Id = Guid.NewGuid().ToString() };
-    }
-
-    public override async Task<AgentThread> DeserializeThreadAsync(JsonElement stateElement, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-    {
-        var thread = new AgentThread();
-        await thread.DeserializeAsync(stateElement, jsonSerializerOptions, cancellationToken);
-        return thread;
     }
 
     public override Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)

@@ -39,18 +39,6 @@ public class CopilotStudioAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public override AgentThread GetNewThread() => new();
-
-    /// <inheritdoc/>
-    public override async Task<AgentThread> DeserializeThreadAsync(JsonElement stateElement, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-    {
-        var thread = this.GetNewThread();
-        await thread.DeserializeAsync(stateElement, jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
-
-        return thread;
-    }
-
-    /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,

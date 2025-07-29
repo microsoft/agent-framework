@@ -89,10 +89,6 @@ public class OrchestrationResultTests
 
     private sealed class MockAgent : AIAgent
     {
-        public override AgentThread GetNewThread() =>
-            throw new NotSupportedException();
-        public override Task<AgentThread> DeserializeThreadAsync(JsonElement stateElement, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
-            throw new NotImplementedException();
         public override Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
         public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
