@@ -1,8 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import sys
 from collections.abc import AsyncIterable, Callable
 from enum import Enum
-from typing import Any, Self
+from typing import Any
 
 from ._edge import Edge
 from ._runner import Runner
@@ -10,6 +11,11 @@ from ._shared_state import SharedState
 from .events import WorkflowEvent
 from .executor import Executor, ExecutorContext
 from .workflow_context import InProcWorkflowContext, WorkflowContext
+
+if sys.version_info >= (3, 11):
+    from typing import Self  # pragma: no cover
+else:
+    from typing_extensions import Self  # pragma: no cover
 
 
 class Workflow:
