@@ -4,9 +4,9 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
-using Microsoft.Agents.Orchestration.Workflows.Core;
+using Microsoft.Agents.Workflows.Core;
 
-namespace Microsoft.Agents.Orchestration.Workflows;
+namespace Microsoft.Agents.Workflows;
 
 internal static class Check
 {
