@@ -25,6 +25,9 @@
     </Project>
   </Folder>
   <Folder Name="/Demos/">
+    <Project Path="demos/AgentOpenTelemetry/AgentOpenTelemetry.csproj">
+      <BuildType Solution="Publish|*" Project="Release" />
+    </Project>
     <Project Path="demos/MinimalConsole/MinimalConsole.csproj">
       <BuildType Solution="Publish|*" Project="Release" />
     </Project>
