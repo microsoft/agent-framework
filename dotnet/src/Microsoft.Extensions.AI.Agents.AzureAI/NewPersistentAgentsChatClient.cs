@@ -58,6 +58,9 @@ namespace Azure.AI.Agents.Persistent
             _metadata = new(ProviderName);
         }
 
+        /// <summary>
+        /// Constructor for <see cref="NewPersistentAgentsChatClient"/>.
+        /// </summary>
         public NewPersistentAgentsChatClient() { }
 
         /// <inheritdoc />
