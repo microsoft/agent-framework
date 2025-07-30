@@ -68,7 +68,7 @@ public class CosmosActorStateStorage : IActorStateStorage
 
         var container = await this._lazyContainer.GetContainerAsync().ConfigureAwait(false);
         var batch = container.CreateTransactionalBatch(GetPartitionKey(actorId));
-        var rootDocId = GetRootDocumentId(actorId);
+        var rootDocId = GetRootDocumentId();
 
         // Add data operations to batch
         foreach (var op in operations)
@@ -76,7 +76,7 @@ public class CosmosActorStateStorage : IActorStateStorage
             switch (op)
             {
                 case SetValueOperation set:
-                    var docId = GetDocumentId(actorId, set.Key);
+                    var docId = GetDocumentId(set.Key);
 
                     var item = new ActorStateDocument
                     {
@@ -90,7 +90,7 @@ public class CosmosActorStateStorage : IActorStateStorage
                     break;
 
                 case RemoveKeyOperation remove:
-                    var docToRemove = GetDocumentId(actorId, remove.Key);
+                    var docToRemove = GetDocumentId(remove.Key);
                     batch.DeleteItem(docToRemove);
                     break;
 
@@ -161,7 +161,7 @@ public class CosmosActorStateStorage : IActorStateStorage
             switch (op)
             {
                 case GetValueOperation get:
-                    var id = GetDocumentId(actorId, get.Key);
+                    var id = GetDocumentId(get.Key);
                     try
                     {
                         var response = await container.ReadItemAsync<ActorStateDocument>(
@@ -269,11 +269,8 @@ public class CosmosActorStateStorage : IActorStateStorage
         public JsonElement Value { get; set; } = default!;
     }
 
-    private static string GetDocumentId(ActorId actorId, string key)
-        => $"{CosmosIdSanitizer.Sanitize(actorId.ToString())}__{CosmosIdSanitizer.Sanitize(key)}";
-
-    private static string GetRootDocumentId(ActorId actorId)
-        => CosmosIdSanitizer.Sanitize(actorId.ToString());
+    private static string GetDocumentId(string key) => $"state_{CosmosIdSanitizer.Sanitize(key)}";
+    private static string GetRootDocumentId() => "rootdoc";
 
     private static PartitionKey GetPartitionKey(ActorId actorId)
         => new(actorId.ToString());
@@ -284,7 +281,7 @@ public class CosmosActorStateStorage : IActorStateStorage
     /// </summary>
     private async ValueTask<string> GetActorETagAsync(Container container, ActorId actorId, CancellationToken cancellationToken)
     {
-        var rootDocId = GetRootDocumentId(actorId);
+        var rootDocId = GetRootDocumentId();
         try
         {
             var rootResponse = await container.ReadItemAsync<ActorRootDocument>(
