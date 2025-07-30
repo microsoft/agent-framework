@@ -295,7 +295,9 @@ sequenceDiagram
     end
 ```
 
-#### 3. Fan-in with Message Accumulation (N:1)
+#### 3. Fan-in Patterns (N:1)
+
+##### 3a. Fan-in with `Activation.WhenAll` (Message Accumulation)
 ```
 ┌─────────────┐    
 │ Executor A  │───┐   
@@ -324,6 +326,38 @@ sequenceDiagram
     Note over SS: All configured edges contributed
     SS->>D: execute([msg_A, msg_B])
     D->>D: _execute([msg_A, msg_B])
+```
+
+##### 3b. Fan-in with `Activation.WhenAny` (Individual Message Processing)
+```
+┌─────────────┐    
+│ Executor A  │───┐   
+│ Output: T   │   │   ┌─────────────────┐
+└─────────────┘   │   │                 │
+                  ├──▶│   Executor D    │
+┌─────────────┐   │   │ Input: T        │
+│ Executor B  │───┘   │                 │
+│ Output: T   │       └─────────────────┘
+└─────────────┘       
+```
+
+**Key Behavior**: Each message triggers the executor independently. No accumulation occurs. If multiple messages arrive in the same superstep, the executor runs multiple times.
+
+**Sequence:**
+```mermaid
+sequenceDiagram
+    participant A as Executor A
+    participant B as Executor B
+    participant D as Executor D
+    
+    par Independent execution
+        A->>D: execute(msg_A)
+        D->>D: _execute(msg_A)
+    and
+        B->>D: execute(msg_B)
+        D->>D: _execute(msg_B)
+    end
+    Note over D: Executor runs twice
 ```
 
 #### 4. Conditional Routing
