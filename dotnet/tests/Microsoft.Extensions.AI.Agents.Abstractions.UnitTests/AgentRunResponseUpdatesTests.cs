@@ -48,7 +48,7 @@ public class AgentRunResponseUpdateTests
         Assert.Same(chatResponseUpdate.Contents, response.Contents);
         Assert.Equal(chatResponseUpdate.CreatedAt, response.CreatedAt);
         Assert.Equal(chatResponseUpdate.MessageId, response.MessageId);
-        Assert.Same(chatResponseUpdate.RawRepresentation, response.RawRepresentation);
+        Assert.Same(chatResponseUpdate, response.RawRepresentation as ChatResponseUpdate);
         Assert.Equal(chatResponseUpdate.ResponseId, response.ResponseId);
         Assert.Equal(chatResponseUpdate.Role, response.Role);
     }

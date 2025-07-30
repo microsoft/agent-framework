@@ -61,7 +61,7 @@ public class AgentRunResponseTests
         Assert.Equal(chatResponse.CreatedAt, response.CreatedAt);
         Assert.Same(chatResponse.Messages, response.Messages);
         Assert.Equal(chatResponse.ResponseId, response.ResponseId);
-        Assert.Same(chatResponse.RawRepresentation, response.RawRepresentation);
+        Assert.Same(chatResponse, response.RawRepresentation as ChatResponse);
         Assert.Same(chatResponse.Usage, response.Usage);
     }
 
