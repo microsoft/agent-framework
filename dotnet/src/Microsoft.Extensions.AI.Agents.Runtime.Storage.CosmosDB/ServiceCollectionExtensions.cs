@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.ObjectModel;
 using System.Text.Json;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.DependencyInjection;
@@ -46,34 +45,11 @@ public static class ServiceCollectionExtensions
             return new CosmosClient(connectionString, cosmosClientOptions);
         });
 
-        // Register Container as singleton
-        services.AddSingleton<Container>(serviceProvider =>
+        // Register LazyCosmosContainer as singleton
+        services.AddSingleton<LazyCosmosContainer>(serviceProvider =>
         {
             var cosmosClient = serviceProvider.GetRequiredService<CosmosClient>();
-
-            // Create database and container if they don't exist
-            var database = cosmosClient.CreateDatabaseIfNotExistsAsync(databaseName).GetAwaiter().GetResult();
-
-            var containerProperties = new ContainerProperties(containerName, "/actorId")
-            {
-                Id = containerName,
-                IndexingPolicy = new IndexingPolicy
-                {
-                    IndexingMode = IndexingMode.Consistent,
-                    Automatic = true
-                },
-                PartitionKeyPaths = ["/actorId"]
-            };
-
-            // Add composite index for efficient queries
-            containerProperties.IndexingPolicy.CompositeIndexes.Add(new Collection<CompositePath>
-            {
-                new() { Path = "/actorId", Order = CompositePathSortOrder.Ascending },
-                new() { Path = "/key", Order = CompositePathSortOrder.Ascending }
-            });
-
-            var container = database.Database.CreateContainerIfNotExistsAsync(containerProperties).GetAwaiter().GetResult();
-            return container.Container;
+            return new LazyCosmosContainer(cosmosClient, databaseName, containerName);
         });
 
         // Register the storage implementation
@@ -83,30 +59,16 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Adds Cosmos DB actor state storage to the service collection with a factory for the Container.
+    /// Adds Cosmos DB actor state storage to the service collection with a factory for the LazyCosmosContainer.
     /// </summary>
     /// <param name="services">The service collection to add services to.</param>
-    /// <param name="containerFactory">A factory function that creates the Cosmos Container.</param>
+    /// <param name="lazyContainerFactory">A factory function that creates the LazyCosmosContainer.</param>
     /// <returns>The service collection for chaining.</returns>
     public static IServiceCollection AddCosmosActorStateStorage(
         this IServiceCollection services,
-        Func<IServiceProvider, Container> containerFactory)
+        Func<IServiceProvider, LazyCosmosContainer> lazyContainerFactory)
     {
-        services.AddSingleton<Container>(containerFactory);
-        services.AddSingleton<IActorStateStorage, CosmosActorStateStorage>();
-        return services;
-    }
-
-    /// <summary>
-    /// Adds Cosmos DB actor state storage to the service collection using an existing Container registration.
-    /// </summary>
-    /// <param name="services">The service collection to add services to.</param>
-    /// <returns>The service collection for chaining.</returns>
-    /// <remarks>
-    /// This overload assumes that a <see cref="Container"/> is already registered in the service collection.
-    /// </remarks>
-    public static IServiceCollection AddCosmosActorStateStorage(this IServiceCollection services)
-    {
+        services.AddSingleton<LazyCosmosContainer>(lazyContainerFactory);
         services.AddSingleton<IActorStateStorage, CosmosActorStateStorage>();
         return services;
     }

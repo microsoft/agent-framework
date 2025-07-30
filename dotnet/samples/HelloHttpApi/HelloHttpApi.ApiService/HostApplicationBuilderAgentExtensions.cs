@@ -9,8 +9,6 @@ using Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB;
 
 namespace HelloHttpApi.ApiService;
 
-#pragma warning disable VSTHRD002
-
 public static class HostApplicationBuilderAgentExtensions
 {
     public static IHostApplicationBuilder AddAIAgent(this IHostApplicationBuilder builder, string name, string instructions, string? chatClientKey = null)
@@ -34,22 +32,10 @@ public static class HostApplicationBuilderAgentExtensions
         var actorBuilder = builder.AddActorRuntime();
 
         // Add CosmosDB state storage to override default storage
-        builder.Services.AddSingleton<IActorStateStorage>(serviceProvider =>
+        builder.Services.AddCosmosActorStateStorage(serviceProvider =>
         {
             var cosmosClient = serviceProvider.GetRequiredService<CosmosClient>();
-
-            // Use the database from Aspire configuration
-            var database = cosmosClient.GetDatabase("actor-state-db");
-
-            // Create container if it doesn't exist with proper configuration
-            var containerProperties = new ContainerProperties
-            {
-                Id = "ActorState",
-                PartitionKeyPath = "/actorId"
-            };
-
-            var container = database.CreateContainerIfNotExistsAsync(containerProperties).GetAwaiter().GetResult();
-            return new CosmosActorStateStorage(container.Container);
+            return new LazyCosmosContainer(cosmosClient, "actor-state-db", "ActorState");
         });
 
         actorBuilder.AddActorType(

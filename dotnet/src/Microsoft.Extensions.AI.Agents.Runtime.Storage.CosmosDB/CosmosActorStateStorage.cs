@@ -35,7 +35,7 @@ namespace Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB;
 /// </summary>
 public class CosmosActorStateStorage : IActorStateStorage
 {
-    private readonly Container _container;
+    private readonly LazyCosmosContainer _lazyContainer;
     private const string InitialEtag = "0"; // Initial ETag value when no state exists
 
     /// <summary>
@@ -43,7 +43,14 @@ public class CosmosActorStateStorage : IActorStateStorage
     /// </summary>
     /// <param name="container">The Cosmos DB container to use for storage.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="container"/> is null.</exception>
-    public CosmosActorStateStorage(Container container) => this._container = container ?? throw new ArgumentNullException(nameof(container));
+    public CosmosActorStateStorage(Container container) => this._lazyContainer = new LazyCosmosContainer(container);
+
+    /// <summary>
+    /// Constructs a new instance of <see cref="CosmosActorStateStorage"/> with the specified lazy container.
+    /// </summary>
+    /// <param name="lazyContainer">The lazy Cosmos DB container to use for storage.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="lazyContainer"/> is null.</exception>
+    public CosmosActorStateStorage(LazyCosmosContainer lazyContainer) => this._lazyContainer = lazyContainer ?? throw new ArgumentNullException(nameof(lazyContainer));
 
     /// <summary>
     /// Writes state changes to the actor's persistent storage.
@@ -54,6 +61,8 @@ public class CosmosActorStateStorage : IActorStateStorage
        string etag,
        CancellationToken cancellationToken = default)
     {
+        var container = await this._lazyContainer.GetContainerAsync().ConfigureAwait(false);
+
         if (operations.Count == 0)
         {
             // No operations to perform - return success with current ETag or generate new one
@@ -62,14 +71,14 @@ public class CosmosActorStateStorage : IActorStateStorage
         }
 
         var partitionKey = new PartitionKey(actorId.ToString());
-        var batch = this._container.CreateTransactionalBatch(partitionKey);
+        var batch = container.CreateTransactionalBatch(partitionKey);
 
         // First, try to read existing root document to get current version
         var rootDocId = GetRootDocumentId(actorId);
         ActorRootDocument? existingRoot = null;
         try
         {
-            var rootResponse = await this._container.ReadItemAsync<ActorRootDocument>(
+            var rootResponse = await container.ReadItemAsync<ActorRootDocument>(
                 rootDocId,
                 partitionKey,
                 cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -165,10 +174,11 @@ public class CosmosActorStateStorage : IActorStateStorage
     IReadOnlyCollection<ActorStateReadOperation> operations,
     CancellationToken cancellationToken = default)
     {
+        var container = await this._lazyContainer.GetContainerAsync().ConfigureAwait(false);
         var results = new List<ActorReadResult>();
 
         // Read root document first to get actor-level ETag
-        string actorETag = await this.GetActorETagAsync(actorId, cancellationToken).ConfigureAwait(false);
+        string actorETag = await this.GetActorETagAsync(container, actorId, cancellationToken).ConfigureAwait(false);
 
         foreach (var op in operations)
         {
@@ -178,7 +188,7 @@ public class CosmosActorStateStorage : IActorStateStorage
                     var id = GetDocumentId(actorId, get.Key);
                     try
                     {
-                        var response = await this._container.ReadItemAsync<ActorStateDocument>(
+                        var response = await container.ReadItemAsync<ActorStateDocument>(
                             id,
                             new PartitionKey(actorId.ToString()),
                             cancellationToken: cancellationToken)
@@ -215,7 +225,7 @@ public class CosmosActorStateStorage : IActorStateStorage
                         MaxItemCount = 100 // TODO Fix 
                     };
 
-                    var iterator = this._container.GetItemQueryIterator<KeyProjection>(
+                    var iterator = container.GetItemQueryIterator<KeyProjection>(
                         query,
                         list.ContinuationToken,
                         requestOptions);
@@ -299,12 +309,12 @@ public class CosmosActorStateStorage : IActorStateStorage
     /// Gets the current ETag for the actor's root document.
     /// Returns a generated ETag if no root document exists.
     /// </summary>
-    private async ValueTask<string> GetActorETagAsync(ActorId actorId, CancellationToken cancellationToken)
+    private async ValueTask<string> GetActorETagAsync(Container container, ActorId actorId, CancellationToken cancellationToken)
     {
         var rootDocId = GetRootDocumentId(actorId);
         try
         {
-            var rootResponse = await this._container.ReadItemAsync<ActorRootDocument>(
+            var rootResponse = await container.ReadItemAsync<ActorRootDocument>(
                 rootDocId,
                 new PartitionKey(actorId.ToString()),
                 cancellationToken: cancellationToken).ConfigureAwait(false);
