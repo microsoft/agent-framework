@@ -98,7 +98,7 @@ def set_up_logging():
     # Events from all child loggers will be processed by this handler.
     logger = logging.getLogger()
     logger.addHandler(handler)
-    # Set the logging level to NOTSET to allow all records to be processed by the handler.
+    # Set the logging level to WARNING, this will not log detailed events to the logger.
     logger.setLevel(logging.WARNING)
 
 
