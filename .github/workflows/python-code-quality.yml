@@ -38,9 +38,13 @@ jobs:
           cache-dependency-glob: "**/uv.lock"
       - name: Install the project
         run: uv sync --all-extras --dev
+      - uses: actions/cache@v3
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit|${{ matrix.python-version }}|${{ hashFiles('python/.pre-commit-config.yaml') }}
       - uses: pre-commit/action@v3.0.1
         name: Run Pre-Commit Hooks
         with:
           extra_args: --config python/.pre-commit-config.yaml --all-files
       - name: Run Mypy
-        run: uv run mypy -p agent_framework
+        run: uv run poe mypy

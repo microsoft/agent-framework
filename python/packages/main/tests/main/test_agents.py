@@ -7,10 +7,10 @@ from uuid import uuid4
 from pytest import fixture, raises
 
 from agent_framework import (
-    Agent,
     AgentRunResponse,
     AgentRunResponseUpdate,
     AgentThread,
+    AIAgent,
     ChatClient,
     ChatClientAgent,
     ChatClientAgentThread,
@@ -33,7 +33,7 @@ class MockAgentThread(AgentThread):
 
 
 # Mock Agent implementation for testing
-class MockAgent(Agent):
+class MockAgent(AIAgent):
     @property
     def id(self) -> str:
         return str(uuid4())
@@ -56,7 +56,7 @@ class MockAgent(Agent):
     ) -> AgentRunResponse:
         return AgentRunResponse(messages=[ChatMessage(role=ChatRole.ASSISTANT, contents=[TextContent("Response")])])
 
-    async def run_stream(
+    async def run_streaming(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
@@ -105,7 +105,7 @@ def agent_thread() -> AgentThread:
 
 
 @fixture
-def agent() -> Agent:
+def agent() -> AIAgent:
     return MockAgent()
 
 
@@ -118,21 +118,21 @@ def test_agent_thread_type(agent_thread: AgentThread) -> None:
     assert isinstance(agent_thread, AgentThread)
 
 
-def test_agent_type(agent: Agent) -> None:
-    assert isinstance(agent, Agent)
+def test_agent_type(agent: AIAgent) -> None:
+    assert isinstance(agent, AIAgent)
 
 
-async def test_agent_run(agent: Agent) -> None:
+async def test_agent_run(agent: AIAgent) -> None:
     response = await agent.run("test")
     assert response.messages[0].role == ChatRole.ASSISTANT
     assert response.messages[0].text == "Response"
 
 
-async def test_agent_run_stream(agent: Agent) -> None:
+async def test_agent_run_streaming(agent: AIAgent) -> None:
     async def collect_updates(updates: AsyncIterable[AgentRunResponseUpdate]) -> list[AgentRunResponseUpdate]:
         return [u async for u in updates]
 
-    updates = await collect_updates(agent.run_stream(messages="test"))
+    updates = await collect_updates(agent.run_streaming(messages="test"))
     assert len(updates) == 1
     assert updates[0].text == "Response"
 
@@ -191,7 +191,7 @@ async def test_chat_client_agent_thread_on_new_messages_in_memory() -> None:
 
 def test_chat_client_agent_type(chat_client: ChatClient) -> None:
     chat_client_agent = ChatClientAgent(chat_client=chat_client)
-    assert isinstance(chat_client_agent, Agent)
+    assert isinstance(chat_client_agent, AIAgent)
 
 
 async def test_chat_client_agent_init(chat_client: ChatClient) -> None:
@@ -199,8 +199,19 @@ async def test_chat_client_agent_init(chat_client: ChatClient) -> None:
     agent = ChatClientAgent(chat_client=chat_client, id=agent_id, description="Test")
 
     assert agent.id == agent_id
-    assert agent.name == "UnnamedAgent"
+    assert agent.name is None
     assert agent.description == "Test"
+    assert agent.display_name == agent_id  # Display name defaults to id if name is None
+
+
+async def test_chat_client_agent_init_with_name(chat_client: ChatClient) -> None:
+    agent_id = str(uuid4())
+    agent = ChatClientAgent(chat_client=chat_client, id=agent_id, name="Test Agent", description="Test")
+
+    assert agent.id == agent_id
+    assert agent.name == "Test Agent"
+    assert agent.description == "Test"
+    assert agent.display_name == "Test Agent"  # Display name is the name if present
 
 
 async def test_chat_client_agent_run(chat_client: ChatClient) -> None:
@@ -211,10 +222,10 @@ async def test_chat_client_agent_run(chat_client: ChatClient) -> None:
     assert result.text == "test response"
 
 
-async def test_chat_client_agent_run_stream(chat_client: ChatClient) -> None:
+async def test_chat_client_agent_run_streaming(chat_client: ChatClient) -> None:
     agent = ChatClientAgent(chat_client=chat_client)
 
-    result = await AgentRunResponse.from_agent_response_generator(agent.run_stream("Hello"))
+    result = await AgentRunResponse.from_agent_response_generator(agent.run_streaming("Hello"))
 
     assert result.text == "test streaming response"
 
@@ -232,17 +243,33 @@ async def test_chat_client_agent_prepare_thread_and_messages(chat_client: ChatCl
     message = ChatMessage(role=ChatRole.USER, text="Hello")
     thread = ChatClientAgentThread(messages=[message])
 
-    result_thread, result_messages = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
-        thread=thread,
-        input_messages=[ChatMessage(role=ChatRole.USER, text="Test")],
-        construct_thread=lambda: ChatClientAgentThread(),
-        expected_type=ChatClientAgentThread,
-    )
+    result_thread = agent._validate_or_create_thread_type(
+        thread, lambda: ChatClientAgentThread(), expected_type=ChatClientAgentThread
+    )  # type: ignore[reportPrivateUsage]
 
     assert result_thread == thread
+    assert isinstance(result_thread, ChatClientAgentThread)
+
+    _, result_messages = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
+        thread=result_thread,
+        input_messages=[ChatMessage(role=ChatRole.USER, text="Test")],
+    )
+
     assert len(result_messages) == 2
     assert result_messages[0] == message
     assert result_messages[1].text == "Test"
+
+
+async def test_chat_client_agent_validate_or_create_thread(chat_client: ChatClient) -> None:
+    agent = ChatClientAgent(chat_client=chat_client)
+    thread = None
+
+    result_thread = agent._validate_or_create_thread_type(
+        thread, lambda: ChatClientAgentThread(), expected_type=ChatClientAgentThread
+    )  # type: ignore[reportPrivateUsage]
+
+    assert result_thread != thread
+    assert isinstance(result_thread, ChatClientAgentThread)
 
 
 async def test_chat_client_agent_update_thread_id() -> None:

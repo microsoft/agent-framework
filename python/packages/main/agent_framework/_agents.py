@@ -6,11 +6,6 @@ from enum import Enum
 from typing import Any, Literal, Protocol, TypeVar, runtime_checkable
 from uuid import uuid4
 
-if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
-else:
-    from typing_extensions import Self  # pragma: no cover
-
 from pydantic import BaseModel, Field
 
 from ._clients import ChatClient
@@ -28,12 +23,17 @@ from ._types import (
 )
 from .exceptions import AgentExecutionException
 
+if sys.version_info >= (3, 11):
+    from typing import Self  # pragma: no cover
+else:
+    from typing_extensions import Self  # pragma: no cover
+
 TThreadType = TypeVar("TThreadType", bound="AgentThread")
 
 # region AgentThread
 
 __all__ = [
-    "Agent",
+    "AIAgent",
     "AgentBase",
     "AgentThread",
     "ChatClientAgent",
@@ -77,7 +77,7 @@ class MessagesRetrievableThread(Protocol):
 
 
 @runtime_checkable
-class Agent(Protocol):
+class AIAgent(Protocol):
     """A protocol for an agent that can be invoked."""
 
     @property
@@ -88,6 +88,11 @@ class Agent(Protocol):
     @property
     def name(self) -> str | None:
         """Returns the name of the agent."""
+        ...
+
+    @property
+    def display_name(self) -> str:
+        """Returns the display name of the agent."""
         ...
 
     @property
@@ -124,7 +129,7 @@ class Agent(Protocol):
         """
         ...
 
-    def run_stream(
+    def run_streaming(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
@@ -157,17 +162,19 @@ class Agent(Protocol):
 
 
 class AgentBase(AFBaseModel):
-    """Base class for all agents.
+    """Base class for all Agent Framework agents.
 
     Attributes:
        id: The unique identifier of the agent  If no id is provided,
            a new UUID will be generated.
-       name: The name of the agent
-       description: The description of the agent
+       name: The name of the agent, can be None.
+       description: The description of the agent.
+       display_name: The display name of the agent, which is either the name or id.
+
     """
 
     id: str = Field(default_factory=lambda: str(uuid4()))
-    name: str = Field(default="UnnamedAgent")
+    name: str | None = None
     description: str | None = None
 
     async def _notify_thread_of_new_messages(
@@ -176,6 +183,43 @@ class AgentBase(AFBaseModel):
         """Notify the thread of new messages."""
         if isinstance(new_messages, ChatMessage) or len(new_messages) > 0:
             await thread.on_new_messages(new_messages)
+
+    @property
+    def display_name(self) -> str:
+        """Returns the display name of the agent.
+
+        This is the name if present, otherwise the id.
+        """
+        return self.name or self.id
+
+    def _validate_or_create_thread_type(
+        self,
+        thread: AgentThread | None,
+        construct_thread: Callable[[], TThreadType],
+        expected_type: type[TThreadType],
+    ) -> TThreadType:
+        """Validate or create a AgentThread of the right type.
+
+        Args:
+            thread: The thread to validate or create.
+            construct_thread: A callable that constructs a new thread if `thread` is None.
+            expected_type: The expected type of the thread.
+
+        Returns:
+            The validated or newly created thread of the expected type.
+
+        Raises:
+            AgentExecutionException: If the thread is not of the expected type.
+        """
+        if thread is None:
+            return construct_thread()
+
+        if not isinstance(thread, expected_type):
+            raise AgentExecutionException(
+                f"{self.__class__.__name__} currently only supports agent threads of type {expected_type.__name__}."
+            )
+
+        return thread
 
 
 # region ChatClientAgentThread
@@ -442,13 +486,7 @@ class ChatClientAgent(AgentBase):
                 will only be passed to functions that are called.
         """
         input_messages = self._normalize_messages(messages)
-
-        thread, thread_messages = await self._prepare_thread_and_messages(
-            thread=thread,
-            input_messages=input_messages,
-            construct_thread=lambda: ChatClientAgentThread(),
-            expected_type=ChatClientAgentThread,
-        )
+        thread, thread_messages = await self._prepare_thread_and_messages(thread=thread, input_messages=input_messages)
 
         response = await self.chat_client.get_response(
             messages=thread_messages,
@@ -491,7 +529,7 @@ class ChatClientAgent(AgentBase):
             additional_properties=response.additional_properties,
         )
 
-    async def run_stream(
+    async def run_streaming(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
@@ -523,7 +561,7 @@ class ChatClientAgent(AgentBase):
         """Stream the agent with the given messages and options.
 
         Remarks:
-            Since you won't always call the agent.run_stream directly, but it get's called
+            Since you won't always call the agent.run_streaming directly, but it get's called
             through orchestration, it is advised to set your default values for
             all the chat client parameters in the agent constructor.
             If both parameters are used, the ones passed to the run methods take precedence.
@@ -552,14 +590,7 @@ class ChatClientAgent(AgentBase):
 
         """
         input_messages = self._normalize_messages(messages)
-
-        thread, thread_messages = await self._prepare_thread_and_messages(
-            thread=thread,
-            input_messages=input_messages,
-            construct_thread=lambda: ChatClientAgentThread(),
-            expected_type=ChatClientAgentThread,
-        )
-
+        thread, thread_messages = await self._prepare_thread_and_messages(thread=thread, input_messages=input_messages)
         response_updates: list[ChatResponseUpdate] = []
 
         async for update in self.chat_client.get_streaming_response(
@@ -607,7 +638,7 @@ class ChatClientAgent(AgentBase):
         await self._notify_thread_of_new_messages(thread, input_messages)
         await self._notify_thread_of_new_messages(thread, response.messages)
 
-    def get_new_thread(self) -> AgentThread:
+    def get_new_thread(self) -> ChatClientAgentThread:
         return ChatClientAgentThread()
 
     def _update_thread_with_type_and_conversation_id(
@@ -644,45 +675,32 @@ class ChatClientAgent(AgentBase):
         *,
         thread: AgentThread | None,
         input_messages: list[ChatMessage] | None = None,
-        construct_thread: Callable[[], TThreadType],
-        expected_type: type[TThreadType],
-    ) -> tuple[TThreadType, list[ChatMessage]]:
-        """Prepare thread and messages for agent execution.
+    ) -> tuple[ChatClientAgentThread, list[ChatMessage]]:
+        """Prepare the messages for agent execution.
 
         Args:
-            thread: The conversation thread, or None to create a new one.
+            thread: The conversation thread.
             input_messages: Messages to process.
-            construct_thread: Factory function to create a new thread.
-            expected_type: Expected thread type for validation.
 
         Returns:
-            Tuple of the thread and normalized messages.
+            The validated thread and normalized messages.
 
         Raises:
-            AgentExecutionException: If thread type is incompatible.
+            AgentExecutionException: If the thread is not of the expected type.
         """
+        validated_thread: ChatClientAgentThread = self._validate_or_create_thread_type(  # type: ignore[reportAssignmentType]
+            thread=thread,
+            construct_thread=self.get_new_thread,
+            expected_type=ChatClientAgentThread,
+        )
         messages: list[ChatMessage] = []
         if self.instructions:
             messages.append(ChatMessage(role=ChatRole.SYSTEM, text=self.instructions))
-
-        if thread is None:
-            thread = construct_thread()
-
-        if not isinstance(thread, expected_type):
-            raise AgentExecutionException(
-                f"{self.__class__.__name__} currently only supports agent threads of type {expected_type.__name__}."
-            )
-
-        # Add any existing messages from the thread to the messages to be sent to the chat client.
-        if isinstance(thread, MessagesRetrievableThread):
-            async for message in thread.get_messages():
+        if isinstance(validated_thread, MessagesRetrievableThread):
+            async for message in validated_thread.get_messages():
                 messages.append(message)
-
-        if input_messages is None:
-            return thread, messages
-
-        messages.extend(input_messages)
-        return thread, messages
+        messages.extend(input_messages or [])
+        return validated_thread, messages
 
     def _normalize_messages(
         self,
