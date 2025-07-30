@@ -80,6 +80,74 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
         IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
         GetStreamingResponseAsync(messages, options, cancellationToken).ToChatResponseAsync(cancellationToken);
 
+    private ToolResources? CreateToolResources(ChatOptions? options)
+    {
+        if (options is null)
+        {
+            return null;
+        }
+
+        if (options.Tools is { Count: > 0 } tools)
+        {
+            FileSearchToolResources? fileSearchResources = null;
+            CodeInterpreterToolResources? codeInterpreterResources = null;
+            // The caller can provide tools in the supplied ThreadAndRunOptions. Augment it with any supplied via ChatOptions.Tools.
+            foreach (AITool tool in tools)
+            {
+                switch (tool)
+                {
+                    case NewHostedCodeInterpreterTool codeTool:
+
+                        if (codeTool.Inputs is { Count: > 0 })
+                        {
+                            codeInterpreterResources ??= new();
+                            foreach (var input in codeTool.Inputs)
+                            {
+                                switch (input)
+                                {
+                                    case HostedFileContent fileContent:
+                                        // Use the file ID from the HostedFileContent.
+                                        codeInterpreterResources.FileIds.Add(fileContent.FileId);
+                                        break;
+                                }
+                            }
+                        }
+
+                        break;
+
+                    case NewHostedFileSearchTool fileSearchTool:
+
+                        // Handle file IDs for file search tool
+                        if (fileSearchTool.Inputs is { Count: > 0 })
+                        {
+                            fileSearchResources ??= new();
+
+                            foreach (var input in fileSearchTool.Inputs)
+                            {
+                                switch (input)
+                                {
+                                    case HostedVectorStoreContent vectorStoreContent:
+                                        // Use the vector store ID from the HostedVectorStoreContent.
+                                        fileSearchResources.VectorStoreIds.Add(vectorStoreContent.VectorStoreId);
+                                        break;
+                                }
+                            }
+                        }
+
+                        break;
+                }
+            }
+
+            return new ToolResources
+            {
+                CodeInterpreter = codeInterpreterResources,
+                FileSearch = fileSearchResources,
+            };
+        }
+
+        return null;
+    }
+
     /// <inheritdoc />
     public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
         IEnumerable<ChatMessage> messages, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -132,7 +200,11 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
             if (threadId is null)
             {
                 // No thread ID was provided, so create a new thread.
-                ThreadCreationOptions threadCreationOptions = new();
+                ThreadCreationOptions threadCreationOptions = new()
+                {
+                    ToolResources = CreateToolResources(options)
+                };
+
                 foreach (var message in runOptions.AdditionalMessages)
                 {
                     threadCreationOptions.InitialMessages.Add(message);
@@ -303,18 +375,48 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
                             runOptions.ToolsOverride.Add(ToOpenAIAssistantsFunctionToolDefinition(aiFunction, options));
                             break;
 
-                        case HostedCodeInterpreterTool:
+                        case NewHostedCodeInterpreterTool codeTool:
                             var codeInterpreterToolDefinition = new CodeInterpreterToolDefinition();
                             runOptions.ToolsOverride.Add(codeInterpreterToolDefinition);
 
-                            // Once available, HostedCodeInterpreterTool.FileIds property will be used instead of the AdditionalProperties.
-                            if (tool.AdditionalProperties.TryGetValue("fileIds", out object? fileIdsObject) && fileIdsObject is IEnumerable<string> fileIds)
+                            if (codeTool.Inputs is { Count: > 0 })
                             {
                                 var threadInitializationMessage = new ThreadInitializationMessage(OpenAI.Assistants.MessageRole.User, [OpenAI.Assistants.MessageContent.FromText("attachments")]);
 
-                                foreach (var fileId in fileIds)
+                                foreach (var input in codeTool.Inputs)
                                 {
-                                    threadInitializationMessage.Attachments.Add(new(fileId, [codeInterpreterToolDefinition]));
+                                    switch (input)
+                                    {
+                                        case HostedFileContent fileContent:
+                                            // Use the file ID from the HostedFileContent.
+                                            threadInitializationMessage.Attachments.Add(new(fileContent.FileId, [codeInterpreterToolDefinition]));
+                                            break;
+                                    }
+                                }
+
+                                runOptions.AdditionalMessages.Add(threadInitializationMessage);
+                            }
+
+                            break;
+
+                        case NewHostedFileSearchTool fileSearchTool:
+                            var fileSearchToolDefinition = new FileSearchToolDefinition();
+                            runOptions.ToolsOverride.Add(fileSearchToolDefinition);
+
+                            // Handle file IDs for file search tool
+                            if (fileSearchTool.Inputs is { Count: > 0 })
+                            {
+                                var threadInitializationMessage = new ThreadInitializationMessage(OpenAI.Assistants.MessageRole.User, [OpenAI.Assistants.MessageContent.FromText("file search attachments")]);
+
+                                foreach (var input in fileSearchTool.Inputs)
+                                {
+                                    switch (input)
+                                    {
+                                        case HostedFileContent fileContent:
+                                            // Use the file ID from the HostedFileContent.
+                                            threadInitializationMessage.Attachments.Add(new(fileContent.FileId, [fileSearchToolDefinition]));
+                                            break;
+                                    }
                                 }
 
                                 runOptions.AdditionalMessages.Add(threadInitializationMessage);
