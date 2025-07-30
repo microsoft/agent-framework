@@ -99,7 +99,7 @@ internal sealed class ChatClientAgentActor(
 
             var serializedRunResponse = JsonSerializer.SerializeToElement(
                 updates.ToAgentRunResponse(),
-                AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentRunResponseUpdate)));
+                AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentRunResponse)));
             var writeResponse = await context.WriteAsync(
                 new(this._etag, [new UpdateRequestOperation(requestId, RequestStatus.Completed, serializedRunResponse)]), cancellationToken)
                 .ConfigureAwait(false);
