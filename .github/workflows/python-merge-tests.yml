@@ -1,0 +1,244 @@
+name: Python - Merge - Tests
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: ["main"]
+  merge_group:
+    branches: ["main"]
+  schedule:
+    - cron: "0 0 * * *" # Run at midnight UTC daily
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  # Configure a constant location for the uv cache
+  UV_CACHE_DIR: /tmp/.uv-cache
+  RUN_INTEGRATION_TESTS: "true"
+  UV_SEMVER: "0.8.x"
+
+jobs:
+  paths-filter:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      pythonChanges: ${{ steps.filter.outputs.python}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            python:
+              - 'python/**'
+      # run only if 'python' files were changed
+      - name: python tests
+        if: steps.filter.outputs.python == 'true'
+        run: echo "Python file"
+      # run only if not 'python' files were changed
+      - name: not python tests
+        if: steps.filter.outputs.python != 'true'
+        run: echo "NOT python file"
+  python-tests-main:
+    name: Python Tests - Main
+    needs: paths-filter
+    if: github.event_name != 'pull_request' && needs.paths-filter.outputs.pythonChanges == 'true'
+    runs-on: ${{ matrix.os }}
+    environment: ${{ matrix.environment }}
+    strategy:
+      fail-fast: true
+      matrix:
+        python-version: ["3.10"]
+        os: [ubuntu-latest]
+        environment: ["integration"]
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
+      PACKAGE_NAME: "main"
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_SEMVER }}
+          enable-cache: true
+          cache-suffix: ${{ runner.os }}-${{ matrix.python-version }}
+          cache-dependency-glob: "**/uv.lock"
+      - name: Install the project
+        run: |
+          uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
+      - name: Test with pytest
+        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
+        working-directory: ./python
+      - name: Move coverage file
+        run: |
+          mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml coverage_${{ env.PACKAGE_NAME }}.xml
+        working-directory: ./python
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ env.PACKAGE_NAME }}
+          path: ./python/coverage_${{ env.PACKAGE_NAME }}.xml
+      - name: Surface failing tests
+        if: always()
+        uses: pmeier/pytest-results-action@v0.7.2
+        with:
+          path: ./python/**.xml
+          summary: true
+          display-options: fEX
+          fail-on-empty: true
+          title: Test results
+
+  python-tests-azure:
+    name: Python Tests - Azure
+    needs: paths-filter
+    if: github.event_name != 'pull_request' && needs.paths-filter.outputs.pythonChanges == 'true'
+    runs-on: ${{ matrix.os }}
+    environment: ${{ matrix.environment }}
+    strategy:
+      fail-fast: true
+      matrix:
+        python-version: ["3.10"]
+        os: [ubuntu-latest]
+        environment: ["integration"]
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
+      AZURE_OPENAI_ENDPOINT: ${{ secrets.AZUREOPENAI__ENDPOINT }}
+      PACKAGE_NAME: "azure"
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_SEMVER }}
+          enable-cache: true
+          cache-suffix: ${{ runner.os }}-${{ matrix.python-version }}
+          cache-dependency-glob: "**/uv.lock"
+      - name: Install the project
+        run: |
+          uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
+      - name: Azure CLI Login
+        if: github.event_name != 'pull_request'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Test with pytest
+        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
+        working-directory: ./python
+      - name: Move coverage file
+        run: |
+          mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml coverage_${{ env.PACKAGE_NAME }}.xml
+        working-directory: ./python
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ env.PACKAGE_NAME }}
+          path: ./python/coverage_${{ env.PACKAGE_NAME }}.xml
+      - name: Surface failing tests
+        if: always()
+        uses: pmeier/pytest-results-action@v0.7.2
+        with:
+          path: ./python/**.xml
+          summary: true
+          display-options: fEX
+          fail-on-empty: true
+          title: Test results
+
+  python-tests-foundry:
+    name: Python Tests - Foundry
+    needs: paths-filter
+    if: github.event_name != 'pull_request' && needs.paths-filter.outputs.pythonChanges == 'true'
+    runs-on: ${{ matrix.os }}
+    environment: ${{ matrix.environment }}
+    strategy:
+      fail-fast: true
+      matrix:
+        python-version: ["3.10"]
+        os: [ubuntu-latest]
+        environment: ["integration"]
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
+      FOUNDRY_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
+      PACKAGE_NAME: "foundry"
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_SEMVER }}
+          enable-cache: true
+          cache-suffix: ${{ runner.os }}-${{ matrix.python-version }}
+          cache-dependency-glob: "**/uv.lock"
+      - name: Install the project
+        run: |
+          uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
+      - name: Azure CLI Login
+        if: github.event_name != 'pull_request'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Test with pytest
+        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
+        working-directory: ./python
+      - name: Move coverage file
+        run: |
+          mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml coverage_${{ env.PACKAGE_NAME }}.xml
+        working-directory: ./python
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ env.PACKAGE_NAME }}
+          path: ./python/coverage_${{ env.PACKAGE_NAME }}.xml
+      - name: Surface failing tests
+        if: always()
+        uses: pmeier/pytest-results-action@v0.7.2
+        with:
+          path: ./python/**.xml
+          summary: true
+          display-options: fEX
+          fail-on-empty: true
+          title: Test results
+  python-integration-tests-check:
+    if: always()
+    runs-on: ubuntu-latest
+    needs:
+      [
+        python-tests-main,
+        python-tests-azure,
+        python-tests-foundry
+      ]
+    steps:
+
+      - name: Fail workflow if tests failed
+        id: check_tests_failed
+        if: contains(join(needs.*.result, ','), 'failure')
+        uses: actions/github-script@v7
+        with:
+          script: core.setFailed('Integration Tests Failed!')
+
+      - name: Fail workflow if tests cancelled
+        id: check_tests_cancelled
+        if: contains(join(needs.*.result, ','), 'cancelled')
+        uses: actions/github-script@v7
+        with:
+          script: core.setFailed('Integration Tests Cancelled!')

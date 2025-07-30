@@ -1,0 +1,7 @@
+<Project>
+  <!-- This configuration is required to automatically inject all dependencies for specific classes. -->
+  <PropertyGroup Condition="'$(InjectSharedThrow)' == 'true'">
+    <InjectCallerAttributesOnLegacy Condition="'$(InjectCallerAttributesOnLegacy)' == ''">true</InjectCallerAttributesOnLegacy>
+    <InjectDiagnosticAttributesOnLegacy Condition="'$(InjectDiagnosticAttributesOnLegacy)' == ''">true</InjectDiagnosticAttributesOnLegacy>
+  </PropertyGroup>
+</Project>

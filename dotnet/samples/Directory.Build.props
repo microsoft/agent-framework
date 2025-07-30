@@ -1,0 +1,11 @@
+﻿<Project>
+
+  <Import Project="../Directory.Build.props" />
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsAotCompatible>false</IsAotCompatible>
+    <ProjectsTargetFrameworks>net472;net9.0</ProjectsTargetFrameworks>
+  </PropertyGroup>
+
+</Project>
