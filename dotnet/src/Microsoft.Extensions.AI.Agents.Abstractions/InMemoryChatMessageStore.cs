@@ -30,9 +30,9 @@ public class InMemoryChatMessageStore : List<ChatMessage>, IChatMessageStore
     }
 
     /// <inheritdoc />
-    public Task DeserializeAsync(JsonElement? stateElement, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public Task DeserializeAsync(JsonElement? serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        if (stateElement is null)
+        if (serializedThread is null)
         {
             return Task.CompletedTask;
         }
@@ -40,7 +40,7 @@ public class InMemoryChatMessageStore : List<ChatMessage>, IChatMessageStore
         jsonSerializerOptions ??= AgentAbstractionsJsonUtilities.DefaultOptions;
 
         var state = JsonSerializer.Deserialize(
-            stateElement.Value,
+            serializedThread.Value,
             jsonSerializerOptions.GetTypeInfo(typeof(StoreState))) as StoreState;
 
         if (state?.Messages is { Count: > 0 } messages)

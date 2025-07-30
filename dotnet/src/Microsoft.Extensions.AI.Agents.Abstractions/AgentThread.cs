@@ -160,16 +160,16 @@ public class AgentThread
     /// <summary>
     /// Deserializes the state contained in the provided <see cref="JsonElement"/> into the properties on this thread.
     /// </summary>
-    /// <param name="stateElement">A <see cref="JsonElement"/> representing the state of the thread.</param>
+    /// <param name="serializedThread">A <see cref="JsonElement"/> representing the state of the thread.</param>
     /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    public virtual async Task DeserializeAsync(JsonElement stateElement, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public virtual async Task DeserializeAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
         jsonSerializerOptions ??= AgentAbstractionsJsonUtilities.DefaultOptions;
 
         // Deserialize the first element as the thread ID.
         var state = JsonSerializer.Deserialize(
-            stateElement,
+            serializedThread,
             jsonSerializerOptions.GetTypeInfo(typeof(ThreadState))) as ThreadState;
 
         if (state?.Id is string threadId)

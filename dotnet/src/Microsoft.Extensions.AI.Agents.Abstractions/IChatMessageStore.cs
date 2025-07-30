@@ -47,14 +47,14 @@ public interface IChatMessageStore
     /// <summary>
     /// Deserializes the state contained in the provided <see cref="JsonElement"/> into the properties on this store.
     /// </summary>
-    /// <param name="stateElement">A <see cref="JsonElement"/> representing the state of the store.</param>
+    /// <param name="serializedThread">A <see cref="JsonElement"/> representing the state of the store.</param>
     /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <remarks>
     /// This method, together with <see cref="SerializeAsync(JsonSerializerOptions?, CancellationToken)"/> can be used to save and load messages from a persistent store
     /// if this store only has messages in memory.
     /// </remarks>
-    Task DeserializeAsync(JsonElement? stateElement, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default);
+    Task DeserializeAsync(JsonElement? serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
