@@ -65,9 +65,7 @@ public class CosmosActorStateStorage : IActorStateStorage
 
         if (operations.Count == 0)
         {
-            // No operations to perform - return success with current ETag or generate new one
-            string resultEtag = !string.IsNullOrEmpty(etag) ? etag : Guid.NewGuid().ToString("N");
-            return new WriteResponse(eTag: resultEtag, success: true);
+            throw new InvalidOperationException("No operations provided for write. At least one operation is required.");
         }
 
         var batch = container.CreateTransactionalBatch(GetPartitionKey(actorId));
