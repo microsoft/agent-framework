@@ -629,7 +629,7 @@ class ChatClientAgent(AgentBase):
                 message_id=update.message_id,
                 created_at=update.created_at,
                 additional_properties=update.additional_properties,
-                raw_representation=update.raw_representation,
+                raw_representation=update,
             )
 
         response = ChatResponse.from_chat_response_updates(response_updates)
