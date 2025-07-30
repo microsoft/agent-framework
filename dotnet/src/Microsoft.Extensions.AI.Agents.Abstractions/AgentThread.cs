@@ -54,6 +54,11 @@ public class AgentThread
         get { return this._conversationId; }
         set
         {
+            if (string.IsNullOrWhiteSpace(this._conversationId) && string.IsNullOrWhiteSpace(value))
+            {
+                return;
+            }
+
             this._conversationId = Throw.IfNullOrWhitespace(value);
             this._messageStore = null;
         }
@@ -81,6 +86,11 @@ public class AgentThread
         get { return this._messageStore; }
         set
         {
+            if (this._messageStore is null && value is null)
+            {
+                return;
+            }
+
             this._messageStore = Throw.IfNull(value);
             this._conversationId = null;
         }
@@ -117,15 +127,21 @@ public class AgentThread
     {
         switch (this)
         {
-            case { MessageStore: not null }:
-                // If a store has been provided, we need to add the messages to the store.
-                await this._messageStore!.AddMessagesAsync(newMessages, cancellationToken).ConfigureAwait(false);
-                break;
-
             case { ConversationId: not null }:
                 // If the thread messages are stored in the service
                 // there is nothing to do here, since invoking the
                 // service should already update the thread.
+                break;
+
+            case { MessageStore: null }:
+                // If there is no conversation id, and no store we can createa a default in memory store and add messages to it.
+                this._messageStore = new InMemoryChatMessageStore();
+                await this._messageStore!.AddMessagesAsync(newMessages, cancellationToken).ConfigureAwait(false);
+                break;
+
+            case { MessageStore: not null }:
+                // If a store has been provided, we need to add the messages to the store.
+                await this._messageStore!.AddMessagesAsync(newMessages, cancellationToken).ConfigureAwait(false);
                 break;
 
             default:

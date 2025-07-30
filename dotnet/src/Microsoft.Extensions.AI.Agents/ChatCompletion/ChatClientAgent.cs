@@ -189,14 +189,7 @@ public sealed class ChatClientAgent : AIAgent
     /// <inheritdoc/>
     public override AgentThread GetNewThread()
     {
-        var thread = new AgentThread();
-
-        var store = this._agentOptions?.ChatMessageStoreFactory?.Invoke();
-        if (store is not null)
-        {
-            thread.MessageStore = store;
-        }
-
+        var thread = new AgentThread() { MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke() };
         return thread;
     }
 
@@ -383,9 +376,9 @@ public sealed class ChatClientAgent : AIAgent
         else if (thread.MessageStore is null)
         {
             // If the service doesn't use service side thread storage (i.e. we got no id back from invocation), and
-            // the thread has no MessageStore yet, we should update the thread to have a MessageStore so that
-            // it has somewhere to store the chat history.
-            thread.MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke() ?? new InMemoryChatMessageStore();
+            // the thread has no MessageStore yet, and we have a custom messages store, we should update the thread
+            // with the custom MessageStore so that it has somewhere to store the chat history.
+            thread.MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke();
         }
     }
 

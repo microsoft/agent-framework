@@ -11,7 +11,7 @@ namespace Microsoft.Extensions.AI.Agents;
 /// <summary>
 /// Represents an in-memory store for chat messages associated with a specific thread.
 /// </summary>
-public class InMemoryChatMessageStore : List<ChatMessage>, IChatMessageStore
+internal class InMemoryChatMessageStore : List<ChatMessage>, IChatMessageStore
 {
     /// <inheritdoc />
     public Task AddMessagesAsync(IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken)
