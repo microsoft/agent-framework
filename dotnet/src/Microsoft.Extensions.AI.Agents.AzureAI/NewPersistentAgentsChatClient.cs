@@ -59,7 +59,7 @@ namespace Azure.AI.Agents.Persistent
         }
 
         /// <summary>
-        /// Constructor for <see cref="NewPersistentAgentsChatClient"/>.
+        /// Initializes a new instance of the <see cref="NewPersistentAgentsChatClient"/> class.
         /// </summary>
         public NewPersistentAgentsChatClient() { }
 
