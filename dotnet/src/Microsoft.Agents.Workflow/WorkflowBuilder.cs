@@ -7,6 +7,8 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Core;
+using Microsoft.Shared.Diagnostics;
+
 #pragma warning restore IDE0005 // Using directive is unnecessary.
 
 using ConditionalT = System.Func<object?, bool>;
@@ -16,21 +18,21 @@ namespace Microsoft.Agents.Workflows;
 internal delegate TExecutor ExecutorProvider<out TExecutor>()
     where TExecutor : Executor;
 
-internal struct EdgeKey : IEquatable<EdgeKey>
-{
-    public string SourceId { get; init; }
-    public string TargetId { get; init; }
+//internal struct EdgeKey : IEquatable<EdgeKey>
+//{
+//    public string SourceId { get; init; }
+//    public string TargetId { get; init; }
 
-    public EdgeKey(string sourceId, string targetId)
-    {
-        this.SourceId = sourceId ?? throw new ArgumentNullException(nameof(sourceId));
-        this.TargetId = targetId ?? throw new ArgumentNullException(nameof(targetId));
-    }
+//    public EdgeKey(string sourceId, string targetId)
+//    {
+//        this.SourceId = sourceId ?? throw new ArgumentNullException(nameof(sourceId));
+//        this.TargetId = targetId ?? throw new ArgumentNullException(nameof(targetId));
+//    }
 
-    public bool Equals(EdgeKey other) => this.SourceId == other.SourceId && this.TargetId == other.TargetId;
-    public override bool Equals(object? obj) => obj is EdgeKey other && this.Equals(other);
-    public override int GetHashCode() => HashCode.Combine(this.SourceId, this.TargetId);
-}
+//    public bool Equals(EdgeKey other) => this.SourceId == other.SourceId && this.TargetId == other.TargetId;
+//    public override bool Equals(object? obj) => obj is EdgeKey other && this.Equals(other);
+//    public override int GetHashCode() => HashCode.Combine(this.SourceId, this.TargetId);
+//}
 
 /// <summary>
 /// .
@@ -177,6 +179,83 @@ internal sealed class ExecutorIsh :
     }
 }
 
+internal record DirectEdgeData(
+    ExecutorIsh Source,
+    ExecutorIsh Sink,
+    Func<object?, bool>? Condition)
+{
+    public static implicit operator FlowEdgeEx(DirectEdgeData data)
+    {
+        return new FlowEdgeEx(data);
+    }
+}
+
+internal record FanOutEdgeData(
+    ExecutorIsh Source,
+    IEnumerable<ExecutorIsh> Sinks,
+    Func<object?, IEnumerable<int>>? Partitioner) // TODO: Should this be IList (to imply an ordering?)?
+{
+    public static implicit operator FlowEdgeEx(FanOutEdgeData data)
+    {
+        return new FlowEdgeEx(data);
+    }
+}
+
+internal enum FanInTrigger
+{
+    WhenAll,
+    WhenAny
+}
+
+internal record FanInEdgeData(
+    IEnumerable<ExecutorIsh> Sources,
+    ExecutorIsh Sink,
+    FanInTrigger Trigger = FanInTrigger.WhenAll)
+{
+    public static implicit operator FlowEdgeEx(FanInEdgeData data)
+    {
+        return new FlowEdgeEx(data);
+    }
+}
+
+internal class FlowEdgeEx
+{
+    public enum Type
+    {
+        Direct,
+        FanOut,
+        FanIn
+    }
+
+    public Type EdgeType { get; init; }
+    public object Data { get; init; }
+
+    public FlowEdgeEx(DirectEdgeData data)
+    {
+        this.Data = Throw.IfNull(data);
+
+        this.EdgeType = Type.Direct;
+    }
+
+    public FlowEdgeEx(FanOutEdgeData data)
+    {
+        this.Data = Throw.IfNull(data);
+
+        this.EdgeType = Type.FanOut;
+    }
+
+    public FlowEdgeEx(FanInEdgeData data)
+    {
+        this.Data = Throw.IfNull(data);
+
+        this.EdgeType = Type.FanIn;
+    }
+
+    public DirectEdgeData? DirectEdgeData => this.Data as DirectEdgeData;
+    public FanOutEdgeData? FanOutEdgeData => this.Data as FanOutEdgeData;
+    public FanInEdgeData? FanInEdgeData => this.Data as FanInEdgeData;
+}
+
 internal class FlowEdge(ExecutorIsh source, ExecutorIsh sink, ConditionalT? conditional) : IEquatable<FlowEdge>
 {
     public ExecutorIsh Source { get; init; } = source ?? throw new ArgumentNullException(nameof(source));
@@ -197,7 +276,7 @@ internal class FlowEdge(ExecutorIsh source, ExecutorIsh sink, ConditionalT? cond
 internal class Workflow
 {
     public Dictionary<string, ExecutorProvider<Executor>> Executors { get; internal init; } = new();
-    public Dictionary<string, HashSet<FlowEdge>> Edges { get; internal init; } = new();
+    public Dictionary<string, HashSet<FlowEdgeEx>> Edges { get; internal init; } = new();
 
 #if NET9_0_OR_GREATER
     required
@@ -243,7 +322,7 @@ internal class Workflow<T> : Workflow
 internal class WorkflowBuilder
 {
     private readonly Dictionary<string, ExecutorProvider<Executor>> _executors = new();
-    private readonly Dictionary<string, HashSet<FlowEdge>> _edges = new();
+    private readonly Dictionary<string, HashSet<FlowEdgeEx>> _edges = new();
     private readonly HashSet<string> _unboundExecutors = new();
 
     private readonly string _startExecutorId;
@@ -292,29 +371,57 @@ internal class WorkflowBuilder
         return this;
     }
 
+    private HashSet<FlowEdgeEx> EnsureEdgesFor(string sourceId)
+    {
+        // Ensure that there is a set of edges for the given source ID.
+        // If it does not exist, create a new one.
+        if (!this._edges.TryGetValue(sourceId, out HashSet<FlowEdgeEx>? edges))
+        {
+            this._edges[sourceId] = edges = new HashSet<FlowEdgeEx>();
+        }
+
+        return edges;
+    }
+
     public WorkflowBuilder AddEdge(ExecutorIsh source, ExecutorIsh target, Func<object?, bool>? condition = null)
     {
         // Add an edge from source to target with an optional condition.
         // This is a low-level builder method that does not enforce any specific executor type.
         // The condition can be used to determine if the edge should be followed based on the input.
+        Throw.IfNull(source);
+        Throw.IfNull(target);
 
-        if (source == null)
-        {
-            throw new ArgumentNullException(nameof(source));
-        }
+        this.EnsureEdgesFor(source.Id)
+            .Add(new DirectEdgeData(this.Track(source), this.Track(target), condition));
 
-        if (target == null)
-        {
-            throw new ArgumentNullException(nameof(target));
-        }
+        return this;
+    }
 
-        if (!this._edges.TryGetValue(source.Id, out HashSet<FlowEdge>? edges))
-        {
-            edges = new HashSet<FlowEdge>();
-            this._edges[source.Id] = edges;
-        }
+    public WorkflowBuilder AddFanOutEdge(ExecutorIsh source, Func<object?, IEnumerable<int>>? partitioner = null, params ExecutorIsh[] targets)
+    {
+        Throw.IfNull(source);
+        Throw.IfNullOrEmpty(targets);
 
-        edges.Add(new FlowEdge(this.Track(source), this.Track(target), condition));
+        this.EnsureEdgesFor(source.Id)
+            .Add(new FanOutEdgeData(
+                this.Track(source),
+                targets.Select(target => this.Track(target)),
+                partitioner));
+
+        return this;
+    }
+
+    public WorkflowBuilder AddFanInEdge(ExecutorIsh target, FanInTrigger trigger = default, params ExecutorIsh[] sources)
+    {
+        Throw.IfNull(target);
+        Throw.IfNullOrEmpty(sources);
+
+        this.EnsureEdgesFor(target.Id)
+            .Add(new FanInEdgeData(
+                sources.Select(source => this.Track(source)),
+                this.Track(target),
+                trigger));
+
         return this;
     }
 
