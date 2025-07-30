@@ -269,14 +269,11 @@ public class CosmosActorStateStorage : IActorStateStorage
         public JsonElement Value { get; set; } = default!;
     }
 
-    private static string Sanitize(string input)
-    => Uri.EscapeDataString(input).Replace("%2F", "__");
-
     private static string GetDocumentId(ActorId actorId, string key)
-        => $"{Sanitize(actorId.ToString())}__{Sanitize(key)}";
+        => $"{CosmosIdSanitizer.Sanitize(actorId.ToString())}__{CosmosIdSanitizer.Sanitize(key)}";
 
     private static string GetRootDocumentId(ActorId actorId)
-        => Sanitize(actorId.ToString());
+        => CosmosIdSanitizer.Sanitize(actorId.ToString());
 
     private static PartitionKey GetPartitionKey(ActorId actorId)
         => new(actorId.ToString());

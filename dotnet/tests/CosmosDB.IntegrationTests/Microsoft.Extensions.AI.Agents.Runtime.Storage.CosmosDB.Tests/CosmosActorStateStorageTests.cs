@@ -237,23 +237,19 @@ public class CosmosActorStateStorageTests
     }
 
     [Fact]
-    public async Task WriteStateAsync_WithEmptyOperations_ShouldReturnSuccessAsync()
+    public async Task WriteStateAsync_WithEmptyOperations_ShouldThrowExceptionAsync()
     {
         // Arrange
         using var cts = new CancellationTokenSource(s_defaultTimeout);
         var cancellationToken = cts.Token;
-
         var storage = new CosmosActorStateStorage(this._fixture.Container);
         var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
-
         var emptyOperations = new List<ActorStateWriteOperation>();
-
-        // Act
-        var result = await storage.WriteStateAsync(testActorId, emptyOperations, "0", cancellationToken);
-
-        // Assert
-        Assert.True(result.Success);
-        Assert.NotNull(result.ETag);
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await storage.WriteStateAsync(testActorId, emptyOperations, "0", cancellationToken);
+        });
     }
 
     [Fact]
