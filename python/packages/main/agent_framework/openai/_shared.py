@@ -117,7 +117,6 @@ class OpenAIModelTypes(Enum):
     TEXT_TO_SPEECH = "text-to-speech"
     REALTIME = "realtime"
     RESPONSE = "response"
-    ASSISTANT = "assistant"
 
 
 class OpenAIHandler(AFBaseModel, ABC):
