@@ -70,35 +70,8 @@ public class CosmosActorStateStorage : IActorStateStorage
             return new WriteResponse(eTag: resultEtag, success: true);
         }
 
-        var partitionKey = new PartitionKey(actorId.ToString());
-        var batch = container.CreateTransactionalBatch(partitionKey);
-
-        // First, try to read existing root document to get current version
+        var batch = container.CreateTransactionalBatch(GetPartitionKey(actorId));
         var rootDocId = GetRootDocumentId(actorId);
-        ActorRootDocument? existingRoot = null;
-        try
-        {
-            var rootResponse = await container.ReadItemAsync<ActorRootDocument>(
-                rootDocId,
-                partitionKey,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
-            existingRoot = rootResponse.Resource;
-
-            // Validate ETag if provided
-            if (!string.IsNullOrEmpty(etag) && rootResponse.ETag != etag)
-            {
-                return new WriteResponse(eTag: string.Empty, success: false);
-            }
-        }
-        catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
-        {
-            // Root document doesn't exist - will be created
-            if (!string.IsNullOrEmpty(etag) && etag != InitialEtag)
-            {
-                // ETag provided but no document exists (and it's not the initial "0" ETag)
-                return new WriteResponse(eTag: InitialEtag, success: false);
-            }
-        }
 
         // Add data operations to batch
         foreach (var op in operations)
@@ -135,16 +108,17 @@ public class CosmosActorStateStorage : IActorStateStorage
             Id = rootDocId,
             ActorId = actorId.ToString(),
             LastModified = DateTimeOffset.UtcNow,
-            Version = (existingRoot?.Version ?? 0) + 1
         };
 
-        if (existingRoot != null && !string.IsNullOrEmpty(etag))
+        if (string.IsNullOrEmpty(etag) || etag == InitialEtag)
         {
-            batch.ReplaceItem(rootDocId, newRoot, new TransactionalBatchItemRequestOptions { IfMatchEtag = etag });
+            // No eTag provided or initial eTag - create new root document (will fail if it already exists)
+            batch.CreateItem(newRoot);
         }
         else
         {
-            batch.UpsertItem(newRoot);
+            // eTag provided - replace existing root document with eTag check
+            batch.ReplaceItem(rootDocId, newRoot, new TransactionalBatchItemRequestOptions { IfMatchEtag = etag });
         }
 
         try
@@ -190,7 +164,7 @@ public class CosmosActorStateStorage : IActorStateStorage
                     {
                         var response = await container.ReadItemAsync<ActorStateDocument>(
                             id,
-                            new PartitionKey(actorId.ToString()),
+                            GetPartitionKey(actorId),
                             cancellationToken: cancellationToken)
                             .ConfigureAwait(false);
 
@@ -221,7 +195,7 @@ public class CosmosActorStateStorage : IActorStateStorage
 
                     var requestOptions = new QueryRequestOptions
                     {
-                        PartitionKey = new PartitionKey(actorId.ToString()),
+                        PartitionKey = GetPartitionKey(actorId),
                         MaxItemCount = 100 // TODO Fix 
                     };
 
@@ -263,8 +237,8 @@ public class CosmosActorStateStorage : IActorStateStorage
     /// Root document for each actor that provides actor-level ETag semantics.
     /// Every write operation updates this document to ensure a single ETag represents
     /// the entire actor's state for optimistic concurrency control.
-    /// This document contains no actor state data. It only serves to track version and
-    /// provide ETag for the entire actor's state.
+    /// This document contains no actor state data. It only serves to track last modified
+    /// time and provide a single ETag for the actor's state.
     /// </summary>
     private sealed class ActorRootDocument
     {
@@ -276,9 +250,6 @@ public class CosmosActorStateStorage : IActorStateStorage
 
         [JsonPropertyName("lastModified")]
         public DateTimeOffset LastModified { get; set; }
-
-        [JsonPropertyName("version")]
-        public long Version { get; set; }
     }
 
     private sealed class ActorStateDocument
@@ -305,6 +276,9 @@ public class CosmosActorStateStorage : IActorStateStorage
     private static string GetRootDocumentId(ActorId actorId)
         => Sanitize(actorId.ToString());
 
+    private static PartitionKey GetPartitionKey(ActorId actorId)
+        => new(actorId.ToString());
+
     /// <summary>
     /// Gets the current ETag for the actor's root document.
     /// Returns a generated ETag if no root document exists.
@@ -316,7 +290,7 @@ public class CosmosActorStateStorage : IActorStateStorage
         {
             var rootResponse = await container.ReadItemAsync<ActorRootDocument>(
                 rootDocId,
-                new PartitionKey(actorId.ToString()),
+                GetPartitionKey(actorId),
                 cancellationToken: cancellationToken).ConfigureAwait(false);
             return rootResponse.ETag;
         }

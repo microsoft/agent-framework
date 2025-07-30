@@ -177,4 +177,74 @@ public class CosmosActorStateStorageConcurrencyTests
         var maxRetries = results.Max(r => r.AttemptNumber);
         Console.WriteLine($"Concurrent operations completed. Total retries: {totalRetries}, Max retries for single operation: {maxRetries}");
     }
+
+    [Fact]
+    public async Task WriteStateAsync_InitialETagHandling_ShouldWorkCorrectlyAsync()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource(s_defaultTimeout);
+        var cancellationToken = cts.Token;
+
+        var storage = new CosmosActorStateStorage(this._fixture.Container);
+        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
+
+        var key = "testKey";
+        var value = JsonSerializer.SerializeToElement("testValue");
+        var operations = new List<ActorStateWriteOperation>
+        {
+            new SetValueOperation(key, value)
+        };
+
+        // Act & Assert - Test null eTag (should create new document)
+#pragma warning disable CS8625 // Cannot convert null literal to non-nullable reference type.
+        var resultWithNullETag = await storage.WriteStateAsync(testActorId, operations, null, cancellationToken);
+#pragma warning restore CS8625 // Cannot convert null literal to non-nullable reference type.
+        Assert.True(resultWithNullETag.Success);
+        Assert.NotNull(resultWithNullETag.ETag);
+        Assert.NotEmpty(resultWithNullETag.ETag);
+
+        // Clean up for next test
+        var uniqueActorId1 = new ActorId("TestActor", Guid.NewGuid().ToString());
+
+        // Act & Assert - Test empty eTag (should create new document)
+        var resultWithEmptyETag = await storage.WriteStateAsync(uniqueActorId1, operations, string.Empty, cancellationToken);
+        Assert.True(resultWithEmptyETag.Success);
+        Assert.NotNull(resultWithEmptyETag.ETag);
+        Assert.NotEmpty(resultWithEmptyETag.ETag);
+
+        // Clean up for next test
+        var uniqueActorId2 = new ActorId("TestActor", Guid.NewGuid().ToString());
+
+        // Act & Assert - Test "0" initial eTag (should create new document)
+        var resultWithInitialETag = await storage.WriteStateAsync(uniqueActorId2, operations, "0", cancellationToken);
+        Assert.True(resultWithInitialETag.Success);
+        Assert.NotNull(resultWithInitialETag.ETag);
+        Assert.NotEmpty(resultWithInitialETag.ETag);
+        Assert.NotEqual("0", resultWithInitialETag.ETag);
+
+        // Act & Assert - Test writing again with "0" should fail (document already exists)
+        var secondWriteWithInitialETag = await storage.WriteStateAsync(uniqueActorId2, operations, "0", cancellationToken);
+        Assert.False(secondWriteWithInitialETag.Success);
+        Assert.Empty(secondWriteWithInitialETag.ETag);
+
+        // Act & Assert - Test writing with correct eTag should succeed
+        var updateOperations = new List<ActorStateWriteOperation>
+        {
+            new SetValueOperation(key, JsonSerializer.SerializeToElement("updatedValue"))
+        };
+        var resultWithCorrectETag = await storage.WriteStateAsync(uniqueActorId2, updateOperations, resultWithInitialETag.ETag, cancellationToken);
+        Assert.True(resultWithCorrectETag.Success);
+        Assert.NotNull(resultWithCorrectETag.ETag);
+        Assert.NotEqual(resultWithInitialETag.ETag, resultWithCorrectETag.ETag);
+
+        // Verify the value was actually updated
+        var readOperations = new List<ActorStateReadOperation>
+        {
+            new GetValueOperation(key)
+        };
+        var readResult = await storage.ReadStateAsync(uniqueActorId2, readOperations, cancellationToken);
+        var getValue = readResult.Results[0] as GetValueResult;
+        Assert.NotNull(getValue);
+        Assert.Equal("updatedValue", getValue.Value?.GetString());
+    }
 }
