@@ -1,0 +1,11 @@
+<Project>
+  <ItemGroup Condition="'$(InjectSharedThrow)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\Throw\*.cs" LinkBase="Shared\Throw" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(InjectSharedSamples)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\Samples\*.cs" LinkBase="Shared\Samples" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(InjectSharedIntegrationTestCode)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\IntegrationTests\*.cs" LinkBase="Shared\IntegrationTests" />
+  </ItemGroup>
+</Project>
