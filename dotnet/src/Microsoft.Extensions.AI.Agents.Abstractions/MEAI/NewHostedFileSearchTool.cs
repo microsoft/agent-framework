@@ -1,5 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+// Line removed as it is unnecessary due to ImplicitUsings being enabled.
+
+using System.Collections.Generic;
+
 namespace Microsoft.Extensions.AI;
 
 /// <summary>

@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
@@ -6,13 +6,13 @@
     <VersionSuffix>alpha</VersionSuffix>
     <NoWarn>$(NoWarn);IDE0009;</NoWarn>
     <ImplicitUsings>enable</ImplicitUsings>
+    <InjectSharedThrow>true</InjectSharedThrow>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
 
   <ItemGroup>
-    <PackageReference Include="Azure.AI.Agents.Persistent" />
-    <PackageReference Include="Microsoft.Extensions.AI" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
   </ItemGroup>
 
   <ItemGroup>
@@ -21,8 +21,8 @@
 
   <PropertyGroup>
     <!-- NuGet Package Settings -->
-    <Title>Microsoft.Extensions.AI.Agents.AzureAI</Title>
-    <Description>Implementation of generative AI abstractions for Azure AI Persistent Agents.</Description>
+    <Title>Microsoft.Extensions.AI.Agents.OpenAI</Title>
+    <Description>Implementation of generative AI abstractions for OpenAI Agents.</Description>
   </PropertyGroup>
 
 </Project>
