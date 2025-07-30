@@ -70,7 +70,7 @@ public class AgentRunResponseUpdate
         this.Contents = chatResponseUpdate.Contents;
         this.CreatedAt = chatResponseUpdate.CreatedAt;
         this.MessageId = chatResponseUpdate.MessageId;
-        this.RawRepresentation = chatResponseUpdate.RawRepresentation;
+        this.RawRepresentation = chatResponseUpdate;
         this.ResponseId = chatResponseUpdate.ResponseId;
         this.Role = chatResponseUpdate.Role;
     }
