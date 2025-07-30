@@ -287,6 +287,7 @@ class FoundryChatClient(ChatClientBase):
         # Get any active run for this thread
         thread_run = await self._get_active_thread_run(thread_id)
 
+        stream: AsyncAgentRunStream[AsyncAgentEventHandler[Any]] | AsyncAgentEventHandler[Any]
         handler: AsyncAgentEventHandler[Any] = AsyncAgentEventHandler()
         tool_run_id, tool_outputs = self._convert_function_results_to_tool_output(tool_results)
 
@@ -352,28 +353,21 @@ class FoundryChatClient(ChatClientBase):
         thread_id: str,
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Process events from the agent stream and yield ChatResponseUpdate objects."""
-        response_id: str | None = None
-
-        if stream is not None:
-            # Use 'async with' only if the stream supports async context management (main agent stream).
-            # Tool output handlers only support async iteration, not context management.
-            if isinstance(stream, contextlib.AbstractAsyncContextManager):
-                async with stream as response_stream:  # type: ignore
-                    async for update in self._process_stream_events_from_iterator(
-                        response_stream, thread_id, response_id
-                    ):
-                        yield update
-            else:
-                async for update in self._process_stream_events_from_iterator(stream, thread_id, response_id):
+        # Use 'async with' only if the stream supports async context management (main agent stream).
+        # Tool output handlers only support async iteration, not context management.
+        if isinstance(stream, contextlib.AbstractAsyncContextManager):
+            async with stream as response_stream:  # type: ignore
+                async for update in self._process_stream_events_from_iterator(response_stream, thread_id):
                     yield update
+        else:
+            async for update in self._process_stream_events_from_iterator(stream, thread_id):
+                yield update
 
     async def _process_stream_events_from_iterator(
-        self,
-        stream_iter: Any,
-        thread_id: str,
-        response_id: str | None,
+        self, stream_iter: Any, thread_id: str
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Process events from the stream iterator and yield ChatResponseUpdate objects."""
+        response_id: str | None = None
         async for event_type, event_data, _ in stream_iter:  # type: ignore
             if event_type == AgentStreamEvent.THREAD_RUN_CREATED and isinstance(event_data, ThreadRun):
                 yield ChatResponseUpdate(
@@ -494,7 +488,7 @@ class FoundryChatClient(ChatClientBase):
                 if chat_options.tool_choice != "none" and chat_options.tools is not None:
                     for tool in chat_options.tools:
                         if isinstance(tool, AIFunction):
-                            tool_definitions.append(ai_function_to_json_schema_spec(tool))
+                            tool_definitions.append(ai_function_to_json_schema_spec(tool))  # type: ignore[reportUnknownArgumentType]
                         elif isinstance(tool, HostedCodeInterpreterTool):
                             tool_definitions.append(CodeInterpreterToolDefinition())
                         elif isinstance(tool, MutableMapping):

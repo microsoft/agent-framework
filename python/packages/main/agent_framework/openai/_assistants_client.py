@@ -9,11 +9,14 @@ from openai.types.beta.threads import (
     ImageURLContentBlockParam,
     ImageURLParam,
     MessageContentPartParam,
+    MessageDeltaEvent,
     Run,
     TextContentBlockParam,
+    TextDeltaBlock,
 )
 from openai.types.beta.threads.run_create_params import AdditionalMessage
 from openai.types.beta.threads.run_submit_tool_outputs_params import ToolOutput
+from openai.types.beta.threads.runs import RunStep
 from pydantic import Field, PrivateAttr, SecretStr, ValidationError
 
 from .._clients import ChatClientBase, ai_function_to_json_schema_spec, use_tool_calling
@@ -24,11 +27,14 @@ from .._types import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
+    ChatRole,
     ChatToolMode,
     FunctionCallContent,
     FunctionResultContent,
     TextContent,
     UriContent,
+    UsageContent,
+    UsageDetails,
 )
 from ..exceptions import ServiceInitializationError
 from ._shared import OpenAIConfigBase, OpenAISettings
@@ -138,7 +144,12 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
         # Determine which assistant to use and create if needed
         assistant_id = await self._get_assistant_id_or_create()
 
-        yield ChatResponseUpdate(contents=[TextContent(text="test")])
+        # Create the streaming response
+        stream, thread_id = await self._create_assistant_stream(thread_id, assistant_id, run_options, tool_results)
+
+        # Process and yield each update from the stream
+        async for update in self._process_stream_events(stream, thread_id):
+            yield update
 
     async def _get_assistant_id_or_create(self) -> str:
         """Determine which assistant to use and create if needed.
@@ -157,7 +168,39 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
 
         return self.assistant_id
 
-    # TODO: _create_agent_stream
+    async def _create_assistant_stream(
+        self,
+        thread_id: str | None,
+        assistant_id: str,
+        run_options: dict[str, Any],
+        tool_results: list[FunctionResultContent] | None,
+    ) -> tuple[Any, str]:
+        """Create the assistant stream for processing.
+
+        Returns:
+            tuple: (stream, final_thread_id)
+        """
+        # Get any active run for this thread
+        thread_run = await self._get_active_thread_run(thread_id)
+
+        tool_run_id, tool_outputs = self._convert_function_results_to_tool_output(tool_results)
+
+        if thread_run is not None and tool_run_id is not None and tool_run_id == thread_run.id and tool_outputs:
+            # There's an active run and we have tool results to submit, so submit the results.
+            stream = self.client.beta.threads.runs.submit_tool_outputs_stream(  # type: ignore[reportDeprecated]
+                run_id=tool_run_id, thread_id=thread_run.thread_id, tool_outputs=tool_outputs
+            )
+            final_thread_id = thread_run.thread_id
+        else:
+            # Handle thread creation or cancellation
+            final_thread_id = await self._prepare_thread(thread_id, thread_run, run_options)
+
+            # Now create a new run and stream the results.
+            stream = self.client.beta.threads.runs.stream(  # type: ignore[reportDeprecated]
+                assistant_id=assistant_id, thread_id=final_thread_id, **run_options
+            )
+
+        return stream, final_thread_id
 
     async def _get_active_thread_run(self, thread_id: str | None) -> Run | None:
         """Get any active run for the given thread."""
@@ -187,9 +230,76 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
 
         return thread_id
 
-    # TODO: _process_stream_events
+    async def _process_stream_events(self, stream: Any, thread_id: str) -> AsyncIterable[ChatResponseUpdate]:
+        response_id: str | None = None
 
-    # TODO: _process_stream_events_from_iterator
+        async with stream as response_stream:
+            async for response in response_stream:
+                if response.event == "thread.run.created":
+                    response_id = response.data.id
+                    yield ChatResponseUpdate(
+                        contents=[],
+                        conversation_id=thread_id,
+                        message_id=response_id,
+                        raw_representation=response.data,
+                        response_id=response_id,
+                        role=ChatRole.ASSISTANT,
+                    )
+                elif response.event == "thread.message.delta" and isinstance(response.data, MessageDeltaEvent):
+                    delta = response.data.delta
+                    role = ChatRole.USER if delta.role == "user" else ChatRole.ASSISTANT
+
+                    for delta_block in delta.content or []:
+                        if isinstance(delta_block, TextDeltaBlock) and delta_block.text and delta_block.text.value:
+                            yield ChatResponseUpdate(
+                                role=role,
+                                text=delta_block.text.value,
+                                conversation_id=thread_id,
+                                message_id=response_id,
+                                raw_representation=response.data,
+                                response_id=response_id,
+                            )
+                elif response.event == "thread.run.requires_action" and isinstance(response.data, Run):
+                    contents = self._create_function_call_contents(response.data, response_id)
+                    if contents:
+                        yield ChatResponseUpdate(
+                            role=ChatRole.ASSISTANT,
+                            contents=contents,
+                            conversation_id=thread_id,
+                            message_id=response_id,
+                            raw_representation=response.data,
+                            response_id=response_id,
+                        )
+                elif (
+                    response.event == "thread.run.completed"
+                    and isinstance(response.data, RunStep)
+                    and response.data.usage is not None
+                ):
+                    usage = response.data.usage
+                    usage_content = UsageContent(
+                        UsageDetails(
+                            input_token_count=usage.prompt_tokens,
+                            output_token_count=usage.completion_tokens,
+                            total_token_count=usage.total_tokens,
+                        )
+                    )
+                    yield ChatResponseUpdate(
+                        role=ChatRole.ASSISTANT,
+                        contents=[usage_content],
+                        conversation_id=thread_id,
+                        message_id=response_id,
+                        raw_representation=response.data,
+                        response_id=response_id,
+                    )
+                else:
+                    yield ChatResponseUpdate(
+                        contents=[],
+                        conversation_id=thread_id,
+                        message_id=response_id,
+                        raw_representation=response.data,
+                        response_id=response_id,
+                        role=ChatRole.ASSISTANT,
+                    )
 
     def _create_function_call_contents(self, event_data: Run, response_id: str | None) -> list[AIContents]:
         """Create function call contents from a tool action event."""
@@ -231,7 +341,7 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
                 if chat_options.tool_choice != "none" and chat_options.tools is not None:
                     for tool in chat_options.tools:
                         if isinstance(tool, AIFunction):
-                            tool_definitions.append(ai_function_to_json_schema_spec(tool))  # type: ignore
+                            tool_definitions.append(ai_function_to_json_schema_spec(tool))  # type: ignore[reportUnknownArgumentType]
                         elif isinstance(tool, HostedCodeInterpreterTool):
                             tool_definitions.append({"type": "code_interpreter"})
                         elif isinstance(tool, MutableMapping):
