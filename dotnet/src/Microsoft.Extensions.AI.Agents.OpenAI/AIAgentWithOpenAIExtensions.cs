@@ -41,7 +41,7 @@ public static class AIAgentWithOpenAIExtensions
         Throw.IfNull(agent);
         Throw.IfNull(message);
 
-        var response = await agent.RunAsync(message.AsChatMessage(), thread, options, cancellationToken);
+        var response = await agent.RunAsync(message.AsChatMessage(), thread, options, cancellationToken).ConfigureAwait(false);
 
         var chatCompletion = response.AsChatCompletion();
         return chatCompletion;
@@ -68,7 +68,7 @@ public static class AIAgentWithOpenAIExtensions
         Throw.IfNull(agent);
         Throw.IfNull(messages);
 
-        var response = await agent.RunAsync([.. messages.AsChatMessages()], thread, options, cancellationToken);
+        var response = await agent.RunAsync([.. messages.AsChatMessages()], thread, options, cancellationToken).ConfigureAwait(false);
 
         var chatCompletion = response.AsChatCompletion();
         return chatCompletion;

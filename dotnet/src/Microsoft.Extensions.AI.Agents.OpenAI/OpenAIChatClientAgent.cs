@@ -16,6 +16,15 @@ public class OpenAIChatClientAgent : AIAgent
 {
     private readonly ChatClientAgent _chatClientAgent;
 
+    /// <summary>
+    /// Initialize an instance of <see cref="OpenAIChatClientAgent"/>
+    /// </summary>
+    /// <param name="client">Instance of <see cref="OpenAIChatClient"/></param>
+    /// <param name="model">Id of the model.</param>
+    /// <param name="instructions">Optional instructions for the agent.</param>
+    /// <param name="name">Optional name for the agent.</param>
+    /// <param name="description">Optional description for the agent.</param>
+    /// <param name="loggerFactory">Optional instance of <see cref="ILoggerFactory"/></param>
     public OpenAIChatClientAgent(OpenAIClient client, string model, string? instructions = null, string? name = null, string? description = null, ILoggerFactory? loggerFactory = null)
     {
         Throw.IfNull(client);
@@ -33,6 +42,13 @@ public class OpenAIChatClientAgent : AIAgent
             loggerFactory);
     }
 
+    /// <summary>
+    /// Initialize an instance of <see cref="OpenAIChatClientAgent"/>
+    /// </summary>
+    /// <param name="client">Instance of <see cref="OpenAIChatClient"/></param>
+    /// <param name="model">Id of the model.</param>
+    /// <param name="options">Options to create the agent.</param>
+    /// <param name="loggerFactory">Optional instance of <see cref="ILoggerFactory"/></param>
     public OpenAIChatClientAgent(OpenAIClient client, string model, ChatClientAgentOptions options, ILoggerFactory? loggerFactory = null)
     {
         Throw.IfNull(client);
@@ -42,9 +58,17 @@ public class OpenAIChatClientAgent : AIAgent
         this._chatClientAgent = new(chatClient, options, loggerFactory);
     }
 
+    /// <summary>
+    /// Run the agent with the provided message and arguments.
+    /// </summary>
+    /// <param name="messages">The messages to pass to the agent.</param>
+    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
+    /// <param name="options">Optional parameters for agent invocation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A <see cref="ChatCompletion"/> containing the list of <see cref="ChatMessage"/> items.</returns>
     public async Task<ChatCompletion> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        var response = await this.RunAsync([.. messages.AsChatMessages()], thread, options, cancellationToken);
+        var response = await this.RunAsync([.. messages.AsChatMessages()], thread, options, cancellationToken).ConfigureAwait(false);
 
         var chatCompletion = response.AsChatCompletion();
         return chatCompletion;

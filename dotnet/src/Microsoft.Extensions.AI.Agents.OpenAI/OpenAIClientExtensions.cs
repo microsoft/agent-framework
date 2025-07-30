@@ -149,7 +149,7 @@ public static class OpenAIClientExtensions
                     Tools = tools,
                 }
             },
-            loggerFactory);
+            loggerFactory).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -195,7 +195,7 @@ public static class OpenAIClientExtensions
 
         var assistantClient = client.GetAssistantClient();
 
-        var assistantCreateResult = await assistantClient.CreateAssistantAsync(model, assistantOptions);
+        var assistantCreateResult = await assistantClient.CreateAssistantAsync(model, assistantOptions).ConfigureAwait(false);
         var assistantId = assistantCreateResult.Value.Id;
 
         var agentOptions = new ChatClientAgentOptions()
@@ -210,7 +210,9 @@ public static class OpenAIClientExtensions
             }
         };
 
+#pragma warning disable CA2000 // Dispose objects before losing scope
         var chatClient = new NewOpenAIAssistantChatClient(assistantClient, assistantId);
+#pragma warning restore CA2000 // Dispose objects before losing scope
         return new ChatClientAgent(chatClient, agentOptions, loggerFactory);
     }
 }
