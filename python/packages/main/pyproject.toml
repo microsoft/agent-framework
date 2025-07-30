@@ -87,6 +87,8 @@ exclude_dirs = ["tests"]
 [tool.poe]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
+[tool.poe.tasks]
+mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework"
 
 [tool.uv.build-backend]
 module-name = "agent_framework"

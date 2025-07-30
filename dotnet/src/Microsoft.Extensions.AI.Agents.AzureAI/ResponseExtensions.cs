@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 
@@ -48,7 +47,7 @@ internal static class PersistentAgentResponseExtensions
         }
 
 #pragma warning disable CA2000 // Dispose objects before losing scope
-        var chatClient = persistentAgentsClient.AsIChatClient(persistentAgentMetadata.Id);
+        var chatClient = new NewPersistentAgentsChatClient(persistentAgentsClient, persistentAgentMetadata.Id);
 #pragma warning restore CA2000 // Dispose objects before losing scope
 
         return new ChatClientAgent(chatClient, options: new()
