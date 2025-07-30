@@ -61,13 +61,12 @@ public class CosmosActorStateStorage : IActorStateStorage
        string etag,
        CancellationToken cancellationToken = default)
     {
-        var container = await this._lazyContainer.GetContainerAsync().ConfigureAwait(false);
-
         if (operations.Count == 0)
         {
             throw new InvalidOperationException("No operations provided for write. At least one operation is required.");
         }
 
+        var container = await this._lazyContainer.GetContainerAsync().ConfigureAwait(false);
         var batch = container.CreateTransactionalBatch(GetPartitionKey(actorId));
         var rootDocId = GetRootDocumentId(actorId);
 
@@ -146,6 +145,11 @@ public class CosmosActorStateStorage : IActorStateStorage
     IReadOnlyCollection<ActorStateReadOperation> operations,
     CancellationToken cancellationToken = default)
     {
+        if (operations.Count == 0)
+        {
+            throw new InvalidOperationException("No operations provided for read. At least one operation is required.");
+        }
+
         var container = await this._lazyContainer.GetContainerAsync().ConfigureAwait(false);
         var results = new List<ActorReadResult>();
 
