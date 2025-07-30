@@ -84,6 +84,7 @@ Specifically, when we are deciding in the IChatClient stack to ask for approval 
 service side thread type (where applicable) supports the concept of a function call approval request.  We therefore need the ability to temporarily store the approval request in the
 AgentThread, without it becoming part of the thread history. This will serve as a temporary record of the fact that there is an outstanding approval request that the agent is waiting for to continue.
 There will be no long term record of an approval request in the chat history, but if the server side thread doesn't support this, there is nothing we can do to change that.
+We should however log approvals so that there is a trace of this for debugging and auditing purposes.
 
 Suggested Types:
 
@@ -215,9 +216,8 @@ so that it can identify which function calls should be returned as an `ApprovalR
 1. Agent executes various steps.
 1. Agent encounters a step for which it requires user approval to continue.
 1. Agent responds with an ApprovalRequestContent.
-1. Agent updates its own state with the progress that it has made up to that point and adds the ApprovalRequestContent to its AgentThread ActiveApprovalRequests.
+1. Agent adds the ApprovalRequestContent to its AgentThread ActiveApprovalRequests.
 1. User (via caller) invokes the agent again with ApprovalResponseContent.
-1. Agent loads its progress from state and continues processing.
 1. Agent removes its ApprovalRequestContent from its AgentThread ActiveApprovalRequests.
 1. Agent responds to caller with result message and thread is updated with the result message.
 
@@ -384,12 +384,12 @@ class FunctionApprovalResponseContent : UserInputResponseContent
 
 // --------------------------------------------------
 // Used for approving a request described using text.
-class QuestionApprovalRequestContent : UserInputRequestContent
+class TextApprovalRequestContent : UserInputRequestContent
 {
     // A user targeted message to explain what needs to be approved.
     public string Text { get; set; }
 }
-class QuestionApprovalResponseContent : UserInputResponseContent
+class TextApprovalResponseContent : UserInputResponseContent
 {
     // Indicates whether the user approved the request.
     public bool Approved { get; set; }
@@ -437,7 +437,7 @@ class AgentRunResponse
 
     // A new property on AgentRunResponse to aggregate the UserInputRequestContent items from
     // the response messages (Similar to the Text property).
-    public IReadOnlyList<UserInputRequestContent> UserInputRequests { get; set; }
+    public IEnumerable<UserInputRequestContent> UserInputRequests { get; set; }
 
     ...
 }
