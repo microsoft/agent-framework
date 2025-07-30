@@ -133,7 +133,7 @@ class GenAIAttributes(str, Enum):
     CHAT_COMPLETION_OPERATION = "chat"
     TOOL_EXECUTION_OPERATION = "execute_tool"
     #    Describes GenAI agent creation and is usually applicable when working with remote agent services.
-    CREATE_AGENT_OPERATION = "create_agent"
+    AGENT_CREATE_OPERATION = "create_agent"
     AGENT_INVOKE_OPERATION = "invoke_agent"
 
     # Agent Framework specific attributes
