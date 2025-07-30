@@ -143,6 +143,7 @@
     <Project Path="src/Microsoft.Extensions.AI.Agents.Abstractions/Microsoft.Extensions.AI.Agents.Abstractions.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.AzureAI/Microsoft.Extensions.AI.Agents.AzureAI.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.CopilotStudio/Microsoft.Extensions.AI.Agents.CopilotStudio.csproj" />
+    <Project Path="src/Microsoft.Extensions.AI.Agents.OpenAI/Microsoft.Extensions.AI.Agents.OpenAI.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.Runtime.Abstractions/Microsoft.Extensions.AI.Agents.Runtime.Abstractions.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.Runtime/Microsoft.Extensions.AI.Agents.Runtime.csproj" Id="35d72ad5-61e1-45cc-a9ad-fa8490dbd146">
       <BuildType Solution="Publish|*" Project="Release" />
