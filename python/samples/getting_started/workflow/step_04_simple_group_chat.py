@@ -19,6 +19,11 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override  # pragma: no cover
 
+"""
+The following sample demonstrates a basic workflow that simulates
+a round-robin group chat.
+"""
+
 
 @dataclass
 class GroupChatMessage:
@@ -93,6 +98,8 @@ class FakeAgentExecutor(Executor[AgentSelectionDecision]):
 
 
 async def main():
+    """Main function to run the group chat workflow."""
+    # Step 1: Create the executors.
     executor_a = FakeAgentExecutor(id="executor_a")
     executor_b = FakeAgentExecutor(id="executor_b")
     executor_c = FakeAgentExecutor(id="executor_c")
@@ -108,15 +115,21 @@ async def main():
     # GroupChatManager -> executor_b -> GroupChatManager
     # GroupChatManager -> executor_c -> GroupChatManager
 
+    # Step 2: Build the workflow with the defined edges.
+    # This time we are creating edges and loops with conditions.
     workflow = (
         WorkflowBuilder()
         .set_start_executor(group_chat_manager)
-        .add_loop(group_chat_manager, executor_a, condition=lambda x: x.selection == executor_a.id)
-        .add_loop(group_chat_manager, executor_b, condition=lambda x: x.selection == executor_b.id)
-        .add_loop(group_chat_manager, executor_c, condition=lambda x: x.selection == executor_c.id)
+        .add_edge(group_chat_manager, executor_a, condition=lambda x: x.selection == executor_a.id)
+        .add_edge(group_chat_manager, executor_b, condition=lambda x: x.selection == executor_b.id)
+        .add_edge(group_chat_manager, executor_c, condition=lambda x: x.selection == executor_c.id)
+        .add_edge(executor_a, group_chat_manager)
+        .add_edge(executor_b, group_chat_manager)
+        .add_edge(executor_c, group_chat_manager)
         .build()
     )
 
+    # Step 3: Run the workflow with an initial message.
     completion_event = None
     async for event in workflow.run_stream([ChatMessage(ChatRole.USER, text="Start group chat")]):
         if isinstance(event, AgentRunEvent):

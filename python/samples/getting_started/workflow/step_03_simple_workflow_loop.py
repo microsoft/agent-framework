@@ -18,6 +18,12 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override  # pragma: no cover
 
+"""
+The following sample demonstrates a basic workflow with two executors
+where one executor guesses a number and the other executor judges the
+guess iteratively.
+"""
+
 
 class NumberSignal(Enum):
     """Enum to represent number signals for the workflow."""
@@ -91,16 +97,21 @@ class JudgeExecutor(Executor[int]):
 
 async def main():
     """Main function to run the workflow."""
+    # Step 1: Create the executors.
     guess_number_executor = GuessNumberExecutor((1, 100))
     judge_executor = JudgeExecutor(30)
 
+    # Step 2: Build the workflow with the defined edges.
+    # This time we are creating a loop in the workflow.
     workflow = (
         WorkflowBuilder()
-        .add_loop(guess_number_executor, judge_executor)
+        .add_edge(guess_number_executor, judge_executor)
+        .add_edge(judge_executor, guess_number_executor)
         .set_start_executor(guess_number_executor)
         .build()
     )
 
+    # Step 3: Run the workflow and print the events.
     iterations = 0
     async for event in workflow.run_stream(NumberSignal.INIT):
         if isinstance(event, ExecutorCompleteEvent) and event.executor_id == guess_number_executor.id:

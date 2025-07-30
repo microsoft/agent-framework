@@ -165,24 +165,6 @@ class WorkflowBuilder:
 
         return self
 
-    def add_loop(
-        self,
-        source: Executor[Any],
-        target: Executor[Any],
-        condition: Callable[[Any], bool] | None = None,
-    ) -> "Self":
-        """Add a loop edge from a source executor to a target executor.
-
-        Args:
-            source: The source executor of the loop edge.
-            target: The target executor of the loop edge.
-            condition: An optional condition function that be applied on only the source -> target edge.
-        """
-        self._edges.append(Edge(source, target, condition))
-        self._edges.append(Edge(target, source))
-
-        return self
-
     def add_chain(
         self,
         executors: list[Executor[Any]],
