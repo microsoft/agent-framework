@@ -3,9 +3,9 @@
 using System.Text;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Samples;
-using OpenAI.Assistants;
 using OpenAI.Files;
 
 namespace Steps;
@@ -21,14 +21,15 @@ public sealed class Step03_ChatClientAgent_UsingCodeInterpreterTools(ITestOutput
     [InlineData(ChatClientProviders.OpenAIAssistant)]
     public async Task RunningWithFileReferenceAsync(ChatClientProviders provider)
     {
-        var codeInterpreterTool = new NewHostedCodeInterpreterTool();
-        codeInterpreterTool.FileIds.Add(await UploadFileAsync("Resources/groceries.txt", provider));
-        var agentOptions = new ChatClientAgentOptions
+        var codeInterpreterTool = new NewHostedCodeInterpreterTool()
         {
-            Name = "HelpfulAssistant",
-            Instructions = "You are a helpful assistant.",
-            ChatOptions = new() { Tools = [codeInterpreterTool] }
+            Inputs = [new HostedFileContent(await UploadFileAsync("Resources/groceries.txt", provider))]
         };
+
+        var agentOptions = new ChatClientAgentOptions(
+            name: "HelpfulAssistant",
+            instructions: "You are a helpful assistant.",
+            tools: [codeInterpreterTool]);
 
         // Create the server-side agent Id when applicable (depending on the provider).
         agentOptions.Id = await base.AgentCreateAsync(provider, agentOptions);
@@ -52,9 +53,9 @@ public sealed class Step03_ChatClientAgent_UsingCodeInterpreterTools(ITestOutput
                 assistantOutput.Append(update.Text);
             }
 
-            if (update.RawRepresentation is not null)
+            if (update.RawRepresentation is ChatResponseUpdate chatUpdate && chatUpdate.RawRepresentation is not null)
             {
-                codeInterpreterOutput.Append(GetCodeInterpreterOutput(update.RawRepresentation, provider));
+                codeInterpreterOutput.Append(GetCodeInterpreterOutput(chatUpdate.RawRepresentation, provider));
             }
         }
 

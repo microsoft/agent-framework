@@ -20,29 +20,23 @@ namespace Microsoft.Agents.Orchestration;
 /// </summary>
 public sealed partial class HandoffOrchestration : OrchestratingAgent
 {
-    private readonly OrchestrationHandoffs _handoffs;
+    private readonly Handoffs _handoffs;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="HandoffOrchestration"/> class.
     /// </summary>
     /// <param name="handoffs">Defines the handoff connections for each agent.</param>
-    /// <param name="agents">Additional agents participating in the orchestration that weren't passed to <paramref name="handoffs"/>.</param>
-    public HandoffOrchestration(OrchestrationHandoffs handoffs, params AIAgent[] agents) : base(
-            agents is { Length: 0 } ? [.. handoffs.Agents] :
-            handoffs.Agents is { Count: 0 } ? agents :
-            [.. handoffs.Agents.Concat(agents).Distinct()])
+    public HandoffOrchestration(Handoffs handoffs) : this(handoffs, name: null)
     {
-        // Create list of distinct agent names
-        HashSet<string> agentNames = [.. base.Agents.Select(a => a.DisplayName), handoffs.FirstAgentName];
+    }
 
-        // Extract names from handoffs that don't align with a member agent.
-        // Fail fast if invalid names are present.
-        string[] badNames = [.. handoffs.Keys.Concat(handoffs.Values.SelectMany(h => h.Keys)).Where(name => !agentNames.Contains(name))];
-        if (badNames.Length > 0)
-        {
-            Throw.ArgumentException(nameof(handoffs), $"The following agents are not defined in the orchestration: {string.Join(", ", badNames)}");
-        }
-
+    /// <summary>
+    /// Initializes a new instance of the <see cref="HandoffOrchestration"/> class.
+    /// </summary>
+    /// <param name="handoffs">Defines the handoff connections for each agent.</param>
+    /// <param name="name">An optional name for this orchestrating agent.</param>
+    public HandoffOrchestration(Handoffs handoffs, string? name) : base(handoffs.Agents.ToArray(), name)
+    {
         this._handoffs = handoffs;
     }
 
@@ -54,39 +48,51 @@ public sealed partial class HandoffOrchestration : OrchestratingAgent
     {
         List<ChatMessage> allMessages = [.. messages];
         int originalMessageCount = allMessages.Count;
-        return this.ResumeAsync(this._handoffs.FirstAgentName, allMessages, originalMessageCount, context, cancellationToken);
+        return this.ResumeAsync(this._handoffs.InitialAgent, allMessages, originalMessageCount, context, cancellationToken);
     }
 
     /// <inheritdoc />
     protected override Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, OrchestratingAgentContext context, CancellationToken cancellationToken)
     {
         var state = checkpointState.Deserialize(OrchestrationJsonContext.Default.HandoffState) ?? throw new InvalidOperationException("The checkpoint state is invalid.");
-        return this.ResumeAsync(state.NextAgent, state.AllMessages, state.OriginalMessageCount, context, cancellationToken);
+
+        AIAgent? nextAgent = null;
+        foreach (var agent in this.Agents)
+        {
+            if (agent.Id == state.NextAgent)
+            {
+                nextAgent = agent;
+                break;
+            }
+        }
+
+        if (nextAgent is null)
+        {
+            Throw.InvalidOperationException($"The next agent '{state.NextAgent}' is not defined in the orchestration.");
+        }
+
+        return this.ResumeAsync(nextAgent, state.AllMessages, state.OriginalMessageCount, context, cancellationToken);
     }
 
     /// <inheritdoc />
     private async Task<AgentRunResponse> ResumeAsync(
-        string? nextAgent, List<ChatMessage> allMessages, int originalMessageCount, OrchestratingAgentContext context, CancellationToken cancellationToken)
+        AIAgent? agent, List<ChatMessage> allMessages, int originalMessageCount, OrchestratingAgentContext context, CancellationToken cancellationToken)
     {
-        Debug.Assert(nextAgent is not null);
+        Debug.Assert(agent is not null);
         AgentRunResponse? response = null;
 
-        while (nextAgent is not null)
+        while (agent is not null)
         {
-            AIAgent? agent =
-                this.Agents.FirstOrDefault(a => a.Name == nextAgent || a.Id == nextAgent) ??
-                throw new InvalidOperationException($"The agent '{nextAgent}' is not defined in the orchestration.");
-
             this.LogOrchestrationSubagentRunning(context, agent);
 
-            if (!this._handoffs.TryGetValue(agent.DisplayName, out AgentHandoffs? handoffs) || handoffs.Count == 0)
+            if (!this._handoffs.Targets.TryGetValue(agent, out var handoffs) || handoffs.Count == 0)
             {
                 // If no handoff is available, we can run the agent directly and return its response.
                 response = await RunAsync(agent, context, allMessages, context.Options, cancellationToken).ConfigureAwait(false);
-                allMessages.AddRange(response.Messages);
-                nextAgent = null;
-                await CheckpointAsync().ConfigureAwait(false);
                 this.LogOrchestrationSubagentCompleted(context, agent);
+                allMessages.AddRange(response.Messages);
+                agent = null;
+                await CheckpointAsync().ConfigureAwait(false);
                 break;
             }
 
@@ -107,8 +113,9 @@ public sealed partial class HandoffOrchestration : OrchestratingAgent
 
             // Invoke the next agent with all of the messages collected so far.
             response = await RunAsync(agent, context, allMessages, options, cancellationToken).ConfigureAwait(false);
+            this.LogOrchestrationSubagentCompleted(context, agent);
             allMessages.AddRange(response.Messages);
-            nextAgent = handoffCtx.TargetedAgent;
+            agent = handoffCtx.TargetedAgent;
             RemoveHandoffFunctionCalls(response, handoffTools);
 
             if (this.InteractiveCallback is not null)
@@ -118,12 +125,10 @@ public sealed partial class HandoffOrchestration : OrchestratingAgent
                     break;
                 }
 
-                nextAgent = agent.DisplayName;
                 allMessages.Add(await this.InteractiveCallback().ConfigureAwait(false));
             }
 
             await CheckpointAsync().ConfigureAwait(false);
-            this.LogOrchestrationSubagentCompleted(context, agent);
         }
 
         allMessages.RemoveRange(0, originalMessageCount);
@@ -132,7 +137,7 @@ public sealed partial class HandoffOrchestration : OrchestratingAgent
         return response;
 
         Task CheckpointAsync() => context.Runtime is not null ?
-            base.WriteCheckpointAsync(JsonSerializer.SerializeToElement(new(nextAgent, allMessages, originalMessageCount), OrchestrationJsonContext.Default.HandoffState), context, cancellationToken) :
+            base.WriteCheckpointAsync(JsonSerializer.SerializeToElement(new(agent?.Id, allMessages, originalMessageCount), OrchestrationJsonContext.Default.HandoffState), context, cancellationToken) :
             Task.CompletedTask;
     }
 
@@ -173,9 +178,9 @@ public sealed partial class HandoffOrchestration : OrchestratingAgent
         }
     }
 
-    private sealed class HandoffContext(AgentHandoffs handoffs)
+    private sealed class HandoffContext(HashSet<Handoffs.HandoffTarget> handoffs)
     {
-        public string? TargetedAgent { get; set; }
+        public AIAgent? TargetedAgent { get; set; }
         public bool EndTaskInvoked { get; set; }
 
         public List<AITool> CreateHandoffFunctions(bool needsEndTask)
@@ -194,16 +199,16 @@ public sealed partial class HandoffOrchestration : OrchestratingAgent
                     description: "Invoke this function when all work is completed and no further interactions are required."));
             }
 
-            foreach (KeyValuePair<string, string> handoff in handoffs)
+            foreach (Handoffs.HandoffTarget handoff in handoffs)
             {
                 functions.Add(AIFunctionFactory.Create(
                     () =>
                     {
-                        this.TargetedAgent = handoff.Key;
+                        this.TargetedAgent = handoff.Target;
                         Terminate();
                     },
-                    name: $"handoff_to_{InvalidNameCharsRegex().Replace(handoff.Key, "_")}",
-                    description: handoff.Value));
+                    name: $"handoff_to_{InvalidNameCharsRegex().Replace(handoff.Target.DisplayName, "_")}",
+                    description: handoff.Reason));
             }
 
             return functions;

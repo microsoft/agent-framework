@@ -19,7 +19,14 @@ public partial class ConcurrentOrchestration : OrchestratingAgent
 
     /// <summary>Initializes a new instance of the <see cref="ConcurrentOrchestration"/> class.</summary>
     /// <param name="subagents">The agents participating in the orchestration.</param>
-    public ConcurrentOrchestration(params AIAgent[] subagents) : base(subagents)
+    public ConcurrentOrchestration(params AIAgent[] subagents) : this(subagents, name: null)
+    {
+    }
+
+    /// <summary>Initializes a new instance of the <see cref="ConcurrentOrchestration"/> class.</summary>
+    /// <param name="subagents">The agents participating in the orchestration.</param>
+    /// <param name="name">An optional name for this orchestrating agent.</param>
+    public ConcurrentOrchestration(AIAgent[] subagents, string? name) : base(subagents, name)
     {
     }
 

@@ -1,35 +1,65 @@
-name: Python - Tests - Merge
+name: Python - Merge - Tests
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: ["main"]
   merge_group:
     branches: ["main"]
+  schedule:
+    - cron: "0 0 * * *" # Run at midnight UTC daily
 
 permissions:
-  contents: read
-  id-token: "write"
+  contents: write
+  id-token: write
 
 env:
   # Configure a constant location for the uv cache
   UV_CACHE_DIR: /tmp/.uv-cache
   RUN_INTEGRATION_TESTS: "true"
+  UV_SEMVER: "0.8.x"
 
 jobs:
+  paths-filter:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      pythonChanges: ${{ steps.filter.outputs.python}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            python:
+              - 'python/**'
+      # run only if 'python' files were changed
+      - name: python tests
+        if: steps.filter.outputs.python == 'true'
+        run: echo "Python file"
+      # run only if not 'python' files were changed
+      - name: not python tests
+        if: steps.filter.outputs.python != 'true'
+        run: echo "NOT python file"
   python-tests-main:
     name: Python Tests - Main
+    needs: paths-filter
+    if: github.event_name != 'pull_request' && needs.paths-filter.outputs.pythonChanges == 'true'
     runs-on: ${{ matrix.os }}
+    environment: ${{ matrix.environment }}
     strategy:
       fail-fast: true
       matrix:
         python-version: ["3.10"]
         os: [ubuntu-latest]
+        environment: ["integration"]
     env:
       UV_PYTHON: ${{ matrix.python-version }}
       OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
       OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
       PACKAGE_NAME: "main"
-    permissions:
-      contents: write
     defaults:
       run:
         working-directory: python
@@ -38,7 +68,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
-          version: "0.7.x"
+          version: ${{ env.UV_SEMVER }}
           enable-cache: true
           cache-suffix: ${{ runner.os }}-${{ matrix.python-version }}
           cache-dependency-glob: "**/uv.lock"
@@ -69,20 +99,21 @@ jobs:
 
   python-tests-azure:
     name: Python Tests - Azure
+    needs: paths-filter
+    if: github.event_name != 'pull_request' && needs.paths-filter.outputs.pythonChanges == 'true'
     runs-on: ${{ matrix.os }}
-    environment: "integration"
+    environment: ${{ matrix.environment }}
     strategy:
       fail-fast: true
       matrix:
         python-version: ["3.10"]
         os: [ubuntu-latest]
+        environment: ["integration"]
     env:
       UV_PYTHON: ${{ matrix.python-version }}
-      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
-      AZURE_OPENAI_ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
+      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
+      AZURE_OPENAI_ENDPOINT: ${{ secrets.AZUREOPENAI__ENDPOINT }}
       PACKAGE_NAME: "azure"
-    permissions:
-      contents: write
     defaults:
       run:
         working-directory: python
@@ -91,7 +122,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
-          version: "0.7.x"
+          version: ${{ env.UV_SEMVER }}
           enable-cache: true
           cache-suffix: ${{ runner.os }}-${{ matrix.python-version }}
           cache-dependency-glob: "**/uv.lock"
@@ -129,20 +160,21 @@ jobs:
 
   python-tests-foundry:
     name: Python Tests - Foundry
+    needs: paths-filter
+    if: github.event_name != 'pull_request' && needs.paths-filter.outputs.pythonChanges == 'true'
     runs-on: ${{ matrix.os }}
-    environment: "integration"
+    environment: ${{ matrix.environment }}
     strategy:
       fail-fast: true
       matrix:
         python-version: ["3.10"]
         os: [ubuntu-latest]
+        environment: ["integration"]
     env:
       UV_PYTHON: ${{ matrix.python-version }}
-      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
-      FOUNDRY_MODEL_DEPLOYMENT_NAME: ${{ vars.FOUNDRY_MODEL_DEPLOYMENT_NAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
+      FOUNDRY_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
       PACKAGE_NAME: "foundry"
-    permissions:
-      contents: write
     defaults:
       run:
         working-directory: python
@@ -151,7 +183,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
-          version: "0.7.x"
+          version: ${{ env.UV_SEMVER }}
           enable-cache: true
           cache-suffix: ${{ runner.os }}-${{ matrix.python-version }}
           cache-dependency-glob: "**/uv.lock"
@@ -186,3 +218,27 @@ jobs:
           display-options: fEX
           fail-on-empty: true
           title: Test results
+  python-integration-tests-check:
+    if: always()
+    runs-on: ubuntu-latest
+    needs:
+      [
+        python-tests-main,
+        python-tests-azure,
+        python-tests-foundry
+      ]
+    steps:
+
+      - name: Fail workflow if tests failed
+        id: check_tests_failed
+        if: contains(join(needs.*.result, ','), 'failure')
+        uses: actions/github-script@v7
+        with:
+          script: core.setFailed('Integration Tests Failed!')
+
+      - name: Fail workflow if tests cancelled
+        id: check_tests_cancelled
+        if: contains(join(needs.*.result, ','), 'cancelled')
+        uses: actions/github-script@v7
+        with:
+          script: core.setFailed('Integration Tests Cancelled!')

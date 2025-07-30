@@ -24,7 +24,17 @@ public sealed partial class GroupChatOrchestration : OrchestratingAgent
     /// </summary>
     /// <param name="manager">The manager that controls the flow of the group-chat.</param>
     /// <param name="agents">The agents participating in the orchestration.</param>
-    public GroupChatOrchestration(GroupChatManager manager, params AIAgent[] agents) : base(agents)
+    public GroupChatOrchestration(GroupChatManager manager, params AIAgent[] agents) : this(manager, agents, name: null)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="GroupChatOrchestration"/> class.
+    /// </summary>
+    /// <param name="manager">The manager that controls the flow of the group-chat.</param>
+    /// <param name="agents">The agents participating in the orchestration.</param>
+    /// <param name="name">An optional name for this orchestrating agent.</param>
+    public GroupChatOrchestration(GroupChatManager manager, AIAgent[] agents, string? name) : base(agents, name)
     {
         this._manager = Throw.IfNull(manager);
     }

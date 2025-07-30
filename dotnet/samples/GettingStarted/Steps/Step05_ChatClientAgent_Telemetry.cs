@@ -33,12 +33,8 @@ public sealed class Step05_ChatClientAgent_Telemetry(ITestOutputHelper output) :
             .AddConsoleExporter()
             .Build();
 
-        // Define agent
-        var agentOptions = new ChatClientAgentOptions
-        {
-            Name = "TelemetryAgent",
-            Instructions = "You are a helpful assistant.",
-        };
+        // Define agent options
+        var agentOptions = new ChatClientAgentOptions(name: "TelemetryAgent", instructions: "You are a helpful assistant.");
 
         // Create the server-side agent Id when applicable (depending on the provider).
         agentOptions.Id = await base.AgentCreateAsync(provider, agentOptions);
