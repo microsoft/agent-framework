@@ -1,14 +1,17 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import logging
 from collections import defaultdict
 from typing import Any, Protocol, runtime_checkable
 
-from .events import WorkflowEvent
+from ._events import WorkflowEvent
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
-class WorkflowContext(Protocol):
-    """Protocol for workflow context used by executors."""
+class RunnerContext(Protocol):
+    """Protocol for the execution context used by the runner."""
 
     async def send_message(self, source_id: str, message: Any) -> None:
         """Send a message from the executor to the context.
@@ -60,8 +63,8 @@ class WorkflowContext(Protocol):
         ...
 
 
-class InProcWorkflowContext(WorkflowContext):
-    """In-process execution context for testing purposes."""
+class InProcRunnerContext(RunnerContext):
+    """In-process execution context for local execution of workflows."""
 
     def __init__(self):
         """Initialize the in-process execution context."""
@@ -99,31 +102,3 @@ class InProcWorkflowContext(WorkflowContext):
     async def has_events(self) -> bool:
         """Check if there are any events in the context."""
         return bool(self._events)
-
-
-class NoopWorkflowContext(WorkflowContext):
-    """A no-operation execution context that does nothing."""
-
-    async def send_message(self, source_id: str, message: Any) -> None:
-        """Override to do nothing."""
-        pass
-
-    async def drain_messages(self) -> dict[str, list[Any]]:
-        """Override to return an empty dictionary."""
-        return {}
-
-    async def has_messages(self) -> bool:
-        """Override to always return False."""
-        return False
-
-    async def add_event(self, event: WorkflowEvent) -> None:
-        """Override to do nothing."""
-        pass
-
-    async def drain_events(self) -> list[WorkflowEvent]:
-        """Override to return an empty list."""
-        return []
-
-    async def has_events(self) -> bool:
-        """Override to always return False."""
-        return False

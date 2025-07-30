@@ -6,11 +6,12 @@ from enum import Enum
 from typing import Any
 
 from ._edge import Edge
+from ._events import WorkflowEvent
+from ._executor import Executor
 from ._runner import Runner
+from ._runner_context import InProcRunnerContext, RunnerContext
 from ._shared_state import SharedState
-from .events import WorkflowEvent
-from .executor import Executor, ExecutorContext
-from .workflow_context import InProcWorkflowContext, WorkflowContext
+from ._workflow_context import WorkflowContext
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -29,20 +30,23 @@ class Workflow:
         self,
         edges: list[Edge],
         start_executor: Executor[Any] | str,
-        workflow_context: WorkflowContext,
+        runner_context: RunnerContext,
     ):
         """Initialize the workflow with a list of edges.
 
         Args:
             edges: A list of directed edges representing the connections between nodes in the workflow.
             start_executor: The starting executor for the workflow, which can be an Executor instance or its ID.
-            workflow_context: The WorkflowContext instance to be used during workflow execution.
+            runner_context: The RunnerContext instance to be used during workflow execution.
         """
         self._edges = edges
         self._start_executor = start_executor
+        self._executors = {edge.source_id: edge.source for edge in edges} | {
+            edge.target_id: edge.target for edge in edges
+        }
 
         self._shared_state = SharedState()
-        self._runner = Runner(self._edges, self._shared_state, workflow_context)
+        self._runner = Runner(self._edges, self._shared_state, runner_context)
 
     async def run_stream(
         self,
@@ -59,18 +63,31 @@ class Workflow:
             executor = self._start_executor
 
         if isinstance(executor, str):
-            executor = self._runner.get_executor_by_id(executor)
+            executor = self._get_executor_by_id(executor)
 
         await executor.execute(
             message,
-            ExecutorContext(
+            WorkflowContext(
                 executor.id,
                 self._shared_state,
-                self._runner.workflow_context,
+                self._runner.context,
             ),
         )
         async for event in self._runner.run_until_convergence():
             yield event
+
+    def _get_executor_by_id(self, executor_id: str) -> Executor[Any]:
+        """Get an executor by its ID.
+
+        Args:
+            executor_id: The ID of the executor to retrieve.
+
+        Returns:
+            The Executor instance corresponding to the given ID.
+        """
+        if executor_id not in self._executors:
+            raise ValueError(f"Executor with ID {executor_id} not found.")
+        return self._executors[executor_id]
 
 
 class Activation(Enum):
@@ -90,7 +107,7 @@ class WorkflowBuilder:
         """Initialize the WorkflowBuilder with an empty list of edges and no starting executor."""
         self._edges: list[Edge] = []
         self._start_executor: Executor[Any] | str | None = None
-        self._workflow_context: WorkflowContext | None = None
+        self._runner_context: RunnerContext | None = None
 
     def add_edge(
         self,
@@ -188,13 +205,13 @@ class WorkflowBuilder:
         self._start_executor = executor
         return self
 
-    def set_workflow_context(self, workflow_context: WorkflowContext) -> "Self":
-        """Set the workflow context for the workflow.
+    def set_runner_context(self, runner_context: RunnerContext) -> "Self":
+        """Set the runner context for the workflow.
 
         Args:
-            workflow_context: The WorkflowContext instance to be used during workflow execution.
+            runner_context: The RunnerContext instance to be used during workflow execution.
         """
-        self._workflow_context = workflow_context
+        self._runner_context = runner_context
         return self
 
     def build(self) -> Workflow:
@@ -206,6 +223,6 @@ class WorkflowBuilder:
         if not self._start_executor:
             raise ValueError("Starting executor must be set before building the workflow.")
 
-        workflow_context = self._workflow_context or InProcWorkflowContext()
+        runner_context = self._runner_context or InProcRunnerContext()
 
-        return Workflow(self._edges, self._start_executor, workflow_context)
+        return Workflow(self._edges, self._start_executor, runner_context)

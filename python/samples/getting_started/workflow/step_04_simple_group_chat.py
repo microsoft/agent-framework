@@ -8,9 +8,9 @@ from agent_framework import ChatMessage, ChatResponse, ChatRole
 from agent_framework.workflow import (
     AgentRunEvent,
     Executor,
-    ExecutorContext,
     WorkflowBuilder,
     WorkflowCompletedEvent,
+    WorkflowContext,
     output_message_types,
 )
 
@@ -47,13 +47,13 @@ class RoundRobinGroupChatManager(Executor[list[ChatMessage]]):
         self._chat_history: list[ChatMessage] = []
 
     @override
-    async def _execute(self, data: list[ChatMessage], ctx: ExecutorContext) -> AgentSelectionDecision | None:
+    async def _execute(self, data: list[ChatMessage], ctx: WorkflowContext) -> None:
         """Execute the task by sending messages to the next executor in the round-robin sequence."""
         self._chat_history.extend(data)
 
         if self._should_terminate():
             await ctx.add_event(WorkflowCompletedEvent(data=self._chat_history))
-            return None
+            return
 
         self._current_round += 1
         selection_decision = AgentSelectionDecision(
@@ -61,8 +61,6 @@ class RoundRobinGroupChatManager(Executor[list[ChatMessage]]):
             selection=self._get_next_member(),
         )
         await ctx.send_message(selection_decision)
-
-        return selection_decision
 
     def _should_terminate(self) -> bool:
         """Determine if the group chat should terminate based on the current round."""
@@ -78,7 +76,7 @@ class FakeAgentExecutor(Executor[AgentSelectionDecision]):
     """An executor that simulates a group chat agent A."""
 
     @override
-    async def _execute(self, data: AgentSelectionDecision, ctx: ExecutorContext) -> list[ChatMessage]:
+    async def _execute(self, data: AgentSelectionDecision, ctx: WorkflowContext) -> None:
         """Simulate a response."""
         response = ChatResponse(
             messages=[
@@ -92,8 +90,6 @@ class FakeAgentExecutor(Executor[AgentSelectionDecision]):
 
         await ctx.add_event(AgentRunEvent(self.id, data=response))
         await ctx.send_message(response.messages)
-
-        return response.messages
 
 
 async def main():

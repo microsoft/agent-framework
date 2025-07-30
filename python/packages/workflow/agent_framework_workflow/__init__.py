@@ -2,8 +2,7 @@
 
 import importlib.metadata
 
-from .core import events
-from .core.events import (
+from ._events import (
     AgentRunEvent,
     AgentRunStreamingEvent,
     ExecutorCompleteEvent,
@@ -14,8 +13,9 @@ from .core.events import (
     WorkflowEvent,
     WorkflowStartedEvent,
 )
-from .core.executor import Executor, ExecutorContext, output_message_types
-from .core.workflow import WorkflowBuilder
+from ._executor import Executor, output_message_types
+from ._workflow import WorkflowBuilder
+from ._workflow_context import WorkflowContext
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -28,15 +28,14 @@ __all__ = [
     "AgentRunStreamingEvent",
     "Executor",
     "ExecutorCompleteEvent",
-    "ExecutorContext",
     "ExecutorEvent",
     "ExecutorInvokeEvent",
     "HumanInTheLoopEvent",
     "WorkflowBuilder",
     "WorkflowCompletedEvent",
+    "WorkflowContext",
     "WorkflowEvent",
     "WorkflowStartedEvent",
     "__version__",
-    "events",
     "output_message_types",
 ]

@@ -5,9 +5,9 @@ import sys
 
 from agent_framework.workflow import (
     Executor,
-    ExecutorContext,
     WorkflowBuilder,
     WorkflowCompletedEvent,
+    WorkflowContext,
     output_message_types,
 )
 
@@ -22,12 +22,11 @@ class UpperCaseExecutor(Executor[str]):
     """An executor that converts text to uppercase."""
 
     @override
-    async def _execute(self, data: str, ctx: ExecutorContext) -> str:
+    async def _execute(self, data: str, ctx: WorkflowContext) -> None:
         """Execute the task by converting the input string to uppercase."""
         result = data.upper()
 
         await ctx.send_message(result)
-        return result
 
 
 @output_message_types(str)
@@ -35,13 +34,12 @@ class ReverseTextExecutor(Executor[str]):
     """An executor that reverses text."""
 
     @override
-    async def _execute(self, data: str, ctx: ExecutorContext) -> str:
+    async def _execute(self, data: str, ctx: WorkflowContext) -> None:
         """Execute the task by reversing the input string."""
         result = data[::-1]
 
         await ctx.send_message(result)
         await ctx.add_event(WorkflowCompletedEvent(result))
-        return result
 
 
 async def main():

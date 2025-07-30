@@ -7,7 +7,7 @@ PACKAGE_NAME = "agent_framework_workflow"
 PACKAGE_EXTRA = "workflow"
 _IMPORTS = [
     "Executor",
-    "ExecutorContext",
+    "WorkflowContext",
     "__version__",
     "events",
     "WorkflowBuilder",

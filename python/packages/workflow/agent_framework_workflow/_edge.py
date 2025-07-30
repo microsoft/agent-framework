@@ -4,9 +4,10 @@ import asyncio
 from collections.abc import Callable
 from typing import Any, ClassVar
 
+from ._executor import Executor
+from ._runner_context import RunnerContext
 from ._shared_state import SharedState
-from .executor import Executor, ExecutorContext
-from .workflow_context import WorkflowContext
+from ._workflow_context import WorkflowContext
 
 
 class Edge:
@@ -54,10 +55,10 @@ class Edge:
             raise ValueError(f"Invalid edge ID format: {edge_id}")
         return ids[0], ids[1]
 
-    async def send_message(self, data: Any, shared_state: SharedState, ctx: WorkflowContext) -> None:
+    async def send_message(self, data: Any, shared_state: SharedState, ctx: RunnerContext) -> None:
         """Send a message along this edge."""
         if not self._edge_group_ids and self._should_route(data):
-            await self.target.execute(data, ExecutorContext(self.target.id, shared_state, ctx))
+            await self.target.execute(data, WorkflowContext(self.target.id, shared_state, ctx))
         elif self._edge_group_ids:
             # Logic:
             # 1. If not all edges in the edge group have data in the shared state,
@@ -81,7 +82,7 @@ class Edge:
                     )
 
             if messages:
-                await self.target.execute(messages, ExecutorContext(self.target.id, shared_state, ctx))
+                await self.target.execute(messages, WorkflowContext(self.target.id, shared_state, ctx))
 
     def _should_route(self, data: Any) -> bool:
         """Determine if message should be routed through this edge."""

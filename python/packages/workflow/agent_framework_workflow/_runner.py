@@ -7,10 +7,9 @@ from collections.abc import AsyncIterable
 from typing import Any
 
 from ._edge import Edge
+from ._events import WorkflowEvent
+from ._runner_context import RunnerContext
 from ._shared_state import SharedState
-from .events import WorkflowEvent
-from .executor import Executor
-from .workflow_context import WorkflowContext
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +21,7 @@ class Runner:
         self,
         edges: list[Edge],
         shared_state: SharedState,
-        ctx: WorkflowContext,
+        ctx: RunnerContext,
         max_iterations: int = 100,
     ):
         self._edge_map = self._parse_edges(edges)
@@ -30,12 +29,9 @@ class Runner:
         self._iteration = 0
         self._max_iterations = max_iterations
         self._shared_state = shared_state
-        self._executors = {edge.source_id: edge.source for edge in edges} | {
-            edge.target_id: edge.target for edge in edges
-        }
 
     @property
-    def workflow_context(self) -> WorkflowContext:
+    def context(self) -> RunnerContext:
         """Get the workflow context."""
         return self._ctx
 
@@ -99,16 +95,3 @@ class Runner:
         for edge in edges:
             parsed[edge.source_id].append(edge)
         return parsed
-
-    def get_executor_by_id(self, executor_id: str) -> Executor[Any]:
-        """Get an executor by its ID.
-
-        Args:
-            executor_id: The ID of the executor to retrieve.
-
-        Returns:
-            The Executor instance corresponding to the given ID.
-        """
-        if executor_id not in self._executors:
-            raise ValueError(f"Executor with ID {executor_id} not found.")
-        return self._executors[executor_id]

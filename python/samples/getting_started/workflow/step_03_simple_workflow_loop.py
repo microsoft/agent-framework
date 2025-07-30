@@ -7,9 +7,9 @@ from enum import Enum
 from agent_framework.workflow import (
     Executor,
     ExecutorCompleteEvent,
-    ExecutorContext,
     WorkflowBuilder,
     WorkflowCompletedEvent,
+    WorkflowContext,
     output_message_types,
 )
 
@@ -43,34 +43,28 @@ class GuessNumberExecutor(Executor[NumberSignal]):
         self._upper = bound[1]
 
     @override
-    async def _execute(self, data: NumberSignal, ctx: ExecutorContext) -> int:
+    async def _execute(self, data: NumberSignal, ctx: WorkflowContext) -> None:
         """Execute the task by guessing a number."""
         if data == NumberSignal.INIT:
             self._guess = (self._lower + self._upper) // 2
             await ctx.send_message(self._guess)
-            return self._guess
-
-        if data == NumberSignal.MATCHED:
+        elif data == NumberSignal.MATCHED:
             # The previous guess was correct.
             await ctx.add_event(WorkflowCompletedEvent(f"Guessed the number: {self._guess}"))
-            return self._guess
-
-        if data == NumberSignal.ABOVE:
+        elif data == NumberSignal.ABOVE:
             # The previous guess was too low.
             # Update the lower bound to the previous guess.
             # Generate a new number that is between the new bounds.
             self._lower = self._guess + 1
             self._guess = (self._lower + self._upper) // 2
             await ctx.send_message(self._guess)
-            return self._guess
-
-        # The previous guess was too high.
-        # Update the upper bound to the previous guess.
-        # Generate a new number that is between the new bounds.
-        self._upper = self._guess - 1
-        self._guess = (self._lower + self._upper) // 2
-        await ctx.send_message(self._guess)
-        return self._guess
+        else:
+            # The previous guess was too high.
+            # Update the upper bound to the previous guess.
+            # Generate a new number that is between the new bounds.
+            self._upper = self._guess - 1
+            self._guess = (self._lower + self._upper) // 2
+            await ctx.send_message(self._guess)
 
 
 @output_message_types(NumberSignal)
@@ -83,7 +77,7 @@ class JudgeExecutor(Executor[int]):
         self._target = target
 
     @override
-    async def _execute(self, data: int, ctx: ExecutorContext) -> NumberSignal:
+    async def _execute(self, data: int, ctx: WorkflowContext) -> None:
         """Judge the guessed number."""
         if data == self._target:
             result = NumberSignal.MATCHED
@@ -93,7 +87,6 @@ class JudgeExecutor(Executor[int]):
             result = NumberSignal.BELOW
 
         await ctx.send_message(result)
-        return result
 
 
 async def main():

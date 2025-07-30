@@ -5,9 +5,9 @@ import sys
 
 from agent_framework.workflow import (
     Executor,
-    ExecutorContext,
     WorkflowBuilder,
     WorkflowCompletedEvent,
+    WorkflowContext,
     output_message_types,
 )
 
@@ -27,12 +27,11 @@ class DetectSpamExecutor(Executor[str]):
         self._spam_keywords = spam_keywords
 
     @override
-    async def _execute(self, data: str, ctx: ExecutorContext) -> bool:
+    async def _execute(self, data: str, ctx: WorkflowContext) -> None:
         """Determine if the input string is spam."""
         result = any(keyword in data.lower() for keyword in self._spam_keywords)
 
         await ctx.send_message(result)
-        return result
 
 
 @output_message_types()
@@ -40,7 +39,7 @@ class RespondToMessageExecutor(Executor[bool]):
     """An executor that responds to a message based on spam detection."""
 
     @override
-    async def _execute(self, data: bool, ctx: ExecutorContext) -> None:
+    async def _execute(self, data: bool, ctx: WorkflowContext) -> None:
         """Respond with a message based on whether the input is spam."""
         if data is True:
             raise RuntimeError("Input is spam, cannot respond.")
@@ -56,7 +55,7 @@ class RemoveSpamExecutor(Executor[bool]):
     """An executor that removes spam messages."""
 
     @override
-    async def _execute(self, data: bool, ctx: ExecutorContext) -> None:
+    async def _execute(self, data: bool, ctx: WorkflowContext) -> None:
         """Remove the spam message."""
         if data is False:
             raise RuntimeError("Input is not spam, cannot remove.")
