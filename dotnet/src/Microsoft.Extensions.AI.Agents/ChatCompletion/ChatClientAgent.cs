@@ -187,7 +187,18 @@ public sealed class ChatClientAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public override AgentThread GetNewThread() => new(this._agentOptions?.ChatMessageStoreFactory?.Invoke());
+    public override AgentThread GetNewThread()
+    {
+        var thread = new AgentThread();
+
+        var store = this._agentOptions?.ChatMessageStoreFactory?.Invoke();
+        if (store is not null)
+        {
+            thread.MessageStore = store;
+        }
+
+        return thread;
+    }
 
     #region Private
 
@@ -338,17 +349,17 @@ public sealed class ChatClientAgent : AIAgent
 
         // If a user provided two different thread ids, via the thread object and options, we should throw
         // since we don't know which one to use.
-        if (!string.IsNullOrWhiteSpace(thread.Id) && !string.IsNullOrWhiteSpace(chatOptions?.ConversationId) && thread.Id != chatOptions.ConversationId)
+        if (!string.IsNullOrWhiteSpace(thread.ConversationId) && !string.IsNullOrWhiteSpace(chatOptions?.ConversationId) && thread.ConversationId != chatOptions.ConversationId)
         {
             throw new InvalidOperationException(
                 $"The {nameof(chatOptions.ConversationId)} provided via {nameof(Microsoft.Extensions.AI.ChatOptions)} is different to the id of the provided {nameof(AgentThread)}. Only one thread id can be used for a run.");
         }
 
         // Only clone and update ChatOptions if we have an id on the thread and we don't have the same one already in ChatOptions.
-        if (!string.IsNullOrWhiteSpace(thread.Id) && thread.Id != chatOptions?.ConversationId)
+        if (!string.IsNullOrWhiteSpace(thread.ConversationId) && thread.ConversationId != chatOptions?.ConversationId)
         {
             chatOptions ??= new();
-            chatOptions.ConversationId = thread.Id;
+            chatOptions.ConversationId = thread.ConversationId;
         }
 
         return (thread, chatOptions, threadMessages);
@@ -356,7 +367,7 @@ public sealed class ChatClientAgent : AIAgent
 
     private void UpdateThreadWithTypeAndConversationId(AgentThread thread, string? responseConversationId)
     {
-        if (string.IsNullOrWhiteSpace(responseConversationId) && !string.IsNullOrWhiteSpace(thread.Id))
+        if (string.IsNullOrWhiteSpace(responseConversationId) && !string.IsNullOrWhiteSpace(thread.ConversationId))
         {
             // We were passed a thread that is service managed, but we got no conversation id back from the chat client,
             // meaning the service doesn't support service managed threads, so the thread cannot be used with this service.
@@ -367,14 +378,14 @@ public sealed class ChatClientAgent : AIAgent
         {
             // If we got a conversation id back from the chat client, it means that the service supports server side thread storage
             // so we should update the thread with the new id.
-            thread.Id = responseConversationId;
+            thread.ConversationId = responseConversationId;
         }
-        else if (thread.ChatMessageStore is null)
+        else if (thread.MessageStore is null)
         {
             // If the service doesn't use service side thread storage (i.e. we got no id back from invocation), and
-            // the thread has no ChatMessageStore yet, we should update the thread to have a ChatMessageStore so that
+            // the thread has no MessageStore yet, we should update the thread to have a MessageStore so that
             // it has somewhere to store the chat history.
-            thread.ChatMessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke() ?? new InMemoryChatMessageStore();
+            thread.MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke() ?? new InMemoryChatMessageStore();
         }
     }
 

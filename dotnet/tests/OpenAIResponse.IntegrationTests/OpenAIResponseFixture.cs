@@ -31,8 +31,8 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
     {
         if (store)
         {
-            var inputItems = await this._openAIResponseClient.GetResponseInputItemsAsync(thread.Id).ToListAsync();
-            var response = await this._openAIResponseClient.GetResponseAsync(thread.Id);
+            var inputItems = await this._openAIResponseClient.GetResponseInputItemsAsync(thread.ConversationId).ToListAsync();
+            var response = await this._openAIResponseClient.GetResponseAsync(thread.ConversationId);
             var responseItem = response.Value.OutputItems.FirstOrDefault()!;
 
             // Take the messages that were the chat history leading up to the current response

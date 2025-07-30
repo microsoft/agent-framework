@@ -17,8 +17,8 @@ namespace Microsoft.Extensions.AI.Agents;
 /// </summary>
 public class AgentThread
 {
-    private string? _id;
-    private IChatMessageStore? _chatMessageStore;
+    private string? _conversationId;
+    private IChatMessageStore? _messageStore;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentThread"/> class.
@@ -28,36 +28,12 @@ public class AgentThread
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="AgentThread"/> class.
-    /// </summary>
-    /// <param name="id">The id of an existing server-side thread to continue.</param>
-    /// <remarks>
-    /// This constructor creates an <see cref="AgentThread"/> that supports storing chat history in the agent service.
-    /// </remarks>
-    public AgentThread(string id)
-    {
-        this._id = Throw.IfNullOrWhitespace(id);
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="AgentThread"/> class.
-    /// </summary>
-    /// <param name="chatMessageStore">The <see cref="IChatMessageStore"/> used to store chat messages.</param>
-    /// <remarks>
-    /// This constructor creates an <see cref="AgentThread"/> with an optional <see cref="IChatMessageStore"/> that can store messages if the agent service does not have built in support for this.
-    /// </remarks>
-    public AgentThread(IChatMessageStore? chatMessageStore)
-    {
-        this._chatMessageStore = chatMessageStore;
-    }
-
-    /// <summary>
     /// Gets or sets the id of the current thread to support cases where the thread is owned by the agent service.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Note that either <see cref="Id"/> or <see cref="ChatMessageStore"/> may be set, but not both.
-    /// If <see cref="ChatMessageStore"/> is not null, and <see cref="Id"/> is set, <see cref="ChatMessageStore"/>
+    /// Note that either <see cref="ConversationId"/> or <see cref="MessageStore "/> may be set, but not both.
+    /// If <see cref="MessageStore "/> is not null, and <see cref="ConversationId"/> is set, <see cref="MessageStore "/>
     /// will be reverted to null, and vice versa.
     /// </para>
     /// <para>
@@ -73,13 +49,13 @@ public class AgentThread
     /// to fork the thread with each iteration.
     /// </para>
     /// </remarks>
-    public string? Id
+    public string? ConversationId
     {
-        get { return this._id; }
+        get { return this._conversationId; }
         set
         {
-            this._id = Throw.IfNullOrWhitespace(value);
-            this._chatMessageStore = null;
+            this._conversationId = Throw.IfNullOrWhitespace(value);
+            this._messageStore = null;
         }
     }
 
@@ -88,8 +64,8 @@ public class AgentThread
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Note that either <see cref="Id"/> or <see cref="ChatMessageStore"/> may be set, but not both.
-    /// If <see cref="Id"/> is not null, and <see cref="ChatMessageStore"/> is set, <see cref="Id"/>
+    /// Note that either <see cref="ConversationId"/> or <see cref="MessageStore "/> may be set, but not both.
+    /// If <see cref="ConversationId"/> is not null, and <see cref="MessageStore "/> is set, <see cref="ConversationId"/>
     /// will be reverted to null, and vice versa.
     /// </para>
     /// <para>
@@ -100,13 +76,13 @@ public class AgentThread
     /// </list>
     /// </para>
     /// </remarks>
-    public IChatMessageStore? ChatMessageStore
+    public IChatMessageStore? MessageStore
     {
-        get { return this._chatMessageStore; }
+        get { return this._messageStore; }
         set
         {
-            this._chatMessageStore = Throw.IfNull(value);
-            this._id = null;
+            this._messageStore = Throw.IfNull(value);
+            this._conversationId = null;
         }
     }
 
@@ -117,9 +93,9 @@ public class AgentThread
     /// <returns>The messages from the <see cref="IChatMessageStore"/> in ascending chronological order, with the oldest message first.</returns>
     public virtual async IAsyncEnumerable<ChatMessage> GetMessagesAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        if (this._chatMessageStore is not null)
+        if (this._messageStore is not null)
         {
-            var messages = await this._chatMessageStore!.GetMessagesAsync(cancellationToken).ConfigureAwait(false);
+            var messages = await this._messageStore!.GetMessagesAsync(cancellationToken).ConfigureAwait(false);
             foreach (var message in messages)
             {
                 yield return message;
@@ -141,12 +117,12 @@ public class AgentThread
     {
         switch (this)
         {
-            case { ChatMessageStore: not null }:
+            case { MessageStore: not null }:
                 // If a store has been provided, we need to add the messages to the store.
-                await this._chatMessageStore!.AddMessagesAsync(newMessages, cancellationToken).ConfigureAwait(false);
+                await this._messageStore!.AddMessagesAsync(newMessages, cancellationToken).ConfigureAwait(false);
                 break;
 
-            case { Id: not null }:
+            case { ConversationId: not null }:
                 // If the thread messages are stored in the service
                 // there is nothing to do here, since invoking the
                 // service should already update the thread.
@@ -174,7 +150,7 @@ public class AgentThread
 
         if (state?.Id is string threadId)
         {
-            this.Id = threadId;
+            this.ConversationId = threadId;
 
             // Since we have an ID, we should not have a chat message store and we can return here.
             return;
@@ -186,13 +162,13 @@ public class AgentThread
             return;
         }
 
-        if (this._chatMessageStore is null)
+        if (this._messageStore is null)
         {
             // If we don't have a chat message store yet, create an in-memory one.
-            this._chatMessageStore = new InMemoryChatMessageStore();
+            this._messageStore = new InMemoryChatMessageStore();
         }
 
-        await this._chatMessageStore.DeserializeAsync(state!.StoreState.Value, jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
+        await this._messageStore.DeserializeAsync(state!.StoreState.Value, jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -205,13 +181,13 @@ public class AgentThread
     {
         jsonSerializerOptions ??= AgentAbstractionsJsonUtilities.DefaultOptions;
 
-        var storeState = this._chatMessageStore is null ?
+        var storeState = this._messageStore is null ?
             (JsonElement?)null :
-            await this._chatMessageStore.SerializeAsync(jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
+            await this._messageStore.SerializeAsync(jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
 
         var state = new ThreadState
         {
-            Id = this.Id,
+            Id = this.ConversationId,
             StoreState = storeState
         };
 

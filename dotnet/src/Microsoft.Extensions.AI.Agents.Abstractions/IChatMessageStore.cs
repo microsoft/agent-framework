@@ -54,7 +54,7 @@ public interface IChatMessageStore
     /// This method, together with <see cref="SerializeAsync(JsonSerializerOptions?, CancellationToken)"/> can be used to save and load messages from a persistent store
     /// if this store only has messages in memory.
     /// </remarks>
-    Task DeserializeAsync(JsonElement? serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default);
+    ValueTask DeserializeAsync(JsonElement? serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
@@ -66,5 +66,5 @@ public interface IChatMessageStore
     /// This method, together with <see cref="DeserializeAsync(JsonElement?, JsonSerializerOptions?, CancellationToken)"/> can be used to save and load messages from a persistent store
     /// if this store only has messages in memory.
     /// </remarks>
-    Task<JsonElement?> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default);
+    ValueTask<JsonElement?> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default);
 }

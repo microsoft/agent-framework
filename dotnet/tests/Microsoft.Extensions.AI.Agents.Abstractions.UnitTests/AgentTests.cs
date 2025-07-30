@@ -228,7 +228,7 @@ public class AgentTests
 
         var threadMock = new Mock<TestAgentThread>() { CallBase = true };
         threadMock.SetupAllProperties();
-        threadMock.Object.Id = "test-thread-id";
+        threadMock.Object.ConversationId = "test-thread-id";
         var agent = new MockAgent();
 
         await agent.NotifyThreadOfNewMessagesAsync(threadMock.Object, messages, cancellationToken);

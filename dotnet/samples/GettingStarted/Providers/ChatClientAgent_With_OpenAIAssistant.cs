@@ -59,7 +59,7 @@ public sealed class ChatClientAgent_With_OpenAIAssistant(ITestOutputHelper outpu
         }
 
         // Cleanup
-        await assistantClient.DeleteThreadAsync(thread.Id);
+        await assistantClient.DeleteThreadAsync(thread.ConversationId);
         await assistantClient.DeleteAssistantAsync(assistantId);
     }
 }

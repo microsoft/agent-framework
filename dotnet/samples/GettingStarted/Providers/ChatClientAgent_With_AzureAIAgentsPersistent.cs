@@ -51,7 +51,7 @@ public sealed class ChatClientAgent_With_AzureAIAgentsPersistent(ITestOutputHelp
         }
 
         // Cleanup
-        await persistentAgentsClient.Threads.DeleteThreadAsync(thread.Id);
+        await persistentAgentsClient.Threads.DeleteThreadAsync(thread.ConversationId);
         await persistentAgentsClient.Administration.DeleteAgentAsync(createPersistentAgentResponse.Value.Id);
     }
 }

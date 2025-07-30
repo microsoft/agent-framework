@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI.Agents;
 
@@ -15,11 +16,8 @@ public class InMemoryChatMessageStore : List<ChatMessage>, IChatMessageStore
     /// <inheritdoc />
     public Task AddMessagesAsync(IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken)
     {
-        if (messages is { Count: > 0 })
-        {
-            this.AddRange(messages);
-        }
-
+        _ = Throw.IfNull(messages);
+        this.AddRange(messages);
         return Task.CompletedTask;
     }
 
@@ -30,11 +28,11 @@ public class InMemoryChatMessageStore : List<ChatMessage>, IChatMessageStore
     }
 
     /// <inheritdoc />
-    public Task DeserializeAsync(JsonElement? serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public ValueTask DeserializeAsync(JsonElement? serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
         if (serializedThread is null)
         {
-            return Task.CompletedTask;
+            return new ValueTask();
         }
 
         jsonSerializerOptions ??= AgentAbstractionsJsonUtilities.DefaultOptions;
@@ -48,11 +46,11 @@ public class InMemoryChatMessageStore : List<ChatMessage>, IChatMessageStore
             this.AddRange(messages);
         }
 
-        return Task.CompletedTask;
+        return new ValueTask();
     }
 
     /// <inheritdoc />
-    public Task<JsonElement?> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public ValueTask<JsonElement?> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
         jsonSerializerOptions ??= AgentAbstractionsJsonUtilities.DefaultOptions;
 
@@ -61,7 +59,7 @@ public class InMemoryChatMessageStore : List<ChatMessage>, IChatMessageStore
             Messages = this,
         };
 
-        return Task.FromResult<JsonElement?>(JsonSerializer.SerializeToElement(state, jsonSerializerOptions.GetTypeInfo(typeof(StoreState))));
+        return new ValueTask<JsonElement?>(JsonSerializer.SerializeToElement(state, jsonSerializerOptions.GetTypeInfo(typeof(StoreState))));
     }
 
     internal class StoreState

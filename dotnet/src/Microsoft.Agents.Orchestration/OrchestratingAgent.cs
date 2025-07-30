@@ -70,7 +70,7 @@ public abstract partial class OrchestratingAgent : AIAgent
 
         if (thread is not null)
         {
-            if (thread.ChatMessageStore is null)
+            if (thread.MessageStore  is null)
             {
                 throw new InvalidOperationException("An agent service managed thread is not supported by this agent.");
             }

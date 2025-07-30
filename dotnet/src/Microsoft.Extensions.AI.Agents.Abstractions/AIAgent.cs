@@ -60,7 +60,7 @@ public abstract class AIAgent
     /// <param name="jsonSerializerOptions">Optional <see cref="JsonSerializerOptions"/> to use for deserializing the thread state.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>The deserialized <see cref="AgentThread"/> instance.</returns>
-    public virtual async Task<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public virtual async ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
         var thread = this.GetNewThread();
         await thread.DeserializeAsync(serializedThread, jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
