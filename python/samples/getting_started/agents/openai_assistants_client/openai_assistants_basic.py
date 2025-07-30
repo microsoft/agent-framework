@@ -5,7 +5,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import ChatClientAgent
-from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIAssistantsClient
 from pydantic import Field
 
 
@@ -21,10 +21,10 @@ async def non_streaming_example() -> None:
     """Example of non-streaming response (get the complete result at once)."""
     print("=== Non-streaming Response Example ===")
 
-    # Since no Agent ID is provided, the agent will be automatically created
+    # Since no assistant ID is provided, the assistant will be automatically created
     # and deleted after getting a response
     async with ChatClientAgent(
-        chat_client=FoundryChatClient(),
+        chat_client=OpenAIAssistantsClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     ) as agent:
@@ -38,10 +38,10 @@ async def streaming_example() -> None:
     """Example of streaming response (get results as they are generated)."""
     print("=== Streaming Response Example ===")
 
-    # Since no Agent ID is provided, the agent will be automatically created
+    # Since no assistant ID is provided, the assistant will be automatically created
     # and deleted after getting a response
     async with ChatClientAgent(
-        chat_client=FoundryChatClient(),
+        chat_client=OpenAIAssistantsClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     ) as agent:
@@ -55,7 +55,7 @@ async def streaming_example() -> None:
 
 
 async def main() -> None:
-    print("=== Basic Foundry Chat Client Agent Example ===")
+    print("=== Basic OpenAI Assistants Chat Client Agent Example ===")
 
     await non_streaming_example()
     await streaming_example()

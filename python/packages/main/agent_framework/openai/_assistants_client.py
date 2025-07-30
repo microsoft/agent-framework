@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
+import sys
 from collections.abc import AsyncIterable, Mapping, MutableMapping, MutableSequence
 from typing import Any, ClassVar
 
@@ -38,6 +39,13 @@ from .._types import (
 )
 from ..exceptions import ServiceInitializationError
 from ._shared import OpenAIConfigBase, OpenAISettings
+
+if sys.version_info >= (3, 11):
+    from typing import Self  # pragma: no cover
+else:
+    from typing_extensions import Self  # pragma: no cover
+
+__all__ = ["OpenAIAssistantsClient"]
 
 
 @use_tool_calling
@@ -111,6 +119,18 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
             default_headers=default_headers,
             client=async_client,
         )
+
+    async def __aenter__(self) -> "Self":
+        """Async context manager entry."""
+        return self
+
+    async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
+        """Async context manager exit - clean up any assistants we created."""
+        await self.close()
+
+    async def close(self) -> None:
+        """Clean up any assistants we created."""
+        await self._cleanup_assistant_if_needed()
 
     async def _inner_get_response(
         self,
@@ -236,7 +256,6 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
         async with stream as response_stream:
             async for response in response_stream:
                 if response.event == "thread.run.created":
-                    response_id = response.data.id
                     yield ChatResponseUpdate(
                         contents=[],
                         conversation_id=thread_id,
@@ -245,6 +264,8 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
                         response_id=response_id,
                         role=ChatRole.ASSISTANT,
                     )
+                elif response.event == "thread.run.step.created" and isinstance(response.data, RunStep):
+                    response_id = response.data.run_id
                 elif response.event == "thread.message.delta" and isinstance(response.data, MessageDeltaEvent):
                     delta = response.data.delta
                     role = ChatRole.USER if delta.role == "user" else ChatRole.ASSISTANT
@@ -272,7 +293,7 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
                         )
                 elif (
                     response.event == "thread.run.completed"
-                    and isinstance(response.data, RunStep)
+                    and isinstance(response.data, Run)
                     and response.data.usage is not None
                 ):
                     usage = response.data.usage
@@ -334,7 +355,9 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
             run_options["model"] = chat_options.ai_model_id
             run_options["top_p"] = chat_options.top_p
             run_options["temperature"] = chat_options.temperature
-            run_options["parallel_tool_calls"] = chat_options.allow_multiple_tool_calls
+
+            if chat_options.allow_multiple_tool_calls is not None:
+                run_options["parallel_tool_calls"] = chat_options.allow_multiple_tool_calls
 
             if chat_options.tool_choice is not None:
                 tool_definitions: list[MutableMapping[str, Any]] = []
