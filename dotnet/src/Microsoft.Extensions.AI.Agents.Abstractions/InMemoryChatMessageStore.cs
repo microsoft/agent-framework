@@ -44,9 +44,9 @@ internal class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageStore
     }
 
     /// <inheritdoc />
-    public ValueTask DeserializeAsync(JsonElement? serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public ValueTask DeserializeAsync(JsonElement? serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        if (serializedThread is null)
+        if (serializedStoreState is null)
         {
             return new ValueTask();
         }
@@ -54,7 +54,7 @@ internal class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageStore
         jsonSerializerOptions ??= AgentAbstractionsJsonUtilities.DefaultOptions;
 
         var state = JsonSerializer.Deserialize(
-            serializedThread.Value,
+            serializedStoreState.Value,
             jsonSerializerOptions.GetTypeInfo(typeof(StoreState))) as StoreState;
 
         if (state?.Messages is { Count: > 0 } messages)

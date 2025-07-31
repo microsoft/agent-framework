@@ -125,10 +125,10 @@ public sealed class Step07_ChatClientAgent_3rdPartyThreadStorage(ITestOutputHelp
             return new ValueTask<JsonElement?>(JsonSerializer.SerializeToElement(this._threadId));
         }
 
-        public ValueTask DeserializeAsync(JsonElement? serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        public ValueTask DeserializeAsync(JsonElement? serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         {
             // Here we can deserialize the thread id so that we can access the same messages as before the suspension.
-            this._threadId = JsonSerializer.Deserialize<string>((JsonElement)serializedThread!);
+            this._threadId = JsonSerializer.Deserialize<string>((JsonElement)serializedStoreState!);
             return new ValueTask();
         }
 
