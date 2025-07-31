@@ -29,12 +29,7 @@
       <BuildType Solution="Publish|*" Project="Release" />
     </Project>
   </Folder>
-  <Folder Name="/Samples/">
-    <Project Path="samples/GettingStarted/GettingStarted.csproj">
-      <BuildType Solution="Publish|*" Project="Debug" />
-    </Project>
-  </Folder>
-  <Folder Name="/Samples/HelloHttpApi/">
+  <Folder Name="/Demos/HelloHttpApi/">
     <Project Path="samples/HelloHttpApi/HelloHttpApi.ApiService/HelloHttpApi.ApiService.csproj">
       <BuildType Solution="Publish|*" Project="Release" />
     </Project>
@@ -46,6 +41,11 @@
     </Project>
     <Project Path="samples/HelloHttpApi/HelloHttpApi.Web/HelloHttpApi.Web.csproj">
       <BuildType Solution="Publish|*" Project="Release" />
+    </Project>
+  </Folder>
+  <Folder Name="/Samples/">
+    <Project Path="samples/GettingStarted/GettingStarted.csproj">
+      <BuildType Solution="Publish|*" Project="Debug" />
     </Project>
   </Folder>
   <Folder Name="/Solution Items/">
