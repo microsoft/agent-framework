@@ -9,7 +9,7 @@ To download nightly builds follow the following steps:
 1. You will need a GitHub account to complete these steps.
 1. Create a GitHub Personal Access Token with the `read:packages` scope using these [instructions](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-personal-access-token-classic).
 1. If your account is part of the Microsoft organization then you must authorize the `Microsoft` organization as a single sign-on organization.
-    1. Click the "Configure SSO" next to the Person Access Token you just created and then authorize `Microsoft`.
+    1. Click the "Configure SSO" next to the Personal Access Token you just created and then authorize `Microsoft`.
 1. Use the following command to add the Microsoft GitHub Packages source to your NuGet configuration:
 
     ```powershell
