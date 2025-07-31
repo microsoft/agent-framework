@@ -112,9 +112,8 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
         => new OpenAIResponseClient(TestConfiguration.OpenAI.ChatModelId, TestConfiguration.OpenAI.ApiKey)
             .AsIChatClient();
 
-    private IChatClient GetAzureAIAgentPersistentClient(ChatClientAgentOptions options)
-        => new PersistentAgentsClient(TestConfiguration.AzureAI.Endpoint, new AzureCliCredential())
-            .AsIChatClient(options.Id!);
+    private NewPersistentAgentsChatClient GetAzureAIAgentPersistentClient(ChatClientAgentOptions options)
+        => new(new PersistentAgentsClient(TestConfiguration.AzureAI.Endpoint, new AzureCliCredential()), options.Id!);
 
     private NewOpenAIAssistantChatClient GetOpenAIAssistantChatClient(ChatClientAgentOptions options)
         => new(new(TestConfiguration.OpenAI.ApiKey), options.Id!, null);
