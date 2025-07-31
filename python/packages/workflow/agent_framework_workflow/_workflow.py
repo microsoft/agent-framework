@@ -1,8 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import sys
-from collections.abc import AsyncIterable, Callable
-from enum import Enum
+from collections.abc import AsyncIterable, Callable, Sequence
 from typing import Any
 
 from ._edge import Edge
@@ -90,13 +89,6 @@ class Workflow:
         return self._executors[executor_id]
 
 
-class Activation(Enum):
-    """Enum to represent the activation condition for edges in a fan in."""
-
-    WhenAll = "when_all"
-    WhenAny = "when_any"
-
-
 class WorkflowBuilder:
     """A builder class for constructing workflows.
 
@@ -127,7 +119,7 @@ class WorkflowBuilder:
         self._edges.append(Edge(source, target, condition))
         return self
 
-    def add_fan_out_edges(self, source: Executor[Any], targets: list[Executor[Any]]) -> "Self":
+    def add_fan_out_edges(self, source: Executor[Any], targets: Sequence[Executor[Any]]) -> "Self":
         """Add multiple edges to the workflow.
 
         Args:
@@ -140,26 +132,26 @@ class WorkflowBuilder:
 
     def add_fan_in_edges(
         self,
-        sources: list[Executor[Any]],
+        sources: Sequence[Executor[Any]],
         target: Executor[Any],
-        activation: Activation = Activation.WhenAll,
     ) -> "Self":
         """Add multiple edges from sources to a single target executor.
+
+        The edges will be grouped together for synchronized processing, meaning
+        the target executor will only be executed once all source executors have completed.
 
         Args:
             sources: A list of source executors for the edges.
             target: The target executor for the edges.
-            activation: The activation condition for the edges, either WhenAll or WhenAny.
         """
         edges = [Edge(source, target) for source in sources]
 
-        if activation == Activation.WhenAll:
-            # Set the edge groups for the edges to ensure they are processed together.
-            for i, edge in enumerate(edges):
-                group_ids: list[str] = []
-                group_ids.extend([e.id for e in edges[0:i]])
-                group_ids.extend([e.id for e in edges[i + 1 :]])
-                edge.set_edge_group(group_ids)
+        # Set the edge groups for the edges to ensure they are processed together.
+        for i, edge in enumerate(edges):
+            group_ids: list[str] = []
+            group_ids.extend([e.id for e in edges[0:i]])
+            group_ids.extend([e.id for e in edges[i + 1 :]])
+            edge.set_edge_group(group_ids)
 
         self._edges.extend(edges)
 
@@ -167,7 +159,7 @@ class WorkflowBuilder:
 
     def add_chain(
         self,
-        executors: list[Executor[Any]],
+        executors: Sequence[Executor[Any]],
     ) -> "Self":
         """Add a chain of executors to the workflow.
 
