@@ -44,7 +44,7 @@ internal class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageStore
     }
 
     /// <inheritdoc />
-    public ValueTask DeserializeAsync(JsonElement? serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public ValueTask DeserializeStateAsync(JsonElement? serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
         if (serializedStoreState is null)
         {
@@ -64,7 +64,7 @@ internal class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageStore
     }
 
     /// <inheritdoc />
-    public ValueTask<JsonElement?> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public ValueTask<JsonElement?> SerializeStateAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
         StoreState state = new()
         {

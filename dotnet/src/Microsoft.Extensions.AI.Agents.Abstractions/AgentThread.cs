@@ -59,8 +59,15 @@ public class AgentThread
                 return;
             }
 
+            if (this._messageStore is not null)
+            {
+                // If we have a message store already, we shouldn't switch the thread to use a conversation id
+                // since it means that the thread contents will essentially be deleted, and the thread will not work
+                // with the original agent anymore.
+                throw new InvalidOperationException("Only the ConversationId or MessageStore may be set, but not both and switching from one to another is not supported.");
+            }
+
             this._conversationId = Throw.IfNullOrWhitespace(value);
-            this._messageStore = null;
         }
     }
 
@@ -91,8 +98,14 @@ public class AgentThread
                 return;
             }
 
+            if (!string.IsNullOrWhiteSpace(this._conversationId))
+            {
+                // If we have a conversation id already, we shouldn't switch the thread to use a message store
+                // since it means that the thread will not work with the original agent anymore.
+                throw new InvalidOperationException("Only the ConversationId or MessageStore may be set, but not both and switching from one to another is not supported.");
+            }
+
             this._messageStore = Throw.IfNull(value);
-            this._conversationId = null;
         }
     }
 
@@ -155,7 +168,7 @@ public class AgentThread
     /// <param name="serializedThread">A <see cref="JsonElement"/> representing the state of the thread.</param>
     /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    public virtual async Task DeserializeAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    protected internal virtual async Task DeserializeAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
         var state = JsonSerializer.Deserialize(
             serializedThread,
@@ -181,7 +194,7 @@ public class AgentThread
             this._messageStore = new InMemoryChatMessageStore();
         }
 
-        await this._messageStore.DeserializeAsync(state!.StoreState.Value, jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
+        await this._messageStore.DeserializeStateAsync(state!.StoreState.Value, jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -194,7 +207,7 @@ public class AgentThread
     {
         var storeState = this._messageStore is null ?
             (JsonElement?)null :
-            await this._messageStore.SerializeAsync(jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
+            await this._messageStore.SerializeStateAsync(jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
 
         var state = new ThreadState
         {

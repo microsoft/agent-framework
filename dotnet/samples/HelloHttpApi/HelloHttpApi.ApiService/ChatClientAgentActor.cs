@@ -34,8 +34,7 @@ internal sealed class ChatClientAgentActor(
             if (threadResult.Value is { } threadJson)
             {
                 // Deserialize the thread state if it exist
-                this._thread = new();
-                await this._thread.DeserializeAsync(threadJson, cancellationToken: cancellationToken);
+                this._thread = await agent.DeserializeThreadAsync(threadJson, cancellationToken: cancellationToken).ConfigureAwait(false);
             }
         }
 

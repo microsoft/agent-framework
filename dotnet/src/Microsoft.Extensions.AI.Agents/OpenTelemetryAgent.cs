@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Runtime.CompilerServices;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Shared.Diagnostics;
@@ -75,10 +74,6 @@ public sealed class OpenTelemetryAgent : AIAgent, IDisposable
 
     /// <inheritdoc/>
     public override AgentThread GetNewThread() => this._innerAgent.GetNewThread();
-
-    /// <inheritdoc/>
-    public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-        => this._innerAgent.DeserializeThreadAsync(serializedThread, jsonSerializerOptions, cancellationToken);
 
     /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(

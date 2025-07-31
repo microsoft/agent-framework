@@ -63,7 +63,7 @@ public class InMemoryChatMessageStoreTests
 
         var emptyObject = JsonSerializer.Deserialize<JsonElement>("{}");
 
-        await newStore.DeserializeAsync(emptyObject);
+        await newStore.DeserializeStateAsync(emptyObject);
 
         Assert.Empty(newStore);
     }
@@ -77,10 +77,10 @@ public class InMemoryChatMessageStoreTests
             new ChatMessage(ChatRole.Assistant, "B")
         };
 
-        var jsonElement = await store.SerializeAsync();
+        var jsonElement = await store.SerializeStateAsync();
         var newStore = new InMemoryChatMessageStore();
 
-        await newStore.DeserializeAsync(jsonElement);
+        await newStore.DeserializeStateAsync(jsonElement);
 
         Assert.Equal(2, newStore.Count);
         Assert.Equal("A", newStore[0].Text);

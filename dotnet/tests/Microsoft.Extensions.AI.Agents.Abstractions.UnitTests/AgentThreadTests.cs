@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -25,34 +26,60 @@ public class AgentThreadTests
     }
 
     [Fact]
-    public void SetIdResetsChatMessageStoreAndRoundtrips()
+    public void SetConversationIdRoundtrips()
+    {
+        // Arrange
+        var thread = new AgentThread();
+        var conversationid = "test-thread-id";
+
+        // Act
+        thread.ConversationId = conversationid;
+
+        // Assert
+        Assert.Equal(conversationid, thread.ConversationId);
+        Assert.Null(thread.MessageStore);
+    }
+
+    [Fact]
+    public void SetChatMessageStoreRoundtrips()
+    {
+        // Arrange
+        var thread = new AgentThread();
+        var messageStore = new InMemoryChatMessageStore();
+
+        // Act
+        thread.MessageStore = messageStore;
+
+        // Assert
+        Assert.Same(messageStore, thread.MessageStore);
+        Assert.Null(thread.ConversationId);
+    }
+
+    [Fact]
+    public void SetConversationIdThrowsWhenMessageStoreIsSet()
     {
         // Arrange
         var thread = new AgentThread();
         thread.MessageStore = new InMemoryChatMessageStore();
 
-        // Act
-        thread.ConversationId = "new-thread-id";
-
-        // Assert
-        Assert.Equal("new-thread-id", thread.ConversationId);
-        Assert.Null(thread.MessageStore);
+        // Act & Assert
+        var exception = Assert.Throws<InvalidOperationException>(() => thread.ConversationId = "new-thread-id");
+        Assert.Equal("Only the ConversationId or MessageStore may be set, but not both and switching from one to another is not supported.", exception.Message);
+        Assert.NotNull(thread.MessageStore);
     }
 
     [Fact]
-    public void SetChatMessageStoreResetsIdAndRoundtrips()
+    public void SetChatMessageStoreThrowsWhenConversationIdIsSet()
     {
         // Arrange
         var thread = new AgentThread();
         thread.ConversationId = "existing-thread-id";
         var store = new InMemoryChatMessageStore();
 
-        // Act
-        thread.MessageStore = store;
-
-        // Assert
-        Assert.Equal(store, thread.MessageStore);
-        Assert.Null(thread.ConversationId);
+        // Act & Assert
+        var exception = Assert.Throws<InvalidOperationException>(() => thread.MessageStore = store);
+        Assert.Equal("Only the ConversationId or MessageStore may be set, but not both and switching from one to another is not supported.", exception.Message);
+        Assert.NotNull(thread.ConversationId);
     }
 
     #endregion Constructor and Property Tests
@@ -277,7 +304,7 @@ public class AgentThreadTests
 
         var messageStoreMock = new Mock<IChatMessageStore>();
         messageStoreMock
-            .Setup(m => m.SerializeAsync(options, It.IsAny<CancellationToken>()))
+            .Setup(m => m.SerializeStateAsync(options, It.IsAny<CancellationToken>()))
             .ReturnsAsync(storeStateElement);
         thread.MessageStore = messageStoreMock.Object;
 
@@ -295,7 +322,7 @@ public class AgentThreadTests
         Assert.True(storeStateProperty.TryGetProperty("Key", out var keyProperty));
         Assert.Equal("TestValue", keyProperty.GetString());
 
-        messageStoreMock.Verify(m => m.SerializeAsync(options, It.IsAny<CancellationToken>()), Times.Once);
+        messageStoreMock.Verify(m => m.SerializeStateAsync(options, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     #endregion Serialize Tests

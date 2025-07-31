@@ -51,10 +51,10 @@ public interface IChatMessageStore
     /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <remarks>
-    /// This method, together with <see cref="SerializeAsync(JsonSerializerOptions?, CancellationToken)"/> can be used to save and load messages from a persistent store
+    /// This method, together with <see cref="SerializeStateAsync(JsonSerializerOptions?, CancellationToken)"/> can be used to save and load messages from a persistent store
     /// if this store only has messages in memory.
     /// </remarks>
-    ValueTask DeserializeAsync(JsonElement? serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default);
+    ValueTask DeserializeStateAsync(JsonElement? serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
@@ -63,8 +63,8 @@ public interface IChatMessageStore
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
     /// <remarks>
-    /// This method, together with <see cref="DeserializeAsync(JsonElement?, JsonSerializerOptions?, CancellationToken)"/> can be used to save and load messages from a persistent store
+    /// This method, together with <see cref="DeserializeStateAsync(JsonElement?, JsonSerializerOptions?, CancellationToken)"/> can be used to save and load messages from a persistent store
     /// if this store only has messages in memory.
     /// </remarks>
-    ValueTask<JsonElement?> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default);
+    ValueTask<JsonElement?> SerializeStateAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default);
 }
