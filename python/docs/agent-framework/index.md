@@ -76,8 +76,9 @@ Get Started
 
 Implementations of connectors and other external components for the Agent Framework. These extensions allow you to connect to various AI models, services, and tools, enhancing the capabilities of your agents.
 
-* {py:class}`~agent-framework-openai` for using OpenAI models.
-* {py:class}`~agent-framework-azure` for using Azure services.
+* {py:mod}`~agent-framework.azure` for using Azure services.
+* {py:mod}`~agent-framework.foundry` for using Foundry models.
+* {py:mod}`~agent-framework.openai` for using OpenAI models.
 +++
 
 :::

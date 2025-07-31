@@ -18,11 +18,20 @@ from ._pydantic import AFBaseSettings
 if TYPE_CHECKING:  # pragma: no cover
     from opentelemetry.util._decorator import _AgnosticContextManager  # type: ignore[reportPrivateUsage]
 
+    from ._agents import AgentThread, AIAgent, ChatClientAgent
     from ._clients import ChatClientBase
     from ._tools import AIFunction
-    from ._types import ChatMessage, ChatOptions, ChatResponse, ChatResponseUpdate
+    from ._types import (
+        AgentRunResponse,
+        AgentRunResponseUpdate,
+        ChatMessage,
+        ChatOptions,
+        ChatResponse,
+        ChatResponseUpdate,
+    )
 
 TChatClientBase = TypeVar("TChatClientBase", bound="ChatClientBase")
+TChatClientAgent = TypeVar("TChatClientAgent", bound="ChatClientAgent")
 
 tracer = get_tracer("agent_framework")
 logger = get_logger()
@@ -32,6 +41,7 @@ __all__ = [
     "APP_INFO",
     "USER_AGENT_KEY",
     "prepend_agent_framework_to_user_agent",
+    "use_agent_telemetry",
     "use_telemetry",
 ]
 
@@ -66,7 +76,8 @@ logger.addFilter(ChatMessageListTimestampFilter())
 class GenAIAttributes(str, Enum):
     """Enum to capture the attributes used in OpenTelemetry for Generative AI.
 
-    Based on: https://opentelemetry.io/docs/concepts/semantic-conventions/
+    Based on: https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/
+    and https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-agent-spans/
 
     Should always be used, with `.value` to get the string representation.
     """
@@ -74,24 +85,40 @@ class GenAIAttributes(str, Enum):
     OPERATION = "gen_ai.operation.name"
     SYSTEM = "gen_ai.system"
     ERROR_TYPE = "error.type"
+    PORT = "server.port"
+    ADDRESS = "server.address"
+    SPAN_ID = "SpanId"
+    TRACE_ID = "TraceId"
+    # Request attributes
     MODEL = "gen_ai.request.model"
     SEED = "gen_ai.request.seed"
-    PORT = "server.port"
     ENCODING_FORMATS = "gen_ai.request.encoding_formats"
     FREQUENCY_PENALTY = "gen_ai.request.frequency_penalty"
     MAX_TOKENS = "gen_ai.request.max_tokens"
+    PRESENCE_PENALTY = "gen_ai.request.presence_penalty"
     STOP_SEQUENCES = "gen_ai.request.stop_sequences"
     TEMPERATURE = "gen_ai.request.temperature"
     TOP_K = "gen_ai.request.top_k"
     TOP_P = "gen_ai.request.top_p"
-    FINISH_REASON = "gen_ai.response.finish_reason"
+    CHOICE_COUNT = "gen_ai.request.choice.count"
+    # Response attributes
+    FINISH_REASONS = "gen_ai.response.finish_reasons"
     RESPONSE_ID = "gen_ai.response.id"
+    RESPONSE_MODEL = "gen_ai.response.model"
+    # Usage attributes
     INPUT_TOKENS = "gen_ai.usage.input_tokens"
     OUTPUT_TOKENS = "gen_ai.usage.output_tokens"
+    # Tool attributes
     TOOL_CALL_ID = "gen_ai.tool.call.id"
     TOOL_DESCRIPTION = "gen_ai.tool.description"
     TOOL_NAME = "gen_ai.tool.name"
-    ADDRESS = "server.address"
+    AGENT_ID = "gen_ai.agent.id"
+    # Agent attributes
+    AGENT_NAME = "gen_ai.agent.name"
+    AGENT_DESCRIPTION = "gen_ai.agent.description"
+    CONVERSATION_ID = "gen_ai.conversation.id"
+    DATA_SOURCE_ID = "gen_ai.data_source.id"
+    OUTPUT_TYPE = "gen_ai.output.type"
 
     # Activity events
     EVENT_NAME = "event.name"
@@ -103,12 +130,15 @@ class GenAIAttributes(str, Enum):
     PROMPT = "gen_ai.prompt"
 
     # Operation names
-    CHAT_COMPLETION_OPERATION = "chat.completions"
-    CHAT_STREAMING_COMPLETION_OPERATION = "chat.streaming_completions"
+    CHAT_COMPLETION_OPERATION = "chat"
     TOOL_EXECUTION_OPERATION = "execute_tool"
+    #    Describes GenAI agent creation and is usually applicable when working with remote agent services.
+    AGENT_CREATE_OPERATION = "create_agent"
+    AGENT_INVOKE_OPERATION = "invoke_agent"
 
     # Agent Framework specific attributes
     MEASUREMENT_FUNCTION_TAG_NAME = "agent_framework.function.name"
+    AGENT_FRAMEWORK_GEN_AI_SYSTEM = "microsoft.agent_framework"
 
 
 ROLE_EVENT_MAP = {
@@ -149,6 +179,9 @@ def prepend_agent_framework_to_user_agent(headers: dict[str, Any]) -> dict[str, 
     )
 
     return headers
+
+
+# region Telemetry utils
 
 
 class ModelDiagnosticSettings(AFBaseSettings):
@@ -228,6 +261,15 @@ def start_as_current_span(
     )
 
 
+def _set_error(span: Span, error: Exception) -> None:
+    """Set an error for spans."""
+    span.set_attribute(GenAIAttributes.ERROR_TYPE.value, str(type(error)))
+    span.set_status(StatusCode.ERROR, repr(error))
+
+
+# region ChatClient
+
+
 def _trace_chat_get_response(
     completion_func: Callable[..., Awaitable["ChatResponse"]],
 ) -> Callable[..., Awaitable["ChatResponse"]]:
@@ -270,7 +312,7 @@ def _trace_chat_get_response(
                 _set_chat_response_output(current_span, response, self.MODEL_PROVIDER_NAME)
                 return response
             except Exception as exception:
-                _set_chat_response_error(current_span, exception)
+                _set_error(current_span, exception)
                 raise
 
     # Mark the wrapper decorator as a chat completion decorator
@@ -306,7 +348,7 @@ def _trace_chat_get_streaming_response(
 
         with use_span(
             _get_chat_response_span(
-                GenAIAttributes.CHAT_STREAMING_COMPLETION_OPERATION.value,
+                GenAIAttributes.CHAT_COMPLETION_OPERATION.value,
                 getattr(self, "ai_model_id", chat_options.ai_model_id or "unknown"),
                 self.MODEL_PROVIDER_NAME,
                 self.service_url() if hasattr(self, "service_url") else None,
@@ -323,7 +365,7 @@ def _trace_chat_get_streaming_response(
                 all_messages_flattened = ChatResponse.from_chat_response_updates(all_updates)
                 _set_chat_response_output(current_span, all_messages_flattened, self.MODEL_PROVIDER_NAME)
             except Exception as exception:
-                _set_chat_response_error(current_span, exception)
+                _set_error(current_span, exception)
                 raise
 
     # Mark the wrapper decorator as a streaming chat completion decorator
@@ -367,6 +409,7 @@ def _get_chat_response_span(
         GenAIAttributes.OPERATION.value: operation_name,
         GenAIAttributes.SYSTEM.value: model_provider,
         GenAIAttributes.MODEL.value: model_name,
+        GenAIAttributes.CHOICE_COUNT.value: 1,
     })
 
     if service_url:
@@ -384,6 +427,8 @@ def _get_chat_response_span(
         span.set_attribute(GenAIAttributes.TEMPERATURE.value, chat_options.temperature)
     if chat_options.top_p is not None:
         span.set_attribute(GenAIAttributes.TOP_P.value, chat_options.top_p)
+    if chat_options.presence_penalty is not None:
+        span.set_attribute(GenAIAttributes.PRESENCE_PENALTY.value, chat_options.presence_penalty)
     if "top_k" in chat_options.additional_properties:
         span.set_attribute(GenAIAttributes.TOP_K.value, chat_options.additional_properties["top_k"])
     if "encoding_formats" in chat_options.additional_properties:
@@ -404,15 +449,14 @@ def _set_chat_response_input(
     if MODEL_DIAGNOSTICS_SETTINGS.SENSITIVE_EVENTS_ENABLED:
         for idx, message in enumerate(messages):
             event_name = ROLE_EVENT_MAP.get(message.role.value)
-            if event_name:
-                logger.info(
-                    message.model_dump_json(exclude_none=True),
-                    extra={
-                        GenAIAttributes.EVENT_NAME.value: event_name,
-                        GenAIAttributes.SYSTEM.value: model_provider,
-                        ChatMessageListTimestampFilter.INDEX_KEY: idx,
-                    },
-                )
+            logger.info(
+                message.model_dump_json(exclude_none=True),
+                extra={
+                    GenAIAttributes.EVENT_NAME.value: event_name,
+                    GenAIAttributes.SYSTEM.value: model_provider,
+                    ChatMessageListTimestampFilter.INDEX_KEY: idx,
+                },
+            )
 
 
 def _set_chat_response_output(
@@ -433,7 +477,7 @@ def _set_chat_response_output(
     # Set the finish reason
     finish_reason = response.finish_reason
     if finish_reason:
-        current_span.set_attribute(GenAIAttributes.FINISH_REASON.value, finish_reason.value)
+        current_span.set_attribute(GenAIAttributes.FINISH_REASONS.value, [finish_reason.value])
 
     # Set usage attributes
 
@@ -460,7 +504,248 @@ def _set_chat_response_output(
             )
 
 
-def _set_chat_response_error(span: Span, error: Exception) -> None:
-    """Set an error for chat client responses."""
-    span.set_attribute(GenAIAttributes.ERROR_TYPE.value, str(type(error)))
-    span.set_status(StatusCode.ERROR, repr(error))
+# region Agent
+
+
+def _trace_agent_run(
+    run_func: Callable[..., Awaitable["AgentRunResponse"]],
+) -> Callable[..., Awaitable["AgentRunResponse"]]:
+    """Decorator to trace chat completion activities.
+
+    Args:
+        run_func: The function to trace.
+    """
+
+    @functools.wraps(run_func)
+    async def wrap_run(
+        self: "ChatClientAgent",
+        messages: "str | ChatMessage | list[str] | list[ChatMessage] | None" = None,
+        *,
+        thread: "AgentThread | None" = None,
+        **kwargs: Any,
+    ) -> "AgentRunResponse":
+        if not MODEL_DIAGNOSTICS_SETTINGS.ENABLED:
+            # If model diagnostics are not enabled, just return the completion
+            return await run_func(
+                self,
+                messages=messages,
+                thread=thread,
+                **kwargs,
+            )
+
+        with use_span(
+            _get_agent_run_span(
+                operation_name=GenAIAttributes.AGENT_INVOKE_OPERATION.value,
+                agent=self,
+                system=self.AGENT_SYSTEM_NAME,
+                thread=thread,
+                **kwargs,
+            ),
+            end_on_exit=True,
+        ) as current_span:
+            _set_agent_run_input(self.AGENT_SYSTEM_NAME, messages)
+            try:
+                response = await run_func(self, messages=messages, thread=thread, **kwargs)
+                _set_agent_run_output(current_span, response, self.AGENT_SYSTEM_NAME)
+                return response
+            except Exception as exception:
+                _set_error(current_span, exception)
+                raise
+
+    # Mark the wrapper decorator as a agent run decorator
+    wrap_run.__model_diagnostics_agent_run__ = True  # type: ignore
+
+    return wrap_run
+
+
+def _trace_agent_run_streaming(
+    run_func: Callable[..., AsyncIterable["AgentRunResponseUpdate"]],
+) -> Callable[..., AsyncIterable["AgentRunResponseUpdate"]]:
+    """Decorator to trace streaming agent run activities.
+
+    Args:
+        run_func: The function to trace.
+    """
+
+    @functools.wraps(run_func)
+    async def wrap_run_streaming(
+        self: "ChatClientAgent",
+        messages: "str | ChatMessage | list[str] | list[ChatMessage] | None" = None,
+        *,
+        thread: "AgentThread | None" = None,
+        **kwargs: Any,
+    ) -> AsyncIterable["AgentRunResponseUpdate"]:
+        if not MODEL_DIAGNOSTICS_SETTINGS.ENABLED:
+            # If model diagnostics are not enabled, just return the completion
+            async for streaming_agent_response in run_func(self, messages=messages, thread=thread, **kwargs):
+                yield streaming_agent_response
+            return
+
+        from ._types import AgentRunResponse
+
+        all_updates: list["AgentRunResponseUpdate"] = []
+
+        with use_span(
+            _get_agent_run_span(
+                operation_name=GenAIAttributes.AGENT_INVOKE_OPERATION.value,
+                agent=self,
+                system=self.AGENT_SYSTEM_NAME,
+                thread=thread,
+                **kwargs,
+            ),
+            end_on_exit=True,
+        ) as current_span:
+            _set_agent_run_input(self.AGENT_SYSTEM_NAME, messages)
+            try:
+                async for response in run_func(self, messages=messages, thread=thread, **kwargs):
+                    all_updates.append(response)
+                    yield response
+
+                all_messages_flattened = AgentRunResponse.from_agent_run_response_updates(all_updates)
+                _set_agent_run_output(current_span, all_messages_flattened, self.AGENT_SYSTEM_NAME)
+            except Exception as exception:
+                _set_error(current_span, exception)
+                raise
+
+    # Mark the wrapper decorator as a streaming agent run decorator
+    wrap_run_streaming.__model_diagnostics_streaming_agent_run__ = True  # type: ignore
+    return wrap_run_streaming
+
+
+def use_agent_telemetry(cls: type[TChatClientAgent]) -> type[TChatClientAgent]:
+    """Class decorator that enables telemetry for an agent."""
+    if run := getattr(cls, "run", None):
+        cls.run = _trace_agent_run(run)  # type: ignore
+    if run_streaming := getattr(cls, "run_streaming", None):
+        cls.run_streaming = _trace_agent_run_streaming(run_streaming)  # type: ignore
+    return cls
+
+
+def _get_agent_run_span(
+    *,
+    operation_name: str,
+    agent: "AIAgent",
+    system: str,
+    thread: "AgentThread | None",
+    **kwargs: Any,
+) -> Span:
+    """Start a text or chat completion span for a given model.
+
+    Note that `start_span` doesn't make the span the current span.
+    Use `use_span` to make it the current span as a context manager.
+
+    Should follow: https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-agent-spans/#invoke-agent-span
+    """
+    span = tracer.start_span(f"{operation_name} {agent.display_name}")
+
+    # Set attributes on the span
+    span.set_attributes({
+        GenAIAttributes.OPERATION.value: operation_name,
+        GenAIAttributes.SYSTEM.value: system,
+        GenAIAttributes.CHOICE_COUNT.value: 1,
+        GenAIAttributes.AGENT_ID.value: agent.id,
+    })
+    if agent.name:
+        span.set_attribute(GenAIAttributes.AGENT_NAME.value, agent.name)
+    if agent.description:
+        span.set_attribute(GenAIAttributes.AGENT_DESCRIPTION.value, agent.description)
+    if thread and thread.id:
+        span.set_attribute(GenAIAttributes.CONVERSATION_ID.value, thread.id)
+    if "model" in kwargs:
+        span.set_attribute(GenAIAttributes.MODEL.value, kwargs["model"])
+    if "seed" in kwargs:
+        span.set_attribute(GenAIAttributes.SEED.value, kwargs["seed"])
+    if "frequency_penalty" in kwargs:
+        span.set_attribute(GenAIAttributes.FREQUENCY_PENALTY.value, kwargs["frequency_penalty"])
+    if "presence_penalty" in kwargs:
+        span.set_attribute(GenAIAttributes.PRESENCE_PENALTY.value, kwargs["presence_penalty"])
+    if "max_tokens" in kwargs:
+        span.set_attribute(GenAIAttributes.MAX_TOKENS.value, kwargs["max_tokens"])
+    if "stop" in kwargs:
+        span.set_attribute(GenAIAttributes.STOP_SEQUENCES.value, kwargs["stop"])
+    if "temperature" in kwargs:
+        span.set_attribute(GenAIAttributes.TEMPERATURE.value, kwargs["temperature"])
+    if "top_p" in kwargs:
+        span.set_attribute(GenAIAttributes.TOP_P.value, kwargs["top_p"])
+    if "top_k" in kwargs:
+        span.set_attribute(GenAIAttributes.TOP_K.value, kwargs["top_k"])
+    if "encoding_formats" in kwargs:
+        span.set_attribute(GenAIAttributes.ENCODING_FORMATS.value, kwargs["encoding_formats"])
+    return span
+
+
+def _set_agent_run_input(
+    system: str,
+    messages: "str | ChatMessage | list[str] | list[ChatMessage] | list[str | ChatMessage] | None" = None,
+) -> None:
+    """Set the input for a chat response.
+
+    The logs will be associated to the current span.
+    """
+    if messages and MODEL_DIAGNOSTICS_SETTINGS.SENSITIVE_EVENTS_ENABLED:
+        if not isinstance(messages, list):
+            messages = [messages]
+        for idx, message in enumerate(messages):
+            if isinstance(message, str):
+                logger.info(
+                    message,
+                    extra={
+                        # assume user message
+                        GenAIAttributes.EVENT_NAME.value: GenAIAttributes.USER_MESSAGE.value,
+                        GenAIAttributes.SYSTEM.value: system,
+                        ChatMessageListTimestampFilter.INDEX_KEY: idx,
+                    },
+                )
+            else:
+                logger.info(
+                    message.model_dump_json(exclude_none=True),
+                    extra={
+                        GenAIAttributes.EVENT_NAME.value: ROLE_EVENT_MAP.get(message.role.value),
+                        GenAIAttributes.SYSTEM.value: system,
+                        ChatMessageListTimestampFilter.INDEX_KEY: idx,
+                    },
+                )
+
+
+def _set_agent_run_output(
+    current_span: Span,
+    response: "AgentRunResponse",
+    model_provider: str,
+) -> None:
+    """Set the agent response for a given span."""
+    first_completion = response.messages[0]
+
+    # Set the response ID
+    response_id = (
+        first_completion.additional_properties.get("id") if first_completion.additional_properties is not None else None
+    )
+    if response_id:
+        current_span.set_attribute(GenAIAttributes.RESPONSE_ID.value, response_id)
+
+    # Set the finish reason
+    finish_reason = getattr(response.raw_representation, "finish_reason", None) if response.raw_representation else None
+    if finish_reason:
+        current_span.set_attribute(GenAIAttributes.FINISH_REASONS.value, [finish_reason.value])
+
+    # Set usage attributes
+    usage = response.usage_details
+    if usage:
+        if usage.input_token_count:
+            current_span.set_attribute(GenAIAttributes.INPUT_TOKENS.value, usage.input_token_count)
+        if usage.output_token_count:
+            current_span.set_attribute(GenAIAttributes.OUTPUT_TOKENS.value, usage.output_token_count)
+
+    # Set the completion event
+    if MODEL_DIAGNOSTICS_SETTINGS.SENSITIVE_EVENTS_ENABLED:
+        for msg in response.messages:
+            full_response: dict[str, Any] = {
+                "message": msg.model_dump(exclude_none=True),
+            }
+            full_response["index"] = response.response_id
+            logger.info(
+                json.dumps(full_response),
+                extra={
+                    GenAIAttributes.EVENT_NAME.value: GenAIAttributes.CHOICE.value,
+                    GenAIAttributes.SYSTEM.value: model_provider,
+                },
+            )
