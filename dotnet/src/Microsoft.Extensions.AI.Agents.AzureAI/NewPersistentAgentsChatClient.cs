@@ -371,13 +371,35 @@ namespace Azure.AI.Agents.Persistent
                 {
                     if (options.ResponseFormat is ChatResponseFormatJson jsonFormat)
                     {
-                        runOptions.ResponseFormat = jsonFormat.Schema is { } schema ?
-                            BinaryData.FromBytes(JsonSerializer.SerializeToUtf8Bytes(new Dictionary<string, object?>()
+                        if (jsonFormat.Schema is JsonElement schema)
+                        {
+                            var schemaNode = JsonSerializer.SerializeToNode(schema, AgentsChatClientJsonContext.Default.JsonElement)!;
+
+                            var jsonSchemaObject = new JsonObject
                             {
-                                ["type"] = "json_schema",
-                                ["json_schema"] = JsonSerializer.SerializeToNode(schema, AgentsChatClientJsonContext.Default.JsonNode),
-                            }, AgentsChatClientJsonContext.Default.JsonObject)) :
-                            BinaryData.FromString("""{ "type": "json_object" }""");
+                                ["schema"] = schemaNode
+                            };
+
+                            if (jsonFormat.SchemaName is not null)
+                            {
+                                jsonSchemaObject["name"] = jsonFormat.SchemaName;
+                            }
+                            if (jsonFormat.SchemaDescription is not null)
+                            {
+                                jsonSchemaObject["description"] = jsonFormat.SchemaDescription;
+                            }
+
+                            runOptions.ResponseFormat =
+                                BinaryData.FromBytes(JsonSerializer.SerializeToUtf8Bytes(new()
+                                {
+                                    ["type"] = "json_schema",
+                                    ["json_schema"] = jsonSchemaObject,
+                                }, AgentsChatClientJsonContext.Default.JsonObject));
+                        }
+                        else
+                        {
+                            runOptions.ResponseFormat = BinaryData.FromString("""{ "type": "json_object" }""");
+                        }
                     }
                 }
             }
