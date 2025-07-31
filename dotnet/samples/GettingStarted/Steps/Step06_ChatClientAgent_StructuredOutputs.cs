@@ -23,32 +23,14 @@ public sealed class Step06_ChatClientAgent_StructuredOutputs(ITestOutputHelper o
     [InlineData(ChatClientProviders.OpenAIResponses)]
     public async Task RunWithCustomSchema(ChatClientProviders provider)
     {
-        var jsonSchema = """
-        {
-            "$schema": "http://json-schema.org/draft-07/schema#",
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "The full name of the person."
-                },
-                "age": {
-                    "type": "integer",
-                    "description": "The age of the person in years."
-                },
-                "occupation": {
-                    "type": "string",
-                    "description": "The primary occupation or job title of the person."
-                }
-            },
-            "required": ["name", "age", "occupation"]
-        }
-        """;
-
         var agentOptions = new ChatClientAgentOptions(name: "HelpfulAssistant", instructions: "You are a helpful assistant.");
         agentOptions.ChatOptions = new()
         {
-            ResponseFormat = ChatResponseFormatJson.ForJsonSchema(JsonDocument.Parse(jsonSchema).RootElement, "PersonInformation", "Information about a person including their name, age, and occupation")
+            ResponseFormat = ChatResponseFormatJson.ForJsonSchema(
+                schema: AIJsonUtilities.CreateJsonSchema(typeof(PersonInfo)),
+                schemaName: "PersonInfo",
+                schemaDescription: "Information about a person including their name, age, and occupation"
+            )
         };
 
         // Create the server-side agent Id when applicable (depending on the provider).
