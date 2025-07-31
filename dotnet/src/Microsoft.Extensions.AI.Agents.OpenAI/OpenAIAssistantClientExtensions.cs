@@ -24,13 +24,13 @@ public static class OpenAIAssistantClientExtensions
     /// Creates an AI agent from an <see cref="AssistantClient"/> using the OpenAI Assistant API.
     /// </summary>
     /// <param name="client">The OpenAI <see cref="AssistantClient" /> to use for the agent.</param>
-    /// <param name="model">The model identifier to use for responses (e.g., "gpt-4", "gpt-3.5-turbo").</param>
+    /// <param name="model">The model identifier to use (e.g., "gpt-4").</param>
     /// <param name="instructions">Optional system instructions that define the agent's behavior and personality.</param>
     /// <param name="name">Optional name for the agent for identification purposes.</param>
     /// <param name="description">Optional description of the agent's capabilities and purpose.</param>
     /// <param name="tools">Optional collection of AI tools that the agent can use during conversations.</param>
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
-    /// <returns>An <see cref="AIAgent"/> instance backed by the OpenAI Response service.</returns>
+    /// <returns>An <see cref="AIAgent"/> instance backed by the OpenAI Assistant service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="model"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> is empty or whitespace.</exception>
     public static AIAgent CreateAIAgent(this AssistantClient client, string model, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null)
@@ -54,16 +54,16 @@ public static class OpenAIAssistantClientExtensions
     /// Creates an AI agent from an <see cref="AssistantClient"/> using the OpenAI Assistant API.
     /// </summary>
     /// <param name="client">The OpenAI <see cref="AssistantClient" /> to use for the agent.</param>
-    /// <param name="model">The model identifier to use for responses (e.g., "gpt-4", "gpt-3.5-turbo").</param>
+    /// <param name="model">The model identifier to use (e.g., "gpt-4").</param>
     /// <param name="options">Full set of options to configure the agent.</param>
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
-    /// <returns>An <see cref="AIAgent"/> instance backed by the OpenAI Response service.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="model"/> is <see langword="null"/>.</exception>
+    /// <returns>An <see cref="AIAgent"/> instance backed by the OpenAI Assistant service.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="model"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> is empty or whitespace.</exception>
     public static AIAgent CreateAIAgent(this AssistantClient client, string model, ChatClientAgentOptions options, ILoggerFactory? loggerFactory = null)
     {
         Throw.IfNull(client);
-        Throw.IfNull(model);
+        Throw.IfNullOrEmpty(model);
         Throw.IfNull(options);
 
         var assistantOptions = new AssistantCreationOptions()
@@ -116,13 +116,13 @@ public static class OpenAIAssistantClientExtensions
     /// Creates an AI agent from an <see cref="AssistantClient"/> using the OpenAI Assistant API.
     /// </summary>
     /// <param name="client">The OpenAI <see cref="AssistantClient" /> to use for the agent.</param>
-    /// <param name="model">The model identifier to use for responses (e.g., "gpt-4", "gpt-3.5-turbo").</param>
+    /// <param name="model">The model identifier to use (e.g., "gpt-4").</param>
     /// <param name="instructions">Optional system instructions that define the agent's behavior and personality.</param>
     /// <param name="name">Optional name for the agent for identification purposes.</param>
     /// <param name="description">Optional description of the agent's capabilities and purpose.</param>
     /// <param name="tools">Optional collection of AI tools that the agent can use during conversations.</param>
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
-    /// <returns>An <see cref="AIAgent"/> instance backed by the OpenAI Response service.</returns>
+    /// <returns>An <see cref="AIAgent"/> instance backed by the OpenAI Assistant service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="model"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> is empty or whitespace.</exception>
     public static async Task<AIAgent> CreateAIAgentAsync(this AssistantClient client, string model, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null)
@@ -146,10 +146,10 @@ public static class OpenAIAssistantClientExtensions
     /// Creates an AI agent from an <see cref="AssistantClient"/> using the OpenAI Assistant API.
     /// </summary>
     /// <param name="client">The OpenAI <see cref="AssistantClient" /> to use for the agent.</param>
-    /// <param name="model">The model identifier to use for responses (e.g., "gpt-4", "gpt-3.5-turbo").</param>
+    /// <param name="model">The model identifier to use (e.g., "gpt-4").</param>
     /// <param name="options">Full set of options to configure the agent.</param>
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
-    /// <returns>An <see cref="AIAgent"/> instance backed by the OpenAI Response service.</returns>
+    /// <returns>An <see cref="AIAgent"/> instance backed by the OpenAI Assistant service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="model"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> is empty or whitespace.</exception>
     public static async Task<AIAgent> CreateAIAgentAsync(this AssistantClient client, string model, ChatClientAgentOptions options, ILoggerFactory? loggerFactory = null)
