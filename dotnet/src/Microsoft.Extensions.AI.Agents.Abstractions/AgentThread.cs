@@ -164,7 +164,7 @@ public class AgentThread
             serializedThread,
             jsonSerializerOptions.GetTypeInfo(typeof(ThreadState))) as ThreadState;
 
-        if (state?.Id is string threadId)
+        if (state?.ConversationId is string threadId)
         {
             this.ConversationId = threadId;
 
@@ -195,24 +195,22 @@ public class AgentThread
     /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
     public virtual async Task<JsonElement> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        jsonSerializerOptions ??= AgentAbstractionsJsonUtilities.DefaultOptions;
-
         var storeState = this._messageStore is null ?
             (JsonElement?)null :
             await this._messageStore.SerializeAsync(jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
 
         var state = new ThreadState
         {
-            Id = this.ConversationId,
+            ConversationId = this.ConversationId,
             StoreState = storeState
         };
 
-        return JsonSerializer.SerializeToElement(state, jsonSerializerOptions.GetTypeInfo(typeof(ThreadState)));
+        return JsonSerializer.SerializeToElement(state, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState)));
     }
 
     internal class ThreadState
     {
-        public string? Id { get; set; }
+        public string? ConversationId { get; set; }
 
         public JsonElement? StoreState { get; set; }
     }

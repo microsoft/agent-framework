@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Moq;
 
 namespace Microsoft.Extensions.AI.Agents.Abstractions.UnitTests;
 
@@ -176,7 +177,7 @@ public class AgentThreadTests
         // Arrange
         var json = JsonSerializer.Deserialize<JsonElement>("""
             {
-                "id": "TestConvId"
+                "conversationId": "TestConvId"
             }
             """);
         var thread = new AgentThread();
@@ -219,7 +220,7 @@ public class AgentThreadTests
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);
 
-        Assert.True(json.TryGetProperty("id", out var idProperty));
+        Assert.True(json.TryGetProperty("conversationId", out var idProperty));
         Assert.Equal("TestConvId", idProperty.GetString());
 
         Assert.False(json.TryGetProperty("storeState", out var storeStateProperty));
@@ -242,7 +243,7 @@ public class AgentThreadTests
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);
 
-        Assert.False(json.TryGetProperty("id", out var idProperty));
+        Assert.False(json.TryGetProperty("conversationId", out var idProperty));
 
         Assert.True(json.TryGetProperty("storeState", out var storeStateProperty));
         Assert.Equal(JsonValueKind.Object, storeStateProperty.ValueKind);
@@ -268,9 +269,17 @@ public class AgentThreadTests
     public async Task VerifyThreadSerializationWithCustomOptionsAsync()
     {
         // Arrange
-        var thread = new AgentThread() { ConversationId = "TestConvId" };
+        var thread = new AgentThread();
         JsonSerializerOptions options = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
         options.TypeInfoResolverChain.Add(AgentAbstractionsJsonUtilities.DefaultOptions.TypeInfoResolver!);
+
+        var storeStateElement = JsonSerializer.SerializeToElement(new { Key = "TestValue" });
+
+        var messageStoreMock = new Mock<IChatMessageStore>();
+        messageStoreMock
+            .Setup(m => m.SerializeAsync(options, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(storeStateElement);
+        thread.MessageStore = messageStoreMock.Object;
 
         // Act
         var json = await thread.SerializeAsync(options);
@@ -278,11 +287,15 @@ public class AgentThreadTests
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);
 
-        Assert.True(json.TryGetProperty("id", out var idProperty));
-        Assert.Equal("TestConvId", idProperty.GetString());
+        Assert.False(json.TryGetProperty("conversationId", out var idProperty));
 
-        Assert.True(json.TryGetProperty("store_state", out var storeStateProperty));
-        Assert.Equal(JsonValueKind.Null, storeStateProperty.ValueKind); // Should be null since no messages are stored.
+        Assert.True(json.TryGetProperty("storeState", out var storeStateProperty));
+        Assert.Equal(JsonValueKind.Object, storeStateProperty.ValueKind);
+
+        Assert.True(storeStateProperty.TryGetProperty("Key", out var keyProperty));
+        Assert.Equal("TestValue", keyProperty.GetString());
+
+        messageStoreMock.Verify(m => m.SerializeAsync(options, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     #endregion Serialize Tests

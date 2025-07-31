@@ -68,14 +68,12 @@ internal class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageStore
     /// <inheritdoc />
     public ValueTask<JsonElement?> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        jsonSerializerOptions ??= AgentAbstractionsJsonUtilities.DefaultOptions;
-
         StoreState state = new()
         {
             Messages = this._messages,
         };
 
-        return new ValueTask<JsonElement?>(JsonSerializer.SerializeToElement(state, jsonSerializerOptions.GetTypeInfo(typeof(StoreState))));
+        return new ValueTask<JsonElement?>(JsonSerializer.SerializeToElement(state, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(StoreState))));
     }
 
     /// <inheritdoc />
