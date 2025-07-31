@@ -312,9 +312,7 @@ class AIContent(AFBaseModel):
 
     type: Literal["ai"] = "ai"
     additional_properties: dict[str, Any] | None = None
-    """Additional properties for the content."""
     raw_representation: Any | None = Field(default=None, repr=False)
-    """The raw representation of the content from an underlying implementation."""
 
 
 class TextContent(AIContent):
@@ -367,7 +365,9 @@ class TextReasoningContent(AIContent):
         raw_representation: Optional raw representation of the content.
 
 
-    """  # TODO(): Should we merge these two classes, and use a property to distinguish them?
+    """
+
+    # TODO(eavanvalkenburg): Should we merge these two classes, and use a property to distinguish them?
 
     text: str
     type: Literal["text_reasoning"] = "text_reasoning"  # type: ignore[assignment]
@@ -536,9 +536,7 @@ class UriContent(AIContent):
 
     type: Literal["uri"] = "uri"  # type: ignore[assignment]
     uri: str
-    """The URI of the content, e.g., 'https://example.com/image.png'."""
     media_type: str
-    """The media type of the content, e.g., 'image/png', 'application/json', etc."""
 
     def __init__(
         self,
@@ -604,11 +602,8 @@ class ErrorContent(AIContent):
 
     type: Literal["error"] = "error"  # type: ignore[assignment]
     error_code: str | None = None
-    """The error code associated with the error."""
     details: str | None = None
-    """Additional details about the error."""
     message: str | None
-    """The error message."""
 
     def __init__(
         self,
@@ -660,13 +655,9 @@ class FunctionCallContent(AIContent):
 
     type: Literal["function_call"] = "function_call"  # type: ignore[assignment]
     call_id: str
-    """The function call identifier."""
     name: str
-    """The name of the function requested."""
     arguments: str | dict[str, Any | None] | None = None
-    """The arguments requested to be provided to the function."""
     exception: Exception | None = None
-    """Any exception that occurred while mapping the original function call data to this representation."""
 
     def __init__(
         self,
@@ -753,11 +744,8 @@ class FunctionResultContent(AIContent):
 
     type: Literal["function_result"] = "function_result"  # type: ignore[assignment]
     call_id: str
-    """The identifier of the function call for which this is the result."""
     result: Any | None = None
-    """The result of the function call, or a generic error message if the function call failed."""
     exception: Exception | None = None
-    """An exception that occurred if the function call failed."""
 
     def __init__(
         self,
@@ -802,7 +790,6 @@ class UsageContent(AIContent):
 
     type: Literal["usage"] = "usage"  # type: ignore[assignment]
     details: UsageDetails
-    """The usage information."""
 
     def __init__(
         self,
@@ -812,14 +799,7 @@ class UsageContent(AIContent):
         raw_representation: Any | None = None,
         **kwargs: Any,
     ) -> None:
-        """Initializes a UsageContent instance.
-
-        Args:
-            details: The usage information.
-            additional_properties: Optional additional properties associated with the content.
-            raw_representation: Optional raw representation of the content.
-            **kwargs: Any additional keyword arguments.
-        """
+        """Initializes a UsageContent instance."""
         super().__init__(
             details=details,  # type: ignore[reportCallIssue]
             raw_representation=raw_representation,
@@ -890,15 +870,6 @@ class ChatFinishReason(AFBaseModel):
 
     Attributes:
         value: The string representation of the finish reason.
-
-    Properties:
-        CONTENT_FILTER: The model filtered content, whether for safety, prohibited content, sensitive content,
-            or other such issues.
-        LENGTH: The model reached the maximum length allowed for the request and/or response (typically in
-            terms of tokens).
-        STOP: The model encountered a natural stop point or provided stop sequence.
-        TOOL_CALLS: The model requested the use of a tool that was defined in the request.
-
     """
 
     value: str

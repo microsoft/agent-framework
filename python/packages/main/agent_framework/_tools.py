@@ -146,15 +146,17 @@ def ai_function(
 ) -> AIFunction[Any, ReturnT]:
     """Decorate a function to turn it into a AIFunction that can be passed to models and executed automatically.
 
-    Remarks:
-        In order to add descriptions to parameters, use:
+    This function will create a Pydantic model from the function's signature,
+    which will be used to validate the arguments passed to the function.
+    And will be used to generate the JSON schema for the function's parameters.
+    In order to add descriptions to parameters, in your function signature,
+    use the `Annotated` type from `typing` and the `Field` class from `pydantic`:
 
-        ```python
-        from typing import Annotated
-        from pydantic import Field
+            from typing import Annotated
 
-        arg: Annotated[<type>, Field(description="<description>")]
-        ```
+            from pydantic import Field
+
+            <field_name>: Annotated[<type>, Field(description="<description>")]
 
     Args:
         func: The function to wrap. If None, returns a decorator.
