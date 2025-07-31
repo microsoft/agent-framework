@@ -425,7 +425,12 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
             if len(message_contents) > 0:
                 if additional_messages is None:
                     additional_messages = []
-                additional_messages.append(AdditionalMessage(role="assistant", content=message_contents))
+                additional_messages.append(
+                    AdditionalMessage(
+                        role="assistant" if chat_message.role == ChatRole.ASSISTANT else "user",
+                        content=message_contents,
+                    )
+                )
 
         if additional_messages is not None:
             run_options["additional_messages"] = additional_messages
