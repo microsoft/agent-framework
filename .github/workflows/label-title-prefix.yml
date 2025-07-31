@@ -22,7 +22,7 @@ jobs:
           script: |
             let prefixLabels = {
               "python": "Python",
-              ".NET": ".Net"
+              ".NET": ".NET"
             };
 
             function addTitlePrefix(title, prefix)
