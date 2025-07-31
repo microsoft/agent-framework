@@ -38,6 +38,7 @@ from .._types import (
     UsageDetails,
 )
 from ..exceptions import ServiceInitializationError
+from ..telemetry import use_telemetry
 from ._shared import OpenAIConfigBase, OpenAISettings
 
 if sys.version_info >= (3, 11):
@@ -48,6 +49,7 @@ else:
 __all__ = ["OpenAIAssistantsClient"]
 
 
+@use_telemetry
 @use_tool_calling
 class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
     """OpenAI Assistants client."""
