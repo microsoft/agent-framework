@@ -7,6 +7,7 @@ PACKAGE_NAME = "agent_framework_azure"
 PACKAGE_EXTRA = "azure"
 _IMPORTS = [
     "AzureChatClient",
+    "AzureOpenAISettings",
     "get_entra_auth_token",
     "__version__",
 ]

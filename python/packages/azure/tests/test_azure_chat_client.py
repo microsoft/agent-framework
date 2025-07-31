@@ -476,7 +476,7 @@ async def test_azure_on_your_data_split_messages(
     content = await azure_chat_client.get_response(
         messages=messages_in,
     )
-    message = azure_chat_client.split_message(content)
+    message = azure_chat_client._split_message(content)
     assert len(content.messages) == 1
     assert len(content.messages[0].contents) == 3
     assert isinstance(content.messages[0].contents[0], FunctionCallContent)

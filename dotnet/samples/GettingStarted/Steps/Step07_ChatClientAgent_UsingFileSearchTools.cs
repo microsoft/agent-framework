@@ -15,7 +15,7 @@ namespace Steps;
 /// Demonstrates how to use <see cref="ChatClientAgent"/> with file search tools and file references.
 /// Shows uploading files to different providers and using them with file search capabilities to retrieve and analyze information from documents.
 /// </summary>
-public sealed class Step04_ChatClientAgent_UsingFileSearchTools(ITestOutputHelper output) : AgentSample(output)
+public sealed class Step07_ChatClientAgent_UsingFileSearchTools(ITestOutputHelper output) : AgentSample(output)
 {
     [Theory]
     [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]

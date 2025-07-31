@@ -225,22 +225,21 @@ def use_tool_calling(cls: type[TChatClientBase]) -> type[TChatClientBase]:
 
     Remarks:
         This only works on classes that derive from ChatClientBase
-        and the _inner_get_response
-        and _inner_get_streaming_response methods.
-        It also sets a __maximum_iterations_per_request attribute on the class.
+        and the `_inner_get_response`
+        and `_inner_get_streaming_response` methods.
+        It also sets a `__maximum_iterations_per_request` attribute on the class.
         if you want to expose this to end_users, do a version of this:
 
-        ```python
-        @use_tool_calling
-        class MyChatClient(ChatClientBase):
             @property
+
             def maximum_iterations_per_request(self):
                 return getattr(self, "__maximum_iterations_per_request", 10)
 
             @maximum_iterations_per_request.setter
+
             def maximum_iterations_per_request(self, value: int) -> None:
                 setattr(self, "__maximum_iterations_per_request", value)
-        ```
+
     """
     setattr(cls, "__maximum_iterations_per_request", 10)
 
