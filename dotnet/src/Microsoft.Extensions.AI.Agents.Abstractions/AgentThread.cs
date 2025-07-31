@@ -159,7 +159,6 @@ public class AgentThread
     {
         jsonSerializerOptions ??= AgentAbstractionsJsonUtilities.DefaultOptions;
 
-        // Deserialize the first element as the thread ID.
         var state = JsonSerializer.Deserialize(
             serializedThread,
             jsonSerializerOptions.GetTypeInfo(typeof(ThreadState))) as ThreadState;
