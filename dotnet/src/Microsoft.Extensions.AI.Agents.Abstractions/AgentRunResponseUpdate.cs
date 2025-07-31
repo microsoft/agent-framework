@@ -92,6 +92,13 @@ public class AgentRunResponseUpdate
     [JsonIgnore]
     public string Text => this._contents is not null ? this._contents.ConcatText() : string.Empty;
 
+    /// <summary>Gets or sets the user input requests associated with the response.</summary>
+    /// <remarks>
+    /// This property concatenates all <see cref="UserInputRequestContent"/> instances in the response.
+    /// </remarks>
+    [JsonIgnore]
+    public IEnumerable<UserInputRequestContent> UserInputRequests => this._contents?.EnumerateUserInputRequests() ?? Array.Empty<UserInputRequestContent>();
+
     /// <summary>Gets or sets the agent run response update content items.</summary>
     [AllowNull]
     public IList<AIContent> Contents

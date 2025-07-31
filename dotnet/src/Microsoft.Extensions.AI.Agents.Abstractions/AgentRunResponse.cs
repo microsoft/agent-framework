@@ -82,6 +82,13 @@ public class AgentRunResponse
     [JsonIgnore]
     public string Text => this._messages?.ConcatText() ?? string.Empty;
 
+    /// <summary>Gets or sets the user input requests associated with the response.</summary>
+    /// <remarks>
+    /// This property concatenates all <see cref="UserInputRequestContent"/> instances in the response.
+    /// </remarks>
+    [JsonIgnore]
+    public IEnumerable<UserInputRequestContent> UserInputRequests => this._messages?.EnumerateUserInputRequests() ?? Array.Empty<UserInputRequestContent>();
+
     /// <summary>Gets or sets the ID of the agent that produced the response.</summary>
     public string? AgentId { get; set; }
 
