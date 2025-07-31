@@ -33,7 +33,7 @@ public sealed class Step04_ChatClientAgent_DependencyInjection(ITestOutputHelper
         services.AddSingleton<ChatClientAgent>();
 
         // Build the service provider.
-        using var serviceProvider = services.BuildServiceProvider();
+        await using var serviceProvider = services.BuildServiceProvider();
 
         // Get the agent from the service provider.
         var agent = serviceProvider.GetRequiredService<ChatClientAgent>();
