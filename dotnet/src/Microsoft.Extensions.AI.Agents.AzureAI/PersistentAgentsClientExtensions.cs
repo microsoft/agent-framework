@@ -36,7 +36,7 @@ public static class PersistentAgentsClientExtensions
         }
 
         var persistentAgentResponse = await persistentAgentsClient.Administration.GetAgentAsync(agentId, cancellationToken).ConfigureAwait(false);
-        return persistentAgentResponse.AsRunnableAgent(persistentAgentsClient, chatOptions);
+        return persistentAgentResponse.AsAIAgent(persistentAgentsClient, chatOptions);
     }
 
     /// <summary>

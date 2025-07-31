@@ -18,10 +18,9 @@ public sealed class Custom_OpenAIChatClientAgent(ITestOutputHelper output) : Age
     [Fact]
     public async Task RunCustomChatClientAgent()
     {
-        var openAIClient = new OpenAIClient(TestConfiguration.OpenAI.ApiKey);
-        var model = TestConfiguration.OpenAI.ChatModelId;
+        var chatClient = new OpenAIClient(TestConfiguration.OpenAI.ApiKey).GetChatClient(TestConfiguration.OpenAI.ChatModelId);
 
-        var agent = new MyOpenAIChatClientAgent(openAIClient, model);
+        var agent = new MyOpenAIChatClientAgent(chatClient);
 
         var chatMessage = new UserChatMessage("Tell me a joke about a pirate.");
         var chatCompletion = await agent.RunAsync(chatMessage);
@@ -35,8 +34,8 @@ public class MyOpenAIChatClientAgent : OpenAIChatClientAgent
     private const string JokerName = "Joker";
     private const string JokerInstructions = "You are good at telling jokes.";
 
-    public MyOpenAIChatClientAgent(OpenAIClient client, string model, ILoggerFactory? loggerFactory = null) :
-        base(client, model, instructions: JokerInstructions, name: JokerName, loggerFactory: loggerFactory)
+    public MyOpenAIChatClientAgent(ChatClient client, ILoggerFactory? loggerFactory = null) :
+        base(client, instructions: JokerInstructions, name: JokerName, loggerFactory: loggerFactory)
     {
     }
 }

@@ -136,7 +136,7 @@ public static class AIAgentWithOpenAIExtensions
     /// It handles the conversion by switching on the concrete type of the OpenAI message and calling the appropriate
     /// specialized conversion method.
     /// </remarks>
-    public static Microsoft.Extensions.AI.ChatMessage AsChatMessage(this OpenAI.Chat.ChatMessage chatMessage)
+    internal static Microsoft.Extensions.AI.ChatMessage AsChatMessage(this OpenAI.Chat.ChatMessage chatMessage)
     {
         Throw.IfNull(chatMessage);
 

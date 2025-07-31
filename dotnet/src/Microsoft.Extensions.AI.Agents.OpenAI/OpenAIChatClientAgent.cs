@@ -19,18 +19,16 @@ public class OpenAIChatClientAgent : AIAgent
     /// <summary>
     /// Initialize an instance of <see cref="OpenAIChatClientAgent"/>
     /// </summary>
-    /// <param name="client">Instance of <see cref="OpenAIChatClient"/></param>
-    /// <param name="model">Id of the model.</param>
+    /// <param name="client">Instance of <see cref="ChatClient"/></param>
     /// <param name="instructions">Optional instructions for the agent.</param>
     /// <param name="name">Optional name for the agent.</param>
     /// <param name="description">Optional description for the agent.</param>
     /// <param name="loggerFactory">Optional instance of <see cref="ILoggerFactory"/></param>
-    public OpenAIChatClientAgent(OpenAIClient client, string model, string? instructions = null, string? name = null, string? description = null, ILoggerFactory? loggerFactory = null)
+    public OpenAIChatClientAgent(ChatClient client, string? instructions = null, string? name = null, string? description = null, ILoggerFactory? loggerFactory = null)
     {
         Throw.IfNull(client);
-        Throw.IfNull(model);
 
-        var chatClient = client.GetChatClient(model).AsIChatClient();
+        var chatClient = client.AsIChatClient();
         this._chatClientAgent = new(
             chatClient,
             new ChatClientAgentOptions()
@@ -45,16 +43,14 @@ public class OpenAIChatClientAgent : AIAgent
     /// <summary>
     /// Initialize an instance of <see cref="OpenAIChatClientAgent"/>
     /// </summary>
-    /// <param name="client">Instance of <see cref="OpenAIChatClient"/></param>
-    /// <param name="model">Id of the model.</param>
+    /// <param name="client">Instance of <see cref="ChatClient"/></param>
     /// <param name="options">Options to create the agent.</param>
     /// <param name="loggerFactory">Optional instance of <see cref="ILoggerFactory"/></param>
-    public OpenAIChatClientAgent(OpenAIClient client, string model, ChatClientAgentOptions options, ILoggerFactory? loggerFactory = null)
+    public OpenAIChatClientAgent(ChatClient client, ChatClientAgentOptions options, ILoggerFactory? loggerFactory = null)
     {
         Throw.IfNull(client);
-        Throw.IfNull(model);
 
-        var chatClient = client.GetChatClient(model).AsIChatClient();
+        var chatClient = client.AsIChatClient();
         this._chatClientAgent = new(chatClient, options, loggerFactory);
     }
 
@@ -66,7 +62,7 @@ public class OpenAIChatClientAgent : AIAgent
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatCompletion"/> containing the list of <see cref="ChatMessage"/> items.</returns>
-    public async Task<ChatCompletion> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public virtual async Task<ChatCompletion> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         var response = await this.RunAsync([.. messages.AsChatMessages()], thread, options, cancellationToken).ConfigureAwait(false);
 
@@ -75,19 +71,19 @@ public class OpenAIChatClientAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public override AgentThread GetNewThread()
+    public sealed override AgentThread GetNewThread()
     {
         return this._chatClientAgent.GetNewThread();
     }
 
     /// <inheritdoc/>
-    public override Task<AgentRunResponse> RunAsync(IReadOnlyCollection<Microsoft.Extensions.AI.ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public sealed override Task<AgentRunResponse> RunAsync(IReadOnlyCollection<Microsoft.Extensions.AI.ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         return this._chatClientAgent.RunAsync(messages, thread, options, cancellationToken);
     }
 
     /// <inheritdoc/>
-    public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<Microsoft.Extensions.AI.ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public sealed override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<Microsoft.Extensions.AI.ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         return this._chatClientAgent.RunStreamingAsync(messages, thread, options, cancellationToken);
     }
