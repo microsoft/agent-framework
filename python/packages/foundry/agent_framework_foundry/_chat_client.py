@@ -128,7 +128,7 @@ class FoundryChatClient(ChatClientBase):
                 nor agent_id is provided, both will be created and managed automatically.
             agent_name: The name to use when creating new agents.
             thread_id: Default thread ID to use for conversations. Can be overridden by
-                conversation_id property from ChatOptions, when making a request.
+                conversation_id property, when making a request.
             project_endpoint: The Azure AI Foundry project endpoint URL. Used if client is not provided.
             model_deployment_name: The model deployment name to use for agent creation.
             credential: Azure async credential to use for authentication. If not provided,

@@ -82,7 +82,7 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
                 If not provided, a new assistant will be created (and deleted after the request).
             assistant_name: The name to use when creating new assistants.
             thread_id: Default thread ID to use for conversations. Can be overridden by
-                conversation_id property from ChatOptions, when making a request.
+                conversation_id property, when making a request.
                 If not provided, a new thread will be created (and deleted after the request).
             api_key: The optional API key to use. If provided will override,
                 the env vars or .env file value.
@@ -132,7 +132,10 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
 
     async def close(self) -> None:
         """Clean up any assistants we created."""
-        await self._cleanup_assistant_if_needed()
+        if self._should_delete_assistant and self.assistant_id is not None:
+            await self.client.beta.assistants.delete(self.assistant_id)
+            self.assistant_id = None
+            self._should_delete_assistant = False
 
     async def _inner_get_response(
         self,
@@ -336,13 +339,6 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
                 contents.append(FunctionCallContent(call_id=call_id, name=function_name, arguments=function_arguments))
 
         return contents
-
-    async def _cleanup_assistant_if_needed(self) -> None:
-        """Clean up the assistant if we created it."""
-        if self._should_delete_assistant and self.assistant_id is not None:
-            await self.client.beta.assistants.delete(self.assistant_id)
-            self.assistant_id = None
-            self._should_delete_assistant = False
 
     def _create_run_options(
         self,
