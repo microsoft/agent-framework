@@ -1,12 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 # type: ignore
-import argparse
 import asyncio
 import logging
 from random import randint
-from typing import Annotated, Literal
+from typing import Annotated
 
-from agent_framework import ai_function
+from agent_framework import ChatClientAgent
 from agent_framework.openai import OpenAIChatClient
 from azure.monitor.opentelemetry import configure_azure_monitor
 from opentelemetry import trace
@@ -25,7 +24,6 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 from opentelemetry.semconv.attributes import service_attributes
 from opentelemetry.trace import SpanKind, set_tracer_provider
-from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
@@ -57,13 +55,11 @@ settings = TelemetrySampleSettings()
 resource = Resource.create({service_attributes.SERVICE_NAME: "TelemetryExample"})
 
 # Define the scenarios that can be run
-SCENARIOS = ["chat_client", "chat_client_stream", "ai_function", "all"]
+SCENARIOS = ["ai_service", "kernel_function", "auto_function_invocation", "all"]
 
 if settings.connection_string:
     configure_azure_monitor(
-        connection_string=settings.connection_string,
-        enable_live_metrics=True,
-        logger_name="agent_framework",
+        connection_string=settings.connection_string, enable_live_metrics=True, logger_name="agent_framework"
     )
 
 
@@ -102,8 +98,8 @@ def set_up_logging():
     # Events from all child loggers will be processed by this handler.
     logger = logging.getLogger()
     logger.addHandler(handler)
-    # Set the logging level to NOTSET to allow all records to be processed by the handler.
-    logger.setLevel(logging.NOTSET)
+    # Set the logging level to INFO.
+    logger.setLevel(logging.INFO)
 
 
 def set_up_tracing():
@@ -147,74 +143,16 @@ def set_up_metrics():
     set_meter_provider(meter_provider)
 
 
-def get_weather(
+async def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
     """Get the weather for a given location."""
+    await asyncio.sleep(randint(0, 10) / 10.0)  # Simulate a network call
     conditions = ["sunny", "cloudy", "rainy", "stormy"]
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
-async def run_chat_client(stream: bool = False) -> None:
-    """Run an AI service.
-
-    This function runs an AI service and prints the output.
-    Telemetry will be collected for the service execution behind the scenes,
-    and the traces will be sent to the configured telemetry backend.
-
-    The telemetry will include information about the AI service execution.
-
-    Args:
-        stream (bool): Whether to use streaming for the plugin
-    """
-
-    tracer = trace.get_tracer(__name__)
-    with tracer.start_as_current_span(
-        "Scenario: Chat Client Stream" if stream else "Scenario: Chat Client", kind=SpanKind.CLIENT
-    ) as current_span:
-        print("Running scenario: Chat Client" if not stream else "Running scenario: Chat Client Stream")
-        try:
-            client = OpenAIChatClient()
-            message = "What's the weather in Amsterdam and in Paris?"
-            print(f"User: {message}")
-            if stream:
-                print("Assistant: ", end="")
-                async for chunk in client.get_streaming_response(message, tools=get_weather):
-                    if str(chunk):
-                        print(str(chunk), end="")
-                print("")
-            else:
-                response = await client.get_response(message, tools=get_weather)
-                print(f"Assistant: {response}")
-        except Exception as e:
-            current_span.record_exception(e)
-            print(f"Error running AI service: {e}")
-
-
-async def run_ai_function() -> None:
-    """Run a AI function.
-
-    This function runs a AI function and prints the output.
-    Telemetry will be collected for the function execution behind the scenes,
-    and the traces will be sent to the configured telemetry backend.
-
-    The telemetry will include information about the AI function execution
-    and the AI service execution.
-    """
-
-    tracer = trace.get_tracer(__name__)
-    with tracer.start_as_current_span("Scenario: AI Function", kind=SpanKind.CLIENT) as current_span:
-        print("Running scenario: AI Function")
-        try:
-            func = ai_function(get_weather)
-            weather = await func.invoke(location="Amsterdam")
-            print(f"Weather in Amsterdam:\n{weather}")
-        except Exception as e:
-            current_span.record_exception(e)
-            print(f"Error running kernel plugin: {e}")
-
-
-async def main(scenario: Literal["chat_client", "chat_client_stream", "ai_function", "all"] = "all"):
+async def main():
     # Set up the providers
     # This must be done before any other telemetry calls
     set_up_logging()
@@ -222,28 +160,31 @@ async def main(scenario: Literal["chat_client", "chat_client_stream", "ai_functi
     set_up_metrics()
 
     tracer = trace.get_tracer("agent_framework")
-    with tracer.start_as_current_span("Scenario's", kind=SpanKind.CLIENT) as current_span:
-        print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
-
-        # Scenarios where telemetry is collected in the SDK, from the most basic to the most complex.
-        if scenario == "chat_client" or scenario == "all":
-            await run_chat_client(stream=False)
-        if scenario == "chat_client_stream" or scenario == "all":
-            await run_chat_client(stream=True)
-        if scenario == "ai_function" or scenario == "all":
-            await run_ai_function()
+    with tracer.start_as_current_span("Scenario: Agent Chat", kind=SpanKind.CLIENT) as current_span:
+        print("Running scenario: Agent Chat")
+        print("Welcome to the chat, type 'exit' to quit.")
+        agent = ChatClientAgent(
+            chat_client=OpenAIChatClient(),
+            tools=get_weather,
+            name="WeatherAgent",
+            instructions="You are a weather assistant.",
+        )
+        thread = agent.get_new_thread()
+        message = input("User: ")
+        try:
+            while message.lower() != "exit":
+                print(f"{agent.display_name}: ", end="")
+                async for update in agent.run_streaming(
+                    message,
+                    thread=thread,
+                ):
+                    if update.text:
+                        print(update.text, end="")
+                message = input("\nUser: ")
+        except Exception as e:
+            current_span.record_exception(e)
+            print(f"\nError running interactive chat: {e}")
 
 
 if __name__ == "__main__":
-    arg_parser = argparse.ArgumentParser()
-
-    arg_parser.add_argument(
-        "--scenario",
-        type=str,
-        choices=SCENARIOS,
-        default="all",
-        help="The scenario to run. Default is all.",
-    )
-
-    args = arg_parser.parse_args()
-    asyncio.run(main(args.scenario))
+    asyncio.run(main())
