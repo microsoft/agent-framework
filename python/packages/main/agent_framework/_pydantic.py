@@ -29,11 +29,11 @@ class AFBaseSettings(BaseSettings):
 
     In the case where a value is specified for the same Settings field in multiple ways,
     the selected value is determined as follows (in descending order of priority):
-      - Arguments passed to the Settings class initializer.
-      - Environment variables, e.g. my_prefix_special_function as described above.
-      - Variables loaded from a dotenv (.env) file.
-      - Variables loaded from the secrets directory.
-      - The default field values for the Settings model.
+    - Arguments passed to the Settings class initializer.
+    - Environment variables, e.g. my_prefix_special_function as described above.
+    - Variables loaded from a dotenv (.env) file.
+    - Variables loaded from the secrets directory.
+    - The default field values for the Settings model.
     """
 
     env_prefix: ClassVar[str] = ""
