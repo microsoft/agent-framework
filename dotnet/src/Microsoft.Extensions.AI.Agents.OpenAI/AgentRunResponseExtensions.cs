@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Chat;
@@ -40,8 +41,12 @@ public static class AgentRunResponseExtensions
     {
         Throw.IfNull(agentResponse);
 
-        return agentResponse.RawRepresentation is ChatCompletion chatCompletion
-            ? chatCompletion
-            : throw new ArgumentException("ChatResponse.RawRepresentation must be a ChatCompletion");
+        if (agentResponse.RawRepresentation is ChatResponse chatResponse)
+        {
+            return chatResponse.RawRepresentation is ChatCompletion chatCompletion
+                ? chatCompletion
+                : throw new ArgumentException("ChatResponse.RawRepresentation must be a ChatCompletion");
+        }
+        throw new ArgumentException("AgentRunResponse.RawRepresentation must be a ChatResponse");
     }
 }

@@ -23,8 +23,7 @@ public class SequentialOrchestration_Multi_Agent(ITestOutputHelper output) : Orc
 
         // Define the agents
         AIAgent analystAgent =
-            openAIClient.CreateChatClientAgent(
-                model,
+            openAIClient.GetChatClient(model).CreateAIAgent(
                 name: "Analyst",
                 instructions:
                 """
@@ -35,8 +34,7 @@ public class SequentialOrchestration_Multi_Agent(ITestOutputHelper output) : Orc
                 """,
                 description: "A agent that extracts key concepts from a product description.");
         AIAgent writerAgent =
-            openAIClient.CreateResponseClientAgent(
-                model,
+            openAIClient.GetOpenAIResponseClient(model).CreateAIAgent(
                 name: "copywriter",
                 instructions:
                 """
@@ -46,7 +44,7 @@ public class SequentialOrchestration_Multi_Agent(ITestOutputHelper output) : Orc
                 """,
                 description: "An agent that writes a marketing copy based on the extracted concepts.");
         AIAgent editorAgent =
-            await openAIClient.CreateAssistantClientAgentAsync(
+            openAIClient.GetAssistantClient().CreateAIAgent(
                 model,
                 name: "editor",
                 instructions:

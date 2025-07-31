@@ -27,7 +27,7 @@ public sealed class AIAgent_With_AzureOpenAIChatCompletion(ITestOutputHelper out
             : new AzureOpenAIClient(TestConfiguration.AzureOpenAI.Endpoint, new ApiKeyCredential(TestConfiguration.AzureOpenAI.ApiKey));
 
         // Create the agent
-        AIAgent agent = openAIClient.CreateChatClientAgent(TestConfiguration.AzureOpenAI.DeploymentName, JokerInstructions, JokerName);
+        AIAgent agent = openAIClient.GetChatClient(TestConfiguration.AzureOpenAI.DeploymentName).CreateAIAgent(JokerInstructions, JokerName);
 
         // Start a new thread for the agent conversation.
         AgentThread thread = agent.GetNewThread();

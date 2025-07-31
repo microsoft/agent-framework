@@ -20,7 +20,8 @@ public sealed class AIAgent_With_OpenAIClient(ITestOutputHelper output) : AgentS
     {
         // Get the agent directly from OpenAIClient.
         AIAgent agent = new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
-            .CreateChatClientAgent(TestConfiguration.OpenAI.ChatModelId, JokerInstructions, JokerName);
+            .GetChatClient(TestConfiguration.OpenAI.ChatModelId)
+            .CreateAIAgent(JokerInstructions, JokerName);
 
         // Start a new thread for the agent conversation.
         AgentThread thread = agent.GetNewThread();
@@ -45,7 +46,8 @@ public sealed class AIAgent_With_OpenAIClient(ITestOutputHelper output) : AgentS
     {
         // Get the agent directly from OpenAIClient.
         var agent = new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
-            .CreateChatClientAgent(TestConfiguration.OpenAI.ChatModelId, JokerInstructions, JokerName);
+            .GetChatClient(TestConfiguration.OpenAI.ChatModelId)
+            .CreateAIAgent(JokerInstructions, JokerName);
 
         // Start a new thread for the agent conversation.
         AgentThread thread = agent.GetNewThread();
@@ -71,7 +73,8 @@ public sealed class AIAgent_With_OpenAIClient(ITestOutputHelper output) : AgentS
     {
         // Get the agent directly from OpenAIClient.
         var agent = new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
-            .CreateChatClientAgent(TestConfiguration.OpenAI.ChatModelId, JokerInstructions, JokerName);
+            .GetChatClient(TestConfiguration.OpenAI.ChatModelId)
+            .CreateAIAgent(JokerInstructions, JokerName);
 
         // Start a new thread for the agent conversation.
         AgentThread thread = agent.GetNewThread();

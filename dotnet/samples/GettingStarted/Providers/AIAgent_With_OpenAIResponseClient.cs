@@ -24,7 +24,8 @@ public sealed class AIAgent_With_OpenAIResponseClient(ITestOutputHelper output) 
     {
         // Get the agent directly from OpenAIClient.
         AIAgent agent = new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
-            .CreateResponseClientAgent(TestConfiguration.OpenAI.ChatModelId, JokerInstructions, JokerName);
+            .GetOpenAIResponseClient(TestConfiguration.OpenAI.ChatModelId)
+            .CreateAIAgent(JokerInstructions, JokerName);
 
         // Start a new thread for the agent conversation based on the type.
         AgentThread thread = agent.GetNewThread();
@@ -52,19 +53,19 @@ public sealed class AIAgent_With_OpenAIResponseClient(ITestOutputHelper output) 
     {
         // Get the agent directly from OpenAIClient.
         AIAgent agent = new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
-            .CreateResponseClientAgent(TestConfiguration.OpenAI.ChatModelId,
-                options: new()
+            .GetOpenAIResponseClient(TestConfiguration.OpenAI.ChatModelId)
+            .CreateAIAgent(options: new()
+            {
+                Name = JokerName,
+                Instructions = JokerInstructions,
+                ChatOptions = new ChatOptions
                 {
-                    Name = JokerName,
-                    Instructions = JokerInstructions,
-                    ChatOptions = new ChatOptions
-                    {
-                        // We can use the RawRepresentationFactory to provide Response service specific
-                        // options. Here we can indicate that we do not want the service to store the
-                        // conversation in a service managed thread.
-                        RawRepresentationFactory = (_) => new ResponseCreationOptions() { StoredOutputEnabled = false }
-                    }
-                });
+                    // We can use the RawRepresentationFactory to provide Response service specific
+                    // options. Here we can indicate that we do not want the service to store the
+                    // conversation in a service managed thread.
+                    RawRepresentationFactory = (_) => new ResponseCreationOptions() { StoredOutputEnabled = false }
+                }
+            });
 
         // Start a new thread for the agent conversation based on the type.
         AgentThread thread = agent.GetNewThread();

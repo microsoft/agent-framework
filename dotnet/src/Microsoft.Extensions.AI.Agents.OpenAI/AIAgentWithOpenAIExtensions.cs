@@ -92,7 +92,7 @@ public static class AIAgentWithOpenAIExtensions
     /// <item><description><see cref="UserChatMessage"/></description></item>
     /// </list>
     /// </remarks>
-    public static IEnumerable<Microsoft.Extensions.AI.ChatMessage> AsChatMessages(this IEnumerable<OpenAI.Chat.ChatMessage> messages)
+    internal static IEnumerable<Microsoft.Extensions.AI.ChatMessage> AsChatMessages(this IEnumerable<OpenAI.Chat.ChatMessage> messages)
     {
         Throw.IfNull(messages);
 
