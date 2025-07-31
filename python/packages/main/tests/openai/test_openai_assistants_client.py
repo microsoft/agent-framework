@@ -182,7 +182,7 @@ async def test_openai_assistants_client_get_assistant_id_or_create_create_new(
 async def test_openai_assistants_client_aclose_should_not_delete(
     mock_async_openai: MagicMock,
 ) -> None:
-    """Test _cleanup_assistant_if_needed when assistant should not be deleted."""
+    """Test close when assistant should not be deleted."""
     chat_client = create_test_openai_assistants_client(
         mock_async_openai, assistant_id="assistant-to-keep", should_delete_assistant=False
     )
