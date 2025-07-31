@@ -179,22 +179,7 @@ async def test_openai_assistants_client_get_assistant_id_or_create_create_new(
     mock_async_openai.beta.assistants.create.assert_called_once()
 
 
-async def test_openai_assistants_client_cleanup_assistant_if_needed_should_delete(
-    mock_async_openai: MagicMock,
-) -> None:
-    """Test _cleanup_assistant_if_needed when assistant should be deleted."""
-    chat_client = create_test_openai_assistants_client(
-        mock_async_openai, assistant_id="assistant-to-delete", should_delete_assistant=True
-    )
-
-    await chat_client._cleanup_assistant_if_needed()  # type: ignore
-
-    # Verify assistant deletion was called
-    mock_async_openai.beta.assistants.delete.assert_called_once_with("assistant-to-delete")
-    assert not chat_client._should_delete_assistant  # type: ignore
-
-
-async def test_openai_assistants_client_cleanup_assistant_if_needed_should_not_delete(
+async def test_openai_assistants_client_aclose_should_not_delete(
     mock_async_openai: MagicMock,
 ) -> None:
     """Test _cleanup_assistant_if_needed when assistant should not be deleted."""
@@ -202,27 +187,14 @@ async def test_openai_assistants_client_cleanup_assistant_if_needed_should_not_d
         mock_async_openai, assistant_id="assistant-to-keep", should_delete_assistant=False
     )
 
-    await chat_client._cleanup_assistant_if_needed()  # type: ignore
+    await chat_client.close()  # type: ignore
 
     # Verify assistant deletion was not called
     mock_async_openai.beta.assistants.delete.assert_not_called()
     assert not chat_client._should_delete_assistant  # type: ignore
 
 
-async def test_openai_assistants_client_cleanup_assistant_if_needed_exception_handling(
-    mock_async_openai: MagicMock,
-) -> None:
-    """Test _cleanup_assistant_if_needed propagates exceptions (it doesn't handle them)."""
-    chat_client = create_test_openai_assistants_client(
-        mock_async_openai, assistant_id="assistant-to-delete", should_delete_assistant=True
-    )
-    mock_async_openai.beta.assistants.delete.side_effect = Exception("Deletion failed")
-
-    with pytest.raises(Exception, match="Deletion failed"):
-        await chat_client._cleanup_assistant_if_needed()  # type: ignore
-
-
-async def test_openai_assistants_client_aclose(mock_async_openai: MagicMock) -> None:
+async def test_openai_assistants_client_aclose_should_delete(mock_async_openai: MagicMock) -> None:
     """Test close method calls cleanup."""
     chat_client = create_test_openai_assistants_client(
         mock_async_openai, assistant_id="assistant-to-delete", should_delete_assistant=True
@@ -232,6 +204,7 @@ async def test_openai_assistants_client_aclose(mock_async_openai: MagicMock) -> 
 
     # Verify assistant deletion was called
     mock_async_openai.beta.assistants.delete.assert_called_once_with("assistant-to-delete")
+    assert not chat_client._should_delete_assistant  # type: ignore
 
 
 async def test_openai_assistants_client_async_context_manager(mock_async_openai: MagicMock) -> None:
