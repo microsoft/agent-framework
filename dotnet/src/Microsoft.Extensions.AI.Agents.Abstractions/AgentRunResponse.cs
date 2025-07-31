@@ -54,7 +54,7 @@ public class AgentRunResponse
         this.AdditionalProperties = response.AdditionalProperties;
         this.CreatedAt = response.CreatedAt;
         this.Messages = response.Messages;
-        this.RawRepresentation = response.RawRepresentation;
+        this.RawRepresentation = response;
         this.ResponseId = response.ResponseId;
         this.Usage = response.Usage;
     }
