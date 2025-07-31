@@ -11,7 +11,7 @@ namespace Steps;
 /// <summary>
 /// Demonstrates how to store the chat history of a thread in a 3rd party store when using <see cref="ChatClientAgent"/>.
 /// </summary>
-public sealed class Step07_ChatClientAgent_3rdPartyThreadStorage(ITestOutputHelper output) : AgentSample(output)
+public sealed class Step09_ChatClientAgent_3rdPartyThreadStorage(ITestOutputHelper output) : AgentSample(output)
 {
     private const string JokerName = "Joker";
     private const string JokerInstructions = "You are good at telling jokes.";

@@ -8,7 +8,7 @@ namespace Steps;
 /// <summary>
 /// Demonstrates how to suspend and resume a thread with the <see cref="ChatClientAgent"/>.
 /// </summary>
-public sealed class Step06_ChatClientAgent_SuspendResumeThread(ITestOutputHelper output) : AgentSample(output)
+public sealed class Step08_ChatClientAgent_SuspendResumeThread(ITestOutputHelper output) : AgentSample(output)
 {
     private const string JokerName = "Joker";
     private const string JokerInstructions = "You are good at telling jokes.";
