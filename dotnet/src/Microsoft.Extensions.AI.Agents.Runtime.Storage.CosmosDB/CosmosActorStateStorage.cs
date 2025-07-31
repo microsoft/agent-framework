@@ -12,26 +12,7 @@ using Microsoft.Azure.Cosmos;
 namespace Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB;
 
 /// <summary>
-///
-/// TODO: partitionkey can be hierarchical - actortype + actorkey
-///
 /// Cosmos DB implementation of actor state storage.
-///
-/// Document Structure (one per actor key):
-/// {
-///   "id": "actor-123__foo",            // Composite ID: actorId__key (__ separator for safety)
-///   "actorId": "actor-123",             // Partition key
-///   "key": "foo",                       // Logical key
-///   "value": { "bar": 42, "baz": "hello" }  // Arbitrary JsonElement payload
-/// }
-///
-/// Root document (one per actor for ETag tracking):
-/// {
-///   "id": "actor-123",                  // Root document ID: actorId
-///   "actorId": "actor-123",             // Partition key (same as ID)
-///   "lastModified": "2024-...",          // Timestamp
-///   "version": 123                       // Incrementing version number
-/// }
 /// </summary>
 public class CosmosActorStateStorage : IActorStateStorage
 {
@@ -241,6 +222,13 @@ public class CosmosActorStateStorage : IActorStateStorage
     /// the entire actor's state for optimistic concurrency control.
     /// This document contains no actor state data. It only serves to track last modified
     /// time and provide a single ETag for the actor's state.
+    ///
+    /// Example structure:
+    /// {
+    ///   "id": "rootdoc",                       // Root document ID (constant per actor partition)
+    ///   "actorId": "actor-123",                // Partition key (actor ID)
+    ///   "lastModified": "2024-...",            // Timestamp
+    /// }
     /// </summary>
     private sealed class ActorRootDocument
     {
@@ -254,6 +242,16 @@ public class CosmosActorStateStorage : IActorStateStorage
         public DateTimeOffset LastModified { get; set; }
     }
 
+    /// <summary>
+    /// Actor state document that represents a single key-value pair in the actor's state.
+    /// Document Structure (one per actor key):
+    /// {
+    ///   "id": "state_sanitizedkey",            // Unique document ID for the state entry
+    ///   "actorId": "actor-123",                // Partition key (actor ID)
+    ///   "key": "foo",                          // Logical key for the state entry
+    ///   "value": { "bar": 42, "baz": "hello" } // Arbitrary JsonElement payload
+    /// }
+    /// </summary>
     private sealed class ActorStateDocument
     {
         [JsonPropertyName("id")]
