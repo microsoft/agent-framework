@@ -51,11 +51,9 @@ internal class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageStore
             return new ValueTask();
         }
 
-        jsonSerializerOptions ??= AgentAbstractionsJsonUtilities.DefaultOptions;
-
         var state = JsonSerializer.Deserialize(
             serializedStoreState.Value,
-            jsonSerializerOptions.GetTypeInfo(typeof(StoreState))) as StoreState;
+            AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(StoreState))) as StoreState;
 
         if (state?.Messages is { Count: > 0 } messages)
         {

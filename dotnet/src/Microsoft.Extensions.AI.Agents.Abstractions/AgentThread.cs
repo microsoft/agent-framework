@@ -157,11 +157,9 @@ public class AgentThread
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     public virtual async Task DeserializeAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        jsonSerializerOptions ??= AgentAbstractionsJsonUtilities.DefaultOptions;
-
         var state = JsonSerializer.Deserialize(
             serializedThread,
-            jsonSerializerOptions.GetTypeInfo(typeof(ThreadState))) as ThreadState;
+            AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState))) as ThreadState;
 
         if (state?.ConversationId is string threadId)
         {
