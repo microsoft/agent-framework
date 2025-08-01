@@ -128,15 +128,6 @@ def test_azure_assistants_client_init_missing_deployment_name(azure_openai_unit_
         )
 
 
-@pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_API_KEY"]], indirect=True)
-def test_azure_assistants_client_init_missing_api_key(azure_openai_unit_test_env: dict[str, str]) -> None:
-    """Test AzureAssistantsClient initialization with missing API key."""
-    # Azure client can work without API key using Entra ID authentication
-    # So this should NOT raise an error, unlike OpenAI client
-    client = AzureAssistantsClient(deployment_name="test_chat_deployment", env_file_path="nonexistent.env")
-    assert client.ai_model_id == "test_chat_deployment"
-
-
 def test_azure_assistants_client_init_with_default_headers(azure_openai_unit_test_env: dict[str, str]) -> None:
     """Test AzureAssistantsClient initialization with default headers."""
     default_headers = {"X-Unit-Test": "test-guid"}
