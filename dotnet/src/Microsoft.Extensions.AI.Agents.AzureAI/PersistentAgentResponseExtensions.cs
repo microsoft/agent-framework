@@ -17,14 +17,14 @@ internal static class PersistentAgentResponseExtensions
     /// <param name="persistentAgentsClient">The client used to interact with persistent agents. Cannot be <see langword="null"/>.</param>
     /// <param name="chatOptions">The default <see cref="ChatOptions"/> to use when interacting with the agent.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the persistent agent.</returns>
-    public static ChatClientAgent AsRunnableAgent(this Response<PersistentAgent> persistentAgentResponse, PersistentAgentsClient persistentAgentsClient, ChatOptions? chatOptions = null)
+    public static ChatClientAgent AsAIAgent(this Response<PersistentAgent> persistentAgentResponse, PersistentAgentsClient persistentAgentsClient, ChatOptions? chatOptions = null)
     {
         if (persistentAgentResponse is null)
         {
             throw new ArgumentNullException(nameof(persistentAgentResponse));
         }
 
-        return AsRunnableAgent(persistentAgentResponse.Value, persistentAgentsClient, chatOptions);
+        return AsAIAgent(persistentAgentResponse.Value, persistentAgentsClient, chatOptions);
     }
 
     /// <summary>
@@ -34,7 +34,7 @@ internal static class PersistentAgentResponseExtensions
     /// <param name="persistentAgentsClient">The client used to interact with persistent agents. Cannot be <see langword="null"/>.</param>
     /// <param name="chatOptions">The default <see cref="ChatOptions"/> to use when interacting with the agent.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the persistent agent.</returns>
-    public static ChatClientAgent AsRunnableAgent(this PersistentAgent persistentAgentMetadata, PersistentAgentsClient persistentAgentsClient, ChatOptions? chatOptions = null)
+    public static ChatClientAgent AsAIAgent(this PersistentAgent persistentAgentMetadata, PersistentAgentsClient persistentAgentsClient, ChatOptions? chatOptions = null)
     {
         if (persistentAgentMetadata is null)
         {
