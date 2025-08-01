@@ -11,7 +11,7 @@
 7. [Pattern Implementation](#pattern-implementation)
 8. [Event System](#event-system)
 9. [State Management](#state-management)
-10. [Human-in-the-Loop Support](#human-in-the-loop-support)
+10. [Request/Response Support](#request-response-support)
 11. [Advanced Features](#advanced-features)
 12. [Security Considerations](#security-considerations)
 13. [Performance Considerations](#performance-considerations)
@@ -19,17 +19,16 @@
 
 ## Executive Summary
 
-The Semantic Kernel Workflow Framework is a sophisticated orchestration system designed to manage complex multi-agent workflows with support for various execution patterns including sequential, concurrent, conditional, and human-in-the-loop scenarios. Built on a graph-based architecture using Pregel-style execution, the framework provides a flexible and extensible foundation for building AI-powered applications.
+The Agent Framework Workflow system is a sophisticated orchestration framework designed to manage complex multi-agent workflows with advanced type safety and polymorphic execution patterns. Built on a graph-based architecture using Pregel-style execution, the framework provides a flexible and extensible foundation for building AI-powered applications with natural multi-handler patterns.
 
 Key features include:
 
-- Type-safe executor-based architecture
-- Asynchronous event-driven execution
-- Built-in support for common patterns (sequential, fan-out/fan-in, loops)
-- Human-in-the-loop capabilities
-- Shared state management with thread-safe operations
-- Comprehensive event streaming for observability
-- Checkpointing and resumption capabilities (planned)
+- **Multi-handler executors** with `@handles_message` decorator pattern
+- **Built-in request/response support** with automatic correlation and external integration
+- **Comprehensive type validation** preventing handler conflicts
+- **Polymorphic message routing** based on runtime type checking
+- **Thread-safe shared state management** with correlation tracking
+- **Asynchronous event-driven execution** with comprehensive observability
 
 ## Introduction
 
@@ -82,125 +81,256 @@ The framework follows a graph-based architecture where:
 
 ## Core Components
 
-### 1. Executor (`executor.py`)
+The workflow framework consists of six core components that work together to create a flexible, type-safe execution environment:
 
-The fundamental processing unit in the workflow system.
-
-```python
-class Executor(Generic[T], ABC):
-    """Base class for all workflow executors"""
-
-    def __init__(self, id: str | None = None):
-        self._id = id or str(uuid.uuid4())
-        self._input_type = self._extract_type_parameter()
-
-    @abstractmethod
-    async def _execute(self, data: T, ctx: ExecutorContext) -> Any:
-        """Execute logic to be implemented by subclasses"""
-
-    async def execute(self, data: T, ctx: ExecutorContext) -> Any:
-        """Wrapper that emits events and calls _execute"""
-
-    def can_handle(self, data: Any) -> bool:
-        """Type checking for incoming messages"""
+```txt
+┌───────────────────────────────────────────────────────────────────┐
+│                        Workflow System                            │
+├─────────────────┬───────────────┬─────────────────────────────────┤
+│                 │               │                                 │
+│   Executors     │     Edges     │           Workflow              │
+│  (Processing)   │   (Routing)   │       (Orchestration)           │
+│                 │               │                                 │
+│ ┌─────────────┐ │ ┌───────────┐ │ ┌─────────────────────────────┐ │
+│ │@handles_msg │ │ │Conditional│ │ │ • Manages execution flow    │ │
+│ │┌───────────┐│ │ │  Routing  │ │ │ • Coordinates executors     │ │
+│ ││Handler A  ││ │ └─────┬─────┘ │ │ • Streams events            │ │
+│ │├───────────┤│ │       │       │ └─────────────┬───────────────┘ │
+│ ││Handler B  ││◄├───────┴───────┤►              │                 │
+│ │├───────────┤│ │               │               ▼                 │
+│ ││Handler C  ││ │  Type-based   │        WorkflowContext          │
+│ │└───────────┘│ │   Routing     │    (Shared State & Events)      │
+│ └─────────────┘ │               │                                 │
+└─────────────────┴───────────────┴─────────────────────────────────┘
 ```
 
-**Key Features:**
+### Component Overview
 
-- Generic type parameter for input type safety
-- Automatic type extraction and validation
-- Built-in event emission for observability
-- Unique identifier for routing and debugging
+1. **Executors**: The processing units that handle messages
+2. **Edges**: Define message flow and routing rules between executors
+3. **Workflow**: Orchestrates execution and manages the lifecycle
+4. **WorkflowContext**: Provides shared state and event management
+5. **Message Handlers**: Enable polymorphic message processing
+6. **RequestInfoExecutor**: Built-in support for external integrations
 
-### 2. Edge (`_edge.py`)
+### 0. Message Handler Pattern
 
-Represents directed connections between executors with optional routing conditions.
+The `@handles_message` decorator transforms executors into polymorphic processors:
 
-```python
-class _Edge:
-    """Directed edge with conditional routing support"""
-
-    def __init__(self, source: Executor, target: Executor,
-                 condition: Callable[[Any], bool] | None = None):
-        self.source = source
-        self.target = target
-        self._condition = condition
-        self._edge_group_ids: list[str] = []
+```
+┌─────────────────────────┐         ┌─────────────────────────┐
+│    Traditional Way      │         │    Multi-Handler Way    │
+├─────────────────────────┤         ├─────────────────────────┤
+│                         │         │ @handles_message        │
+│ class MyExecutor:       │         │ async def handle_typeA()│
+│   def can_handle():     │   ───►  │                         │
+│     # Complex logic     │         │ @handles_message        │
+│   def _execute():       │         │ async def handle_typeB()│
+│     # Big switch/if     │         │                         │
+│                         │         │ # Automatic routing!    │
+└─────────────────────────┘         └─────────────────────────┘
 ```
 
-**Key Features:**
+**How it works:**
+- Decorates methods to mark them as message handlers
+- Automatically extracts the expected message type from method signature
+- Framework discovers all handlers during executor initialization
+- Routes messages to appropriate handler based on runtime type
 
-- Conditional routing based on message content
-- Edge groups for fan-in synchronization
-- Type-aware message filtering
-- Support for complex routing patterns
+### 1. Executor - The Processing Unit
 
-### 3. Workflow (`workflow.py`)
+Executors are the fundamental building blocks that process messages in a workflow:
 
-The main orchestration container that manages execution.
-
-```python
-class Workflow:
-    """Workflow container managing executors and execution"""
-
-    def __init__(self, edges: list[_Edge], start_executor: Executor | str,
-                 execution_context: ExecutionContext):
-        self._edges = edges
-        self._start_executor = start_executor
-        self._runner = _Runner(edges, shared_state, execution_context)
-
-    async def run_stream(self, message: Any,
-                        executor: Executor | str | None = None) -> AsyncIterable[WorkflowEvent]:
-        """Stream execution events as the workflow runs"""
+```
+┌────────────────────────────────────────┐
+│             Executor                   │
+├────────────────────────────────────────┤
+│ ID: "data_processor"                   │
+├────────────────────────────────────────┤
+│ Message Handlers:                      │
+│  • handle_text(TextData) → ProcessedText│
+│  • handle_image(ImageData) → Thumbnail │
+│  • handle_batch(List[Any]) → Report    │
+├────────────────────────────────────────┤
+│ Lifecycle:                             │
+│  1. Receive message                    │
+│  2. Match type to handler              │
+│  3. Execute handler                    │
+│  4. Send output messages               │
+│  5. Emit events                        │
+└────────────────────────────────────────┘
 ```
 
-### 4. WorkflowBuilder (`workflow.py`)
+**Key Concepts:**
 
-Fluent API for constructing workflows.
+- **Identity**: Each executor has a unique ID for routing and debugging
+- **Polymorphic**: Can handle multiple message types via different handlers
+- **Type-Safe**: Validates message types before processing
+- **Event Emitting**: Broadcasts lifecycle events for observability
+- **Stateless**: Designed to be stateless (state managed via WorkflowContext)
 
-```python
-class WorkflowBuilder:
-    """Builder pattern for workflow construction"""
+### 2. Edge - The Message Highway
 
-    def add_edge(self, source: Executor, target: Executor,
-                 condition: Callable[[Any], bool] | None = None) -> Self
-    def add_fan_out_edges(self, source: Executor, targets: list[Executor]) -> Self
-    def add_fan_in_edges(self, sources: list[Executor], target: Executor,
-                         activation: Activation = Activation.WhenAll) -> Self
-    def add_loop(self, source: Executor, target: Executor,
-                 condition: Callable[[Any], bool] | None = None) -> Self
-    def add_chain(self, executors: list[Executor]) -> Self
+Edges define how messages flow between executors:
+
+```
+┌─────────────┐                    ┌─────────────┐
+│  Executor A │                    │  Executor B │
+│             │     Edge Rules:    │             │
+│   Output:   │  1. Type Check     │   Input:    │
+│   UserData  │  2. Condition?     │   UserData  │
+│             │  3. Route Message  │             │
+└──────┬──────┘                    └──────▲──────┘
+       │                                  │
+       │         ┌──────────────┐         │
+       └────────►│     Edge     │─────────┘
+                 │              │
+                 │ if user.age  │
+                 │    >= 18     │
+                 └──────────────┘
 ```
 
-### 5. Runner (`_runner.py`)
+**Edge Capabilities:**
 
-Internal component managing the Pregel-style execution.
+- **Type Filtering**: Only routes messages the target can handle
+- **Conditional Logic**: Optional conditions for dynamic routing
+- **Fan-out Support**: One source can connect to multiple targets
+- **Fan-in Support**: Multiple sources can connect to one target
+- **Edge Groups**: Coordinate message collection for fan-in patterns
 
-```python
-class _Runner:
-    """Manages superstep-based workflow execution"""
+### 3. Workflow - The Orchestrator
 
-    async def run_until_convergence(self) -> AsyncIterable[WorkflowEvent]:
-        """Run supersteps until no messages remain"""
+The Workflow ties everything together and manages execution:
 
-    async def _run_iteration(self):
-        """Execute one superstep of message delivery"""
+```
+┌─────────────────────────────────────────────────────┐
+│                    Workflow                         │
+├─────────────────────────────────────────────────────┤
+│  Components:                                        │
+│  • Executors: [A, B, C, RequestInfo*]               │
+│  • Edges: [A→B, A→C, B→C]                           │
+│  • Start: A                                         │
+│  • Runner: Pregel-style superstep execution         │
+├─────────────────────────────────────────────────────┤
+│  Execution Flow:                                    │
+│  1. run_stream(message) ──► Start at executor A     │
+│  2. Superstep 1: A processes, sends to B & C        │
+│  3. Superstep 2: B & C process in parallel          │
+│  4. Stream events throughout execution              │
+│  5. Complete when no messages remain                │
+└─────────────────────────────────────────────────────┘
+         * RequestInfo executor added automatically
 ```
 
-### 6. ExecutionContext (`execution_context.py`)
+**Workflow Responsibilities:**
 
-Protocol defining the execution environment interface.
+- **Graph Management**: Maintains the executor graph structure
+- **Execution Control**: Initiates and monitors workflow runs
+- **Event Streaming**: Provides real-time execution visibility
+- **Request/Response**: Built-in support for external integrations
+- **Automatic Enhancement**: Adds RequestInfoExecutor if not present
 
-```python
-@runtime_checkable
-class ExecutionContext(Protocol):
-    """Execution context for message passing and event handling"""
+### 4. WorkflowBuilder - The Construction API
 
-    async def send_message(self, source_id: str, message: Any) -> None
-    async def drain_messages(self) -> dict[str, list[Any]]
-    async def add_event(self, event: WorkflowEvent) -> None
-    async def drain_events(self) -> list[WorkflowEvent]
+Provides a fluent interface for building workflows:
+
 ```
+┌─────────────────────────────────────────────────────┐
+│            WorkflowBuilder Patterns                 │
+├─────────────────────────────────────────────────────┤
+│                                                     │
+│  Sequential:     A ──► B ──► C                      │
+│  .add_chain([A, B, C])                              │
+│                                                     │
+│  Fan-out:        ┌──► B                             │
+│                A ─┼──► C                            │
+│                   └──► D                            │
+│  .add_fan_out_edges(A, [B, C, D])                   │
+│                                                     │
+│  Conditional:    ┌─[if x>0]─► B                     │
+│                A ─┤                                 │
+│                   └─[if x<0]─► C                    │
+│  .add_edge(A, B, lambda x: x > 0)                   │
+│  .add_edge(A, C, lambda x: x < 0)                   │
+│                                                     │
+│  Fan-in:      A ─┐                                  │
+│               B ─┼──► D                             │
+│               C ─┘                                  │
+│  .add_fan_in_edges([A, B, C], D)                    │
+└─────────────────────────────────────────────────────┘
+```
+
+### 5. WorkflowContext - The Shared Environment
+
+Provides executors with access to shared state and event emission:
+
+```
+┌─────────────────────────────────────────────────────┐
+│                 WorkflowContext                     │
+├─────────────────────────────────────────────────────┤
+│                                                     │
+│  Shared State:          Event Stream:               │
+│  ┌─────────────┐       ┌──────────────────┐         │
+│  │ counter: 42 │       │ ExecutorInvoke   │         │
+│  │ user: {...} │       │ ExecutorComplete │         │
+│  │ cache: [...]│       │ RequestInfo      │         │
+│  └─────────────┘       │ WorkflowComplete │         │
+│                        └──────────────────┘         │
+│                                                     │
+│  Methods:                                           │
+│  • send_message(msg) - Route to next executors      │
+│  • add_event(event) - Emit to event stream          │
+│  • get/set_shared_state(key, value) - Share data    │
+└─────────────────────────────────────────────────────┘
+```
+
+**Context Capabilities:**
+
+- **Message Routing**: Send messages that flow along edges
+- **State Management**: Thread-safe shared state between executors
+- **Event Broadcasting**: Emit events for external monitoring
+- **Request Correlation**: Track request/response pairs
+
+### 6. RequestInfoExecutor - The External Gateway
+
+A special built-in executor for handling external interactions:
+
+```
+┌─────────────────────────────────────────────────────┐
+│              RequestInfoExecutor                    │
+│                (ID: "request_info")                 │
+├─────────────────────────────────────────────────────┤
+│                                                     │
+│  Workflow                          External World   │
+│     │                                    ▲          │
+│     │  UserApprovalRequest               │          │
+│     ▼                                    │          │
+│  ┌──────────────┐      RequestInfoEvent │           │
+│  │ RequestInfo  │ ─────────────────────►│           │
+│  │  Executor    │      (request_id: 123)│           │
+│  │              │                        │          │
+│  │              │◄───────────────────────┘          │
+│  └──────────────┘   send_response(true, 123)        │
+│     │                                               │
+│     │  true                                         │
+│     ▼                                               │
+│  Continue...                                        │
+└─────────────────────────────────────────────────────┘
+```
+
+**How it works:**
+
+1. **Intercepts Requests**: Catches any `RequestMessage` subclass
+2. **Generates Correlation ID**: Creates unique request_id
+3. **Emits Event**: Sends RequestInfoEvent for external handling
+4. **Waits for Response**: External system calls `workflow.send_response()`
+5. **Continues Flow**: Response routed back through workflow edges
+
+**Use Cases:**
+- Human approval workflows
+- External API calls
+- Database lookups
+- Any async external integration
 
 ## Execution Model
 
@@ -209,9 +339,10 @@ class ExecutionContext(Protocol):
 The workflow framework implements a type-safe message passing system with the following key principles:
 
 #### Executor Type System
-- **Single Input Type**: Each executor declares exactly one input type via generic parameter `Executor[T]`
-- **Any Output Type**: Executors can produce any output type from their `_execute()` method
-- **Type Validation**: Messages are routed only if `target.can_handle(data)` returns true
+- **Multiple Input Types**: Executors can handle multiple types via `@handles_message` decorated methods
+- **Handler Discovery**: Types automatically detected from method signatures
+- **Type Validation**: Messages routed to appropriate handlers, raises error if no handler found
+- **Conflict Prevention**: Validation prevents multiple handlers for same type
 
 #### Edge Routing Logic
 Messages flow along edges based on a two-step validation:
@@ -227,12 +358,12 @@ The framework uses a modified Pregel execution model with clear data flow semant
 ```
 Superstep N:
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│  Collect All    │───▶│  Route Messages │───▶│  Execute All    │
+│  Collect All    │───▶│  Route Messages │───▶│  Execute All   │
 │  Pending        │    │  Based on Type  │    │  Target         │
 │  Messages       │    │  & Conditions   │    │  Executors      │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
                                                         │
-┌─────────────────┐    ┌─────────────────┐             │
+┌─────────────────┐    ┌─────────────────┐              │
 │  Start Next     │◀───│  Emit Events &  │◀────────────┘
 │  Superstep      │    │  New Messages   │
 └─────────────────┘    └─────────────────┘
@@ -282,22 +413,22 @@ sequenceDiagram
     participant B as Executor B
     participant C as Executor C
     
-    A->>A: _execute() produces message
+    A->>A: handler method produces message
     par Send to B
         A->>B: send_message(data)
     and Send to C
         A->>C: send_message(data)
     end
     par Execute concurrently
-        B->>B: _execute(data)
+        B->>B: handle message via @handles_message
     and
-        C->>C: _execute(data)
+        C->>C: handle message via @handles_message
     end
 ```
 
 #### 3. Fan-in Patterns (N:1)
 
-##### 3a. Fan-in with `Activation.WhenAll` (Message Accumulation)
+##### 3a. Fan-in (Message Collection)
 ```
 ┌─────────────┐    
 │ Executor A  │───┐   
@@ -310,7 +441,7 @@ sequenceDiagram
 └─────────────┘       
 ```
 
-**Key Behavior**: Messages accumulate in shared state until ALL configured edges in the fan-in group have contributed messages, then delivered as a collection. If any edge never contributes (due to type mismatch, condition failure, or no output), the fan-in won't execute.
+**Key Behavior**: When multiple executors connect to a single target executor that expects a list type, messages are collected and delivered as a list to the target executor's handler method.
 
 **Sequence:**
 ```mermaid
@@ -325,10 +456,10 @@ sequenceDiagram
     B->>SS: store message from B
     Note over SS: All configured edges contributed
     SS->>D: execute([msg_A, msg_B])
-    D->>D: _execute([msg_A, msg_B])
+    D->>D: handle list via @handles_message
 ```
 
-##### 3b. Fan-in with `Activation.WhenAny` (Individual Message Processing)
+##### 3b. Fan-in (Individual Message Processing)
 ```
 ┌─────────────┐    
 │ Executor A  │───┐   
@@ -352,10 +483,10 @@ sequenceDiagram
     
     par Independent execution
         A->>D: execute(msg_A)
-        D->>D: _execute(msg_A)
+        D->>D: handle msg_A via @handles_message
     and
         B->>D: execute(msg_B)
-        D->>D: _execute(msg_B)
+        D->>D: handle msg_B via @handles_message
     end
     Note over D: Executor runs twice
 ```
@@ -385,13 +516,13 @@ sequenceDiagram
     participant HighHandler as High Priority Handler
     participant LowHandler as Low Priority Handler
     
-    Router->>Router: _execute() produces message
+    Router->>Router: handler method produces message
     alt message.priority == "high"
         Router->>HighHandler: send_message(high_priority_msg)
-        HighHandler->>HighHandler: _execute(msg)
+        HighHandler->>HighHandler: handle message via @handles_message
     else message.priority == "low"
         Router->>LowHandler: send_message(low_priority_msg)
-        LowHandler->>LowHandler: _execute(msg)
+        LowHandler->>LowHandler: handle message via @handles_message
     else no condition matches
         Note over Router: Message ignored
     end
@@ -406,15 +537,35 @@ sequenceDiagram
 
 ## API Design
 
-### Creating Executors
+### Creating Single-Handler Executors
 
 ```python
 @output_message_types(str)
-class UpperCaseExecutor(Executor[str]):
-    async def _execute(self, data: str, ctx: ExecutorContext) -> str:
+class UpperCaseExecutor(Executor):
+    @handles_message
+    async def process_text(self, data: str, ctx: WorkflowContext) -> None:
         result = data.upper()
         await ctx.send_message(result)
-        return result
+```
+
+### Creating Multi-Handler Executors
+
+```python
+@output_message_types(TemperatureResponse, WeatherResponse)
+class WeatherService(Executor):
+    """Service handling multiple weather query types"""
+
+    @handles_message
+    async def get_temperature(self, query: TemperatureQuery, ctx: WorkflowContext) -> None:
+        response = TemperatureResponse(location=query.location, temperature=20.0)
+        await ctx.send_message(response)
+
+    @handles_message 
+    async def get_weather(self, query: WeatherQuery, ctx: WorkflowContext) -> None:
+        response = WeatherResponse(
+            location=query.location, temperature=20.0, conditions="Sunny"
+        )
+        await ctx.send_message(response)
 ```
 
 ### Building Workflows
@@ -442,8 +593,7 @@ workflow = (
     WorkflowBuilder()
     .set_start_executor(splitter)
     .add_fan_out_edges(splitter, [worker1, worker2, worker3])
-    .add_fan_in_edges([worker1, worker2, worker3], aggregator,
-                      activation=Activation.WhenAll)
+    .add_fan_in_edges([worker1, worker2, worker3], aggregator)
     .build()
 )
 ```
@@ -455,87 +605,136 @@ workflow = (
 async for event in workflow.run_stream(initial_message):
     if isinstance(event, ExecutorCompleteEvent):
         print(f"Executor {event.executor_id} completed")
-    elif isinstance(event, HumanInTheLoopEvent):
-        # Handle human intervention request
-        user_input = await get_user_input()
-        async for event in workflow.run_stream(user_input, executor=event.executor_id):
-            # Process continuation events
+    elif isinstance(event, RequestInfoEvent):
+        # Handle request/response pattern
+        user_response = await get_user_input(event.request_data)
+        async for event in workflow.send_response(user_response, event.request_id):
+            # Process response continuation events
 ```
 
 ## Pattern Implementation
 
-### 1. Sequential Processing
+### 1. Multi-Handler Pattern
+
+Single executor handling multiple message types.
+
+```python
+@output_message_types(ProcessedDataA, ProcessedDataB)
+class PolymorphicProcessor(Executor):
+    @handles_message
+    async def handle_type_a(self, data: InputTypeA, ctx: WorkflowContext):
+        result = ProcessedDataA(data.value * 2)
+        await ctx.send_message(result)
+
+    @handles_message
+    async def handle_type_b(self, data: InputTypeB, ctx: WorkflowContext):
+        result = ProcessedDataB(data.text.upper())
+        await ctx.send_message(result)
+```
+
+### 2. Request/Response Pattern
+
+Built-in support for external request handling.
+
+```python
+@dataclass
+class UserQuery(RequestMessage):
+    question: str
+
+# Workflow automatically includes RequestInfoExecutor
+workflow = WorkflowBuilder().set_start_executor(processor).build()
+
+# Handle request/response externally
+async for event in workflow.run_stream(UserQuery("What is AI?")):
+    if isinstance(event, RequestInfoEvent):
+        response = await get_human_response(event.request_data.question)
+        async for event in workflow.send_response(response, event.request_id):
+            # Process response...
+```
+
+### 3. Sequential Processing
 
 Simple chain of executors processing data in order.
 
 ```python
 workflow = (
     WorkflowBuilder()
-    .add_chain([preprocessor, analyzer, formatter])
+    .add_chain([preprocessor, analyzer, formatter]) 
     .set_start_executor(preprocessor)
     .build()
 )
 ```
 
-### 2. Round-Robin Group Chat
+### 4. Round-Robin Group Chat
 
-Executors take turns in a predefined sequence.
+Multi-agent coordination with conditional routing.
 
 ```python
-# Building the group chat workflow
-executor_a = AgentExecutor(id="agent_a")
-executor_b = AgentExecutor(id="agent_b")
-executor_c = AgentExecutor(id="agent_c")
+@output_message_types(TurnSelection)
+class GroupChatManager(Executor):
+    @handles_message
+    async def coordinate_chat(self, messages: list[ChatMessage], ctx: WorkflowContext):
+        next_agent = self._agents[self._turn_count % len(self._agents)]
+        selection = TurnSelection(messages=messages, selected_agent=next_agent)
+        await ctx.send_message(selection)
 
-group_chat_manager = RoundRobinGroupChatManager(
-    members=["agent_a", "agent_b", "agent_c"],
-    max_rounds=3
-)
+@output_message_types(list[ChatMessage])
+class ChatAgent(Executor):
+    @handles_message
+    async def respond_when_selected(self, selection: TurnSelection, ctx: WorkflowContext):
+        if selection.selected_agent == self._name:
+            response = ChatMessage(text=f"This is {self._name} speaking!")
+            await ctx.send_message([response])
 
+# Conditional routing based on agent selection
 workflow = (
     WorkflowBuilder()
-    .set_start_executor(group_chat_manager)
-    .add_loop(group_chat_manager, executor_a,
-              condition=lambda x: x.selection == "agent_a")
-    .add_loop(group_chat_manager, executor_b,
-              condition=lambda x: x.selection == "agent_b")
-    .add_loop(group_chat_manager, executor_c,
-              condition=lambda x: x.selection == "agent_c")
+    .set_start_executor(manager)
+    .add_edge(manager, alice, 
+              condition=lambda sel: sel.selected_agent == "alice")
+    .add_edge(manager, bob,
+              condition=lambda sel: sel.selected_agent == "bob")
+    .add_edge(alice, manager)
+    .add_edge(bob, manager)
     .build()
 )
 ```
 
-### 3. Map-Reduce Pattern
+### 5. Map-Reduce Pattern
 
-Parallel processing with aggregation.
+Parallel processing with aggregation using fan-out/fan-in.
 
 ```python
-# Split -> Map (parallel) -> Shuffle -> Reduce (parallel) -> Aggregate
+# Split -> Map (parallel) -> Reduce -> Aggregate
 workflow = (
     WorkflowBuilder()
     .set_start_executor(splitter)
-    .add_fan_out_edges(splitter, mappers)
-    .add_fan_in_edges(mappers, shuffler, activation=Activation.WhenAll)
-    .add_fan_out_edges(shuffler, reducers)
-    .add_fan_in_edges(reducers, aggregator, activation=Activation.WhenAll)
+    .add_fan_out_edges(splitter, mappers)  # Parallel processing
+    .add_fan_in_edges(mappers, aggregator)
     .build()
 )
 ```
 
-### 4. Conditional Branching
+### 6. Conditional Branching
 
 Dynamic routing based on message content.
 
 ```python
+@output_message_types(EmailMessage)
+class SpamDetector(Executor):
+    @handles_message
+    async def analyze_email(self, content: str, ctx: WorkflowContext):
+        is_spam = any(keyword in content.lower() for keyword in self._spam_keywords)
+        await ctx.send_message(EmailMessage(content=content, is_spam=is_spam))
+
+# Conditional routing based on analysis results
 workflow = (
     WorkflowBuilder()
-    .add_edge(classifier, high_priority_handler,
-              lambda msg: msg.priority == "high")
-    .add_edge(classifier, normal_handler,
-              lambda msg: msg.priority == "normal")
-    .add_edge(classifier, low_priority_handler,
-              lambda msg: msg.priority == "low")
-    .set_start_executor(classifier)
+    .set_start_executor(detector)
+    .add_edge(detector, responder, 
+              condition=lambda email: not email.is_spam)
+    .add_edge(detector, spam_filter,
+              condition=lambda email: email.is_spam)
     .build()
 )
 ```
@@ -557,8 +756,20 @@ ExecutorCompleteEvent   # Executor finishes processing
 AgentRunEvent          # Agent produces final response
 AgentRunStreamingEvent # Agent streams partial response
 
-# Control flow events
-HumanInTheLoopEvent    # Human intervention required
+# Request/Response events
+RequestInfoEvent       # Request received with correlation ID
+```
+
+### RequestInfoEvent Structure
+
+```python
+@dataclass
+class RequestInfoEvent(WorkflowEvent):
+    """Event emitted when RequestInfoExecutor processes a request"""
+    request_id: str          # Unique correlation ID
+    source_executor_id: str  # ID of the executor that sent the request
+    request_type: str        # Type name of request message
+    request_data: RequestMessage  # The actual request data
 ```
 
 ### Event Handling
@@ -568,12 +779,14 @@ Events are emitted during execution and streamed to consumers:
 ```python
 async for event in workflow.run_stream(message):
     match event:
-        case ExecutorCompleteEvent(executor_id=id, data=result):
-            logger.info(f"Executor {id} completed with result: {result}")
-        case HumanInTheLoopEvent(executor_id=id):
-            # Pause workflow for human input
-            human_response = await prompt_user()
-            # Resume with human input
+        case ExecutorCompleteEvent(executor_id=id):
+            logger.info(f"Executor {id} completed")
+        case RequestInfoEvent(request_id=rid, request_data=data):
+            # Handle external request
+            response = await get_external_response(data)
+            # Resume with response
+            async for event in workflow.send_response(response, rid):
+                # Process continuation
         case WorkflowCompletedEvent(data=final_result):
             return final_result
 ```
@@ -601,8 +814,9 @@ class _SharedState:
 ### Usage in Executors
 
 ```python
-class StatefulExecutor(Executor[str]):
-    async def _execute(self, data: str, ctx: ExecutorContext) -> None:
+class StatefulExecutor(Executor):
+    @handles_message
+    async def process_data(self, data: str, ctx: WorkflowContext) -> None:
         # Read from shared state
         counter = await ctx.get_shared_state("counter") or 0
 
@@ -616,58 +830,60 @@ class StatefulExecutor(Executor[str]):
             await ctx.set_shared_state("combined", value1 + value2)
 ```
 
-## Human-in-the-Loop Support
+## Request/Response Support
 
 ### Design Approach
 
-The framework supports human intervention through:
+The framework provides built-in request/response patterns through:
 
-1. Special HIL executors that emit `HumanInTheLoopEvent`
-2. Workflow suspension while awaiting human input
-3. Targeted message delivery to resume execution
+1. **RequestMessage Base Class**: All requests inherit from `RequestMessage`
+2. **RequestInfoExecutor**: Automatically added to workflows
+3. **Request Correlation**: Unique IDs for tracking request/response pairs
+4. **External Integration**: Clean API for external response handling
 
-### Implementation Example
+### RequestMessage Pattern
 
 ```python
-class HumanInTheLoopExecutor(Executor[list[ChatMessageContent]]):
-    def __init__(self):
-        super().__init__()
-        self._awaiting_input = False
+@dataclass
+class UserApprovalRequest(RequestMessage):
+    """Request requiring human approval"""
+    action: str
+    details: str
+    risk_level: str
 
-    async def _execute(self, data: list[ChatMessageContent],
-                      ctx: ExecutorContext) -> list[ChatMessageContent] | None:
-        if not self._awaiting_input:
-            # Request human input
-            self._awaiting_input = True
-            await ctx.add_event(HumanInTheLoopEvent(executor_id=self.id))
-            return None
+@output_message_types()
+class ApprovalProcessor(Executor):
+    @handles_message
+    async def process_approval(self, response: bool, ctx: WorkflowContext):
+        if response:
+            await ctx.add_event(WorkflowCompletedEvent("Action approved"))
         else:
-            # Process human response
-            self._awaiting_input = False
-            await ctx.send_message(data)
-            return data
+            await ctx.add_event(WorkflowCompletedEvent("Action rejected"))
 ```
 
 ### Integration Pattern
 
 ```python
-# Main execution loop with HIL support
-hil_event = None
-while True:
-    if hil_event:
-        # Resume at specific executor with human input
-        events = workflow.run_stream(human_input, executor=hil_event.executor_id)
-    else:
-        # Normal execution
-        events = workflow.run_stream(initial_message)
+# Workflow automatically includes RequestInfoExecutor
+workflow = WorkflowBuilder().set_start_executor(processor).build()
 
-    async for event in events:
-        if isinstance(event, HumanInTheLoopEvent):
-            hil_event = event
-            human_input = await get_human_input()
-            break
-        elif isinstance(event, WorkflowCompletedEvent):
-            return event.data
+# Request/response handling
+async for event in workflow.run_stream(UserApprovalRequest(
+    action="delete_files", details="Remove temp files", risk_level="low"
+)):
+    if isinstance(event, RequestInfoEvent):
+        # Handle request externally
+        user_decision = await prompt_user(
+            f"Approve {event.request_data.action}? (y/n)"
+        )
+        approval = user_decision.lower() == 'y'
+        
+        # Send response back to workflow
+        async for event in workflow.send_response(approval, event.request_id):
+            if isinstance(event, WorkflowCompletedEvent):
+                print(f"Result: {event.data}")
+                break
+        break
 ```
 
 ## Advanced Features
@@ -680,50 +896,81 @@ Fan-in edges can be grouped for synchronized delivery:
 # All three workers must complete before aggregator runs
 workflow = (
     WorkflowBuilder()
-    .add_fan_in_edges([worker1, worker2, worker3], aggregator,
-                      activation=Activation.WhenAll)
+    .add_fan_in_edges([worker1, worker2, worker3], aggregator)
     .build()
 )
 ```
 
-### 2. Type System Integration
+### 2. Handler Conflict Validation
 
-The framework leverages Python's type system for safety:
+Prevents runtime errors through comprehensive validation:
 
 ```python
-def _is_instance_of(data: Any, target_type: type) -> bool:
-    """Runtime type checking supporting generics"""
-    # Handles Union, Optional, List, Dict, Tuple types
-    # Provides comprehensive type validation
+def _validate_handler_conflicts(self, handlers: list[tuple[str, Any, type]]) -> None:
+    """Validate no conflicting message handlers exist"""
+    type_to_handler = {}
+    for method_name, method, message_type in handlers:
+        expanded_types = self._expand_type(message_type)
+        for expanded_type in expanded_types:
+            if expanded_type in type_to_handler:
+                existing = type_to_handler[expanded_type]
+                raise ValueError(
+                    f"Conflicting message handlers: {existing} and {method_name} "
+                    f"both handle {expanded_type}"
+                )
+            type_to_handler[expanded_type] = method_name
 ```
 
-### 3. Custom Output Type Declaration
+**Conflict Detection:**
+- **Direct conflicts**: Two handlers for same type
+- **Union conflicts**: `Union[A, B]` vs separate `A` handler  
+- **Subclass conflicts**: Parent and child class handlers
 
-Executors can declare multiple output types:
+### 3. Advanced Type Handling
+
+Supports Union types, generics, and subclass matching:
 
 ```python
-@output_message_types(ProcessedData, ErrorReport, None)
-class DataProcessor(Executor[RawData]):
-    async def _execute(self, data: RawData, ctx: ExecutorContext):
-        try:
-            result = process(data)
-            await ctx.send_message(ProcessedData(result))
-        except Exception as e:
-            await ctx.send_message(ErrorReport(str(e)))
+@output_message_types(ProcessedData, ErrorReport)
+class DataProcessor(Executor):
+    @handles_message
+    async def process_data(self, data: Union[TextData, ImageData], ctx: WorkflowContext):
+        if isinstance(data, TextData):
+            result = process_text(data)
+        else:
+            result = process_image(data)
+        await ctx.send_message(ProcessedData(result))
+
+    @handles_message
+    async def handle_batch(self, items: list[Any], ctx: WorkflowContext):
+        # Handles any list type (list[str], list[int], etc.)
+        for item in items:
+            await ctx.send_message(ProcessedData(item))
 ```
 
-### 4. Streaming Support
+### 4. Type-Safe Message Routing
 
-Built-in support for streaming responses:
+Automatic routing based on runtime type checking:
 
 ```python
-class StreamingAgentExecutor(Executor[str]):
-    async def _execute(self, prompt: str, ctx: ExecutorContext):
-        async for chunk in self.agent.stream(prompt):
-            await ctx.add_event(AgentRunStreamingEvent(self.id, chunk))
-
-        final_response = await self.agent.get_final()
-        await ctx.send_message(final_response)
+def _get_handler_for_type(self, message_type: type) -> Callable | None:
+    """Find appropriate handler for message type"""
+    # Direct type match
+    if message_type in self._message_handlers:
+        return self._message_handlers[message_type]
+    
+    # Generic type matching (list matches list[str])
+    for handler_type, handler in self._message_handlers.items():
+        if hasattr(handler_type, '__origin__') and hasattr(message_type, '__origin__'):
+            if handler_type.__origin__ == message_type.__origin__:
+                return handler
+    
+    # Subclass matching
+    for handler_type, handler in self._message_handlers.items():
+        if isinstance(handler_type, type) and issubclass(message_type, handler_type):
+            return handler
+    
+    return None
 ```
 
 ## Security Considerations
@@ -778,51 +1025,87 @@ class StreamingAgentExecutor(Executor[str]):
 - Message batching for high-throughput scenarios
 - Executor pooling for stateless processors
 
-## Future Enhancements
+## Current Advanced Features
 
-### 1. Checkpointing and Recovery
+### 1. Polymorphic Executors
+
+Single executors handling multiple message types with automatic routing:
 
 ```python
-class CheckpointProvider(Protocol):
-    async def save_checkpoint(self, workflow_id: str, state: WorkflowState) -> str
-    async def load_checkpoint(self, checkpoint_id: str) -> WorkflowState
-    async def list_checkpoints(self, workflow_id: str) -> list[CheckpointInfo]
+@output_message_types(ResponseA, ResponseB, ResponseC)
+class MultiServiceExecutor(Executor):
+    @handles_message
+    async def handle_query_a(self, query: QueryA, ctx: WorkflowContext):
+        response = ResponseA(result=self.process_a(query))
+        await ctx.send_message(response)
+
+    @handles_message
+    async def handle_query_b(self, query: QueryB, ctx: WorkflowContext):
+        response = ResponseB(result=self.process_b(query))
+        await ctx.send_message(response)
+
+    @handles_message
+    async def handle_batch(self, queries: list[Union[QueryA, QueryB]], ctx: WorkflowContext):
+        for query in queries:
+            # Automatically routes to appropriate handler
+            await self.execute(query, ctx)
 ```
 
-### 2. Distributed Execution
+### 2. Request Correlation and External Integration
+
+Seamless external API and human-in-the-loop integration:
+
+```python
+# Built-in correlation with unique IDs
+request_id = str(uuid.uuid4())
+await ctx.set_shared_state(f"request:{request_id}", data)
+
+# Events emitted for external handling
+await ctx.add_event(RequestInfoEvent(
+    request_id=request_id,
+    request_type=type(data).__name__,
+    request_data=data
+))
+
+# Clean response API
+async for event in workflow.send_response(user_input, request_id):
+    # Process response continuation
+```
+
+### 3. Type Safety and Validation
+
+Comprehensive type checking and conflict prevention:
+
+- **Handler Discovery**: Automatic type extraction from method signatures
+- **Conflict Detection**: Prevents overlapping Union types and duplicate handlers  
+- **Runtime Validation**: Type-aware message routing with subclass support
+- **Generic Type Support**: Handles `list[T]`, `dict[K,V]`, `Union[A,B]` patterns
+
+### 4. Comprehensive Observability
+
+Built-in observability and debugging capabilities:
+
+- **Event Streaming**: Real-time workflow execution events
+- **Request Tracking**: Correlation IDs for request/response patterns  
+- **Type Validation**: Clear error messages for handler conflicts
+- **Execution Flow**: Detailed executor invoke/complete events
+
+## Future Enhancements
+
+### 1. Distributed Execution
 
 - Support for executor distribution across nodes
-- Message passing via message queues
+- Message passing via message queues  
 - Distributed shared state with consistency guarantees
 
-### 3. Advanced Patterns
-
-- Sub-workflow composition
-- Dynamic executor instantiation
-- Recursive workflow structures
-- Time-based triggers and delays
-
-### 4. Observability Enhancements
+### 2. Enhanced Observability
 
 - OpenTelemetry integration
 - Structured logging with correlation IDs
 - Performance metrics and profiling
 - Visual workflow debugging tools
 
-### 5. Template System
-
-```python
-# Planned template system for reusable patterns
-template = WorkflowTemplate("map_reduce")
-    .with_parameter("mapper_count", type=int, default=3)
-    .with_parameter("reducer_count", type=int, default=2)
-    .with_pattern(MapReducePattern())
-    .build()
-
-workflow = template.instantiate(mapper_count=5, reducer_count=3)
-```
-
-### 6. Error Handling and Retry
+### 3. Advanced Error Handling
 
 - Configurable retry policies per executor
 - Dead letter queues for failed messages
@@ -831,6 +1114,14 @@ workflow = template.instantiate(mapper_count=5, reducer_count=3)
 
 ## Conclusion
 
-The Semantic Kernel Workflow Framework provides a robust foundation for building complex AI-powered workflows. Its type-safe, event-driven architecture combined with flexible execution patterns makes it suitable for a wide range of applications from simple sequential processing to complex multi-agent orchestrations with human oversight.
+The Agent Framework Workflow system provides a powerful, type-safe foundation for building complex AI-powered workflows. Its multi-handler executor pattern, built-in request/response support, and comprehensive type validation make it suitable for a wide range of applications from simple sequential processing to complex multi-agent orchestrations with external integrations.
 
-The framework's design prioritizes developer experience through its fluent API while maintaining the flexibility needed for advanced use cases. As the framework evolves, planned enhancements around distributed execution, checkpointing, and advanced patterns will further expand its capabilities while maintaining the core principles of type safety, observability, and extensibility.
+**Key Strengths:**
+
+- **Polymorphic Design**: Single executors handle multiple message types with automatic routing
+- **Type Safety**: Comprehensive validation prevents runtime conflicts and ensures correct message flow
+- **External Integration**: Built-in request/response correlation for APIs and human-in-the-loop workflows
+- **Developer Experience**: Clean, intuitive API with extensive validation and helpful error reporting
+- **Extensibility**: Easy to add new handler types and message patterns
+
+The framework's evolution from single-type executors to polymorphic handlers represents a significant advancement in workflow orchestration, enabling more natural and maintainable multi-agent system architectures while preserving the benefits of strong typing and predictable execution patterns.
