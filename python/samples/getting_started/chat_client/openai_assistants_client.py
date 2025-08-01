@@ -4,7 +4,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIAssistantsClient
 from pydantic import Field
 
 
@@ -17,7 +17,7 @@ def get_weather(
 
 
 async def main() -> None:
-    async with FoundryChatClient() as client:
+    async with OpenAIAssistantsClient() as client:
         message = "What's the weather in Amsterdam and in Paris?"
         stream = False
         print(f"User: {message}")
