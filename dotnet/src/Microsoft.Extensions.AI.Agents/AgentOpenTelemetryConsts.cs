@@ -23,6 +23,11 @@ internal static class AgentOpenTelemetryConsts
     /// </summary>
     public const string TokensUnit = "token";
 
+    public static class Event
+    {
+        public const string Name = "event.name";
+    }
+
     /// <summary>
     /// Constants for generative AI telemetry, following OpenTelemetry semantic conventions.
     /// </summary>
@@ -70,6 +75,14 @@ internal static class AgentOpenTelemetryConsts
         /// </summary>
         public static class Agent
         {
+            public const string Choice = "gen_ai.agent.choice";
+            public const string SystemName = "gen_ai.agent.system";
+
+            public static class User
+            {
+                public const string Message = "gen_ai.user.message";
+            }
+
             /// <summary>
             /// The attribute name for the agent ID (following gen_ai.agent.id convention).
             /// </summary>
@@ -84,6 +97,37 @@ internal static class AgentOpenTelemetryConsts
             /// The attribute name for the agent description (following gen_ai.agent.description convention).
             /// </summary>
             public const string Description = "gen_ai.agent.description";
+
+            /// <summary>
+            /// Represents the key used to identify assistant messages in the system.
+            /// </summary>
+            public static class Assistant
+            {
+                public const string Message = "gen_ai.agent.assistant.message";
+            }
+
+            /// <summary>
+            /// Provides constants related to tools used in the AI agent system.
+            /// </summary>
+            public static class Tool
+            {
+                public const string Name = "gen_ai.agent.tool.name";
+                public const string Description = "gen_ai.agent.tool.description";
+                public const string Message = "gen_ai.agent.tool.message";
+
+                public static class Call
+                {
+                    public const string Id = "gen_ai.agent.tool.call.id";
+                }
+            }
+
+            /// <summary>
+            /// Provides constants related to the system's messaging functionality.
+            /// </summary>
+            public static class System
+            {
+                public const string Message = "gen_ai.system.message";
+            }
 
             /// <summary>
             /// Constants for agent request attributes.

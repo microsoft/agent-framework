@@ -29,8 +29,9 @@ public class OpenTelemetryAgentTests
             .AddInMemoryExporter(activities)
             .Build();
 
+        var mockLogger = new Mock<ILogger>();
         var mockAgent = CreateMockAgent(withError);
-        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName);
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, mockLogger.Object, sourceName);
 
         var messages = new List<ChatMessage>
         {
@@ -99,7 +100,8 @@ public class OpenTelemetryAgentTests
             .Build();
 
         var mockAgent = CreateMockStreamingAgent(withError);
-        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName);
+        var mockLogger = new Mock<ILogger>();
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, mockLogger.Object, sourceName);
 
         var messages = new List<ChatMessage>
         {
@@ -535,12 +537,13 @@ public class OpenTelemetryAgentTests
         mockAgent.Setup(a => a.Id).Returns("test-id");
         mockAgent.Setup(a => a.Name).Returns("TestAgent");
         mockAgent.Setup(a => a.Description).Returns("Test Description");
+        var mockLogger = new Mock<ILogger>();
 
         var logger = new Mock<ILogger>().Object;
         var sourceName = "custom-source";
 
         // Act
-        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName);
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, mockLogger.Object, sourceName);
 
         // Assert
         Assert.Equal("test-id", telemetryAgent.Id);

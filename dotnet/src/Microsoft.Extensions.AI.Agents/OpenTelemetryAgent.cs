@@ -4,9 +4,15 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI.Agents;
@@ -18,27 +24,38 @@ namespace Microsoft.Extensions.AI.Agents;
 /// This class provides telemetry instrumentation for agent operations including activities, metrics, and logging.
 /// The telemetry output follows OpenTelemetry semantic conventions in <see href="https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-agent-spans/"/> and is subject to change as the conventions evolve.
 /// </remarks>
-public sealed class OpenTelemetryAgent : AIAgent, IDisposable
+public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
 {
+    private const LogLevel EventLogLevel = LogLevel.Information;
+    private JsonSerializerOptions _jsonSerializerOptions;
+
+    private readonly string? _system;
     private readonly AIAgent _innerAgent;
     private readonly ActivitySource _activitySource;
     private readonly Meter _meter;
     private readonly Histogram<double> _operationDurationHistogram;
     private readonly Histogram<int> _tokenUsageHistogram;
     private readonly Counter<int> _requestCounter;
-
+    private readonly ILogger _logger;
+    private readonly bool _chatClientAgentHasTelemetryEnabled;
     /// <summary>
     /// Initializes a new instance of the <see cref="OpenTelemetryAgent"/> class.
     /// </summary>
     /// <param name="innerAgent">The underlying agent to wrap with telemetry.</param>
+    /// <param name="logger">The <see cref="ILogger"/> to use for emitting events.</param>
     /// <param name="sourceName">An optional source name that will be used on the telemetry data.</param>
-    public OpenTelemetryAgent(AIAgent innerAgent, string? sourceName = null)
+    public OpenTelemetryAgent(AIAgent innerAgent, ILogger? logger = null, string? sourceName = null)
     {
         this._innerAgent = Throw.IfNull(innerAgent);
 
         string name = string.IsNullOrEmpty(sourceName) ? AgentOpenTelemetryConsts.DefaultSourceName : sourceName!;
         this._activitySource = new(name);
         this._meter = new(name);
+        this._logger = logger ?? NullLogger.Instance;
+        this._system = innerAgent.GetType().Name;
+
+        // This prevents OTEL data duplication as the agent will not send Model Telemetry data that is already handled my the ChatClient OTEL.
+        this._chatClientAgentHasTelemetryEnabled = (innerAgent as ChatClientAgent)?.ChatClient.GetService<OpenTelemetryChatClient>() is not null ? true : false;
 
         this._operationDurationHistogram = this._meter.CreateHistogram<double>(
             AgentOpenTelemetryConsts.GenAI.Agent.Client.OperationDuration.Name,
@@ -61,7 +78,23 @@ public sealed class OpenTelemetryAgent : AIAgent, IDisposable
         this._requestCounter = this._meter.CreateCounter<int>(
             AgentOpenTelemetryConsts.GenAI.Agent.Client.RequestCount.Name,
             description: AgentOpenTelemetryConsts.GenAI.Agent.Client.RequestCount.Description);
+
+        this._jsonSerializerOptions = AIJsonUtilities.DefaultOptions;
     }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether potentially sensitive information should be included in telemetry.
+    /// </summary>
+    /// <value>
+    /// <see langword="true"/> if potentially sensitive information should be included in telemetry;
+    /// <see langword="false"/> if telemetry shouldn't include raw inputs and outputs.
+    /// The default value is <see langword="false"/>.
+    /// </value>
+    /// <remarks>
+    /// By default, telemetry includes metadata, such as token counts, but not raw inputs
+    /// and outputs, such as message content, function call arguments, and function call results.
+    /// </remarks>
+    public bool EnableSensitiveData { get; set; }
 
     /// <inheritdoc/>
     public override string Id => this._innerAgent.Id;
@@ -338,4 +371,156 @@ public sealed class OpenTelemetryAgent : AIAgent, IDisposable
             }
         }
     }
+
+    private void LogChatMessages(IEnumerable<ChatMessage> messages)
+    {
+        if (!this._logger.IsEnabled(EventLogLevel))
+        {
+            return;
+        }
+
+        foreach (ChatMessage message in messages)
+        {
+            if (message.Role == ChatRole.Assistant)
+            {
+                this.Log(new(1, AgentOpenTelemetryConsts.GenAI.Agent.Assistant.Message),
+                    JsonSerializer.Serialize(this.CreateAssistantEvent(message.Contents), OtelContext.Default.AssistantEvent));
+            }
+            else if (message.Role == ChatRole.Tool)
+            {
+                foreach (FunctionResultContent frc in message.Contents.OfType<FunctionResultContent>())
+                {
+                    this.Log(new(1, AgentOpenTelemetryConsts.GenAI.Agent.Tool.Message),
+                        JsonSerializer.Serialize(new()
+                        {
+                            Id = frc.CallId,
+                            Content = this.EnableSensitiveData && frc.Result is object result ?
+                                JsonSerializer.SerializeToNode(result, this._jsonSerializerOptions.GetTypeInfo(result.GetType())) :
+                                null,
+                        }, OtelContext.Default.ToolEvent));
+                }
+            }
+            else
+            {
+                this.Log(new(1, message.Role == ChatRole.System ? AgentOpenTelemetryConsts.GenAI.Agent.System.Message : AgentOpenTelemetryConsts.GenAI.Agent.User.Message),
+                    JsonSerializer.Serialize(new()
+                    {
+                        Role = message.Role != ChatRole.System && message.Role != ChatRole.User && !string.IsNullOrWhiteSpace(message.Role.Value) ? message.Role.Value : null,
+                        Content = this.GetMessageContent(message.Contents),
+                    }, OtelContext.Default.SystemOrUserEvent));
+            }
+        }
+    }
+
+    private void LogChatResponse(ChatResponse response)
+    {
+        if (!this._logger.IsEnabled(EventLogLevel))
+        {
+            return;
+        }
+
+        EventId id = new(1, AgentOpenTelemetryConsts.GenAI.Agent.Choice);
+        this.Log(id, JsonSerializer.Serialize(new()
+        {
+            FinishReason = response.FinishReason?.Value ?? "error",
+            Index = 0,
+            Message = this.CreateAssistantEvent(response.Messages is { Count: 1 } ? response.Messages[0].Contents : response.Messages.SelectMany(m => m.Contents)),
+        }, OtelContext.Default.ChoiceEvent));
+    }
+
+    private void Log(EventId id, string eventBodyJson)
+    {
+        // This is not the idiomatic way to log, but it's necessary for now in order to structure
+        // the data in a way that the OpenTelemetry collector can work with it. The event body
+        // can be very large and should not be logged as an attribute.
+
+        KeyValuePair<string, object?>[] tags =
+        [
+            new(AgentOpenTelemetryConsts.Event.Name, id.Name),
+            new(AgentOpenTelemetryConsts.GenAI.Agent.SystemName, this._system),
+        ];
+
+        this._logger.Log(EventLogLevel, id, tags, null, (_, __) => eventBodyJson);
+    }
+
+    private AssistantEvent CreateAssistantEvent(IEnumerable<AIContent> contents)
+    {
+        var toolCalls = contents.OfType<FunctionCallContent>().Select(fc => new ToolCall
+        {
+            Id = fc.CallId,
+            Function = new()
+            {
+                Name = fc.Name,
+                Arguments = this.EnableSensitiveData ?
+                    JsonSerializer.SerializeToNode(fc.Arguments, this._jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object?>))) :
+                    null,
+            },
+        }).ToArray();
+
+        return new()
+        {
+            Content = this.GetMessageContent(contents),
+            ToolCalls = toolCalls.Length > 0 ? toolCalls : null,
+        };
+    }
+
+    private string? GetMessageContent(IEnumerable<AIContent> contents)
+    {
+        if (this.EnableSensitiveData)
+        {
+            string content = string.Concat(contents.OfType<TextContent>());
+            if (content.Length > 0)
+            {
+                return content;
+            }
+        }
+
+        return null;
+    }
+
+    private sealed partial class SystemOrUserEvent
+    {
+        public string? Role { get; set; }
+        public string? Content { get; set; }
+    }
+
+    private sealed class AssistantEvent
+    {
+        public string? Content { get; set; }
+        public ToolCall[]? ToolCalls { get; set; }
+    }
+
+    private sealed partial class ToolEvent
+    {
+        public string? Id { get; set; }
+        public JsonNode? Content { get; set; }
+    }
+
+    private sealed partial class ChoiceEvent
+    {
+        public string? FinishReason { get; set; }
+        public int Index { get; set; }
+        public AssistantEvent? Message { get; set; }
+    }
+
+    private sealed partial class ToolCall
+    {
+        public string? Id { get; set; }
+        public string? Type { get; set; } = "function";
+        public ToolCallFunction? Function { get; set; }
+    }
+
+    private sealed partial class ToolCallFunction
+    {
+        public string? Name { get; set; }
+        public JsonNode? Arguments { get; set; }
+    }
+
+    [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonSerializable(typeof(SystemOrUserEvent))]
+    [JsonSerializable(typeof(AssistantEvent))]
+    [JsonSerializable(typeof(ToolEvent))]
+    [JsonSerializable(typeof(ChoiceEvent))]
+    [JsonSerializable(typeof(object))]
+    private sealed partial class OtelContext : JsonSerializerContext;
 }
