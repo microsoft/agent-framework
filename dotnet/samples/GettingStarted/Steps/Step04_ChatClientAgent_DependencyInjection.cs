@@ -3,6 +3,7 @@
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Steps;
 
@@ -23,6 +24,8 @@ public sealed class Step04_ChatClientAgent_DependencyInjection(ITestOutputHelper
             name: "Parrot",
             instructions: "Repeat the user message in the voice of a pirate and then end with a parrot sound.");
 
+        services.AddLogging();
+
         // Create the server-side agent Id when applicable (depending on the provider).
         agentOptions.Id = await base.AgentCreateAsync(provider, agentOptions);
 
@@ -30,7 +33,11 @@ public sealed class Step04_ChatClientAgent_DependencyInjection(ITestOutputHelper
 
         services.AddChatClient((sp) => base.GetChatClient(provider, sp.GetRequiredService<ChatClientAgentOptions>()));
 
-        services.AddSingleton<ChatClientAgent>();
+        services.AddSingleton<ChatClientAgent>((sp)
+            => new ChatClientAgent(
+                chatClient: sp.GetRequiredService<IChatClient>(),
+                options: sp.GetRequiredService<ChatClientAgentOptions>(),
+                loggerFactory: sp.GetRequiredService<ILoggerFactory>()));
 
         // Build the service provider.
         using var serviceProvider = services.BuildServiceProvider();
