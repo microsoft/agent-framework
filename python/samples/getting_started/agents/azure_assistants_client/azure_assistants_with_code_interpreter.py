@@ -3,29 +3,29 @@
 import asyncio
 
 from agent_framework import AgentRunResponseUpdate, ChatClientAgent, ChatResponseUpdate, HostedCodeInterpreterTool
-from agent_framework.foundry import FoundryChatClient
-from azure.ai.agents.models import (
+from agent_framework.azure import AzureAssistantsClient
+from openai.types.beta.threads.runs import (
+    CodeInterpreterToolCallDelta,
     RunStepDelta,
-    RunStepDeltaChunk,
-    RunStepDeltaCodeInterpreterDetailItemObject,
-    RunStepDeltaCodeInterpreterToolCall,
-    RunStepDeltaToolCallObject,
+    RunStepDeltaEvent,
+    ToolCallDeltaObject,
 )
+from openai.types.beta.threads.runs.code_interpreter_tool_call_delta import CodeInterpreter
 
 
 def get_code_interpreter_chunk(chunk: AgentRunResponseUpdate) -> str | None:
     """Helper method to access code interpreter data."""
     if (
         isinstance(chunk.raw_representation, ChatResponseUpdate)
-        and isinstance(chunk.raw_representation.raw_representation, RunStepDeltaChunk)
+        and isinstance(chunk.raw_representation.raw_representation, RunStepDeltaEvent)
         and isinstance(chunk.raw_representation.raw_representation.delta, RunStepDelta)
-        and isinstance(chunk.raw_representation.raw_representation.delta.step_details, RunStepDeltaToolCallObject)
+        and isinstance(chunk.raw_representation.raw_representation.delta.step_details, ToolCallDeltaObject)
         and chunk.raw_representation.raw_representation.delta.step_details.tool_calls
     ):
         for tool_call in chunk.raw_representation.raw_representation.delta.step_details.tool_calls:
             if (
-                isinstance(tool_call, RunStepDeltaCodeInterpreterToolCall)
-                and isinstance(tool_call.code_interpreter, RunStepDeltaCodeInterpreterDetailItemObject)
+                isinstance(tool_call, CodeInterpreterToolCallDelta)
+                and isinstance(tool_call.code_interpreter, CodeInterpreter)
                 and tool_call.code_interpreter.input is not None
             ):
                 return tool_call.code_interpreter.input
@@ -33,11 +33,11 @@ def get_code_interpreter_chunk(chunk: AgentRunResponseUpdate) -> str | None:
 
 
 async def main() -> None:
-    """Example showing how to use the HostedCodeInterpreterTool with Foundry."""
-    print("=== Foundry Agent with Code Interpreter Example ===")
+    """Example showing how to use the HostedCodeInterpreterTool with Azure OpenAI Assistants."""
+    print("=== Azure OpenAI Assistants Agent with Code Interpreter Example ===")
 
     async with ChatClientAgent(
-        chat_client=FoundryChatClient(),
+        chat_client=AzureAssistantsClient(),
         instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
         tools=HostedCodeInterpreterTool(),
     ) as agent:

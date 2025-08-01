@@ -2,6 +2,7 @@
 
 import importlib.metadata
 
+from ._assistants_client import AzureAssistantsClient
 from ._chat_client import AzureChatClient
 from ._entra_id_authentication import get_entra_auth_token
 
@@ -11,6 +12,7 @@ except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0"  # Fallback for development mode
 
 __all__ = [
+    "AzureAssistantsClient",
     "AzureChatClient",
     "__version__",
     "get_entra_auth_token",
