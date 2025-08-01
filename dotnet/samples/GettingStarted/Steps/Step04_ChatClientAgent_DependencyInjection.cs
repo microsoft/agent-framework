@@ -33,7 +33,7 @@ public sealed class Step04_ChatClientAgent_DependencyInjection(ITestOutputHelper
 
         services.AddChatClient((sp) => base.GetChatClient(provider, sp.GetRequiredService<ChatClientAgentOptions>()));
 
-        services.AddSingleton<ChatClientAgent>((sp)
+        services.AddSingleton<AIAgent>((sp)
             => new ChatClientAgent(
                 chatClient: sp.GetRequiredService<IChatClient>(),
                 options: sp.GetRequiredService<ChatClientAgentOptions>(),
@@ -43,12 +43,12 @@ public sealed class Step04_ChatClientAgent_DependencyInjection(ITestOutputHelper
         using var serviceProvider = services.BuildServiceProvider();
 
         // Get the agent from the service provider.
-        var agent = serviceProvider.GetRequiredService<ChatClientAgent>();
+        var agent = serviceProvider.GetRequiredService<AIAgent>();
 
         // Create the chat history thread to capture the agent interaction.
         var thread = agent.GetNewThread();
 
-        Console.WriteLine($"Using chat client for provider: {agent.ChatClient.GetService<ChatClientMetadata>()!.ProviderName}, for agent: {agent.Name}");
+        Console.WriteLine($"Using chat client for provider: {provider}");
 
         // Respond to user input, invoking functions where appropriate.
         await RunAgentAsync("Tell me a joke about a pirate.");
