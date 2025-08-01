@@ -114,6 +114,86 @@ public sealed class Step02_ChatClientAgent_UsingFunctionTools(ITestOutputHelper 
         await base.AgentCleanUpAsync(provider, agent, thread);
     }
 
+    [Theory]
+    [InlineData(ChatClientProviders.AzureOpenAI)]
+    [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
+    [InlineData(ChatClientProviders.OpenAIAssistant)]
+    [InlineData(ChatClientProviders.OpenAIChatCompletion)]
+    [InlineData(ChatClientProviders.OpenAIResponses)]
+    public async Task ApprovalsWithTools(ChatClientProviders provider)
+    {
+        // Creating a MenuTools instance to be used by the agent.
+        var menuTools = new MenuTools();
+
+        // Define the options for the chat client agent.
+        var agentOptions = new ChatClientAgentOptions(
+            name: "Host",
+            instructions: "Answer questions about the menu",
+            tools: [
+                AIFunctionFactory.Create(menuTools.GetMenu),
+                AIFunctionFactory.Create(menuTools.GetSpecials),
+                AIFunctionFactory.Create(menuTools.GetItemPrice)
+            ]);
+
+        // Create the server-side agent Id when applicable (depending on the provider).
+        agentOptions.Id = await base.AgentCreateAsync(provider, agentOptions);
+
+        // Get the chat client to use for the agent.
+        using var chatClient = base.GetChatClient(provider, agentOptions);
+
+        // Define the agent
+        var agent = new ChatClientAgent(chatClient, agentOptions);
+
+        // Create the chat history thread to capture the agent interaction.
+        var thread = agent.GetNewThread();
+
+        // Respond to user input, invoking functions where appropriate.
+        await RunAgentAsync("What is the special soup and its price?");
+
+        async Task RunAgentAsync(string input)
+        {
+            this.WriteUserMessage(input);
+            var response = await agent.RunAsync(input, thread);
+            this.WriteResponseOutput(response);
+
+            var userInputRequests = response.UserInputRequests.ToList();
+
+            // Loop until all user input requests are handled.
+            while (userInputRequests.Count > 0)
+            {
+                List<ChatMessage> nextIterationMessages = [];
+
+                foreach (var request in userInputRequests)
+                {
+                    if (request is FunctionApprovalRequestContent approvalRequest)
+                    {
+                        if (approvalRequest.FunctionCall.Name == "GetSpecials")
+                        {
+                            Console.WriteLine($"Approving the {approvalRequest.FunctionCall.Name} function call.");
+                            nextIterationMessages.Add(approvalRequest.Approve());
+                        }
+                        else
+                        {
+                            Console.WriteLine($"Rejecting the {approvalRequest.FunctionCall.Name} function call.");
+                            nextIterationMessages.Add(approvalRequest.Reject());
+                        }
+                    }
+                    else
+                    {
+                        throw new NotSupportedException("This type of approval is not supported");
+                    }
+                }
+
+                response = await agent.RunAsync(nextIterationMessages, thread);
+                this.WriteResponseOutput(response);
+                userInputRequests = response.UserInputRequests.ToList();
+            }
+        }
+
+        // Clean up the server-side agent after use when applicable (depending on the provider).
+        await base.AgentCleanUpAsync(provider, agent, thread);
+    }
+
     private sealed class MenuTools
     {
         [Description("Get the full menu items.")]
