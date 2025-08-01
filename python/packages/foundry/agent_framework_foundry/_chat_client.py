@@ -267,8 +267,13 @@ class FoundryChatClient(ChatClientBase):
 
             agent_name = self._foundry_settings.agent_name
             args = {"model": self._foundry_settings.model_deployment_name, "name": agent_name}
-            if run_options and "tools" in run_options:
-                args["tools"] = run_options["tools"]
+            if run_options:
+                if "tools" in run_options:
+                    args["tools"] = run_options["tools"]
+                if "instructions" in run_options:
+                    args["instructions"] = run_options["instructions"]
+                if "response_format" in run_options:
+                    args["response_format"] = run_options["response_format"]
             created_agent = await self.client.agents.create_agent(**args)
             self.agent_id = created_agent.id
             self._should_delete_agent = True
