@@ -3,6 +3,7 @@
 from agent_framework_azure import (
     AzureAssistantsClient,
     AzureChatClient,
+    AzureOpenAISettings,
     __version__,
     get_entra_auth_token,
 )
@@ -10,6 +11,7 @@ from agent_framework_azure import (
 __all__ = [
     "AzureAssistantsClient",
     "AzureChatClient",
+    "AzureOpenAISettings",
     "__version__",
     "get_entra_auth_token",
 ]

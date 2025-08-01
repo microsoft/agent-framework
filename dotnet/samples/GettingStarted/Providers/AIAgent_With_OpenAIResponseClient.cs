@@ -11,7 +11,7 @@ namespace Providers;
 /// <summary>
 /// End-to-end sample showing how to use <see cref="ChatClientAgent"/> with OpenAI Chat Completion.
 /// </summary>
-public sealed class ChatClientAgent_With_OpenAIResponsesChatCompletion(ITestOutputHelper output) : AgentSample(output)
+public sealed class AIAgent_With_OpenAIResponseClient(ITestOutputHelper output) : AgentSample(output)
 {
     private const string JokerName = "Joker";
     private const string JokerInstructions = "You are good at telling jokes.";
@@ -20,15 +20,12 @@ public sealed class ChatClientAgent_With_OpenAIResponsesChatCompletion(ITestOutp
     /// This will use the conversation id to reference the thread state on the server side.
     /// </summary>
     [Fact]
-    public async Task RunWithChatCompletionServiceManagedThread()
+    public async Task RunWithResponses()
     {
-        // Get the chat client to use for the agent.
-        using var chatClient = new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
+        // Get the agent directly from OpenAIClient.
+        AIAgent agent = new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
             .GetOpenAIResponseClient(TestConfiguration.OpenAI.ChatModelId)
-            .AsIChatClient();
-
-        // Define the agent
-        ChatClientAgent agent = new(chatClient, JokerInstructions, JokerName);
+            .CreateAIAgent(JokerInstructions, JokerName);
 
         // Start a new thread for the agent conversation based on the type.
         AgentThread thread = agent.GetNewThread();
@@ -52,16 +49,12 @@ public sealed class ChatClientAgent_With_OpenAIResponsesChatCompletion(ITestOutp
     /// This will use in-memory messages to store the thread state.
     /// </summary>
     [Fact]
-    public async Task RunWithChatCompletionInMemoryThread()
+    public async Task RunWithResponsesAndStoreOutputDisabled()
     {
-        // Get the chat client to use for the agent.
-        using var chatClient = new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
+        // Get the agent directly from OpenAIClient.
+        AIAgent agent = new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
             .GetOpenAIResponseClient(TestConfiguration.OpenAI.ChatModelId)
-            .AsIChatClient();
-
-        // Define the agent
-        ChatClientAgent agent =
-            new(chatClient, options: new()
+            .CreateAIAgent(options: new()
             {
                 Name = JokerName,
                 Instructions = JokerInstructions,
