@@ -16,12 +16,13 @@ from openai.types.beta.threads.runs.code_interpreter_tool_call_delta import Code
 def get_code_interpreter_chunk(chunk: AgentRunResponseUpdate) -> str | None:
     """Helper method to access code interpreter data."""
     if (
-        isinstance(chunk.raw_representation, RunStepDeltaEvent)
-        and isinstance(chunk.raw_representation.delta, RunStepDelta)
-        and isinstance(chunk.raw_representation.delta.step_details, ToolCallDeltaObject)
-        and chunk.raw_representation.delta.step_details.tool_calls
+        isinstance(chunk.raw_representation, AgentRunResponseUpdate)
+        and isinstance(chunk.raw_representation.raw_representation, RunStepDeltaEvent)
+        and isinstance(chunk.raw_representation.raw_representation.delta, RunStepDelta)
+        and isinstance(chunk.raw_representation.raw_representation.delta.step_details, ToolCallDeltaObject)
+        and chunk.raw_representation.raw_representation.delta.step_details.tool_calls
     ):
-        for tool_call in chunk.raw_representation.delta.step_details.tool_calls:
+        for tool_call in chunk.raw_representation.raw_representation.delta.step_details.tool_calls:
             if (
                 isinstance(tool_call, CodeInterpreterToolCallDelta)
                 and isinstance(tool_call.code_interpreter, CodeInterpreter)
@@ -40,7 +41,7 @@ async def main() -> None:
         instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
         tools=HostedCodeInterpreterTool(),
     ) as agent:
-        query = "What is current datetime?"
+        query = "Use code to get the factorial of 100?"
         print(f"User: {query}")
         print("Agent: ", end="", flush=True)
         generated_code = ""

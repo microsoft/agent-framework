@@ -33,6 +33,8 @@ async def main() -> None:
 
     try:
         async with ChatClientAgent(
+            # passing in the client is optional here, so if you take the agent_id from the portal
+            # you can use it directly without the two lines above.
             chat_client=FoundryChatClient(client=client, agent_id=created_agent.id),
             instructions="You are a helpful weather agent.",
             tools=get_weather,
