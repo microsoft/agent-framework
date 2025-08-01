@@ -291,5 +291,10 @@ public class AgentTests
         {
             throw new System.NotImplementedException();
         }
+
+        public override object? GetService(Type serviceType, object? serviceKey = null)
+        {
+            throw new NotImplementedException();
+        }
     }
 }

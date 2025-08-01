@@ -18,6 +18,7 @@ namespace Microsoft.Extensions.AI.Agents;
 public sealed class ChatClientAgent : AIAgent
 {
     private readonly ChatClientAgentOptions? _agentOptions;
+    private readonly AIAgentMetadata _agentMetadata;
     private readonly ILogger _logger;
     private readonly Type _chatClientType;
 
@@ -59,6 +60,8 @@ public sealed class ChatClientAgent : AIAgent
 
         // Options must be cloned since ChatClientAgentOptions is mutable.
         this._agentOptions = options?.Clone();
+
+        this._agentMetadata = new AIAgentMetadata(chatClient.GetService<ChatClientMetadata>()?.ProviderName);
 
         // Get the type of the chat client before wrapping it as an agent invoking chat client.
         this._chatClientType = chatClient.GetType();
@@ -185,6 +188,12 @@ public sealed class ChatClientAgent : AIAgent
 
         await this.NotifyThreadOfNewMessagesAsync(chatClientThread, chatResponseMessages, cancellationToken).ConfigureAwait(false);
     }
+
+    /// <inheritdoc/>
+    public override object? GetService(Type serviceType, object? serviceKey = null) =>
+        serviceType == typeof(AIAgentMetadata) ? this._agentMetadata :
+        serviceType == typeof(IChatClient) ? this.ChatClient :
+        this.ChatClient.GetService(serviceType, serviceKey);
 
     /// <inheritdoc/>
     public override AgentThread GetNewThread() => new ChatClientAgentThread();

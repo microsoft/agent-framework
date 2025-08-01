@@ -308,4 +308,8 @@ public abstract partial class OrchestratingAgent : AIAgent
             LogOrchestrationFailure(logger, context.ToString(), context.Id, ex);
         }
     }
+
+    /// <inheritdoc />
+    public override object? GetService(Type serviceType, object? serviceKey = null)
+        => null;
 }

@@ -36,7 +36,7 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
     private readonly Histogram<double> _operationDurationHistogram;
     private readonly Histogram<int> _tokenUsageHistogram;
     private readonly ILogger _logger;
-    private readonly bool _chatClientAgentHasTelemetryEnabled;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="OpenTelemetryAgent"/> class.
     /// </summary>
@@ -109,6 +109,11 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
     /// and outputs, such as message content, function call arguments, and function call results.
     /// </remarks>
     public bool EnableSensitiveData { get; set; }
+
+    /// <inheritdoc/>
+    public override object? GetService(Type serviceType, object? serviceKey = null) =>
+        serviceType == typeof(ActivitySource) ? this._activitySource :
+        this._innerAgent.GetService(serviceType, serviceKey);
 
     /// <inheritdoc/>
     public override string Id => this._innerAgent.Id;
@@ -364,9 +369,14 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
 
     private void LogChatMessages(IEnumerable<ChatMessage> messages)
     {
-        // If the agent is a ChatClientAgent and its innerChatClient already has telemetry enabled, the logging will be skipped
-        // to prevent duplication of telemetry data.
-        if (this._chatClientAgentHasTelemetryEnabled || !this._logger.IsEnabled(EventLogLevel))
+        if (this._openTelementryChatClient is not null)
+        {
+            // If the agent is a ChatClientAgent and its innerChatClient already has telemetry enabled, the logging will be skipped
+            // to prevent duplication of telemetry data.
+            return;
+        }
+
+        if (!this._logger.IsEnabled(EventLogLevel))
         {
             return;
         }

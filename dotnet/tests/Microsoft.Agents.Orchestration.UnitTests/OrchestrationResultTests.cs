@@ -91,6 +91,8 @@ public class OrchestrationResultTests
     {
         public override AgentThread GetNewThread() =>
             throw new NotSupportedException();
+        public override object? GetService(Type serviceType, object? serviceKey = null) =>
+            throw new NotImplementedException();
         public override Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
         public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
