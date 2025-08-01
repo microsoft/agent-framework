@@ -254,7 +254,7 @@ class FoundryChatClient(ChatClientBase):
         async for update in self._process_stream_events(stream, thread_id):
             yield update
 
-    async def _get_agent_id_or_create(self, run_options: dict[str, Any]) -> str:
+    async def _get_agent_id_or_create(self, run_options: dict[str, Any] | None = None) -> str:
         """Determine which agent to use and create if needed.
 
         Returns:
@@ -267,7 +267,7 @@ class FoundryChatClient(ChatClientBase):
 
             agent_name = self._foundry_settings.agent_name
             args = {"model": self._foundry_settings.model_deployment_name, "name": agent_name}
-            if "tools" in run_options:
+            if run_options and "tools" in run_options:
                 args["tools"] = run_options["tools"]
             created_agent = await self.client.agents.create_agent(**args)
             self.agent_id = created_agent.id
