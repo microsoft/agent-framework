@@ -4,11 +4,10 @@ import asyncio
 import logging
 from collections import defaultdict
 from collections.abc import AsyncIterable
-from typing import Any
 
 from ._edge import Edge
-from ._events import WorkflowEvent
-from ._runner_context import RunnerContext
+from ._events import WorkflowEvent, WorkflowWarningEvent
+from ._runner_context import Message, RunnerContext
 from ._shared_state import SharedState
 
 logger = logging.getLogger(__name__)
@@ -54,7 +53,7 @@ class Runner:
     async def _run_iteration(self):
         """Run a superstep of the workflow execution."""
 
-        async def _deliver_messages(source_executor_id: str, messages: list[Any]) -> None:
+        async def _deliver_messages(source_executor_id: str, messages: list[Message]) -> None:
             """Deliver messages to the executors.
 
             Outer loop to concurrently deliver messages from all sources to their targets.
@@ -62,13 +61,24 @@ class Runner:
 
             async def _deliver_messages_inner(
                 edge: Edge,
-                messages: list[Any],
+                messages: list[Message],
             ) -> None:
                 """Deliver messages to a specific target executor.
 
                 Inner loop to deliver messages to a specific target executor.
                 """
                 for message in messages:
+                    if message.target_id is not None and message.target_id != edge.target_id:
+                        continue
+
+                    if not edge.can_handle(message.data):
+                        warning_msg = (
+                            f"Edge {edge.id} cannot handle message with data type {type(message.data)}. Skipping."
+                        )
+                        logger.warning(warning_msg)
+                        await self._ctx.add_event(WorkflowWarningEvent(warning_msg))
+                        continue
+
                     await edge.send_message(message, self._shared_state, self._ctx)
 
             associated_edges = self._edge_map.get(source_executor_id, [])

@@ -4,21 +4,24 @@ import asyncio
 import sys
 from dataclasses import dataclass
 
-from agent_framework import ChatMessage, ChatResponse, ChatRole
+from agent_framework import ChatClientAgent, ChatMessage, ChatRole
+from agent_framework.azure import AzureChatClient
 from agent_framework.workflow import (
-    AgentRunEvent,
+    AgentExecutor,
+    AgentExecutorRequest,
+    AgentExecutorResponse,
     Executor,
     HumanInTheLoopEvent,
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
-    output_message_types,
+    message_handler,
 )
 
 if sys.version_info >= (3, 12):
-    from typing import override  # pragma: no cover
+    pass  # pragma: no cover
 else:
-    from typing_extensions import override  # pragma: no cover
+    pass  # pragma: no cover
 
 """
 The following sample demonstrates a basic workflow that simulates
@@ -40,8 +43,7 @@ class AgentSelectionDecision(GroupChatMessage):
     selection: str
 
 
-@output_message_types(AgentSelectionDecision, list[ChatMessage])
-class CriticGroupChatManagerWithHIL(Executor[list[ChatMessage]]):
+class CriticGroupChatManagerWithHIL(Executor):
     """An executor that manages a round-robin group chat."""
 
     def __init__(self, members: list[str], id: str | None = None):
@@ -51,26 +53,53 @@ class CriticGroupChatManagerWithHIL(Executor[list[ChatMessage]]):
         self._current_round = 0
         self._chat_history: list[ChatMessage] = []
 
-    @override
-    async def _execute(self, data: list[ChatMessage], ctx: WorkflowContext) -> None:
+    @message_handler(output_types=[AgentExecutorRequest])
+    async def start(self, task: str, ctx: WorkflowContext) -> None:
         """Execute the task by sending messages to the next executor in the round-robin sequence."""
-        self._chat_history.extend(data)
+        initial_message = ChatMessage(ChatRole.USER, text=task)
 
-        if self._should_terminate():
-            await ctx.add_event(WorkflowCompletedEvent(data=self._chat_history))
-            return
+        # Send the initial message to the members
+        await asyncio.gather(*[
+            ctx.send_message(
+                AgentExecutorRequest(messages=[initial_message], should_respond=False),
+                target_id=member_id,
+            )
+            for member_id in self._members
+        ])
 
-        if self._should_request_hil():
-            # Request human intervention if the last message was from the assistant
-            await ctx.send_message(self._chat_history)
-            return
-
-        self._current_round += 1
-        selection_decision = AgentSelectionDecision(
-            messages=self._chat_history,
-            selection=self._get_next_member(),
+        # Invoke the first member to start the round-robin chat
+        await ctx.send_message(
+            AgentExecutorRequest(messages=[], should_respond=True),
+            target_id=self._get_next_member(),
         )
-        await ctx.send_message(selection_decision)
+
+        # Update the cache with the initial message
+        self._chat_history.append(initial_message)
+
+    @message_handler(output_types=[AgentExecutorRequest])
+    async def handle_agent_response(self, response: AgentExecutorResponse, ctx: WorkflowContext) -> None:
+        """Execute the task by sending messages to the next executor in the round-robin sequence."""
+        # Update the chat history with the response
+        self._chat_history.extend(response.agent_run_response.messages)
+
+        # Send the response to the other members
+        await asyncio.gather(*[
+            ctx.send_message(
+                AgentExecutorRequest(messages=response.agent_run_response.messages, should_respond=False),
+                target_id=member_id,
+            )
+            for member_id in self._members
+            if member_id != response.executor_id
+        ])
+
+        # Check for termination condition
+        if self._should_terminate():
+            await ctx.add_event(WorkflowCompletedEvent(data=response))
+            return
+
+        # Request the next member to respond
+        selection = self._get_next_member()
+        await ctx.send_message(AgentExecutorRequest(messages=[], should_respond=True), target_id=selection)
 
     def _should_terminate(self) -> bool:
         """Determine if the group chat should terminate based on the last message."""
@@ -78,7 +107,7 @@ class CriticGroupChatManagerWithHIL(Executor[list[ChatMessage]]):
             return False
 
         last_message = self._chat_history[-1]
-        return bool(last_message.role == ChatRole.USER and "stop" in last_message.text.lower())
+        return bool(last_message.role == ChatRole.USER and "approve" in last_message.text.lower())
 
     def _should_request_hil(self) -> bool:
         """Determine if the group chat should request HIL based on the last message."""
@@ -93,68 +122,33 @@ class CriticGroupChatManagerWithHIL(Executor[list[ChatMessage]]):
         return self._members[(self._current_round - 1) % len(self._members)]
 
 
-@output_message_types(list[ChatMessage])
-class HumanInTheLoopExecutor(Executor[list[ChatMessage]]):
-    """An executor that simulates a human-in-the-loop decision-making process."""
-
-    def __init__(self, id: str | None = None):
-        """Initialize the executor with a unique identifier."""
-        super().__init__(id)
-
-        self._is_waiting_for_human_input = False
-
-    @override
-    async def _execute(self, data: list[ChatMessage], ctx: WorkflowContext) -> None:
-        """Simulate a human-in-the-loop response."""
-        if not self._is_waiting_for_human_input:
-            # If it's not waiting but received a message, it means it should prompt for human input.
-            self._is_waiting_for_human_input = True
-            await ctx.add_event(HumanInTheLoopEvent(executor_id=self.id))
-            return
-
-        self._is_waiting_for_human_input = False
-        # If it is waiting, it means the human has provided input. It should return the messages.
-        await ctx.send_message(data)
-
-
-@output_message_types(list[ChatMessage])
-class FakeAgentExecutor(Executor[AgentSelectionDecision]):
-    """An executor that simulates a group chat agent A."""
-
-    @override
-    async def _execute(self, data: AgentSelectionDecision, ctx: WorkflowContext) -> None:
-        """Simulate a response."""
-        response = ChatResponse(
-            messages=[
-                ChatMessage(
-                    ChatRole.ASSISTANT,
-                    text=f"{self.id} received request. Current message size: {len(data.messages)}",
-                    author_name=f"{self.id}",
-                )
-            ]
-        )
-        await ctx.add_event(AgentRunEvent(self.id, data=response))
-        await ctx.send_message(response.messages)
-
-
 async def main():
     """Main function to run the group chat workflow."""
     # Step 1: Create the executors.
-    executor_a = FakeAgentExecutor(id="executor_a")
-    executor_b = FakeAgentExecutor(id="executor_b")
-    executor_c = FakeAgentExecutor(id="executor_c")
-
-    hil_executor = HumanInTheLoopExecutor(id="hil_executor")
+    chat_client = AzureChatClient()
+    writer = AgentExecutor(
+        ChatClientAgent(
+            chat_client,
+            instructions=(
+                "You are an excellent content writer. You create new content and edit contents based on the feedback."
+            ),
+        ),
+        id="writer",
+    )
+    reviewer = AgentExecutor(
+        ChatClientAgent(
+            chat_client,
+            instructions=(
+                "You are an excellent content reviewer. You review the content and provide feedback to the writer."
+            ),
+        ),
+        id="reviewer",
+    )
 
     group_chat_manager = CriticGroupChatManagerWithHIL(
-        members=[executor_a.id, executor_b.id, executor_c.id],
+        members=[writer.id, reviewer.id],
         id="group_chat_manager",
     )
-    # The workflow graph:
-    #
-    # CriticGroupChatManagerWithHIL -> executor_a <-> CriticGroupChatManagerWithHIL <-> HumanInTheLoopExecutor
-    # CriticGroupChatManagerWithHIL -> executor_b <-> CriticGroupChatManagerWithHIL <-> HumanInTheLoopExecutor
-    # CriticGroupChatManagerWithHIL -> executor_c <-> CriticGroupChatManagerWithHIL <-> HumanInTheLoopExecutor
 
     # Step 2: Build the workflow with the defined edges.
     workflow = (

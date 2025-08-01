@@ -13,7 +13,7 @@ from ._events import (
     WorkflowEvent,
     WorkflowStartedEvent,
 )
-from ._executor import Executor, output_message_types
+from ._executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse, Executor, message_handler
 from ._workflow import WorkflowBuilder
 from ._workflow_context import WorkflowContext
 
@@ -24,6 +24,9 @@ except importlib.metadata.PackageNotFoundError:
 
 
 __all__ = [
+    "AgentExecutor",
+    "AgentExecutorRequest",
+    "AgentExecutorResponse",
     "AgentRunEvent",
     "AgentRunStreamingEvent",
     "Executor",
@@ -37,5 +40,5 @@ __all__ = [
     "WorkflowEvent",
     "WorkflowStartedEvent",
     "__version__",
-    "output_message_types",
+    "message_handler",
 ]

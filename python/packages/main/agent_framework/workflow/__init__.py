@@ -11,7 +11,6 @@ _IMPORTS = [
     "__version__",
     "events",
     "WorkflowBuilder",
-    "output_message_types",
     "ExecutorCompleteEvent",
     "ExecutorEvent",
     "ExecutorInvokeEvent",
@@ -21,6 +20,10 @@ _IMPORTS = [
     "WorkflowStartedEvent",
     "AgentRunEvent",
     "AgentRunStreamingEvent",
+    "message_handler",
+    "AgentExecutor",
+    "AgentExecutorRequest",
+    "AgentExecutorResponse",
 ]
 
 

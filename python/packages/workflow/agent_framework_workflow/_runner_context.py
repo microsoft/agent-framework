@@ -2,18 +2,30 @@
 
 import logging
 from collections import defaultdict
-from typing import Any, Protocol, runtime_checkable
+from dataclasses import dataclass
+from typing import Any, Protocol, TypeVar, runtime_checkable
 
 from ._events import WorkflowEvent
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+
+@dataclass
+class Message:
+    """A class representing a message in the workflow."""
+
+    data: Any
+    source_id: str
+    target_id: str | None = None
 
 
 @runtime_checkable
 class RunnerContext(Protocol):
     """Protocol for the execution context used by the runner."""
 
-    async def send_message(self, source_id: str, message: Any) -> None:
+    async def send_message(self, message: Message) -> None:
         """Send a message from the executor to the context.
 
         Args:
@@ -22,7 +34,7 @@ class RunnerContext(Protocol):
         """
         ...
 
-    async def drain_messages(self) -> dict[str, list[Any]]:
+    async def drain_messages(self) -> dict[str, list[Message]]:
         """Drain all messages from the context.
 
         Returns:
@@ -68,14 +80,14 @@ class InProcRunnerContext(RunnerContext):
 
     def __init__(self):
         """Initialize the in-process execution context."""
-        self._messages: defaultdict[str, list[Any]] = defaultdict(list)
+        self._messages: defaultdict[str, list[Message]] = defaultdict(list)
         self._events: list[WorkflowEvent] = []
 
-    async def send_message(self, source_id: str, message: Any) -> None:
+    async def send_message(self, message: Message) -> None:
         """Send a message from the executor to the context."""
-        self._messages[source_id].append(message)
+        self._messages[message.source_id].append(message)
 
-    async def drain_messages(self) -> dict[str, list[Any]]:
+    async def drain_messages(self) -> dict[str, list[Message]]:
         """Drain all messages from the context."""
         messages = dict(self._messages)
         self._messages.clear()

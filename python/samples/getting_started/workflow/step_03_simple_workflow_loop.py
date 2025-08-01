@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import sys
 from enum import Enum
 
 from agent_framework.workflow import (
@@ -10,13 +9,8 @@ from agent_framework.workflow import (
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
-    output_message_types,
+    message_handler,
 )
-
-if sys.version_info >= (3, 12):
-    from typing import override  # pragma: no cover
-else:
-    from typing_extensions import override  # pragma: no cover
 
 """
 The following sample demonstrates a basic workflow with two executors
@@ -38,8 +32,7 @@ class NumberSignal(Enum):
     INIT = "init"
 
 
-@output_message_types(int)
-class GuessNumberExecutor(Executor[NumberSignal]):
+class GuessNumberExecutor(Executor):
     """An executor that guesses a number."""
 
     def __init__(self, bound: tuple[int, int], id: str | None = None):
@@ -48,16 +41,16 @@ class GuessNumberExecutor(Executor[NumberSignal]):
         self._lower = bound[0]
         self._upper = bound[1]
 
-    @override
-    async def _execute(self, data: NumberSignal, ctx: WorkflowContext) -> None:
+    @message_handler(output_types=[int])
+    async def guess_number(self, feedback: NumberSignal, ctx: WorkflowContext) -> None:
         """Execute the task by guessing a number."""
-        if data == NumberSignal.INIT:
+        if feedback == NumberSignal.INIT:
             self._guess = (self._lower + self._upper) // 2
             await ctx.send_message(self._guess)
-        elif data == NumberSignal.MATCHED:
+        elif feedback == NumberSignal.MATCHED:
             # The previous guess was correct.
             await ctx.add_event(WorkflowCompletedEvent(f"Guessed the number: {self._guess}"))
-        elif data == NumberSignal.ABOVE:
+        elif feedback == NumberSignal.ABOVE:
             # The previous guess was too low.
             # Update the lower bound to the previous guess.
             # Generate a new number that is between the new bounds.
@@ -73,8 +66,7 @@ class GuessNumberExecutor(Executor[NumberSignal]):
             await ctx.send_message(self._guess)
 
 
-@output_message_types(NumberSignal)
-class JudgeExecutor(Executor[int]):
+class JudgeExecutor(Executor):
     """An executor that judges the guessed number."""
 
     def __init__(self, target: int, id: str | None = None):
@@ -82,12 +74,12 @@ class JudgeExecutor(Executor[int]):
         super().__init__(id=id)
         self._target = target
 
-    @override
-    async def _execute(self, data: int, ctx: WorkflowContext) -> None:
+    @message_handler(output_types=[NumberSignal])
+    async def judge(self, number: int, ctx: WorkflowContext) -> None:
         """Judge the guessed number."""
-        if data == self._target:
+        if number == self._target:
             result = NumberSignal.MATCHED
-        elif data < self._target:
+        elif number < self._target:
             result = NumberSignal.ABOVE
         else:
             result = NumberSignal.BELOW

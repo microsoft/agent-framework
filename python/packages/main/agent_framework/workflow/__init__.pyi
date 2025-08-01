@@ -1,6 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from agent_framework_workflow import (
+    AgentExecutor,
+    AgentExecutorRequest,
+    AgentExecutorResponse,
     AgentRunEvent,
     AgentRunStreamingEvent,
     Executor,
@@ -14,10 +17,13 @@ from agent_framework_workflow import (
     WorkflowEvent,
     WorkflowStartedEvent,
     __version__,
-    output_message_types,
+    message_handler,
 )
 
 __all__ = [
+    "AgentExecutor",
+    "AgentExecutorRequest",
+    "AgentExecutorResponse",
     "AgentRunEvent",
     "AgentRunStreamingEvent",
     "Executor",
@@ -31,5 +37,5 @@ __all__ = [
     "WorkflowEvent",
     "WorkflowStartedEvent",
     "__version__",
-    "output_message_types",
+    "message_handler",
 ]

@@ -2,7 +2,7 @@
 
 import sys
 from collections.abc import AsyncIterable, Callable, Sequence
-from typing import Any
+from typing import Any, Generic, TypeVar
 
 from ._edge import Edge
 from ._events import WorkflowEvent
@@ -18,6 +18,9 @@ else:
     from typing_extensions import Self  # pragma: no cover
 
 
+TIn = TypeVar("TIn")
+
+
 class Workflow:
     """A class representing a workflow that can be executed.
 
@@ -28,7 +31,7 @@ class Workflow:
     def __init__(
         self,
         edges: list[Edge],
-        start_executor: Executor[Any] | str,
+        start_executor: Executor | str,
         runner_context: RunnerContext,
     ):
         """Initialize the workflow with a list of edges.
@@ -50,7 +53,7 @@ class Workflow:
     async def run_stream(
         self,
         message: Any,
-        executor: Executor[Any] | str | None = None,
+        executor: Executor | str | None = None,
     ) -> AsyncIterable[WorkflowEvent]:
         """Send a message to the starting executor of the workflow.
 
@@ -75,7 +78,7 @@ class Workflow:
         async for event in self._runner.run_until_convergence():
             yield event
 
-    def _get_executor_by_id(self, executor_id: str) -> Executor[Any]:
+    def _get_executor_by_id(self, executor_id: str) -> Executor:
         """Get an executor by its ID.
 
         Args:
@@ -89,7 +92,7 @@ class Workflow:
         return self._executors[executor_id]
 
 
-class WorkflowBuilder:
+class WorkflowBuilder(Generic[TIn]):
     """A builder class for constructing workflows.
 
     This class provides methods to add edges and set the starting executor for the workflow.
@@ -98,13 +101,13 @@ class WorkflowBuilder:
     def __init__(self):
         """Initialize the WorkflowBuilder with an empty list of edges and no starting executor."""
         self._edges: list[Edge] = []
-        self._start_executor: Executor[Any] | str | None = None
+        self._start_executor: Executor | str | None = None
         self._runner_context: RunnerContext | None = None
 
     def add_edge(
         self,
-        source: Executor[Any],
-        target: Executor[Any],
+        source: Executor,
+        target: Executor,
         condition: Callable[[Any], bool] | None = None,
     ) -> "Self":
         """Add a directed edge between two executors.
@@ -119,7 +122,7 @@ class WorkflowBuilder:
         self._edges.append(Edge(source, target, condition))
         return self
 
-    def add_fan_out_edges(self, source: Executor[Any], targets: Sequence[Executor[Any]]) -> "Self":
+    def add_fan_out_edges(self, source: Executor, targets: Sequence[Executor]) -> "Self":
         """Add multiple edges to the workflow.
 
         Args:
@@ -132,8 +135,8 @@ class WorkflowBuilder:
 
     def add_fan_in_edges(
         self,
-        sources: Sequence[Executor[Any]],
-        target: Executor[Any],
+        sources: Sequence[Executor],
+        target: Executor,
     ) -> "Self":
         """Add multiple edges from sources to a single target executor.
 
@@ -159,7 +162,7 @@ class WorkflowBuilder:
 
     def add_chain(
         self,
-        executors: Sequence[Executor[Any]],
+        executors: Sequence[Executor],
     ) -> "Self":
         """Add a chain of executors to the workflow.
 
@@ -170,7 +173,7 @@ class WorkflowBuilder:
             self.add_edge(executors[i], executors[i + 1])
         return self
 
-    def set_start_executor(self, executor: Executor[Any] | str) -> "Self":
+    def set_start_executor(self, executor: Executor | str) -> "Self":
         """Set the starting executor for the workflow.
 
         Args:

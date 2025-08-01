@@ -1,21 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import sys
 
-from agent_framework.workflow import (
-    Executor,
-    WorkflowBuilder,
-    WorkflowCompletedEvent,
-    WorkflowContext,
-    output_message_types,
-)
-
-if sys.version_info >= (3, 12):
-    from typing import override  # pragma: no cover
-else:
-    from typing_extensions import override  # pragma: no cover
-
+from agent_framework.workflow import Executor, WorkflowBuilder, WorkflowCompletedEvent, WorkflowContext, message_handler
 
 """
 The following sample demonstrates a basic workflow with two executors
@@ -24,27 +11,25 @@ input string to uppercase, and the second executor reverses the string.
 """
 
 
-@output_message_types(str)
-class UpperCaseExecutor(Executor[str]):
+class UpperCaseExecutor(Executor):
     """An executor that converts text to uppercase."""
 
-    @override
-    async def _execute(self, data: str, ctx: WorkflowContext) -> None:
+    @message_handler(output_types=[str])
+    async def to_upper_case(self, text: str, ctx: WorkflowContext) -> None:
         """Execute the task by converting the input string to uppercase."""
-        result = data.upper()
+        result = text.upper()
 
         # Send the result to the next executor in the workflow.
         await ctx.send_message(result)
 
 
-@output_message_types(str)
-class ReverseTextExecutor(Executor[str]):
+class ReverseTextExecutor(Executor):
     """An executor that reverses text."""
 
-    @override
-    async def _execute(self, data: str, ctx: WorkflowContext) -> None:
+    @message_handler
+    async def reverse_text(self, text: str, ctx: WorkflowContext) -> None:
         """Execute the task by reversing the input string."""
-        result = data[::-1]
+        result = text[::-1]
 
         # Send the result with a workflow completion event.
         await ctx.add_event(WorkflowCompletedEvent(result))

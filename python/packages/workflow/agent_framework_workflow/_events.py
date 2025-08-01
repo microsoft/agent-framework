@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from agent_framework import ChatResponse, ChatResponseUpdate
+from agent_framework import AgentRunResponse, AgentRunResponseUpdate
 
 
 class WorkflowEvent:
@@ -27,6 +27,30 @@ class WorkflowCompletedEvent(WorkflowEvent):
     """Event triggered when a workflow completes."""
 
     ...
+
+
+class WorkflowWarningEvent(WorkflowEvent):
+    """Event triggered when a warning occurs in the workflow."""
+
+    def __init__(self, data: str):
+        """Initialize the workflow warning event with optional data and warning message."""
+        super().__init__(data)
+
+    def __repr__(self):
+        """Return a string representation of the workflow warning event."""
+        return f"{self.__class__.__name__}(message={self.data})"
+
+
+class WorkflowErrorEvent(WorkflowEvent):
+    """Event triggered when an error occurs in the workflow."""
+
+    def __init__(self, data: Exception):
+        """Initialize the workflow error event with optional data and error message."""
+        super().__init__(data)
+
+    def __repr__(self):
+        """Return a string representation of the workflow error event."""
+        return f"{self.__class__.__name__}(exception={self.data})"
 
 
 class ExecutorEvent(WorkflowEvent):
@@ -74,7 +98,7 @@ class ExecutorCompleteEvent(ExecutorEvent):
 class AgentRunStreamingEvent(ExecutorEvent):
     """Event triggered when an agent is streaming messages."""
 
-    def __init__(self, executor_id: str, data: ChatResponseUpdate | None = None):
+    def __init__(self, executor_id: str, data: AgentRunResponseUpdate | None = None):
         """Initialize the agent streaming event."""
         super().__init__(executor_id, data)
 
@@ -86,7 +110,7 @@ class AgentRunStreamingEvent(ExecutorEvent):
 class AgentRunEvent(ExecutorEvent):
     """Event triggered when an agent run is completed."""
 
-    def __init__(self, executor_id: str, data: ChatResponse | None = None):
+    def __init__(self, executor_id: str, data: AgentRunResponse | None = None):
         """Initialize the agent run event."""
         super().__init__(executor_id, data)
 

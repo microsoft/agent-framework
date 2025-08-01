@@ -13,13 +13,13 @@ from agent_framework.workflow import (
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
-    output_message_types,
+    message_handler,
 )
 
 if sys.version_info >= (3, 12):
-    from typing import override  # pragma: no cover
+    pass  # pragma: no cover
 else:
-    from typing_extensions import override  # pragma: no cover
+    pass  # pragma: no cover
 
 
 """
@@ -42,15 +42,13 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 SHARED_STATE_DATA_KEY = "data_to_be_processed"
 
 
-@dataclass
 class SplitCompleted:
-    """A data class to hold the completed state of the SplitExecutor."""
+    """A class to signal the completion of the Split executor."""
 
-    map_executor_id: str
+    ...
 
 
-@output_message_types(list[str])
-class SplitDataExecutor(Executor[str]):
+class Split(Executor):
     """An executor that splits data into smaller chunks based on the number of nodes available."""
 
     def __init__(self, map_executor_ids: list[str], id: str | None = None):
@@ -58,8 +56,8 @@ class SplitDataExecutor(Executor[str]):
         super().__init__(id)
         self._map_executor_ids = map_executor_ids
 
-    @override
-    async def _execute(self, data: str, ctx: WorkflowContext) -> None:
+    @message_handler(output_types=[SplitCompleted])
+    async def split(self, data: str, ctx: WorkflowContext) -> None:
         """Execute the task by splitting the data into chunks.
 
         Args:
@@ -85,7 +83,7 @@ class SplitDataExecutor(Executor[str]):
             # The start and end indices are stored in the shared state for the MapExecutor.
             # This allows the MapExecutor to know which part of the data it should process.
             await ctx.set_shared_state(self._map_executor_ids[i], (start_index, end_index))
-            await ctx.send_message(SplitCompleted(self._map_executor_ids[i]))
+            await ctx.send_message(SplitCompleted(), self._map_executor_ids[i])
 
         tasks = [asyncio.create_task(_process_chunk(i)) for i in range(map_executor_count)]
         await asyncio.gather(*tasks)
@@ -110,12 +108,11 @@ class MapCompleted:
     file_path: str
 
 
-@output_message_types(MapCompleted)
-class MapExecutor(Executor[SplitCompleted]):
+class Map(Executor):
     """An executor that applies a function to each item in the data and save the result to a file."""
 
-    @override
-    async def _execute(self, data: SplitCompleted, ctx: WorkflowContext) -> None:
+    @message_handler(output_types=[MapCompleted])
+    async def map(self, _: SplitCompleted, ctx: WorkflowContext) -> None:
         """Execute the task by applying a function to each item and same result to a file.
 
         Args:
@@ -143,8 +140,7 @@ class ShuffleCompleted:
     reducer_id: str
 
 
-@output_message_types(ShuffleCompleted)
-class ShuffleExecutor(Executor[list[MapCompleted]]):
+class Shuffle(Executor):
     """An executor that redistributes results from the map step to the reduce step."""
 
     def __init__(self, reducer_ids: list[str], id: str | None = None):
@@ -152,8 +148,8 @@ class ShuffleExecutor(Executor[list[MapCompleted]]):
         super().__init__(id)
         self._reducer_ids = reducer_ids
 
-    @override
-    async def _execute(self, data: list[MapCompleted], ctx: WorkflowContext) -> None:
+    @message_handler(output_types=[ShuffleCompleted])
+    async def shuffle(self, data: list[MapCompleted], ctx: WorkflowContext) -> None:
         """Execute the task by aggregating the results.
 
         Args:
@@ -224,11 +220,10 @@ class ReduceCompleted:
     file_path: str
 
 
-@output_message_types(ReduceCompleted)
-class ReduceExecutor(Executor[ShuffleCompleted]):
+class Reduce(Executor):
     """An executor that reduces the results from the ShuffleExecutor."""
 
-    @override
+    @message_handler(output_types=[ReduceCompleted])
     async def _execute(self, data: ShuffleCompleted, ctx: WorkflowContext) -> None:
         """Execute the task by reducing the results.
 
@@ -258,11 +253,11 @@ class ReduceExecutor(Executor[ShuffleCompleted]):
         await ctx.send_message(ReduceCompleted(file_path))
 
 
-class CompletionExecutor(Executor[list[ReduceCompleted]]):
+class CompletionExecutor(Executor):
     """An executor that completes the workflow by aggregating the results from the ReduceExecutors."""
 
-    @override
-    async def _execute(self, data: list[ReduceCompleted], ctx: WorkflowContext) -> None:
+    @message_handler
+    async def complete(self, data: list[ReduceCompleted], ctx: WorkflowContext) -> None:
         """Execute the task by aggregating the results.
 
         Args:
@@ -275,14 +270,14 @@ class CompletionExecutor(Executor[list[ReduceCompleted]]):
 async def main():
     """Main function to run the workflow."""
     # Step 1: Create the executors.
-    map_executors = [MapExecutor(id=f"map_executor_{i}") for i in range(3)]
-    split_data_executor = SplitDataExecutor(
-        [map_executor.id for map_executor in map_executors],
+    map_operations = [Map(id=f"map_executor_{i}") for i in range(3)]
+    split_operation = Split(
+        [map_operation.id for map_operation in map_operations],
         id="split_data_executor",
     )
-    reduce_executors = [ReduceExecutor(id=f"reduce_executor_{i}") for i in range(4)]
-    shuffle_executor = ShuffleExecutor(
-        [reduce_executor.id for reduce_executor in reduce_executors],
+    reduce_operations = [Reduce(id=f"reduce_executor_{i}") for i in range(4)]
+    shuffle_operation = Shuffle(
+        [reduce_operation.id for reduce_operation in reduce_operations],
         id="shuffle_executor",
     )
     completion_executor = CompletionExecutor(id="completion_executor")
@@ -290,11 +285,11 @@ async def main():
     # Step 2: Build the workflow.
     workflow = (
         WorkflowBuilder()
-        .set_start_executor(split_data_executor)
-        .add_fan_out_edges(split_data_executor, map_executors)
-        .add_fan_in_edges(map_executors, shuffle_executor)
-        .add_fan_out_edges(shuffle_executor, reduce_executors)
-        .add_fan_in_edges(reduce_executors, completion_executor)
+        .set_start_executor(split_operation)
+        .add_fan_out_edges(split_operation, map_operations)
+        .add_fan_in_edges(map_operations, shuffle_operation)
+        .add_fan_out_edges(shuffle_operation, reduce_operations)
+        .add_fan_in_edges(reduce_operations, completion_executor)
         .build()
     )
 

@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import sys
 from dataclasses import dataclass
 
 from agent_framework.workflow import (
@@ -9,13 +8,8 @@ from agent_framework.workflow import (
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
-    output_message_types,
+    message_handler,
 )
-
-if sys.version_info >= (3, 12):
-    from typing import override  # pragma: no cover
-else:
-    from typing_extensions import override  # pragma: no cover
 
 """
 The following sample demonstrates a basic workflow with two executors
@@ -26,15 +20,14 @@ workflow takes different paths.
 
 
 @dataclass
-class EmailMessage:
+class SpamDetectorResponse:
     """A data class to hold the email message content."""
 
-    content: str
+    email: str
     is_spam: bool = False
 
 
-@output_message_types(EmailMessage)
-class DetectSpamExecutor(Executor[str]):
+class SpamDetector(Executor):
     """An executor that determines if a message is spam."""
 
     def __init__(self, spam_keywords: list[str], id: str | None = None):
@@ -42,43 +35,49 @@ class DetectSpamExecutor(Executor[str]):
         super().__init__(id=id)
         self._spam_keywords = spam_keywords
 
-    @override
-    async def _execute(self, data: str, ctx: WorkflowContext) -> None:
+    @message_handler(output_types=[SpamDetectorResponse])
+    async def handle_email(self, email: str, ctx: WorkflowContext) -> None:
         """Determine if the input string is spam."""
-        result = any(keyword in data.lower() for keyword in self._spam_keywords)
+        result = any(keyword in email.lower() for keyword in self._spam_keywords)
 
-        await ctx.send_message(EmailMessage(content=data, is_spam=result))
+        await ctx.send_message(SpamDetectorResponse(email=email, is_spam=result))
 
 
-@output_message_types()
-class RespondToMessageExecutor(Executor[EmailMessage]):
+class SendResponse(Executor):
     """An executor that responds to a message based on spam detection."""
 
-    @override
-    async def _execute(self, data: EmailMessage, ctx: WorkflowContext) -> None:
+    @message_handler
+    async def handle_detector_response(
+        self,
+        spam_detector_response: SpamDetectorResponse,
+        ctx: WorkflowContext,
+    ) -> None:
         """Respond with a message based on whether the input is spam."""
-        if data.is_spam:
+        if spam_detector_response.is_spam:
             raise RuntimeError("Input is spam, cannot respond.")
 
         # Simulate processing delay
-        print(f"Responding to message: {data.content}")
+        print(f"Responding to message: {spam_detector_response.email}")
         await asyncio.sleep(1)
 
         await ctx.add_event(WorkflowCompletedEvent("Message processed successfully."))
 
 
-@output_message_types()
-class RemoveSpamExecutor(Executor[EmailMessage]):
+class RemoveSpam(Executor):
     """An executor that removes spam messages."""
 
-    @override
-    async def _execute(self, data: EmailMessage, ctx: WorkflowContext) -> None:
+    @message_handler
+    async def handle_detector_response(
+        self,
+        spam_detector_response: SpamDetectorResponse,
+        ctx: WorkflowContext,
+    ) -> None:
         """Remove the spam message."""
-        if data.is_spam is False:
+        if spam_detector_response.is_spam is False:
             raise RuntimeError("Input is not spam, cannot remove.")
 
         # Simulate processing delay
-        print(f"Removing spam message: {data.content}")
+        print(f"Removing spam message: {spam_detector_response.email}")
         await asyncio.sleep(1)
 
         await ctx.add_event(WorkflowCompletedEvent("Spam message removed."))
@@ -90,22 +89,22 @@ async def main():
     spam_keywords = ["spam", "advertisement", "offer"]
 
     # Step 1: Create the executors.
-    detect_spam_executor = DetectSpamExecutor(spam_keywords, id="detect_spam_executor")
-    respond_to_message_executor = RespondToMessageExecutor(id="respond_to_message_executor")
-    remove_spam_executor = RemoveSpamExecutor(id="remove_spam_executor")
+    spam_detector = SpamDetector(spam_keywords, id="spam_detector")
+    send_response = SendResponse(id="send_response")
+    remove_spam = RemoveSpam(id="remove_spam")
 
     # Step 2: Build the workflow with the defined edges with conditions.
     workflow = (
         WorkflowBuilder()
-        .set_start_executor(detect_spam_executor)
+        .set_start_executor(spam_detector)
         .add_edge(
-            detect_spam_executor,
-            respond_to_message_executor,
+            spam_detector,
+            send_response,
             condition=lambda x: x.is_spam is False,
         )
         .add_edge(
-            detect_spam_executor,
-            remove_spam_executor,
+            spam_detector,
+            remove_spam,
             condition=lambda x: x.is_spam is True,
         )
         .build()
