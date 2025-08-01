@@ -7,7 +7,6 @@ from collections.abc import AsyncIterable, MutableMapping, MutableSequence
 from typing import Any, ClassVar
 
 from agent_framework import (
-    AFBaseSettings,
     AIContents,
     AIFunction,
     ChatClientBase,
@@ -28,6 +27,7 @@ from agent_framework import (
     use_tool_calling,
 )
 from agent_framework._clients import ai_function_to_json_schema_spec
+from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.telemetry import use_telemetry
 from azure.ai.agents.models import (
@@ -74,14 +74,16 @@ class FoundrySettings(AFBaseSettings):
     with the encoding 'utf-8'. If the settings are not found in the .env file, the settings
     are ignored; however, validation will fail alerting that the settings are missing.
 
-    Optional settings for prefix 'FOUNDRY_' are:
-    - project_endpoint: str | None - The Azure AI Foundry project endpoint URL.
-        (Env var FOUNDRY_PROJECT_ENDPOINT)
-    - model_deployment_name: str | None - The name of the model deployment to use.
-        (Env var FOUNDRY_MODEL_DEPLOYMENT_NAME)
-    - agent_name: str | None - Default name for automatically created agents.
-        (Env var FOUNDRY_AGENT_NAME)
-    - env_file_path: str | None - if provided, the .env settings are read from this file path location
+    Attributes:
+        project_endpoint: The Azure AI Foundry project endpoint URL.
+            (Env var FOUNDRY_PROJECT_ENDPOINT)
+        model_deployment_name: The name of the model deployment to use.
+            (Env var FOUNDRY_MODEL_DEPLOYMENT_NAME)
+        agent_name: Default name for automatically created agents.
+            (Env var FOUNDRY_AGENT_NAME)
+    Parameters:
+        env_file_path: If provided, the .env settings are read from this file path location.
+        env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
     """
 
     env_prefix: ClassVar[str] = "FOUNDRY_"
