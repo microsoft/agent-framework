@@ -274,7 +274,7 @@ class FoundryChatClient(ChatClientBase):
                     args["instructions"] = run_options["instructions"]
                 if "response_format" in run_options:
                     args["response_format"] = run_options["response_format"]
-            created_agent = await self.client.agents.create_agent(**args)
+            created_agent = await self.client.agents.create_agent(**args)  # type: ignore[arg-type]
             self.agent_id = created_agent.id
             self._should_delete_agent = True
 
