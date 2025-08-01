@@ -28,14 +28,13 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
 {
     private const LogLevel EventLogLevel = LogLevel.Information;
     private JsonSerializerOptions _jsonSerializerOptions;
-
+    private readonly OpenTelemetryChatClient? _openTelementryChatClient;
     private readonly string? _system;
     private readonly AIAgent _innerAgent;
     private readonly ActivitySource _activitySource;
     private readonly Meter _meter;
     private readonly Histogram<double> _operationDurationHistogram;
     private readonly Histogram<int> _tokenUsageHistogram;
-    private readonly Counter<int> _requestCounter;
     private readonly ILogger _logger;
     private readonly bool _chatClientAgentHasTelemetryEnabled;
     /// <summary>
@@ -48,38 +47,53 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
     {
         this._innerAgent = Throw.IfNull(innerAgent);
 
-        string name = string.IsNullOrEmpty(sourceName) ? AgentOpenTelemetryConsts.DefaultSourceName : sourceName!;
+        string name = string.IsNullOrEmpty(sourceName) ? OpenTelemetryConsts.DefaultSourceName : sourceName!;
         this._activitySource = new(name);
         this._meter = new(name);
         this._logger = logger ?? NullLogger.Instance;
         this._system = innerAgent.GetType().Name;
 
-        // This prevents OTEL data duplication as the agent will not send Model Telemetry data that is already handled my the ChatClient OTEL.
-        this._chatClientAgentHasTelemetryEnabled = (innerAgent as ChatClientAgent)?.ChatClient.GetService<OpenTelemetryChatClient>() is not null ? true : false;
+        // Attempt to get the open telemetry chat client if the inner agent is a ChatClientAgent.
+        this._openTelementryChatClient = (innerAgent as ChatClientAgent)?.ChatClient.GetService<OpenTelemetryChatClient>();
+
+        // Inherit by default the EnableSensitiveData setting from the TelemetryChatClient if available.
+        this.EnableSensitiveData = this._openTelementryChatClient?.EnableSensitiveData ?? false;
 
         this._operationDurationHistogram = this._meter.CreateHistogram<double>(
-            AgentOpenTelemetryConsts.GenAI.Agent.Client.OperationDuration.Name,
-            AgentOpenTelemetryConsts.SecondsUnit,
-            AgentOpenTelemetryConsts.GenAI.Agent.Client.OperationDuration.Description
+            OpenTelemetryConsts.GenAI.Client.OperationDuration.Name,
+            OpenTelemetryConsts.SecondsUnit,
+            OpenTelemetryConsts.GenAI.Client.OperationDuration.Description
 #if NET9_0_OR_GREATER
-            , advice: new() { HistogramBucketBoundaries = AgentOpenTelemetryConsts.GenAI.Agent.Client.OperationDuration.ExplicitBucketBoundaries }
+            , advice: new() { HistogramBucketBoundaries = OpenTelemetryConsts.GenAI.Client.OperationDuration.ExplicitBucketBoundaries }
 #endif
             );
 
         this._tokenUsageHistogram = this._meter.CreateHistogram<int>(
-            AgentOpenTelemetryConsts.GenAI.Agent.Client.TokenUsage.Name,
-            AgentOpenTelemetryConsts.TokensUnit,
-            AgentOpenTelemetryConsts.GenAI.Agent.Client.TokenUsage.Description
+            OpenTelemetryConsts.GenAI.Client.TokenUsage.Name,
+            OpenTelemetryConsts.TokensUnit,
+            OpenTelemetryConsts.GenAI.Client.TokenUsage.Description
 #if NET9_0_OR_GREATER
-            , advice: new() { HistogramBucketBoundaries = AgentOpenTelemetryConsts.GenAI.Agent.Client.TokenUsage.ExplicitBucketBoundaries }
+            , advice: new() { HistogramBucketBoundaries = OpenTelemetryConsts.GenAI.Client.TokenUsage.ExplicitBucketBoundaries }
 #endif
             );
 
-        this._requestCounter = this._meter.CreateCounter<int>(
-            AgentOpenTelemetryConsts.GenAI.Agent.Client.RequestCount.Name,
-            description: AgentOpenTelemetryConsts.GenAI.Agent.Client.RequestCount.Description);
-
         this._jsonSerializerOptions = AIJsonUtilities.DefaultOptions;
+    }
+
+    /// <summary>Gets or sets JSON serialization options to use when formatting chat data into telemetry strings.</summary>
+    public JsonSerializerOptions JsonSerializerOptions
+    {
+        get => this._jsonSerializerOptions;
+        set => this._jsonSerializerOptions = Throw.IfNull(value);
+    }
+
+    /// <summary>
+    /// Disposes the telemetry resources.
+    /// </summary>
+    public void Dispose()
+    {
+        this._activitySource.Dispose();
+        this._meter.Dispose();
     }
 
     /// <summary>
@@ -117,12 +131,13 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
     {
         _ = Throw.IfNull(messages);
 
-        using Activity? activity = this.CreateAndConfigureActivity(AgentOpenTelemetryConsts.GenAI.Operations.InvokeAgent, messages, thread);
+        using Activity? activity = this.CreateAndConfigureActivity(OpenTelemetryConsts.GenAI.Operation.NameValues.InvokeAgent, messages, thread);
         Stopwatch? stopwatch = this._operationDurationHistogram.Enabled ? Stopwatch.StartNew() : null;
+
+        this.LogChatMessages(messages);
 
         AgentRunResponse? response = null;
         Exception? error = null;
-
         try
         {
             response = await this._innerAgent.RunAsync(messages, thread, options, cancellationToken).ConfigureAwait(false);
@@ -148,7 +163,7 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
     {
         _ = Throw.IfNull(messages);
 
-        using Activity? activity = this.CreateAndConfigureActivity(AgentOpenTelemetryConsts.GenAI.Operations.InvokeAgent, messages, thread);
+        using Activity? activity = this.CreateAndConfigureActivity(OpenTelemetryConsts.GenAI.Operation.NameValues.InvokeAgent, messages, thread);
         Stopwatch? stopwatch = this._operationDurationHistogram.Enabled ? Stopwatch.StartNew() : null;
 
         IAsyncEnumerable<AgentRunResponseUpdate> updates;
@@ -198,22 +213,13 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
     }
 
     /// <summary>
-    /// Disposes the telemetry resources.
-    /// </summary>
-    public void Dispose()
-    {
-        this._activitySource.Dispose();
-        this._meter.Dispose();
-    }
-
-    /// <summary>
     /// Creates an activity for an agent request, or returns null if not enabled.
     /// </summary>
     private Activity? CreateAndConfigureActivity(string operationName, IReadOnlyCollection<ChatMessage> messages, AgentThread? thread)
     {
         // Get the GenAI system name for telemetry
         var chatClientAgent = this._innerAgent as ChatClientAgent;
-        var genAISystem = chatClientAgent?.ChatClient.GetService<ChatClientMetadata>()?.ProviderName;
+        var genAISystemName = chatClientAgent?.ChatClient.GetService<ChatClientMetadata>()?.ProviderName;
         Activity? activity = null;
         if (this._activitySource.HasListeners())
         {
@@ -224,34 +230,33 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
             {
                 _ = activity
                     // Required attributes per OpenTelemetry semantic conventions
-                    .AddTag(AgentOpenTelemetryConsts.GenAI.OperationName, operationName)
-                    .AddTag(AgentOpenTelemetryConsts.GenAI.System, genAISystem ?? AgentOpenTelemetryConsts.GenAI.Systems.MicrosoftExtensionsAI)
+                    .AddTag(OpenTelemetryConsts.GenAI.Operation.Name, operationName)
+                    .AddTag(OpenTelemetryConsts.GenAI.SystemName, genAISystemName ?? OpenTelemetryConsts.GenAI.SystemNameValues.MicrosoftExtensionsAIAgents)
                     // Agent-specific attributes
-                    .AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Id, this.Id)
-                    .AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Request.MessageCount, messages.Count);
+                    .AddTag(OpenTelemetryConsts.GenAI.Agent.Id, this.Id);
 
                 // Add agent name if available (following gen_ai.agent.name convention - conditionally required when available)
                 if (!string.IsNullOrWhiteSpace(this.Name))
                 {
-                    _ = activity.AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Name, this.Name);
+                    _ = activity.AddTag(OpenTelemetryConsts.GenAI.Agent.Name, this.Name);
                 }
 
                 // Add description if available (following gen_ai.agent.description convention)
                 if (!string.IsNullOrWhiteSpace(this.Description))
                 {
-                    _ = activity.AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Description, this.Description);
+                    _ = activity.AddTag(OpenTelemetryConsts.GenAI.Agent.Description, this.Description);
                 }
 
                 // Add conversation ID if thread is available (following gen_ai.conversation.id convention)
                 if (!string.IsNullOrWhiteSpace(thread?.Id))
                 {
-                    _ = activity.AddTag(AgentOpenTelemetryConsts.GenAI.ConversationId, thread.Id);
+                    _ = activity.AddTag(OpenTelemetryConsts.GenAI.Conversation.Id, thread.Id);
                 }
 
                 // Add instructions if available (for ChatClientAgent)
                 if (!string.IsNullOrWhiteSpace(chatClientAgent?.Instructions))
                 {
-                    _ = activity.AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Request.Instructions, chatClientAgent.Instructions);
+                    _ = activity.AddTag(OpenTelemetryConsts.GenAI.Request.Instructions, chatClientAgent.Instructions);
                 }
             }
         }
@@ -286,30 +291,17 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
         {
             TagList tags = new()
             {
-                { AgentOpenTelemetryConsts.GenAI.OperationName, AgentOpenTelemetryConsts.GenAI.Operations.InvokeAgent }
+                { OpenTelemetryConsts.GenAI.Operation.Name, OpenTelemetryConsts.GenAI.Operation.NameValues.InvokeAgent }
             };
 
-            AddIfNotWhiteSpace(ref tags, AgentOpenTelemetryConsts.GenAI.Agent.Name, this.Name);
+            AddIfNotWhiteSpace(ref tags, OpenTelemetryConsts.GenAI.Agent.Name, this.DisplayName);
 
             if (error is not null)
             {
-                tags.Add(AgentOpenTelemetryConsts.ErrorInfo.Type, error.GetType().FullName);
+                tags.Add(OpenTelemetryConsts.Error.Type, error.GetType().FullName);
             }
 
             this._operationDurationHistogram.Record(stopwatch.Elapsed.TotalSeconds, tags);
-        }
-
-        // Record request count metric
-        if (this._requestCounter.Enabled)
-        {
-            TagList tags = new()
-            {
-                { AgentOpenTelemetryConsts.GenAI.OperationName, AgentOpenTelemetryConsts.GenAI.Operations.InvokeAgent }
-            };
-
-            AddIfNotWhiteSpace(ref tags, AgentOpenTelemetryConsts.GenAI.Agent.Name, this.Name);
-
-            this._requestCounter.Add(1, tags);
         }
 
         // Record token usage metrics
@@ -319,10 +311,10 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
             {
                 TagList tags = new()
                 {
-                    { AgentOpenTelemetryConsts.GenAI.Agent.Token.Type, "input" }
+                    { OpenTelemetryConsts.GenAI.Token.Type, "input" }
                 };
 
-                AddIfNotWhiteSpace(ref tags, AgentOpenTelemetryConsts.GenAI.Agent.Name, this.Name);
+                AddIfNotWhiteSpace(ref tags, OpenTelemetryConsts.GenAI.Agent.Name, this.Name);
 
                 this._tokenUsageHistogram.Record((int)inputTokens, tags);
             }
@@ -331,10 +323,10 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
             {
                 TagList tags = new()
                 {
-                    { AgentOpenTelemetryConsts.GenAI.Agent.Token.Type, "output" }
+                    { OpenTelemetryConsts.GenAI.Token.Type, "output" }
                 };
 
-                AddIfNotWhiteSpace(ref tags, AgentOpenTelemetryConsts.GenAI.Agent.Name, this.Name);
+                AddIfNotWhiteSpace(ref tags, OpenTelemetryConsts.GenAI.Agent.Name, this.Name);
 
                 this._tokenUsageHistogram.Record((int)outputTokens, tags);
             }
@@ -346,27 +338,25 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
             if (error is not null)
             {
                 _ = activity
-                    .AddTag(AgentOpenTelemetryConsts.ErrorInfo.Type, error.GetType().FullName)
+                    .AddTag(OpenTelemetryConsts.Error.Type, error.GetType().FullName)
                     .SetStatus(ActivityStatusCode.Error, error.Message);
             }
 
             if (response is not null)
             {
-                _ = activity.AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Response.MessageCount, response.Messages.Count);
-
                 if (!string.IsNullOrWhiteSpace(response.ResponseId))
                 {
-                    _ = activity.AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Response.Id, response.ResponseId);
+                    _ = activity.AddTag(OpenTelemetryConsts.GenAI.Response.Id, response.ResponseId);
                 }
 
                 if (response.Usage?.InputTokenCount is long inputTokens)
                 {
-                    _ = activity.AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Usage.InputTokens, (int)inputTokens);
+                    _ = activity.AddTag(OpenTelemetryConsts.GenAI.Usage.InputTokens, (int)inputTokens);
                 }
 
                 if (response.Usage?.OutputTokenCount is long outputTokens)
                 {
-                    _ = activity.AddTag(AgentOpenTelemetryConsts.GenAI.Agent.Usage.OutputTokens, (int)outputTokens);
+                    _ = activity.AddTag(OpenTelemetryConsts.GenAI.Usage.OutputTokens, (int)outputTokens);
                 }
             }
         }
@@ -374,7 +364,9 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
 
     private void LogChatMessages(IEnumerable<ChatMessage> messages)
     {
-        if (!this._logger.IsEnabled(EventLogLevel))
+        // If the agent is a ChatClientAgent and its innerChatClient already has telemetry enabled, the logging will be skipped
+        // to prevent duplication of telemetry data.
+        if (this._chatClientAgentHasTelemetryEnabled || !this._logger.IsEnabled(EventLogLevel))
         {
             return;
         }
@@ -383,14 +375,14 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
         {
             if (message.Role == ChatRole.Assistant)
             {
-                this.Log(new(1, AgentOpenTelemetryConsts.GenAI.Agent.Assistant.Message),
+                this.Log(new(1, OpenTelemetryConsts.GenAI.Assistant.Message),
                     JsonSerializer.Serialize(this.CreateAssistantEvent(message.Contents), OtelContext.Default.AssistantEvent));
             }
             else if (message.Role == ChatRole.Tool)
             {
                 foreach (FunctionResultContent frc in message.Contents.OfType<FunctionResultContent>())
                 {
-                    this.Log(new(1, AgentOpenTelemetryConsts.GenAI.Agent.Tool.Message),
+                    this.Log(new(1, OpenTelemetryConsts.GenAI.Tool.Message),
                         JsonSerializer.Serialize(new()
                         {
                             Id = frc.CallId,
@@ -402,7 +394,7 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
             }
             else
             {
-                this.Log(new(1, message.Role == ChatRole.System ? AgentOpenTelemetryConsts.GenAI.Agent.System.Message : AgentOpenTelemetryConsts.GenAI.Agent.User.Message),
+                this.Log(new(1, message.Role == ChatRole.System ? OpenTelemetryConsts.GenAI.System.Message : OpenTelemetryConsts.GenAI.User.Message),
                     JsonSerializer.Serialize(new()
                     {
                         Role = message.Role != ChatRole.System && message.Role != ChatRole.User && !string.IsNullOrWhiteSpace(message.Role.Value) ? message.Role.Value : null,
@@ -419,7 +411,7 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
             return;
         }
 
-        EventId id = new(1, AgentOpenTelemetryConsts.GenAI.Agent.Choice);
+        EventId id = new(1, OpenTelemetryConsts.GenAI.Choice);
         this.Log(id, JsonSerializer.Serialize(new()
         {
             FinishReason = response.FinishReason?.Value ?? "error",
@@ -436,8 +428,8 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
 
         KeyValuePair<string, object?>[] tags =
         [
-            new(AgentOpenTelemetryConsts.Event.Name, id.Name),
-            new(AgentOpenTelemetryConsts.GenAI.Agent.SystemName, this._system),
+            new(OpenTelemetryConsts.Event.Name, id.Name),
+            new(OpenTelemetryConsts.GenAI.SystemName, this._system),
         ];
 
         this._logger.Log(EventLogLevel, id, tags, null, (_, __) => eventBodyJson);
