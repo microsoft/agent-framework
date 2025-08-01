@@ -57,7 +57,7 @@ builder.AddAIAgent("knights-and-knaves", (sp, key) =>
         If the user asks a general question about their surrounding, make something up which is consistent with the scenario.
         """, "Narrator");
 
-    return new ConcurrentOrchestration([knight, knave], name: key);
+    return new ConcurrentOrchestration([knight, knave, narrator], name: key);
 });
 
 var app = builder.Build();
