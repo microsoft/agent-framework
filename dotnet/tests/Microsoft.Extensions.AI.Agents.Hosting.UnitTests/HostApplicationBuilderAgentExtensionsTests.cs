@@ -187,26 +187,6 @@ public class HostApplicationBuilderAgentExtensionsTests
     }
 
     /// <summary>
-    /// Verifies that AddAIAgent registers AgentProxyFactory as singleton.
-    /// </summary>
-    [Fact]
-    public void AddAIAgent_RegistersAgentProxyFactory()
-    {
-        // Arrange
-        var builder = new HostApplicationBuilder();
-
-        // Act
-        builder.AddAIAgent("agentName", "instructions");
-
-        // Assert
-        var descriptor = builder.Services.FirstOrDefault(
-            d => d.ServiceType == typeof(AgentProxyFactory));
-
-        Assert.NotNull(descriptor);
-        Assert.Equal(ServiceLifetime.Singleton, descriptor.Lifetime);
-    }
-
-    /// <summary>
     /// Verifies that AddAIAgent can be called multiple times with different agent names.
     /// </summary>
     [Fact]

@@ -3,13 +3,14 @@
 @inject AgentDiscoveryClient AgentClient
 @inject IJSRuntime JSRuntime
 @inject ILogger<Home> Logger
-@inject AgentProxyFactory AgentProxyFactory
+@inject IActorClient ActorClient
 @rendermode InteractiveServer
 @using System.Text
 @using System.Text.Json
 @using Microsoft.Extensions.AI
 @using Microsoft.Extensions.AI.Agents
 @using Microsoft.Extensions.AI.Agents.Hosting
+@using Microsoft.Extensions.AI.Agents.Runtime
 
 <PageTitle>Agent Web Chat</PageTitle>
 
@@ -497,6 +498,9 @@
 </style>
 
 @code {
+
+
+
     private string currentMessage = "";
     private bool isStreaming = false;
     private bool isLoadingAgents = true;
@@ -516,13 +520,13 @@
     protected override async Task OnInitializedAsync()
     {
         Logger.LogDebug("Initializing Agent Chat component");
-        
+
         // Load agents
         try
         {
             availableAgents = await AgentClient.GetAgentsAsync();
             Logger.LogInformation("Loaded {AgentCount} agents", availableAgents.Count);
-            
+
             // Default to first agent and start a conversation
             if (availableAgents.Any())
             {
@@ -576,7 +580,7 @@
 
         conversations.Add(newConversation);
         currentConversation = newConversation;
-        
+
         Logger.LogInformation("Started new conversation with agent: {AgentName}, session: {SessionId}", 
             newConversation.AgentName, newConversation.SessionId);
 
@@ -600,7 +604,7 @@
         if (conversationToRemove != null)
         {
             conversations.Remove(conversationToRemove);
-            
+
             if (currentConversation?.SessionId == sessionId)
             {
                 currentConversation = conversations.FirstOrDefault();
@@ -609,8 +613,8 @@
                     selectedAgentName = currentConversation.AgentName;
                 }
             }
-            
-                Logger.LogInformation("Closed conversation with session: {SessionId}", sessionId);
+
+            Logger.LogInformation("Closed conversation with session: {SessionId}", sessionId);
         }
         StateHasChanged();
     }
@@ -639,9 +643,10 @@
         try
         {
             var responseContent = new StringBuilder();
-            var agent = AgentProxyFactory.Create(currentConversation.AgentName);
-            var thread = agent.GetThread(currentConversation.SessionId);
-            
+            var agent = new AgentProxy(currentConversation.AgentName, ActorClient);
+            var thread = agent.GetNewThread();
+            thread.Id = currentConversation.SessionId;
+
             await foreach (var update in agent.RunStreamingAsync(
                 [new ChatMessage(ChatRole.User, userMessage)], 
                 thread,

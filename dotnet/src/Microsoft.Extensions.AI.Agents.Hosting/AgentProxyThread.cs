@@ -12,7 +12,7 @@ namespace Microsoft.Extensions.AI.Agents.Hosting;
 /// <summary>
 /// Represents an agent thread for a <see cref="AgentProxy"/>.
 /// </summary>
-public sealed partial class AgentProxyThread : AgentThread
+internal sealed partial class AgentProxyThread : AgentThread
 {
 #if NET7_0_OR_GREATER
     [System.Diagnostics.CodeAnalysis.StringSyntax("Regex")]
@@ -71,11 +71,5 @@ public sealed partial class AgentProxyThread : AgentThread
         {
             throw new ArgumentException($"Thread ID '{id}' is not valid. Thread IDs must contain only alphanumeric characters, hyphens, underscores, dots, and tildes.", nameof(id));
         }
-    }
-
-    /// <inheritdoc/>
-    protected override Task OnNewMessagesAsync(IReadOnlyCollection<ChatMessage> newMessages, CancellationToken cancellationToken = default)
-    {
-        return base.OnNewMessagesAsync(newMessages, cancellationToken);
     }
 }

@@ -2,7 +2,6 @@
 
 using AgentWebChat.Web;
 using AgentWebChat.Web.Components;
-using Microsoft.Extensions.AI.Agents.Hosting;
 using Microsoft.Extensions.AI.Agents.Runtime;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -16,7 +15,6 @@ builder.Services.AddRazorComponents()
 
 builder.Services.AddOutputCache();
 
-builder.Services.AddSingleton<AgentProxyFactory>();
 builder.Services.AddHttpClient<IActorClient, HttpActorClient>(client => client.BaseAddress = new("https+http://agenthost"));
 builder.Services.AddHttpClient<AgentDiscoveryClient>(client => client.BaseAddress = new("https+http://agenthost"));
 

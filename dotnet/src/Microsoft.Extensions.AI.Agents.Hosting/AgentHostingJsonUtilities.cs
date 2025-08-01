@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -56,11 +55,6 @@ public static partial class AgentHostingJsonUtilities
     [JsonSerializable(typeof(AgentRunRequest))]
     [JsonSerializable(typeof(AgentProxyThread))]
     [JsonSerializable(typeof(ChatClientAgentThread))]
-    [JsonSerializable(typeof(IReadOnlyCollection<ChatMessage>))]
-    [JsonSerializable(typeof(List<ChatMessage>))]
-    [JsonSerializable(typeof(AgentRunResponseUpdate))]
-    [JsonSerializable(typeof(AgentRunResponse))]
-    [JsonSerializable(typeof(string))]
     [ExcludeFromCodeCoverage]
     internal sealed partial class JsonContext : JsonSerializerContext;
 }

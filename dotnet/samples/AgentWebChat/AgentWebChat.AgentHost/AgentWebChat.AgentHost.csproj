@@ -29,6 +29,7 @@
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
     <PackageReference Include="Microsoft.AspNetCore.OpenAPI" />
     <PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" />
+    <PackageReference Include="System.Net.ServerSentEvents" />
   </ItemGroup>
 
 </Project>

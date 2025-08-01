@@ -107,7 +107,13 @@ public static class HostApplicationBuilderAgentExtensions
             Throw.IfNull(key);
             var keyString = key as string;
             Throw.IfNullOrEmpty(keyString);
-            return createAgentDelegate(sp, keyString) ?? throw new InvalidOperationException($"The agent factory did not return a valid {nameof(AIAgent)} instance for key '{keyString}'.");
+            var agent = createAgentDelegate(sp, keyString) ?? throw new InvalidOperationException($"The agent factory did not return a valid {nameof(AIAgent)} instance for key '{keyString}'.");
+            if (agent.Name != keyString)
+            {
+                throw new InvalidOperationException($"The agent factory returned an agent with name '{agent.Name}', but the expected name is '{keyString}'.");
+            }
+
+            return agent;
         });
 
         return builder.AddAgentActor(name);
@@ -147,7 +153,6 @@ public static class HostApplicationBuilderAgentExtensions
     private static void ConfigureHostBuilder(IHostApplicationBuilder builder, LocalAgentRegistry agentHostBuilderContext)
     {
         builder.Services.Add(ServiceDescriptor.Singleton(agentHostBuilderContext));
-        builder.Services.AddSingleton<AgentProxyFactory>();
         builder.Services.AddSingleton<AgentCatalog, LocalAgentCatalog>();
     }
 }
