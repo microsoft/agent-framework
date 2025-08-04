@@ -6,7 +6,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Microsoft.Extensions.AI.Agents\Microsoft.Extensions.AI.Agents.csproj" />
-    <ProjectReference Include="..\..\src\Microsoft.Agents.Workflow\Microsoft.Agents.Workflow.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Agents.Workflow\Microsoft.Agents.Workflows.csproj" />
   </ItemGroup>
 
   <ItemGroup>
