@@ -37,10 +37,10 @@ public class CosmosActorStateStorage : IActorStateStorage
     /// Writes state changes to the actor's persistent storage.
     /// </summary>
     public async ValueTask<WriteResponse> WriteStateAsync(
-       ActorId actorId,
-       IReadOnlyCollection<ActorStateWriteOperation> operations,
-       string etag,
-       CancellationToken cancellationToken = default)
+        ActorId actorId,
+        IReadOnlyCollection<ActorStateWriteOperation> operations,
+        string etag,
+        CancellationToken cancellationToken = default)
     {
         if (operations.Count == 0)
         {
@@ -49,7 +49,7 @@ public class CosmosActorStateStorage : IActorStateStorage
 
         var container = await this._lazyContainer.GetContainerAsync().ConfigureAwait(false);
         var batch = container.CreateTransactionalBatch(GetPartitionKey(actorId));
-        var rootDocId = GetRootDocumentId();
+        var actorIdStr = actorId.ToString();
 
         // Add data operations to batch
         foreach (var op in operations)
@@ -62,7 +62,7 @@ public class CosmosActorStateStorage : IActorStateStorage
                     var item = new ActorStateDocument
                     {
                         Id = docId,
-                        ActorId = actorId.ToString(),
+                        ActorId = actorIdStr,
                         Key = set.Key,
                         Value = set.Value
                     };
@@ -83,7 +83,7 @@ public class CosmosActorStateStorage : IActorStateStorage
         // Add root document update to batch
         var newRoot = new ActorRootDocument
         {
-            Id = rootDocId,
+            Id = RootDocumentId,
             ActorId = actorId.ToString(),
             LastModified = DateTimeOffset.UtcNow,
         };
@@ -96,7 +96,7 @@ public class CosmosActorStateStorage : IActorStateStorage
         else
         {
             // eTag provided - replace existing root document with eTag check
-            batch.ReplaceItem(rootDocId, newRoot, new TransactionalBatchItemRequestOptions { IfMatchEtag = etag });
+            batch.ReplaceItem(RootDocumentId, newRoot, new TransactionalBatchItemRequestOptions { IfMatchEtag = etag });
         }
 
         try
@@ -122,9 +122,9 @@ public class CosmosActorStateStorage : IActorStateStorage
     /// Reads state data from the actor's persistent storage.
     /// </summary>
     public async ValueTask<ReadResponse> ReadStateAsync(
-    ActorId actorId,
-    IReadOnlyCollection<ActorStateReadOperation> operations,
-    CancellationToken cancellationToken = default)
+        ActorId actorId,
+        IReadOnlyCollection<ActorStateReadOperation> operations,
+        CancellationToken cancellationToken = default)
     {
         if (operations.Count == 0)
         {
@@ -160,9 +160,6 @@ public class CosmosActorStateStorage : IActorStateStorage
                     break;
 
                 case ListKeysOperation list:
-                    var keys = new List<string>();
-                    string? continuationToken = null;
-
                     QueryDefinition query;
                     if (!string.IsNullOrEmpty(list.KeyPrefix))
                     {
@@ -186,6 +183,9 @@ public class CosmosActorStateStorage : IActorStateStorage
                         query,
                         list.ContinuationToken,
                         requestOptions);
+
+                    var keys = new List<string>();
+                    string? continuationToken = null;
 
                     while (iterator.HasMoreResults)
                     {
@@ -268,7 +268,7 @@ public class CosmosActorStateStorage : IActorStateStorage
     }
 
     private static string GetDocumentId(string key) => $"state_{CosmosIdSanitizer.Sanitize(key)}";
-    private static string GetRootDocumentId() => "rootdoc";
+    private const string RootDocumentId = "rootdoc";
 
     private static PartitionKey GetPartitionKey(ActorId actorId)
         => new(actorId.ToString());
@@ -279,11 +279,10 @@ public class CosmosActorStateStorage : IActorStateStorage
     /// </summary>
     private async ValueTask<string> GetActorETagAsync(Container container, ActorId actorId, CancellationToken cancellationToken)
     {
-        var rootDocId = GetRootDocumentId();
         try
         {
             var rootResponse = await container.ReadItemAsync<ActorRootDocument>(
-                rootDocId,
+                RootDocumentId,
                 GetPartitionKey(actorId),
                 cancellationToken: cancellationToken).ConfigureAwait(false);
             return rootResponse.ETag;

@@ -252,7 +252,7 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
         {
             result = await this.Storage.WriteStateAsync(
                 this.ActorId,
-                [.. operations.Operations.OfType<ActorStateWriteOperation>()],
+                writeOps,
                 operations.ETag,
                 cancellationToken).ConfigureAwait(false);
         }
