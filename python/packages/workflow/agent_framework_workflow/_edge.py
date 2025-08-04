@@ -69,7 +69,9 @@ class Edge:
             raise RuntimeError(f"Edge {self.id} cannot handle data of type {type(message.data)}.")
 
         if not self._edge_group_ids and self._should_route(message.data):
-            await self.target.execute(message.data, WorkflowContext(self.target.id, shared_state, ctx))
+            await self.target.execute(
+                message.data, WorkflowContext(self.target.id, [self.source.id], shared_state, ctx)
+            )
         elif self._edge_group_ids:
             # Logic:
             # 1. If not all edges in the edge group have data in the shared state,
@@ -94,7 +96,8 @@ class Edge:
 
             if message_list:
                 data_list = [msg.data for msg in message_list]
-                await self.target.execute(data_list, WorkflowContext(self.target.id, shared_state, ctx))
+                source_ids = [msg.source_id for msg in message_list]
+                await self.target.execute(data_list, WorkflowContext(self.target.id, source_ids, shared_state, ctx))
 
     def _should_route(self, data: Any) -> bool:
         """Determine if message should be routed through this edge."""

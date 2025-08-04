@@ -6,7 +6,7 @@ from collections import defaultdict
 from collections.abc import AsyncIterable
 
 from ._edge import Edge
-from ._events import WorkflowEvent, WorkflowWarningEvent
+from ._events import WorkflowEvent
 from ._runner_context import Message, RunnerContext
 from ._shared_state import SharedState
 
@@ -72,11 +72,6 @@ class Runner:
                         continue
 
                     if not edge.can_handle(message.data):
-                        warning_msg = (
-                            f"Edge {edge.id} cannot handle message with data type {type(message.data)}. Skipping."
-                        )
-                        logger.warning(warning_msg)
-                        await self._ctx.add_event(WorkflowWarningEvent(warning_msg))
                         continue
 
                     await edge.send_message(message, self._shared_state, self._ctx)

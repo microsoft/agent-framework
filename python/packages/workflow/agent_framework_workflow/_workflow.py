@@ -6,7 +6,7 @@ from typing import Any, Generic, TypeVar
 
 from ._edge import Edge
 from ._events import WorkflowEvent
-from ._executor import Executor
+from ._executor import Executor, RequestInfoExecutor
 from ._runner import Runner
 from ._runner_context import InProcRunnerContext, RunnerContext
 from ._shared_state import SharedState
@@ -71,10 +71,44 @@ class Workflow:
             message,
             WorkflowContext(
                 executor.id,
+                [
+                    # Using the workflow class name as the source executor ID when
+                    # delivering the first message to the starting executor
+                    self.__class__.__name__
+                ],
                 self._shared_state,
                 self._runner.context,
             ),
         )
+        async for event in self._runner.run_until_convergence():
+            yield event
+
+    async def send_response(self, response: Any, request_id: str) -> AsyncIterable[WorkflowEvent]:
+        """Send a response back to the workflow.
+
+        Args:
+            response: The response data to be sent.
+            request_id: The ID of the request that this response corresponds to.
+        """
+        request_info_executor = self._get_executor_by_id(RequestInfoExecutor.EXECUTOR_ID)
+        if not isinstance(request_info_executor, RequestInfoExecutor):
+            raise ValueError(f"Executor with ID {RequestInfoExecutor.EXECUTOR_ID} is not a RequestInfoExecutor.")
+
+        await request_info_executor.handle_response(
+            response,
+            request_id,
+            WorkflowContext(
+                request_info_executor.id,
+                [
+                    # Using the workflow class name as the source executor ID when
+                    # delivering the first message to the starting executor
+                    self.__class__.__name__
+                ],
+                self._shared_state,
+                self._runner.context,
+            ),
+        )
+
         async for event in self._runner.run_until_convergence():
             yield event
 

@@ -1,8 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import sys
-from dataclasses import dataclass
 
 from agent_framework import ChatClientAgent, ChatMessage, ChatRole
 from agent_framework.azure import AzureChatClient
@@ -11,17 +9,14 @@ from agent_framework.workflow import (
     AgentExecutorRequest,
     AgentExecutorResponse,
     Executor,
-    HumanInTheLoopEvent,
+    RequestInfoEvent,
+    RequestInfoExecutor,
+    RequestInfoMessage,
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
     message_handler,
 )
-
-if sys.version_info >= (3, 12):
-    pass  # pragma: no cover
-else:
-    pass  # pragma: no cover
 
 """
 The following sample demonstrates a basic workflow that simulates
@@ -29,21 +24,7 @@ a round-robin group chat with a Human-in-the-Loop (HIL) executor.
 """
 
 
-@dataclass
-class GroupChatMessage:
-    """A data class to hold the messages in a group chat."""
-
-    messages: list[ChatMessage]
-
-
-@dataclass
-class AgentSelectionDecision(GroupChatMessage):
-    """A data class to hold the decision made by the Human-in-the-Loop executor."""
-
-    selection: str
-
-
-class CriticGroupChatManagerWithHIL(Executor):
+class CriticGroupChatManager(Executor):
     """An executor that manages a round-robin group chat."""
 
     def __init__(self, members: list[str], id: str | None = None):
@@ -55,17 +36,11 @@ class CriticGroupChatManagerWithHIL(Executor):
 
     @message_handler(output_types=[AgentExecutorRequest])
     async def start(self, task: str, ctx: WorkflowContext) -> None:
-        """Execute the task by sending messages to the next executor in the round-robin sequence."""
+        """Handler that starts the group chat with an initial task."""
         initial_message = ChatMessage(ChatRole.USER, text=task)
 
         # Send the initial message to the members
-        await asyncio.gather(*[
-            ctx.send_message(
-                AgentExecutorRequest(messages=[initial_message], should_respond=False),
-                target_id=member_id,
-            )
-            for member_id in self._members
-        ])
+        await self._broadcast_message([initial_message], ctx)
 
         # Invoke the first member to start the round-robin chat
         await ctx.send_message(
@@ -76,21 +51,19 @@ class CriticGroupChatManagerWithHIL(Executor):
         # Update the cache with the initial message
         self._chat_history.append(initial_message)
 
-    @message_handler(output_types=[AgentExecutorRequest])
+    @message_handler(output_types=[AgentExecutorRequest, RequestInfoMessage])
     async def handle_agent_response(self, response: AgentExecutorResponse, ctx: WorkflowContext) -> None:
-        """Execute the task by sending messages to the next executor in the round-robin sequence."""
+        """Handler that processes the response from the agent."""
         # Update the chat history with the response
         self._chat_history.extend(response.agent_run_response.messages)
 
         # Send the response to the other members
-        await asyncio.gather(*[
-            ctx.send_message(
-                AgentExecutorRequest(messages=response.agent_run_response.messages, should_respond=False),
-                target_id=member_id,
-            )
-            for member_id in self._members
-            if member_id != response.executor_id
-        ])
+        await self._broadcast_message(response.agent_run_response.messages, ctx, exclude_id=response.executor_id)
+
+        # Check if we need to request additional information
+        if self._should_request_info():
+            await ctx.send_message(RequestInfoMessage())
+            return
 
         # Check for termination condition
         if self._should_terminate():
@@ -101,6 +74,40 @@ class CriticGroupChatManagerWithHIL(Executor):
         selection = self._get_next_member()
         await ctx.send_message(AgentExecutorRequest(messages=[], should_respond=True), target_id=selection)
 
+    @message_handler(output_types=[AgentExecutorRequest])
+    async def handle_request_response(self, response: list[ChatMessage], ctx: WorkflowContext) -> None:
+        """Handler that processes the response from the RequestInfoExecutor."""
+        # Update the chat history with the response
+        self._chat_history.extend(response)
+
+        # Send the response to the other members
+        await self._broadcast_message(response, ctx)
+
+        # Check for termination condition
+        if self._should_terminate():
+            await ctx.add_event(WorkflowCompletedEvent(data=response))
+            return
+
+        # Request the next member to respond
+        selection = self._get_next_member()
+        await ctx.send_message(AgentExecutorRequest(messages=[], should_respond=True), target_id=selection)
+
+    async def _broadcast_message(
+        self,
+        messages: list[ChatMessage],
+        ctx: WorkflowContext,
+        exclude_id: str | None = None,
+    ) -> None:
+        """Broadcast messages to all members."""
+        await asyncio.gather(*[
+            ctx.send_message(
+                AgentExecutorRequest(messages=messages, should_respond=False),
+                target_id=member_id,
+            )
+            for member_id in self._members
+            if member_id != exclude_id
+        ])
+
     def _should_terminate(self) -> bool:
         """Determine if the group chat should terminate based on the last message."""
         if len(self._chat_history) == 0:
@@ -109,7 +116,7 @@ class CriticGroupChatManagerWithHIL(Executor):
         last_message = self._chat_history[-1]
         return bool(last_message.role == ChatRole.USER and "approve" in last_message.text.lower())
 
-    def _should_request_hil(self) -> bool:
+    def _should_request_info(self) -> bool:
         """Determine if the group chat should request HIL based on the last message."""
         if len(self._chat_history) == 0:
             return True
@@ -119,82 +126,86 @@ class CriticGroupChatManagerWithHIL(Executor):
 
     def _get_next_member(self) -> str:
         """Get the next member in the round-robin sequence."""
-        return self._members[(self._current_round - 1) % len(self._members)]
+        next_member = self._members[self._current_round % len(self._members)]
+        self._current_round += 1
+
+        return next_member
 
 
 async def main():
     """Main function to run the group chat workflow."""
     # Step 1: Create the executors.
-    chat_client = AzureChatClient()
     writer = AgentExecutor(
         ChatClientAgent(
-            chat_client,
+            AzureChatClient(),
             instructions=(
                 "You are an excellent content writer. You create new content and edit contents based on the feedback."
             ),
+            name="Writer",
+            id="Writer",
         ),
-        id="writer",
     )
     reviewer = AgentExecutor(
         ChatClientAgent(
-            chat_client,
+            AzureChatClient(),
             instructions=(
-                "You are an excellent content reviewer. You review the content and provide feedback to the writer."
+                "You are an excellent content reviewer. You review the content and provide feedback to the writer. "
+                "You do not address user requests. Only provide feedback to the writer."
             ),
+            name="Reviewer",
+            id="Reviewer",
         ),
-        id="reviewer",
     )
 
-    group_chat_manager = CriticGroupChatManagerWithHIL(
-        members=[writer.id, reviewer.id],
-        id="group_chat_manager",
-    )
+    group_chat_manager = CriticGroupChatManager(members=[writer.id, reviewer.id], id="GroupChatManager")
+
+    request_info_executor = RequestInfoExecutor()
 
     # Step 2: Build the workflow with the defined edges.
     workflow = (
         WorkflowBuilder()
         .set_start_executor(group_chat_manager)
-        .add_edge(group_chat_manager, hil_executor)
-        .add_edge(hil_executor, group_chat_manager)
-        .add_edge(group_chat_manager, executor_a, condition=lambda x: x.selection == executor_a.id)
-        .add_edge(group_chat_manager, executor_b, condition=lambda x: x.selection == executor_b.id)
-        .add_edge(group_chat_manager, executor_c, condition=lambda x: x.selection == executor_c.id)
-        .add_edge(executor_a, group_chat_manager)
-        .add_edge(executor_b, group_chat_manager)
-        .add_edge(executor_c, group_chat_manager)
+        .add_edge(group_chat_manager, request_info_executor)
+        .add_edge(request_info_executor, group_chat_manager)
+        .add_edge(group_chat_manager, writer)
+        .add_edge(group_chat_manager, reviewer)
+        .add_edge(writer, group_chat_manager)
+        .add_edge(reviewer, group_chat_manager)
         .build()
     )
 
     # Step 3: Run the workflow with an initial message.
-    # Here we are capturing the human-in-the-loop event and allowing the user to provide input.
+    # Here we are capturing the RequestInfoEvent event and allowing the user to provide input.
     # Once the user provides input, we will provide it back to the workflow to continue the execution.
     completion_event: WorkflowCompletedEvent | None = None
-    human_in_the_loop_event: HumanInTheLoopEvent | None = None
-    user_input = "Start group chat"
+    request_info_event: RequestInfoEvent | None = None
+    user_input = ""
 
     while True:
-        # Depending on whether we have a human-in-the-loop event, we either
+        # Depending on whether we have a RequestInfoEvent event, we either
         # run the workflow normally or send the message to the HIL executor.
-        if not human_in_the_loop_event:
-            response = workflow.run_stream([ChatMessage(ChatRole.USER, text=user_input)])
-        else:
+        if not request_info_event:
             response = workflow.run_stream(
-                [ChatMessage(ChatRole.USER, text=user_input)],
-                executor=human_in_the_loop_event.executor_id,
+                "Create a slogan for a new electric SUV that is affordable and fun to drive."
             )
-            human_in_the_loop_event = None
+        else:
+            response = workflow.send_response(
+                [ChatMessage(ChatRole.USER, text=user_input)],
+                request_info_event.request_id,
+            )
+            request_info_event = None
 
         async for event in response:
-            print(f"{event}")
+            print(event)
 
             if isinstance(event, WorkflowCompletedEvent):
                 completion_event = event
-            elif isinstance(event, HumanInTheLoopEvent):
-                human_in_the_loop_event = event
+            elif isinstance(event, RequestInfoEvent):
+                request_info_event = event
 
         # Prompt for user input if we are waiting for human intervention
-        if human_in_the_loop_event:
-            user_input = input("Human intervention required. Type 'stop' to end the loop or any message to continue: ")
+        if request_info_event:
+            user_input = input("Human feedback required. Please provide your input (type 'approve' to end): ")
         elif completion_event:
             break
 

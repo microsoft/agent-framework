@@ -66,17 +66,38 @@ class ExecutorEvent(WorkflowEvent):
         return f"{self.__class__.__name__}(executor_id={self.executor_id}, data={self.data})"
 
 
-class HumanInTheLoopEvent(ExecutorEvent):
-    """Event triggered when human intervention is required in the workflow."""
+class RequestInfoEvent(WorkflowEvent):
+    """Event triggered when a workflow executor requests external information."""
 
-    def __init__(self, executor_id: str, data: Any | None = None, **kwargs: Any):
-        """Initialize the human-in-the-loop event with optional data."""
-        super().__init__(executor_id, data)
-        self.kwargs = kwargs
+    def __init__(
+        self,
+        request_id: str,
+        source_executor_id: str,
+        request_type: type,
+        request_data: Any,
+    ):
+        """Initialize the request info event.
+
+        Args:
+            request_id: Unique identifier for the request.
+            source_executor_id: ID of the executor that made the request.
+            request_type: Type of the request (e.g., a specific data type).
+            request_data: The data associated with the request.
+        """
+        super().__init__(request_data)
+        self.request_id = request_id
+        self.source_executor_id = source_executor_id
+        self.request_type = request_type
 
     def __repr__(self):
-        """Return a string representation of the human-in-the-loop event."""
-        return f"{self.__class__.__name__}(executor_id={self.executor_id}, data={self.data}, kwargs={self.kwargs})"
+        """Return a string representation of the request info event."""
+        return (
+            f"{self.__class__.__name__}("
+            f"request_id={self.request_id}, "
+            f"source_executor_id={self.source_executor_id}, "
+            f"request_type={self.request_type.__name__}, "
+            f"data={self.data})"
+        )
 
 
 class ExecutorInvokeEvent(ExecutorEvent):

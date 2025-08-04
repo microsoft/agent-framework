@@ -17,6 +17,7 @@ class WorkflowContext:
     def __init__(
         self,
         executor_id: str,
+        source_executor_ids: list[str],
         shared_state: SharedState,
         runner_context: RunnerContext,
     ):
@@ -24,13 +25,19 @@ class WorkflowContext:
 
         Args:
             executor_id: The unique identifier of the executor that this context belongs to.
-            source_executor_id: The unique identifier of the source executor that generated this context.
+            source_executor_ids: The IDs of the source executors that sent messages to this executor.
+                This is a list to support fan_in scenarios where multiple sources send aggregated
+                messages to the same executor.
             shared_state: The shared state for the workflow.
             runner_context: The runner context that provides methods to send messages and events.
         """
         self._executor_id = executor_id
+        self._source_executor_ids = source_executor_ids
         self._runner_context = runner_context
         self._shared_state = shared_state
+
+        if not self._source_executor_ids:
+            raise ValueError("source_executor_ids cannot be empty. At least one source executor ID is required.")
 
     async def send_message(self, message: Any, target_id: str | None = None) -> None:
         """Send a message to the workflow context."""
@@ -53,6 +60,24 @@ class WorkflowContext:
     async def set_shared_state(self, key: str, value: Any) -> None:
         """Set a value in the shared state."""
         await self._shared_state.set(key, value)
+
+    def get_source_executor_id(self) -> str:
+        """Get the ID of the source executor that sent the message to this executor.
+
+        Raises:
+            RuntimeError: If there are multiple source executors, this method raises an error.
+        """
+        if len(self._source_executor_ids) > 1:
+            raise RuntimeError(
+                "Cannot get source executor ID when there are multiple source executors. "
+                "Access the full list via the source_executor_ids property instead."
+            )
+        return self._source_executor_ids[0]
+
+    @property
+    def source_executor_ids(self) -> list[str]:
+        """Get the IDs of the source executors that sent messages to this executor."""
+        return self._source_executor_ids
 
     @property
     def shared_state(self) -> SharedState:

@@ -8,12 +8,20 @@ from ._events import (
     ExecutorCompleteEvent,
     ExecutorEvent,
     ExecutorInvokeEvent,
-    HumanInTheLoopEvent,
+    RequestInfoEvent,
     WorkflowCompletedEvent,
     WorkflowEvent,
     WorkflowStartedEvent,
 )
-from ._executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse, Executor, message_handler
+from ._executor import (
+    AgentExecutor,
+    AgentExecutorRequest,
+    AgentExecutorResponse,
+    Executor,
+    RequestInfoExecutor,
+    RequestInfoMessage,
+    message_handler,
+)
 from ._workflow import WorkflowBuilder
 from ._workflow_context import WorkflowContext
 
@@ -33,7 +41,11 @@ __all__ = [
     "ExecutorCompleteEvent",
     "ExecutorEvent",
     "ExecutorInvokeEvent",
-    "HumanInTheLoopEvent",
+    "RequestInfoEvent",
+    "RequestInfoEvent",
+    "RequestInfoExecutor",
+    "RequestInfoExecutor",
+    "RequestInfoMessage",
     "WorkflowBuilder",
     "WorkflowCompletedEvent",
     "WorkflowContext",

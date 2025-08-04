@@ -14,7 +14,7 @@ _IMPORTS = [
     "ExecutorCompleteEvent",
     "ExecutorEvent",
     "ExecutorInvokeEvent",
-    "HumanInTheLoopEvent",
+    "RequestInfoEvent",
     "WorkflowCompletedEvent",
     "WorkflowEvent",
     "WorkflowStartedEvent",
@@ -24,6 +24,8 @@ _IMPORTS = [
     "AgentExecutor",
     "AgentExecutorRequest",
     "AgentExecutorResponse",
+    "RequestInfoExecutor",
+    "RequestInfoMessage",
 ]
 
 

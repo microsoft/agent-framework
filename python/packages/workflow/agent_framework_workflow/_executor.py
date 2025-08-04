@@ -5,11 +5,11 @@ import inspect
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, TypeVar, overload
+from typing import Any, ClassVar, TypeVar, overload
 
 from agent_framework import AgentRunResponse, AgentRunResponseUpdate, AgentThread, AIAgent, ChatMessage
 
-from ._events import AgentRunEvent, AgentRunStreamingEvent, ExecutorCompleteEvent, ExecutorInvokeEvent
+from ._events import AgentRunEvent, AgentRunStreamingEvent, ExecutorCompleteEvent, ExecutorInvokeEvent, RequestInfoEvent
 from ._typing_utils import is_instance_of
 from ._workflow_context import WorkflowContext
 
@@ -209,7 +209,7 @@ class AgentExecutorResponse:
 
 
 class AgentExecutor(Executor):
-    """An executor that wraps an agent for handling messages."""
+    """built-in executor that wraps an agent for handling messages."""
 
     def __init__(
         self,
@@ -253,3 +253,71 @@ class AgentExecutor(Executor):
 
 
 # endregion: Agent Executor
+
+
+# region: Request Info Executor
+
+
+@dataclass
+class RequestInfoMessage:
+    """Base class for all request messages in workflows.
+
+    Any message that should be routed to the RequestInfoExecutor for external
+    handling must inherit from this class. This ensures type safety and makes
+    the request/response pattern explicit.
+    """
+
+    request_id: str = str(uuid.uuid4())
+
+
+class RequestInfoExecutor(Executor):
+    """Built-in executor that handles request/response patterns in workflows.
+
+    This executor acts as a gateway for external information requests. When it receives
+    a request message, it saves the request details and emits a RequestInfoEvent. When
+    a response is provided externally, it emits the response as a message.
+    """
+
+    # Well-known ID for the request info executor
+    EXECUTOR_ID: ClassVar[str] = "request_info"
+
+    def __init__(self):
+        """Initialize the RequestInfoExecutor with its well-known ID."""
+        super().__init__(id=self.EXECUTOR_ID)
+        self._request_events: dict[str, RequestInfoEvent] = {}
+
+    @message_handler
+    async def run(self, message: RequestInfoMessage, ctx: WorkflowContext) -> None:
+        """Run the RequestInfoExecutor with the given message."""
+        source_executor_id = ctx.get_source_executor_id()
+
+        event = RequestInfoEvent(
+            request_id=message.request_id,
+            source_executor_id=source_executor_id,
+            request_type=type(message),
+            request_data=message,
+        )
+        self._request_events[message.request_id] = event
+        await ctx.add_event(event)
+
+    async def handle_response(
+        self,
+        response_data: Any,
+        request_id: str,
+        ctx: WorkflowContext,
+    ) -> None:
+        """Handle a response to a request.
+
+        Args:
+            request_id: The ID of the request to which this response corresponds.
+            response_data: The data returned in the response.
+            ctx: The workflow context for sending the response.
+        """
+        if request_id not in self._request_events:
+            raise ValueError(f"No request found with ID: {request_id}")
+
+        event = self._request_events.pop(request_id)
+        await ctx.send_message(response_data, target_id=event.source_executor_id)
+
+
+# endregion: Request Info Executor
