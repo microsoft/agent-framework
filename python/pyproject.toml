@@ -28,7 +28,7 @@ dev = [
     "tomli-w",
     "markdownify",
     # Documentation
-    "myst-nb==1.1.2",
+    "myst-nb==1.3.0",
     "pydata-sphinx-theme==0.16.0",
     "sphinx-copybutton",
     "sphinx-design",
