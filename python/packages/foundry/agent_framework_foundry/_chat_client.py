@@ -245,7 +245,7 @@ class FoundryChatClient(ChatClientBase):
             raise ValueError("No thread ID was provided, but chat messages includes tool results.")
 
         # Determine which agent to use and create if needed
-        agent_id = await self._get_agent_id_or_create()
+        agent_id = await self._get_agent_id_or_create(run_options)
 
         # Create the streaming response
         stream, thread_id = await self._create_agent_stream(thread_id, agent_id, run_options, tool_results)
@@ -254,7 +254,7 @@ class FoundryChatClient(ChatClientBase):
         async for update in self._process_stream_events(stream, thread_id):
             yield update
 
-    async def _get_agent_id_or_create(self) -> str:
+    async def _get_agent_id_or_create(self, run_options: dict[str, Any] | None = None) -> str:
         """Determine which agent to use and create if needed.
 
         Returns:
@@ -266,9 +266,15 @@ class FoundryChatClient(ChatClientBase):
                 raise ServiceInitializationError("Model deployment name is required for agent creation.")
 
             agent_name = self._foundry_settings.agent_name
-            created_agent = await self.client.agents.create_agent(
-                model=self._foundry_settings.model_deployment_name, name=agent_name
-            )
+            args = {"model": self._foundry_settings.model_deployment_name, "name": agent_name}
+            if run_options:
+                if "tools" in run_options:
+                    args["tools"] = run_options["tools"]
+                if "instructions" in run_options:
+                    args["instructions"] = run_options["instructions"]
+                if "response_format" in run_options:
+                    args["response_format"] = run_options["response_format"]
+            created_agent = await self.client.agents.create_agent(**args)  # type: ignore[arg-type]
             self.agent_id = created_agent.id
             self._should_delete_agent = True
 

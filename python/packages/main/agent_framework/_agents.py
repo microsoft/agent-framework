@@ -2,6 +2,7 @@
 
 import sys
 from collections.abc import AsyncIterable, Callable, MutableMapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from enum import Enum
 from typing import Any, ClassVar, Literal, Protocol, TypeVar, runtime_checkable
 from uuid import uuid4
@@ -417,7 +418,7 @@ class ChatClientAgent(AgentBase):
 
         If the chat_client supports async context management, enter its context.
         """
-        if hasattr(self.chat_client, "__aenter__") and hasattr(self.chat_client, "__aexit__"):
+        if isinstance(self.chat_client, AbstractAsyncContextManager):
             await self.chat_client.__aenter__()  # type: ignore[reportUnknownMemberType]
         return self
 
@@ -426,7 +427,7 @@ class ChatClientAgent(AgentBase):
 
         If the chat_client supports async context management, exit its context.
         """
-        if hasattr(self.chat_client, "__aenter__") and hasattr(self.chat_client, "__aexit__"):
+        if isinstance(self.chat_client, AbstractAsyncContextManager):
             await self.chat_client.__aexit__(exc_type, exc_val, exc_tb)  # type: ignore[reportUnknownMemberType]
 
     async def run(

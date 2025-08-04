@@ -41,7 +41,7 @@ async def main() -> None:
         instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
         tools=HostedCodeInterpreterTool(),
     ) as agent:
-        query = "What is current datetime?"
+        query = "Generate the factorial of 100 using python code."
         print(f"User: {query}")
         print("Agent: ", end="", flush=True)
         generated_code = ""
