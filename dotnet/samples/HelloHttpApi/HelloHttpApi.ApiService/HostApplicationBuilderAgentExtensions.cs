@@ -32,11 +32,7 @@ public static class HostApplicationBuilderAgentExtensions
         var actorBuilder = builder.AddActorRuntime();
 
         // Add CosmosDB state storage to override default storage
-        builder.Services.AddCosmosActorStateStorage(serviceProvider =>
-        {
-            var cosmosClient = serviceProvider.GetRequiredService<CosmosClient>();
-            return new LazyCosmosContainer(cosmosClient, "actor-state-db", "ActorState");
-        });
+        builder.Services.AddCosmosActorStateStorage("actor-state-db", "ActorState");
 
         actorBuilder.AddActorType(
             new ActorType(agentKey),

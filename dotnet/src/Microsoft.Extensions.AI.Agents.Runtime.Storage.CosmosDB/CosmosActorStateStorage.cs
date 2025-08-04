@@ -27,11 +27,13 @@ public class CosmosActorStateStorage : IActorStateStorage
     public CosmosActorStateStorage(Container container) => this._lazyContainer = new LazyCosmosContainer(container);
 
     /// <summary>
-    /// Constructs a new instance of <see cref="CosmosActorStateStorage"/> with the specified lazy container.
+    /// This constructor is used by dependency injection to create an instance of <see cref="CosmosActorStateStorage"/>
+    /// with a lazy-loaded Cosmos container whose initialization is deferred until first access.
     /// </summary>
-    /// <param name="lazyContainer">The lazy Cosmos DB container to use for storage.</param>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="lazyContainer"/> is null.</exception>
-    public CosmosActorStateStorage(LazyCosmosContainer lazyContainer) => this._lazyContainer = lazyContainer ?? throw new ArgumentNullException(nameof(lazyContainer));
+    /// <param name="lazyContainer">The lazy-loaded Cosmos container.</param>
+    /// <throws cref="ArgumentNullException">Thrown when <paramref name="lazyContainer"/> is null.</throws>
+    internal CosmosActorStateStorage(LazyCosmosContainer lazyContainer) =>
+        this._lazyContainer = lazyContainer ?? throw new ArgumentNullException(nameof(lazyContainer));
 
     /// <summary>
     /// Writes state changes to the actor's persistent storage.

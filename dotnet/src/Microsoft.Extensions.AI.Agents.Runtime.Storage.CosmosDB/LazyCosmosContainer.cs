@@ -15,7 +15,7 @@ namespace Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB;
 /// This avoids performing async I/O-bound operations (i.e. Cosmos DB setup) during
 /// DI registration, deferring them until first access.
 /// </summary>
-public sealed class LazyCosmosContainer
+internal sealed class LazyCosmosContainer
 {
     private readonly CosmosClient? _cosmosClient;
     private readonly string? _databaseName;

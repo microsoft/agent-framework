@@ -53,23 +53,41 @@ public static class ServiceCollectionExtensions
         });
 
         // Register the storage implementation
-        services.AddSingleton<IActorStateStorage, CosmosActorStateStorage>();
+        services.AddSingleton<IActorStateStorage>(serviceProvider =>
+        {
+            var lazyContainer = serviceProvider.GetRequiredService<LazyCosmosContainer>();
+            return new CosmosActorStateStorage(lazyContainer);
+        });
 
         return services;
     }
 
     /// <summary>
-    /// Adds Cosmos DB actor state storage to the service collection with a factory for the LazyCosmosContainer.
+    /// Adds Cosmos DB actor state storage to the service collection using an existing CosmosClient from DI.
     /// </summary>
     /// <param name="services">The service collection to add services to.</param>
-    /// <param name="lazyContainerFactory">A factory function that creates the LazyCosmosContainer.</param>
+    /// <param name="databaseName">The database name to use for actor state storage.</param>
+    /// <param name="containerName">The container name to use for actor state storage. Defaults to "ActorState".</param>
     /// <returns>The service collection for chaining.</returns>
     public static IServiceCollection AddCosmosActorStateStorage(
         this IServiceCollection services,
-        Func<IServiceProvider, LazyCosmosContainer> lazyContainerFactory)
+        string databaseName,
+        string containerName = "ActorState")
     {
-        services.AddSingleton<LazyCosmosContainer>(lazyContainerFactory);
-        services.AddSingleton<IActorStateStorage, CosmosActorStateStorage>();
+        // Register LazyCosmosContainer as singleton using existing CosmosClient
+        services.AddSingleton<LazyCosmosContainer>(serviceProvider =>
+        {
+            var cosmosClient = serviceProvider.GetRequiredService<CosmosClient>();
+            return new LazyCosmosContainer(cosmosClient, databaseName, containerName);
+        });
+
+        // Register the storage implementation
+        services.AddSingleton<IActorStateStorage>(serviceProvider =>
+        {
+            var lazyContainer = serviceProvider.GetRequiredService<LazyCosmosContainer>();
+            return new CosmosActorStateStorage(lazyContainer);
+        });
+
         return services;
     }
 }
