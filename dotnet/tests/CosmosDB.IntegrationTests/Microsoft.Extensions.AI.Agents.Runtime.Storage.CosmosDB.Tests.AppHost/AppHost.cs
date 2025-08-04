@@ -1,8 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
-using System.Runtime.CompilerServices;
 using Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests;
-
-[assembly: InternalsVisibleTo("Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests")]
 
 var builder = DistributedApplication.CreateBuilder(args);
 var cosmosDb = builder.AddAzureCosmosDB(CosmosDBTestConstants.TestCosmosDbName);
