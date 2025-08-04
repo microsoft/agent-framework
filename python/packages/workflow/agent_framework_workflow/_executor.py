@@ -214,12 +214,13 @@ class AgentExecutor(Executor):
     def __init__(
         self,
         agent: AIAgent,
+        *,
         agent_thread: AgentThread | None = None,
         streaming: bool = False,
         id: str | None = None,
     ):
         """Initialize the executor with a unique identifier."""
-        super().__init__(id)
+        super().__init__(id or agent.id)
         self._agent = agent
         self._agent_thread = agent_thread or self._agent.get_new_thread()
         self._streaming = streaming

@@ -125,6 +125,8 @@ class WorkflowBuilder(Generic[TIn]):
     def add_fan_out_edges(self, source: Executor, targets: Sequence[Executor]) -> "Self":
         """Add multiple edges to the workflow.
 
+        Messages from the source executor will be sent to all target executors.
+
         Args:
             source: The source executor of the edges.
             targets: A list of target executors for the edges.
