@@ -53,17 +53,13 @@ class Workflow:
     async def run_stream(
         self,
         message: Any,
-        executor: Executor | str | None = None,
     ) -> AsyncIterable[WorkflowEvent]:
         """Send a message to the starting executor of the workflow.
 
         Args:
             message: The message to be sent to the starting executor.
-            executor: The executor to which the message should be sent. If None, the starting executor is used.
         """
-        if not executor:
-            executor = self._start_executor
-
+        executor = self._start_executor
         if isinstance(executor, str):
             executor = self._get_executor_by_id(executor)
 
@@ -136,7 +132,6 @@ class WorkflowBuilder(Generic[TIn]):
         """Initialize the WorkflowBuilder with an empty list of edges and no starting executor."""
         self._edges: list[Edge] = []
         self._start_executor: Executor | str | None = None
-        self._runner_context: RunnerContext | None = None
 
     def add_edge(
         self,
@@ -218,15 +213,6 @@ class WorkflowBuilder(Generic[TIn]):
         self._start_executor = executor
         return self
 
-    def set_runner_context(self, runner_context: RunnerContext) -> "Self":
-        """Set the runner context for the workflow.
-
-        Args:
-            runner_context: The RunnerContext instance to be used during workflow execution.
-        """
-        self._runner_context = runner_context
-        return self
-
     def build(self) -> Workflow:
         """Build and return the constructed workflow.
 
@@ -236,6 +222,4 @@ class WorkflowBuilder(Generic[TIn]):
         if not self._start_executor:
             raise ValueError("Starting executor must be set before building the workflow.")
 
-        runner_context = self._runner_context or InProcRunnerContext()
-
-        return Workflow(self._edges, self._start_executor, runner_context)
+        return Workflow(self._edges, self._start_executor, InProcRunnerContext())
