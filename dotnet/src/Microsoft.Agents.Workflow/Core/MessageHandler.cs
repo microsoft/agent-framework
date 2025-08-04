@@ -16,7 +16,7 @@ public interface IMessageHandler<TMessage>
     /// <param name="message">The message to handle.</param>
     /// <param name="context">The execution context.</param>
     /// <returns>A task that represents the asynchronous operation.</returns>
-    ValueTask HandleAsync(TMessage message, IExecutionContext context);
+    ValueTask HandleAsync(TMessage message, IWorkflowContext context);
 }
 
 /// <summary>
@@ -33,5 +33,5 @@ public interface IMessageHandler<TMessage, TResult>
     /// <param name="message">The message to handle.</param>
     /// <param name="context">The execution context.</param>
     /// <returns>A task that represents the asynchronous operation.</returns>
-    ValueTask<TResult> HandleAsync(TMessage message, IExecutionContext context);
+    ValueTask<TResult> HandleAsync(TMessage message, IWorkflowContext context);
 }

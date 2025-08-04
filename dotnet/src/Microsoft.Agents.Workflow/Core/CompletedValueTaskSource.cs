@@ -18,10 +18,6 @@ internal static class CompletedValueTaskSource
 
     internal static ValueTask<T> FromResult<T>(T result)
     {
-#if NET5_0_OR_GREATER
         return new ValueTask<T>(result);
-#else
-        return new ValueTask<T>(Task.FromResult(result));
-#endif
     }
 }
