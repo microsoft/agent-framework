@@ -35,9 +35,10 @@ public static class ServiceCollectionExtensions
                 ApplicationName = "AgentFramework",
                 ConnectionMode = ConnectionMode.Direct,
                 ConsistencyLevel = ConsistencyLevel.Session,
-                UseSystemTextJsonSerializerWithOptions = new JsonSerializerOptions()
+                UseSystemTextJsonSerializerWithOptions = new JsonSerializerOptions
                 {
                     PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                    TypeInfoResolver = CosmosActorStateJsonContext.Default
                 }
             };
 

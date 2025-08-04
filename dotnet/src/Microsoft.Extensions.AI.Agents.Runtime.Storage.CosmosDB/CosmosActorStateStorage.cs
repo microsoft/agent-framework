@@ -2,9 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Azure.Cosmos;
@@ -178,7 +175,7 @@ public class CosmosActorStateStorage : IActorStateStorage
                     var requestOptions = new QueryRequestOptions
                     {
                         PartitionKey = GetPartitionKey(actorId),
-                        MaxItemCount = 100 // TODO Fix 
+                        MaxItemCount = -1 // Use dynamic page size
                     };
 
                     var iterator = container.GetItemQueryIterator<KeyProjection>(
@@ -209,64 +206,6 @@ public class CosmosActorStateStorage : IActorStateStorage
         }
 
         return new ReadResponse(actorETag, results);
-    }
-
-    [SuppressMessage("Performance", "CA1812", Justification = "This is a projection class for Cosmos DB queries.")]
-    private sealed class KeyProjection
-    {
-        [JsonPropertyName("key")]
-        public string Key { get; set; } = default!;
-    }
-
-    /// <summary>
-    /// Root document for each actor that provides actor-level ETag semantics.
-    /// Every write operation updates this document to ensure a single ETag represents
-    /// the entire actor's state for optimistic concurrency control.
-    /// This document contains no actor state data. It only serves to track last modified
-    /// time and provide a single ETag for the actor's state.
-    ///
-    /// Example structure:
-    /// {
-    ///   "id": "rootdoc",                       // Root document ID (constant per actor partition)
-    ///   "actorId": "actor-123",                // Partition key (actor ID)
-    ///   "lastModified": "2024-...",            // Timestamp
-    /// }
-    /// </summary>
-    private sealed class ActorRootDocument
-    {
-        [JsonPropertyName("id")]
-        public string Id { get; set; } = default!;
-
-        [JsonPropertyName("actorId")]
-        public string ActorId { get; set; } = default!;
-
-        [JsonPropertyName("lastModified")]
-        public DateTimeOffset LastModified { get; set; }
-    }
-
-    /// <summary>
-    /// Actor state document that represents a single key-value pair in the actor's state.
-    /// Document Structure (one per actor key):
-    /// {
-    ///   "id": "state_sanitizedkey",            // Unique document ID for the state entry
-    ///   "actorId": "actor-123",                // Partition key (actor ID)
-    ///   "key": "foo",                          // Logical key for the state entry
-    ///   "value": { "bar": 42, "baz": "hello" } // Arbitrary JsonElement payload
-    /// }
-    /// </summary>
-    private sealed class ActorStateDocument
-    {
-        [JsonPropertyName("id")]
-        public string Id { get; set; } = default!;
-
-        [JsonPropertyName("actorId")]
-        public string ActorId { get; set; } = default!;
-
-        [JsonPropertyName("key")]
-        public string Key { get; set; } = default!;
-
-        [JsonPropertyName("value")]
-        public JsonElement Value { get; set; } = default!;
     }
 
     private static string GetDocumentId(string key) => $"state_{CosmosIdSanitizer.Sanitize(key)}";
