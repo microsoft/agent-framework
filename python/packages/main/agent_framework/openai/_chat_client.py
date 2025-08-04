@@ -286,26 +286,27 @@ class OpenAIChatClient(OpenAIConfigBase, OpenAIChatClientBase):
         org_id: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
+        instruction_role: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        instruction_role: str | None = None,
     ) -> None:
         """Initialize an OpenAIChatCompletion service.
 
         Args:
-            ai_model_id (str): OpenAI model name, see
+            ai_model_id: OpenAI model name, see
                 https://platform.openai.com/docs/models
-            api_key (str | None): The optional API key to use. If provided will override,
+            api_key: The optional API key to use. If provided will override,
                 the env vars or .env file value.
-            org_id (str | None): The optional org ID to use. If provided will override,
+            org_id: The optional org ID to use. If provided will override,
                 the env vars or .env file value.
             default_headers: The default headers mapping of string keys to
                 string values for HTTP requests. (Optional)
-            async_client (Optional[AsyncOpenAI]): An existing client to use. (Optional)
-            env_file_path (str | None): Use the environment settings file as a fallback
+            async_client: An existing client to use. (Optional)
+            instruction_role: The role to use for 'instruction' messages, for example,
+                "system" or "developer". If not provided, the default is "system".
+            env_file_path: Use the environment settings file as a fallback
                 to environment variables. (Optional)
-            env_file_encoding (str | None): The encoding of the environment settings file. (Optional)
-            instruction_role (str | None): The role to use for 'instruction' messages, for example,
+            env_file_encoding: The encoding of the environment settings file. (Optional)
         """
         try:
             openai_settings = OpenAISettings(

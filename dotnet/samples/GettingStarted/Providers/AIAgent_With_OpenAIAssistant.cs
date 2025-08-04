@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Samples;
 using OpenAI;
@@ -10,36 +9,29 @@ using OpenAI;
 namespace Providers;
 
 /// <summary>
-/// End-to-end sample showing how to use <see cref="ChatClientAgent"/> with OpenAI Assistants.
+/// End-to-end sample showing how to use <see cref="AIAgent"/> with OpenAI Assistants.
 /// </summary>
-public sealed class ChatClientAgent_With_OpenAIAssistant(ITestOutputHelper output) : AgentSample(output)
+public sealed class AIAgent_With_OpenAIAssistant(ITestOutputHelper output) : AgentSample(output)
 {
     private const string JokerName = "Joker";
     private const string JokerInstructions = "You are good at telling jokes.";
 
     [Fact]
-    public async Task RunWithOpenAIAssistant()
+    public async Task RunWithAssistant()
     {
         // Get a client to create server side agents with.
         var openAIClient = new OpenAIClient(TestConfiguration.OpenAI.ApiKey);
-        var assistantClient = openAIClient.GetAssistantClient();
 
-        // Create a server side agent to work with.
-        var assistantCreateResult = await assistantClient.CreateAssistantAsync(
-            TestConfiguration.OpenAI.ChatModelId,
-            new()
-            {
-                Name = JokerName,
-                Instructions = JokerInstructions
-            });
-
-        var assistantId = assistantCreateResult.Value.Id;
-
-        // Get the chat client to use for the agent.
-        using var chatClient = assistantClient.AsIChatClient(assistantId);
-
-        // Define the agent.
-        ChatClientAgent agent = new(chatClient);
+        // Get the agent directly from OpenAIClient.
+        AIAgent agent = openAIClient
+            .GetAssistantClient()
+            .CreateAIAgent(
+                TestConfiguration.OpenAI.ChatModelId,
+                options: new()
+                {
+                    Name = JokerName,
+                    Instructions = JokerInstructions,
+                });
 
         // Start a new thread for the agent conversation.
         AgentThread thread = agent.GetNewThread();
@@ -59,7 +51,8 @@ public sealed class ChatClientAgent_With_OpenAIAssistant(ITestOutputHelper outpu
         }
 
         // Cleanup
+        var assistantClient = openAIClient.GetAssistantClient();
         await assistantClient.DeleteThreadAsync(thread.Id);
-        await assistantClient.DeleteAssistantAsync(assistantId);
+        await assistantClient.DeleteAssistantAsync(agent.Id);
     }
 }
