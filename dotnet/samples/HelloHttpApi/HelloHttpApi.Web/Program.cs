@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using A2A;
 using HelloHttpApi.Web;
 using HelloHttpApi.Web.Components;
 
@@ -14,12 +15,24 @@ builder.Services.AddRazorComponents()
 
 builder.Services.AddOutputCache();
 
+// This URL uses "https+http://" to indicate HTTPS is preferred over HTTP.
+// Learn more about service discovery scheme resolution at https://aka.ms/dotnet/sdschemes.
+Uri baseAddress = new("https+http://apiservice");
+Uri a2aUrl = new("http://localhost:5390/a2a");
+
 builder.Services.AddHttpClient<AgentClient>(client =>
-    {
-        // This URL uses "https+http://" to indicate HTTPS is preferred over HTTP.
-        // Learn more about service discovery scheme resolution at https://aka.ms/dotnet/sdschemes.
-        client.BaseAddress = new("https+http://apiservice");
-    });
+{
+    client.BaseAddress = baseAddress;
+});
+
+builder.Services.AddSingleton<A2ACardResolver>(sp =>
+{
+    return new A2ACardResolver(a2aUrl);
+});
+builder.Services.AddSingleton<A2AClient>(sp =>
+{
+    return new A2AClient(a2aUrl);
+});
 
 var app = builder.Build();
 

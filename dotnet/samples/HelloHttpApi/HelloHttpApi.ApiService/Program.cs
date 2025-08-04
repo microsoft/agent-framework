@@ -1,6 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using A2A;
+using A2A.AspNetCore;
 using HelloHttpApi.ApiService;
+using HelloHttpApi.ApiService.A2A;
 using HelloHttpApi.ApiService.Utilities;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -20,12 +23,20 @@ builder.AddAIAgent(
     chatClientKey: "chat-model");
 
 var app = builder.Build();
+var loggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
 
 // Configure the HTTP request pipeline.
 app.UseExceptionHandler();
 
 // Map the agents HTTP endpoints
 app.MapAgents();
+
+var taskManager = new TaskManager();
+var a2aAgent = new DefaultA2AAgent(loggerFactory.CreateLogger<DefaultA2AAgent>());
+a2aAgent.Attach(taskManager);
+
+app.MapA2A(taskManager, "/a2a");
+app.MapHttpA2A(taskManager, "/a2a");
 
 app.MapDefaultEndpoints();
 

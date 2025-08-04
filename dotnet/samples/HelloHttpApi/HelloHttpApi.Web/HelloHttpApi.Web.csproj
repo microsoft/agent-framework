@@ -11,4 +11,8 @@
     <ProjectReference Include="..\..\..\src\Microsoft.Extensions.AI.Agents.Abstractions\Microsoft.Extensions.AI.Agents.Abstractions.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="A2A.AspNetCore" />
+  </ItemGroup>
+
 </Project>
