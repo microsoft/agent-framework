@@ -3,7 +3,6 @@
   <PropertyGroup>
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
-    <RootNamespace>Microsoft.Agents.Workflow</RootNamespace>
     <VersionSuffix>alpha</VersionSuffix>
   </PropertyGroup>
 
@@ -18,7 +17,6 @@
     <!-- NuGet Package Settings -->
     <Title>Microsoft Agent Workflow Framework</Title>
     <Description>Contains the Microsoft Agent Workflow Framework.</Description>
-    <AssemblyName>Microsoft.Agents.Workflows</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>
