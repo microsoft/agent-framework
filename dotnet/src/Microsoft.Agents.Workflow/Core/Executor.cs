@@ -100,7 +100,7 @@ public abstract class Executor : DisposableObject, IIdentified
     /// </summary>
     public string Name { get; }
 
-    private MessageRouter MessageRouter { get; init; }
+    internal MessageRouter MessageRouter { get; init; }
     private Dictionary<string, object> State { get; } = new();
 
     /// <summary>
@@ -124,7 +124,7 @@ public abstract class Executor : DisposableObject, IIdentified
     /// <returns></returns>
     /// <exception cref="NotSupportedException"></exception>
     /// <exception cref="TargetInvocationException"></exception>
-    public async ValueTask<object?> ExecuteAsync(object message, IExecutionContext context)
+    public async ValueTask<object?> ExecuteAsync(object message, IWorkflowContext context)
     {
         CallResult? result = await this.MessageRouter.RouteMessageAsync(message, context, requireRoute: true)
                                                      .ConfigureAwait(false);
@@ -173,7 +173,7 @@ public abstract class Executor : DisposableObject, IIdentified
     /// </summary>
     /// <param name="context"></param>
     /// <returns></returns>
-    public async ValueTask InitializeAsync(IExecutionContext context)
+    public async ValueTask InitializeAsync(IWorkflowContext context)
     {
         if (this._initialized)
         {
@@ -248,7 +248,7 @@ public abstract class Executor : DisposableObject, IIdentified
     /// </summary>
     /// <param name="context"></param>
     /// <returns></returns>
-    protected virtual ValueTask InitializeOverride(IExecutionContext context)
+    protected virtual ValueTask InitializeOverride(IWorkflowContext context)
     {
         // Default implementation does nothing.
         return CompletedValueTaskSource.Completed;
