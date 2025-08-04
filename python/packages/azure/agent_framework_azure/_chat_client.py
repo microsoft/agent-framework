@@ -97,6 +97,8 @@ class AzureChatClient(AzureOpenAIConfigBase, OpenAIChatClientBase):
 
         if not azure_openai_settings.chat_deployment_name:
             raise ServiceInitializationError("chat_deployment_name is required.")
+        if not azure_openai_settings.api_version:
+            raise ServiceInitializationError("api_version is required.")
 
         super().__init__(
             deployment_name=azure_openai_settings.chat_deployment_name,

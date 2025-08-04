@@ -14,7 +14,6 @@ from pydantic import SecretStr, ValidationError
 from pydantic.networks import AnyUrl
 
 from ._shared import (
-    DEFAULT_AZURE_TOKEN_ENDPOINT,
     AzureOpenAIConfigBase,
     AzureOpenAISettings,
 )
@@ -74,10 +73,11 @@ class AzureResponsesClient(AzureOpenAIConfigBase, OpenAIResponsesClientBase):
                 base_url=AnyUrl(base_url) if base_url else None,
                 endpoint=AnyUrl(endpoint) if endpoint else None,
                 responses_deployment_name=deployment_name,
-                api_version=api_version or "preview",
+                api_version=api_version,
                 env_file_path=env_file_path,
                 env_file_encoding=env_file_encoding,
-                token_endpoint=token_endpoint or DEFAULT_AZURE_TOKEN_ENDPOINT,
+                token_endpoint=token_endpoint,
+                default_api_version="preview",
             )
             # TODO(peterychang): This is a temporary hack to ensure that the base_url is set correctly
             # while this feature is in preview.
@@ -93,6 +93,8 @@ class AzureResponsesClient(AzureOpenAIConfigBase, OpenAIResponsesClientBase):
 
         if not azure_openai_settings.responses_deployment_name:
             raise ServiceInitializationError("responses_deployment_name is required.")
+        if not azure_openai_settings.api_version:
+            raise ServiceInitializationError("api_version is required.")
 
         super().__init__(
             deployment_name=azure_openai_settings.responses_deployment_name,
