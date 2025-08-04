@@ -1,160 +1,235 @@
-# Python
+# Get Started with Microsoft Agent Framework
 
-This project uses [poethepoet](https://github.com/nat-n/poethepoet) for task management and [uv](https://github.com/astral-sh/uv) for dependency management.
+Highlights
+- Flexible Agent Framework: build, orchestrate, and deploy AI agents and multi-agent systems
+- Multi-Agent Orchestration: Group chat, sequential, concurrent, and handoff patterns
+- Plugin Ecosystem: Extend with native functions, OpenAPI, Model Context Protocol (MCP), and more
+- LLM Support: OpenAI, Azure OpenAI, Azure AI Foundry, and more
+- Runtime Support: In-process and distributed agent execution
+- Multimodal: Text, vision, and function calling
+- Cross-Platform: .NET and Python implementations
 
-## Available Poe Tasks
-
-### Setup and Installation
-
-Once uv is installed, and you do not yet have a virtual environment setup:
-
-```bash
-uv venv
-```
-
-and then you can run the following tasks:
-```bash
-uv sync --all-extras --dev
-```
-
-After this initial setup, you can use the following tasks to manage your development environment, it is adviced to use the following setup command since that also installs the pre-commit hooks.
-
-#### `setup`
-Set up the development environment with a virtual environment, install dependencies and pre-commit hooks:
-```bash
-uv run poe setup
-# or with specific Python version
-uv run poe setup --python 3.12
-```
-
-#### `install`
-Install all dependencies including extras and dev dependencies, including updates:
-```bash
-uv run poe install
-```
-
-#### `venv`
-Create a virtual environment with specified Python version or switch python version:
-```bash
-uv run poe venv
-# or with specific Python version
-uv run poe venv --python 3.12
-```
-
-#### `pre-commit-install`
-Install pre-commit hooks:
-```bash
-uv run poe pre-commit-install
-```
-
-### Code Quality and Formatting
-
-Each of the following tasks are designed to run against both the main `agent-framework` package and the extension packages, ensuring consistent code quality across the project.
-
-#### `fmt` (format)
-Format code using ruff:
-```bash
-uv run poe fmt
-```
-
-#### `lint`
-Run linting checks and fix issues:
-```bash
-uv run poe lint
-```
-
-#### `pyright`
-Run Pyright type checking:
-```bash
-uv run poe pyright
-```
-
-#### `mypy`
-Run MyPy type checking:
-```bash
-uv run poe mypy
-```
-
-### Testing
-
-#### `test`
-Run unit tests with coverage:
-```bash
-uv run poe test
-```
-
-### Documentation
-
-#### `docs-clean`
-Remove the docs build directory:
-```bash
-uv run poe docs-clean
-```
-
-#### `docs-build`
-Build the documentation:
-```bash
-uv run poe docs-build
-```
-
-#### `docs-serve`
-Serve documentation locally with auto-reload:
-```bash
-uv run poe docs-serve
-```
-
-#### `docs-check`
-Build documentation and fail on warnings:
-```bash
-uv run poe docs-check
-```
-
-#### `docs-check-examples`
-Check documentation examples for code correctness:
-```bash
-uv run poe docs-check-examples
-```
-
-### Code Validation
-
-#### `markdown-code-lint`
-Lint markdown code blocks:
-```bash
-uv run poe markdown-code-lint
-```
-
-#### `samples-code-check`
-Run type checking on samples:
-```bash
-uv run poe samples-code-check
-```
-
-### Comprehensive Checks
-
-#### `check`
-Run all quality checks (format, lint, pyright, mypy, test, markdown lint, samples check):
-```bash
-uv run poe check
-```
-
-#### `pre-commit-check`
-Run pre-commit specific checks (all of the above, excluding `mypy`):
-```bash
-uv run poe pre-commit-check
-```
-
-### Building
-
-#### `build`
-Build the package:
-```bash
-uv run poe build
-```
-
-## Pre-commit Hooks
-
-You can also run all checks using pre-commit directly:
+## Quick Install
 
 ```bash
-uv run pre-commit run -a
+pip install agent-framework
+# Optional: Add Azure integration
+pip install agent-framework[azure]
+# Optional: Add Foundry integration
+pip install agent-framework[foundry]
+# Optional: Both
+pip install agent-framework[azure,foundry]
 ```
+
+Supported Platforms:
+- Python: 3.10+
+- OS: Windows, macOS, Linux
+
+## 1. Setup API Keys
+
+Set as environment variables, or create a .env file at your project root:
+
+```bash
+OPENAI_API_KEY=sk-...
+OPENAI_CHAT_MODEL_ID=...
+...
+AZURE_OPENAI_API_KEY=...
+AZURE_OPENAI_ENDPOINT=...
+AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=...
+...
+FOUNDRY_PROJECT_ENDPOINT=...
+FOUNDRY_MODEL_DEPLOYMENT_NAME=...
+```
+
+You can also override environment variables by explicitly passing configuration parameters to the chat client constructor:
+
+```python
+from agent_framework.azure import AzureChatClient
+
+chat_client = AzureChatClient(
+    api_key='',
+    endpoint='',
+    deployment_name='',
+    api_version='',
+)
+```
+
+See the following [setup guide](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started) for more information.
+
+## 2. Create a Simple Agent
+
+Create agents and invoke them directly:
+
+```python
+import asyncio
+from agent_framework import ChatClientAgent
+from agent_framework.openai import OpenAIChatClient
+
+async def main():
+    agent = ChatClientAgent(
+        chat_client=OpenAIChatClient(),
+        instructions="""
+        1) A robot may not injure a human being...
+        2) A robot must obey orders given it by human beings...
+        3) A robot must protect its own existence...
+
+        Give me the TLDR in exactly 5 words.
+        """
+    )
+
+    result = await agent.run("Summarize the Three Laws of Robotics")
+    print(result)
+
+asyncio.run(main())
+# Output: Protect humans, obey, self-preserve, prioritized.
+```
+
+## 3. Directly Use Chat Clients (No Agent Required)
+
+You can use the chat client classes directly for advanced workflows:
+
+```python
+import asyncio
+from agent_framework.openai import OpenAIChatClient
+from agent_framework import ChatMessage, ChatRole
+
+async def main():
+    client = OpenAIChatClient()
+
+    messages = [
+        ChatMessage(role=ChatRole.SYSTEM, text="You are a helpful assistant."),
+        ChatMessage(role=ChatRole.USER, text="Write a haiku about Agent Framework.")
+    ]
+
+    response = await client.get_response(messages)
+    print(response.messages[0].text)
+
+    """
+    Output:
+
+    Agents work in sync,
+    Framework threads through each task—
+    Code sparks collaboration.
+    """
+
+asyncio.run(main())
+```
+
+## 4. Build an Agent with Tools and Functions
+
+Enhance your agent with custom tools and function calling:
+
+```python
+import asyncio
+from typing import Annotated
+from random import randint
+from pydantic import Field
+from agent_framework import ChatClientAgent
+from agent_framework.openai import OpenAIChatClient
+
+
+def get_weather(
+    location: Annotated[str, Field(description="The location to get the weather for.")],
+) -> str:
+    """Get the weather for a given location."""
+    conditions = ["sunny", "cloudy", "rainy", "stormy"]
+    return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
+
+
+def get_menu_specials() -> str:
+    """Get today's menu specials."""
+    return """
+    Special Soup: Clam Chowder
+    Special Salad: Cobb Salad
+    Special Drink: Chai Tea
+    """
+
+
+async def main():
+    agent = ChatClientAgent(
+        chat_client=OpenAIChatClient(),
+        instructions="You are a helpful assistant that can provide weather and restaurant information.",
+        tools=[get_weather, get_menu_specials]
+    )
+
+    response = await agent.run("What's the weather in Amsterdam and what are today's specials?")
+    print(response)
+
+    """
+    Output:
+    The weather in Amsterdam is sunny with a high of 22°C. Today's specials include
+    Clam Chowder soup, Cobb Salad, and Chai Tea as the special drink.
+    """
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+You can explore additional agent samples [here](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/agents).
+
+## 5. Multi-Agent Orchestration
+
+Coordinate multiple agents to collaborate on complex tasks using orchestration patterns:
+
+```python
+import asyncio
+from agent_framework import ChatClientAgent
+from agent_framework.openai import OpenAIChatClient
+
+
+async def main():
+    # Create specialized agents
+    writer = ChatClientAgent(
+        chat_client=OpenAIChatClient(),
+        name="Writer",
+        instructions="You are a creative content writer. Generate and refine slogans based on feedback."
+    )
+
+    reviewer = ChatClientAgent(
+        chat_client=OpenAIChatClient(),
+        name="Reviewer",
+        instructions="You are a critical reviewer. Provide detailed feedback on proposed slogans."
+    )
+
+    # Sequential workflow: Writer creates, Reviewer provides feedback
+    task = "Create a slogan for a new electric SUV that is affordable and fun to drive."
+
+    # Step 1: Writer creates initial slogan
+    initial_result = await writer.run(task)
+    print(f"Writer: {initial_result}")
+
+    # Step 2: Reviewer provides feedback
+    feedback_request = f"Please review this slogan: {initial_result}"
+    feedback = await reviewer.run(feedback_request)
+    print(f"Reviewer: {feedback}")
+
+    # Step 3: Writer refines based on feedback
+    refinement_request = f"Please refine this slogan based on the feedback: {initial_result}\nFeedback: {feedback}"
+    final_result = await writer.run(refinement_request)
+    print(f"Final Slogan: {final_result}")
+
+    # Example Output:
+    # Writer: "Charge Forward: Affordable Adventure Awaits!"
+    # Reviewer: "Good energy, but 'Charge Forward' is overused in EV marketing..."
+    # Final Slogan: "Power Up Your Adventure: Premium Feel, Smart Price!"
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+**Note**: Advanced orchestration patterns like GroupChat, Sequential, and Concurrent orchestrations are coming soon.
+
+## More Examples & Samples
+
+- [Getting Started with Agents](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/agents): Basic agent creation and tool usage
+- [Chat Client Examples](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/chat_client): Direct chat client usage patterns
+- [Azure Integration](https://github.com/microsoft/agent-framework/tree/main/python/packages/azure): Azure OpenAI and AI Foundry integration
+- [.NET Orchestration Samples](https://github.com/microsoft/agent-framework/tree/main/dotnet/samples/GettingStarted/Orchestration): Advanced multi-agent patterns (.NET)
+
+## Agent Framework Documentation
+
+- [Agent Framework Repository](https://github.com/microsoft/agent-framework)
+- [Python Package Documentation](https://github.com/microsoft/agent-framework/tree/main/python)
+- [.NET Package Documentation](https://github.com/microsoft/agent-framework/tree/main/dotnet)
+- [Design Documents](https://github.com/microsoft/agent-framework/tree/main/docs/design)
+- Learn docs are coming soon.
