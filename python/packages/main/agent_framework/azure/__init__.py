@@ -8,6 +8,7 @@ PACKAGE_EXTRA = "azure"
 _IMPORTS = [
     "AzureChatClient",
     "AzureOpenAISettings",
+    "AzureResponsesClient",
     "get_entra_auth_token",
     "__version__",
 ]

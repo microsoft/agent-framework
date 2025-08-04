@@ -4,6 +4,7 @@ import importlib.metadata
 
 from ._chat_client import AzureChatClient
 from ._entra_id_authentication import get_entra_auth_token
+from ._responses_client import AzureResponsesClient
 from ._shared import AzureOpenAISettings
 
 try:
@@ -14,6 +15,7 @@ except importlib.metadata.PackageNotFoundError:
 __all__ = [
     "AzureChatClient",
     "AzureOpenAISettings",
+    "AzureResponsesClient",
     "__version__",
     "get_entra_auth_token",
 ]
