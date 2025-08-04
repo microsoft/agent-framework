@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, ClassVar
 from urllib.parse import urljoin
 
 from agent_framework import use_tool_calling
@@ -24,6 +24,8 @@ from ._shared import (
 @use_tool_calling
 class AzureResponsesClient(AzureOpenAIConfigBase, OpenAIResponsesClientBase):
     """Azure Responses completion class."""
+
+    MODEL_PROVIDER_NAME: ClassVar[str] = "azure_openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     def __init__(
         self,
@@ -53,7 +55,7 @@ class AzureResponsesClient(AzureOpenAIConfigBase, OpenAIResponsesClientBase):
             base_url: The optional deployment base_url. If provided will override the value
                 in the env vars or .env file. Currently, the base_url must end with "/openai/v1/"
             api_version: The optional deployment api version. If provided will override the value
-                in the env vars or .env file. Currenty, the api_version must be "preview".
+                in the env vars or .env file. Currently, the api_version must be "preview".
             ad_token: The Azure Active Directory token. (Optional)
             ad_token_provider: The Azure Active Directory token provider. (Optional)
             token_endpoint: The token endpoint to request an Azure token. (Optional)

@@ -53,8 +53,6 @@ __all__ = ["OpenAIResponsesClient"]
 
 
 class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
-    MODEL_PROVIDER_NAME: ClassVar[str] = "azure_openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
-
     def _filter_options(self, **kwargs: Any) -> dict[str, Any]:
         """Filter options for the responses call."""
         # The responses call does not support all the options that the chat completion call does.
@@ -490,6 +488,8 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
 @use_tool_calling
 class OpenAIResponsesClient(OpenAIConfigBase, OpenAIResponsesClientBase):
     """OpenAI Responses client class."""
+
+    MODEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     def __init__(
         self,
