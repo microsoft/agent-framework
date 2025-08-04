@@ -45,7 +45,7 @@ internal sealed class GuessNumberExecutor : Executor, IMessageHandler<NumberSign
     private int NextGuess => (this.LowerBound + this.UpperBound) / 2;
 
     private int _currGuess = -1;
-    public async ValueTask<int> HandleAsync(NumberSignal message, IExecutionContext context)
+    public async ValueTask<int> HandleAsync(NumberSignal message, IWorkflowContext context)
     {
         switch (message)
         {
@@ -75,7 +75,7 @@ internal sealed class JudgeExecutor : Executor, IMessageHandler<int, NumberSigna
         this._targetNumber = targetNumber;
     }
 
-    public ValueTask<NumberSignal> HandleAsync(int message, IExecutionContext context)
+    public ValueTask<NumberSignal> HandleAsync(int message, IWorkflowContext context)
     {
         if (message == this._targetNumber)
         {

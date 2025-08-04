@@ -25,7 +25,7 @@ internal static class Step2EntryPoint
 
 internal sealed class UppercaseExecutor : Executor, IMessageHandler<string, string>
 {
-    public ValueTask<string> HandleAsync(string message, IExecutionContext context)
+    public ValueTask<string> HandleAsync(string message, IWorkflowContext context)
     {
         return CompletedValueTaskSource.FromResult(message.ToUpperInvariant());
     }
@@ -33,7 +33,7 @@ internal sealed class UppercaseExecutor : Executor, IMessageHandler<string, stri
 
 internal sealed class ReverseTextExecutor : Executor, IMessageHandler<string, string>
 {
-    public ValueTask<string> HandleAsync(string message, IExecutionContext context)
+    public ValueTask<string> HandleAsync(string message, IWorkflowContext context)
     {
         char[] charArray = message.ToCharArray();
         System.Array.Reverse(charArray);

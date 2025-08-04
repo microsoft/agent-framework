@@ -7,6 +7,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
+using Microsoft.Shared.Diagnostics;
 
 using HandlerInfosT =
     System.Collections.Generic.Dictionary<
@@ -133,7 +134,7 @@ internal struct MessageHandlerInfo
             throw new ArgumentException("Handler method must have exactly two parameters: TMessage and IExecutionContext.", nameof(handlerInfo));
         }
 
-        if (parameters[1].ParameterType != typeof(IExecutionContext))
+        if (parameters[1].ParameterType != typeof(IWorkflowContext))
         {
             throw new ArgumentException("Handler method's second parameter must be of type IExecutionContext.", nameof(handlerInfo));
         }
@@ -163,7 +164,7 @@ internal struct MessageHandlerInfo
         }
     }
 
-    public Func<object, ValueTask<CallResult>> Bind(Executor executor, bool checkType = false)
+    public Func<object, IWorkflowContext, ValueTask<CallResult>> Bind(Executor executor, bool checkType = false)
     {
         Type? resultType = this.OutType;
         MethodInfo handlerMethod = this.HandlerInfo;
@@ -172,13 +173,13 @@ internal struct MessageHandlerInfo
         return InvokeHandlerAsync;
 
         // Create a delegate that binds the handler to the executor.
-        async ValueTask<CallResult> InvokeHandlerAsync(object message)
+        async ValueTask<CallResult> InvokeHandlerAsync(object message, IWorkflowContext workflowContext)
         {
             bool expectingVoid = resultType == null || resultType == typeof(void);
 
             try
             {
-                object? maybeValueTask = handlerMethod.Invoke(executor, new object[] { message, executor });
+                object? maybeValueTask = handlerMethod.Invoke(executor, new object[] { message, workflowContext });
 
                 if (expectingVoid)
                 {
@@ -230,7 +231,7 @@ internal class MessageRouter
     // TODO: The goal of the cache is to allow SourceGenerators to do the reflection to bind the handlers in the router.
     internal static readonly Dictionary<Type, Func<MessageRouter>> s_routerFactoryCache = new();
 
-    private Dictionary<Type, Func<object, ValueTask<CallResult>>> BoundHandlers { get; init; } = new();
+    private Dictionary<Type, Func<object, IWorkflowContext, ValueTask<CallResult>>> BoundHandlers { get; init; } = new();
 
     [SuppressMessage("Trimming",
         "IL2075:'this' argument does not satisfy 'DynamicallyAccessedMembersAttribute' in call to target method. The return value " +
@@ -306,18 +307,18 @@ internal class MessageRouter
         // If no factory is found, reflect over the handlers
         HandlerInfosT handlers = ReflectHandlers(executor.GetType());
 
-        Dictionary<Type, Func<object, ValueTask<CallResult>>> boundHandlers = new();
+        Dictionary<Type, Func<object, IWorkflowContext, ValueTask<CallResult>>> boundHandlers = new();
         foreach (Type inType in handlers.Keys)
         {
             MessageHandlerInfo handlerInfo = handlers[inType];
-            Func<object, ValueTask<CallResult>> boundHandler = handlerInfo.Bind(executor, checkType);
+            Func<object, IWorkflowContext, ValueTask<CallResult>> boundHandler = handlerInfo.Bind(executor, checkType);
             boundHandlers.Add(inType, boundHandler); // TODO: Turn the error here into something more actionable.
         }
 
         return new MessageRouter(boundHandlers);
     }
 
-    internal MessageRouter(Dictionary<Type, Func<object, ValueTask<CallResult>>> handlers)
+    internal MessageRouter(Dictionary<Type, Func<object, IWorkflowContext, ValueTask<CallResult>>> handlers)
     {
         this.BoundHandlers = handlers;
     }
@@ -331,7 +332,7 @@ internal class MessageRouter
     /// <returns></returns>
     /// <exception cref="ArgumentNullException"></exception>
     /// <exception cref="NotImplementedException"></exception>
-    public async ValueTask<CallResult?> RouteMessageAsync(object message, IExecutionContext context, bool requireRoute = true)
+    public async ValueTask<CallResult?> RouteMessageAsync(object message, IWorkflowContext context, bool requireRoute = false)
     {
         if (message == null)
         {
@@ -340,13 +341,15 @@ internal class MessageRouter
 
         // TODO: Implement base type delegation
         CallResult? result = null;
-        if (this.BoundHandlers.TryGetValue(message.GetType(), out Func<object, ValueTask<CallResult>>? handler))
+        if (this.BoundHandlers.TryGetValue(message.GetType(), out Func<object, IWorkflowContext, ValueTask<CallResult>>? handler))
         {
-            result = await handler(message).ConfigureAwait(false);
+            result = await handler(message, context).ConfigureAwait(false);
         }
 
         return result;
     }
+
+    public bool CanHandle(object message) => this.CanHandle(Throw.IfNull(message).GetType());
 
     public bool CanHandle(Type candidateType)
     {

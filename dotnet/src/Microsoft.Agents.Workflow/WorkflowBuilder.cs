@@ -6,323 +6,22 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using Microsoft.Agents.Workflows.Execution;
 using Microsoft.Agents.Workflows.Core;
 using Microsoft.Shared.Diagnostics;
+using System.Collections.Concurrent;
 
 #pragma warning restore IDE0005 // Using directive is unnecessary.
-
-using ConditionalT = System.Func<object?, bool>;
 
 namespace Microsoft.Agents.Workflows;
 
 internal delegate TExecutor ExecutorProvider<out TExecutor>()
     where TExecutor : Executor;
 
-//internal struct EdgeKey : IEquatable<EdgeKey>
-//{
-//    public string SourceId { get; init; }
-//    public string TargetId { get; init; }
-
-//    public EdgeKey(string sourceId, string targetId)
-//    {
-//        this.SourceId = sourceId ?? throw new ArgumentNullException(nameof(sourceId));
-//        this.TargetId = targetId ?? throw new ArgumentNullException(nameof(targetId));
-//    }
-
-//    public bool Equals(EdgeKey other) => this.SourceId == other.SourceId && this.TargetId == other.TargetId;
-//    public override bool Equals(object? obj) => obj is EdgeKey other && this.Equals(other);
-//    public override int GetHashCode() => HashCode.Combine(this.SourceId, this.TargetId);
-//}
-
-/// <summary>
-/// .
-/// </summary>
-public class ExecutionResult
-{
-}
-
-internal sealed class ExecutorIsh :
-    IIdentified,
-    IEquatable<ExecutorIsh>,
-    IEquatable<IIdentified>,
-    IEquatable<string>
-{
-    public enum Type
-    {
-        Unbound,
-        Executor,
-        //Function,
-        //Agent,
-        //ProcessStep
-    }
-
-    public Type ExecutorType { get; init; }
-
-    private readonly string? _idValue;
-    private readonly Executor? _executorValue;
-    //private readonly Func<object?, CallResult>? _functionValue;
-
-    public ExecutorIsh(Executor executor)
-    {
-        this.ExecutorType = Type.Executor;
-        this._executorValue = executor ?? throw new ArgumentNullException(nameof(executor));
-    }
-
-    public ExecutorIsh(string id)
-    {
-        this.ExecutorType = Type.Unbound;
-        this._idValue = id ?? throw new ArgumentNullException(nameof(id));
-    }
-
-    public bool IsUnbound => this.ExecutorType == Type.Unbound;
-
-    public string Id => this.ExecutorType switch
-    {
-        Type.Unbound => this._idValue ?? throw new InvalidOperationException("This ExecutorIsh is unbound and has no ID."),
-        Type.Executor => this._executorValue!.Id,
-        //Type.Function => throw new NotImplementedException("Function type is not yet implemented."),
-        //Type.Agent => throw new NotImplementedException("Agent type is not yet implemented."),
-        //Type.ProcessStep => throw new NotImplementedException("ProcessStep type is not yet implemented."),
-        _ => throw new ArgumentOutOfRangeException(nameof(this.ExecutorType), "Unknown ExecutorIsh type.")
-    };
-
-    public ExecutorProvider<Executor> ExecutorProvider => this.ExecutorType switch
-    {
-        Type.Unbound => throw new InvalidOperationException($"Executor with ID '{this.Id}' is unbound."),
-        Type.Executor => () => this._executorValue!,
-        //Type.Function => throw new NotImplementedException("Function type is not yet implemented."),
-        //Type.Agent => throw new NotImplementedException("Agent type is not yet implemented."),
-        //Type.ProcessStep => throw new NotImplementedException("ProcessStep type is not yet implemented."),
-        _ => throw new ArgumentOutOfRangeException(nameof(this.ExecutorType), "Unknown ExecutorIsh type.")
-    };
-
-    //public ExecutorIsh(Func<object?, CallResult> function)
-    //{
-    //    this.ExecutorType = Type.Function;
-    //    this._functionValue = function ?? throw new ArgumentNullException(nameof(function));
-    //}
-
-    // Implicit conversions into ExecutorIsh
-    public static implicit operator ExecutorIsh(Executor executor)
-    {
-        return new ExecutorIsh(executor);
-    }
-
-    // How do we AoT compile this?
-    //public static implicit operator ExecutorIsh(Func<object?, CallResult> function)
-    //{
-    //    return new ExecutorIsh(function);
-    //}
-
-    public static implicit operator ExecutorIsh(string id)
-    {
-        return new ExecutorIsh(id);
-    }
-
-    public bool Equals(ExecutorIsh? other)
-    {
-        return other is not null &&
-               other.Id == this.Id;
-    }
-
-    public bool Equals(IIdentified? other)
-    {
-        return other is not null &&
-               other.Id == this.Id;
-    }
-
-    public bool Equals(string? other)
-    {
-        return other is not null &&
-               other == this.Id;
-    }
-
-    public override bool Equals(object? obj)
-    {
-        if (obj is null)
-        {
-            return false;
-        }
-
-        if (obj is ExecutorIsh ish)
-        {
-            return this.Equals(ish);
-        }
-        else if (obj is IIdentified identified)
-        {
-            return this.Equals(identified);
-        }
-        else if (obj is string str)
-        {
-            return this.Equals(str);
-        }
-
-        return false;
-    }
-
-    public override int GetHashCode()
-    {
-        return this.Id.GetHashCode();
-    }
-
-    public override string ToString()
-    {
-        return this.ExecutorType switch
-        {
-            Type.Unbound => $"'{this.Id}':<unbound>",
-            Type.Executor => $"'{this.Id}':{this._executorValue!.GetType()}",
-            //Type.Function => $"ExecutorIsh for Function with ID '{this.Id}'",
-            //Type.Agent => $"ExecutorIsh for Agent with ID '{this.Id}'",
-            //Type.ProcessStep => $"ExecutorIsh for ProcessStep with ID '{this.Id}'",
-            _ => throw new ArgumentOutOfRangeException(nameof(this.ExecutorType), "Unknown ExecutorIsh type.")
-        };
-    }
-}
-
-internal record DirectEdgeData(
-    ExecutorIsh Source,
-    ExecutorIsh Sink,
-    Func<object?, bool>? Condition)
-{
-    public static implicit operator FlowEdgeEx(DirectEdgeData data)
-    {
-        return new FlowEdgeEx(data);
-    }
-}
-
-internal record FanOutEdgeData(
-    ExecutorIsh Source,
-    IEnumerable<ExecutorIsh> Sinks,
-    Func<object?, IEnumerable<int>>? Partitioner) // TODO: Should this be IList (to imply an ordering?)?
-{
-    public static implicit operator FlowEdgeEx(FanOutEdgeData data)
-    {
-        return new FlowEdgeEx(data);
-    }
-}
-
-internal enum FanInTrigger
-{
-    WhenAll,
-    WhenAny
-}
-
-internal record FanInEdgeData(
-    IEnumerable<ExecutorIsh> Sources,
-    ExecutorIsh Sink,
-    FanInTrigger Trigger = FanInTrigger.WhenAll)
-{
-    public static implicit operator FlowEdgeEx(FanInEdgeData data)
-    {
-        return new FlowEdgeEx(data);
-    }
-}
-
-internal class FlowEdgeEx
-{
-    public enum Type
-    {
-        Direct,
-        FanOut,
-        FanIn
-    }
-
-    public Type EdgeType { get; init; }
-    public object Data { get; init; }
-
-    public FlowEdgeEx(DirectEdgeData data)
-    {
-        this.Data = Throw.IfNull(data);
-
-        this.EdgeType = Type.Direct;
-    }
-
-    public FlowEdgeEx(FanOutEdgeData data)
-    {
-        this.Data = Throw.IfNull(data);
-
-        this.EdgeType = Type.FanOut;
-    }
-
-    public FlowEdgeEx(FanInEdgeData data)
-    {
-        this.Data = Throw.IfNull(data);
-
-        this.EdgeType = Type.FanIn;
-    }
-
-    public DirectEdgeData? DirectEdgeData => this.Data as DirectEdgeData;
-    public FanOutEdgeData? FanOutEdgeData => this.Data as FanOutEdgeData;
-    public FanInEdgeData? FanInEdgeData => this.Data as FanInEdgeData;
-}
-
-internal class FlowEdge(ExecutorIsh source, ExecutorIsh sink, ConditionalT? conditional) : IEquatable<FlowEdge>
-{
-    public ExecutorIsh Source { get; init; } = source ?? throw new ArgumentNullException(nameof(source));
-    public ExecutorIsh Sink { get; } = sink ?? throw new ArgumentNullException(nameof(sink));
-    public Func<object?, bool>? Condition { get; } = conditional;
-
-    public bool Equals(FlowEdge? other)
-    {
-        return other is null
-                    ? false
-                    : this.Source.Equals(other.Source) && this.Sink.Equals(other.Sink);
-    }
-
-    public override bool Equals(object? obj) => obj is FlowEdge other && this.Equals(other);
-    public override int GetHashCode() => HashCode.Combine(this.Source.GetHashCode(), this.Sink.GetHashCode());
-}
-
-internal class Workflow
-{
-    public Dictionary<string, ExecutorProvider<Executor>> Executors { get; internal init; } = new();
-    public Dictionary<string, HashSet<FlowEdgeEx>> Edges { get; internal init; } = new();
-
-#if NET9_0_OR_GREATER
-    required
-#endif
-    public string StartExecutorId
-    { get; init; }
-
-#if NET9_0_OR_GREATER
-    required
-#endif
-    public Type InputType
-    { get; init; } = typeof(object);
-
-    public Workflow(string startExecutorId, Type type)
-    {
-        this.StartExecutorId = startExecutorId ?? throw new ArgumentNullException(nameof(startExecutorId));
-        this.InputType = type ?? throw new ArgumentNullException(nameof(type));
-
-        // TODO: How do we (1) ensure the types are happy, and (2) work under AOT?
-    }
-
-#if NET9_0_OR_GREATER
-    public Workflow()
-    { }
-#endif
-}
-
-// Just a decorator for the purposes of keeping type type where we can
-internal class Workflow<T> : Workflow
-{
-    public Workflow(string startExecutorId) : base(startExecutorId, typeof(T))
-    {
-    }
-
-#if NET9_0_OR_GREATER
-    public Workflow()
-    {
-        this.InputType = typeof(T);
-    }
-#endif
-}
-
 internal class WorkflowBuilder
 {
     private readonly Dictionary<string, ExecutorProvider<Executor>> _executors = new();
-    private readonly Dictionary<string, HashSet<FlowEdgeEx>> _edges = new();
+    private readonly Dictionary<string, HashSet<FlowEdge>> _edges = new();
     private readonly HashSet<string> _unboundExecutors = new();
 
     private readonly string _startExecutorId;
@@ -371,13 +70,13 @@ internal class WorkflowBuilder
         return this;
     }
 
-    private HashSet<FlowEdgeEx> EnsureEdgesFor(string sourceId)
+    private HashSet<FlowEdge> EnsureEdgesFor(string sourceId)
     {
         // Ensure that there is a set of edges for the given source ID.
         // If it does not exist, create a new one.
-        if (!this._edges.TryGetValue(sourceId, out HashSet<FlowEdgeEx>? edges))
+        if (!this._edges.TryGetValue(sourceId, out HashSet<FlowEdge>? edges))
         {
-            this._edges[sourceId] = edges = new HashSet<FlowEdgeEx>();
+            this._edges[sourceId] = edges = new HashSet<FlowEdge>();
         }
 
         return edges;
@@ -392,20 +91,22 @@ internal class WorkflowBuilder
         Throw.IfNull(target);
 
         this.EnsureEdgesFor(source.Id)
-            .Add(new DirectEdgeData(this.Track(source), this.Track(target), condition));
+            .Add(new DirectEdgeData(this.Track(source).Id, this.Track(target).Id, condition));
 
         return this;
     }
 
-    public WorkflowBuilder AddFanOutEdge(ExecutorIsh source, Func<object?, IEnumerable<int>>? partitioner = null, params ExecutorIsh[] targets)
+    // output int strictly element-of [0, count)
+
+    public WorkflowBuilder AddFanOutEdge(ExecutorIsh source, Func<object?, int, IEnumerable<int>>? partitioner = null, params ExecutorIsh[] targets)
     {
         Throw.IfNull(source);
         Throw.IfNullOrEmpty(targets);
 
         this.EnsureEdgesFor(source.Id)
             .Add(new FanOutEdgeData(
-                this.Track(source),
-                targets.Select(target => this.Track(target)),
+                this.Track(source).Id,
+                targets.Select(target => this.Track(target).Id).ToList(),
                 partitioner));
 
         return this;
@@ -416,11 +117,15 @@ internal class WorkflowBuilder
         Throw.IfNull(target);
         Throw.IfNullOrEmpty(sources);
 
-        this.EnsureEdgesFor(target.Id)
-            .Add(new FanInEdgeData(
-                sources.Select(source => this.Track(source)),
-                this.Track(target),
-                trigger));
+        FanInEdgeData edgeData = new(
+            sources.Select(source => this.Track(source).Id).ToList(),
+                this.Track(target).Id,
+                trigger);
+
+        foreach (string sourceId in edgeData.SourceIds)
+        {
+            this.EnsureEdgesFor(sourceId).Add(edgeData);
+        }
 
         return this;
     }
@@ -451,7 +156,7 @@ internal class WorkflowBuilder
 
         return new Workflow<T>(this._startExecutorId) // Why does it not see the default ctor?
         {
-            Executors = this._executors,
+            ExecutorProviders = this._executors,
             Edges = this._edges,
             StartExecutorId = this._startExecutorId,
             InputType = typeof(T)

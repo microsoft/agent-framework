@@ -38,7 +38,7 @@ internal sealed class DetectSpamExecutor : Executor, IMessageHandler<string, boo
         this.SpamKeywords = spamKeywords;
     }
 
-    public ValueTask<bool> HandleAsync(string message, IExecutionContext context)
+    public ValueTask<bool> HandleAsync(string message, IWorkflowContext context)
     {
 #if NET5_0_OR_GREATER
         bool isSpam = this.SpamKeywords.Any(keyword => message.Contains(keyword, StringComparison.OrdinalIgnoreCase));
@@ -52,7 +52,7 @@ internal sealed class DetectSpamExecutor : Executor, IMessageHandler<string, boo
 
 internal sealed class RespondToMessageExecutor : Executor, IMessageHandler<bool>
 {
-    public async ValueTask HandleAsync(bool message, IExecutionContext context)
+    public async ValueTask HandleAsync(bool message, IWorkflowContext context)
     {
         if (message)
         {
@@ -69,7 +69,7 @@ internal sealed class RespondToMessageExecutor : Executor, IMessageHandler<bool>
 
 internal sealed class RemoveSpamExecutor : Executor, IMessageHandler<bool>
 {
-    public async ValueTask HandleAsync(bool message, IExecutionContext context)
+    public async ValueTask HandleAsync(bool message, IWorkflowContext context)
     {
         if (!message)
         {
