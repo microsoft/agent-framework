@@ -14,7 +14,7 @@ namespace Microsoft.Agents.Workflows.Core;
 /// .
 /// </summary>
 [DebuggerDisplay("{GetType().Name}{Id}({Name})")]
-public abstract class Executor : DisposableObject, IIdentified
+public abstract class Executor : IIdentified, IAsyncDisposable
 {
     /// <summary>
     /// .
@@ -192,14 +192,19 @@ public abstract class Executor : DisposableObject, IIdentified
     /// <summary>
     /// .
     /// </summary>
-    /// <param name="disposing"></param>
     /// <returns></returns>
-    protected override async ValueTask DisposeAsync(bool disposing = false)
+    protected virtual async ValueTask DisposeAsync()
     {
         this._initialized = false;
 
         await this.FlushReduceRemainingAsync().ConfigureAwait(false);
+    }
 
-        await base.DisposeAsync(disposing).ConfigureAwait(false);
+    ValueTask IAsyncDisposable.DisposeAsync()
+    {
+        GC.SuppressFinalize(this); // Should we be suppressing the finalizer here? CodeAnalysis seems to want it (CA1816)
+
+        // Chain to the virtual call to DisposeAsync.
+        return this.DisposeAsync();
     }
 }
