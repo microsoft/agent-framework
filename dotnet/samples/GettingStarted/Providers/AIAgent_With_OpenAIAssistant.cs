@@ -52,7 +52,7 @@ public sealed class AIAgent_With_OpenAIAssistant(ITestOutputHelper output) : Age
 
         // Cleanup
         var assistantClient = openAIClient.GetAssistantClient();
-        await assistantClient.DeleteThreadAsync(thread.Id);
+        await assistantClient.DeleteThreadAsync(thread.ConversationId);
         await assistantClient.DeleteAssistantAsync(agent.Id);
     }
 }

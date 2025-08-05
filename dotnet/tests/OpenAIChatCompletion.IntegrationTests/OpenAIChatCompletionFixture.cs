@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -33,12 +32,7 @@ public class OpenAIChatCompletionFixture : IChatClientAgentFixture
 
     public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
     {
-        if (thread is not ChatClientAgentThread chatClientThread)
-        {
-            throw new InvalidOperationException("The thread must be of type ChatClientAgentThread to retrieve chat history.");
-        }
-
-        return await chatClientThread.GetMessagesAsync().ToListAsync();
+        return await thread.GetMessagesAsync().ToListAsync();
     }
 
     public Task<ChatClientAgent> CreateChatClientAgentAsync(
