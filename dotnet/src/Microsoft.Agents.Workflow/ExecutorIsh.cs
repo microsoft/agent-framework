@@ -2,6 +2,7 @@
 
 using System;
 using Microsoft.Agents.Workflows.Core;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows;
 
@@ -29,13 +30,13 @@ internal sealed class ExecutorIsh :
     public ExecutorIsh(Executor executor)
     {
         this.ExecutorType = Type.Executor;
-        this._executorValue = executor ?? throw new ArgumentNullException(nameof(executor));
+        this._executorValue = Throw.IfNull(executor);
     }
 
     public ExecutorIsh(string id)
     {
         this.ExecutorType = Type.Unbound;
-        this._idValue = id ?? throw new ArgumentNullException(nameof(id));
+        this._idValue = Throw.IfNull(id);
     }
 
     public bool IsUnbound => this.ExecutorType == Type.Unbound;
@@ -63,7 +64,7 @@ internal sealed class ExecutorIsh :
     //public ExecutorIsh(Func<object?, CallResult> function)
     //{
     //    this.ExecutorType = Type.Function;
-    //    this._functionValue = function ?? throw new ArgumentNullException(nameof(function));
+    //    this._functionValue = Throw.IfNull(function);
     //}
 
     // Implicit conversions into ExecutorIsh

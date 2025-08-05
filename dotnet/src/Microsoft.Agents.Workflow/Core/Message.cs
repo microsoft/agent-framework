@@ -2,7 +2,7 @@
 
 using System;
 using System.Collections.Generic;
-
+using Microsoft.Shared.Diagnostics;
 using ExecutorId = string;
 // TODO: Unclear whether this should be forcibly a serializable type.
 using MetadataValueT = object;
@@ -93,8 +93,8 @@ public record Message<TContent>
     /// <exception cref="ArgumentNullException"></exception>
     public Message(TContent content, MessageMetadata metadata)
     {
-        this.Content = content ?? throw new ArgumentNullException(nameof(content));
-        this.Metadata = metadata ?? throw new ArgumentNullException(nameof(metadata));
+        this.Content = Throw.IfNull(content);
+        this.Metadata = Throw.IfNull(metadata);
     }
 
     /// <summary>
