@@ -27,7 +27,7 @@ class Colors(str, Enum):
     CGREY = "\33[90m"
 
 
-def with_color(text: str, color: Colors) -> None:
+def with_color(text: str, color: Colors) -> str:
     """Prints a string with the specified color."""
     return f"{color.value}{text}{Colors.CEND.value}"
 
@@ -56,7 +56,7 @@ def extract_python_code_blocks(markdown_file_path: str) -> list[tuple[str, int]]
 
 def check_code_blocks(markdown_file_paths: list[str]) -> None:
     """Check Python code blocks in a Markdown file for syntax errors."""
-    files_with_errors = []
+    files_with_errors: list[str] = []
 
     for markdown_file_path in markdown_file_paths:
         code_blocks = extract_python_code_blocks(markdown_file_path)
@@ -70,7 +70,7 @@ def check_code_blocks(markdown_file_paths: list[str]) -> None:
                 all(import_code not in code_block for import_code in [f"import {module}", f"from {module}"])
                 for module in ["agent_framework"]
             ):
-                logger.info(" " + with_color("OK[ignored]", Colors.CGREENBG))
+                logger.info(f' {with_color("OK[ignored]", Colors.CGREENBG)}')
                 continue
 
             with tempfile.NamedTemporaryFile(suffix=".py", delete=False) as temp_file:
@@ -84,19 +84,19 @@ def check_code_blocks(markdown_file_paths: list[str]) -> None:
                     highlighted_code = highlight(code_block, PythonLexer(), TerminalFormatter())  # type: ignore
                     logger.info(
                         f" {with_color('FAIL', Colors.CREDBG)}\n"
-                        f"{with_color('========================================================', Colors.CGRAY)}\n"
+                        f"{with_color('========================================================', Colors.CGREY)}\n"
                         f"{with_color('Error', Colors.CRED)}: Pyright found issues in {with_color(markdown_file_path_with_line_no, Colors.CVIOLET)}:\n"
-                        f"{with_color('--------------------------------------------------------', Colors.CGRAY)}\n"
+                        f"{with_color('--------------------------------------------------------', Colors.CGREY)}\n"
                         f"{highlighted_code}\n"
-                        f"{with_color('--------------------------------------------------------', Colors.CGRAY)}\n"
+                        f"{with_color('--------------------------------------------------------', Colors.CGREY)}\n"
                         "\n"
                         f"{with_color('pyright output:', Colors.CVIOLET)}\n"
                         f"{with_color(result.stdout, Colors.CRED)}"
-                        f"{with_color('========================================================', Colors.CGRAY)}\n"
+                        f"{with_color('========================================================', Colors.CGREY)}\n"
                     )
                     had_errors = True
                 else:
-                    logger.info(" " + with_color("OK", Colors.CGREENBG))
+                    logger.info(f" {with_color('OK', Colors.CGREENBG)}")
 
         if had_errors:
             files_with_errors.append(markdown_file_path)
