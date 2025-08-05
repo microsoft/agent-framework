@@ -28,7 +28,7 @@ internal sealed class UppercaseExecutor : Executor, IMessageHandler<string, stri
 {
     public ValueTask<string> HandleAsync(string message, IWorkflowContext context)
     {
-        return CompletedValueTaskSource.FromResult(message.ToUpperInvariant());
+        return new ValueTask<string>(message.ToUpperInvariant());
     }
 }
 
@@ -38,6 +38,6 @@ internal sealed class ReverseTextExecutor : Executor, IMessageHandler<string, st
     {
         char[] charArray = message.ToCharArray();
         System.Array.Reverse(charArray);
-        return CompletedValueTaskSource.FromResult(new string(charArray));
+        return new ValueTask<string>(new string(charArray));
     }
 }

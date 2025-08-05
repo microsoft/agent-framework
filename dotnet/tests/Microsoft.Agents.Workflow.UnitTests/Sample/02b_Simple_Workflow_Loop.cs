@@ -79,15 +79,15 @@ internal sealed class JudgeExecutor : Executor, IMessageHandler<int, NumberSigna
     {
         if (message == this._targetNumber)
         {
-            return CompletedValueTaskSource.FromResult(NumberSignal.Matched);
+            return new ValueTask<NumberSignal>(NumberSignal.Matched);
         }
         else if (message < this._targetNumber)
         {
-            return CompletedValueTaskSource.FromResult(NumberSignal.Below);
+            return new ValueTask<NumberSignal>(NumberSignal.Below);
         }
         else
         {
-            return CompletedValueTaskSource.FromResult(NumberSignal.Above);
+            return new ValueTask<NumberSignal>(NumberSignal.Above);
         }
     }
 }

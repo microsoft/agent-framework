@@ -159,7 +159,7 @@ public abstract class Executor : IIdentified, IAsyncDisposable
     /// <returns></returns>
     protected virtual ValueTask PrepareForCheckpointAsync()
     {
-        return CompletedValueTaskSource.Completed;
+        return default;
     }
 
     /// <summary>
@@ -168,7 +168,7 @@ public abstract class Executor : IIdentified, IAsyncDisposable
     /// <returns></returns>
     protected virtual ValueTask AfterCheckpointRestoreAsync()
     {
-        return CompletedValueTaskSource.Completed;
+        return default;
     }
 
     /// <summary>
@@ -179,7 +179,7 @@ public abstract class Executor : IIdentified, IAsyncDisposable
     protected virtual ValueTask InitializeOverride(IWorkflowContext context)
     {
         // Default implementation does nothing.
-        return CompletedValueTaskSource.Completed;
+        return default;
     }
 
     private async ValueTask FlushReduceRemainingAsync()
