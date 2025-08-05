@@ -6,6 +6,7 @@ using Microsoft.Agents.Orchestration;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI.Agents.Hosting;
+using Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -15,6 +16,19 @@ builder.Services.AddOpenApi();
 
 // Add services to the container.
 builder.Services.AddProblemDetails();
+
+// Add CosmosDB client integration
+builder.AddAzureCosmosClient("agent-web-chat-cosmosdb");
+//builder.AddAzureCosmosClient("agent-web-chat-cosmosdb", null, CosmosClientOptions =>
+//{
+//    CosmosClientOptions.ApplicationName = "AgentWebChat";
+//    CosmosClientOptions.ConnectionMode = ConnectionMode.Direct;
+//    CosmosClientOptions.ConsistencyLevel = ConsistencyLevel.Session;
+//    CosmosClientOptions.UseSystemTextJsonSerializerWithOptions = new JsonSerializerOptions
+//    {
+//        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+//    };
+//});
 
 // Configure the chat model and our agent.
 builder.AddKeyedChatClient("chat-model");
@@ -59,6 +73,9 @@ builder.AddAIAgent("knights-and-knaves", (sp, key) =>
 
     return new ConcurrentOrchestration([knight, knave, narrator], name: key);
 });
+
+// Add CosmosDB state storage to override default storage
+builder.Services.AddCosmosActorStateStorage("actor-state-db", "ActorState");
 
 var app = builder.Build();
 
