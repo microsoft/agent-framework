@@ -73,26 +73,9 @@ public sealed class TestConfiguration
     }
 
     /// <summary>
-    /// Provides access to the configuration root for the application.
-    /// </summary>
-    private static IConfigurationRoot? ConfigurationRoot => s_instance?._configRoot;
-
-    /// <summary>
     /// Gets the configuration settings for the AzureAI integration.
     /// </summary>
     public static AzureAIConfig AzureAI => LoadSection<AzureAIConfig>();
-
-    /// <summary>
-    /// Retrieves a configuration section based on the specified key.
-    /// </summary>
-    /// <param name="caller">The key identifying the configuration section to retrieve. Cannot be null or empty.</param>
-    /// <returns>The <see cref="IConfigurationSection"/> corresponding to the specified key.</returns>
-    /// <exception cref="InvalidOperationException">Thrown if the configuration root is not initialized or the specified key does not correspond to a valid section.</exception>
-    private static IConfigurationSection GetSection(string caller)
-    {
-        return s_instance?._configRoot.GetSection(caller) ??
-               throw new InvalidOperationException(caller);
-    }
 
     private static T LoadSection<T>([CallerMemberName] string? caller = null)
     {

@@ -41,12 +41,17 @@ public partial class ConcurrentOrchestration : OrchestratingAgent
                 return f;
             }
 
-            return static async (responses, cancellationToken) =>
-                new AgentRunResponse([.. responses.Where(r => r.Messages.Count > 0).Select(r =>
-                {
-                    var messages = r.Messages;
-                    return messages.Count > 0 ? messages[messages.Count - 1] : new();
-                })]);
+            return (responses, cancellationToken)
+                => Task.FromResult(
+                    new AgentRunResponse([.. responses
+                        .Where(r => r.Messages.Count > 0)
+                        .Select(r =>
+                        {
+                            var messages = r.Messages;
+                            return messages.Count > 0 ? messages[messages.Count - 1] : new();
+                        })
+                    ])
+                );
         }
         set => this._aggregationFunc = value;
     }

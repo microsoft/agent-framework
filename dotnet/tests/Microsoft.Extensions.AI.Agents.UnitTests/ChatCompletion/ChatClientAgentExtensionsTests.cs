@@ -7,6 +7,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Moq;
 
+#pragma warning disable RCS1196 // Call extension method as instance method
+
 namespace Microsoft.Extensions.AI.Agents.UnitTests.ChatCompletion;
 
 public class ChatClientAgentExtensionsTests

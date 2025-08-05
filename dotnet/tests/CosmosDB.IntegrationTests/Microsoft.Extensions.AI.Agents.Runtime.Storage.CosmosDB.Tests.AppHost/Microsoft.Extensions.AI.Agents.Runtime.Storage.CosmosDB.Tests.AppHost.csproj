@@ -3,23 +3,18 @@
   <Sdk Name="Aspire.AppHost.Sdk" Version="9.3.1" />
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <!--<OutputType>Exe</OutputType>-->
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <UserSecretsId>80048040-aaf1-4f44-9970-8aef39651edf</UserSecretsId>
     <IsAspireHost>true</IsAspireHost>
-    <UserSecretsId>2969a84d-8ee6-4304-8737-6e469a315aa8</UserSecretsId>
+    <GenerateProgramFile>false</GenerateProgramFile>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Aspire.Hosting.AppHost" />
-    <PackageReference Include="Aspire.Hosting.Azure.CognitiveServices" />
     <PackageReference Include="Aspire.Hosting.Azure.CosmosDB" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\HelloHttpApi.ApiService\HelloHttpApi.ApiService.csproj" />
-    <ProjectReference Include="..\HelloHttpApi.Web\HelloHttpApi.Web.csproj" />
   </ItemGroup>
 
 </Project>
