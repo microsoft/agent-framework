@@ -321,7 +321,7 @@ public class ChatClientAgentTests
 
         ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
 
-        ChatClientAgentThread thread = new("ConvId");
+        AgentThread thread = new() { ConversationId = "ConvId" };
 
         // Act & Assert
         await agent.RunAsync([new(ChatRole.User, "test")], thread, chatOptions: chatOptions);
@@ -340,7 +340,7 @@ public class ChatClientAgentTests
 
         ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
 
-        ChatClientAgentThread thread = new("ThreadId");
+        AgentThread thread = new() { ConversationId = "ThreadId" };
 
         // Act & Assert
         await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([new(ChatRole.User, "test")], thread, chatOptions: chatOptions));
@@ -363,7 +363,7 @@ public class ChatClientAgentTests
 
         ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
 
-        ChatClientAgentThread thread = new("ConvId");
+        AgentThread thread = new() { ConversationId = "ConvId" };
 
         // Act
         await agent.RunAsync([new(ChatRole.User, "test")], thread, chatOptions: chatOptions);
@@ -388,7 +388,7 @@ public class ChatClientAgentTests
 
         ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
 
-        ChatClientAgentThread thread = new("ConvId");
+        AgentThread thread = new() { ConversationId = "ConvId" };
 
         // Act & Assert
         await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([new(ChatRole.User, "test")], thread));

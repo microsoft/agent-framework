@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests;
@@ -29,14 +28,9 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
 
     public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
     {
-        if (thread is not ChatClientAgentThread chatClientThread)
-        {
-            throw new InvalidOperationException($"The thread must be of type {nameof(ChatClientAgentThread)} to retrieve chat history.");
-        }
-
         List<ChatMessage> messages = [];
 
-        AsyncPageable<PersistentThreadMessage> threadMessages = this._persistentAgentsClient.Messages.GetMessagesAsync(threadId: thread.Id, order: ListSortOrder.Ascending);
+        AsyncPageable<PersistentThreadMessage> threadMessages = this._persistentAgentsClient.Messages.GetMessagesAsync(threadId: thread.ConversationId, order: ListSortOrder.Ascending);
 
         await foreach (var threadMessage in threadMessages)
         {
@@ -87,9 +81,9 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
 
     public Task DeleteThreadAsync(AgentThread thread)
     {
-        if (thread?.Id is not null)
+        if (thread?.ConversationId is not null)
         {
-            return this._persistentAgentsClient.Threads.DeleteThreadAsync(thread.Id);
+            return this._persistentAgentsClient.Threads.DeleteThreadAsync(thread.ConversationId);
         }
 
         return Task.CompletedTask;

@@ -388,7 +388,7 @@ public class OpenTelemetryAgentTests
             new(ChatRole.User, "Hello")
         };
 
-        var thread = new AgentThread { Id = "thread-123" };
+        var thread = new AgentThread { ConversationId = "thread-123" };
 
         // Act
         await telemetryAgent.RunAsync(messages, thread);
