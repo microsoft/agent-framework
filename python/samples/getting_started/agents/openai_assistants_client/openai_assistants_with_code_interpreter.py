@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import AgentRunResponseUpdate, ChatClientAgent, HostedCodeInterpreterTool
+from agent_framework import AgentRunResponseUpdate, ChatClientAgent, ChatResponseUpdate, HostedCodeInterpreterTool
 from agent_framework.openai import OpenAIAssistantsClient
 from openai.types.beta.threads.runs import (
     CodeInterpreterToolCallDelta,
@@ -16,7 +16,7 @@ from openai.types.beta.threads.runs.code_interpreter_tool_call_delta import Code
 def get_code_interpreter_chunk(chunk: AgentRunResponseUpdate) -> str | None:
     """Helper method to access code interpreter data."""
     if (
-        isinstance(chunk.raw_representation, AgentRunResponseUpdate)
+        isinstance(chunk.raw_representation, ChatResponseUpdate)
         and isinstance(chunk.raw_representation.raw_representation, RunStepDeltaEvent)
         and isinstance(chunk.raw_representation.raw_representation.delta, RunStepDelta)
         and isinstance(chunk.raw_representation.raw_representation.delta.step_details, ToolCallDeltaObject)
