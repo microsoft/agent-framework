@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Agents.Workflows.Core;
 using Microsoft.Shared.Diagnostics;
 
@@ -25,9 +27,19 @@ internal static class WorkflowBuilderExtensions
         Throw.IfNull(builder);
         Throw.IfNull(source);
 
+        HashSet<string> seenExecutors = new();
+        seenExecutors.Add(source.Id);
+
         for (int i = 0; i < executors.Length; i++)
         {
             Throw.IfNull(executors[i], nameof(executors) + $"[{i}]");
+
+            if (seenExecutors.Contains(executors[i].Id))
+            {
+                throw new ArgumentException($"Executor '{executors[i].Id}' is already in the chain.", nameof(executors));
+            }
+            seenExecutors.Add(executors[i].Id);
+
             builder.AddEdge(source, executors[i]);
             source = executors[i];
         }
