@@ -43,11 +43,8 @@ public sealed class AIAgent_With_OpenAIAssistant(ITestOutputHelper output) : Age
         // Local function to invoke agent and display the conversation messages for the thread.
         async Task RunAgentAsync(string input)
         {
-            this.WriteUserMessage(input);
-
-            var response = await agent.RunAsync(input, thread);
-
-            this.WriteResponseOutput(response);
+            Console.WriteLine(input);
+            Console.WriteLine(await agent.RunAsync(input, thread));
         }
 
         // Cleanup

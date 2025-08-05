@@ -44,10 +44,7 @@ public sealed class AIAgent_With_AzureAIAgentsPersistent(ITestOutputHelper outpu
         async Task RunAgentAsync(string input)
         {
             Console.WriteLine(input);
-
-            var response = await agent.RunAsync(input, thread);
-
-            Console.WriteLine(response);
+            Console.WriteLine(await agent.RunAsync(input, thread));
         }
 
         // Cleanup
@@ -78,10 +75,7 @@ public sealed class AIAgent_With_AzureAIAgentsPersistent(ITestOutputHelper outpu
         async Task RunAgentAsync(string input)
         {
             Console.WriteLine(input);
-
-            var response = await agent.RunAsync(input, thread);
-
-            Console.WriteLine(response);
+            Console.WriteLine(await agent.RunAsync(input, thread));
         }
 
         // Cleanup

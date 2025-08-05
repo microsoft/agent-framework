@@ -34,10 +34,7 @@ public sealed class AIAgent_With_OpenAIClient(ITestOutputHelper output) : AgentS
         async Task RunAgentAsync(string input)
         {
             Console.WriteLine(input);
-
-            var response = await agent.RunAsync(input, thread);
-
-            Console.WriteLine(response.Messages.Last().Text);
+            Console.WriteLine(await agent.RunAsync(input, thread));
         }
     }
 
