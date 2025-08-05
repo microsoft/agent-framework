@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from agent_framework_azure import (
+    AzureAssistantsClient,
     AzureChatClient,
     AzureOpenAISettings,
     __version__,
@@ -8,6 +9,7 @@ from agent_framework_azure import (
 )
 
 __all__ = [
+    "AzureAssistantsClient",
     "AzureChatClient",
     "AzureOpenAISettings",
     "__version__",

@@ -3,7 +3,7 @@
 import asyncio
 
 from agent_framework import AgentRunResponseUpdate, ChatClientAgent, ChatResponseUpdate, HostedCodeInterpreterTool
-from agent_framework.openai import OpenAIAssistantsClient
+from agent_framework.azure import AzureAssistantsClient
 from openai.types.beta.threads.runs import (
     CodeInterpreterToolCallDelta,
     RunStepDelta,
@@ -33,15 +33,15 @@ def get_code_interpreter_chunk(chunk: AgentRunResponseUpdate) -> str | None:
 
 
 async def main() -> None:
-    """Example showing how to use the HostedCodeInterpreterTool with OpenAI Assistants."""
-    print("=== OpenAI Assistants Agent with Code Interpreter Example ===")
+    """Example showing how to use the HostedCodeInterpreterTool with Azure OpenAI Assistants."""
+    print("=== Azure OpenAI Assistants Agent with Code Interpreter Example ===")
 
     async with ChatClientAgent(
-        chat_client=OpenAIAssistantsClient(),
+        chat_client=AzureAssistantsClient(),
         instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
         tools=HostedCodeInterpreterTool(),
     ) as agent:
-        query = "Use code to get the factorial of 100?"
+        query = "What is current datetime?"
         print(f"User: {query}")
         print("Agent: ", end="", flush=True)
         generated_code = ""

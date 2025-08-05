@@ -6,6 +6,7 @@ from typing import Any
 PACKAGE_NAME = "agent_framework_azure"
 PACKAGE_EXTRA = "azure"
 _IMPORTS = [
+    "AzureAssistantsClient",
     "AzureChatClient",
     "AzureOpenAISettings",
     "get_entra_auth_token",

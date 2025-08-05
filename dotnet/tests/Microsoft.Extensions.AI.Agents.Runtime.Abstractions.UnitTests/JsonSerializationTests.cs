@@ -18,9 +18,9 @@ public class JsonSerializationTests
         {
             WriteIndented = false, // Use compact JSON for easier testing
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-            Converters = { new JsonStringEnumConverter() }
+            Converters = { new JsonStringEnumConverter() },
+            TypeInfoResolver = ActorJsonContext.Default
         };
-        this._options.TypeInfoResolver = ActorJsonContext.Default;
     }
 
     #region ActorMessage Tests

@@ -48,7 +48,7 @@ public class AgentRunResponseTests
     {
         ChatResponse chatResponse = new()
         {
-            AdditionalProperties = new(),
+            AdditionalProperties = [],
             CreatedAt = new DateTimeOffset(2022, 1, 1, 0, 0, 0, TimeSpan.Zero),
             Messages = [new(ChatRole.Assistant, "This is a test message.")],
             RawRepresentation = new object(),
