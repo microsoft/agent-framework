@@ -39,7 +39,7 @@ internal class LocalRunnerContext<TExternalInput> : IRunnerContext
         return executor;
     }
 
-    public ValueTask AddExternalMessageAsync([NotNull] TExternalInput message)
+    public ValueTask AddExternalMessageAsync([NotNull] object message)
     {
         Throw.IfNull(message);
 

@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Core;
 using Microsoft.Shared.Diagnostics;
@@ -91,7 +92,7 @@ internal class EdgeMap
     }
 }
 
-internal class LocalRunner<TInput>
+internal class LocalRunner<TInput> : ISuperStepRunner where TInput : notnull
 {
     public LocalRunner(Workflow<TInput> workflow)
     {
@@ -101,6 +102,11 @@ internal class LocalRunner<TInput>
         // Initialize the runners for each of the edges, along with the state for edges that
         // need it.
         this.EdgeMap = new EdgeMap(this.RunContext, this.Workflow.Edges, this.Workflow.StartExecutorId);
+    }
+
+    ValueTask ISuperStepRunner.EnqueueMessageAsync(object message)
+    {
+        return this.RunContext.AddExternalMessageAsync(message);
     }
 
     protected Workflow<TInput> Workflow { get; init; }
@@ -131,47 +137,68 @@ internal class LocalRunner<TInput>
             : this.EdgeMap.InvokeInputAsync(message);
     }
 
-    public async Task RunAsync(TInput input)
+    public async ValueTask<StreamingExecutionHandle> StreamAsync(TInput input, CancellationToken cancellation = default)
     {
         await this.RunContext.AddExternalMessageAsync(input).ConfigureAwait(false);
 
-        // Kick everything off by sending the first message to the start executor.
-        Executor startExecutor = await this.RunContext.EnsureExecutorAsync(this.Workflow.StartExecutorId)
-                                                      .ConfigureAwait(false);
+        return new StreamingExecutionHandle(this);
+    }
 
-        for (StepContext currentStep = this.RunContext.Advance(); currentStep.HasMessages; currentStep = this.RunContext.Advance())
+    private StepContext? _currentStep = null;
+    public async ValueTask<bool> RunSuperStepAsync(CancellationToken cancellation)
+    {
+        cancellation.ThrowIfCancellationRequested();
+
+        if (this._currentStep == null)
         {
-            // Deliver the messages and queue the next step
-            List<Task<IEnumerable<CallResult?>>> edgeTasks = new();
-            foreach (Identity sender in currentStep.QueuedMessages.Keys)
+            this._currentStep = this.RunContext.Advance();
+        }
+
+        if (this._currentStep.HasMessages)
+        {
+            await this.RunSuperstepAsync(this._currentStep).ConfigureAwait(false);
+            return true;
+        }
+
+        return false;
+    }
+
+    private async ValueTask RunSuperstepAsync(StepContext currentStep)
+    {
+        // Deliver the messages and queue the next step
+        List<Task<IEnumerable<CallResult?>>> edgeTasks = new();
+        foreach (Identity sender in currentStep.QueuedMessages.Keys)
+        {
+            IEnumerable<object> senderMessages = currentStep.QueuedMessages[sender];
+            if (sender.Id is null)
             {
-                IEnumerable<object> senderMessages = currentStep.QueuedMessages[sender];
-                if (sender.Id is null)
+                edgeTasks.AddRange(senderMessages.Select(message => this.RouteExternalMessageAsync(message).AsTask()));
+            }
+            else
+            {
+                HashSet<FlowEdge> outgoingEdges = this.Workflow.Edges[sender.Id!]; // Id is not null when Identity is not .None
+                foreach (FlowEdge outgoingEdge in outgoingEdges)
                 {
-                    edgeTasks.AddRange(senderMessages.Select(message => this.RouteExternalMessageAsync(message).AsTask()));
-                }
-                else
-                {
-                    HashSet<FlowEdge> outgoingEdges = this.Workflow.Edges[sender.Id!]; // Id is not null when Identity is not .None
-                    foreach (FlowEdge outgoingEdge in outgoingEdges)
-                    {
-                        edgeTasks.AddRange(senderMessages.Select(message => this.EdgeMap.InvokeEdgeAsync(outgoingEdge, sender.Id, message).AsTask()));
-                    }
+                    edgeTasks.AddRange(senderMessages.Select(message => this.EdgeMap.InvokeEdgeAsync(outgoingEdge, sender.Id, message).AsTask()));
                 }
             }
+        }
 
-            IEnumerable<CallResult?> results = (await Task.WhenAll(edgeTasks).ConfigureAwait(false)).SelectMany(r => r);
+        // TODO: Should we let the user specify that they want strictly turn-based execution of the edges, vs. concurrent?
+        // (Simply substitute a strategy that replaces Task.WhenAll with a loop with an await in the middle. Difficulty is
+        // that we would need to avoid firing the tasks when we call InvokeEdgeAsync, or RouteExternalMessageAsync.
+        IEnumerable<CallResult?> results = (await Task.WhenAll(edgeTasks).ConfigureAwait(false)).SelectMany(r => r);
 
-            // After the message handler invocations, we may have some events to deliver
-            foreach (WorkflowEvent @event in this.RunContext.QueuedEvents)
-            {
-                // TODO
-            }
+        // TODO: Commit the state updates (so they are visible to the next step)
+        // After the message handler invocations, we may have some events to deliver
+        foreach (WorkflowEvent @event in this.RunContext.QueuedEvents)
+        {
+            this.RaiseWorkflowEvent(@event);
         }
     }
 }
 
-internal class LocalRunner<TInput, TResult>
+internal class LocalRunner<TInput, TResult> : IRunnerWithResult<TResult> where TInput : notnull
 {
     private readonly Workflow<TInput, TResult> _workflow;
     private readonly LocalRunner<TInput> _innerRunner;
@@ -182,10 +209,20 @@ internal class LocalRunner<TInput, TResult>
         this._innerRunner = new LocalRunner<TInput>(workflow);
     }
 
-    public async Task RunAsync(TInput input)
+    public async ValueTask<StreamingExecutionHandle> StreamAsync(TInput input, CancellationToken cancellation = default)
     {
-        await this._innerRunner.RunAsync(input).ConfigureAwait(false);
+        await this.StepRunner.EnqueueMessageAsync(input).ConfigureAwait(false);
+
+        return new StreamingExecutionHandle(this._innerRunner);
+    }
+
+    public ValueTask<TResult> GetResultAsync(CancellationToken cancellation = default)
+    {
+        // TODO: Block on finishing consuming StreamAsync()?
+        return CompletedValueTaskSource.FromResult(this.RunningOutput!);
     }
 
     public TResult? RunningOutput => this._workflow.RunningOutput;
+
+    public ISuperStepRunner StepRunner => this._innerRunner;
 }

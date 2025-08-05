@@ -4,12 +4,13 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Core;
+using Microsoft.Agents.Workflows.Execution;
 
 namespace Microsoft.Agents.Workflows.Sample;
 
 internal static class Step2aEntryPoint
 {
-    public static ValueTask RunAsync()
+    public static async ValueTask RunAsync()
     {
         string[] spamKeywords = { "spam", "advertisement", "offer" };
 
@@ -22,10 +23,10 @@ internal static class Step2aEntryPoint
             .AddEdge(detectSpam, removeSpam, isSpam => isSpam is false) // If spam, remove
             .Build<string>();
 
-        // async foreach (var event in workflow.RunAsync("This is a spam message."))
-        //     await Console.Out.WriteLineAsync(event);
+        LocalRunner<string> runner = new(workflow);
 
-        return CompletedValueTaskSource.Completed;
+        StreamingExecutionHandle handle = await runner.StreamAsync("This is a spam message.").ConfigureAwait(false);
+        await handle.RunToCompletionAsync().ConfigureAwait(false);
     }
 }
 
