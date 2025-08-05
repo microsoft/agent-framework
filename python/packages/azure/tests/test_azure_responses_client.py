@@ -141,7 +141,7 @@ async def test_azure_responses_client_response() -> None:
     assert isinstance(response, ChatResponse)
     output = OutputStruct.model_validate_json(response.text)
     assert output.location == "New York"
-    assert "sunny" in output.weather
+    assert "sunny" in output.weather.lower()
 
 
 @skip_if_azure_integration_tests_disabled
@@ -180,7 +180,7 @@ async def test_azure_responses_client_response_tools() -> None:
     assert isinstance(response, ChatResponse)
     output = OutputStruct.model_validate_json(response.text)
     assert "Seattle" in output.location
-    assert "sunny" in output.weather
+    assert "sunny" in output.weather.lower()
 
 
 @skip_if_azure_integration_tests_disabled
@@ -235,7 +235,7 @@ async def test_azure_responses_client_streaming() -> None:
 
         output = OutputStruct.model_validate_json(full_message)
         assert "Seattle" in output.location
-        assert "sunny" in output.weather
+        assert "sunny" in output.weather.lower()
 
 
 @skip_if_azure_integration_tests_disabled
@@ -284,4 +284,4 @@ async def test_azure_responses_client_streaming_tools() -> None:
 
         output = OutputStruct.model_validate_json(full_message)
         assert "Seattle" in output.location
-        assert "sunny" in output.weather
+        assert "sunny" in output.weather.lower()
