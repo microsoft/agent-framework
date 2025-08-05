@@ -24,8 +24,8 @@ public class ChatClientAgentThreadTests
         var thread = new ChatClientAgentThread();
 
         // Assert
-        Assert.IsAssignableFrom<IMessagesRetrievableThread>(thread);
-        Assert.IsAssignableFrom<AgentThread>(thread);
+        Assert.IsType<IMessagesRetrievableThread>(thread, exactMatch: false);
+        Assert.IsType<AgentThread>(thread, exactMatch: false);
     }
 
     /// <summary>
@@ -879,7 +879,9 @@ public class ChatClientAgentThreadTests
     public void VerifyJsonDeserialization_HandlesMalformedJson()
     {
         // Arrange - Invalid JSON structure
+#pragma warning disable JSON001 // Invalid JSON pattern
         string invalidJson = "{ invalid json";
+#pragma warning restore JSON001 // Invalid JSON pattern
 
         // Act & Assert
         Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<ChatClientAgentThread>(invalidJson));

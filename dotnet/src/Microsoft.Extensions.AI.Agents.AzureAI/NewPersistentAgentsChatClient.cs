@@ -371,13 +371,35 @@ namespace Azure.AI.Agents.Persistent
                 {
                     if (options.ResponseFormat is ChatResponseFormatJson jsonFormat)
                     {
-                        runOptions.ResponseFormat = jsonFormat.Schema is { } schema ?
-                            BinaryData.FromBytes(JsonSerializer.SerializeToUtf8Bytes(new Dictionary<string, object?>()
+                        if (jsonFormat.Schema is JsonElement schema)
+                        {
+                            var schemaNode = JsonSerializer.SerializeToNode(schema, AgentsChatClientJsonContext.Default.JsonElement)!;
+
+                            var jsonSchemaObject = new JsonObject
                             {
-                                ["type"] = "json_schema",
-                                ["json_schema"] = JsonSerializer.SerializeToNode(schema, AgentsChatClientJsonContext.Default.JsonNode),
-                            }, AgentsChatClientJsonContext.Default.JsonObject)) :
-                            BinaryData.FromString("""{ "type": "json_object" }""");
+                                ["schema"] = schemaNode
+                            };
+
+                            if (jsonFormat.SchemaName is not null)
+                            {
+                                jsonSchemaObject["name"] = jsonFormat.SchemaName;
+                            }
+                            if (jsonFormat.SchemaDescription is not null)
+                            {
+                                jsonSchemaObject["description"] = jsonFormat.SchemaDescription;
+                            }
+
+                            runOptions.ResponseFormat =
+                                BinaryData.FromBytes(JsonSerializer.SerializeToUtf8Bytes(new()
+                                {
+                                    ["type"] = "json_schema",
+                                    ["json_schema"] = jsonSchemaObject,
+                                }, AgentsChatClientJsonContext.Default.JsonObject));
+                        }
+                        else
+                        {
+                            runOptions.ResponseFormat = BinaryData.FromString("""{ "type": "json_object" }""");
+                        }
                     }
                 }
             }
@@ -487,6 +509,7 @@ namespace Azure.AI.Agents.Persistent
                     // We need to extract the run ID and ensure that the ToolOutput we send back to Azure
                     // is only the call ID.
                     string[]? runAndCallIDs;
+#pragma warning disable CA1031 // Do not catch general exception types
                     try
                     {
                         runAndCallIDs = JsonSerializer.Deserialize(frc.CallId, AgentsChatClientJsonContext.Default.StringArray);
@@ -495,6 +518,7 @@ namespace Azure.AI.Agents.Persistent
                     {
                         continue;
                     }
+#pragma warning restore CA1031 // Do not catch general exception types
 
                     if (runAndCallIDs is null ||
                         runAndCallIDs.Length != 2 ||

@@ -9,7 +9,9 @@ Highlights
 - Multimodal: Text, vision, and function calling
 - Cross-Platform: .NET and Python implementations
 
-## Quick Install
+Below are the basics for each language implementation. For more details on python see [here](./python/README.md) and for .NET see [here](./dotnet/README.md).
+
+## Python - Quick Install
 
 ```bash
 pip install agent-framework
@@ -25,13 +27,14 @@ Supported Platforms:
 - Python: 3.10+
 - OS: Windows, macOS, Linux
 
-## 1. Setup API Keys
+## Python - 1. Setup API Keys
 
 Set as environment variables, or create a .env file at your project root:
 
 ```bash
 OPENAI_API_KEY=sk-...
 OPENAI_CHAT_MODEL_ID=...
+OPENAI_RESPONSES_MODEL_ID=...
 ...
 AZURE_OPENAI_API_KEY=...
 AZURE_OPENAI_ENDPOINT=...
@@ -56,66 +59,38 @@ chat_client = AzureChatClient(
 
 See the following [setup guide](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started) for more information.
 
-## 2. Create a Simple Agent
+## Python - 2. Create a Simple Agent
 
 Create agents and invoke them directly:
 
 ```python
 import asyncio
 from agent_framework import ChatClientAgent
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 
 async def main():
-    agent = ChatClientAgent(
-        chat_client=OpenAIChatClient(),
-        instructions="""
+    async with ChatClientAgent(
+        chat_client=FoundryChatClient(),
+        instructions="""These are the Three Laws of Robotics:
         1) A robot may not injure a human being...
         2) A robot must obey orders given it by human beings...
         3) A robot must protect its own existence...
 
-        Give me the TLDR in exactly 5 words.
+        Respond concisely to the user's request.
         """
-    )
+    ):
+        result = await agent.run("Summarize the Three Laws of Robotics")
+        print(result.text)
+        """
+        Output:
+        Protect humans, obey, self-preserve, prioritized.
+        """
 
-    result = await agent.run("Summarize the Three Laws of Robotics")
-    print(result)
-
-asyncio.run(main())
-# Output: Protect humans, obey, self-preserve, prioritized.
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
-## 3. Directly Use Chat Clients (No Agent Required)
-
-You can use the chat client classes directly for advanced workflows:
-
-```python
-import asyncio
-from agent_framework.openai import OpenAIChatClient
-from agent_framework import ChatMessage, ChatRole
-
-async def main():
-    client = OpenAIChatClient()
-
-    messages = [
-        ChatMessage(role=ChatRole.SYSTEM, text="You are a helpful assistant."),
-        ChatMessage(role=ChatRole.USER, text="Write a haiku about Agent Framework.")
-    ]
-
-    response = await client.get_response(messages)
-    print(response.messages[0].text)
-
-    """
-    Output:
-
-    Agents work in sync,
-    Framework threads through each task—
-    Code sparks collaboration.
-    """
-
-asyncio.run(main())
-```
-
-## 4. Build an Agent with Tools and Functions
+## Python - 3. Build an Agent with Tools
 
 Enhance your agent with custom tools and function calling:
 
@@ -125,7 +100,7 @@ from typing import Annotated
 from random import randint
 from pydantic import Field
 from agent_framework import ChatClientAgent
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.openai import OpenAIResponsesClient
 
 
 def get_weather(
@@ -147,13 +122,13 @@ def get_menu_specials() -> str:
 
 async def main():
     agent = ChatClientAgent(
-        chat_client=OpenAIChatClient(),
+        chat_client=OpenAIResponsesClient(),
         instructions="You are a helpful assistant that can provide weather and restaurant information.",
         tools=[get_weather, get_menu_specials]
     )
 
     response = await agent.run("What's the weather in Amsterdam and what are today's specials?")
-    print(response)
+    print(response.text)
 
     """
     Output:
@@ -166,56 +141,6 @@ if __name__ == "__main__":
 ```
 
 You can explore additional agent samples [here](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/agents).
-
-## 5. Multi-Agent Orchestration
-
-Coordinate multiple agents to collaborate on complex tasks using orchestration patterns:
-
-```python
-import asyncio
-from agent_framework import ChatClientAgent
-from agent_framework.openai import OpenAIChatClient
-
-
-async def main():
-    # Create specialized agents
-    writer = ChatClientAgent(
-        chat_client=OpenAIChatClient(),
-        name="Writer",
-        instructions="You are a creative content writer. Generate and refine slogans based on feedback."
-    )
-
-    reviewer = ChatClientAgent(
-        chat_client=OpenAIChatClient(),
-        name="Reviewer",
-        instructions="You are a critical reviewer. Provide detailed feedback on proposed slogans."
-    )
-
-    # Sequential workflow: Writer creates, Reviewer provides feedback
-    task = "Create a slogan for a new electric SUV that is affordable and fun to drive."
-
-    # Step 1: Writer creates initial slogan
-    initial_result = await writer.run(task)
-    print(f"Writer: {initial_result}")
-
-    # Step 2: Reviewer provides feedback
-    feedback_request = f"Please review this slogan: {initial_result}"
-    feedback = await reviewer.run(feedback_request)
-    print(f"Reviewer: {feedback}")
-
-    # Step 3: Writer refines based on feedback
-    refinement_request = f"Please refine this slogan based on the feedback: {initial_result}\nFeedback: {feedback}"
-    final_result = await writer.run(refinement_request)
-    print(f"Final Slogan: {final_result}")
-
-    # Example Output:
-    # Writer: "Charge Forward: Affordable Adventure Awaits!"
-    # Reviewer: "Good energy, but 'Charge Forward' is overused in EV marketing..."
-    # Final Slogan: "Power Up Your Adventure: Premium Feel, Smart Price!"
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
 
 **Note**: Advanced orchestration patterns like GroupChat, Sequential, and Concurrent orchestrations are coming soon.
 

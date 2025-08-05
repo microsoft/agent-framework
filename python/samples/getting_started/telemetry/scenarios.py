@@ -24,7 +24,7 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 from opentelemetry.semconv.attributes import service_attributes
-from opentelemetry.trace import set_tracer_provider
+from opentelemetry.trace import SpanKind, set_tracer_provider
 from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
 from pydantic_settings import BaseSettings
@@ -170,7 +170,7 @@ async def run_chat_client(stream: bool = False) -> None:
 
     tracer = trace.get_tracer(__name__)
     with tracer.start_as_current_span(
-        "Scenario: Chat Client Stream" if stream else "Scenario: Chat Client"
+        "Scenario: Chat Client Stream" if stream else "Scenario: Chat Client", kind=SpanKind.CLIENT
     ) as current_span:
         print("Running scenario: Chat Client" if not stream else "Running scenario: Chat Client Stream")
         try:
@@ -203,7 +203,7 @@ async def run_ai_function() -> None:
     """
 
     tracer = trace.get_tracer(__name__)
-    with tracer.start_as_current_span("Scenario: AI Function") as current_span:
+    with tracer.start_as_current_span("Scenario: AI Function", kind=SpanKind.CLIENT) as current_span:
         print("Running scenario: AI Function")
         try:
             func = ai_function(get_weather)
@@ -222,7 +222,7 @@ async def main(scenario: Literal["chat_client", "chat_client_stream", "ai_functi
     set_up_metrics()
 
     tracer = trace.get_tracer("agent_framework")
-    with tracer.start_as_current_span("Scenario's") as current_span:
+    with tracer.start_as_current_span("Scenario's", kind=SpanKind.CLIENT) as current_span:
         print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
 
         # Scenarios where telemetry is collected in the SDK, from the most basic to the most complex.

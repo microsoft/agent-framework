@@ -23,7 +23,7 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 from opentelemetry.semconv.attributes import service_attributes
-from opentelemetry.trace import set_tracer_provider
+from opentelemetry.trace import SpanKind, set_tracer_provider
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
@@ -98,7 +98,7 @@ def set_up_logging():
     # Events from all child loggers will be processed by this handler.
     logger = logging.getLogger()
     logger.addHandler(handler)
-    # Set the logging level to NOTSET to allow all records to be processed by the handler.
+    # Set the logging level to WARNING, this will not log detailed events to the logger.
     logger.setLevel(logging.WARNING)
 
 
@@ -159,7 +159,7 @@ async def main():
     set_up_metrics()
 
     tracer = trace.get_tracer("agent_framework")
-    with tracer.start_as_current_span("Scenario: Interactive Chat") as current_span:
+    with tracer.start_as_current_span("Scenario: Interactive Chat", kind=SpanKind.CLIENT) as current_span:
         print("Running scenario: Interactive Chat")
         print("Welcome to the chat, type 'exit' to quit.")
         client = OpenAIChatClient()

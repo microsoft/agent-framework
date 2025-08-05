@@ -2,8 +2,9 @@
 
 import sys
 from collections.abc import AsyncIterable, Callable, MutableMapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from enum import Enum
-from typing import Any, Literal, Protocol, TypeVar, runtime_checkable
+from typing import Any, ClassVar, Literal, Protocol, TypeVar, runtime_checkable
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -22,6 +23,7 @@ from ._types import (
     ChatToolMode,
 )
 from .exceptions import AgentExecutionException
+from .telemetry import use_agent_telemetry
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -305,9 +307,11 @@ class ChatClientAgentThread(AgentThread):
 # region ChatClientAgent
 
 
+@use_agent_telemetry
 class ChatClientAgent(AgentBase):
     """A Chat Client Agent."""
 
+    AGENT_SYSTEM_NAME: ClassVar[str] = "microsoft.agent_framework"
     chat_client: ChatClient
     instructions: str | None = None
     chat_options: ChatOptions
@@ -414,7 +418,7 @@ class ChatClientAgent(AgentBase):
 
         If the chat_client supports async context management, enter its context.
         """
-        if hasattr(self.chat_client, "__aenter__") and hasattr(self.chat_client, "__aexit__"):
+        if isinstance(self.chat_client, AbstractAsyncContextManager):
             await self.chat_client.__aenter__()  # type: ignore[reportUnknownMemberType]
         return self
 
@@ -423,7 +427,7 @@ class ChatClientAgent(AgentBase):
 
         If the chat_client supports async context management, exit its context.
         """
-        if hasattr(self.chat_client, "__aenter__") and hasattr(self.chat_client, "__aexit__"):
+        if isinstance(self.chat_client, AbstractAsyncContextManager):
             await self.chat_client.__aexit__(exc_type, exc_val, exc_tb)  # type: ignore[reportUnknownMemberType]
 
     async def run(
@@ -487,6 +491,7 @@ class ChatClientAgent(AgentBase):
         """
         input_messages = self._normalize_messages(messages)
         thread, thread_messages = await self._prepare_thread_and_messages(thread=thread, input_messages=input_messages)
+        agent_name = self._get_agent_name()
 
         response = await self.chat_client.get_response(
             messages=thread_messages,
@@ -515,6 +520,11 @@ class ChatClientAgent(AgentBase):
 
         self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
 
+        # Ensure that the author name is set for each message in the response.
+        for message in response.messages:
+            if message.author_name is None:
+                message.author_name = agent_name
+
         # Only notify the thread of new messages if the chatResponse was successful
         # to avoid inconsistent messages state in the thread.
         await self._notify_thread_of_new_messages(thread, input_messages)
@@ -525,7 +535,7 @@ class ChatClientAgent(AgentBase):
             response_id=response.response_id,
             created_at=response.created_at,
             usage_details=response.usage_details,
-            raw_representation=response.raw_representation,
+            raw_representation=response,
             additional_properties=response.additional_properties,
         )
 
@@ -591,6 +601,7 @@ class ChatClientAgent(AgentBase):
         """
         input_messages = self._normalize_messages(messages)
         thread, thread_messages = await self._prepare_thread_and_messages(thread=thread, input_messages=input_messages)
+        agent_name = self._get_agent_name()
         response_updates: list[ChatResponseUpdate] = []
 
         async for update in self.chat_client.get_streaming_response(
@@ -618,6 +629,10 @@ class ChatClientAgent(AgentBase):
             **kwargs,
         ):
             response_updates.append(update)
+
+            if update.author_name is None:
+                update.author_name = agent_name
+
             yield AgentRunResponseUpdate(
                 contents=update.contents,
                 role=update.role,
@@ -626,7 +641,7 @@ class ChatClientAgent(AgentBase):
                 message_id=update.message_id,
                 created_at=update.created_at,
                 additional_properties=update.additional_properties,
-                raw_representation=update.raw_representation,
+                raw_representation=update,
             )
 
         response = ChatResponse.from_chat_response_updates(response_updates)
@@ -716,3 +731,6 @@ class ChatClientAgent(AgentBase):
             return [messages]
 
         return [ChatMessage(role=ChatRole.USER, text=msg) if isinstance(msg, str) else msg for msg in messages]
+
+    def _get_agent_name(self) -> str:
+        return self.name or "UnnamedAgent"
