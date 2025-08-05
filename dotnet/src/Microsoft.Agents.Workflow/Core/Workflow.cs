@@ -25,8 +25,8 @@ internal class Workflow
 
     public Workflow(string startExecutorId, Type type)
     {
-        this.StartExecutorId = startExecutorId ?? throw new ArgumentNullException(nameof(startExecutorId));
-        this.InputType = type ?? throw new ArgumentNullException(nameof(type));
+        this.StartExecutorId = Throw.IfNull(startExecutorId);
+        this.InputType = Throw.IfNull(type);
 
         // TODO: How do we (1) ensure the types are happy, and (2) work under AOT?
     }

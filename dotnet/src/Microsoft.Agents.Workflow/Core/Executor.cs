@@ -7,6 +7,7 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Threading.Tasks;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Core;
 
@@ -142,10 +143,7 @@ public abstract class Executor : IIdentified, IAsyncDisposable
     /// <exception cref="ArgumentNullException"></exception>
     public void RestoreState(IDictionary<string, object> state)
     {
-        if (state == null)
-        {
-            throw new ArgumentNullException(nameof(state), "State cannot be null.");
-        }
+        Throw.IfNull(state);
 
         this.State.Clear();
 

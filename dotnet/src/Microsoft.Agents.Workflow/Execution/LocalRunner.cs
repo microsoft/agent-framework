@@ -14,7 +14,7 @@ internal class LocalRunner<TInput> : ISuperStepRunner where TInput : notnull
 {
     public LocalRunner(Workflow<TInput> workflow)
     {
-        this.Workflow = workflow ?? throw new ArgumentNullException(nameof(workflow));
+        this.Workflow = Throw.IfNull(workflow);
         this.RunContext = new LocalRunnerContext<TInput>(workflow);
 
         // Initialize the runners for each of the edges, along with the state for edges that

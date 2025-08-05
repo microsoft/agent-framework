@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Core;
 
@@ -68,10 +69,7 @@ public sealed class CallResult
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="exception"/> is null.</exception>
     public static CallResult RaisedException(bool wasVoid, Exception exception)
     {
-        if (exception == null)
-        {
-            throw new ArgumentNullException(nameof(exception), "Exception cannot be null.");
-        }
+        Throw.IfNull(exception);
 
         return new(wasVoid) { Exception = exception };
     }

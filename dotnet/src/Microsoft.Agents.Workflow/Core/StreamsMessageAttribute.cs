@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Core;
 
@@ -21,6 +22,6 @@ public sealed class StreamsMessageAttribute : Attribute
     public StreamsMessageAttribute(Type type)
     {
         // This attribute is used to mark executors that yield messages.
-        this.Type = type ?? throw new ArgumentNullException(nameof(type), "Type cannot be null.");
+        this.Type = Throw.IfNull(type);
     }
 }
