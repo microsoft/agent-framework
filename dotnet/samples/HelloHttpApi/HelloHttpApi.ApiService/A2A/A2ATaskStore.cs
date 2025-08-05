@@ -5,7 +5,7 @@ using Microsoft.Extensions.AI.Agents;
 
 namespace HelloHttpApi.ApiService.A2A;
 
-internal class A2ATaskStore : ITaskStore
+internal sealed class A2ATaskStore : ITaskStore
 {
     private readonly ILogger<A2ATaskStore> _logger;
     private readonly AIAgent _agent;
