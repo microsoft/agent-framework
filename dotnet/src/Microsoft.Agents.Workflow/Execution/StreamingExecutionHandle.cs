@@ -10,22 +10,6 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Execution;
 
-internal interface ISuperStepRunner
-{
-    ValueTask EnqueueMessageAsync(object message);
-
-    event EventHandler<WorkflowEvent>? WorkflowEvent;
-
-    ValueTask<bool> RunSuperStepAsync(CancellationToken cancellation);
-}
-
-internal interface IRunnerWithResult<TResult>
-{
-    ISuperStepRunner StepRunner { get; }
-
-    ValueTask<TResult> GetResultAsync(CancellationToken cancellation = default);
-}
-
 /// <summary>
 /// .
 /// </summary>
