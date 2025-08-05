@@ -152,6 +152,8 @@ internal class WorkflowBuilder
         {
             // We have no handlers for the input type T, which means the built workflow will not be able to
             // process messages of the desired type
+            throw new InvalidOperationException(
+                $"Workflow cannot be built because the starting executor {this._startExecutorId} does not contain a handler for the desired input type {typeof(T).Name}");
         }
 
         return new Workflow<T>(this._startExecutorId) // Why does it not see the default ctor?
