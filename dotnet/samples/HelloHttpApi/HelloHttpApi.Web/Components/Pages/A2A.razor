@@ -234,38 +234,26 @@
                 ]
             };
 
-            var response = await A2AClient.SendMessageAsync(new MessageSendParams { Message = message });
-            foreach (var part in ((Message)response).Parts)
+            await foreach (System.Net.ServerSentEvents.SseItem<A2AEvent> sseItem in A2AClient.SendMessageStreamAsync(new MessageSendParams { Message = message }))
             {
-                if (part is TextPart textPart && !string.IsNullOrEmpty(textPart.Text))
-                {
-                    Logger.LogDebug("Processing text part: '{TextPart}' for session {SessionId}", textPart.Text, sessionId);
-                    responseContent.Append(textPart.Text);
-                    currentStreamedMessage = responseContent.ToString();
-                    StateHasChanged();
-                }
-            }
-
-            // await foreach (System.Net.ServerSentEvents.SseItem<A2AEvent> sseItem in A2AClient.SendMessageStreamAsync(new MessageSendParams { Message = message }))
-            // {
-            //     Message agentResponse = (Message)sseItem.Data;
+                Message agentResponse = (Message)sseItem.Data;
                 
-            //     // Process streaming response chunks as they arrive
-            //     Logger.LogInformation($"Received: {((TextPart)agentResponse.Parts[0]).Text}");
+                // Process streaming response chunks as they arrive
+                Logger.LogInformation($"Received: {((TextPart)agentResponse.Parts[0]).Text}");
 
-            //     foreach (var part in agentResponse.Parts)
-            //     {
-            //         if (part is TextPart textPart && !string.IsNullOrEmpty(textPart.Text))
-            //         {
-            //             Logger.LogDebug("Processing text part: '{TextPart}' for session {SessionId}", textPart.Text, sessionId);
-            //             responseContent.Append(textPart.Text);
-            //             currentStreamedMessage = responseContent.ToString();
-            //             StateHasChanged();
-            //         }
-            //     }
+                foreach (var part in agentResponse.Parts)
+                {
+                    if (part is TextPart textPart && !string.IsNullOrEmpty(textPart.Text))
+                    {
+                        Logger.LogDebug("Processing text part: '{TextPart}' for session {SessionId}", textPart.Text, sessionId);
+                        responseContent.Append(textPart.Text);
+                        currentStreamedMessage = responseContent.ToString();
+                        StateHasChanged();
+                    }
+                }
 
-            //     await ScrollToBottom();
-            // }
+                await ScrollToBottom();
+            }
 
             // Add the complete pirate response to chat messages
             if (responseContent.Length > 0)
