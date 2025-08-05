@@ -239,11 +239,23 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
 
         // TODO: Turn send & update message operations into storage writes to outbox
 
-        var result = await this.Storage.WriteStateAsync(
-            this.ActorId,
-            [.. operations.Operations.OfType<ActorStateWriteOperation>()],
-            operations.ETag,
-            cancellationToken).ConfigureAwait(false);
+        IReadOnlyCollection<ActorStateWriteOperation> writeOps =
+            [.. operations.Operations.OfType<ActorStateWriteOperation>()];
+
+        WriteResponse result;
+        if (writeOps.Count == 0)
+        {
+            // Nothing to write
+            result = new WriteResponse(operations.ETag, success: true);
+        }
+        else
+        {
+            result = await this.Storage.WriteStateAsync(
+                this.ActorId,
+                writeOps,
+                operations.ETag,
+                cancellationToken).ConfigureAwait(false);
+        }
 
         Log.WriteOperationCompleted(this._logger, this.ActorId.ToString(), result.Success);
 

@@ -145,6 +145,9 @@
     <Project Path="src/Microsoft.Extensions.AI.Agents.CopilotStudio/Microsoft.Extensions.AI.Agents.CopilotStudio.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.OpenAI/Microsoft.Extensions.AI.Agents.OpenAI.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.Runtime.Abstractions/Microsoft.Extensions.AI.Agents.Runtime.Abstractions.csproj" />
+    <Project Path="src/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.csproj">
+      <BuildType Solution="Publish|*" Project="Release" />
+    </Project>
     <Project Path="src/Microsoft.Extensions.AI.Agents.Runtime/Microsoft.Extensions.AI.Agents.Runtime.csproj" Id="35d72ad5-61e1-45cc-a9ad-fa8490dbd146">
       <BuildType Solution="Publish|*" Project="Release" />
     </Project>
@@ -163,5 +166,14 @@
     <Project Path="tests/Microsoft.Extensions.AI.Agents.UnitTests/Microsoft.Extensions.AI.Agents.UnitTests.csproj">
       <BuildType Solution="Publish|*" Project="Debug" />
     </Project>
+      <Project Path="tests/CosmosDB.IntegrationTests/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests.AppHost/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests.AppHost.csproj">
+        <BuildType Solution="Publish|*" Project="Release" />
+      </Project>
+      <Project Path="tests/CosmosDB.IntegrationTests/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests.csproj">
+        <BuildType Solution="Publish|*" Project="Release" />
+      </Project>
+    <Folder Name="/CosmosDB/">
+
+    </Folder>
   </Folder>
 </Solution>
