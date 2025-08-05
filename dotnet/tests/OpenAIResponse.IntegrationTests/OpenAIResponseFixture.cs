@@ -52,9 +52,7 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
 
             // Concatenate the previous messages with the response message to get a full chat history
             // that includes the current response.
-            return previousMessages
-                .Concat([responseMessage])
-                .ToList();
+            return [.. previousMessages, responseMessage];
         }
 
         return await chatClientThread.GetMessagesAsync().ToListAsync();

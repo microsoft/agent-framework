@@ -44,6 +44,11 @@ class MockAgent(AIAgent):
         return "Name"
 
     @property
+    def display_name(self) -> str:
+        """Returns the name of the agent."""
+        return "Display Name"
+
+    @property
     def description(self) -> str | None:
         return "Description"
 
@@ -243,7 +248,7 @@ async def test_chat_client_agent_prepare_thread_and_messages(chat_client: ChatCl
     message = ChatMessage(role=ChatRole.USER, text="Hello")
     thread = ChatClientAgentThread(messages=[message])
 
-    result_thread = agent._validate_or_create_thread_type(
+    result_thread = agent._validate_or_create_thread_type(  # type: ignore[reportPrivateUsage]
         thread, lambda: ChatClientAgentThread(), expected_type=ChatClientAgentThread
     )  # type: ignore[reportPrivateUsage]
 
@@ -264,7 +269,7 @@ async def test_chat_client_agent_validate_or_create_thread(chat_client: ChatClie
     agent = ChatClientAgent(chat_client=chat_client)
     thread = None
 
-    result_thread = agent._validate_or_create_thread_type(
+    result_thread = agent._validate_or_create_thread_type(  # type: ignore[reportPrivateUsage]
         thread, lambda: ChatClientAgentThread(), expected_type=ChatClientAgentThread
     )  # type: ignore[reportPrivateUsage]
 
@@ -313,3 +318,36 @@ async def test_chat_client_agent_update_thread_conversation_id_missing(chat_clie
 
     with raises(AgentExecutionException, match="Service did not return a valid conversation id"):
         agent._update_thread_with_type_and_conversation_id(thread, None)  # type: ignore[reportPrivateUsage]
+
+
+async def test_chat_client_agent_default_author_name(chat_client: ChatClient) -> None:
+    # Name is not specified here, so default name should be used
+    agent = ChatClientAgent(chat_client=chat_client)
+
+    result = await agent.run("Hello")
+    assert result.text == "test response"
+    assert result.messages[0].author_name == "UnnamedAgent"
+
+
+async def test_chat_client_agent_author_name_as_agent_name(chat_client: ChatClient) -> None:
+    # Name is specified here, so it should be used as author name
+    agent = ChatClientAgent(chat_client=chat_client, name="TestAgent")
+
+    result = await agent.run("Hello")
+    assert result.text == "test response"
+    assert result.messages[0].author_name == "TestAgent"
+
+
+async def test_chat_client_agent_author_name_is_used_from_response() -> None:
+    chat_client = MockChatClient(
+        mock_response=ChatResponse(
+            messages=[
+                ChatMessage(role=ChatRole.ASSISTANT, contents=[TextContent("test response")], author_name="TestAuthor")
+            ]
+        )
+    )
+    agent = ChatClientAgent(chat_client=chat_client)
+
+    result = await agent.run("Hello")
+    assert result.text == "test response"
+    assert result.messages[0].author_name == "TestAuthor"

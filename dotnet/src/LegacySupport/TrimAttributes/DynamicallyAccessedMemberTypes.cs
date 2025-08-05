@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable RCS1157 // Composite enum value contains undefined flag
+
 namespace System.Diagnostics.CodeAnalysis;
 
 /// <summary>
