@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-#pragma warning disable CA1019, RCS1251
+#pragma warning disable CA1019, RCS1251, IDE0300
 
 namespace System.Diagnostics.CodeAnalysis;
 
@@ -81,7 +81,9 @@ internal sealed class NotNullIfNotNullAttribute : Attribute
 /// <summary>Applied to a method that will never return under any circumstance.</summary>
 [AttributeUsage(AttributeTargets.Method, Inherited = false)]
 [ExcludeFromCodeCoverage]
-internal sealed class DoesNotReturnAttribute : Attribute;
+internal sealed class DoesNotReturnAttribute : Attribute
+{
+}
 
 /// <summary>Specifies that the method will not return if the associated Boolean parameter is passed the specified value.</summary>
 [AttributeUsage(AttributeTargets.Parameter, Inherited = false)]
@@ -109,7 +111,7 @@ internal sealed class MemberNotNullAttribute : Attribute
     /// <param name="member">
     /// The field or property member that is promised to be not-null.
     /// </param>
-    public MemberNotNullAttribute(string member) => this.Members = [member];
+    public MemberNotNullAttribute(string member) => this.Members = new[] { member };
 
     /// <summary>Initializes the attribute with the list of field and property members.</summary>
     /// <param name="members">
