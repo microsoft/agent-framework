@@ -51,7 +51,7 @@ public sealed class AIAgent_With_AzureAIAgentsPersistent(ITestOutputHelper outpu
         }
 
         // Cleanup
-        await persistentAgentsClient.Threads.DeleteThreadAsync(thread.Id);
+        await persistentAgentsClient.Threads.DeleteThreadAsync(thread.ConversationId);
         await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
     }
 
@@ -85,7 +85,7 @@ public sealed class AIAgent_With_AzureAIAgentsPersistent(ITestOutputHelper outpu
         }
 
         // Cleanup
-        await persistentAgentsClient.Threads.DeleteThreadAsync(thread.Id);
+        await persistentAgentsClient.Threads.DeleteThreadAsync(thread.ConversationId);
         await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
     }
 }

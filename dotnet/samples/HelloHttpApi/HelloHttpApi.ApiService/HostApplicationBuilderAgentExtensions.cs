@@ -4,6 +4,7 @@ using Microsoft.Agents.Orchestration;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI.Agents.Runtime;
+using Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB;
 
 namespace HelloHttpApi.ApiService;
 
@@ -26,7 +27,11 @@ public static class HostApplicationBuilderAgentExtensions
                 .Add(triage, customerService, "Hand off to the customer service agent for handling rude customer inquiries.")
                 .Build("PirateWorkflow");
         });
+
         var actorBuilder = builder.AddActorRuntime();
+
+        // Add CosmosDB state storage to override default storage
+        builder.Services.AddCosmosActorStateStorage("actor-state-db", "ActorState");
 
         actorBuilder.AddActorType(
             new ActorType(agentKey),
