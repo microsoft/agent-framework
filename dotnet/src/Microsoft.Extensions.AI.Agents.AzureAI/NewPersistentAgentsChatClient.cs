@@ -509,6 +509,7 @@ namespace Azure.AI.Agents.Persistent
                     // We need to extract the run ID and ensure that the ToolOutput we send back to Azure
                     // is only the call ID.
                     string[]? runAndCallIDs;
+#pragma warning disable CA1031 // Do not catch general exception types
                     try
                     {
                         runAndCallIDs = JsonSerializer.Deserialize(frc.CallId, AgentsChatClientJsonContext.Default.StringArray);
@@ -517,6 +518,7 @@ namespace Azure.AI.Agents.Persistent
                     {
                         continue;
                     }
+#pragma warning restore CA1031 // Do not catch general exception types
 
                     if (runAndCallIDs is null ||
                         runAndCallIDs.Length != 2 ||

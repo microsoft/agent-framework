@@ -1,0 +1,132 @@
+# Copyright (c) Microsoft. All rights reserved.
+
+from collections.abc import Mapping
+from typing import Any, ClassVar
+
+from agent_framework.exceptions import ServiceInitializationError
+from agent_framework.openai import OpenAIAssistantsClient
+from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
+from pydantic import SecretStr, ValidationError
+from pydantic.networks import AnyUrl
+
+from ._shared import (
+    DEFAULT_AZURE_TOKEN_ENDPOINT,
+    AzureOpenAISettings,
+)
+
+__all__ = ["AzureAssistantsClient"]
+
+
+class AzureAssistantsClient(OpenAIAssistantsClient):
+    """Azure OpenAI Assistants client."""
+
+    DEFAULT_AZURE_API_VERSION: ClassVar[str] = "2024-05-01-preview"
+    MODEL_PROVIDER_NAME: ClassVar[str] = "azure_openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
+
+    def __init__(
+        self,
+        deployment_name: str | None = None,
+        assistant_id: str | None = None,
+        assistant_name: str | None = None,
+        thread_id: str | None = None,
+        api_key: str | None = None,
+        endpoint: str | None = None,
+        base_url: str | None = None,
+        api_version: str | None = None,
+        ad_token: str | None = None,
+        ad_token_provider: AsyncAzureADTokenProvider | None = None,
+        token_endpoint: str | None = None,
+        default_headers: Mapping[str, str] | None = None,
+        async_client: AsyncAzureOpenAI | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        """Initialize an Azure OpenAI Assistants client.
+
+        Args:
+            deployment_name: The Azure OpenAI deployment name for the model to use.
+            assistant_id: The ID of an Azure OpenAI assistant to use.
+                If not provided, a new assistant will be created (and deleted after the request).
+            assistant_name: The name to use when creating new assistants.
+            thread_id: Default thread ID to use for conversations. Can be overridden by
+                conversation_id property, when making a request.
+                If not provided, a new thread will be created (and deleted after the request).
+            api_key: The optional API key to use. If provided will override,
+                the env vars or .env file value.
+            endpoint: The optional deployment endpoint. If provided will override the value
+                in the env vars or .env file.
+            base_url: The optional deployment base_url. If provided will override the value
+                in the env vars or .env file.
+            api_version: The optional deployment api version. If provided will override the value
+                in the env vars or .env file.
+            ad_token: The Azure Active Directory token. (Optional)
+            ad_token_provider: The Azure Active Directory token provider. (Optional)
+            token_endpoint: The token endpoint to request an Azure token. (Optional)
+            default_headers: The default headers mapping of string keys to
+                string values for HTTP requests. (Optional)
+            async_client: An existing client to use. (Optional)
+            env_file_path: Use the environment settings file as a fallback
+                to environment variables. (Optional)
+            env_file_encoding: The encoding of the environment settings file. (Optional)
+        """
+        try:
+            azure_openai_settings = AzureOpenAISettings(
+                api_key=SecretStr(api_key) if api_key else None,
+                base_url=AnyUrl(base_url) if base_url else None,
+                endpoint=AnyUrl(endpoint) if endpoint else None,
+                chat_deployment_name=deployment_name,
+                api_version=api_version or self.DEFAULT_AZURE_API_VERSION,
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
+                token_endpoint=token_endpoint or DEFAULT_AZURE_TOKEN_ENDPOINT,
+            )
+        except ValidationError as ex:
+            raise ServiceInitializationError("Failed to create Azure OpenAI settings.", ex) from ex
+
+        if not azure_openai_settings.chat_deployment_name:
+            raise ServiceInitializationError("The Azure OpenAI deployment name is required.")
+
+        # Handle authentication: try API key first, then AD token, then Entra ID
+        if (
+            not async_client
+            and not azure_openai_settings.api_key
+            and not ad_token
+            and not ad_token_provider
+            and azure_openai_settings.token_endpoint
+        ):
+            # Try to get token using Entra ID if no other auth method is provided
+            from ._entra_id_authentication import get_entra_auth_token
+
+            ad_token = get_entra_auth_token(azure_openai_settings.token_endpoint)
+
+        if not async_client and not azure_openai_settings.api_key and not ad_token and not ad_token_provider:
+            raise ServiceInitializationError("The Azure OpenAI API key, ad_token, or ad_token_provider is required.")
+
+        # Create Azure client if not provided
+        if not async_client:
+            client_params: dict[str, Any] = {
+                "api_version": azure_openai_settings.api_version,
+                "default_headers": default_headers,
+            }
+
+            if azure_openai_settings.api_key:
+                client_params["api_key"] = azure_openai_settings.api_key.get_secret_value()
+            elif ad_token:
+                client_params["azure_ad_token"] = ad_token
+            elif ad_token_provider:
+                client_params["azure_ad_token_provider"] = ad_token_provider
+
+            if azure_openai_settings.base_url:
+                client_params["base_url"] = str(azure_openai_settings.base_url)
+            elif azure_openai_settings.endpoint:
+                client_params["azure_endpoint"] = str(azure_openai_settings.endpoint)
+
+            async_client = AsyncAzureOpenAI(**client_params)
+
+        super().__init__(
+            ai_model_id=azure_openai_settings.chat_deployment_name,
+            assistant_id=assistant_id,
+            assistant_name=assistant_name,
+            thread_id=thread_id,
+            async_client=async_client,  # type: ignore[reportArgumentType]
+        )
