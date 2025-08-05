@@ -25,6 +25,6 @@ internal class OutputCollectorExecutor<TInput, TResult> : OutputSink<TResult>, I
     public ValueTask HandleAsync(TInput message, IWorkflowContext context)
     {
         this.Result = this._aggregator(message);
-        return CompletedValueTaskSource.Completed;
+        return default;
     }
 }

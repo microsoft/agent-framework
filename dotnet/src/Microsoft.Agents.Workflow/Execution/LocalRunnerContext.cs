@@ -44,7 +44,7 @@ internal class LocalRunnerContext<TExternalInput> : IRunnerContext
         Throw.IfNull(message);
 
         this._nextStep.MessagesFor(ExecutorIdentity.None).Add(message);
-        return CompletedValueTaskSource.Completed;
+        return default;
     }
 
     public bool NextStepHasActions => this._nextStep.HasMessages;
@@ -57,13 +57,13 @@ internal class LocalRunnerContext<TExternalInput> : IRunnerContext
     public ValueTask AddEventAsync(string executorId, WorkflowEvent workflowEvent)
     {
         this.QueuedEvents.Add(workflowEvent);
-        return CompletedValueTaskSource.Completed;
+        return default;
     }
 
     public ValueTask SendMessageAsync(string executorId, object message)
     {
         this._nextStep.MessagesFor(message.GetType().Name).Add(message);
-        return CompletedValueTaskSource.Completed;
+        return default;
     }
 
     public IWorkflowContext Bind(string executorId)

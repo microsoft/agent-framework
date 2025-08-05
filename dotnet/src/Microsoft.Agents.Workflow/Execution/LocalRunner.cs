@@ -143,7 +143,7 @@ internal class LocalRunner<TInput, TResult> : IRunnerWithResult<TResult> where T
     public ValueTask<TResult> GetResultAsync(CancellationToken cancellation = default)
     {
         // TODO: Block on finishing consuming StreamAsync()?
-        return CompletedValueTaskSource.FromResult(this.RunningOutput!);
+        return new ValueTask<TResult>(this.RunningOutput!);
     }
 
     public TResult? RunningOutput => this._workflow.RunningOutput;

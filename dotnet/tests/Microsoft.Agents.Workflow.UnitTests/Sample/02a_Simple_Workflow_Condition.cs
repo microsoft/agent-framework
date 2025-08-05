@@ -47,7 +47,7 @@ internal sealed class DetectSpamExecutor : Executor, IMessageHandler<string, boo
         bool isSpam = this.SpamKeywords.Any(keyword => message.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0);
 #endif
 
-        return CompletedValueTaskSource.FromResult(isSpam);
+        return new ValueTask<bool>(isSpam);
     }
 }
 
