@@ -74,7 +74,7 @@ class MockExecutorRequestApproval(Executor):
             await ctx.send_message(MockMessage(data=data))
 
 
-async def test_workflow_run_stream():
+async def test_workflow_run_streaming():
     """Test the workflow run stream."""
     executor_a = MockExecutor(id="executor_a")
     executor_b = MockExecutor(id="executor_b")
@@ -88,7 +88,7 @@ async def test_workflow_run_stream():
     )
 
     result: int | None = None
-    async for event in workflow.run_stream(MockMessage(data=0)):
+    async for event in workflow.run_streaming(MockMessage(data=0)):
         assert isinstance(event, WorkflowEvent)
         if isinstance(event, WorkflowCompletedEvent):
             result = event.data
@@ -111,7 +111,7 @@ async def test_workflow_run_stream_not_completed():
     )
 
     with pytest.raises(RuntimeError):
-        async for _ in workflow.run_stream(MockMessage(data=0)):
+        async for _ in workflow.run_streaming(MockMessage(data=0)):
             pass
 
 
@@ -152,7 +152,7 @@ async def test_workflow_run_not_completed():
         await workflow.run(MockMessage(data=0))
 
 
-async def test_workflow_send_responses_stream():
+async def test_workflow_send_responses_streaming():
     """Test the workflow run with approval."""
     executor_a = MockExecutor(id="executor_a")
     executor_b = MockExecutorRequestApproval(id="executor_b")
@@ -169,13 +169,15 @@ async def test_workflow_send_responses_stream():
     )
 
     request_info_event: RequestInfoEvent | None = None
-    async for event in workflow.run_stream(MockMessage(data=0)):
+    async for event in workflow.run_streaming(MockMessage(data=0)):
         if isinstance(event, RequestInfoEvent):
             request_info_event = event
 
     assert request_info_event is not None
     result: int | None = None
-    async for event in workflow.send_responses_stream({request_info_event.request_id: ApprovalMessage(approved=True)}):
+    async for event in workflow.send_responses_streaming({
+        request_info_event.request_id: ApprovalMessage(approved=True)
+    }):
         if isinstance(event, WorkflowCompletedEvent):
             result = event.data
 

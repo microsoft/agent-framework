@@ -130,7 +130,7 @@ async def main():
 
     # Step 3: Run the workflow with an initial message.
     completion_event = None
-    async for event in workflow.run_stream(
+    async for event in workflow.run_streaming(
         "Create a slogan for a new electric SUV that is affordable and fun to drive."
     ):
         if isinstance(event, AgentRunEvent):
