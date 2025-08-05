@@ -2,12 +2,13 @@
 
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Core;
+using Microsoft.Agents.Workflows.Execution;
 
 namespace Microsoft.Agents.Workflows.Sample;
 
 internal static class Step2EntryPoint
 {
-    public static ValueTask RunAsync()
+    public static async ValueTask RunAsync()
     {
         UppercaseExecutor uppercase = new();
         ReverseTextExecutor reverse = new();
@@ -16,10 +17,10 @@ internal static class Step2EntryPoint
         builder.AddEdge(uppercase, reverse);
 
         Workflow<string> workflow = builder.Build<string>();
-        // async foreach (var event in workflow.RunAsync("hello world"))
-        //    await Console.Out.WriteLineAsync(event);
+        LocalRunner<string> runner = new(workflow);
 
-        return CompletedValueTaskSource.Completed;
+        var handle = await runner.StreamAsync("Hello, World!").ConfigureAwait(false);
+        await handle.RunToCompletionAsync().ConfigureAwait(false);
     }
 }
 

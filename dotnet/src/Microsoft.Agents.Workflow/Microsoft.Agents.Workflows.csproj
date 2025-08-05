@@ -30,7 +30,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Folder Include="MapReduce\" />
     <Folder Include="Representation\" />
   </ItemGroup>
 

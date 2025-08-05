@@ -2,12 +2,13 @@
 
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Core;
+using Microsoft.Agents.Workflows.Execution;
 
 namespace Microsoft.Agents.Workflows.Sample;
 
 internal static class Step2bEntryPoint
 {
-    public static ValueTask RunAsync()
+    public static async ValueTask RunAsync()
     {
         GuessNumberExecutor guessNumber = new(1, 100);
         JudgeExecutor judge = new(42); // Let's say the target number is 42
@@ -16,10 +17,9 @@ internal static class Step2bEntryPoint
             .AddLoop(guessNumber, judge)
             .Build<NumberSignal>();
 
-        // async foreach (var event in workflow.RunAsync(NumberSignal.Init))
-        //     await Console.Out.WriteLineAsync(event);
-
-        return CompletedValueTaskSource.Completed;
+        LocalRunner<NumberSignal> runner = new(workflow);
+        StreamingExecutionHandle handle = await runner.StreamAsync(NumberSignal.Init).ConfigureAwait(false);
+        await handle.RunToCompletionAsync();
     }
 }
 
