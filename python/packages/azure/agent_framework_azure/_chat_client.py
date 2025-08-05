@@ -26,8 +26,6 @@ from pydantic import SecretStr, ValidationError
 from pydantic.networks import AnyUrl
 
 from ._shared import (
-    DEFAULT_AZURE_API_VERSION,
-    DEFAULT_AZURE_TOKEN_ENDPOINT,
     AzureOpenAIConfigBase,
     AzureOpenAISettings,
 )
@@ -87,10 +85,10 @@ class AzureChatClient(AzureOpenAIConfigBase, OpenAIChatClientBase):
                 base_url=AnyUrl(base_url) if base_url else None,
                 endpoint=AnyUrl(endpoint) if endpoint else None,
                 chat_deployment_name=deployment_name,
-                api_version=api_version or DEFAULT_AZURE_API_VERSION,
+                api_version=api_version,
                 env_file_path=env_file_path,
                 env_file_encoding=env_file_encoding,
-                token_endpoint=token_endpoint or DEFAULT_AZURE_TOKEN_ENDPOINT,
+                token_endpoint=token_endpoint,
             )
         except ValidationError as exc:
             raise ServiceInitializationError(f"Failed to validate settings: {exc}") from exc
