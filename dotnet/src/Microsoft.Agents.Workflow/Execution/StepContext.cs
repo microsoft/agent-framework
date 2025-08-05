@@ -7,7 +7,7 @@ namespace Microsoft.Agents.Workflows.Execution;
 
 internal class StepContext
 {
-    public Dictionary<Identity, List<object>> QueuedMessages { get; } = new();
+    public Dictionary<ExecutorIdentity, List<object>> QueuedMessages { get; } = new();
 
     public bool HasMessages => this.QueuedMessages.Values.Any(messageList => messageList.Count > 0);
 
