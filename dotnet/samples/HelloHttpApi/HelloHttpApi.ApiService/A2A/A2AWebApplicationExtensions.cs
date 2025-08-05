@@ -13,13 +13,14 @@ public static class A2AWebApplicationExtensions
         string agentName,
         string path)
     {
-        var taskManager = new TaskManager();
         var agentKey = $"agent:{agentName}";
-
         var agent = app.Services.GetRequiredKeyedService<AIAgent>(agentKey);
-        var logger = app.Services.GetRequiredService<ILogger<A2AConnector>>();
-        var a2aConnector = new A2AConnector(logger, agent);
+        var loggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
 
+        var a2aConnector = new A2AConnector(loggerFactory.CreateLogger<A2AConnector>(), agent);
+        var taskStore = new A2ATaskStore(loggerFactory.CreateLogger<A2ATaskStore>(), agent);
+
+        var taskManager = new TaskManager(taskStore: taskStore);
         a2aConnector.Attach(taskManager);
 
         app.MapA2A(taskManager, path);
