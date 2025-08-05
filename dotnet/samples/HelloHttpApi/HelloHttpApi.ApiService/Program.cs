@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using A2A;
-using A2A.AspNetCore;
 using HelloHttpApi.ApiService;
 using HelloHttpApi.ApiService.A2A;
 using HelloHttpApi.ApiService.Utilities;
@@ -31,12 +29,10 @@ app.UseExceptionHandler();
 // Map the agents HTTP endpoints
 app.MapAgents();
 
-var taskManager = new TaskManager();
-var a2aAgent = new DefaultA2AAgent(loggerFactory.CreateLogger<DefaultA2AAgent>());
-a2aAgent.Attach(taskManager);
-
-app.MapA2A(taskManager, "/a2a");
-app.MapHttpA2A(taskManager, "/a2a");
+// Configure agent to A2A communication
+app.AttachA2A(
+    agentName: "pirate",
+    path: "/a2a");
 
 app.MapDefaultEndpoints();
 

@@ -18,7 +18,7 @@ builder.Services.AddOutputCache();
 // This URL uses "https+http://" to indicate HTTPS is preferred over HTTP.
 // Learn more about service discovery scheme resolution at https://aka.ms/dotnet/sdschemes.
 Uri baseAddress = new("https+http://apiservice");
-Uri a2aUrl = new("http://localhost:5390/a2a");
+Uri a2aPirateUrl = new("http://localhost:5390/a2a");
 
 builder.Services.AddHttpClient<AgentClient>(client =>
 {
@@ -27,11 +27,11 @@ builder.Services.AddHttpClient<AgentClient>(client =>
 
 builder.Services.AddSingleton<A2ACardResolver>(sp =>
 {
-    return new A2ACardResolver(a2aUrl);
+    return new A2ACardResolver(a2aPirateUrl);
 });
 builder.Services.AddSingleton<A2AClient>(sp =>
 {
-    return new A2AClient(a2aUrl);
+    return new A2AClient(a2aPirateUrl);
 });
 
 var app = builder.Build();

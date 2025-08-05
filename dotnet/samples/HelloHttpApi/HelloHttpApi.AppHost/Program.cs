@@ -6,7 +6,7 @@ var builder = DistributedApplication.CreateBuilder(args);
 
 var azOpenAiResource = builder.AddParameterFromConfiguration("AzureOpenAIName", "AzureOpenAI:Name");
 var azOpenAiResourceGroup = builder.AddParameterFromConfiguration("AzureOpenAIResourceGroup", "AzureOpenAI:ResourceGroup");
-var chatModel = builder.AddAIModel("chat-model").AsAzureOpenAI("gpt-4o", o => o.AsExisting(azOpenAiResource, azOpenAiResourceGroup));
+var chatModel = builder.AddAIModel("chat-model").AsAzureOpenAI("gpt-4.1", o => o.AsExisting(azOpenAiResource, azOpenAiResourceGroup));
 
 var apiService = builder.AddProject<Projects.HelloHttpApi_ApiService>("apiservice")
         .WithReference(chatModel);
