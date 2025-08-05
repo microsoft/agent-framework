@@ -125,10 +125,7 @@ internal class MessageRouter
     /// <exception cref="NotImplementedException"></exception>
     public async ValueTask<CallResult?> RouteMessageAsync(object message, IWorkflowContext context, bool requireRoute = false)
     {
-        if (message == null)
-        {
-            throw new ArgumentNullException(nameof(message), "Message cannot be null.");
-        }
+        Throw.IfNull(message);
 
         // TODO: Implement base type delegation?
         CallResult? result = null;
