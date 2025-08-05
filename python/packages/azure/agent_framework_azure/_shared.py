@@ -99,11 +99,15 @@ class AzureOpenAISettings(AFBaseSettings):
             your resource from the Azure portal, the endpoint should end in openai.azure.com.
             If both base_url and endpoint are supplied, base_url will be used.
             (Env var AZURE_OPENAI_ENDPOINT)
-        api_version: The API version to use. The default value is "2024-02-01".
+        api_version: The API version to use. The default value is `default_api_version`.
             (Env var AZURE_OPENAI_API_VERSION)
         token_endpoint: The token endpoint to use to retrieve the authentication token.
-            The default value is "https://cognitiveservices.azure.com/.default".
+            The default value is `default_token_endpoint`.
             (Env var AZURE_OPENAI_TOKEN_ENDPOINT)
+        default_api_version: The default API version to use if not specified.
+            The default value is "2024-10-21".
+        default_token_endpoint: The default token endpoint to use if not specified.
+            The default value is "https://cognitiveservices.azure.com/.default".
 
     Parameters:
         env_file_path: The path to the .env file to load settings from.
