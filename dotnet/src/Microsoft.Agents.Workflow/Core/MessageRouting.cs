@@ -164,22 +164,17 @@ internal struct MessageHandlerInfo
         }
     }
 
-    public Func<object, IWorkflowContext, ValueTask<CallResult>> Bind(Executor executor, bool checkType = false)
+    public static Func<object, IWorkflowContext, ValueTask<CallResult>> Bind(Func<object, IWorkflowContext, object?> handlerAsync, bool checkType, Type? resultType = null, Func<object, ValueTask<object?>>? unwrapper = null)
     {
-        Type? resultType = this.OutType;
-        MethodInfo handlerMethod = this.HandlerInfo;
-        Func<object, ValueTask<object?>>? unwrapper = this.Unwrapper;
-
         return InvokeHandlerAsync;
 
-        // Create a delegate that binds the handler to the executor.
         async ValueTask<CallResult> InvokeHandlerAsync(object message, IWorkflowContext workflowContext)
         {
             bool expectingVoid = resultType == null || resultType == typeof(void);
 
             try
             {
-                object? maybeValueTask = handlerMethod.Invoke(executor, new object[] { message, workflowContext });
+                object? maybeValueTask = handlerAsync(message, workflowContext);
 
                 if (expectingVoid)
                 {
@@ -190,7 +185,7 @@ internal struct MessageHandlerInfo
                     }
 
                     throw new InvalidOperationException(
-                        $"Handler method {handlerMethod.Name} is expected to return ValueTask or ValueTask<TResult>, but returned " +
+                        "Handler method is expected to return ValueTask or ValueTask<TResult>, but returned " +
                         $"{maybeValueTask?.GetType().Name ?? "null"}.");
                 }
 
@@ -198,13 +193,13 @@ internal struct MessageHandlerInfo
                 if (unwrapper == null)
                 {
                     throw new InvalidOperationException(
-                        $"Handler method {handlerMethod.Name} is expected to return ValueTask<{resultType!.Name}>, but no unwrapper is available.");
+                        $"Handler method is expected to return ValueTask<{resultType!.Name}>, but no unwrapper is available.");
                 }
 
                 if (maybeValueTask == null)
                 {
                     throw new InvalidOperationException(
-                        $"Handler method {handlerMethod.Name} returned null, but a ValueTask<{resultType!.Name}> was expected.");
+                        $"Handler method returned null, but a ValueTask<{resultType!.Name}> was expected.");
                 }
 
                 object? result = await unwrapper(maybeValueTask).ConfigureAwait(false);
@@ -212,7 +207,7 @@ internal struct MessageHandlerInfo
                 if (checkType && result != null && !resultType.IsInstanceOfType(result))
                 {
                     throw new InvalidOperationException(
-                        $"Handler method {handlerMethod.Name} returned an incompatible type: expected {resultType.Name}, got {result.GetType().Name}.");
+                        $"Handler method returned an incompatible type: expected {resultType.Name}, got {result.GetType().Name}.");
                 }
 
                 return CallResult.ReturnResult(result);
@@ -224,6 +219,17 @@ internal struct MessageHandlerInfo
             }
         }
     }
+
+    public Func<object, IWorkflowContext, ValueTask<CallResult>> Bind(Executor executor, bool checkType = false)
+    {
+        MethodInfo handlerMethod = this.HandlerInfo;
+        return MessageHandlerInfo.Bind(InvokeHandler, checkType, this.OutType, this.Unwrapper);
+
+        object? InvokeHandler(object message, IWorkflowContext workflowContext)
+        {
+            return handlerMethod.Invoke(executor, new object[] { message, workflowContext });
+        }
+    }
 }
 
 internal class MessageRouter
@@ -232,6 +238,7 @@ internal class MessageRouter
     internal static readonly Dictionary<Type, Func<MessageRouter>> s_routerFactoryCache = new();
 
     private Dictionary<Type, Func<object, IWorkflowContext, ValueTask<CallResult>>> BoundHandlers { get; init; } = new();
+    private IDefaultMessageHandler? DefaultHandler { get; init; } = null;
 
     [SuppressMessage("Trimming",
         "IL2075:'this' argument does not satisfy 'DynamicallyAccessedMembersAttribute' in call to target method. The return value " +
@@ -315,12 +322,13 @@ internal class MessageRouter
             boundHandlers.Add(inType, boundHandler); // TODO: Turn the error here into something more actionable.
         }
 
-        return new MessageRouter(boundHandlers);
+        return new MessageRouter(boundHandlers, executor as IDefaultMessageHandler);
     }
 
-    internal MessageRouter(Dictionary<Type, Func<object, IWorkflowContext, ValueTask<CallResult>>> handlers)
+    internal MessageRouter(Dictionary<Type, Func<object, IWorkflowContext, ValueTask<CallResult>>> handlers, IDefaultMessageHandler? defaultHandler = null)
     {
         this.BoundHandlers = handlers;
+        this.DefaultHandler = defaultHandler;
     }
 
     /// <summary>
@@ -339,11 +347,23 @@ internal class MessageRouter
             throw new ArgumentNullException(nameof(message), "Message cannot be null.");
         }
 
-        // TODO: Implement base type delegation
+        // TODO: Implement base type delegation?
         CallResult? result = null;
         if (this.BoundHandlers.TryGetValue(message.GetType(), out Func<object, IWorkflowContext, ValueTask<CallResult>>? handler))
         {
             result = await handler(message, context).ConfigureAwait(false);
+        }
+        else if (this.DefaultHandler != null)
+        {
+            try
+            {
+                await this.DefaultHandler.HandleAsync(message, context).ConfigureAwait(false);
+                result = CallResult.ReturnVoid();
+            }
+            catch (Exception e)
+            {
+                result = CallResult.RaisedException(wasVoid: true, e);
+            }
         }
 
         return result;
@@ -353,14 +373,14 @@ internal class MessageRouter
 
     public bool CanHandle(Type candidateType)
     {
-        if (candidateType == null)
-        {
-            throw new ArgumentNullException(nameof(candidateType), "Candidate type cannot be null.");
-        }
+        Throw.IfNull(candidateType);
 
         // Check if the router can handle the candidate type.
-        return this.BoundHandlers.ContainsKey(candidateType);
+        return this.DefaultHandler != null || this.BoundHandlers.ContainsKey(candidateType);
     }
 
-    public HashSet<Type> IncomingTypes => [.. this.BoundHandlers.Keys];
+    public HashSet<Type> IncomingTypes
+        => this.DefaultHandler != null
+            ? [.. this.BoundHandlers.Keys, typeof(object)]
+            : [.. this.BoundHandlers.Keys];
 }
