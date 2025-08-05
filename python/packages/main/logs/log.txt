@@ -1,4 +1,0 @@
-INFO - py2docfx.convert_prepare.environment - <CI INFO>: basevenv setup complete.
-INFO - py2docfx.__main__ - Processing package agent-framework, env_prepare_tasks: 1
-ERROR - py2docfx.__main__ - Failed to setup venv for package agent-framework: coroutine raised StopIteration
-ERROR - py2docfx.__main__ - An error occurred: coroutine raised StopIteration
