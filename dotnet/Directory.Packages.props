@@ -10,6 +10,9 @@
     <PackageVersion Include="Aspire.Azure.AI.OpenAI" Version="9.3.1-preview.1.25305.6" />
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="9.3.1" />
     <PackageVersion Include="Aspire.Hosting.Azure.CognitiveServices" Version="9.3.1" />
+    <PackageVersion Include="Aspire.Hosting.Azure.CosmosDB" Version="9.3.1" />
+    <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="9.3.1" />
+    <PackageVersion Include="Aspire.Hosting.Testing" Version="9.3.1" />
     <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.1" />
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.2.0-beta.5" />
     <PackageVersion Include="Azure.Identity" Version="1.14.2" />
@@ -21,6 +24,9 @@
     <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.12.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.12.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.12.0" />
+    <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.52.0" />
+    <!-- Newtonsoft (Required by CosmosClient) -->
+    <PackageVersion Include="Newtonsoft.Json" Version="13.0.3" />
     <!-- System.* -->
     <PackageVersion Include="System.Linq.Async" Version="6.0.3" />
     <PackageVersion Include="System.Text.Json" Version="9.0.7" />
