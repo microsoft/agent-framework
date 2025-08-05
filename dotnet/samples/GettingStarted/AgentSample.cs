@@ -65,7 +65,7 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
     /// <remarks>
     /// Ideally for faster execution and potential cost savings, server-side agents should be reused.
     /// </remarks>
-    protected Task AgentCleanUpAsync(ChatClientProviders provider, ChatClientAgent agent, AgentThread? thread = null, CancellationToken cancellationToken = default)
+    protected Task AgentCleanUpAsync(ChatClientProviders provider, AIAgent agent, AgentThread? thread = null, CancellationToken cancellationToken = default)
     {
         return provider switch
         {
@@ -157,9 +157,9 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
 
     #region Private AgentCleanUp
 
-    private async Task AzureAIAgentsPersistentAgentCleanUpAsync(ChatClientAgent agent, AgentThread? thread, CancellationToken cancellationToken)
+    private async Task AzureAIAgentsPersistentAgentCleanUpAsync(AIAgent agent, AgentThread? thread, CancellationToken cancellationToken)
     {
-        var persistentAgentsClient = agent.ChatClient.GetService<PersistentAgentsClient>() ??
+        var persistentAgentsClient = (agent as ChatClientAgent)?.ChatClient.GetService<PersistentAgentsClient>() ??
             throw new InvalidOperationException("The provided chat client is not a Persistent Agents Chat Client");
 
         await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id, cancellationToken);
@@ -171,9 +171,9 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
         }
     }
 
-    private async Task OpenAIAssistantCleanUpAgentAsync(ChatClientAgent agent, AgentThread? thread, CancellationToken cancellationToken)
+    private async Task OpenAIAssistantCleanUpAgentAsync(AIAgent agent, AgentThread? thread, CancellationToken cancellationToken)
     {
-        var assistantClient = agent.ChatClient
+        var assistantClient = (agent as ChatClientAgent)?.ChatClient
             .GetService<AssistantClient>()
             ?? throw new InvalidOperationException("The provided chat client is not an OpenAI Assistant Chat Client");
 

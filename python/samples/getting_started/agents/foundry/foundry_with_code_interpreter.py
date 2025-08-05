@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import AgentRunResponseUpdate, ChatClientAgent, HostedCodeInterpreterTool
+from agent_framework import AgentRunResponseUpdate, ChatClientAgent, ChatResponseUpdate, HostedCodeInterpreterTool
 from agent_framework.foundry import FoundryChatClient
 from azure.ai.agents.models import (
     RunStepDelta,
@@ -16,12 +16,13 @@ from azure.ai.agents.models import (
 def get_code_interpreter_chunk(chunk: AgentRunResponseUpdate) -> str | None:
     """Helper method to access code interpreter data."""
     if (
-        isinstance(chunk.raw_representation, RunStepDeltaChunk)
-        and isinstance(chunk.raw_representation.delta, RunStepDelta)
-        and isinstance(chunk.raw_representation.delta.step_details, RunStepDeltaToolCallObject)
-        and chunk.raw_representation.delta.step_details.tool_calls
+        isinstance(chunk.raw_representation, ChatResponseUpdate)
+        and isinstance(chunk.raw_representation.raw_representation, RunStepDeltaChunk)
+        and isinstance(chunk.raw_representation.raw_representation.delta, RunStepDelta)
+        and isinstance(chunk.raw_representation.raw_representation.delta.step_details, RunStepDeltaToolCallObject)
+        and chunk.raw_representation.raw_representation.delta.step_details.tool_calls
     ):
-        for tool_call in chunk.raw_representation.delta.step_details.tool_calls:
+        for tool_call in chunk.raw_representation.raw_representation.delta.step_details.tool_calls:
             if (
                 isinstance(tool_call, RunStepDeltaCodeInterpreterToolCall)
                 and isinstance(tool_call.code_interpreter, RunStepDeltaCodeInterpreterDetailItemObject)
@@ -40,7 +41,7 @@ async def main() -> None:
         instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
         tools=HostedCodeInterpreterTool(),
     ) as agent:
-        query = "What is current datetime?"
+        query = "Generate the factorial of 100 using python code."
         print(f"User: {query}")
         print("Agent: ", end="", flush=True)
         generated_code = ""
