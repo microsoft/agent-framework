@@ -109,6 +109,7 @@ internal class LocalRunner<TInput> : ISuperStepRunner where TInput : notnull
         return this.RunContext.AddExternalMessageAsync(message);
     }
 
+    protected Dictionary<string, string> PendingCalls { get; } = new();
     protected Workflow<TInput> Workflow { get; init; }
     protected LocalRunnerContext<TInput> RunContext { get; init; }
     protected EdgeMap EdgeMap { get; init; }
@@ -151,12 +152,16 @@ internal class LocalRunner<TInput> : ISuperStepRunner where TInput : notnull
 
         if (this._currentStep == null)
         {
+            // TODO: Python-side does not raise this event.
+            // await this.RunContext.AddEventAsync(this.Workflow.StartExecutorId, new WorkflowStartedEvent()).ConfigureAwait(false);
             this._currentStep = this.RunContext.Advance();
         }
 
         if (this._currentStep.HasMessages)
         {
             await this.RunSuperstepAsync(this._currentStep).ConfigureAwait(false);
+            this._currentStep = this.RunContext.Advance();
+
             return true;
         }
 
@@ -190,6 +195,7 @@ internal class LocalRunner<TInput> : ISuperStepRunner where TInput : notnull
         IEnumerable<CallResult?> results = (await Task.WhenAll(edgeTasks).ConfigureAwait(false)).SelectMany(r => r);
 
         // TODO: Commit the state updates (so they are visible to the next step)
+
         // After the message handler invocations, we may have some events to deliver
         foreach (WorkflowEvent @event in this.RunContext.QueuedEvents)
         {

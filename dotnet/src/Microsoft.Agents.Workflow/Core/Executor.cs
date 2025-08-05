@@ -126,8 +126,12 @@ public abstract class Executor : DisposableObject, IIdentified
     /// <exception cref="TargetInvocationException"></exception>
     public async ValueTask<object?> ExecuteAsync(object message, IWorkflowContext context)
     {
+        await context.AddEventAsync(new ExecutorInvokeEvent(this.Id)).ConfigureAwait(false);
+
         CallResult? result = await this.MessageRouter.RouteMessageAsync(message, context, requireRoute: true)
                                                      .ConfigureAwait(false);
+
+        await context.AddEventAsync(new ExecutorCompleteEvent(this.Id)).ConfigureAwait(false);
 
         if (result == null)
         {
