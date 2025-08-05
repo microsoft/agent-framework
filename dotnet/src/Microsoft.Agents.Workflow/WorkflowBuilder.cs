@@ -18,11 +18,17 @@ namespace Microsoft.Agents.Workflows;
 internal delegate TExecutor ExecutorProvider<out TExecutor>()
     where TExecutor : Executor;
 
+internal record struct EdgeId(string SourceId, string TargetId)
+{
+    public override string ToString() => $"{this.SourceId} -> {this.TargetId}";
+}
+
 internal class WorkflowBuilder
 {
     private readonly Dictionary<string, ExecutorProvider<Executor>> _executors = new();
     private readonly Dictionary<string, HashSet<FlowEdge>> _edges = new();
     private readonly HashSet<string> _unboundExecutors = new();
+    private readonly HashSet<EdgeId> _conditionlessEdges = new();
 
     private readonly string _startExecutorId;
 
@@ -89,6 +95,14 @@ internal class WorkflowBuilder
         // The condition can be used to determine if the edge should be followed based on the input.
         Throw.IfNull(source);
         Throw.IfNull(target);
+
+        EdgeId id = new(source.Id, target.Id);
+        if (condition == null && this._conditionlessEdges.Contains(id))
+        {
+            throw new InvalidOperationException(
+                $"An edge from '{source.Id}' to '{target.Id}' already exists without a condition. " +
+                "You cannot add another edge without a condition for the same source and target.");
+        }
 
         this.EnsureEdgesFor(source.Id)
             .Add(new DirectEdgeData(this.Track(source).Id, this.Track(target).Id, condition));
