@@ -5,13 +5,13 @@ using System.Diagnostics.CodeAnalysis;
 
 namespace Microsoft.Agents.Workflows.Execution;
 
-internal readonly struct Identity : IEquatable<Identity>
+internal readonly struct ExecutorIdentity : IEquatable<ExecutorIdentity>
 {
-    public static Identity None { get; } = new Identity();
+    public static ExecutorIdentity None { get; } = new ExecutorIdentity();
 
     public string? Id { get; init; }
 
-    public bool Equals(Identity other)
+    public bool Equals(ExecutorIdentity other)
     {
         return this.Id == null
             ? other.Id == null
@@ -30,7 +30,7 @@ internal readonly struct Identity : IEquatable<Identity>
             return false;
         }
 
-        if (obj is Identity id)
+        if (obj is ExecutorIdentity id)
         {
             return id.Equals(this);
         }
@@ -48,12 +48,12 @@ internal readonly struct Identity : IEquatable<Identity>
         return this.Id == null ? 0 : StringComparer.OrdinalIgnoreCase.GetHashCode(this.Id);
     }
 
-    public static implicit operator Identity(string? id)
+    public static implicit operator ExecutorIdentity(string? id)
     {
-        return new Identity { Id = id };
+        return new ExecutorIdentity { Id = id };
     }
 
-    public static implicit operator string?(Identity identity)
+    public static implicit operator string?(ExecutorIdentity identity)
     {
         return identity.Id;
     }

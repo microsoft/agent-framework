@@ -43,7 +43,7 @@ internal class LocalRunnerContext<TExternalInput> : IRunnerContext
     {
         Throw.IfNull(message);
 
-        this._nextStep.MessagesFor(Identity.None).Add(message);
+        this._nextStep.MessagesFor(ExecutorIdentity.None).Add(message);
         return CompletedValueTaskSource.Completed;
     }
 
