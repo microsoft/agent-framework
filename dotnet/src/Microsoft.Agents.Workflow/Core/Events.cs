@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Core;
 
@@ -27,27 +27,15 @@ public record ExecutorEvent : WorkflowEvent
     /// <summary>
     /// The identifier of the executor that generated this event.
     /// </summary>
-#if NET9_0_OR_GREATER
-    required
-#endif
-    public string ExecutorId
-    { get; init; }
+    public string ExecutorId { get; }
 
     /// <summary>
     /// .
     /// </summary>
     public ExecutorEvent(string executorId, object? data = null) : base(data)
     {
-        this.ExecutorId = executorId ?? throw new ArgumentNullException(nameof(executorId), "Executor ID cannot be null.");
+        this.ExecutorId = Throw.IfNull(executorId);
     }
-
-#if NET9_0_OR_GREATER
-    /// <summary>
-    /// .
-    /// </summary>
-    public ExecutorEvent()
-    { }
-#endif
 }
 
 /// <summary>
@@ -58,15 +46,9 @@ public record ExecutorInvokeEvent : ExecutorEvent
     /// <summary>
     /// .
     /// </summary>
-    public ExecutorInvokeEvent(string executorId, object? data = null) : base(executorId, data) { }
-
-#if NET9_0_OR_GREATER
-    /// <summary>
-    /// .
-    /// </summary>
-    public ExecutorInvokeEvent()
-    { }
-#endif
+    public ExecutorInvokeEvent(string executorId, object? data = null) : base(executorId, data)
+    {
+    }
 }
 
 /// <summary>
@@ -78,14 +60,6 @@ public record ExecutorCompleteEvent : ExecutorEvent
     /// .
     /// </summary>
     public ExecutorCompleteEvent(string executorId, object? data = null) : base(executorId, data) { }
-
-#if NET9_0_OR_GREATER
-    /// <summary>
-    /// .
-    /// </summary>
-    public ExecutorCompleteEvent()
-    { }
-#endif
 }
 
 // TODO: This is a placeholder for streaming chat message content.

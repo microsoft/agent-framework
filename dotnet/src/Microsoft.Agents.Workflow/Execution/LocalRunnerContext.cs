@@ -47,6 +47,8 @@ internal class LocalRunnerContext<TExternalInput> : IRunnerContext
         return CompletedValueTaskSource.Completed;
     }
 
+    public bool NextStepHasActions => this._nextStep.HasMessages;
+
     public StepContext Advance()
     {
         return Interlocked.Exchange(ref this._nextStep, new StepContext());
