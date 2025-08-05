@@ -242,14 +242,18 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
                             for item in content.result:
                                 if isinstance(item, BaseModel):
                                     results.append(
-                                        item.model_dump_json(exclude_none=True, exclude={"raw_representation"})
+                                        item.model_dump_json(
+                                            exclude_none=True, exclude={"raw_representation", "additional_properties"}
+                                        )
                                     )
                                 else:
                                     results.append(json.dumps(item))
                         else:
                             if isinstance(content.result, BaseModel):
                                 results.append(
-                                    content.result.model_dump_json(exclude_none=True, exclude={"raw_representation"})
+                                    content.result.model_dump_json(
+                                        exclude_none=True, exclude={"raw_representation", "additional_properties"}
+                                    )
                                 )
                             else:
                                 results.append(json.dumps(content.result))
