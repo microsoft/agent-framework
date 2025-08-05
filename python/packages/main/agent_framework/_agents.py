@@ -10,6 +10,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 from ._clients import ChatClient
+from ._mcp import MCPBase
 from ._pydantic import AFBaseModel
 from ._tools import AITool
 from ._types import (
@@ -315,6 +316,7 @@ class ChatClientAgent(AgentBase):
     chat_client: ChatClient
     instructions: str | None = None
     chat_options: ChatOptions
+    mcp_servers: list[MCPBase] | None = None
 
     def __init__(
         self,
@@ -338,6 +340,8 @@ class ChatClientAgent(AgentBase):
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
         tools: AITool
         | list[AITool]
+        | MCPBase
+        | list[MCPBase]
         | Callable[..., Any]
         | list[Callable[..., Any]]
         | MutableMapping[str, Any]
@@ -381,6 +385,13 @@ class ChatClientAgent(AgentBase):
             kwargs: any additional keyword arguments.
                 Unused, can be used by subclasses of this Agent.
         """
+        mcp_servers: list[MCPBase] | None = None
+        if isinstance(tools, MCPBase):
+            mcp_servers = [tools]
+            tools = None
+        elif isinstance(tools, list) and all(isinstance(tool, MCPBase) for tool in tools):  # type: ignore[reportUnknownVariableType]
+            mcp_servers = tools  # type: ignore[reportArgumentType]
+            tools = None
         args: dict[str, Any] = {
             "chat_client": chat_client,
             "chat_options": ChatOptions(
@@ -410,6 +421,8 @@ class ChatClientAgent(AgentBase):
             args["description"] = description
         if id is not None:
             args["id"] = id
+        if mcp_servers is not None:
+            args["mcp_servers"] = mcp_servers
 
         super().__init__(**args)
 
@@ -420,6 +433,9 @@ class ChatClientAgent(AgentBase):
         """
         if isinstance(self.chat_client, AbstractAsyncContextManager):
             await self.chat_client.__aenter__()  # type: ignore[reportUnknownMemberType]
+        if self.mcp_servers:
+            for mcp_server in self.mcp_servers:
+                await mcp_server.connect()
         return self
 
     async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
@@ -429,6 +445,9 @@ class ChatClientAgent(AgentBase):
         """
         if isinstance(self.chat_client, AbstractAsyncContextManager):
             await self.chat_client.__aexit__(exc_type, exc_val, exc_tb)  # type: ignore[reportUnknownMemberType]
+        if self.mcp_servers:
+            for mcp_server in self.mcp_servers:
+                await mcp_server.close()
 
     async def run(
         self,
@@ -492,6 +511,14 @@ class ChatClientAgent(AgentBase):
         input_messages = self._normalize_messages(messages)
         thread, thread_messages = await self._prepare_thread_and_messages(thread=thread, input_messages=input_messages)
         agent_name = self._get_agent_name()
+
+        if self.mcp_servers:
+            if tools is None:
+                tools = []
+            if not isinstance(tools, list):
+                tools = [tools]  # type: ignore
+            for mcp_server in self.mcp_servers:
+                tools.extend(mcp_server.functions.values())  # type: ignore
 
         response = await self.chat_client.get_response(
             messages=thread_messages,
@@ -603,6 +630,14 @@ class ChatClientAgent(AgentBase):
         thread, thread_messages = await self._prepare_thread_and_messages(thread=thread, input_messages=input_messages)
         agent_name = self._get_agent_name()
         response_updates: list[ChatResponseUpdate] = []
+
+        if self.mcp_servers:
+            if tools is None:
+                tools = []
+            if not isinstance(tools, list):
+                tools = [tools]  # type: ignore
+            for mcp_server in self.mcp_servers:
+                tools.extend(mcp_server.functions.values())  # type: ignore
 
         async for update in self.chat_client.get_streaming_response(
             messages=thread_messages,

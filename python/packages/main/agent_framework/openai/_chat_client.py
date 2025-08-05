@@ -12,7 +12,7 @@ from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, ChoiceDeltaToolCall
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall
-from pydantic import SecretStr, ValidationError
+from pydantic import BaseModel, SecretStr, ValidationError
 
 from .._clients import ChatClientBase, use_tool_calling
 from .._types import (
@@ -236,7 +236,24 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
                         args["tool_calls"] = [self._openai_content_parser(content)]  # type: ignore
                 case FunctionResultContent():
                     args["tool_call_id"] = content.call_id
-                    args["content"] = content.result
+                    results: list[Any] = []
+                    if content.result:
+                        if isinstance(content.result, list):
+                            for item in content.result:
+                                if isinstance(item, BaseModel):
+                                    results.append(
+                                        item.model_dump_json(exclude_none=True, exclude={"raw_representation"})
+                                    )
+                                else:
+                                    results.append(json.dumps(item))
+                        else:
+                            if isinstance(content.result, BaseModel):
+                                results.append(
+                                    content.result.model_dump_json(exclude_none=True, exclude={"raw_representation"})
+                                )
+                            else:
+                                results.append(json.dumps(content.result))
+                    args["content"] = results if len(results) > 1 else results[0] if results else None
                 case _:
                     if "content" not in args:
                         args["content"] = []

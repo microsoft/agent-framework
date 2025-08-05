@@ -1064,7 +1064,7 @@ class ChatRole(AFBaseModel):
         TOOL: The role that provides additional information and references in response to tool use requests.
     """
 
-    value: str
+    value: str = Field(..., kw_only=False)
 
     SYSTEM: ClassVar[Self]  # type: ignore[assignment]
     """The role that instructs or sets the behaviour of the AI system."""

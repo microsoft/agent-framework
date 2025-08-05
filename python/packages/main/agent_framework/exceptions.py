@@ -68,3 +68,15 @@ class ServiceInvalidResponseError(ServiceResponseException):
     """An error occurred while validating the response from the service."""
 
     pass
+
+
+class FunctionException(AgentFrameworkException):
+    """An error occurred while executing a function."""
+
+    pass
+
+
+class FunctionExecutionException(FunctionException):
+    """An error occurred while executing a function."""
+
+    pass

@@ -53,9 +53,10 @@ class AIFunction(AITool, Generic[ArgsT, ReturnT]):
 
     def __init__(
         self,
-        func: Callable[..., Awaitable[ReturnT] | ReturnT],
         name: str,
-        description: str,
+        *,
+        func: Callable[..., Awaitable[ReturnT] | ReturnT],
+        description: str | None = None,
         input_model: type[ArgsT],
         **kwargs: Any,
     ):
