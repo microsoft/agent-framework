@@ -22,6 +22,14 @@ from ._executor import (
     RequestInfoMessage,
     message_handler,
 )
+from ._validation import (
+    EdgeDuplicationError,
+    GraphConnectivityError,
+    TypeCompatibilityError,
+    ValidationTypeEnum,
+    WorkflowValidationError,
+    validate_workflow_graph,
+)
 from ._workflow import WorkflowBuilder
 from ._workflow_context import WorkflowContext
 
@@ -37,20 +45,26 @@ __all__ = [
     "AgentExecutorResponse",
     "AgentRunEvent",
     "AgentRunStreamingEvent",
+    "EdgeDuplicationError",
     "Executor",
     "ExecutorCompleteEvent",
     "ExecutorEvent",
     "ExecutorInvokeEvent",
+    "GraphConnectivityError",
     "RequestInfoEvent",
     "RequestInfoEvent",
     "RequestInfoExecutor",
     "RequestInfoExecutor",
     "RequestInfoMessage",
+    "TypeCompatibilityError",
+    "ValidationTypeEnum",
     "WorkflowBuilder",
     "WorkflowCompletedEvent",
     "WorkflowContext",
     "WorkflowEvent",
     "WorkflowStartedEvent",
+    "WorkflowValidationError",
     "__version__",
     "message_handler",
+    "validate_workflow_graph",
 ]

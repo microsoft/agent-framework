@@ -10,6 +10,7 @@ from ._executor import Executor, RequestInfoExecutor
 from ._runner import Runner
 from ._runner_context import InProcRunnerContext, RunnerContext
 from ._shared_state import SharedState
+from ._validation import validate_workflow_graph
 from ._workflow_context import WorkflowContext
 
 if sys.version_info >= (3, 11):
@@ -216,10 +217,19 @@ class WorkflowBuilder(Generic[TIn]):
     def build(self) -> Workflow:
         """Build and return the constructed workflow.
 
+        This method performs validation before building the workflow.
+
         Returns:
             A Workflow instance with the defined edges and starting executor.
+
+        Raises:
+            ValueError: If starting executor is not set.
+            WorkflowValidationError: If workflow validation fails (includes EdgeDuplicationError,
+                TypeCompatibilityError, and GraphConnectivityError subclasses).
         """
         if not self._start_executor:
             raise ValueError("Starting executor must be set before building the workflow.")
+
+        validate_workflow_graph(self._edges, self._start_executor)
 
         return Workflow(self._edges, self._start_executor, InProcRunnerContext())
