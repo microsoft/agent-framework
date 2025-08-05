@@ -25,8 +25,12 @@ from ._workflow_context import WorkflowContext
 class Executor:
     """An executor is a component that processes messages in a workflow."""
 
-    def __init__(self, id: str | None = None):
-        """Initialize the executor with a unique identifier."""
+    def __init__(self, id: str | None = None) -> None:
+        """Initialize the executor with a unique identifier.
+
+        Args:
+            id: A unique identifier for the executor. If None, a new UUID will be generated.
+        """
         self._id = id or str(uuid.uuid4())
 
         self._message_handlers: dict[type, Callable[[Any, WorkflowContext], Any]] = {}
@@ -38,11 +42,7 @@ class Executor:
                 "Please define at least one message handler using the @message_handler decorator."
             )
 
-    async def execute(
-        self,
-        message: Any,
-        context: WorkflowContext,
-    ) -> None:
+    async def execute(self, message: Any, context: WorkflowContext) -> None:
         """Execute the executor with a given message and context.
 
         Args:
@@ -225,7 +225,15 @@ class AgentExecutor(Executor):
         streaming: bool = False,
         id: str | None = None,
     ):
-        """Initialize the executor with a unique identifier."""
+        """Initialize the executor with a unique identifier.
+
+        Args:
+            agent: The agent to be wrapped by this executor.
+            agent_thread: The thread to use for running the agent. If None, a new thread will be created.
+            streaming: Whether to enable streaming for the agent. If enabled, the executor will emit
+                AgentRunStreamingEvent updates instead of a single AgentRunEvent.
+            id: A unique identifier for the executor. If None, a new UUID will be generated.
+        """
         super().__init__(id or agent.id)
         self._agent = agent
         self._agent_thread = agent_thread or self._agent.get_new_thread()

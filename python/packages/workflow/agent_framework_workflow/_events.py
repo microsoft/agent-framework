@@ -53,19 +53,6 @@ class WorkflowErrorEvent(WorkflowEvent):
         return f"{self.__class__.__name__}(exception={self.data})"
 
 
-class ExecutorEvent(WorkflowEvent):
-    """Base class for executor events."""
-
-    def __init__(self, executor_id: str, data: Any | None = None):
-        """Initialize the executor event with an executor ID and optional data."""
-        super().__init__(data)
-        self.executor_id = executor_id
-
-    def __repr__(self):
-        """Return a string representation of the executor event."""
-        return f"{self.__class__.__name__}(executor_id={self.executor_id}, data={self.data})"
-
-
 class RequestInfoEvent(WorkflowEvent):
     """Event triggered when a workflow executor requests external information."""
 
@@ -98,6 +85,19 @@ class RequestInfoEvent(WorkflowEvent):
             f"request_type={self.request_type.__name__}, "
             f"data={self.data})"
         )
+
+
+class ExecutorEvent(WorkflowEvent):
+    """Base class for executor events."""
+
+    def __init__(self, executor_id: str, data: Any | None = None):
+        """Initialize the executor event with an executor ID and optional data."""
+        super().__init__(data)
+        self.executor_id = executor_id
+
+    def __repr__(self):
+        """Return a string representation of the executor event."""
+        return f"{self.__class__.__name__}(executor_id={self.executor_id}, data={self.data})"
 
 
 class ExecutorInvokeEvent(ExecutorEvent):

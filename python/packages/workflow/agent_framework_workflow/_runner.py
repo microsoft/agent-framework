@@ -24,7 +24,15 @@ class Runner:
         shared_state: SharedState,
         ctx: RunnerContext,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
-    ):
+    ) -> None:
+        """Initialize the runner with edges, shared state, and context.
+
+        Args:
+            edges: The edges of the workflow.
+            shared_state: The shared state for the workflow.
+            ctx: The runner context for the workflow.
+            max_iterations: The maximum number of iterations to run.
+        """
         self._edge_map = self._parse_edges(edges)
         self._ctx = ctx
         self._iteration = 0

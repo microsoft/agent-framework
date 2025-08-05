@@ -4,7 +4,15 @@ from typing import Any, Union, get_args, get_origin
 
 
 def is_instance_of(data: Any, target_type: type) -> bool:
-    """Check if the data is an instance of the target type."""
+    """Check if the data is an instance of the target type.
+
+    Args:
+        data (Any): The data to check.
+        target_type (type): The type to check against.
+
+    Returns:
+        bool: True if data is an instance of target_type, False otherwise.
+    """
     origin = get_origin(target_type)
     args = get_args(target_type)
 

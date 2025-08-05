@@ -29,7 +29,6 @@ class RunnerContext(Protocol):
         """Send a message from the executor to the context.
 
         Args:
-            source_id: The ID of the executor sending the message.
             message: The message to be sent.
         """
         ...

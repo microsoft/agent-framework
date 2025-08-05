@@ -40,7 +40,13 @@ class WorkflowContext:
             raise ValueError("source_executor_ids cannot be empty. At least one source executor ID is required.")
 
     async def send_message(self, message: Any, target_id: str | None = None) -> None:
-        """Send a message to the workflow context."""
+        """Send a message to the workflow context.
+
+        Args:
+            message: The message to send. This can be any data type that the target executor can handle.
+            target_id: The ID of the target executor to send the message to.
+                       If None, the message will be sent to all target executors.
+        """
         await self._runner_context.send_message(
             Message(
                 data=message,

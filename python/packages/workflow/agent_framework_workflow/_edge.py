@@ -20,8 +20,16 @@ class Edge:
         source: Executor,
         target: Executor,
         condition: Callable[[Any], bool] | None = None,
-    ):
-        """Initialize the edge with a source and target node."""
+    ) -> None:
+        """Initialize the edge with a source and target node.
+
+        Args:
+            source (Executor): The source executor of the edge.
+            target (Executor): The target executor of the edge.
+            condition (Callable[[Any], bool], optional): A condition function that determines
+                if the edge can handle the data. If None, the edge can handle any data type.
+                Defaults to None.
+        """
         self.source = source
         self.target = target
         self._condition = condition
@@ -51,7 +59,14 @@ class Edge:
 
     @classmethod
     def source_and_target_from_id(cls, edge_id: str) -> tuple[str, str]:
-        """Extract the source and target IDs from the edge ID."""
+        """Extract the source and target IDs from the edge ID.
+
+        Args:
+            edge_id (str): The edge ID in the format "source_id->target_id".
+
+        Returns:
+            tuple[str, str]: A tuple containing the source ID and target ID.
+        """
         if cls.ID_SEPARATOR not in edge_id:
             raise ValueError(f"Invalid edge ID format: {edge_id}")
         ids = edge_id.split(cls.ID_SEPARATOR)
@@ -60,7 +75,14 @@ class Edge:
         return ids[0], ids[1]
 
     def can_handle(self, message_data: Any) -> bool:
-        """Check if the edge can handle the given data."""
+        """Check if the edge can handle the given data.
+
+        Args:
+            message_data (Any): The data to check.
+
+        Returns:
+            bool: True if the edge can handle the data, False otherwise.
+        """
         if not self._edge_group_ids:
             return self.target.can_handle(message_data)
 
@@ -68,7 +90,13 @@ class Edge:
         return self.target.can_handle([message_data])
 
     async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> None:
-        """Send a message along this edge."""
+        """Send a message along this edge.
+
+        Args:
+            message (Message): The message to send.
+            shared_state (SharedState): The shared state to use for holding data.
+            ctx (RunnerContext): The context for the runner.
+        """
         if not self.can_handle(message.data):
             raise RuntimeError(f"Edge {self.id} cannot handle data of type {type(message.data)}.")
 
@@ -111,7 +139,11 @@ class Edge:
         return self._condition(data)
 
     def set_edge_group(self, edge_group_ids: list[str]) -> None:
-        """Set the edge group IDs for this edge."""
+        """Set the edge group IDs for this edge.
+
+        Args:
+            edge_group_ids (list[str]): A list of edge IDs that belong to the same edge group.
+        """
         # Validate that the edges in the edge group contain the same target executor as this edge
         # TODO(@taochen): An edge cannot be part of multiple edge groups.
         # TODO(@taochen): Can an edge have both a condition and an edge group?

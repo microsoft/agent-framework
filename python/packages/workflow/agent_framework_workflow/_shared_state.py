@@ -8,7 +8,7 @@ from typing import Any
 class SharedState:
     """A class to manage shared state in a workflow."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the shared state."""
         self._state: dict[str, Any] = {}
         self._shared_state_lock = asyncio.Lock()

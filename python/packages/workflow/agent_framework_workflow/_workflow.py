@@ -105,6 +105,9 @@ class Workflow:
 
         Args:
             message: The message to be sent to the starting executor.
+
+        Yields:
+            WorkflowEvent: The events generated during the workflow execution.
         """
         executor = self._start_executor
         if isinstance(executor, str):
@@ -132,6 +135,9 @@ class Workflow:
         Args:
             responses: The responses to be sent back to the workflow, where keys are request IDs
                        and values are the corresponding response data.
+
+        Yields:
+            WorkflowEvent: The events generated during the workflow execution after sending the responses.
         """
         request_info_executor = self._get_executor_by_id(RequestInfoExecutor.EXECUTOR_ID)
         if not isinstance(request_info_executor, RequestInfoExecutor):
@@ -217,6 +223,8 @@ class WorkflowBuilder:
     ) -> "Self":
         """Add a directed edge between two executors.
 
+        The output types of the source and the input types of the target must be compatible.
+
         Args:
             source: The source executor of the edge.
             target: The target executor of the edge.
@@ -230,6 +238,7 @@ class WorkflowBuilder:
     def add_fan_out_edges(self, source: Executor, targets: Sequence[Executor]) -> "Self":
         """Add multiple edges to the workflow.
 
+        The output types of the source and the input types of the targets must be compatible.
         Messages from the source executor will be sent to all target executors.
 
         Args:
@@ -240,15 +249,35 @@ class WorkflowBuilder:
             self._edges.append(Edge(source, target))
         return self
 
-    def add_fan_in_edges(
-        self,
-        sources: Sequence[Executor],
-        target: Executor,
-    ) -> "Self":
+    def add_fan_in_edges(self, sources: Sequence[Executor], target: Executor) -> "Self":
         """Add multiple edges from sources to a single target executor.
 
         The edges will be grouped together for synchronized processing, meaning
         the target executor will only be executed once all source executors have completed.
+
+        The target executor will receive a list of messages aggregated from all source executors.
+        Thus the input types of the target executor must be compatible with a list of the output
+        types of the source executors. For example:
+
+            class Target(Executor):
+                @message_handler
+                def handle_messages(self, messages: list[Message]) -> None:
+                    # Process the aggregated messages from all sources
+
+            class Source(Executor):
+                @message_handler(output_type=[Message])
+                def handle_message(self, message: Message) -> None:
+                    # Send a message to the target executor
+                    self.send_message(message)
+
+            workflow = (
+                WorkflowBuilder()
+                .add_fan_in_edges(
+                    [Source(id="source1"), Source(id="source2")],
+                    Target(id="target")
+                )
+                .build()
+            )
 
         Args:
             sources: A list of source executors for the edges.
@@ -267,11 +296,13 @@ class WorkflowBuilder:
 
         return self
 
-    def add_chain(
-        self,
-        executors: Sequence[Executor],
-    ) -> "Self":
+    def add_chain(self, executors: Sequence[Executor]) -> "Self":
         """Add a chain of executors to the workflow.
+
+        The output of each executor in the chain will be sent to the next executor in the chain.
+        The input types of each executor must be compatible with the output types of the previous executor.
+
+        Circles in the chain are not allowed, meaning the chain cannot have two executors with the same ID.
 
         Args:
             executors: A list of executors to be added to the chain.
