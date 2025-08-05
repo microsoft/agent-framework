@@ -24,8 +24,8 @@ public class ChatClientAgentThreadTests
         var thread = new ChatClientAgentThread();
 
         // Assert
-        Assert.IsAssignableFrom<IMessagesRetrievableThread>(thread);
-        Assert.IsAssignableFrom<AgentThread>(thread);
+        Assert.IsType<IMessagesRetrievableThread>(thread, exactMatch: false);
+        Assert.IsType<AgentThread>(thread, exactMatch: false);
     }
 
     /// <summary>

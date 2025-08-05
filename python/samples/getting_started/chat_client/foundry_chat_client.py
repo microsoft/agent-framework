@@ -17,19 +17,19 @@ def get_weather(
 
 
 async def main() -> None:
-    client = FoundryChatClient()
-    message = "What's the weather in Amsterdam and in Paris?"
-    stream = False
-    print(f"User: {message}")
-    if stream:
-        print("Assistant: ", end="")
-        async for chunk in client.get_streaming_response(message, tools=get_weather):
-            if str(chunk):
-                print(str(chunk), end="")
-        print("")
-    else:
-        response = await client.get_response(message, tools=get_weather)
-        print(f"Assistant: {response}")
+    async with FoundryChatClient() as client:
+        message = "What's the weather in Amsterdam and in Paris?"
+        stream = False
+        print(f"User: {message}")
+        if stream:
+            print("Assistant: ", end="")
+            async for chunk in client.get_streaming_response(message, tools=get_weather):
+                if str(chunk):
+                    print(str(chunk), end="")
+            print("")
+        else:
+            response = await client.get_response(message, tools=get_weather)
+            print(f"Assistant: {response}")
 
 
 if __name__ == "__main__":

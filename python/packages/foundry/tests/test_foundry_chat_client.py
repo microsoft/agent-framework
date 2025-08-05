@@ -45,6 +45,7 @@ def create_test_foundry_chat_client(
         thread_id=thread_id,
         _should_delete_agent=should_delete_agent,
         _foundry_settings=foundry_settings,
+        credential=None,
     )
 
 
@@ -95,6 +96,7 @@ def test_foundry_chat_client_init_auto_create_client(
         thread_id=None,
         _should_delete_agent=False,
         _foundry_settings=foundry_settings,
+        credential=None,
     )
 
     assert chat_client.client is mock_ai_project_client

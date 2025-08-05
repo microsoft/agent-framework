@@ -29,7 +29,7 @@ public class AgentRunResponseUpdateTests
     {
         ChatResponseUpdate chatResponseUpdate = new()
         {
-            AdditionalProperties = new(),
+            AdditionalProperties = [],
             AuthorName = "author",
             Contents = [new TextContent("hello")],
             ConversationId = "conversationId",
