@@ -5,7 +5,7 @@ import importlib.metadata
 from ._events import (
     AgentRunEvent,
     AgentRunStreamingEvent,
-    ExecutorCompleteEvent,
+    ExecutorCompletedEvent,
     ExecutorEvent,
     ExecutorInvokeEvent,
     RequestInfoEvent,
@@ -30,7 +30,7 @@ from ._validation import (
     WorkflowValidationError,
     validate_workflow_graph,
 )
-from ._workflow import WorkflowBuilder
+from ._workflow import Workflow, WorkflowBuilder, WorkflowRunResult
 from ._workflow_context import WorkflowContext
 
 try:
@@ -47,7 +47,7 @@ __all__ = [
     "AgentRunStreamingEvent",
     "EdgeDuplicationError",
     "Executor",
-    "ExecutorCompleteEvent",
+    "ExecutorCompletedEvent",
     "ExecutorEvent",
     "ExecutorInvokeEvent",
     "GraphConnectivityError",
@@ -58,10 +58,12 @@ __all__ = [
     "RequestInfoMessage",
     "TypeCompatibilityError",
     "ValidationTypeEnum",
+    "Workflow",
     "WorkflowBuilder",
     "WorkflowCompletedEvent",
     "WorkflowContext",
     "WorkflowEvent",
+    "WorkflowRunResult",
     "WorkflowStartedEvent",
     "WorkflowValidationError",
     "__version__",

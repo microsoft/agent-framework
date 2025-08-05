@@ -45,6 +45,10 @@ class Edge:
         """Get the unique ID of the edge."""
         return f"{self.source_id}{self.ID_SEPARATOR}{self.target_id}"
 
+    def has_edge_group(self) -> bool:
+        """Check if the edge is part of an edge group."""
+        return bool(self._edge_group_ids)
+
     @classmethod
     def source_and_target_from_id(cls, edge_id: str) -> tuple[str, str]:
         """Extract the source and target IDs from the edge ID."""

@@ -188,9 +188,15 @@ class WorkflowGraphValidator:
 
             for source_type in source_output_types:
                 for target_type in target_input_types:
-                    if self._is_type_compatible(source_type, target_type):
-                        compatible = True
-                        compatible_pairs.append((source_type, target_type))
+                    if edge.has_edge_group():
+                        # If the edge is part of an edge group, the target expects a list of data types
+                        if self._is_type_compatible(list[source_type], target_type):
+                            compatible = True
+                            compatible_pairs.append((list[source_type], target_type))
+                    else:
+                        if self._is_type_compatible(source_type, target_type):
+                            compatible = True
+                            compatible_pairs.append((source_type, target_type))
 
             # Log successful type compatibility for debugging
             if compatible:

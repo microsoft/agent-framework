@@ -26,6 +26,15 @@ class StringExecutor(Executor):
         await ctx.send_message(message.upper())
 
 
+class StringAggregator(Executor):
+    """A mock executor that aggregates results from multiple executors."""
+
+    @message_handler(output_types=[str])
+    async def mock_handler(self, messages: list[str], ctx: WorkflowContext) -> None:
+        # This mock simply returns the data incremented by 1
+        await ctx.send_message("Aggregated: " + ", ".join(messages))
+
+
 class IntExecutor(Executor):
     @message_handler(output_types=[int])
     async def handle_int(self, message: int, ctx: WorkflowContext) -> None:
@@ -255,7 +264,7 @@ def test_fan_in_validation():
     start_executor = StringExecutor(id="start")
     source1 = StringExecutor(id="source1")
     source2 = StringExecutor(id="source2")
-    target = StringExecutor(id="target")
+    target = StringAggregator(id="target")
 
     # Create a proper fan-in by having a start executor that connects to both sources
     workflow = (

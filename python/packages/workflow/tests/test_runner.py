@@ -1,7 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 from dataclasses import dataclass
 
+import pytest
 from agent_framework.workflow import Executor, WorkflowCompletedEvent, WorkflowContext, WorkflowEvent, message_handler
 
 from agent_framework_workflow._edge import Edge
@@ -22,7 +24,6 @@ class MockExecutor(Executor):
 
     @message_handler(output_types=[MockMessage])
     async def mock_handler(self, message: MockMessage, ctx: WorkflowContext) -> None:
-        """A mock handler that does nothing."""
         if message.data < 10:
             await ctx.send_message(MockMessage(data=message.data + 1))
         else:
@@ -60,10 +61,23 @@ async def test_runner_run_until_convergence():
     ctx = InProcRunnerContext()
 
     runner = Runner(edges, shared_state, ctx)
+
+    result: int | None = None
+    await executor_a.execute(
+        MockMessage(data=0),
+        WorkflowContext(
+            executor_id=executor_a.id,
+            source_executor_ids=["START"],
+            shared_state=shared_state,
+            runner_context=ctx,
+        ),
+    )
     async for event in runner.run_until_convergence():
         assert isinstance(event, WorkflowEvent)
         if isinstance(event, WorkflowCompletedEvent):
-            assert event.data == 10
+            result = event.data
+
+    assert result is not None and result == 10
 
 
 async def test_runner_run_until_convergence_not_completed():
@@ -81,5 +95,51 @@ async def test_runner_run_until_convergence_not_completed():
     ctx = InProcRunnerContext()
 
     runner = Runner(edges, shared_state, ctx, max_iterations=5)
-    async for event in runner.run_until_convergence():
-        assert not isinstance(event, WorkflowCompletedEvent)
+
+    await executor_a.execute(
+        MockMessage(data=0),
+        WorkflowContext(
+            executor_id=executor_a.id,
+            source_executor_ids=["START"],
+            shared_state=shared_state,
+            runner_context=ctx,
+        ),
+    )
+    with pytest.raises(RuntimeError, match="Runner did not converge after 5 iterations."):
+        async for event in runner.run_until_convergence():
+            assert not isinstance(event, WorkflowCompletedEvent)
+
+
+async def test_runner_already_running():
+    """Test that running the runner while it is already running raises an error."""
+    executor_a = MockExecutor(id="executor_a")
+    executor_b = MockExecutor(id="executor_b")
+
+    # Create a loop
+    edges = [
+        Edge(source=executor_a, target=executor_b),
+        Edge(source=executor_b, target=executor_a),
+    ]
+
+    shared_state = SharedState()
+    ctx = InProcRunnerContext()
+
+    runner = Runner(edges, shared_state, ctx)
+
+    await executor_a.execute(
+        MockMessage(data=0),
+        WorkflowContext(
+            executor_id=executor_a.id,
+            source_executor_ids=["START"],
+            shared_state=shared_state,
+            runner_context=ctx,
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="Runner is already running."):
+
+        async def _run():
+            async for _ in runner.run_until_convergence():
+                pass
+
+        await asyncio.gather(_run(), _run())

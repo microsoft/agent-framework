@@ -12,6 +12,8 @@ from ._shared_state import SharedState
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_MAX_ITERATIONS = 100
+
 
 class Runner:
     """A class to run a workflow in Pregel supersteps."""
@@ -21,13 +23,14 @@ class Runner:
         edges: list[Edge],
         shared_state: SharedState,
         ctx: RunnerContext,
-        max_iterations: int = 100,
+        max_iterations: int = DEFAULT_MAX_ITERATIONS,
     ):
         self._edge_map = self._parse_edges(edges)
         self._ctx = ctx
         self._iteration = 0
         self._max_iterations = max_iterations
         self._shared_state = shared_state
+        self._is_running = False
 
     @property
     def context(self) -> RunnerContext:
@@ -36,19 +39,26 @@ class Runner:
 
     async def run_until_convergence(self) -> AsyncIterable[WorkflowEvent]:
         """Run the workflow until no more messages are sent."""
-        while self._iteration < self._max_iterations:
-            await self._run_iteration()
-            self._iteration += 1
+        try:
+            if self._is_running:
+                raise RuntimeError("Runner is already running.")
+            self._is_running = True
+            while self._iteration < self._max_iterations:
+                await self._run_iteration()
+                self._iteration += 1
 
-            if await self._ctx.has_events():
-                events = await self._ctx.drain_events()
-                for event in events:
-                    yield event
+                if await self._ctx.has_events():
+                    events = await self._ctx.drain_events()
+                    for event in events:
+                        yield event
 
-            if not await self._ctx.has_messages():
-                break
-
-        self._iteration = 0
+                if not await self._ctx.has_messages():
+                    break
+            else:
+                raise RuntimeError(f"Runner did not converge after {self._max_iterations} iterations.")
+        finally:
+            self._is_running = False
+            self._iteration = 0
 
     async def _run_iteration(self):
         """Run a superstep of the workflow execution."""

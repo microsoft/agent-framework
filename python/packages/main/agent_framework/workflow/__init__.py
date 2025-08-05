@@ -11,7 +11,7 @@ _IMPORTS = [
     "__version__",
     "events",
     "WorkflowBuilder",
-    "ExecutorCompleteEvent",
+    "ExecutorCompletedEvent",
     "ExecutorEvent",
     "ExecutorInvokeEvent",
     "RequestInfoEvent",
@@ -26,6 +26,8 @@ _IMPORTS = [
     "AgentExecutorResponse",
     "RequestInfoExecutor",
     "RequestInfoMessage",
+    "WorkflowRunResult",
+    "Workflow",
 ]
 
 

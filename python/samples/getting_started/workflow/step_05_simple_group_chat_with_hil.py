@@ -185,17 +185,16 @@ async def main():
         # Depending on whether we have a RequestInfoEvent event, we either
         # run the workflow normally or send the message to the HIL executor.
         if not request_info_event:
-            response = workflow.run_stream(
+            response_stream = workflow.run_stream(
                 "Create a slogan for a new electric SUV that is affordable and fun to drive."
             )
         else:
-            response = workflow.send_response(
-                [ChatMessage(ChatRole.USER, text=user_input)],
-                request_info_event.request_id,
-            )
+            response_stream = workflow.send_responses_stream({
+                request_info_event.request_id: [ChatMessage(ChatRole.USER, text=user_input)]
+            })
             request_info_event = None
 
-        async for event in response:
+        async for event in response_stream:
             print(event)
 
             if isinstance(event, WorkflowCompletedEvent):

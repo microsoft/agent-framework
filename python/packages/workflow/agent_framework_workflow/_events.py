@@ -108,7 +108,7 @@ class ExecutorInvokeEvent(ExecutorEvent):
         return f"{self.__class__.__name__}(executor_id={self.executor_id})"
 
 
-class ExecutorCompleteEvent(ExecutorEvent):
+class ExecutorCompletedEvent(ExecutorEvent):
     """Event triggered when an executor handler is completed."""
 
     def __repr__(self):

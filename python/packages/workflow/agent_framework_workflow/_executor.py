@@ -9,7 +9,13 @@ from typing import Any, ClassVar, TypeVar, overload
 
 from agent_framework import AgentRunResponse, AgentRunResponseUpdate, AgentThread, AIAgent, ChatMessage
 
-from ._events import AgentRunEvent, AgentRunStreamingEvent, ExecutorCompleteEvent, ExecutorInvokeEvent, RequestInfoEvent
+from ._events import (
+    AgentRunEvent,
+    AgentRunStreamingEvent,
+    ExecutorCompletedEvent,
+    ExecutorInvokeEvent,
+    RequestInfoEvent,
+)
 from ._typing_utils import is_instance_of
 from ._workflow_context import WorkflowContext
 
@@ -57,7 +63,7 @@ class Executor:
 
         await context.add_event(ExecutorInvokeEvent(self.id))
         await handler(message, context)
-        await context.add_event(ExecutorCompleteEvent(self.id))
+        await context.add_event(ExecutorCompletedEvent(self.id))
 
     @property
     def id(self) -> str:
