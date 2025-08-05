@@ -111,5 +111,5 @@ module-name = "agent_framework"
 module-root = ""
 
 [build-system]
-requires = ["uv_build>=0.8.2,<0.9.0"]
-build-backend = "uv_build"
+requires = ["flit-core >= 3.9,<4.0"]
+build-backend = "flit_core.buildapi"

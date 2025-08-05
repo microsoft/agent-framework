@@ -224,13 +224,13 @@ Prefer attributes over inheritance when parameters are mostly the same:
 
 ```python
 # ✅ Preferred - using attributes
-from agent_framework import ChatMessage
+from ... import ChatMessage
 
 user_msg = ChatMessage(role="user", content="Hello, world!")
 asst_msg = ChatMessage(role="assistant", content="Hello, world!")
 
 # ❌ Not preferred - unnecessary inheritance
-from agent_framework import UserMessage, AssistantMessage
+from ... import UserMessage, AssistantMessage
 
 user_msg = UserMessage(content="Hello, world!")
 asst_msg = AssistantMessage(content="Hello, world!")

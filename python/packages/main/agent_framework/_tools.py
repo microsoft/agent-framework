@@ -73,6 +73,9 @@ DEFAULT_MAX_ITERATIONS: Final[int] = 10
 TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol")
 # region Helpers
 
+ArgsT = TypeVar("ArgsT", bound=BaseModel)
+ReturnT = TypeVar("ReturnT")
+
 
 def _parse_inputs(
     inputs: "Contents | dict[str, Any] | str | list[Contents | dict[str, Any] | str] | None",
@@ -121,13 +124,10 @@ def _parse_inputs(
 class ToolProtocol(Protocol):
     """Represents a generic tool that can be specified to an AI service.
 
-    Attributes:
+    Parameters:
         name: The name of the tool.
         description: A description of the tool.
         additional_properties: Additional properties associated with the tool.
-
-    Methods:
-        parameters: The parameters accepted by the tool, in a json schema format.
     """
 
     name: str
