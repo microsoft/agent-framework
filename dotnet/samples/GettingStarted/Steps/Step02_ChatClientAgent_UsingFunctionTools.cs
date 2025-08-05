@@ -163,26 +163,14 @@ public sealed class Step02_ChatClientAgent_UsingFunctionTools(ITestOutputHelper 
             {
                 List<ChatMessage> nextIterationMessages = [];
 
-                foreach (var request in userInputRequests)
-                {
-                    if (request is FunctionApprovalRequestContent approvalRequest)
-                    {
-                        if (approvalRequest.FunctionCall.Name == "GetSpecials")
-                        {
-                            Console.WriteLine($"Approving the {approvalRequest.FunctionCall.Name} function call.");
-                            nextIterationMessages.Add(approvalRequest.Approve());
-                        }
-                        else
-                        {
-                            Console.WriteLine($"Rejecting the {approvalRequest.FunctionCall.Name} function call.");
-                            nextIterationMessages.Add(approvalRequest.Reject());
-                        }
-                    }
-                    else
-                    {
-                        throw new NotSupportedException("This type of approval is not supported");
-                    }
-                }
+                var approvedRequests = userInputRequests.OfType<FunctionApprovalRequestContent>().Where(x => x.FunctionCall.Name == "GetSpecials").ToList();
+                var rejectedRequests = userInputRequests.OfType<FunctionApprovalRequestContent>().Where(x => x.FunctionCall.Name != "GetSpecials").ToList();
+
+                approvedRequests.ForEach(x => Console.WriteLine($"Approving the {x.FunctionCall.Name} function call."));
+                rejectedRequests.ForEach(x => Console.WriteLine($"Rejecting the {x.FunctionCall.Name} function call."));
+
+                nextIterationMessages.AddRange(approvedRequests.Select(x => x.Approve()));
+                nextIterationMessages.AddRange(rejectedRequests.Select(x => x.Reject()));
 
                 response = await agent.RunAsync(nextIterationMessages, thread);
                 this.WriteResponseOutput(response);

@@ -12,22 +12,22 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Extensions.AI.Agents;
 
 /// <summary>
-/// Represents a chat client that seeks user approval for function calls.
+/// Represents a chat client that seeks user approval for function calls and sits behind the <see cref="FunctionInvokingChatClient"/>.
 /// </summary>
-public class ApprovalGeneratingChatClient : DelegatingChatClient
+public class PostFICCApprovalGeneratingChatClient : DelegatingChatClient
 {
     /// <summary>The logger to use for logging information about function approval.</summary>
     private readonly ILogger _logger;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="ApprovalGeneratingChatClient"/> class.
+    /// Initializes a new instance of the <see cref="PostFICCApprovalGeneratingChatClient"/> class.
     /// </summary>
     /// <param name="innerClient">The underlying <see cref="IChatClient"/>, or the next instance in a chain of clients.</param>
     /// <param name="loggerFactory">An <see cref="ILoggerFactory"/> to use for logging information about function invocation.</param>
-    public ApprovalGeneratingChatClient(IChatClient innerClient, ILoggerFactory? loggerFactory = null)
+    public PostFICCApprovalGeneratingChatClient(IChatClient innerClient, ILoggerFactory? loggerFactory = null)
         : base(innerClient)
     {
-        this._logger = (ILogger?)loggerFactory?.CreateLogger<ApprovalGeneratingChatClient>() ?? NullLogger.Instance;
+        this._logger = (ILogger?)loggerFactory?.CreateLogger<PostFICCApprovalGeneratingChatClient>() ?? NullLogger.Instance;
     }
 
     /// <inheritdoc />
