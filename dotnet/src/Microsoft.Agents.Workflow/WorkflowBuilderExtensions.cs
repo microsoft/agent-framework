@@ -9,18 +9,6 @@ namespace Microsoft.Agents.Workflows;
 
 internal static class WorkflowBuilderExtensions
 {
-    public static WorkflowBuilder AddLoop(this WorkflowBuilder builder, ExecutorIsh source, ExecutorIsh loopBody, Func<object?, bool>? condition = null)
-    {
-        Throw.IfNull(builder);
-        Throw.IfNull(source);
-        Throw.IfNull(loopBody);
-
-        builder.AddEdge(source, loopBody, condition);
-        builder.AddEdge(loopBody, source);
-
-        return builder;
-    }
-
     public static WorkflowBuilder AddChain(this WorkflowBuilder builder, ExecutorIsh source, params ExecutorIsh[] executors)
     {
         Throw.IfNull(builder);
@@ -62,22 +50,4 @@ internal static class WorkflowBuilderExtensions
         Workflow<TInput> workflow = builder.Build<TInput>();
         return workflow.Promote(outputSink);
     }
-
-    //public static WorkflowBuilder AddMapReduce
 }
-
-//class T
-//{
-//    async Task A()
-//    {
-//        WorkflowBuilder b;
-
-//        Workflow<int, IEnumerable<string>> wf =
-//            WorkflowBuilderExtensions.BuildWithOutput<int, string, IEnumerable<string>>(b, "my_last_node", StreamingAggregators.Union<string>());
-
-//        LocalRunner<int, IEnumerable<string>> runner = new(wf);
-
-//        await runner.RunAsync(42).ConfigureAwait(false);
-//        var result = runner.RunningOutput;
-//    }
-//}
