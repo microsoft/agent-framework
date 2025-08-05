@@ -371,8 +371,8 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
     {
         if (this._openTelementryChatClient is not null)
         {
-            // If the agent is a ChatClientAgent and its innerChatClient already has telemetry enabled, the logging will be skipped
-            // to prevent duplication of telemetry data.
+            // To avoid duplication of telemetry data the logging will be skipped if the agent is a ChatClientAgent and
+            // its innerChatClient already has telemetry enabled, 
             return;
         }
 
@@ -385,15 +385,15 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
         {
             if (message.Role == ChatRole.Assistant)
             {
-                this.Log(new(1, OpenTelemetryConsts.GenAI.Assistant.Message),
+                this.Log(new EventId(1, OpenTelemetryConsts.GenAI.Assistant.Message),
                     JsonSerializer.Serialize(this.CreateAssistantEvent(message.Contents), OtelContext.Default.AssistantEvent));
             }
             else if (message.Role == ChatRole.Tool)
             {
                 foreach (FunctionResultContent frc in message.Contents.OfType<FunctionResultContent>())
                 {
-                    this.Log(new(1, OpenTelemetryConsts.GenAI.Tool.Message),
-                        JsonSerializer.Serialize(new()
+                    this.Log(new EventId(1, OpenTelemetryConsts.GenAI.Tool.Message),
+                        JsonSerializer.Serialize(new ToolEvent()
                         {
                             Id = frc.CallId,
                             Content = this.EnableSensitiveData && frc.Result is object result ?
@@ -404,8 +404,8 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
             }
             else
             {
-                this.Log(new(1, message.Role == ChatRole.System ? OpenTelemetryConsts.GenAI.System.Message : OpenTelemetryConsts.GenAI.User.Message),
-                    JsonSerializer.Serialize(new()
+                this.Log(new EventId(1, message.Role == ChatRole.System ? OpenTelemetryConsts.GenAI.System.Message : OpenTelemetryConsts.GenAI.User.Message),
+                    JsonSerializer.Serialize(new SystemOrUserEvent()
                     {
                         Role = message.Role != ChatRole.System && message.Role != ChatRole.User && !string.IsNullOrWhiteSpace(message.Role.Value) ? message.Role.Value : null,
                         Content = this.GetMessageContent(message.Contents),
@@ -422,7 +422,7 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
         }
 
         EventId id = new(1, OpenTelemetryConsts.GenAI.Choice);
-        this.Log(id, JsonSerializer.Serialize(new()
+        this.Log(id, JsonSerializer.Serialize(new ChoiceEvent()
         {
             FinishReason = response.FinishReason?.Value ?? "error",
             Index = 0,
