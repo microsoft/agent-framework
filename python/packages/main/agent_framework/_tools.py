@@ -516,11 +516,20 @@ def ai_function(
     In order to add descriptions to parameters, in your function signature,
     use the `Annotated` type from `typing` and the `Field` class from `pydantic`:
 
-            from typing import Annotated
+    Example:
 
+        .. code-block:: python
+
+            from typing import Annotated
             from pydantic import Field
 
-            <field_name>: Annotated[<type>, Field(description="<description>")]
+
+            def ai_function_example(
+                arg1: Annotated[str, Field(description="The first argument")],
+                arg2: Annotated[int, Field(description="The second argument")],
+            ) -> str:
+                # An example function that takes two arguments and returns a string.
+                return f"arg1: {arg1}, arg2: {arg2}"
 
     Args:
         func: The function to wrap. If None, returns a decorator.
