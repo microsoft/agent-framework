@@ -2,7 +2,6 @@
 
   <PropertyGroup>
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
-    <NoWarn>$(NoWarn);Moq1410;</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

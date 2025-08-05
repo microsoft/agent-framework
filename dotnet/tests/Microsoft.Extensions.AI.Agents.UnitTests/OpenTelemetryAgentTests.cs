@@ -12,8 +12,6 @@ using Moq;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 
-#pragma warning disable Moq1410 // Moq: Set MockBehavior to Strict
-
 namespace Microsoft.Extensions.AI.Agents.UnitTests;
 
 public class OpenTelemetryAgentTests

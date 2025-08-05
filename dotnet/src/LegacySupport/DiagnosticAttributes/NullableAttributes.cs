@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-#pragma warning disable CA1019
+#pragma warning disable CA1019, RCS1251
 
 namespace System.Diagnostics.CodeAnalysis;
 
@@ -8,22 +8,30 @@ namespace System.Diagnostics.CodeAnalysis;
 /// <summary>Specifies that null is allowed as an input even if the corresponding type disallows it.</summary>
 [AttributeUsage(AttributeTargets.Field | AttributeTargets.Parameter | AttributeTargets.Property, Inherited = false)]
 [ExcludeFromCodeCoverage]
-internal sealed class AllowNullAttribute : Attribute;
+internal sealed class AllowNullAttribute : Attribute
+{
+}
 
 /// <summary>Specifies that null is disallowed as an input even if the corresponding type allows it.</summary>
 [AttributeUsage(AttributeTargets.Field | AttributeTargets.Parameter | AttributeTargets.Property, Inherited = false)]
 [ExcludeFromCodeCoverage]
-internal sealed class DisallowNullAttribute : Attribute;
+internal sealed class DisallowNullAttribute : Attribute
+{
+}
 
 /// <summary>Specifies that an output may be null even if the corresponding type disallows it.</summary>
 [AttributeUsage(AttributeTargets.Field | AttributeTargets.Parameter | AttributeTargets.Property | AttributeTargets.ReturnValue, Inherited = false)]
 [ExcludeFromCodeCoverage]
-internal sealed class MaybeNullAttribute : Attribute;
+internal sealed class MaybeNullAttribute : Attribute
+{
+}
 
 /// <summary>Specifies that an output will not be null even if the corresponding type allows it. Specifies that an input argument was not null when the call returns.</summary>
 [AttributeUsage(AttributeTargets.Field | AttributeTargets.Parameter | AttributeTargets.Property | AttributeTargets.ReturnValue, Inherited = false)]
 [ExcludeFromCodeCoverage]
-internal sealed class NotNullAttribute : Attribute;
+internal sealed class NotNullAttribute : Attribute
+{
+}
 
 /// <summary>Specifies that when a method returns <see cref="ReturnValue"/>, the parameter may be null even if the corresponding type disallows it.</summary>
 [AttributeUsage(AttributeTargets.Parameter, Inherited = false)]

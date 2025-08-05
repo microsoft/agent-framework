@@ -41,7 +41,7 @@ public partial class ConcurrentOrchestration : OrchestratingAgent
                 return f;
             }
 
-            return (AgentRunResponse[] responses, CancellationToken cancellationToken)
+            return (responses, cancellationToken)
                 => Task.FromResult(
                     new AgentRunResponse([.. responses
                         .Where(r => r.Messages.Count > 0)
