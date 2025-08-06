@@ -40,11 +40,11 @@ public sealed class AgentProxy : AIAgent
     public override AgentThread GetNewThread() => new AgentProxyThread();
 
     /// <summary>
-    /// Gets a thread by its <see cref="AgentThread.Id"/>.
+    /// Gets a thread by its <see cref="AgentThread.ConversationId"/>.
     /// </summary>
-    /// <param name="threadId">The thread identifier.</param>
+    /// <param name="conversationId">The thread identifier.</param>
     /// <returns>The thread.</returns>
-    public AgentThread GetThread(string threadId) => new AgentProxyThread(threadId);
+    public AgentThread GetThread(string conversationId) => new AgentProxyThread(conversationId);
 
     /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(
@@ -132,7 +132,7 @@ public sealed class AgentProxy : AIAgent
             throw new ArgumentException("The thread must be an instance of AgentProxyThread.", nameof(thread));
         }
 
-        return agentProxyThread.Id!;
+        return agentProxyThread.ConversationId!;
     }
 
     private async Task<ActorResponseHandle> RunCoreAsync(IReadOnlyCollection<ChatMessage> messages, string threadId, CancellationToken cancellationToken)

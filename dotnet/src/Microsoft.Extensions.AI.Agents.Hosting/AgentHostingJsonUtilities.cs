@@ -54,7 +54,7 @@ public static partial class AgentHostingJsonUtilities
         NumberHandling = JsonNumberHandling.AllowReadingFromString)]
     [JsonSerializable(typeof(AgentRunRequest))]
     [JsonSerializable(typeof(AgentProxyThread))]
-    [JsonSerializable(typeof(ChatClientAgentThread))]
+    [JsonSerializable(typeof(AgentThread))]
     [ExcludeFromCodeCoverage]
     internal sealed partial class JsonContext : JsonSerializerContext;
 }

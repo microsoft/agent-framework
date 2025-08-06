@@ -1,10 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
 using System.Text.RegularExpressions;
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI.Agents.Hosting;
@@ -48,7 +45,7 @@ internal sealed partial class AgentProxyThread : AgentThread
     {
         Throw.IfNullOrEmpty(id);
         ValidateId(id);
-        this.Id = id;
+        this.ConversationId = id;
     }
 
     /// <summary>

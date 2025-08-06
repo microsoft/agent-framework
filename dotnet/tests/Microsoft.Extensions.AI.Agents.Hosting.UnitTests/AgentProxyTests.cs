@@ -686,7 +686,7 @@ public class AgentProxyTests
         }
 
         // Assert
-        var threadIds = threads.Cast<AgentProxyThread>().Select(t => t.Id).ToList();
+        var threadIds = threads.Cast<AgentProxyThread>().Select(t => t.ConversationId).ToList();
         Assert.Equal(10, threadIds.Count);
         Assert.Equal(10, threadIds.Distinct().Count()); // All IDs should be unique
     }

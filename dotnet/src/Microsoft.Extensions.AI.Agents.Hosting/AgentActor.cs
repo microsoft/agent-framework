@@ -37,8 +37,8 @@ internal sealed class AgentActor(
         {
             if (threadResult.Value is { } threadJson)
             {
-                // Deserialize the thread state if it exist
-                this._thread = threadJson.Deserialize(AgentHostingJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ChatClientAgentThread))) as ChatClientAgentThread;
+                // Deserialize the thread state if it exists
+                await agent.DeserializeThreadAsync(threadJson, cancellationToken: cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -123,7 +123,7 @@ internal sealed class AgentActor(
             var serializedRunResponse = JsonSerializer.SerializeToElement(
                 updates.ToAgentRunResponse(),
                 AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentRunResponse)));
-            var updatedThread = JsonSerializer.SerializeToElement(this._thread, AgentHostingJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ChatClientAgentThread)));
+            var updatedThread = JsonSerializer.SerializeToElement(this._thread, AgentHostingJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentThread)));
             var writeResponse = await context.WriteAsync(
                 new(this._etag,
                 [

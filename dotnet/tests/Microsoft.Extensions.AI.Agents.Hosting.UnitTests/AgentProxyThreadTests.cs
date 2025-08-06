@@ -55,7 +55,7 @@ public class AgentProxyThreadTests
         var thread = new AgentProxyThread(id);
 
         // Assert
-        Assert.Equal(id, thread.Id);
+        Assert.Equal(id, thread.ConversationId);
     }
 
     /// <summary>
@@ -102,8 +102,8 @@ public class AgentProxyThreadTests
         var thread = new AgentProxyThread();
 
         // Assert
-        Assert.False(string.IsNullOrEmpty(thread.Id));
-        Assert.True(Guid.TryParseExact(thread.Id, "N", out _), $"Id '{thread.Id}' is not a valid GUID in 'N' format.");
+        Assert.False(string.IsNullOrEmpty(thread.ConversationId));
+        Assert.True(Guid.TryParseExact(thread.ConversationId, "N", out _), $"Id '{thread.ConversationId}' is not a valid GUID in 'N' format.");
     }
 
     /// <summary>
@@ -117,7 +117,7 @@ public class AgentProxyThreadTests
         var thread2 = new AgentProxyThread();
 
         // Assert
-        Assert.NotEqual(thread1.Id, thread2.Id);
+        Assert.NotEqual(thread1.ConversationId, thread2.ConversationId);
     }
 
     /// <summary>
@@ -183,7 +183,7 @@ public class AgentProxyThreadTests
 
             // Assert - Should not throw exception
             var thread = new AgentProxyThread(id);
-            Assert.Equal(id, thread.Id);
+            Assert.Equal(id, thread.ConversationId);
         }
     }
 
@@ -206,7 +206,7 @@ public class AgentProxyThreadTests
         var thread = new AgentProxyThread(id);
 
         // Assert
-        Assert.Equal(id, thread.Id);
+        Assert.Equal(id, thread.ConversationId);
     }
 
     /// <summary>
@@ -269,8 +269,8 @@ public class AgentProxyThreadTests
         var thread = new AgentProxyThread("test-id");
 
         // Assert
-        Assert.NotNull(thread.Id);
-        Assert.Equal("test-id", thread.Id);
+        Assert.NotNull(thread.ConversationId);
+        Assert.Equal("test-id", thread.ConversationId);
     }
 
     /// <summary>
@@ -284,7 +284,7 @@ public class AgentProxyThreadTests
         var thread = new AgentProxyThread(OriginalId);
 
         // Act & Assert
-        Assert.Equal(OriginalId, thread.Id);
+        Assert.Equal(OriginalId, thread.ConversationId);
     }
 
     /// <summary>
@@ -297,9 +297,9 @@ public class AgentProxyThreadTests
         var thread = new AgentProxyThread();
 
         // Assert
-        Assert.NotNull(thread.Id);
-        Assert.Equal(32, thread.Id.Length);
-        Assert.True(Guid.TryParseExact(thread.Id, "N", out var guid));
+        Assert.NotNull(thread.ConversationId);
+        Assert.Equal(32, thread.ConversationId.Length);
+        Assert.True(Guid.TryParseExact(thread.ConversationId, "N", out var guid));
         Assert.NotEqual(Guid.Empty, guid);
     }
 }
