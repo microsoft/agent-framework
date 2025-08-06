@@ -8,7 +8,7 @@ from agent_framework.workflow import (
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
-    message_handler,
+    handler,
 )
 
 """
@@ -35,7 +35,7 @@ class SpamDetector(Executor):
         super().__init__(id=id)
         self._spam_keywords = spam_keywords
 
-    @message_handler(output_types=[SpamDetectorResponse])
+    @handler(output_types=[SpamDetectorResponse])
     async def handle_email(self, email: str, ctx: WorkflowContext) -> None:
         """Determine if the input string is spam."""
         result = any(keyword in email.lower() for keyword in self._spam_keywords)
@@ -46,7 +46,7 @@ class SpamDetector(Executor):
 class SendResponse(Executor):
     """An executor that responds to a message based on spam detection."""
 
-    @message_handler
+    @handler
     async def handle_detector_response(
         self,
         spam_detector_response: SpamDetectorResponse,
@@ -66,7 +66,7 @@ class SendResponse(Executor):
 class RemoveSpam(Executor):
     """An executor that removes spam messages."""
 
-    @message_handler
+    @handler
     async def handle_detector_response(
         self,
         spam_detector_response: SpamDetectorResponse,

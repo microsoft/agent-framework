@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Any
 
-from agent_framework.workflow import Executor, WorkflowContext, message_handler
+from agent_framework.workflow import Executor, WorkflowContext, handler
 
 from agent_framework_workflow._edge import Edge
 
@@ -18,7 +18,7 @@ class MockMessage:
 class MockExecutor(Executor):
     """A mock executor for testing purposes."""
 
-    @message_handler
+    @handler
     async def mock_handler(self, message: MockMessage, ctx: WorkflowContext) -> None:
         """A mock handler that does nothing."""
         pass

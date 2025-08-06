@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
-from agent_framework.workflow import Executor, WorkflowBuilder, WorkflowContext, message_handler
+from agent_framework.workflow import Executor, WorkflowBuilder, WorkflowContext, handler
 
 
 @dataclass
@@ -17,7 +17,7 @@ class MockMessage:
 class MockExecutor(Executor):
     """A mock executor for testing purposes."""
 
-    @message_handler(output_types=[MockMessage])
+    @handler(output_types=[MockMessage])
     async def mock_handler(self, message: MockMessage, ctx: WorkflowContext) -> None:
         """A mock handler that does nothing."""
         pass
@@ -26,7 +26,7 @@ class MockExecutor(Executor):
 class MockAggregator(Executor):
     """A mock executor that aggregates results from multiple executors."""
 
-    @message_handler(output_types=[MockMessage])
+    @handler(output_types=[MockMessage])
     async def mock_handler(self, messages: list[MockMessage], ctx: WorkflowContext) -> None:
         # This mock simply returns the data incremented by 1
         pass

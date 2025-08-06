@@ -9,7 +9,7 @@ from agent_framework.workflow import (
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
-    message_handler,
+    handler,
 )
 
 """
@@ -41,7 +41,7 @@ class GuessNumberExecutor(Executor):
         self._lower = bound[0]
         self._upper = bound[1]
 
-    @message_handler(output_types=[int])
+    @handler(output_types=[int])
     async def guess_number(self, feedback: NumberSignal, ctx: WorkflowContext) -> None:
         """Execute the task by guessing a number."""
         if feedback == NumberSignal.INIT:
@@ -74,7 +74,7 @@ class JudgeExecutor(Executor):
         super().__init__(id=id)
         self._target = target
 
-    @message_handler(output_types=[NumberSignal])
+    @handler(output_types=[NumberSignal])
     async def judge(self, number: int, ctx: WorkflowContext) -> None:
         """Judge the guessed number."""
         if number == self._target:

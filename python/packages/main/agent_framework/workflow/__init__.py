@@ -20,7 +20,7 @@ _IMPORTS = [
     "WorkflowStartedEvent",
     "AgentRunEvent",
     "AgentRunStreamingEvent",
-    "message_handler",
+    "handler",
     "AgentExecutor",
     "AgentExecutorRequest",
     "AgentExecutorResponse",

@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import pytest
-from agent_framework.workflow import Executor, WorkflowContext, message_handler
+from agent_framework.workflow import Executor, WorkflowContext, handler
 
 
 def test_executor_without_handlers():
@@ -24,7 +24,7 @@ def test_executor_handler_without_annotations():
         class MockExecutorWithOneHandlerWithoutAnnotations(Executor):  # type: ignore
             """A mock executor with one handler that does not implement any annotations."""
 
-            @message_handler
+            @handler
             async def handle(self, message, ctx) -> None:  # type: ignore
                 """A mock handler that does not implement any annotations."""
                 pass
@@ -38,7 +38,7 @@ def test_executor_invalid_handler_signature():
         class MockExecutorWithInvalidHandlerSignature(Executor):  # type: ignore
             """A mock executor with an invalid handler signature."""
 
-            @message_handler  # type: ignore
+            @handler  # type: ignore
             async def handle(self, message, other, ctx) -> None:  # type: ignore
                 """A mock handler with an invalid signature."""
                 pass
@@ -50,19 +50,19 @@ def test_executor_with_valid_handlers():
     class MockExecutorWithValidHandlers(Executor):  # type: ignore
         """A mock executor with valid handlers."""
 
-        @message_handler
+        @handler
         async def handle_text(self, text: str, ctx: WorkflowContext) -> None:  # type: ignore
             """A mock handler with a valid signature."""
             pass
 
-        @message_handler
+        @handler
         async def handle_number(self, number: int, ctx: WorkflowContext) -> None:  # type: ignore
             """Another mock handler with a valid signature."""
             pass
 
     executor = MockExecutorWithValidHandlers()
     assert executor.id is not None
-    assert len(executor._message_handlers) == 2  # type: ignore
+    assert len(executor._handlers) == 2  # type: ignore
     assert executor.can_handle("text") is True
     assert executor.can_handle(42) is True
     assert executor.can_handle(3.14) is False
@@ -74,27 +74,27 @@ def test_executor_handlers_with_output_types():
     class MockExecutorWithOutputTypes(Executor):  # type: ignore
         """A mock executor with handlers that specify output types."""
 
-        @message_handler(output_types=[str])
+        @handler(output_types=[str])
         async def handle_string(self, text: str, ctx: WorkflowContext) -> None:  # type: ignore
             """A mock handler that outputs a string."""
             pass
 
-        @message_handler(output_types=[int])
+        @handler(output_types=[int])
         async def handle_integer(self, number: int, ctx: WorkflowContext) -> None:  # type: ignore
             """A mock handler that outputs an integer."""
             pass
 
     executor = MockExecutorWithOutputTypes()
-    assert len(executor._message_handlers) == 2  # type: ignore
+    assert len(executor._handlers) == 2  # type: ignore
 
-    string_handler = executor._message_handlers[str]  # type: ignore
+    string_handler = executor._handlers[str]  # type: ignore
     assert string_handler is not None
     assert string_handler._handler_spec is not None  # type: ignore
     assert string_handler._handler_spec["name"] == "handle_string"  # type: ignore
     assert string_handler._handler_spec["message_type"] is str  # type: ignore
     assert string_handler._handler_spec["output_types"] == [str]  # type: ignore
 
-    int_handler = executor._message_handlers[int]  # type: ignore
+    int_handler = executor._handlers[int]  # type: ignore
     assert int_handler is not None
     assert int_handler._handler_spec is not None  # type: ignore
     assert int_handler._handler_spec["name"] == "handle_integer"  # type: ignore

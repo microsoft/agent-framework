@@ -4,7 +4,7 @@ import asyncio
 from dataclasses import dataclass
 
 import pytest
-from agent_framework.workflow import Executor, WorkflowCompletedEvent, WorkflowContext, WorkflowEvent, message_handler
+from agent_framework.workflow import Executor, WorkflowCompletedEvent, WorkflowContext, WorkflowEvent, handler
 
 from agent_framework_workflow._edge import Edge
 from agent_framework_workflow._runner import Runner
@@ -22,7 +22,7 @@ class MockMessage:
 class MockExecutor(Executor):
     """A mock executor for testing purposes."""
 
-    @message_handler(output_types=[MockMessage])
+    @handler(output_types=[MockMessage])
     async def mock_handler(self, message: MockMessage, ctx: WorkflowContext) -> None:
         if message.data < 10:
             await ctx.send_message(MockMessage(data=message.data + 1))

@@ -172,7 +172,7 @@ class WorkflowGraphValidator:
                     logger.warning(
                         f"Executor '{source_executor.id}' has no output type annotations. "
                         f"Type compatibility validation will be skipped for edges from this executor. "
-                        f"Consider adding output_types to @message_handler decorators for better validation."
+                        f"Consider adding output_types to @handler decorators for better validation."
                     )
                 if not target_input_types:
                     logger.warning(
@@ -245,9 +245,9 @@ class WorkflowGraphValidator:
         """
         input_types: list[type[Any]] = []
 
-        # Access the private _message_handlers attribute to get input types
-        if hasattr(executor, "_message_handlers"):
-            input_types.extend(executor._message_handlers.keys())  # type: ignore
+        # Access the private _handlers attribute to get input types
+        if hasattr(executor, "_handlers"):
+            input_types.extend(executor._handlers.keys())  # type: ignore
 
         return input_types
 

@@ -33,13 +33,13 @@ class Executor:
         """
         self._id = id or str(uuid.uuid4())
 
-        self._message_handlers: dict[type, Callable[[Any, WorkflowContext], Any]] = {}
+        self._handlers: dict[type, Callable[[Any, WorkflowContext], Any]] = {}
         self._discover_handlers()
 
-        if not self._message_handlers:
+        if not self._handlers:
             raise ValueError(
-                f"Executor {self.__class__.__name__} has no message handlers defined. "
-                "Please define at least one message handler using the @message_handler decorator."
+                f"Executor {self.__class__.__name__} has no handlers defined. "
+                "Please define at least one handler using the @handler decorator."
             )
 
     async def execute(self, message: Any, context: WorkflowContext) -> None:
@@ -53,9 +53,9 @@ class Executor:
             An awaitable that resolves to the result of the execution.
         """
         handler: Callable[[Any, WorkflowContext], Any] | None = None
-        for message_type in self._message_handlers:
+        for message_type in self._handlers:
             if is_instance_of(message, message_type):
-                handler = self._message_handlers[message_type]
+                handler = self._handlers[message_type]
                 break
 
         if handler is None:
@@ -76,12 +76,11 @@ class Executor:
             attr = getattr(self, attr_name)
             if callable(attr) and hasattr(attr, "_handler_spec"):
                 handler_spec = attr._handler_spec  # type: ignore
-                if self._message_handlers.get(handler_spec["message_type"]) is not None:
+                if self._handlers.get(handler_spec["message_type"]) is not None:
                     raise ValueError(
-                        f"Duplicate message handler for type {handler_spec['message_type']} "
-                        f"in {self.__class__.__name__}"
+                        f"Duplicate handler for type {handler_spec['message_type']} in {self.__class__.__name__}"
                     )
-                self._message_handlers[handler_spec["message_type"]] = attr
+                self._handlers[handler_spec["message_type"]] = attr
 
     def can_handle(self, message: Any) -> bool:
         """Check if the executor can handle a given message type.
@@ -92,25 +91,25 @@ class Executor:
         Returns:
             True if the executor can handle the message type, False otherwise.
         """
-        return any(is_instance_of(message, message_type) for message_type in self._message_handlers)
+        return any(is_instance_of(message, message_type) for message_type in self._handlers)
 
 
 # endregion: Executor
 
-# region: Message Handler Decorator
+# region: Handler Decorator
 
 
 ExecutorT = TypeVar("ExecutorT", bound="Executor")
 
 
 @overload
-def message_handler(
+def handler(
     func: Callable[[ExecutorT, Any, WorkflowContext], Awaitable[Any]],
 ) -> Callable[[ExecutorT, Any, WorkflowContext], Awaitable[Any]]: ...
 
 
 @overload
-def message_handler(
+def handler(
     func: None = None,
     *,
     output_types: list[type] | None = None,
@@ -120,7 +119,7 @@ def message_handler(
 ]: ...
 
 
-def message_handler(
+def handler(
     func: Callable[[ExecutorT, Any, WorkflowContext], Awaitable[Any]] | None = None,
     *,
     output_types: list[type] | None = None,
@@ -131,7 +130,7 @@ def message_handler(
         Callable[[ExecutorT, Any, WorkflowContext], Awaitable[Any]],
     ]
 ):
-    """Decorator to register a message handler for an executor.
+    """Decorator to register a handler for an executor.
 
     Args:
         func: The function to decorate. Can be None when using with parameters.
@@ -141,11 +140,11 @@ def message_handler(
         The decorated function with handler metadata.
 
     Example:
-        @message_handler
+        @handler
         async def handle_string(self, message: str, ctx: WorkflowContext) -> None:
             ...
 
-        @message_handler(output_types=[str, int])
+        @handler(output_types=[str, int])
         async def handle_data(self, message: dict, ctx: WorkflowContext) -> None:
             ...
     """
@@ -153,20 +152,20 @@ def message_handler(
     def decorator(
         func: Callable[[ExecutorT, Any, WorkflowContext], Awaitable[Any]],
     ) -> Callable[[ExecutorT, Any, WorkflowContext], Awaitable[Any]]:
-        # Extract the message type from a message handler function.
+        # Extract the message type from a handler function.
         sig = inspect.signature(func)
         params = list(sig.parameters.values())
 
         if len(params) != 3:  # self, message, ctx
-            raise ValueError(f"Message handler must have exactly 3 parameters, got {len(params)}")
+            raise ValueError(f"Handler must have exactly 3 parameters, got {len(params)}")
 
         message_type = params[1].annotation
         if message_type is inspect.Parameter.empty:
-            raise ValueError("Message handler's second parameter must have a type annotation")
+            raise ValueError("Handler's second parameter must have a type annotation")
 
         @functools.wraps(func)
         async def wrapper(self: ExecutorT, message: Any, ctx: WorkflowContext) -> Any:
-            """Wrapper function to call the message handler."""
+            """Wrapper function to call the handler."""
             return await func(self, message, ctx)
 
         wrapper._handler_spec = {  # type: ignore
@@ -182,7 +181,7 @@ def message_handler(
     return decorator(func)
 
 
-# endregion: Message Handler Decorator
+# endregion: Handler Decorator
 
 # region: Agent Executor
 
@@ -240,7 +239,7 @@ class AgentExecutor(Executor):
         self._streaming = streaming
         self._cache: list[ChatMessage] = []
 
-    @message_handler(output_types=[AgentExecutorResponse])
+    @handler(output_types=[AgentExecutorResponse])
     async def run(self, request: AgentExecutorRequest, ctx: WorkflowContext) -> None:
         """Run the agent executor with the given request."""
         self._cache.extend(request.messages)
@@ -300,7 +299,7 @@ class RequestInfoExecutor(Executor):
         super().__init__(id=self.EXECUTOR_ID)
         self._request_events: dict[str, RequestInfoEvent] = {}
 
-    @message_handler
+    @handler
     async def run(self, message: RequestInfoMessage, ctx: WorkflowContext) -> None:
         """Run the RequestInfoExecutor with the given message."""
         source_executor_id = ctx.get_source_executor_id()

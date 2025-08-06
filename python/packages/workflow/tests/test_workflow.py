@@ -12,7 +12,7 @@ from agent_framework.workflow import (
     WorkflowCompletedEvent,
     WorkflowContext,
     WorkflowEvent,
-    message_handler,
+    handler,
 )
 
 
@@ -31,7 +31,7 @@ class MockExecutor(Executor):
         super().__init__(id=id)
         self.limit = limit
 
-    @message_handler(output_types=[MockMessage])
+    @handler(output_types=[MockMessage])
     async def mock_handler(self, message: MockMessage, ctx: WorkflowContext) -> None:
         if message.data < self.limit:
             await ctx.send_message(MockMessage(data=message.data + 1))
@@ -42,7 +42,7 @@ class MockExecutor(Executor):
 class MockAggregator(Executor):
     """A mock executor that aggregates results from multiple executors."""
 
-    @message_handler
+    @handler
     async def mock_handler(self, messages: list[MockMessage], ctx: WorkflowContext) -> None:
         # This mock simply returns the data incremented by 1
         await ctx.add_event(WorkflowCompletedEvent(data=sum(msg.data for msg in messages)))
@@ -58,13 +58,13 @@ class ApprovalMessage:
 class MockExecutorRequestApproval(Executor):
     """A mock executor that simulates a request for approval."""
 
-    @message_handler(output_types=[RequestInfoMessage])
+    @handler(output_types=[RequestInfoMessage])
     async def mock_handler_a(self, message: MockMessage, ctx: WorkflowContext) -> None:
         """A mock handler that requests approval."""
         await ctx.set_shared_state(self.id, message.data)
         await ctx.send_message(RequestInfoMessage())
 
-    @message_handler(output_types=[MockMessage])
+    @handler(output_types=[MockMessage])
     async def mock_handler_b(self, message: ApprovalMessage, ctx: WorkflowContext) -> None:
         """A mock handler that processes the approval response."""
         data = await ctx.get_shared_state(self.id)

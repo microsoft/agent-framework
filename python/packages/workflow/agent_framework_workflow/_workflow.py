@@ -260,12 +260,12 @@ class WorkflowBuilder:
         types of the source executors. For example:
 
             class Target(Executor):
-                @message_handler
+                @handler
                 def handle_messages(self, messages: list[Message]) -> None:
                     # Process the aggregated messages from all sources
 
             class Source(Executor):
-                @message_handler(output_type=[Message])
+                @handler(output_type=[Message])
                 def handle_message(self, message: Message) -> None:
                     # Send a message to the target executor
                     self.send_message(message)

@@ -13,7 +13,7 @@ from agent_framework.workflow import (
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
-    message_handler,
+    handler,
 )
 
 if sys.version_info >= (3, 12):
@@ -56,7 +56,7 @@ class Split(Executor):
         super().__init__(id)
         self._map_executor_ids = map_executor_ids
 
-    @message_handler(output_types=[SplitCompleted])
+    @handler(output_types=[SplitCompleted])
     async def split(self, data: str, ctx: WorkflowContext) -> None:
         """Execute the task by splitting the data into chunks.
 
@@ -111,7 +111,7 @@ class MapCompleted:
 class Map(Executor):
     """An executor that applies a function to each item in the data and save the result to a file."""
 
-    @message_handler(output_types=[MapCompleted])
+    @handler(output_types=[MapCompleted])
     async def map(self, _: SplitCompleted, ctx: WorkflowContext) -> None:
         """Execute the task by applying a function to each item and same result to a file.
 
@@ -148,7 +148,7 @@ class Shuffle(Executor):
         super().__init__(id)
         self._reducer_ids = reducer_ids
 
-    @message_handler(output_types=[ShuffleCompleted])
+    @handler(output_types=[ShuffleCompleted])
     async def shuffle(self, data: list[MapCompleted], ctx: WorkflowContext) -> None:
         """Execute the task by aggregating the results.
 
@@ -223,7 +223,7 @@ class ReduceCompleted:
 class Reduce(Executor):
     """An executor that reduces the results from the ShuffleExecutor."""
 
-    @message_handler(output_types=[ReduceCompleted])
+    @handler(output_types=[ReduceCompleted])
     async def _execute(self, data: ShuffleCompleted, ctx: WorkflowContext) -> None:
         """Execute the task by reducing the results.
 
@@ -256,7 +256,7 @@ class Reduce(Executor):
 class CompletionExecutor(Executor):
     """An executor that completes the workflow by aggregating the results from the ReduceExecutors."""
 
-    @message_handler
+    @handler
     async def complete(self, data: list[ReduceCompleted], ctx: WorkflowContext) -> None:
         """Execute the task by aggregating the results.
 

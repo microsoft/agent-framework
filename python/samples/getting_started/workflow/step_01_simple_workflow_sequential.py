@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework.workflow import Executor, WorkflowBuilder, WorkflowCompletedEvent, WorkflowContext, message_handler
+from agent_framework.workflow import Executor, WorkflowBuilder, WorkflowCompletedEvent, WorkflowContext, handler
 
 """
 The following sample demonstrates a basic workflow with two executors
@@ -14,7 +14,7 @@ input string to uppercase, and the second executor reverses the string.
 class UpperCaseExecutor(Executor):
     """An executor that converts text to uppercase."""
 
-    @message_handler(output_types=[str])
+    @handler(output_types=[str])
     async def to_upper_case(self, text: str, ctx: WorkflowContext) -> None:
         """Execute the task by converting the input string to uppercase."""
         result = text.upper()
@@ -26,7 +26,7 @@ class UpperCaseExecutor(Executor):
 class ReverseTextExecutor(Executor):
     """An executor that reverses text."""
 
-    @message_handler
+    @handler
     async def reverse_text(self, text: str, ctx: WorkflowContext) -> None:
         """Execute the task by reversing the input string."""
         result = text[::-1]

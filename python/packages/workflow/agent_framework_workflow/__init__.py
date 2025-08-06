@@ -20,7 +20,7 @@ from ._executor import (
     Executor,
     RequestInfoExecutor,
     RequestInfoMessage,
-    message_handler,
+    handler,
 )
 from ._validation import (
     EdgeDuplicationError,
@@ -67,6 +67,6 @@ __all__ = [
     "WorkflowStartedEvent",
     "WorkflowValidationError",
     "__version__",
-    "message_handler",
+    "handler",
     "validate_workflow_graph",
 ]

@@ -14,14 +14,14 @@ from agent_framework_workflow import (
     WorkflowBuilder,
     WorkflowContext,
     WorkflowValidationError,
-    message_handler,
+    handler,
     validate_workflow_graph,
 )
 from agent_framework_workflow._edge import Edge
 
 
 class StringExecutor(Executor):
-    @message_handler(output_types=[str])
+    @handler(output_types=[str])
     async def handle_string(self, message: str, ctx: WorkflowContext) -> None:
         await ctx.send_message(message.upper())
 
@@ -29,36 +29,36 @@ class StringExecutor(Executor):
 class StringAggregator(Executor):
     """A mock executor that aggregates results from multiple executors."""
 
-    @message_handler(output_types=[str])
+    @handler(output_types=[str])
     async def mock_handler(self, messages: list[str], ctx: WorkflowContext) -> None:
         # This mock simply returns the data incremented by 1
         await ctx.send_message("Aggregated: " + ", ".join(messages))
 
 
 class IntExecutor(Executor):
-    @message_handler(output_types=[int])
+    @handler(output_types=[int])
     async def handle_int(self, message: int, ctx: WorkflowContext) -> None:
         await ctx.send_message(message * 2)
 
 
 class AnyExecutor(Executor):
-    @message_handler
+    @handler
     async def handle_any(self, message: Any, ctx: WorkflowContext) -> None:
         await ctx.send_message(f"Processed: {message}")
 
 
 class NoOutputTypesExecutor(Executor):
-    @message_handler
+    @handler
     async def handle_message(self, message: str, ctx: WorkflowContext) -> None:
         await ctx.send_message("processed")
 
 
 class MultiTypeExecutor(Executor):
-    @message_handler(output_types=[str])
+    @handler(output_types=[str])
     async def handle_string(self, message: str, ctx: WorkflowContext) -> None:
         await ctx.send_message(f"String: {message}")
 
-    @message_handler(output_types=[int])
+    @handler(output_types=[int])
     async def handle_int(self, message: int, ctx: WorkflowContext) -> None:
         await ctx.send_message(f"Int: {message}")
 
@@ -218,12 +218,12 @@ def test_complex_workflow_validation():
 
 def test_type_compatibility_inheritance():
     class BaseExecutor(Executor):
-        @message_handler(output_types=[str])
+        @handler(output_types=[str])
         async def handle_base(self, message: str, ctx: WorkflowContext) -> None:
             await ctx.send_message("base")
 
     class DerivedExecutor(Executor):
-        @message_handler(output_types=[str])
+        @handler(output_types=[str])
         async def handle_derived(self, message: str, ctx: WorkflowContext) -> None:
             await ctx.send_message("derived")
 
@@ -303,7 +303,7 @@ def test_logging_for_missing_output_types(caplog: Any) -> None:
 
     assert workflow is not None
     assert "has no output type annotations" in caplog.text
-    assert "Consider adding output_types to @message_handler decorators" in caplog.text
+    assert "Consider adding output_types to @handler decorators" in caplog.text
 
 
 def test_logging_for_missing_input_types(caplog: Any) -> None:
@@ -316,7 +316,7 @@ def test_logging_for_missing_input_types(caplog: Any) -> None:
 
         def _discover_handlers(self) -> None:
             # Override to manually register handler without type info
-            self._message_handlers[str] = self.handle_message
+            self._handlers[str] = self.handle_message
 
     string_executor = StringExecutor(id="string_executor")
     no_input_executor = NoInputTypesExecutor(id="no_input")
@@ -501,12 +501,12 @@ def test_enhanced_type_compatibility_error_details():
 
 def test_union_type_compatibility_validation() -> None:
     class UnionOutputExecutor(Executor):
-        @message_handler(output_types=[str, int])
+        @handler(output_types=[str, int])
         async def handle_message(self, message: str, ctx: WorkflowContext) -> None:
             await ctx.send_message("output")
 
     class UnionInputExecutor(Executor):
-        @message_handler(output_types=[str])
+        @handler(output_types=[str])
         async def handle_message(self, message: str, ctx: WorkflowContext) -> None:
             await ctx.send_message("processed")
 
@@ -521,12 +521,12 @@ def test_union_type_compatibility_validation() -> None:
 
 def test_generic_type_compatibility() -> None:
     class ListOutputExecutor(Executor):
-        @message_handler(output_types=[list[str]])
+        @handler(output_types=[list[str]])
         async def handle_message(self, message: str, ctx: WorkflowContext) -> None:
             await ctx.send_message(["output"])
 
     class ListInputExecutor(Executor):
-        @message_handler(output_types=[str])
+        @handler(output_types=[str])
         async def handle_message(self, message: list[str], ctx: WorkflowContext) -> None:
             await ctx.send_message("processed")
 

@@ -21,7 +21,7 @@ from agent_framework_workflow import (
     WorkflowRunResult,
     WorkflowStartedEvent,
     __version__,
-    message_handler,
+    handler,
 )
 
 __all__ = [
@@ -45,5 +45,5 @@ __all__ = [
     "WorkflowRunResult",
     "WorkflowStartedEvent",
     "__version__",
-    "message_handler",
+    "handler",
 ]

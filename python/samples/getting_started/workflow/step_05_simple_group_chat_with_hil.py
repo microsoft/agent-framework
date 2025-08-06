@@ -15,7 +15,7 @@ from agent_framework.workflow import (
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
-    message_handler,
+    handler,
 )
 
 """
@@ -34,7 +34,7 @@ class CriticGroupChatManager(Executor):
         self._current_round = 0
         self._chat_history: list[ChatMessage] = []
 
-    @message_handler(output_types=[AgentExecutorRequest])
+    @handler(output_types=[AgentExecutorRequest])
     async def start(self, task: str, ctx: WorkflowContext) -> None:
         """Handler that starts the group chat with an initial task."""
         initial_message = ChatMessage(ChatRole.USER, text=task)
@@ -51,7 +51,7 @@ class CriticGroupChatManager(Executor):
         # Update the cache with the initial message
         self._chat_history.append(initial_message)
 
-    @message_handler(output_types=[AgentExecutorRequest, RequestInfoMessage])
+    @handler(output_types=[AgentExecutorRequest, RequestInfoMessage])
     async def handle_agent_response(self, response: AgentExecutorResponse, ctx: WorkflowContext) -> None:
         """Handler that processes the response from the agent."""
         # Update the chat history with the response
@@ -74,7 +74,7 @@ class CriticGroupChatManager(Executor):
         selection = self._get_next_member()
         await ctx.send_message(AgentExecutorRequest(messages=[], should_respond=True), target_id=selection)
 
-    @message_handler(output_types=[AgentExecutorRequest])
+    @handler(output_types=[AgentExecutorRequest])
     async def handle_request_response(self, response: list[ChatMessage], ctx: WorkflowContext) -> None:
         """Handler that processes the response from the RequestInfoExecutor."""
         # Update the chat history with the response
