@@ -20,7 +20,7 @@ public class JsonSerializationTests
             WriteIndented = false, // Use compact JSON for easier testing
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
             Converters = { new JsonStringEnumConverter() },
-            TypeInfoResolver = ActorJsonContext.Default
+            TypeInfoResolver = AgentRuntimeAbstractionsJsonUtilities.JsonContext.Default
         };
     }
 
