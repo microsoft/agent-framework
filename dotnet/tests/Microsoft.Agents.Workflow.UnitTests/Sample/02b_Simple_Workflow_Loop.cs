@@ -14,7 +14,8 @@ internal static class Step2bEntryPoint
         JudgeExecutor judge = new(42); // Let's say the target number is 42
 
         Workflow<NumberSignal> workflow = new WorkflowBuilder(guessNumber)
-            .AddLoop(guessNumber, judge)
+            .AddEdge(guessNumber, judge)
+            .AddEdge(judge, guessNumber)
             .Build<NumberSignal>();
 
         LocalRunner<NumberSignal> runner = new(workflow);
