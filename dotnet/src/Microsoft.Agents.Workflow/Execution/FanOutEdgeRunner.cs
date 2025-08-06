@@ -30,7 +30,7 @@ internal class FanOutEdgeRunner(IRunnerContext runContext, FanOutEdgeData edgeDa
             Executor executor = await this.RunContext.EnsureExecutorAsync(targetId)
                                                      .ConfigureAwait(false);
 
-            MessageRouter router = executor.MessageRouter;
+            MessageRouter router = executor.Router;
             if (router.CanHandle(message))
             {
                 return await router.RouteMessageAsync(message, this.BoundContexts[targetId])

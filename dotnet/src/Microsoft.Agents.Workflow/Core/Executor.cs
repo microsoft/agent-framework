@@ -27,7 +27,6 @@ public abstract class Executor : IIdentified, IAsyncDisposable
     /// </summary>
     public string Name { get; }
 
-    internal MessageRouter MessageRouter { get; init; }
     private Dictionary<string, object> State { get; } = new();
 
     /// <summary>
@@ -39,8 +38,32 @@ public abstract class Executor : IIdentified, IAsyncDisposable
     {
         this.Name = name ?? this.GetType().Name;
         this.Id = id ?? $"{this.Name}{Guid.NewGuid():N}";
+    }
 
-        this.MessageRouter = MessageRouter.BindMessageHandlers(this, checkType: true);
+    /// <summary>
+    /// Override this method to register handlers for the executor. The deafult implementation uses reflection to
+    /// look for implementations of <see cref="IMessageHandler{TInput}"/> and <see cref="IMessageHandler{TInput, TResult}"/>.
+    /// </summary>
+    /// <param name="routeBuilder"></param>
+    /// <returns></returns>
+    protected virtual RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    {
+        return routeBuilder.ReflectHandlers(this);
+    }
+
+    private MessageRouter? _router = null;
+    internal MessageRouter Router
+    {
+        get
+        {
+            if (this._router == null)
+            {
+                RouteBuilder routeBuilder = this.ConfigureRoutes(new RouteBuilder());
+                this._router = routeBuilder.Build();
+            }
+
+            return this._router;
+        }
     }
 
     /// <summary>
@@ -55,7 +78,7 @@ public abstract class Executor : IIdentified, IAsyncDisposable
     {
         await context.AddEventAsync(new ExecutorInvokeEvent(this.Id)).ConfigureAwait(false);
 
-        CallResult? result = await this.MessageRouter.RouteMessageAsync(message, context, requireRoute: true)
+        CallResult? result = await this.Router.RouteMessageAsync(message, context, requireRoute: true)
                                                      .ConfigureAwait(false);
 
         await context.AddEventAsync(new ExecutorCompleteEvent(this.Id)).ConfigureAwait(false);
@@ -82,9 +105,24 @@ public abstract class Executor : IIdentified, IAsyncDisposable
     private bool _initialized = false;
 
     /// <summary>
+    /// Ensures that the executor has been initialized before performing operations.
+    /// </summary>
+    /// <remarks>This method checks the internal state of the executor and throws an exception if it has not
+    /// been initialized. Call <c>InitializeAsync</c> before invoking any operations that require
+    /// initialization.</remarks>
+    /// <exception cref="InvalidOperationException">Thrown if the executor has not been initialized by calling <c>InitializeAsync</c>.</exception>
+    protected void CheckInitialized()
+    {
+        if (!this._initialized)
+        {
+            throw new InvalidOperationException($"Executor {this.GetType().Name} is not initialized. Call InitializeAsync first.");
+        }
+    }
+
+    /// <summary>
     /// .
     /// </summary>
-    public ISet<Type> InputTypes => this.MessageRouter.IncomingTypes;
+    public ISet<Type> InputTypes => this.Router.IncomingTypes;
 
     /// <summary>
     /// .
@@ -97,7 +135,7 @@ public abstract class Executor : IIdentified, IAsyncDisposable
     /// </summary>
     /// <param name="messageType"></param>
     /// <returns></returns>
-    public bool CanHandle(Type messageType) => this.MessageRouter.CanHandle(messageType);
+    public bool CanHandle(Type messageType) => this.Router.CanHandle(messageType);
 
     /// <summary>
     /// .
@@ -157,35 +195,20 @@ public abstract class Executor : IIdentified, IAsyncDisposable
     /// .
     /// </summary>
     /// <returns></returns>
-    protected virtual ValueTask PrepareForCheckpointAsync()
-    {
-        return default;
-    }
+    protected virtual ValueTask PrepareForCheckpointAsync() => default;
 
     /// <summary>
     /// .
     /// </summary>
     /// <returns></returns>
-    protected virtual ValueTask AfterCheckpointRestoreAsync()
-    {
-        return default;
-    }
+    protected virtual ValueTask AfterCheckpointRestoreAsync() => default;
 
     /// <summary>
     /// .
     /// </summary>
     /// <param name="context"></param>
     /// <returns></returns>
-    protected virtual ValueTask InitializeOverride(IWorkflowContext context)
-    {
-        // Default implementation does nothing.
-        return default;
-    }
-
-    private async ValueTask FlushReduceRemainingAsync()
-    {
-        return;
-    }
+    protected virtual ValueTask InitializeOverride(IWorkflowContext context) => default;
 
     /// <summary>
     /// .
@@ -194,8 +217,6 @@ public abstract class Executor : IIdentified, IAsyncDisposable
     protected virtual async ValueTask DisposeAsync()
     {
         this._initialized = false;
-
-        await this.FlushReduceRemainingAsync().ConfigureAwait(false);
     }
 
     ValueTask IAsyncDisposable.DisposeAsync()

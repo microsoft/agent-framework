@@ -25,7 +25,7 @@ internal class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData edgeData
         Executor sink = await this.RunContext.EnsureExecutorAsync(this.EdgeData.SinkId)
                                              .ConfigureAwait(false);
 
-        MessageRouter router = sink.MessageRouter;
+        MessageRouter router = sink.Router;
         if (router.CanHandle(message))
         {
             return await router.RouteMessageAsync(message, this.BoundContext)
