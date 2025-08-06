@@ -35,7 +35,7 @@ from ._shared import OpenAIConfigBase, OpenAIHandler, OpenAIModelTypes, OpenAISe
 __all__ = ["OpenAIChatClient"]
 
 
-def _prepare_function_call_results(item: AIContents | Any):
+def _prepare_function_call_results(item: AIContents | Any) -> str:
     """Prepare the values of the function call results."""
     if isinstance(item, BaseModel):
         return item.model_dump_json(exclude_none=True, exclude={"raw_representation", "additional_properties"})
