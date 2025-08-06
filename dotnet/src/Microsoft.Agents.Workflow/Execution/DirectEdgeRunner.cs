@@ -16,7 +16,7 @@ internal class DirectEdgeRunner(IRunnerContext runContext, DirectEdgeData edgeDa
         Executor sink = await this.RunContext.EnsureExecutorAsync(this.EdgeData.SinkId)
                                              .ConfigureAwait(false);
 
-        return sink.MessageRouter;
+        return sink.Router;
     }
 
     public async ValueTask<IEnumerable<CallResult?>> ChaseAsync(object message)
