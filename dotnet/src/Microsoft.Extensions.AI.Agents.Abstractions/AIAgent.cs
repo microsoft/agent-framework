@@ -49,6 +49,17 @@ public abstract class AIAgent
     /// </remarks>
     public abstract object? GetService(Type serviceType, object? serviceKey = null);
 
+    /// <summary>Asks the <see cref="AIAgent"/> for an object of type <typeparamref name="TService"/>.</summary>
+    /// <typeparam name="TService">The type of the object to be retrieved.</typeparam>
+    /// <param name="serviceKey">An optional key that can be used to help identify the target service.</param>
+    /// <returns>The found object, otherwise <see langword="null"/>.</returns>
+    /// <remarks>
+    /// The purpose of this method is to allow for the retrieval of strongly typed services that may be provided by the <see cref="AIAgent"/>,
+    /// including itself or any services it might be wrapping.
+    /// </remarks>
+    public TService? GetService<TService>(object? serviceKey = null)
+        => this.GetService(typeof(TService), serviceKey) is TService service ? service : default;
+
     /// <summary>
     /// Get a new <see cref="AgentThread"/> instance that is compatible with the agent.
     /// </summary>

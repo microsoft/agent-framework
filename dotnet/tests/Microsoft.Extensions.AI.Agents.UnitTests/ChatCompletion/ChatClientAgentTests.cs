@@ -1092,6 +1092,280 @@ public class ChatClientAgentTests
 
     #endregion
 
+    #region GetService Method Tests
+
+    /// <summary>
+    /// Verify that GetService returns AIAgentMetadata when requested.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingAIAgentMetadata_ReturnsMetadata()
+    {
+        // Arrange
+        var mockChatClient = new Mock<IChatClient>();
+        var metadata = new ChatClientMetadata("test-provider");
+        mockChatClient.Setup(c => c.GetService(typeof(ChatClientMetadata), null))
+            .Returns(metadata);
+
+        var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            Id = "test-agent-id",
+            Name = "TestAgent",
+            Instructions = "Test instructions"
+        });
+
+        // Act
+        var result = agent.GetService(typeof(AIAgentMetadata));
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.IsType<AIAgentMetadata>(result);
+        var agentMetadata = (AIAgentMetadata)result;
+        Assert.Equal("test-provider", agentMetadata.ProviderName);
+    }
+
+    /// <summary>
+    /// Verify that GetService returns IChatClient when requested.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingIChatClient_ReturnsChatClient()
+    {
+        // Arrange
+        var mockChatClient = new Mock<IChatClient>();
+        var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            Instructions = "Test instructions"
+        });
+
+        // Act
+        var result = agent.GetService(typeof(IChatClient));
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.IsAssignableFrom<IChatClient>(result);
+        // Note: The result will be the AgentInvokingChatClient wrapper, not the original mock
+        Assert.Equal("AgentInvokingChatClient", result.GetType().Name);
+    }
+
+    /// <summary>
+    /// Verify that GetService delegates to the underlying ChatClient for unknown service types.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingUnknownServiceType_DelegatesToChatClient()
+    {
+        // Arrange
+        var mockChatClient = new Mock<IChatClient>();
+        var customService = new object();
+        mockChatClient.Setup(c => c.GetService(typeof(string), null))
+            .Returns(customService);
+
+        var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            Instructions = "Test instructions"
+        });
+
+        // Act
+        var result = agent.GetService(typeof(string));
+
+        // Assert
+        Assert.Same(customService, result);
+        mockChatClient.Verify(c => c.GetService(typeof(string), null), Times.Once);
+    }
+
+    /// <summary>
+    /// Verify that GetService returns null for unknown service types when ChatClient returns null.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingUnknownServiceTypeWithNullFromChatClient_ReturnsNull()
+    {
+        // Arrange
+        var mockChatClient = new Mock<IChatClient>();
+        mockChatClient.Setup(c => c.GetService(typeof(string), null))
+            .Returns((object?)null);
+
+        var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            Instructions = "Test instructions"
+        });
+
+        // Act
+        var result = agent.GetService(typeof(string));
+
+        // Assert
+        Assert.Null(result);
+        mockChatClient.Verify(c => c.GetService(typeof(string), null), Times.Once);
+    }
+
+    /// <summary>
+    /// Verify that GetService with serviceKey parameter delegates correctly to ChatClient.
+    /// </summary>
+    [Fact]
+    public void GetService_WithServiceKey_DelegatesToChatClient()
+    {
+        // Arrange
+        var mockChatClient = new Mock<IChatClient>();
+        var customService = new object();
+        var serviceKey = "test-key";
+        mockChatClient.Setup(c => c.GetService(typeof(string), serviceKey))
+            .Returns(customService);
+
+        var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            Instructions = "Test instructions"
+        });
+
+        // Act
+        var result = agent.GetService(typeof(string), serviceKey);
+
+        // Assert
+        Assert.Same(customService, result);
+        mockChatClient.Verify(c => c.GetService(typeof(string), serviceKey), Times.Once);
+    }
+
+    /// <summary>
+    /// Verify that GetService returns AIAgentMetadata with correct provider name from ChatClientMetadata.
+    /// </summary>
+    [Theory]
+    [InlineData("openai")]
+    [InlineData("azure")]
+    [InlineData("anthropic")]
+    [InlineData(null)]
+    public void GetService_RequestingAIAgentMetadata_ReturnsMetadataWithCorrectProviderName(string? providerName)
+    {
+        // Arrange
+        var mockChatClient = new Mock<IChatClient>();
+        var chatClientMetadata = providerName != null ? new ChatClientMetadata(providerName) : null;
+        mockChatClient.Setup(c => c.GetService(typeof(ChatClientMetadata), null))
+            .Returns(chatClientMetadata);
+
+        var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            Instructions = "Test instructions"
+        });
+
+        // Act
+        var result = agent.GetService(typeof(AIAgentMetadata));
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.IsType<AIAgentMetadata>(result);
+        var agentMetadata = (AIAgentMetadata)result;
+        Assert.Equal(providerName, agentMetadata.ProviderName);
+    }
+
+    /// <summary>
+    /// Verify that ChatClientAgent returns correct AIAgentMetadata based on ChatClientMetadata.
+    /// </summary>
+    [Theory]
+    [InlineData("openai", "openai")]
+    [InlineData("azure", "azure")]
+    [InlineData("anthropic", "anthropic")]
+    [InlineData(null, null)]
+    public void GetService_RequestingAIAgentMetadata_ReturnsCorrectAIAgentMetadataBasedOnProvider(string? chatClientProviderName, string? expectedProviderName)
+    {
+        // Arrange
+        var mockChatClient = new Mock<IChatClient>();
+        var chatClientMetadata = chatClientProviderName != null ? new ChatClientMetadata(chatClientProviderName) : null;
+        mockChatClient.Setup(c => c.GetService(typeof(ChatClientMetadata), null))
+            .Returns(chatClientMetadata);
+
+        var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            Id = "test-agent-id",
+            Name = "TestAgent",
+            Instructions = "Test instructions"
+        });
+
+        // Act
+        var result = agent.GetService(typeof(AIAgentMetadata));
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.IsType<AIAgentMetadata>(result);
+        var agentMetadata = (AIAgentMetadata)result;
+        Assert.Equal(expectedProviderName, agentMetadata.ProviderName);
+    }
+
+    /// <summary>
+    /// Verify that ChatClientAgent metadata is consistent across multiple calls.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingAIAgentMetadata_ReturnsConsistentMetadata()
+    {
+        // Arrange
+        var mockChatClient = new Mock<IChatClient>();
+        var chatClientMetadata = new ChatClientMetadata("test-provider");
+        mockChatClient.Setup(c => c.GetService(typeof(ChatClientMetadata), null))
+            .Returns(chatClientMetadata);
+
+        var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            Instructions = "Test instructions"
+        });
+
+        // Act
+        var result1 = agent.GetService(typeof(AIAgentMetadata));
+        var result2 = agent.GetService(typeof(AIAgentMetadata));
+
+        // Assert
+        Assert.NotNull(result1);
+        Assert.NotNull(result2);
+        Assert.Same(result1, result2); // Should return the same instance
+        Assert.IsType<AIAgentMetadata>(result1);
+        var agentMetadata = (AIAgentMetadata)result1;
+        Assert.Equal("test-provider", agentMetadata.ProviderName);
+    }
+
+    /// <summary>
+    /// Verify that AIAgentMetadata structure is consistent across different ChatClientAgent configurations.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingAIAgentMetadata_StructureIsConsistentAcrossConfigurations()
+    {
+        // Arrange
+        var mockChatClient1 = new Mock<IChatClient>();
+        var chatClientMetadata1 = new ChatClientMetadata("openai");
+        mockChatClient1.Setup(c => c.GetService(typeof(ChatClientMetadata), null))
+            .Returns(chatClientMetadata1);
+
+        var mockChatClient2 = new Mock<IChatClient>();
+        var chatClientMetadata2 = new ChatClientMetadata("azure");
+        mockChatClient2.Setup(c => c.GetService(typeof(ChatClientMetadata), null))
+            .Returns(chatClientMetadata2);
+
+        var chatClientAgent1 = new ChatClientAgent(mockChatClient1.Object, new ChatClientAgentOptions
+        {
+            Instructions = "Test instructions 1"
+        });
+
+        var chatClientAgent2 = new ChatClientAgent(mockChatClient2.Object, new ChatClientAgentOptions
+        {
+            Instructions = "Test instructions 2"
+        });
+
+        // Act
+        var metadata1 = chatClientAgent1.GetService(typeof(AIAgentMetadata)) as AIAgentMetadata;
+        var metadata2 = chatClientAgent2.GetService(typeof(AIAgentMetadata)) as AIAgentMetadata;
+
+        // Assert
+        Assert.NotNull(metadata1);
+        Assert.NotNull(metadata2);
+
+        // Both should have the same type and structure
+        Assert.Equal(typeof(AIAgentMetadata), metadata1.GetType());
+        Assert.Equal(typeof(AIAgentMetadata), metadata2.GetType());
+
+        // Both should have ProviderName property
+        Assert.NotNull(metadata1.ProviderName);
+        Assert.NotNull(metadata2.ProviderName);
+
+        // Provider names should be different
+        Assert.Equal("openai", metadata1.ProviderName);
+        Assert.Equal("azure", metadata2.ProviderName);
+        Assert.NotEqual(metadata1.ProviderName, metadata2.ProviderName);
+    }
+
+    #endregion
+
     #region RunStreamingAsync Tests
 
     /// <summary>

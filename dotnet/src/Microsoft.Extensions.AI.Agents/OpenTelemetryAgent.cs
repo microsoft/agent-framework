@@ -51,7 +51,7 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
         this._activitySource = new(name);
         this._meter = new(name);
         this._logger = logger ?? NullLogger.Instance;
-        this._system = innerAgent.GetType().Name;
+        this._system = this.GetService<AIAgentMetadata>()?.ProviderName ?? OpenTelemetryConsts.GenAI.SystemNameValues.MicrosoftExtensionsAIAgents;
 
         // Attempt to get the open telemetry chat client if the inner agent is a ChatClientAgent.
         this._openTelementryChatClient = (innerAgent as ChatClientAgent)?.ChatClient.GetService<OpenTelemetryChatClient>();
@@ -224,7 +224,6 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
     {
         // Get the GenAI system name for telemetry
         var chatClientAgent = this._innerAgent as ChatClientAgent;
-        var genAISystemName = chatClientAgent?.ChatClient.GetService<ChatClientMetadata>()?.ProviderName;
         Activity? activity = null;
         if (this._activitySource.HasListeners())
         {
@@ -236,7 +235,7 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
                 _ = activity
                     // Required attributes per OpenTelemetry semantic conventions
                     .AddTag(OpenTelemetryConsts.GenAI.Operation.Name, operationName)
-                    .AddTag(OpenTelemetryConsts.GenAI.SystemName, genAISystemName ?? OpenTelemetryConsts.GenAI.SystemNameValues.MicrosoftExtensionsAIAgents)
+                    .AddTag(OpenTelemetryConsts.GenAI.SystemName, this._system)
                     // Agent-specific attributes
                     .AddTag(OpenTelemetryConsts.GenAI.Agent.Id, this.Id);
 

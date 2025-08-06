@@ -413,6 +413,771 @@ public class OpenTelemetryAgentTests
         Assert.Equal("TestAgent", telemetryAgent.Name);
     }
 
+    #region ILogger Tests
+
+    /// <summary>
+    /// Verify that OpenTelemetryAgent constructor accepts ILogger parameter and uses it.
+    /// </summary>
+    [Fact]
+    public void Constructor_WithILogger_AcceptsLoggerParameter()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        mockAgent.Setup(a => a.Id).Returns("test-id");
+        mockAgent.Setup(a => a.Name).Returns("TestAgent");
+        var mockLogger = new Mock<ILogger>();
+        var sourceName = "test-source";
+
+        // Act
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, mockLogger.Object, sourceName);
+
+        // Assert
+        Assert.Equal("test-id", telemetryAgent.Id);
+        Assert.Equal("TestAgent", telemetryAgent.Name);
+    }
+
+    /// <summary>
+    /// Verify that OpenTelemetryAgent constructor works with null ILogger parameter.
+    /// </summary>
+    [Fact]
+    public void Constructor_WithNullILogger_UsesNullLogger()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        mockAgent.Setup(a => a.Id).Returns("test-id");
+        mockAgent.Setup(a => a.Name).Returns("TestAgent");
+        var sourceName = "test-source";
+
+        // Act
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, logger: null, sourceName);
+
+        // Assert
+        Assert.Equal("test-id", telemetryAgent.Id);
+        Assert.Equal("TestAgent", telemetryAgent.Name);
+    }
+
+    /// <summary>
+    /// Verify that OpenTelemetryAgent uses the provided ILogger for logging events during RunAsync.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_WithILogger_LogsEventsCorrectlyAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var mockLogger = new Mock<ILogger>();
+
+        // Setup the logger to return true for IsEnabled to ensure logging occurs
+        mockLogger.Setup(x => x.IsEnabled(LogLevel.Information)).Returns(true);
+
+        var mockAgent = CreateMockAgent(false);
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, mockLogger.Object, sourceName);
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        // Act
+        await telemetryAgent.RunAsync(messages);
+
+        // Assert
+        // Verify that the logger was called for logging events
+        mockLogger.Verify(
+            x => x.Log(
+                LogLevel.Information,
+                It.IsAny<EventId>(),
+                It.IsAny<It.IsAnyType>(),
+                It.IsAny<Exception>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.AtLeastOnce);
+    }
+
+    /// <summary>
+    /// Verify that OpenTelemetryAgent extension method accepts ILogger parameter.
+    /// </summary>
+    [Fact]
+    public void WithOpenTelemetry_ExtensionMethodWithILogger_CreatesOpenTelemetryAgentWithLogger()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        mockAgent.Setup(a => a.Id).Returns("test-id");
+        mockAgent.Setup(a => a.Name).Returns("TestAgent");
+        var mockLogger = new Mock<ILogger>();
+        var sourceName = "test-source";
+
+        // Act
+        using var telemetryAgent = mockAgent.Object.WithOpenTelemetry(mockLogger.Object, sourceName);
+
+        // Assert
+        Assert.IsType<OpenTelemetryAgent>(telemetryAgent);
+        Assert.Equal("test-id", telemetryAgent.Id);
+        Assert.Equal("TestAgent", telemetryAgent.Name);
+    }
+
+    #endregion
+
+    #region OpenTelemetry Logging Deduplication Tests
+
+    /// <summary>
+    /// Verify that when OpenTelemetryAgent wraps a ChatClientAgent with OpenTelemetry-enabled ChatClient,
+    /// logs are not duplicated.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_WithOpenTelemetryChatClientAgent_DoesNotDuplicateLogsAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var mockLogger = new Mock<ILogger>();
+
+        // Setup the logger to return true for IsEnabled to ensure logging occurs
+        mockLogger.Setup(x => x.IsEnabled(LogLevel.Information)).Returns(true);
+
+        var mockChatClient = new Mock<IChatClient>();
+
+        // Setup ChatClient to return a response
+        mockChatClient.Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Response")));
+
+        // Setup ChatClientMetadata
+        var metadata = new ChatClientMetadata("openai");
+        mockChatClient.Setup(c => c.GetService(typeof(ChatClientMetadata), null))
+            .Returns(metadata);
+
+        // Create a real OpenTelemetryChatClient to simulate OpenTelemetry-enabled ChatClient
+        var openTelemetryChatClient = new OpenTelemetryChatClient(mockChatClient.Object, sourceName: sourceName);
+        mockChatClient.Setup(c => c.GetService(typeof(OpenTelemetryChatClient), null)).Returns(openTelemetryChatClient);
+
+        var chatClientAgent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            Id = "chat-agent-id",
+            Name = "ChatAgent",
+            Instructions = "You are a helpful assistant."
+        });
+
+        using var telemetryAgent = new OpenTelemetryAgent(chatClientAgent, mockLogger.Object, sourceName);
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Hello")
+        };
+
+        // Act
+        await telemetryAgent.RunAsync(messages);
+
+        // Assert
+        // Verify that the logger was NOT called because OpenTelemetryChatClient is present (deduplication)
+        mockLogger.Verify(
+            x => x.Log(
+                LogLevel.Information,
+                It.IsAny<EventId>(),
+                It.IsAny<It.IsAnyType>(),
+                It.IsAny<Exception>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Never);
+
+        // Verify that activities were created (indicating telemetry is working)
+        Assert.NotEmpty(activities);
+
+        // Cleanup
+        openTelemetryChatClient.Dispose();
+    }
+
+    /// <summary>
+    /// Verify that OpenTelemetryAgent works correctly when wrapping a ChatClientAgent
+    /// without OpenTelemetry-enabled ChatClient.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_WithRegularChatClientAgent_LogsCorrectlyAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var mockLogger = new Mock<ILogger>();
+
+        // Setup the logger to return true for IsEnabled to ensure logging occurs
+        mockLogger.Setup(x => x.IsEnabled(LogLevel.Information)).Returns(true);
+
+        var mockChatClient = new Mock<IChatClient>();
+
+        // Setup ChatClient to return a response
+        mockChatClient.Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Response")));
+
+        // Setup ChatClientMetadata
+        var metadata = new ChatClientMetadata("openai");
+        mockChatClient.Setup(c => c.GetService(typeof(ChatClientMetadata), null))
+            .Returns(metadata);
+
+        // No OpenTelemetryChatClient setup - simulating regular ChatClient
+        mockChatClient.Setup(c => c.GetService(typeof(OpenTelemetryChatClient), null)).Returns((OpenTelemetryChatClient?)null);
+
+        var chatClientAgent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            Id = "chat-agent-id",
+            Name = "ChatAgent",
+            Instructions = "You are a helpful assistant."
+        });
+
+        using var telemetryAgent = new OpenTelemetryAgent(chatClientAgent, mockLogger.Object, sourceName);
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Hello")
+        };
+
+        // Act
+        await telemetryAgent.RunAsync(messages);
+
+        // Assert
+        // Verify that the logger was called
+        mockLogger.Verify(
+            x => x.Log(
+                LogLevel.Information,
+                It.IsAny<EventId>(),
+                It.IsAny<It.IsAnyType>(),
+                It.IsAny<Exception>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.AtLeastOnce);
+
+        // Verify that activities were created
+        Assert.NotEmpty(activities);
+    }
+
+    /// <summary>
+    /// Verify that EnableSensitiveData setting is inherited from OpenTelemetryChatClient when available.
+    /// </summary>
+    [Fact]
+    public void Constructor_WithOpenTelemetryChatClient_InheritsEnableSensitiveDataSetting()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var mockChatClient = new Mock<IChatClient>();
+
+        // Setup ChatClientMetadata
+        var metadata = new ChatClientMetadata("openai");
+        mockChatClient.Setup(c => c.GetService(typeof(ChatClientMetadata), null))
+            .Returns(metadata);
+
+        // Create a real OpenTelemetryChatClient with EnableSensitiveData = true
+        var openTelemetryChatClient = new OpenTelemetryChatClient(mockChatClient.Object, sourceName: sourceName)
+        {
+            EnableSensitiveData = true
+        };
+        mockChatClient.Setup(c => c.GetService(typeof(OpenTelemetryChatClient), null)).Returns(openTelemetryChatClient);
+
+        var chatClientAgent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            Id = "chat-agent-id",
+            Name = "ChatAgent"
+        });
+
+        // Act
+        using var telemetryAgent = new OpenTelemetryAgent(chatClientAgent, sourceName: sourceName);
+
+        // Assert
+        Assert.True(telemetryAgent.EnableSensitiveData);
+
+        // Cleanup
+        openTelemetryChatClient.Dispose();
+    }
+
+    #endregion
+
+    #region GetService Method Tests
+
+    /// <summary>
+    /// Verify that GetService returns ActivitySource when requested.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingActivitySource_ReturnsActivitySource()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        mockAgent.Setup(a => a.Id).Returns("test-id");
+        var sourceName = "test-source";
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: sourceName);
+
+        // Act
+        var result = telemetryAgent.GetService(typeof(ActivitySource));
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.IsType<ActivitySource>(result);
+        var activitySource = (ActivitySource)result;
+        Assert.Equal(sourceName, activitySource.Name);
+    }
+
+    /// <summary>
+    /// Verify that GetService delegates to inner agent for unknown service types.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingUnknownServiceType_DelegatesToInnerAgent()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        var customService = new object();
+        mockAgent.Setup(a => a.GetService(typeof(string), null))
+            .Returns(customService);
+
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object);
+
+        // Act
+        var result = telemetryAgent.GetService(typeof(string));
+
+        // Assert
+        Assert.Same(customService, result);
+        mockAgent.Verify(a => a.GetService(typeof(string), null), Times.Once);
+    }
+
+    /// <summary>
+    /// Verify that GetService returns null for unknown service types when inner agent returns null.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingUnknownServiceTypeWithNullFromInnerAgent_ReturnsNull()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        mockAgent.Setup(a => a.GetService(typeof(string), null))
+            .Returns((object?)null);
+
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object);
+
+        // Act
+        var result = telemetryAgent.GetService(typeof(string));
+
+        // Assert
+        Assert.Null(result);
+        mockAgent.Verify(a => a.GetService(typeof(string), null), Times.Once);
+    }
+
+    /// <summary>
+    /// Verify that GetService with serviceKey parameter delegates correctly to inner agent.
+    /// </summary>
+    [Fact]
+    public void GetService_WithServiceKey_DelegatesToInnerAgent()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        var customService = new object();
+        var serviceKey = "test-key";
+        mockAgent.Setup(a => a.GetService(typeof(string), serviceKey))
+            .Returns(customService);
+
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object);
+
+        // Act
+        var result = telemetryAgent.GetService(typeof(string), serviceKey);
+
+        // Assert
+        Assert.Same(customService, result);
+        mockAgent.Verify(a => a.GetService(typeof(string), serviceKey), Times.Once);
+    }
+
+    /// <summary>
+    /// Verify that GetService returns ActivitySource even when inner agent has the same service type.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingActivitySourceWithInnerAgentHavingSameType_ReturnsOpenTelemetryActivitySource()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        var innerActivitySource = new ActivitySource("inner-source");
+        mockAgent.Setup(a => a.GetService(typeof(ActivitySource), null))
+            .Returns(innerActivitySource);
+
+        var sourceName = "telemetry-source";
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: sourceName);
+
+        // Act
+        var result = telemetryAgent.GetService(typeof(ActivitySource));
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.IsType<ActivitySource>(result);
+        var activitySource = (ActivitySource)result;
+        Assert.Equal(sourceName, activitySource.Name);
+        Assert.NotSame(innerActivitySource, result); // Should return OpenTelemetryAgent's ActivitySource, not inner agent's
+
+        // Cleanup
+        innerActivitySource.Dispose();
+    }
+
+    /// <summary>
+    /// Verify that GetService can retrieve AIAgentMetadata from inner agent.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingAIAgentMetadata_DelegatesToInnerAgent()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        var agentMetadata = new AIAgentMetadata("test-provider");
+        mockAgent.Setup(a => a.GetService(typeof(AIAgentMetadata), null))
+            .Returns(agentMetadata);
+
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object);
+
+        // Act
+        var result = telemetryAgent.GetService(typeof(AIAgentMetadata));
+
+        // Assert
+        Assert.Same(agentMetadata, result);
+        mockAgent.Verify(a => a.GetService(typeof(AIAgentMetadata), null), Times.AtLeastOnce);
+    }
+
+    /// <summary>
+    /// Verify that OpenTelemetryAgent delegates AIAgentMetadata requests to inner agent.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingAIAgentMetadata_DelegatesToInnerAgentWithChatClientAgent()
+    {
+        // Arrange
+        var mockChatClient = new Mock<IChatClient>();
+        var chatClientMetadata = new ChatClientMetadata("test-provider");
+        mockChatClient.Setup(c => c.GetService(typeof(ChatClientMetadata), null))
+            .Returns(chatClientMetadata);
+
+        var chatClientAgent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            Instructions = "Test instructions"
+        });
+
+        using var telemetryAgent = new OpenTelemetryAgent(chatClientAgent);
+
+        // Act
+        var result = telemetryAgent.GetService(typeof(AIAgentMetadata));
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.IsType<AIAgentMetadata>(result);
+        var agentMetadata = (AIAgentMetadata)result;
+        Assert.Equal("test-provider", agentMetadata.ProviderName);
+    }
+
+    /// <summary>
+    /// Verify that when OpenTelemetryAgent wraps a ChatClientAgent, the AIAgentMetadata.ProviderName
+    /// from ChatClientMetadata is correctly reflected in OpenTelemetry activities.
+    /// </summary>
+    [Theory]
+    [InlineData("openai")]
+    [InlineData("azure")]
+    [InlineData("anthropic")]
+    [InlineData("custom-provider")]
+    public async Task RunAsync_WithChatClientAgent_ProviderNameReflectedInTelemetryAsync(string providerName)
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var mockChatClient = new Mock<IChatClient>();
+        var chatClientMetadata = new ChatClientMetadata(providerName);
+        mockChatClient.Setup(c => c.GetService(typeof(ChatClientMetadata), null))
+            .Returns(chatClientMetadata);
+        mockChatClient.Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Response")));
+
+        var chatClientAgent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            Instructions = "Test instructions"
+        });
+
+        using var telemetryAgent = new OpenTelemetryAgent(chatClientAgent, sourceName: sourceName);
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        // Act
+        await telemetryAgent.RunAsync(messages);
+
+        // Assert
+        var activity = Assert.Single(activities);
+
+        // Verify that the provider name from ChatClientMetadata appears in telemetry
+        Assert.Equal(providerName, activity.GetTagItem(OpenTelemetryConsts.GenAI.SystemName));
+
+        // Verify that GetService returns the same provider name
+        var agentMetadata = telemetryAgent.GetService(typeof(AIAgentMetadata)) as AIAgentMetadata;
+        Assert.NotNull(agentMetadata);
+        Assert.Equal(providerName, agentMetadata.ProviderName);
+    }
+
+    /// <summary>
+    /// Verify that when OpenTelemetryAgent wraps a ChatClientAgent with null ChatClientMetadata,
+    /// the system defaults to "Microsoft.Extensions.AI" in telemetry.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_WithChatClientAgent_NullMetadata_DefaultsToMEAIAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var mockChatClient = new Mock<IChatClient>();
+        // Setup ChatClient to return null metadata
+        mockChatClient.Setup(c => c.GetService(typeof(ChatClientMetadata), null))
+            .Returns((ChatClientMetadata?)null);
+        mockChatClient.Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Response")));
+
+        var chatClientAgent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            Instructions = "Test instructions"
+        });
+
+        using var telemetryAgent = new OpenTelemetryAgent(chatClientAgent, sourceName: sourceName);
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        // Act
+        await telemetryAgent.RunAsync(messages);
+
+        // Assert
+        var activity = Assert.Single(activities);
+
+        // Verify that the system defaults to "microsoft.extensions.ai.agents" when no metadata is available
+        Assert.Equal("microsoft.extensions.ai.agents", activity.GetTagItem(OpenTelemetryConsts.GenAI.SystemName));
+
+        // Verify that GetService returns null provider name
+        var agentMetadata = telemetryAgent.GetService(typeof(AIAgentMetadata)) as AIAgentMetadata;
+        Assert.NotNull(agentMetadata);
+        Assert.Null(agentMetadata.ProviderName);
+    }
+
+    /// <summary>
+    /// Verify that when OpenTelemetryAgent wraps a non-ChatClientAgent with custom metadata,
+    /// the custom provider name is correctly reflected in telemetry.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_WithCustomAgent_CustomMetadata_ReflectedInTelemetryAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var customProviderName = "custom-ai-provider";
+        var mockAgent = new Mock<AIAgent>();
+        var customMetadata = new AIAgentMetadata(customProviderName);
+
+        // Setup mock agent to return custom metadata
+        mockAgent.Setup(a => a.GetService(typeof(AIAgentMetadata), null))
+            .Returns(customMetadata);
+        mockAgent.Setup(a => a.RunAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<AgentThread>(), It.IsAny<AgentRunOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Custom response")));
+
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: sourceName);
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        // Act
+        await telemetryAgent.RunAsync(messages);
+
+        // Assert
+        var activity = Assert.Single(activities);
+
+        // Verify that the custom provider name appears in telemetry
+        Assert.Equal(customProviderName, activity.GetTagItem(OpenTelemetryConsts.GenAI.SystemName));
+
+        // Verify that GetService returns the same custom provider name
+        var agentMetadata = telemetryAgent.GetService(typeof(AIAgentMetadata)) as AIAgentMetadata;
+        Assert.NotNull(agentMetadata);
+        Assert.Equal(customProviderName, agentMetadata.ProviderName);
+    }
+
+    /// <summary>
+    /// Verify that when OpenTelemetryAgent wraps a non-ChatClientAgent with no metadata,
+    /// the system defaults to "Microsoft.Extensions.AI" in telemetry.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_WithCustomAgent_NoMetadata_DefaultsToMEAIAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var mockAgent = new Mock<AIAgent>();
+
+        // Setup mock agent to return null metadata
+        mockAgent.Setup(a => a.GetService(typeof(AIAgentMetadata), null))
+            .Returns((AIAgentMetadata?)null);
+        mockAgent.Setup(a => a.RunAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<AgentThread>(), It.IsAny<AgentRunOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Response")));
+
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: sourceName);
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        // Act
+        await telemetryAgent.RunAsync(messages);
+
+        // Assert
+        var activity = Assert.Single(activities);
+
+        // Verify that the system defaults to "microsoft.extensions.ai.agents" when no metadata is available
+        Assert.Equal("microsoft.extensions.ai.agents", activity.GetTagItem(OpenTelemetryConsts.GenAI.SystemName));
+
+        // Verify that GetService returns null for metadata
+        var agentMetadata = telemetryAgent.GetService(typeof(AIAgentMetadata)) as AIAgentMetadata;
+        Assert.Null(agentMetadata);
+    }
+
+    /// <summary>
+    /// Verify that streaming operations also correctly reflect provider name in telemetry.
+    /// </summary>
+    [Theory]
+    [InlineData("openai")]
+    [InlineData("azure")]
+    [InlineData("anthropic")]
+    public async Task RunStreamingAsync_WithChatClientAgent_ProviderNameReflectedInTelemetryAsync(string providerName)
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var mockChatClient = new Mock<IChatClient>();
+        var chatClientMetadata = new ChatClientMetadata(providerName);
+        mockChatClient.Setup(c => c.GetService(typeof(ChatClientMetadata), null))
+            .Returns(chatClientMetadata);
+
+        ChatResponseUpdate[] returnUpdates =
+        [
+            new ChatResponseUpdate(role: ChatRole.Assistant, content: "Hello"),
+            new ChatResponseUpdate(role: ChatRole.Assistant, content: " World"),
+        ];
+
+        mockChatClient.Setup(c => c.GetStreamingResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Returns(returnUpdates.ToAsyncEnumerable());
+
+        var chatClientAgent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            Instructions = "Test instructions"
+        });
+
+        using var telemetryAgent = new OpenTelemetryAgent(chatClientAgent, sourceName: sourceName);
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        // Act
+        await foreach (var update in telemetryAgent.RunStreamingAsync(messages))
+        {
+            // Process updates
+        }
+
+        // Assert
+        var activity = Assert.Single(activities);
+
+        // Verify that the provider name from ChatClientMetadata appears in telemetry
+        Assert.Equal(providerName, activity.GetTagItem(OpenTelemetryConsts.GenAI.SystemName));
+
+        // Verify that GetService returns the same provider name
+        var agentMetadata = telemetryAgent.GetService(typeof(AIAgentMetadata)) as AIAgentMetadata;
+        Assert.NotNull(agentMetadata);
+        Assert.Equal(providerName, agentMetadata.ProviderName);
+    }
+
+    /// <summary>
+    /// Verify that provider name consistency is maintained across multiple RunAsync calls.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_MultipleCallsWithSameAgent_ConsistentProviderNameAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var providerName = "consistent-provider";
+        var mockChatClient = new Mock<IChatClient>();
+        var chatClientMetadata = new ChatClientMetadata(providerName);
+        mockChatClient.Setup(c => c.GetService(typeof(ChatClientMetadata), null))
+            .Returns(chatClientMetadata);
+        mockChatClient.Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Response")));
+
+        var chatClientAgent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            Instructions = "Test instructions"
+        });
+
+        using var telemetryAgent = new OpenTelemetryAgent(chatClientAgent, sourceName: sourceName);
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        // Act - Make multiple calls
+        await telemetryAgent.RunAsync(messages);
+        await telemetryAgent.RunAsync(messages);
+        await telemetryAgent.RunAsync(messages);
+
+        // Assert
+        Assert.Equal(3, activities.Count);
+
+        // Verify that all activities have the same provider name
+        foreach (var activity in activities)
+        {
+            Assert.Equal(providerName, activity.GetTagItem(OpenTelemetryConsts.GenAI.SystemName));
+        }
+
+        // Verify that GetService consistently returns the same provider name
+        var agentMetadata1 = telemetryAgent.GetService(typeof(AIAgentMetadata)) as AIAgentMetadata;
+        var agentMetadata2 = telemetryAgent.GetService(typeof(AIAgentMetadata)) as AIAgentMetadata;
+        Assert.NotNull(agentMetadata1);
+        Assert.NotNull(agentMetadata2);
+        Assert.Equal(providerName, agentMetadata1.ProviderName);
+        Assert.Equal(providerName, agentMetadata2.ProviderName);
+        Assert.Same(agentMetadata1, agentMetadata2); // Should be cached
+    }
+
+    #endregion
+
     [Fact]
     public async Task RunAsync_NoListeners_NoActivitiesCreatedAsync()
     {
