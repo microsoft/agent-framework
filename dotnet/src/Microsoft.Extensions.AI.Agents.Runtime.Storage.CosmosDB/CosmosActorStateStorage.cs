@@ -230,8 +230,8 @@ public class CosmosActorStateStorage : IActorStateStorage
         }
         catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
-            // No root document means no actor state exists
-            return Guid.NewGuid().ToString("N");
+            // No root document means no actor state exists - return initial ETag
+            return InitialEtag;
         }
     }
 }
