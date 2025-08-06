@@ -15,7 +15,7 @@ internal class InputEdgeRuner(IRunnerContext runContext, string sinkId)
         Executor sink = await this.RunContext.EnsureExecutorAsync(this.EdgeData)
                                              .ConfigureAwait(false);
 
-        return sink.MessageRouter;
+        return sink.Router;
     }
 
     public async ValueTask<CallResult?> ChaseAsync(object message)
