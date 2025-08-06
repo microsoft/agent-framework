@@ -8,6 +8,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using OpenAI;
 using OpenTelemetry;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
@@ -104,27 +105,26 @@ var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT
 logger.LogInformation("Initializing Azure OpenAI client with endpoint: {Endpoint}", endpoint);
 logger.LogDebug("Using deployment: {DeploymentName}", deploymentName);
 
-IChatClient chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
-        .GetChatClient(deploymentName)
-        .AsIChatClient();
-
-// Create the agent with OpenTelemetry instrumentation
-logger.LogInformation("Creating ChatClientAgent with OpenTelemetry instrumentation");
-var baseAgent = new ChatClientAgent(
-    chatClient,
-    name: "OpenTelemetryDemoAgent",
-    instructions: "You are a helpful assistant that provides concise and informative responses.");
-
 // Create a logger specifically for the agent
 var agentLogger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger<OpenTelemetryAgent>();
-using var agent = baseAgent.WithOpenTelemetry(agentLogger, SourceName);
+
+// Create the agent with OpenTelemetry instrumentation
+logger.LogInformation("Creating Agent with OpenTelemetry instrumentation");
+
+using var agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+        .GetChatClient(deploymentName)
+        .CreateAIAgent(
+            name: "OpenTelemetryDemoAgent",
+            instructions: "You are a helpful assistant that provides concise and informative responses.")
+        .WithOpenTelemetry(agentLogger, SourceName);
+
 var thread = agent.GetNewThread();
 
 logger.LogInformation("Agent created successfully with ID: {AgentId}", agent.Id);
 
 // Create a parent span for the entire agent session
 using var sessionActivity = activitySource.StartActivity("Agent Session");
-var sessionId = thread.Id ?? Guid.NewGuid().ToString();
+var sessionId = thread.ConversationId ?? Guid.NewGuid().ToString();
 sessionActivity?.SetTag("agent.name", "OpenTelemetryDemoAgent");
 sessionActivity?.SetTag("session.id", sessionId);
 sessionActivity?.SetTag("session.start_time", DateTimeOffset.UtcNow.ToString("O"));

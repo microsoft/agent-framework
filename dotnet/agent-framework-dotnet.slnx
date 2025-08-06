@@ -170,14 +170,5 @@
     <Project Path="tests/Microsoft.Extensions.AI.Agents.UnitTests/Microsoft.Extensions.AI.Agents.UnitTests.csproj">
       <BuildType Solution="Publish|*" Project="Debug" />
     </Project>
-      <Project Path="tests/CosmosDB.IntegrationTests/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests.AppHost/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests.AppHost.csproj">
-        <BuildType Solution="Publish|*" Project="Release" />
-      </Project>
-      <Project Path="tests/CosmosDB.IntegrationTests/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests.csproj">
-        <BuildType Solution="Publish|*" Project="Release" />
-      </Project>
-    <Folder Name="/CosmosDB/">
-
-    </Folder>
   </Folder>
 </Solution>
