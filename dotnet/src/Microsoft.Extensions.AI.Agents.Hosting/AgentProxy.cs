@@ -105,13 +105,6 @@ public sealed class AgentProxy : AIAgent
 
             if (update.Status is RequestStatus.Completed)
             {
-                var responseTypeInfo = AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentRunResponse));
-                var runResponse = (AgentRunResponse)update.Data.Deserialize(responseTypeInfo)!;
-                foreach (var item in runResponse.ToAgentRunResponseUpdates())
-                {
-                    yield return item;
-                }
-
                 yield break;
             }
 
