@@ -93,6 +93,12 @@ The proposed solution is to add helper methods which allow developers to either 
 
 ### 1. Create and retrieve with Foundry SDK, run with Agent Framework
 
+- [Foundry SDK] Create a `PersistentAgentsClient`
+- [Foundry SDK] Create a `PersistentAgent` using the `PersistentAgentsClient`
+- [Foundry SDK] Retrieve an `AIAgent` using the `PersistentAgentsClient`
+- [Agent Framework SDK] Invoke the `AIAgent` instance and access response from the `AgentRunResponse` 
+- [Foundry SDK] Clean up the agent
+
 
 ```csharp
 // Get a client to create server side agents with.
@@ -119,6 +125,10 @@ await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
 
 ### 2. Create directly with Foundry SDK, run with Agent Framework
 
+- [Foundry SDK] Create a `PersistentAgentsClient`
+- [Foundry SDK] Create a `AIAgent` using the `PersistentAgentsClient`
+- [Agent Framework SDK] Invoke the `AIAgent` instance and access response from the `AgentRunResponse` 
+- [Foundry SDK] Clean up the agent
 
 ```csharp
 // Get a client to create server side agents with.
@@ -142,6 +152,11 @@ await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
 
 ### 3. Create directly with Foundry SDK, run with conversation state using Agent Framework
 
+- [Foundry SDK] Create a `PersistentAgentsClient`
+- [Foundry SDK] Create a `AIAgent` using the `PersistentAgentsClient`
+- [Agent Framework SDK] Optionally create an `AgentThread` for the agent run
+- [Agent Framework SDK] Invoke the `AIAgent` instance and access response from the `AgentRunResponse` 
+- [Foundry SDK] Clean up the agent and the agent thread
 
 ```csharp
 // Get a client to create server side agents with.
@@ -180,6 +195,11 @@ await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
 
 ### 4. Create directly with Foundry SDK, orchestrate with Agent Framework
 
+- [Foundry SDK] Create a `PersistentAgentsClient`
+- [Foundry SDK] Create multiple `AIAgent` instances using the `PersistentAgentsClient`
+- [Agent Framework SDK] Create a `SequentialOrchestration` and add all of the agents to it
+- [Agent Framework SDK] Invoke the `SequentialOrchestration` instance and access response from the `AgentRunResponse` 
+- [Foundry SDK] Clean up the agents
 
 ```csharp
 // Get a client to create server side agents with.
