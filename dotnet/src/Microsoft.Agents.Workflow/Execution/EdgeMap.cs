@@ -12,9 +12,13 @@ internal class EdgeMap
 {
     private readonly Dictionary<Edge, object> _edgeRunners = new();
     private readonly Dictionary<Edge, FanInEdgeState> _fanInState = new();
-    private readonly InputEdgeRuner _inputRunner;
+    private readonly Dictionary<string, InputEdgeRunner> _portEdgeRunners;
+    private readonly InputEdgeRunner _inputRunner;
 
-    public EdgeMap(IRunnerContext runContext, Dictionary<string, HashSet<Edge>> workflowEdges, string startExecutorId)
+    public EdgeMap(IRunnerContext runContext,
+                   Dictionary<string, HashSet<Edge>> workflowEdges,
+                   IEnumerable<InputPort> workflowPorts,
+                   string startExecutorId)
     {
         foreach (Edge edge in workflowEdges.Values.SelectMany(e => e))
         {
@@ -29,7 +33,12 @@ internal class EdgeMap
             this._edgeRunners[edge] = edgeRunner;
         }
 
-        this._inputRunner = new InputEdgeRuner(runContext, startExecutorId);
+        this._portEdgeRunners = workflowPorts.ToDictionary(
+            port => port.Id,
+            port => InputEdgeRunner.ForPort(runContext, port)
+            );
+
+        this._inputRunner = new InputEdgeRunner(runContext, startExecutorId);
     }
 
     public async ValueTask<IEnumerable<CallResult?>> InvokeEdgeAsync(Edge edge, string sourceId, object message)
@@ -84,8 +93,13 @@ internal class EdgeMap
         return [await this._inputRunner.ChaseAsync(inputMessage).ConfigureAwait(false)];
     }
 
-    public ValueTask<IEnumerable<CallResult?>> InvokeResponseAsync(object externalResponse)
+    public async ValueTask<IEnumerable<CallResult?>> InvokeResponseAsync(ExternalResponse response)
     {
-        throw new NotImplementedException();
+        if (!this._portEdgeRunners.TryGetValue(response.Port.Id, out InputEdgeRunner? portRunner))
+        {
+            throw new InvalidOperationException($"Port {response.Port.Id} not found in the edge map.");
+        }
+
+        return [await portRunner.ChaseAsync(response.Data).ConfigureAwait(false)];
     }
 }

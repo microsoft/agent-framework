@@ -2,6 +2,7 @@
 
 using System;
 using Microsoft.Agents.Workflows.Core;
+using Microsoft.Agents.Workflows.Specialized;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows;
@@ -28,6 +29,10 @@ public sealed class ExecutorIsh :
         /// .
         /// </summary>
         Executor,
+        /// <summary>
+        /// .
+        /// </summary>
+        InputPort,
         //Function,
         //Agent,
         //ProcessStep
@@ -40,7 +45,18 @@ public sealed class ExecutorIsh :
 
     private readonly string? _idValue;
     private readonly Executor? _executorValue;
+    private readonly InputPort? _inputPortValue;
     //private readonly Func<object?, CallResult>? _functionValue;
+
+    /// <summary>
+    /// .
+    /// </summary>
+    /// <param name="id"></param>
+    public ExecutorIsh(string id)
+    {
+        this.ExecutorType = Type.Unbound;
+        this._idValue = Throw.IfNull(id);
+    }
 
     /// <summary>
     /// .
@@ -55,11 +71,11 @@ public sealed class ExecutorIsh :
     /// <summary>
     /// .
     /// </summary>
-    /// <param name="id"></param>
-    public ExecutorIsh(string id)
+    /// <param name="port"></param>
+    public ExecutorIsh(InputPort port)
     {
-        this.ExecutorType = Type.Unbound;
-        this._idValue = Throw.IfNull(id);
+        this.ExecutorType = Type.InputPort;
+        this._inputPortValue = Throw.IfNull(port);
     }
 
     internal bool IsUnbound => this.ExecutorType == Type.Unbound;
@@ -69,6 +85,7 @@ public sealed class ExecutorIsh :
     {
         Type.Unbound => this._idValue ?? throw new InvalidOperationException("This ExecutorIsh is unbound and has no ID."),
         Type.Executor => this._executorValue!.Id,
+        Type.InputPort => this._inputPortValue!.Id,
         //Type.Function => throw new NotImplementedException("Function type is not yet implemented."),
         //Type.Agent => throw new NotImplementedException("Agent type is not yet implemented."),
         //Type.ProcessStep => throw new NotImplementedException("ProcessStep type is not yet implemented."),
@@ -82,6 +99,7 @@ public sealed class ExecutorIsh :
     {
         Type.Unbound => throw new InvalidOperationException($"Executor with ID '{this.Id}' is unbound."),
         Type.Executor => () => this._executorValue!,
+        Type.InputPort => () => new RequestInputExecutor(this._inputPortValue!),
         //Type.Function => throw new NotImplementedException("Function type is not yet implemented."),
         //Type.Agent => throw new NotImplementedException("Agent type is not yet implemented."),
         //Type.ProcessStep => throw new NotImplementedException("ProcessStep type is not yet implemented."),
@@ -98,10 +116,13 @@ public sealed class ExecutorIsh :
     /// .
     /// </summary>
     /// <param name="executor"></param>
-    public static implicit operator ExecutorIsh(Executor executor)
-    {
-        return new ExecutorIsh(executor);
-    }
+    public static implicit operator ExecutorIsh(Executor executor) => new(executor);
+
+    /// <summary>
+    /// .
+    /// </summary>
+    /// <param name="inputPort"></param>
+    public static implicit operator ExecutorIsh(InputPort inputPort) => new(inputPort);
 
     // How do we AoT compile this?
     //public static implicit operator ExecutorIsh(Func<object?, CallResult> function)
@@ -175,11 +196,12 @@ public sealed class ExecutorIsh :
         return this.ExecutorType switch
         {
             Type.Unbound => $"'{this.Id}':<unbound>",
-            Type.Executor => $"'{this.Id}':{this._executorValue!.GetType()}",
+            Type.Executor => $"'{this.Id}':{this._executorValue!.GetType().Name}",
+            Type.InputPort => $"'{this.Id}':Input({this._inputPortValue!.Request.Name}->{this._inputPortValue!.Response.Name})",
             //Type.Function => $"ExecutorIsh for Function with ID '{this.Id}'",
             //Type.Agent => $"ExecutorIsh for Agent with ID '{this.Id}'",
             //Type.ProcessStep => $"ExecutorIsh for ProcessStep with ID '{this.Id}'",
-            _ => $"'{this.Id}':<unknown[{this.ExecutorType}]"
+            _ => $"'{this.Id}':<unknown[{this.ExecutorType}]>"
         };
     }
 }
