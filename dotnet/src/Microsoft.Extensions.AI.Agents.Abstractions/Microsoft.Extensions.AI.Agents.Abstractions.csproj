@@ -10,6 +10,7 @@
 
   <PropertyGroup>
     <InjectSharedThrow>true</InjectSharedThrow>
+    <InjectDiagnosticClassesOnLegacy>true</InjectDiagnosticClassesOnLegacy>
     <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>
   </PropertyGroup>
 

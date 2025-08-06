@@ -2,8 +2,12 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI.Agents;
 
@@ -13,21 +17,114 @@ namespace Microsoft.Extensions.AI.Agents;
 /// </summary>
 public class AgentThread
 {
+    private string? _conversationId;
+    private IChatMessageStore? _messageStore;
+
     /// <summary>
-    /// Gets or sets the id of the current thread.
+    /// Initializes a new instance of the <see cref="AgentThread"/> class.
+    /// </summary>
+    public AgentThread()
+    {
+    }
+
+    /// <summary>
+    /// Gets or sets the id of the current thread to support cases where the thread is owned by the agent service.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// This id may be null if the thread has no id, or
-    /// if it represents a service-owned thread but the service
-    /// has not yet been called to create the thread.
+    /// Note that either <see cref="ConversationId"/> or <see cref="MessageStore "/> may be set, but not both.
+    /// If <see cref="MessageStore "/> is not null, and <see cref="ConversationId"/> is set, <see cref="MessageStore "/>
+    /// will be reverted to null, and vice versa.
     /// </para>
     /// <para>
-    /// The id may also change over time where the <see cref="AgentThread"/>
-    /// is a proxy to a service owned thread that forks on each agent invocation.
+    /// This property may be null in the following cases:
+    /// <list type="bullet">
+    /// <item>The thread stores messages via the <see cref="IChatMessageStore"/> and not in the agent service.</item>
+    /// <item>This thread object is new and a server managed thread has not yet been created in the agent service.</item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// The id may also change over time where the the id is pointing at a
+    /// agent service managed thread, and the default behavior of a service is
+    /// to fork the thread with each iteration.
     /// </para>
     /// </remarks>
-    public string? Id { get; set; }
+    public string? ConversationId
+    {
+        get { return this._conversationId; }
+        set
+        {
+            if (string.IsNullOrWhiteSpace(this._conversationId) && string.IsNullOrWhiteSpace(value))
+            {
+                return;
+            }
+
+            if (this._messageStore is not null)
+            {
+                // If we have a message store already, we shouldn't switch the thread to use a conversation id
+                // since it means that the thread contents will essentially be deleted, and the thread will not work
+                // with the original agent anymore.
+                throw new InvalidOperationException("Only the ConversationId or MessageStore may be set, but not both and switching from one to another is not supported.");
+            }
+
+            this._conversationId = Throw.IfNullOrWhitespace(value);
+        }
+    }
+
+    /// <summary>
+    /// Gets or sets the <see cref="IChatMessageStore"/> used by this thread, for cases where messages should be stored in a custom location.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Note that either <see cref="ConversationId"/> or <see cref="MessageStore "/> may be set, but not both.
+    /// If <see cref="ConversationId"/> is not null, and <see cref="MessageStore "/> is set, <see cref="ConversationId"/>
+    /// will be reverted to null, and vice versa.
+    /// </para>
+    /// <para>
+    /// This property may be null in the following cases:
+    /// <list type="bullet">
+    /// <item>The thread stores messages in the agent service and just has an id to the remove thread, instead of in an <see cref="IChatMessageStore"/>.</item>
+    /// <item>This thread object is new it is not yet clear whether it will be backed by a server managed thread or an <see cref="IChatMessageStore"/>.</item>
+    /// </list>
+    /// </para>
+    /// </remarks>
+    public IChatMessageStore? MessageStore
+    {
+        get { return this._messageStore; }
+        set
+        {
+            if (this._messageStore is null && value is null)
+            {
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(this._conversationId))
+            {
+                // If we have a conversation id already, we shouldn't switch the thread to use a message store
+                // since it means that the thread will not work with the original agent anymore.
+                throw new InvalidOperationException("Only the ConversationId or MessageStore may be set, but not both and switching from one to another is not supported.");
+            }
+
+            this._messageStore = Throw.IfNull(value);
+        }
+    }
+
+    /// <summary>
+    /// Retrieves any messages stored in the <see cref="IChatMessageStore"/> of the thread, otherwise returns an empty collection.
+    /// </summary>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>The messages from the <see cref="IChatMessageStore"/> in ascending chronological order, with the oldest message first.</returns>
+    public virtual async IAsyncEnumerable<ChatMessage> GetMessagesAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        if (this._messageStore is not null)
+        {
+            var messages = await this._messageStore!.GetMessagesAsync(cancellationToken).ConfigureAwait(false);
+            foreach (var message in messages)
+            {
+                yield return message;
+            }
+        }
+    }
 
     /// <summary>
     /// This method is called when new messages have been contributed to the chat by any participant.
@@ -39,8 +136,92 @@ public class AgentThread
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that completes when the context has been updated.</returns>
     /// <exception cref="InvalidOperationException">The thread has been deleted.</exception>
-    protected internal virtual Task OnNewMessagesAsync(IReadOnlyCollection<ChatMessage> newMessages, CancellationToken cancellationToken = default)
+    protected internal virtual async Task OnNewMessagesAsync(IReadOnlyCollection<ChatMessage> newMessages, CancellationToken cancellationToken = default)
     {
-        return Task.CompletedTask;
+        switch (this)
+        {
+            case { ConversationId: not null }:
+                // If the thread messages are stored in the service
+                // there is nothing to do here, since invoking the
+                // service should already update the thread.
+                break;
+
+            case { MessageStore: null }:
+                // If there is no conversation id, and no store we can createa a default in memory store and add messages to it.
+                this._messageStore = new InMemoryChatMessageStore();
+                await this._messageStore!.AddMessagesAsync(newMessages, cancellationToken).ConfigureAwait(false);
+                break;
+
+            case { MessageStore: not null }:
+                // If a store has been provided, we need to add the messages to the store.
+                await this._messageStore!.AddMessagesAsync(newMessages, cancellationToken).ConfigureAwait(false);
+                break;
+
+            default:
+                throw new UnreachableException();
+        }
+    }
+
+    /// <summary>
+    /// Deserializes the state contained in the provided <see cref="JsonElement"/> into the properties on this thread.
+    /// </summary>
+    /// <param name="serializedThread">A <see cref="JsonElement"/> representing the state of the thread.</param>
+    /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    protected internal virtual async Task DeserializeAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    {
+        var state = JsonSerializer.Deserialize(
+            serializedThread,
+            AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState))) as ThreadState;
+
+        if (state?.ConversationId is string threadId)
+        {
+            this.ConversationId = threadId;
+
+            // Since we have an ID, we should not have a chat message store and we can return here.
+            return;
+        }
+
+        // If we don't have any IChatMessageStore state return here.
+        if (state?.StoreState is null || state?.StoreState?.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+        {
+            return;
+        }
+
+        if (this._messageStore is null)
+        {
+            // If we don't have a chat message store yet, create an in-memory one.
+            this._messageStore = new InMemoryChatMessageStore();
+        }
+
+        await this._messageStore.DeserializeStateAsync(state!.StoreState.Value, jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
+    /// </summary>
+    /// <param name="jsonSerializerOptions">The JSON serialization options to use.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
+    public virtual async Task<JsonElement> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    {
+        var storeState = this._messageStore is null ?
+            (JsonElement?)null :
+            await this._messageStore.SerializeStateAsync(jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
+
+        var state = new ThreadState
+        {
+            ConversationId = this.ConversationId,
+            StoreState = storeState
+        };
+
+        return JsonSerializer.SerializeToElement(state, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState)));
+    }
+
+    internal class ThreadState
+    {
+        public string? ConversationId { get; set; }
+
+        public JsonElement? StoreState { get; set; }
     }
 }

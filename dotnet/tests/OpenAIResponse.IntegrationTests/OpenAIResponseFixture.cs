@@ -29,15 +29,10 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
 
     public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
     {
-        if (thread is not ChatClientAgentThread chatClientThread)
-        {
-            throw new InvalidOperationException("The thread must be of type ChatClientAgentThread to retrieve chat history.");
-        }
-
         if (store)
         {
-            var inputItems = await this._openAIResponseClient.GetResponseInputItemsAsync(chatClientThread.Id).ToListAsync();
-            var response = await this._openAIResponseClient.GetResponseAsync(chatClientThread.Id);
+            var inputItems = await this._openAIResponseClient.GetResponseInputItemsAsync(thread.ConversationId).ToListAsync();
+            var response = await this._openAIResponseClient.GetResponseAsync(thread.ConversationId);
             var responseItem = response.Value.OutputItems.FirstOrDefault()!;
 
             // Take the messages that were the chat history leading up to the current response
@@ -55,7 +50,7 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
             return [.. previousMessages, responseMessage];
         }
 
-        return await chatClientThread.GetMessagesAsync().ToListAsync();
+        return await thread.GetMessagesAsync().ToListAsync();
     }
 
     private static ChatMessage ConvertToChatMessage(ResponseItem item)
