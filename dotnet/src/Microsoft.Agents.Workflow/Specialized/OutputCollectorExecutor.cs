@@ -4,7 +4,7 @@ using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Core;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.Workflows;
+namespace Microsoft.Agents.Workflows.Specialized;
 
 internal class OutputSink<TResult> : Executor
 {

@@ -22,6 +22,11 @@ public record WorkflowCompletedEvent : WorkflowEvent;
 /// <summary>
 /// .
 /// </summary>
+public record RequestInputEvent(ExternalRequest request) : WorkflowEvent;
+
+/// <summary>
+/// .
+/// </summary>
 public record ExecutorEvent : WorkflowEvent
 {
     /// <summary>

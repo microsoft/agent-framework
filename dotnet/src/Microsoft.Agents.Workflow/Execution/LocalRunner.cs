@@ -27,7 +27,7 @@ public class LocalRunner<TInput> : ISuperStepRunner where TInput : notnull
 
         // Initialize the runners for each of the edges, along with the state for edges that
         // need it.
-        this.EdgeMap = new EdgeMap(this.RunContext, this.Workflow.Edges, this.Workflow.StartExecutorId);
+        this.EdgeMap = new EdgeMap(this.RunContext, this.Workflow.Edges, this.Workflow.Ports.Values, this.Workflow.StartExecutorId);
     }
 
     ValueTask ISuperStepRunner.EnqueueMessageAsync(object message)
@@ -56,7 +56,7 @@ public class LocalRunner<TInput> : ISuperStepRunner where TInput : notnull
 
     private bool IsResponse(object message)
     {
-        return false;
+        return message is ExternalResponse;
     }
 
     private ValueTask<IEnumerable<CallResult?>> RouteExternalMessageAsync(object message)
@@ -65,9 +65,19 @@ public class LocalRunner<TInput> : ISuperStepRunner where TInput : notnull
         bool isHil = false;
 #pragma warning restore CS0219 // Variable is assigned but its value is never used
 
-        return this.IsResponse(message)
-            ? this.EdgeMap.InvokeResponseAsync(message)
+        return message is ExternalResponse response
+            ? this.CompleteExternalResponseAsync(response)
             : this.EdgeMap.InvokeInputAsync(message);
+    }
+
+    private ValueTask<IEnumerable<CallResult?>> CompleteExternalResponseAsync(ExternalResponse response)
+    {
+        if (!this.RunContext.CompleteRequest(response.RequestId))
+        {
+            throw new InvalidOperationException($"No pending request with ID {response.RequestId} found in the workflow context.");
+        }
+
+        return this.EdgeMap.InvokeResponseAsync(response);
     }
 
     /// <summary>
