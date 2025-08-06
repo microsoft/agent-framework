@@ -9,7 +9,7 @@ namespace Microsoft.Agents.Workflows.Core;
 /// This class represents the result of a call to a <see cref="IMessageHandler{TMessage}"/>
 /// or <see cref="IMessageHandler{TMessage,TResult}"/>.
 /// </summary>
-public sealed class CallResult
+internal sealed class CallResult
 {
     /// <summary>
     /// Indicates whether the call was void (i.e., no result expected). This only applies to

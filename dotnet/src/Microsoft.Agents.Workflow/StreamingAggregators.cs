@@ -5,10 +5,28 @@ using System.Collections.Generic;
 
 namespace Microsoft.Agents.Workflows;
 
-internal delegate TResult? StreamingAggregator<TInput, TResult>(TInput input);
+/// <summary>
+/// .
+/// </summary>
+/// <typeparam name="TInput"></typeparam>
+/// <typeparam name="TResult"></typeparam>
+/// <param name="input"></param>
+/// <returns></returns>
+public delegate TResult? StreamingAggregator<TInput, TResult>(TInput input);
 
-internal static class StreamingAggregators
+/// <summary>
+/// .
+/// </summary>
+public static class StreamingAggregators
 {
+    /// <summary>
+    /// .
+    /// </summary>
+    /// <typeparam name="TInput"></typeparam>
+    /// <typeparam name="TResult"></typeparam>
+    /// <param name="conversion"></param>
+    /// <param name="defaultValue"></param>
+    /// <returns></returns>
     public static StreamingAggregator<TInput, TResult> First<TInput, TResult>(Func<TInput, TResult> conversion, TResult? defaultValue = default)
     {
         bool hasRun = false;
@@ -27,9 +45,23 @@ internal static class StreamingAggregators
         }
     }
 
+    /// <summary>
+    /// .
+    /// </summary>
+    /// <typeparam name="TInput"></typeparam>
+    /// <param name="defaultValue"></param>
+    /// <returns></returns>
     public static StreamingAggregator<TInput, TInput> First<TInput>(TInput? defaultValue = default)
         => First<TInput, TInput>(input => input, defaultValue);
 
+    /// <summary>
+    /// .
+    /// </summary>
+    /// <typeparam name="TInput"></typeparam>
+    /// <typeparam name="TResult"></typeparam>
+    /// <param name="conversion"></param>
+    /// <param name="defaultValue"></param>
+    /// <returns></returns>
     public static StreamingAggregator<TInput, TResult> Last<TInput, TResult>(Func<TInput, TResult> conversion, TResult? defaultValue = default)
     {
         TResult? local = defaultValue;
@@ -43,9 +75,22 @@ internal static class StreamingAggregators
         }
     }
 
+    /// <summary>
+    /// .
+    /// </summary>
+    /// <typeparam name="TInput"></typeparam>
+    /// <param name="defaultValue"></param>
+    /// <returns></returns>
     public static StreamingAggregator<TInput, TInput> Last<TInput>(TInput? defaultValue = default)
         => Last<TInput, TInput>(input => input, defaultValue);
 
+    /// <summary>
+    /// .
+    /// </summary>
+    /// <typeparam name="TInput"></typeparam>
+    /// <typeparam name="TResult"></typeparam>
+    /// <param name="conversion"></param>
+    /// <returns></returns>
     public static StreamingAggregator<TInput, IEnumerable<TResult>> Union<TInput, TResult>(Func<TInput, TResult> conversion)
     {
         List<TResult> results = new();
@@ -59,6 +104,11 @@ internal static class StreamingAggregators
         }
     }
 
+    /// <summary>
+    /// .
+    /// </summary>
+    /// <typeparam name="TInput"></typeparam>
+    /// <returns></returns>
     public static StreamingAggregator<TInput, IEnumerable<TInput>> Union<TInput>()
         => Union<TInput, TInput>(input => input);
 }

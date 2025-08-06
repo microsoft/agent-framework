@@ -15,23 +15,35 @@ using System.Collections.Concurrent;
 
 namespace Microsoft.Agents.Workflows;
 
-internal delegate TExecutor ExecutorProvider<out TExecutor>()
+/// <summary>
+/// A factory method that produces an executor instance.
+/// </summary>
+/// <typeparam name="TExecutor">The executor type.</typeparam>
+/// <returns>A new <typeparamref name="TExecutor"/> instance.</returns>
+public delegate TExecutor ExecutorProvider<out TExecutor>()
     where TExecutor : Executor;
 
-internal record struct EdgeId(string SourceId, string TargetId)
+/// <summary>
+/// .
+/// </summary>
+public class WorkflowBuilder
 {
-    public override string ToString() => $"{this.SourceId} -> {this.TargetId}";
-}
+    private record struct EdgeId(string SourceId, string TargetId)
+    {
+        public override string ToString() => $"{this.SourceId} -> {this.TargetId}";
+    }
 
-internal class WorkflowBuilder
-{
     private readonly Dictionary<string, ExecutorProvider<Executor>> _executors = new();
-    private readonly Dictionary<string, HashSet<FlowEdge>> _edges = new();
+    private readonly Dictionary<string, HashSet<Edge>> _edges = new();
     private readonly HashSet<string> _unboundExecutors = new();
     private readonly HashSet<EdgeId> _conditionlessEdges = new();
 
     private readonly string _startExecutorId;
 
+    /// <summary>
+    /// .
+    /// </summary>
+    /// <param name="start"></param>
     public WorkflowBuilder(ExecutorIsh start)
     {
         this._startExecutorId = this.Track(start).Id;
@@ -63,6 +75,12 @@ internal class WorkflowBuilder
         this._executors[id] = provider;
     }
 
+    /// <summary>
+    /// .
+    /// </summary>
+    /// <param name="executor"></param>
+    /// <returns></returns>
+    /// <exception cref="InvalidOperationException"></exception>
     public WorkflowBuilder BindExecutor(Executor executor)
     {
         if (!this._unboundExecutors.Contains(executor.Id))
@@ -76,18 +94,26 @@ internal class WorkflowBuilder
         return this;
     }
 
-    private HashSet<FlowEdge> EnsureEdgesFor(string sourceId)
+    private HashSet<Edge> EnsureEdgesFor(string sourceId)
     {
         // Ensure that there is a set of edges for the given source ID.
         // If it does not exist, create a new one.
-        if (!this._edges.TryGetValue(sourceId, out HashSet<FlowEdge>? edges))
+        if (!this._edges.TryGetValue(sourceId, out HashSet<Edge>? edges))
         {
-            this._edges[sourceId] = edges = new HashSet<FlowEdge>();
+            this._edges[sourceId] = edges = new HashSet<Edge>();
         }
 
         return edges;
     }
 
+    /// <summary>
+    /// .
+    /// </summary>
+    /// <param name="source"></param>
+    /// <param name="target"></param>
+    /// <param name="condition"></param>
+    /// <returns></returns>
+    /// <exception cref="InvalidOperationException"></exception>
     public WorkflowBuilder AddEdge(ExecutorIsh source, ExecutorIsh target, Func<object?, bool>? condition = null)
     {
         // Add an edge from source to target with an optional condition.
@@ -110,8 +136,13 @@ internal class WorkflowBuilder
         return this;
     }
 
-    // output int strictly element-of [0, count)
-
+    /// <summary>
+    /// .
+    /// </summary>
+    /// <param name="source"></param>
+    /// <param name="partitioner"></param>
+    /// <param name="targets"></param>
+    /// <returns></returns>
     public WorkflowBuilder AddFanOutEdge(ExecutorIsh source, Func<object?, int, IEnumerable<int>>? partitioner = null, params ExecutorIsh[] targets)
     {
         Throw.IfNull(source);
@@ -126,6 +157,13 @@ internal class WorkflowBuilder
         return this;
     }
 
+    /// <summary>
+    /// .
+    /// </summary>
+    /// <param name="target"></param>
+    /// <param name="trigger"></param>
+    /// <param name="sources"></param>
+    /// <returns></returns>
     public WorkflowBuilder AddFanInEdge(ExecutorIsh target, FanInTrigger trigger = default, params ExecutorIsh[] sources)
     {
         Throw.IfNull(target);
@@ -144,6 +182,12 @@ internal class WorkflowBuilder
         return this;
     }
 
+    /// <summary>
+    /// .
+    /// </summary>
+    /// <typeparam name="T"></typeparam>
+    /// <returns></returns>
+    /// <exception cref="InvalidOperationException"></exception>
     public Workflow<T> Build<T>()
     {
         if (this._unboundExecutors.Count > 0)
@@ -173,9 +217,7 @@ internal class WorkflowBuilder
         return new Workflow<T>(this._startExecutorId) // Why does it not see the default ctor?
         {
             ExecutorProviders = this._executors,
-            Edges = this._edges,
-            StartExecutorId = this._startExecutorId,
-            InputType = typeof(T)
+            Edges = this._edges
         };
     }
 }
