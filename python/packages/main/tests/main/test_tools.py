@@ -94,7 +94,7 @@ async def test_ai_function_invoke_telemetry_enabled():
 
         # Mock the histogram
         mock_histogram = Mock()
-        telemetry_test_tool.invocation_duration_histogram = mock_histogram
+        telemetry_test_tool._invocation_duration_histogram = mock_histogram
 
         # Call invoke
         result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
@@ -138,7 +138,7 @@ async def test_ai_function_invoke_telemetry_with_pydantic_args():
         mock_start_span.return_value = mock_context_manager
 
         mock_histogram = Mock()
-        pydantic_test_tool.invocation_duration_histogram = mock_histogram
+        pydantic_test_tool._invocation_duration_histogram = mock_histogram
 
         # Call invoke with Pydantic model
         result = await pydantic_test_tool.invoke(arguments=args_model, tool_call_id="pydantic_call")
@@ -171,7 +171,7 @@ async def test_ai_function_invoke_telemetry_with_exception():
         mock_start_span.return_value = mock_context_manager
 
         mock_histogram = Mock()
-        exception_test_tool.invocation_duration_histogram = mock_histogram
+        exception_test_tool._invocation_duration_histogram = mock_histogram
 
         # Call invoke and expect exception
         with pytest.raises(ValueError, match="Test exception for telemetry"):
@@ -211,7 +211,7 @@ async def test_ai_function_invoke_telemetry_async_function():
         mock_start_span.return_value = mock_context_manager
 
         mock_histogram = Mock()
-        async_telemetry_test.invocation_duration_histogram = mock_histogram
+        async_telemetry_test._invocation_duration_histogram = mock_histogram
 
         # Call invoke
         result = await async_telemetry_test.invoke(x=3, y=4, tool_call_id="async_call")
@@ -250,7 +250,7 @@ async def test_ai_function_invoke_telemetry_no_tool_call_id():
         mock_start_span.return_value = mock_context_manager
 
         mock_histogram = Mock()
-        no_id_test_tool.invocation_duration_histogram = mock_histogram
+        no_id_test_tool._invocation_duration_histogram = mock_histogram
 
         # Call invoke without tool_call_id
         result = await no_id_test_tool.invoke(x=5)

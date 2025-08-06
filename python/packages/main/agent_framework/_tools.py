@@ -7,9 +7,10 @@ from time import perf_counter
 from typing import Annotated, Any, Generic, Protocol, TypeVar, get_args, get_origin, runtime_checkable
 
 from opentelemetry import metrics, trace
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, Field, PrivateAttr, create_model
 
 from ._logging import get_logger
+from ._pydantic import AFBaseModel
 from .telemetry import GenAIAttributes, start_as_current_span
 
 tracer: trace.Tracer = trace.get_tracer("agent_framework")
@@ -34,9 +35,9 @@ class AITool(Protocol):
 
     name: str
     """The name of the tool."""
-    description: str | None = None
+    description: str
     """A description of the tool, suitable for use in describing the purpose to a model."""
-    additional_properties: dict[str, Any] | None = None
+    additional_properties: dict[str, Any] | None
     """Additional properties associated with the tool."""
 
     def __str__(self) -> str:
@@ -48,38 +49,75 @@ ArgsT = TypeVar("ArgsT", bound=BaseModel)
 ReturnT = TypeVar("ReturnT")
 
 
-class AIFunction(AITool, Generic[ArgsT, ReturnT]):
-    """A AITool that is callable as code."""
+class AIToolBase(AFBaseModel):
+    """Base class for AI tools, providing common attributes and methods.
+
+    Args:
+        name: The name of the tool.
+        description: A description of the tool.
+        additional_properties: Additional properties associated with the tool.
+    """
+
+    name: str = Field(..., kw_only=False)
+    description: str = ""
+    additional_properties: dict[str, Any] | None = None
+
+    def __str__(self) -> str:
+        """Return a string representation of the tool."""
+        if self.description:
+            return f"{self.__class__.__name__}(name={self.name}, description={self.description})"
+        return f"{self.__class__.__name__}(name={self.name})"
+
+
+class HostedCodeInterpreterTool(AIToolBase):
+    """Represents a hosted tool that can be specified to an AI service to enable it to execute generated code.
+
+    This tool does not implement code interpretation itself. It serves as a marker to inform a service
+    that it is allowed to execute generated code if the service is capable of doing so.
+    """
 
     def __init__(
-        self,
-        name: str,
-        *,
-        func: Callable[..., Awaitable[ReturnT] | ReturnT],
-        description: str | None = None,
-        input_model: type[ArgsT],
-        **kwargs: Any,
-    ):
-        """Initialize a FunctionTool.
+        self, *, description: str | None = None, additional_properties: dict[str, Any] | None = None, **kwargs: Any
+    ) -> None:
+        """Initialize the HostedCodeInterpreterTool.
 
         Args:
-            func: The function to wrap.
-            name: The name of the tool.
             description: A description of the tool.
-            input_model: A Pydantic model that defines the input parameters for the function.
-            **kwargs: Additional properties to set on the tool.
-                stored in additional_properties.
+            additional_properties: Additional properties associated with the tool.
+            **kwargs: Additional keyword arguments to pass to the base class.
         """
-        self.name = name
-        self.description = description
-        self.input_model = input_model
-        self.additional_properties: dict[str, Any] | None = kwargs
-        self._func = func
-        self.invocation_duration_histogram = meter.create_histogram(
-            "agent_framework.function.invocation.duration",
+        args: dict[str, Any] = {
+            "name": "hosted_code_interpreter",
+        }
+        if description is not None:
+            args["description"] = description
+        if additional_properties is not None:
+            args["additional_properties"] = additional_properties
+        if "name" in kwargs:
+            raise ValueError("The 'name' argument is reserved for the HostedCodeInterpreterTool and cannot be set.")
+        super().__init__(**args, **kwargs)
+
+
+class AIFunction(AIToolBase, Generic[ArgsT, ReturnT]):
+    """A AITool that is callable as code.
+
+    Args:
+        name: The name of the function.
+        description: A description of the function.
+        additional_properties: Additional properties to set on the function.
+        func: The function to wrap. If None, returns a decorator.
+        input_model: The Pydantic model that defines the input parameters for the function.
+    """
+
+    func: Callable[..., Awaitable[ReturnT] | ReturnT]
+    input_model: type[ArgsT]
+    _invocation_duration_histogram: metrics.Histogram = PrivateAttr(
+        default_factory=lambda: meter.create_histogram(
+            GenAIAttributes.MEASUREMENT_FUNCTION_INVOCATION_DURATION.value,
             unit="s",
             description="Measures the duration of a function's execution",
         )
+    )
 
     def parameters(self) -> dict[str, Any]:
         """Return the parameter json schemas of the input model."""
@@ -87,10 +125,7 @@ class AIFunction(AITool, Generic[ArgsT, ReturnT]):
 
     def __call__(self, *args: Any, **kwargs: Any) -> ReturnT | Awaitable[ReturnT]:
         """Call the wrapped function with the provided arguments."""
-        return self._func(*args, **kwargs)
-
-    def __str__(self) -> str:
-        return f"AIFunction(name={self.name}, description={self.description})"
+        return self.func(*args, **kwargs)
 
     async def invoke(
         self,
@@ -134,7 +169,7 @@ class AIFunction(AITool, Generic[ArgsT, ReturnT]):
                 raise
             finally:
                 duration = perf_counter() - starting_time_stamp
-                self.invocation_duration_histogram.record(duration, attributes=attributes)
+                self._invocation_duration_histogram.record(duration, attributes=attributes)
                 logger.info("Function completed. Duration: %fs", duration)
 
 
@@ -205,42 +240,13 @@ def ai_function(
                 raise TypeError(f"Input model for {tool_name} must be a subclass of BaseModel, got {input_model}")
 
             return AIFunction[Any, ReturnT](
-                func=f,
                 name=tool_name,
                 description=tool_desc,
+                additional_properties=additional_properties or {},
+                func=f,
                 input_model=input_model,
-                **(additional_properties if additional_properties is not None else {}),
             )
 
         return wrapper(func)
 
     return decorator(func) if func else decorator  # type: ignore[reportReturnType, return-value]
-
-
-class HostedCodeInterpreterTool(AITool):
-    """Represents a hosted tool that can be specified to an AI service to enable it to execute generated code.
-
-    This tool does not implement code interpretation itself. It serves as a marker to inform a service
-    that it is allowed to execute generated code if the service is capable of doing so.
-    """
-
-    def __init__(
-        self,
-        name: str = "code_interpreter",
-        description: str | None = None,
-        additional_properties: dict[str, Any] | None = None,
-    ):
-        """Initialize a HostedCodeInterpreterTool.
-
-        Args:
-            name: The name of the tool. Defaults to "code_interpreter".
-            description: A description of the tool.
-            additional_properties: Additional properties associated with the tool, specific to the service used.
-        """
-        self.name = name
-        self.description = description
-        self.additional_properties = additional_properties
-
-    def __str__(self) -> str:
-        """Return a string representation of the tool."""
-        return f"HostedCodeInterpreterTool(name={self.name})"

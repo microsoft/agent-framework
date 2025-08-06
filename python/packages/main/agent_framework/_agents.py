@@ -2,15 +2,16 @@
 
 import sys
 from collections.abc import AsyncIterable, Callable, MutableMapping, Sequence
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from enum import Enum
+from itertools import chain
 from typing import Any, ClassVar, Literal, Protocol, TypeVar, runtime_checkable
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 from ._clients import ChatClient
-from ._mcp import MCPBase
+from ._mcp import LocalMcpServer
 from ._pydantic import AFBaseModel
 from ._tools import AITool
 from ._types import (
@@ -316,7 +317,8 @@ class ChatClientAgent(AgentBase):
     chat_client: ChatClient
     instructions: str | None = None
     chat_options: ChatOptions
-    mcp_servers: list[MCPBase] | None = None
+    _local_mcp_tools: list[LocalMcpServer] = PrivateAttr(default_factory=list)  # type: ignore[reportUnknownVariableType]
+    _async_exit_stack: AsyncExitStack = PrivateAttr(default_factory=AsyncExitStack)
 
     def __init__(
         self,
@@ -340,8 +342,8 @@ class ChatClientAgent(AgentBase):
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
         tools: AITool
         | list[AITool]
-        | MCPBase
-        | list[MCPBase]
+        | LocalMcpServer
+        | list[LocalMcpServer]
         | Callable[..., Any]
         | list[Callable[..., Any]]
         | MutableMapping[str, Any]
@@ -385,13 +387,18 @@ class ChatClientAgent(AgentBase):
             kwargs: any additional keyword arguments.
                 Unused, can be used by subclasses of this Agent.
         """
-        mcp_servers: list[MCPBase] | None = None
-        if isinstance(tools, MCPBase):
-            mcp_servers = [tools]
+        local_mcp_tools: list[LocalMcpServer] = []
+        if isinstance(tools, LocalMcpServer):
+            local_mcp_tools = [tools]
             tools = None
-        elif isinstance(tools, list) and all(isinstance(tool, MCPBase) for tool in tools):  # type: ignore[reportUnknownVariableType]
-            mcp_servers = tools  # type: ignore[reportArgumentType]
-            tools = None
+        elif isinstance(tools, list):
+            new_tools: list[Any] = []
+            for tool in tools:  # type: ignore[assignment]
+                if isinstance(tool, LocalMcpServer):
+                    local_mcp_tools.append(tool)
+                else:
+                    new_tools.append(tool)
+            tools = new_tools
         args: dict[str, Any] = {
             "chat_client": chat_client,
             "chat_options": ChatOptions(
@@ -421,33 +428,29 @@ class ChatClientAgent(AgentBase):
             args["description"] = description
         if id is not None:
             args["id"] = id
-        if mcp_servers is not None:
-            args["mcp_servers"] = mcp_servers
 
         super().__init__(**args)
+        self._local_mcp_tools = local_mcp_tools
 
     async def __aenter__(self) -> "Self":
         """Async context manager entry.
 
-        If the chat_client supports async context management, enter its context.
+        If either the chat_client or the local_mcp_tools are context managers,
+        they will be entered into the async exit stack to ensure proper cleanup.
+
+        This list might be extended in the future.
         """
-        if isinstance(self.chat_client, AbstractAsyncContextManager):
-            await self.chat_client.__aenter__()  # type: ignore[reportUnknownMemberType]
-        if self.mcp_servers:
-            for mcp_server in self.mcp_servers:
-                await mcp_server.connect()
+        for context_manager in chain([self.chat_client], self._local_mcp_tools):
+            if isinstance(context_manager, AbstractAsyncContextManager):
+                await self._async_exit_stack.enter_async_context(context_manager)
         return self
 
     async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
         """Async context manager exit.
 
-        If the chat_client supports async context management, exit its context.
+        Close the async exit stack to ensure all context managers are exited properly.
         """
-        if isinstance(self.chat_client, AbstractAsyncContextManager):
-            await self.chat_client.__aexit__(exc_type, exc_val, exc_tb)  # type: ignore[reportUnknownMemberType]
-        if self.mcp_servers:
-            for mcp_server in self.mcp_servers:
-                await mcp_server.close()
+        await self._async_exit_stack.aclose()
 
     async def run(
         self,
@@ -512,13 +515,13 @@ class ChatClientAgent(AgentBase):
         thread, thread_messages = await self._prepare_thread_and_messages(thread=thread, input_messages=input_messages)
         agent_name = self._get_agent_name()
 
-        if self.mcp_servers:
+        if self._local_mcp_tools:
             if tools is None:
                 tools = []
             if not isinstance(tools, list):
                 tools = [tools]  # type: ignore
-            for mcp_server in self.mcp_servers:
-                tools.extend(mcp_server.functions.values())  # type: ignore
+            for mcp_server in self._local_mcp_tools:
+                tools.extend(mcp_server.functions)  # type: ignore
 
         response = await self.chat_client.get_response(
             messages=thread_messages,
@@ -631,12 +634,12 @@ class ChatClientAgent(AgentBase):
         agent_name = self._get_agent_name()
         response_updates: list[ChatResponseUpdate] = []
 
-        if self.mcp_servers:
+        if self._local_mcp_tools:
             if tools is None:
                 tools = []
             if not isinstance(tools, list):
                 tools = [tools]  # type: ignore
-            for mcp_server in self.mcp_servers:
+            for mcp_server in self._local_mcp_tools:
                 tools.extend(mcp_server.functions.values())  # type: ignore
 
         async for update in self.chat_client.get_streaming_response(

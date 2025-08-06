@@ -5,7 +5,6 @@ import logging
 import re
 import sys
 from abc import abstractmethod
-from collections.abc import Sequence
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
 from datetime import timedelta
 from functools import partial
@@ -20,12 +19,12 @@ from mcp.client.websocket import websocket_client
 from mcp.shared.context import RequestContext
 from mcp.shared.exceptions import McpError
 from mcp.shared.session import RequestResponder
-from pydantic import create_model
+from pydantic import BaseModel, create_model
 
 from ._clients import ChatClient
 from ._tools import AIFunction
-from ._types import ChatMessage, ChatRole, DataContent, TextContent, UriContent
-from .exceptions import FunctionException, FunctionExecutionException
+from ._types import AIContents, ChatMessage, ChatRole, DataContent, TextContent, UriContent
+from .exceptions import ToolException, ToolExecutionException
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -49,103 +48,116 @@ LOG_LEVEL_MAPPING: dict[types.LoggingLevel, int] = {
 }
 
 __all__ = [
-    "MCPSseTools",
-    "MCPStdioTools",
-    "MCPStreamableHttpTools",
-    "MCPWebsocketTools",
+    "LocalMCPSseTools",
+    "LocalMcpStdioTool",
+    "LocalMcpStreamableHttpTool",
+    "LocalMcpWebsocketTool",
 ]
 
 
-def _mcp_prompt_message_to_ai_content(
+def _mcp_prompt_message_to_chat_message(
     mcp_type: types.PromptMessage | types.SamplingMessage,
 ) -> ChatMessage:
     """Convert a MCP container type to a Agent Framework type."""
     return ChatMessage(
-        role=ChatRole(mcp_type.role),
-        contents=[_mcp_content_types_to_ai_content(mcp_type.content)],  # type: ignore[call-arg]
+        role=ChatRole(value=mcp_type.role),
+        contents=[_mcp_type_to_ai_content(mcp_type.content)],  # type: ignore[call-arg]
         raw_representation=mcp_type,
     )
 
 
 def _mcp_call_tool_result_to_ai_contents(
     mcp_type: types.CallToolResult,
-) -> list[TextContent | DataContent | UriContent]:
+) -> list[AIContents]:
     """Convert a MCP container type to a Agent Framework type."""
-    return [_mcp_content_types_to_ai_content(item) for item in mcp_type.content]
+    return [_mcp_type_to_ai_content(item) for item in mcp_type.content]
 
 
-def _mcp_content_types_to_ai_content(
+def _mcp_type_to_ai_content(
     mcp_type: types.ImageContent | types.TextContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink,
-) -> TextContent | DataContent | UriContent:
+) -> AIContents:
     """Convert a MCP type to a Agent Framework type."""
-    if isinstance(mcp_type, types.TextContent):
-        return TextContent(text=mcp_type.text, raw_representation=mcp_type)
-    if isinstance(mcp_type, (types.ImageContent, types.AudioContent)):
-        return DataContent(uri=mcp_type.data, media_type=mcp_type.mimeType, raw_representation=mcp_type)
-    if isinstance(mcp_type, types.ResourceLink):
-        return UriContent(
-            uri=str(mcp_type.uri), media_type=mcp_type.mimeType or "application/json", raw_representation=mcp_type
-        )
-    # subtypes of EmbeddedResource
-    if isinstance(mcp_type.resource, types.TextResourceContents):
-        return TextContent(
-            text=mcp_type.resource.text,
-            raw_representation=mcp_type,
-            additional_properties=mcp_type.annotations.model_dump() if mcp_type.annotations else {},
-        )
-    return DataContent(
-        uri=mcp_type.resource.blob,
-        raw_representation=mcp_type,
-        additional_properties=mcp_type.annotations.model_dump() if mcp_type.annotations else {},
-    )
+    match mcp_type:
+        case types.TextContent():
+            return TextContent(text=mcp_type.text, raw_representation=mcp_type)
+        case types.ImageContent() | types.AudioContent():
+            return DataContent(uri=mcp_type.data, media_type=mcp_type.mimeType, raw_representation=mcp_type)
+        case types.ResourceLink():
+            return UriContent(
+                uri=str(mcp_type.uri), media_type=mcp_type.mimeType or "application/json", raw_representation=mcp_type
+            )
+        case _:
+            match mcp_type.resource:
+                case types.TextResourceContents():
+                    return TextContent(
+                        text=mcp_type.resource.text,
+                        raw_representation=mcp_type,
+                        additional_properties=mcp_type.annotations.model_dump() if mcp_type.annotations else {},
+                    )
+                case types.BlobResourceContents():
+                    return DataContent(
+                        uri=mcp_type.resource.blob,
+                        media_type=mcp_type.resource.mimeType,
+                        raw_representation=mcp_type,
+                        additional_properties=mcp_type.annotations.model_dump() if mcp_type.annotations else {},
+                    )
 
 
-def _ai_content_to_mcp_content_types(
-    content: ChatMessage | TextContent | DataContent | UriContent,
-) -> Sequence[types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource]:
-    """Convert a kernel content type to a MCP type."""
-    if isinstance(content, TextContent):
-        return [types.TextContent(type="text", text=content.text)]
-    if isinstance(content, DataContent):
-        if content.media_type and content.media_type.startswith("image/"):
-            return [types.ImageContent(type="image", data=content.uri, mimeType=content.media_type)]
-        if content.media_type and content.media_type.startswith("audio/"):
-            return [types.AudioContent(type="audio", data=content.uri, mimeType=content.media_type)]
-        if content.media_type and content.media_type.startswith("application/"):
-            return [
-                types.EmbeddedResource(
+def _ai_content_to_mcp_types(
+    content: AIContents,
+) -> types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink | None:
+    """Convert a AIContent type to a MCP type."""
+    match content:
+        case TextContent():
+            return types.TextContent(type="text", text=content.text)
+        case DataContent():
+            if content.media_type and content.media_type.startswith("image/"):
+                return types.ImageContent(type="image", data=content.uri, mimeType=content.media_type)
+            if content.media_type and content.media_type.startswith("audio/"):
+                return types.AudioContent(type="audio", data=content.uri, mimeType=content.media_type)
+            if content.media_type and content.media_type.startswith("application/"):
+                return types.EmbeddedResource(
                     type="resource",
                     resource=types.BlobResourceContents(
                         blob=content.uri,
                         mimeType=content.media_type,
-                        uri="sk://binary",  # type: ignore[reportArgumentType]
+                        # uri's are not limited in MCP but they have to be set.
+                        # the uri of data content, contains the data uri, which
+                        # is not the uri meant here, UriContent would match this.
+                        uri=content.additional_properties.get("uri", "sk://binary")
+                        if content.additional_properties
+                        else "sk://binary",  # type: ignore[reportArgumentType]
                     ),
                 )
-            ]
-    if isinstance(content, UriContent):
-        return [
-            types.EmbeddedResource(
-                type="resource",
-                resource=types.BlobResourceContents(
-                    uri=content.uri,  # type: ignore[reportArgumentType]
-                    mimeType=content.media_type,
-                    blob="",
-                ),
+            return None
+        case UriContent():
+            return types.ResourceLink(
+                type="resource_link",
+                uri=content.uri,  # type: ignore[reportArgumentType]
+                mimeType=content.media_type,
+                name=content.additional_properties.get("name", "Unknown")
+                if content.additional_properties
+                else "Unknown",
             )
-        ]
-    if isinstance(content, ChatMessage):
-        messages: list[types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource] = []
-        for item in content.contents:
-            if isinstance(item, (TextContent, DataContent, UriContent)):
-                messages.extend(_ai_content_to_mcp_content_types(item))
-            else:
-                logger.debug("Unsupported content type: %s", type(item))
-        return messages
-
-    raise FunctionExecutionException(f"Unsupported content type: {type(content)}")
+        case _:
+            return None
 
 
-def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> type[Any]:
+def _chat_message_to_mcp_types(
+    content: ChatMessage,
+) -> list[types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink]:
+    """Convert a ChatMessage to a list of MCP types."""
+    messages: list[
+        types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink
+    ] = []
+    for item in content.contents:
+        mcp_content = _ai_content_to_mcp_types(item)
+        if mcp_content:
+            messages.append(mcp_content)
+    return messages
+
+
+def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> type[BaseModel]:
     """Creates a Pydantic model from a prompt's parameters."""
     # Check if 'arguments' is missing or empty
     if not prompt.arguments:
@@ -166,7 +178,7 @@ def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> type[Any]:
     return create_model(f"{prompt.name}_input", **field_definitions)
 
 
-def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[Any]:
+def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
     """Creates a Pydantic model from a tools parameters."""
     properties = tool.inputSchema.get("properties", None)
     required = tool.inputSchema.get("required", [])
@@ -210,7 +222,7 @@ def _normalize_mcp_name(name: str) -> str:
 # region: MCP Plugin
 
 
-class MCPBase:
+class LocalMcpServer:
     """MCP Base."""
 
     def __init__(
@@ -232,7 +244,7 @@ class MCPBase:
         self.session = session
         self.request_timeout = request_timeout
         self.chat_client = chat_client
-        self.functions: dict[str, AIFunction[Any, Any]] = {}
+        self.functions: list[AIFunction[Any, Any]] = []
 
     async def connect(self) -> None:
         """Connect to the MCP server."""
@@ -241,7 +253,9 @@ class MCPBase:
                 transport = await self._exit_stack.enter_async_context(self.get_mcp_client())
             except Exception as ex:
                 await self._exit_stack.aclose()
-                raise FunctionException("Failed to connect to the MCP server. Please check your configuration.") from ex
+                raise ToolException(
+                    "Failed to connect to the MCP server. Please check your configuration.", inner_exception=ex
+                ) from ex
             try:
                 session = await self._exit_stack.enter_async_context(
                     ClientSession(
@@ -255,8 +269,8 @@ class MCPBase:
                 )
             except Exception as ex:
                 await self._exit_stack.aclose()
-                raise FunctionException(
-                    "Failed to create a session. Please check your configuration.",
+                raise ToolException(
+                    message="Failed to create a session. Please check your configuration.", inner_exception=ex
                 ) from ex
             await session.initialize()
             self.session = session
@@ -274,8 +288,8 @@ class MCPBase:
                 await self.session.set_logging_level(
                     next(level for level, value in LOG_LEVEL_MAPPING.items() if value == logger.level)
                 )
-            except Exception:
-                logger.warning("Failed to set log level to %s", logger.level)
+            except Exception as exc:
+                logger.warning("Failed to set log level to %s", logger.level, exc_info=exc)
 
     async def sampling_callback(
         self, context: RequestContext[ClientSession, Any], params: types.CreateMessageRequestParams
@@ -295,7 +309,7 @@ class MCPBase:
         logger.debug("Sampling callback called with params: %s", params)
         messages: list[ChatMessage] = []
         for msg in params.messages:
-            messages.append(_mcp_prompt_message_to_ai_content(msg))
+            messages.append(_mcp_prompt_message_to_chat_message(msg))
         try:
             response = await self.chat_client.get_response(
                 messages,
@@ -313,7 +327,7 @@ class MCPBase:
                 code=types.INTERNAL_ERROR,
                 message="Failed to get chat message content.",
             )
-        mcp_contents = _ai_content_to_mcp_content_types(response.messages[0])
+        mcp_contents = _chat_message_to_mcp_types(response.messages[0])
         # grab the first content that is of type TextContent or ImageContent
         mcp_content = next(
             (content for content in mcp_contents if isinstance(content, (types.TextContent, types.ImageContent))),
@@ -354,7 +368,7 @@ class MCPBase:
         if you want to keep the default behavior, make sure to call `super().message_handler(message)`.
         """
         if isinstance(message, Exception):
-            logger.error("Error from MCP server: %s", message)
+            logger.error("Error from MCP server: %s", message, exc_info=message)
             return
         if isinstance(message, types.ServerNotification):
             match message.root.method:
@@ -365,48 +379,46 @@ class MCPBase:
                 case _:
                     logger.debug("Unhandled notification: %s", message.root.method)
 
-    async def load_prompts(self):
+    async def load_prompts(self) -> None:
         """Load prompts from the MCP server."""
         if not self.session:
-            raise FunctionExecutionException(
-                "MCP server not connected, please call connect() before using this method."
-            )
+            raise ToolExecutionException("MCP server not connected, please call connect() before using this method.")
         try:
             prompt_list = await self.session.list_prompts()
-        except Exception:
+        except Exception as exc:
+            logger.warning("Prompt could not be loaded", exc_info=exc)
             prompt_list = None
         for prompt in prompt_list.prompts if prompt_list else []:
             local_name = _normalize_mcp_name(prompt.name)
             input_model = _get_input_model_from_mcp_prompt(prompt)
-            func = AIFunction(
+            func: AIFunction[BaseModel, list[ChatMessage]] = AIFunction(
                 func=partial(self.get_prompt, prompt.name),
                 name=local_name,
                 description=prompt.description or "",
                 input_model=input_model,
             )
-            self.functions[local_name] = func
+            self.functions.append(func)
 
-    async def load_tools(self):
+    async def load_tools(self) -> None:
         """Load tools from the MCP server."""
         if not self.session:
-            raise FunctionExecutionException(
-                "MCP server not connected, please call connect() before using this method."
-            )
+            raise ToolExecutionException("MCP server not connected, please call connect() before using this method.")
         try:
             tool_list = await self.session.list_tools()
-        except Exception:
+        except Exception as exc:
+            logger.warning("Tools could not be loaded", exc_info=exc)
             tool_list = None
             # Create methods with the kernel_function decorator for each tool
         for tool in tool_list.tools if tool_list else []:
             local_name = _normalize_mcp_name(tool.name)
             input_model = _get_input_model_from_mcp_tool(tool)
-            func = AIFunction(
+            func: AIFunction[BaseModel, list[AIContents]] = AIFunction(
                 func=partial(self.call_tool, tool.name),
                 name=local_name,
-                description=tool.description,
+                description=tool.description or "",
                 input_model=input_model,
             )
-            self.functions[local_name] = func
+            self.functions.append(func)
 
     async def close(self) -> None:
         """Disconnect from the MCP server."""
@@ -418,51 +430,47 @@ class MCPBase:
         """Get an MCP client."""
         pass
 
-    async def call_tool(self, tool_name: str, **kwargs: Any) -> list[TextContent | DataContent | UriContent]:
+    async def call_tool(self, tool_name: str, **kwargs: Any) -> list[AIContents]:
         """Call a tool with the given arguments."""
         if not self.session:
-            raise FunctionExecutionException(
-                "MCP server not connected, please call connect() before using this method."
-            )
+            raise ToolExecutionException("MCP server not connected, please call connect() before using this method.")
         if not self.load_tools_flag:
-            raise FunctionExecutionException(
+            raise ToolExecutionException(
                 "Tools are not loaded for this server, please set load_tools=True in the constructor."
             )
         try:
             return _mcp_call_tool_result_to_ai_contents(await self.session.call_tool(tool_name, arguments=kwargs))
-        except McpError:
-            raise
+        except McpError as mcp_exc:
+            raise ToolExecutionException(mcp_exc.error.message, inner_exception=mcp_exc) from mcp_exc
         except Exception as ex:
-            raise FunctionExecutionException(f"Failed to call tool '{tool_name}'.") from ex
+            raise ToolExecutionException(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex
 
     async def get_prompt(self, prompt_name: str, **kwargs: Any) -> list[ChatMessage]:
         """Call a prompt with the given arguments."""
         if not self.session:
-            raise FunctionExecutionException(
-                "MCP server not connected, please call connect() before using this method."
-            )
+            raise ToolExecutionException("MCP server not connected, please call connect() before using this method.")
         if not self.load_prompts_flag:
-            raise FunctionExecutionException(
+            raise ToolExecutionException(
                 "Prompts are not loaded for this server, please set load_prompts=True in the constructor."
             )
         try:
             prompt_result = await self.session.get_prompt(prompt_name, arguments=kwargs)
-            return [_mcp_prompt_message_to_ai_content(message) for message in prompt_result.messages]
-        except McpError:
-            raise
+            return [_mcp_prompt_message_to_chat_message(message) for message in prompt_result.messages]
+        except McpError as mcp_exc:
+            raise ToolExecutionException(mcp_exc.error.message, inner_exception=mcp_exc) from mcp_exc
         except Exception as ex:
-            raise FunctionExecutionException(f"Failed to call prompt '{prompt_name}'.") from ex
+            raise ToolExecutionException(f"Failed to call prompt '{prompt_name}'.", inner_exception=ex) from ex
 
     async def __aenter__(self) -> Self:
         """Enter the context manager."""
         try:
             await self.connect()
             return self
-        except FunctionException:
+        except ToolException:
             raise
         except Exception as ex:
             await self._exit_stack.aclose()
-            raise FunctionExecutionException("Failed to enter context manager.") from ex
+            raise ToolExecutionException("Failed to enter context manager.", inner_exception=ex) from ex
 
     async def __aexit__(
         self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: Any
@@ -474,7 +482,7 @@ class MCPBase:
 # region: MCP Plugin Implementations
 
 
-class MCPStdioTools(MCPBase):
+class LocalMcpStdioTool(LocalMcpServer):
     """MCP stdio server configuration."""
 
     def __init__(
@@ -544,7 +552,7 @@ class MCPStdioTools(MCPBase):
         return stdio_client(server=StdioServerParameters(**args))
 
 
-class MCPSseTools(MCPBase):
+class LocalMCPSseTools(LocalMcpServer):
     """MCP sse server configuration."""
 
     def __init__(
@@ -617,7 +625,7 @@ class MCPSseTools(MCPBase):
         return sse_client(**args)
 
 
-class MCPStreamableHttpTools(MCPBase):
+class LocalMcpStreamableHttpTool(LocalMcpServer):
     """MCP streamable http server configuration."""
 
     def __init__(
@@ -694,7 +702,7 @@ class MCPStreamableHttpTools(MCPBase):
         return streamablehttp_client(**args)
 
 
-class MCPWebsocketTools(MCPBase):
+class LocalMcpWebsocketTool(LocalMcpServer):
     """MCP websocket server configuration."""
 
     def __init__(
