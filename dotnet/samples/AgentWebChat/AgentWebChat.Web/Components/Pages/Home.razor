@@ -645,7 +645,7 @@
             var responseContent = new StringBuilder();
             var agent = new AgentProxy(currentConversation.AgentName, ActorClient);
             var thread = agent.GetNewThread();
-            thread.Id = currentConversation.SessionId;
+            thread.ConversationId = currentConversation.SessionId;
 
             await foreach (var update in agent.RunStreamingAsync(
                 [new ChatMessage(ChatRole.User, userMessage)], 
