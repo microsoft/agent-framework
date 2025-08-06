@@ -386,7 +386,6 @@ print(f"Workflow completed with result: {result}")
 ### 2. Declarative Workflow Definitions
 
 - CSDL (Copilot Studio Definition Language) support for defining workflows
-- Visual workflow designer with drag-and-drop interface
 
 ### 3. Crossed-platform & Distributed Execution
 
