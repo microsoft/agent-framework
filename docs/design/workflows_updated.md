@@ -378,20 +378,30 @@ print(f"Workflow completed with result: {result}")
 
 ## Future Enhancements
 
-### 1. Distributed Execution
+### 1. Templatized Workflows
+
+- Support for reusable workflow templates
+- High-level workflow definitions with parameterization and templatized WorkflowBuilder to allow for easy instantiation of common patterns
+
+### 2. Declarative Workflow Definitions
+
+- CSDL (Copilot Studio Definition Language) support for defining workflows
+- Visual workflow designer with drag-and-drop interface
+
+### 3. Crossed-platform & Distributed Execution
 
 - Support for executor distribution across nodes
 - Message passing via message queues  
 - Distributed shared state with consistency guarantees
 
-### 2. Enhanced Observability
+### 4. Enhanced Observability
 
 - OpenTelemetry integration
 - Structured logging with correlation IDs
 - Performance metrics and profiling
 - Visual workflow debugging tools
 
-### 3. Advanced Error Handling
+### 5. Advanced Error Handling
 
 - Configurable retry policies per executor
 - Dead letter queues for failed messages
