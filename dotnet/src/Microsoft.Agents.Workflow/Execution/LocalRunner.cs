@@ -10,8 +10,16 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Execution;
 
-internal class LocalRunner<TInput> : ISuperStepRunner where TInput : notnull
+/// <summary>
+/// .
+/// </summary>
+/// <typeparam name="TInput"></typeparam>
+public class LocalRunner<TInput> : ISuperStepRunner where TInput : notnull
 {
+    /// <summary>
+    /// .
+    /// </summary>
+    /// <param name="workflow"></param>
     public LocalRunner(Workflow<TInput> workflow)
     {
         this.Workflow = Throw.IfNull(workflow);
@@ -27,13 +35,19 @@ internal class LocalRunner<TInput> : ISuperStepRunner where TInput : notnull
         return this.RunContext.AddExternalMessageAsync(message);
     }
 
-    protected Dictionary<string, string> PendingCalls { get; } = new();
-    protected Workflow<TInput> Workflow { get; init; }
-    protected LocalRunnerContext<TInput> RunContext { get; init; }
-    protected EdgeMap EdgeMap { get; init; }
+    private Dictionary<string, string> PendingCalls { get; } = new();
+    private Workflow<TInput> Workflow { get; init; }
+    private LocalRunnerContext<TInput> RunContext { get; init; }
+    private EdgeMap EdgeMap { get; init; }
 
     // TODO: Better signature?
-    public event EventHandler<WorkflowEvent>? WorkflowEvent;
+    event EventHandler<WorkflowEvent>? ISuperStepRunner.WorkflowEvent
+    {
+        add => this.WorkflowEvent += value;
+        remove => this.WorkflowEvent -= value;
+    }
+
+    private event EventHandler<WorkflowEvent>? WorkflowEvent;
 
     private void RaiseWorkflowEvent(WorkflowEvent workflowEvent)
     {
@@ -56,6 +70,12 @@ internal class LocalRunner<TInput> : ISuperStepRunner where TInput : notnull
             : this.EdgeMap.InvokeInputAsync(message);
     }
 
+    /// <summary>
+    /// .
+    /// </summary>
+    /// <param name="input"></param>
+    /// <param name="cancellation"></param>
+    /// <returns></returns>
     public async ValueTask<StreamingExecutionHandle> StreamAsync(TInput input, CancellationToken cancellation = default)
     {
         await this.RunContext.AddExternalMessageAsync(input).ConfigureAwait(false);
@@ -64,7 +84,7 @@ internal class LocalRunner<TInput> : ISuperStepRunner where TInput : notnull
     }
 
     private StepContext? _currentStep = null;
-    public async ValueTask<bool> RunSuperStepAsync(CancellationToken cancellation)
+    async ValueTask<bool> ISuperStepRunner.RunSuperStepAsync(CancellationToken cancellation)
     {
         cancellation.ThrowIfCancellationRequested();
 
@@ -99,8 +119,8 @@ internal class LocalRunner<TInput> : ISuperStepRunner where TInput : notnull
             }
             else
             {
-                HashSet<FlowEdge> outgoingEdges = this.Workflow.Edges[sender.Id!]; // Id is not null when Identity is not .None
-                foreach (FlowEdge outgoingEdge in outgoingEdges)
+                HashSet<Edge> outgoingEdges = this.Workflow.Edges[sender.Id!]; // Id is not null when Identity is not .None
+                foreach (Edge outgoingEdge in outgoingEdges)
                 {
                     edgeTasks.AddRange(senderMessages.Select(message => this.EdgeMap.InvokeEdgeAsync(outgoingEdge, sender.Id, message).AsTask()));
                 }
@@ -122,31 +142,54 @@ internal class LocalRunner<TInput> : ISuperStepRunner where TInput : notnull
     }
 }
 
-internal class LocalRunner<TInput, TResult> : IRunnerWithResult<TResult> where TInput : notnull
+/// <summary>
+/// .
+/// </summary>
+/// <typeparam name="TInput"></typeparam>
+/// <typeparam name="TResult"></typeparam>
+public class LocalRunner<TInput, TResult> : IRunnerWithResult<TResult> where TInput : notnull
 {
     private readonly Workflow<TInput, TResult> _workflow;
-    private readonly LocalRunner<TInput> _innerRunner;
+    private readonly ISuperStepRunner _innerRunner;
 
+    /// <summary>
+    /// .
+    /// </summary>
+    /// <param name="workflow"></param>
     public LocalRunner(Workflow<TInput, TResult> workflow)
     {
         this._workflow = Throw.IfNull(workflow);
         this._innerRunner = new LocalRunner<TInput>(workflow);
     }
 
+    /// <summary>
+    /// .
+    /// </summary>
+    /// <param name="input"></param>
+    /// <param name="cancellation"></param>
+    /// <returns></returns>
     public async ValueTask<StreamingExecutionHandle> StreamAsync(TInput input, CancellationToken cancellation = default)
     {
-        await this.StepRunner.EnqueueMessageAsync(input).ConfigureAwait(false);
+        await this._innerRunner.EnqueueMessageAsync(input).ConfigureAwait(false);
 
         return new StreamingExecutionHandle(this._innerRunner);
     }
 
+    /// <summary>
+    /// .
+    /// </summary>
+    /// <param name="cancellation"></param>
+    /// <returns></returns>
     public ValueTask<TResult> GetResultAsync(CancellationToken cancellation = default)
     {
         // TODO: Block on finishing consuming StreamAsync()?
         return new ValueTask<TResult>(this.RunningOutput!);
     }
 
+    /// <summary>
+    /// .
+    /// </summary>
     public TResult? RunningOutput => this._workflow.RunningOutput;
 
-    public ISuperStepRunner StepRunner => this._innerRunner;
+    ISuperStepRunner IRunnerWithResult<TResult>.StepRunner => this._innerRunner;
 }

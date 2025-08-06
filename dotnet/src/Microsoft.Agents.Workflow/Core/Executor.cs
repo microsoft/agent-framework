@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
-using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Threading.Tasks;
 using Microsoft.Shared.Diagnostics;
@@ -127,8 +126,7 @@ public abstract class Executor : IIdentified, IAsyncDisposable
     /// <summary>
     /// .
     /// </summary>
-    [SuppressMessage("Design", "CA1065:Do not raise exceptions in unexpected locations", Justification = "<Pending>")]
-    public ISet<Type> OutputTypes => throw new NotImplementedException();
+    public virtual ISet<Type> OutputTypes => new HashSet<Type>();
 
     /// <summary>
     /// .
