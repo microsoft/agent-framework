@@ -408,10 +408,10 @@ class LocalMcpServer:
         except Exception as exc:
             logger.warning("Tools could not be loaded", exc_info=exc)
             tool_list = None
-            # Create methods with the kernel_function decorator for each tool
         for tool in tool_list.tools if tool_list else []:
             local_name = _normalize_mcp_name(tool.name)
             input_model = _get_input_model_from_mcp_tool(tool)
+            # Create AIFunctions out of each tool
             func: AIFunction[BaseModel, list[AIContents]] = AIFunction(
                 func=partial(self.call_tool, tool.name),
                 name=local_name,

@@ -35,6 +35,14 @@ from ._shared import OpenAIConfigBase, OpenAIHandler, OpenAIModelTypes, OpenAISe
 __all__ = ["OpenAIChatClient"]
 
 
+def _prepare_function_call_results(item: AIContents | Any):
+    """Prepare the values of the function call results."""
+    if isinstance(item, BaseModel):
+        return item.model_dump_json(exclude_none=True, exclude={"raw_representation", "additional_properties"})
+    # fallback
+    return json.dumps(item)
+
+
 # region Base Client
 @use_telemetry
 @use_tool_calling
@@ -240,23 +248,9 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
                     if content.result:
                         if isinstance(content.result, list):
                             for item in content.result:
-                                if isinstance(item, BaseModel):
-                                    results.append(
-                                        item.model_dump_json(
-                                            exclude_none=True, exclude={"raw_representation", "additional_properties"}
-                                        )
-                                    )
-                                else:
-                                    results.append(json.dumps(item))
+                                results.append(_prepare_function_call_results(item))
                         else:
-                            if isinstance(content.result, BaseModel):
-                                results.append(
-                                    content.result.model_dump_json(
-                                        exclude_none=True, exclude={"raw_representation", "additional_properties"}
-                                    )
-                                )
-                            else:
-                                results.append(json.dumps(content.result))
+                            results.append(_prepare_function_call_results(content))
                     args["content"] = results if len(results) > 1 else results[0] if results else None
                 case _:
                     if "content" not in args:
