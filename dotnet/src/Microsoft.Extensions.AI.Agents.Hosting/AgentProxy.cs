@@ -1,0 +1,158 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.AI.Agents.Runtime;
+using Microsoft.Shared.Diagnostics;
+
+namespace Microsoft.Extensions.AI.Agents.Hosting;
+
+/// <summary>
+/// Represents a proxy for an AI agent that communicates with the agent runtime via an actor client.
+/// </summary>
+public sealed class AgentProxy : AIAgent
+{
+    private readonly IActorClient _client;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AgentProxy"/> class with the specified agent name and actor client.
+    /// </summary>
+    /// <param name="name">The name of the agent.</param>
+    /// <param name="client">The actor client used to communicate with the agent.</param>
+    public AgentProxy(string name, IActorClient client)
+    {
+        Throw.IfNull(client);
+        Throw.IfNullOrEmpty(name);
+        this._client = client;
+        this.Name = name;
+    }
+
+    /// <inheritdoc/>
+    public override string Name { get; }
+
+    /// <inheritdoc/>
+    public override AgentThread GetNewThread() => new AgentProxyThread();
+
+    /// <summary>
+    /// Gets a thread by its <see cref="AgentThread.ConversationId"/>.
+    /// </summary>
+    /// <param name="conversationId">The thread identifier.</param>
+    /// <returns>The thread.</returns>
+    public AgentThread GetThread(string conversationId) => new AgentProxyThread(conversationId);
+
+    /// <inheritdoc/>
+    public override async Task<AgentRunResponse> RunAsync(
+        IReadOnlyCollection<ChatMessage> messages,
+        AgentThread? thread = null,
+        AgentRunOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        Throw.IfNull(messages);
+        var agentThread = GetAgentThreadId(thread);
+        return await this.RunAsync(messages, agentThread, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+        IReadOnlyCollection<ChatMessage> messages,
+        AgentThread? thread = null,
+        AgentRunOptions? options = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        Throw.IfNull(messages);
+        var agentThread = GetAgentThreadId(thread);
+        await foreach (var item in this.RunStreamingAsync(messages, agentThread, cancellationToken).ConfigureAwait(false))
+        {
+            yield return item;
+        }
+    }
+
+    private async Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, string threadId, CancellationToken cancellationToken)
+    {
+        Throw.IfNull(messages);
+        var handle = await this.RunCoreAsync(messages, threadId, cancellationToken).ConfigureAwait(false);
+        var response = await handle.GetResponseAsync(cancellationToken).ConfigureAwait(false);
+        return response.Status switch
+        {
+            RequestStatus.Completed => (AgentRunResponse)response.Data.Deserialize(
+                AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentRunResponse)))!,
+            RequestStatus.Failed => throw new InvalidOperationException($"The agent run request failed: {response.Data}"),
+            RequestStatus.Pending => throw new InvalidOperationException("The agent run request is still pending."),
+            _ => throw new NotSupportedException($"The agent run request returned an unsupported status: {response.Status}.")
+        };
+    }
+
+    private async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+        IReadOnlyCollection<ChatMessage> messages,
+        string threadId,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        Throw.IfNull(messages);
+        var response = await this.RunCoreAsync(messages, threadId, cancellationToken).ConfigureAwait(false);
+        var updateTypeInfo = AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentRunResponseUpdate));
+        await foreach (var update in response.WatchUpdatesAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (update.Status is RequestStatus.Failed)
+            {
+                throw new InvalidOperationException($"The agent run request failed: {update.Data}");
+            }
+
+            if (update.Status is RequestStatus.Completed)
+            {
+                var responseTypeInfo = AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentRunResponse));
+                var runResponse = (AgentRunResponse)update.Data.Deserialize(responseTypeInfo)!;
+                foreach (var item in runResponse.ToAgentRunResponseUpdates())
+                {
+                    yield return item;
+                }
+
+                yield break;
+            }
+
+            var runResponseUpdate = (AgentRunResponseUpdate)update.Data.Deserialize(updateTypeInfo)!;
+            yield return runResponseUpdate;
+        }
+    }
+
+    private static string GetAgentThreadId(AgentThread? thread)
+    {
+        if (thread is null)
+        {
+            return AgentProxyThread.CreateId();
+        }
+
+        if (thread is not AgentProxyThread agentProxyThread)
+        {
+            throw new ArgumentException("The thread must be an instance of AgentProxyThread.", nameof(thread));
+        }
+
+        return agentProxyThread.ConversationId!;
+    }
+
+    private async Task<ActorResponseHandle> RunCoreAsync(IReadOnlyCollection<ChatMessage> messages, string threadId, CancellationToken cancellationToken)
+    {
+        Debug.Assert(messages is not null);
+        Debug.Assert(threadId is not null);
+        var newMessages = new List<ChatMessage>(messages);
+
+        var runRequest = new AgentRunRequest
+        {
+            Messages = newMessages
+        };
+
+        string messageId = newMessages.LastOrDefault()?.MessageId ?? Guid.NewGuid().ToString();
+        var actorRequest = new ActorRequest(
+            actorId: new ActorId(this.Name, threadId),
+            messageId,
+            method: AgentActorConstants.RunMethodName,
+            @params: JsonSerializer.SerializeToElement(runRequest, AgentHostingJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentRunRequest))));
+        var handle = await this._client.SendRequestAsync(actorRequest, cancellationToken).ConfigureAwait(false);
+        return handle;
+    }
+}
