@@ -32,8 +32,6 @@ Success Metrics:
 - In Semantic Kernel the Foundry Agent support isn't integrated into the Foundry SDK so there is a disjointed developer UX
 - Customers are confused as to when they should use Foundry SDK versus Semantic Kernel
 
-Consult PM on this.
-
 
 ## API Changes
 
@@ -135,7 +133,7 @@ await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
 var persistentAgentsClient = new PersistentAgentsClient(
     TestConfiguration.AzureAI.Endpoint, new AzureCliCredential());
 
-// Create a Agent Framework agent.
+// Create an Agent Framework agent.
 AIAgent agent = await persistentAgentsClient.CreateAIAgentAsync(
     model: TestConfiguration.AzureAI.DeploymentName!,
     name: JokerName,
@@ -163,7 +161,7 @@ await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
 var persistentAgentsClient = new PersistentAgentsClient(
     TestConfiguration.AzureAI.Endpoint, new AzureCliCredential());
 
-// Create a Agent Framework agent.
+// Create an Agent Framework agent.
 AIAgent agent = await persistentAgentsClient.CreateAIAgentAsync(
     model: TestConfiguration.AzureAI.DeploymentName!,
     name: JokerName,
@@ -219,7 +217,7 @@ AIAgent analystAgent =
         - Target audience
         - Unique selling points
         """,
-        description: "A agent that extracts key concepts from a product description.");
+        description: "An agent that extracts key concepts from a product description.");
 AIAgent writerAgent =
     await persistentAgentsClient.CreateAIAgentAsync(
         model,
