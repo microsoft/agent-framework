@@ -10,7 +10,6 @@ from pydantic import SecretStr, ValidationError
 from pydantic.networks import AnyUrl
 
 from ._shared import (
-    DEFAULT_AZURE_TOKEN_ENDPOINT,
     AzureOpenAISettings,
 )
 
@@ -75,10 +74,11 @@ class AzureAssistantsClient(OpenAIAssistantsClient):
                 base_url=AnyUrl(base_url) if base_url else None,
                 endpoint=AnyUrl(endpoint) if endpoint else None,
                 chat_deployment_name=deployment_name,
-                api_version=api_version or self.DEFAULT_AZURE_API_VERSION,
+                api_version=api_version,
                 env_file_path=env_file_path,
                 env_file_encoding=env_file_encoding,
-                token_endpoint=token_endpoint or DEFAULT_AZURE_TOKEN_ENDPOINT,
+                token_endpoint=token_endpoint,
+                default_api_version=self.DEFAULT_AZURE_API_VERSION,
             )
         except ValidationError as ex:
             raise ServiceInitializationError("Failed to create Azure OpenAI settings.", ex) from ex
