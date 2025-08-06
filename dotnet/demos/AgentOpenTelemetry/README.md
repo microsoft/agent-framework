@@ -1,6 +1,6 @@
-# OpenTelemetry Aspire Demo
+# OpenTelemetry Aspire Demo with Azure OpenAI
 
-This demo showcases the integration of OpenTelemetry with the Microsoft Agent Framework using .NET Aspire Dashboard for telemetry visualization.
+This demo showcases the integration of OpenTelemetry with the Microsoft Agent Framework using Azure OpenAI and .NET Aspire Dashboard for telemetry visualization.
 
 ## Overview
 
@@ -13,8 +13,8 @@ The demo consists of two main components:
 
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Console App   │───▶│  Agent Framework │───▶│  OpenAI/Azure   │
-│  (Interactive)  │    │  with OpenTel    │    │     OpenAI      │
+│   Console App   │───▶│  Agent Framework │───▶│  Azure OpenAI   │
+│  (Interactive)  │    │  with OpenTel    │    │    Service      │
 │                 │    │  Instrumentation │    │                 │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
          │                        │
@@ -28,22 +28,19 @@ The demo consists of two main components:
 ## Prerequisites
 
 - .NET 9.0 SDK or later
-- An OpenAI API key OR Azure OpenAI endpoint configured
+- Azure OpenAI service endpoint and deployment configured
+- Azure CLI installed and authenticated (for Azure credential authentication)
 
 ## Configuration
 
-### Option 1: OpenAI
-Set the following environment variable:
-```bash
-$env:OPENAI_API_KEY="your-openai-api-key-here"
-```
-
-### Option 2: Azure OpenAI
+### Azure OpenAI Setup
 Set the following environment variables:
 ```bash
 $env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
 $env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
 ```
+
+**Note**: This demo uses Azure CLI credentials for authentication. Make sure you're logged in with `az login` and have access to the Azure OpenAI resource.
 
 ## Running the Demo
 
@@ -56,12 +53,12 @@ The easiest way to run the demo is using the provided PowerShell script:
 ```
 
 This script will automatically:
-- ✅ Check prerequisites (Docker, API keys)
+- ✅ Check prerequisites (Docker, Azure OpenAI configuration)
 - 🔨 Build the console application
 - 🐳 Start the Aspire Dashboard via Docker (with anonymous access)
 - ⏳ Wait for dashboard to be ready (polls port until listening)
 - 🌐 Open your browser with the dashboard
-- 📊 Configure telemetry endpoints (http://localhost:4318)
+- 📊 Configure telemetry endpoints (http://localhost:4317)
 - 🎯 Start the interactive console application
 
 ### Manual Setup (Step by Step)
@@ -76,13 +73,13 @@ docker run -d --name aspire-dashboard -p 4318:18888 -p 4317:18889 -e DOTNET_DASH
 
 #### Step 2: Access the Dashboard
 
-Open your browser to: http://localhost:4317
+Open your browser to: http://localhost:4318
 
 #### Step 3: Run the Console Application
 
 ```bash
 cd dotnet/demos/AgentOpenTelemetry
-$env:OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"
+$env:OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317"
 dotnet run
 ```
 
@@ -93,11 +90,8 @@ You should see a welcome message like:
 ```
 === OpenTelemetry Aspire Demo ===
 This demo shows OpenTelemetry integration with the Agent Framework.
-Each agent interaction will be wrapped in a telemetry span.
 You can view the telemetry data in the Aspire Dashboard.
-
-Make sure the Aspire Dashboard is running first!
-Type your message and press Enter. Type 'exit' to quit.
+Type your message and press Enter. Type 'exit' or empty message to quit.
 
 You:
 ```
@@ -127,7 +121,7 @@ You:
 3. Each trace contains:
    - An outer span for the entire agent interaction
    - Inner spans from the Agent Framework's OpenTelemetry instrumentation
-   - Spans from HTTP calls to OpenAI/Azure OpenAI
+   - Spans from HTTP calls to Azure OpenAI
 
 ### Metrics
 1. Navigate to the **Metrics** tab
@@ -150,7 +144,7 @@ You:
 - **Telemetry correlation** across the entire request flow
 
 ### Agent Framework Features
-- **ChatClientAgent** with OpenAI/Azure OpenAI integration
+- **ChatClientAgent** with Azure OpenAI integration
 - **OpenTelemetry wrapper** using `.WithOpenTelemetry()`
 - **Conversation threading** for multi-turn conversations
 - **Error handling** with telemetry correlation
@@ -176,27 +170,29 @@ Complete demo startup script that handles everything automatically.
 ```
 
 **Features:**
-- **Automatic API key detection** - Checks for OpenAI or Azure OpenAI configuration
+- **Automatic configuration detection** - Checks for Azure OpenAI configuration
 - **Project building** - Automatically builds projects before running
 - **Error handling** - Provides clear error messages if something goes wrong
 - **Multi-window support** - Opens dashboard in separate window for better experience
 - **Browser auto-launch** - Automatically opens the Aspire Dashboard in your browser
-- **Hardcoded endpoints** - Uses reliable, fixed endpoints for demo consistency
+- **Docker integration** - Uses Docker to run the Aspire Dashboard
 
-**Hardcoded Endpoints:**
-- **Aspire Dashboard**: `https://localhost:17054`
-- **OTLP Telemetry**: `https://localhost:21244` (from launchSettings.json)
+**Docker Endpoints:**
+- **Aspire Dashboard**: `http://localhost:4318`
+- **OTLP Telemetry**: `http://localhost:4317`
 
 ## Troubleshooting
 
 ### Port Conflicts
 If you encounter port binding errors, try:
-1. Change the port in `Properties/launchSettings.json`
+1. Stop any existing Docker containers using the same ports (`docker stop aspire-dashboard`)
 2. Or kill any processes using the conflicting ports
 
 ### Authentication Issues
-- Ensure your OpenAI API key or Azure OpenAI endpoint is correctly configured
+- Ensure your Azure OpenAI endpoint is correctly configured
 - Check that the environment variables are set in the correct terminal session
+- Verify you're logged in with Azure CLI (`az login`) and have access to the Azure OpenAI resource
+- Ensure the Azure OpenAI deployment name matches your actual deployment
 
 ### Build Issues
 - Ensure you're using .NET 9.0 SDK
@@ -206,14 +202,10 @@ If you encounter port binding errors, try:
 ## Project Structure
 
 ```
-AspireOpenTelemetry/
-├── OpenTelemetryAspire.AppHost/          # Aspire orchestration host
-│   ├── AppHost.cs                        # Main orchestration configuration
-│   └── Properties/launchSettings.json    # Launch profiles
-├── OpenTelemetryAspire.ServiceDefaults/  # Shared service configuration
-│   └── Extensions.cs                     # OpenTelemetry configuration
-├── OpenTelemetryAspire.ConsoleApp/       # Console application
-│   └── Program.cs                        # Main application with agent integration
+AgentOpenTelemetry/
+├── AgentOpenTelemetry.csproj             # Project file with dependencies
+├── Program.cs                            # Main application with Azure OpenAI agent integration
+├── start-demo.ps1                        # PowerShell script to start the demo
 └── README.md                             # This file
 ```
 

@@ -98,7 +98,6 @@ logger.LogInformation("OTLP endpoint configured: {OtlpEndpoint}", otlpEndpoint);
 logger.LogDebug("Service name: {ServiceName}, Source name: {SourceName}", ServiceName, SourceName);
 
 // Create the chat client
-var configuredEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT") ?? "http://localhost:4317";
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT", EnvironmentVariableTarget.Machine) ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT environment variable is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
