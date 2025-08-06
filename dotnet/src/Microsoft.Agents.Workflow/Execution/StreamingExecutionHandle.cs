@@ -49,10 +49,23 @@ public class StreamingExecutionHandle
         {
             while (await this._stepRunner.RunSuperStepAsync(cancellation).ConfigureAwait(false))
             {
+                bool hadCompletionEvent = false;
                 List<WorkflowEvent> outputEvents = Interlocked.Exchange(ref eventSink, new());
                 foreach (WorkflowEvent raisedEvent in outputEvents)
                 {
                     yield return raisedEvent;
+
+                    // TODO: Do we actually want to interpret this as a termination request?
+                    if (raisedEvent is WorkflowCompletedEvent)
+                    {
+                        hadCompletionEvent = true;
+                    }
+                }
+
+                if (hadCompletionEvent)
+                {
+                    // If we had a completion event, we are done.
+                    yield break;
                 }
             }
         }
