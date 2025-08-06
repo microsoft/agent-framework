@@ -154,22 +154,22 @@ The Workflow ties everything together and manages execution:
 A special built-in executor for handling external interactions:
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  Executor A                       External World    │
-│     │                                    ▲          │
-│     │  Request                           │          │
-│     ▼                                    │          │
-│  ┌──────────────┐      RequestInfoEvent  │          │
-│  │ RequestInfo  │ ─────────────────────► │          │
-│  │  Executor    │      (request_id: 123) │          │
-│  │              │                        │          │
-│  │              │◄───────────────────────┘          │
-│  └──────────────┘   send_response(true, 123)        │
-│     │                                               │
-│     │  Response                                     │
-│     ▼                                               │
-│  Executor A                                         │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│  Executor A                       External World            │
+│     │                                    ▲                  │
+│     │  Request                           │                  │
+│     ▼                                    │                  │
+│  ┌──────────────┐      RequestInfoEvent  │                  │
+│  │ RequestInfo  │ ─────────────────────► │                  │
+│  │  Executor    │      (request_id: 123) │                  │
+│  │              │                        │                  │
+│  │              │◄───────────────────────┘                  │
+│  └──────────────┘send_responses_streaming({123: response})  │
+│     │                                                       │
+│     │  Response                                             │
+│     ▼                                                       │
+│  Executor A                                                 │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 **How it works:**
@@ -177,7 +177,7 @@ A special built-in executor for handling external interactions:
 1. **Intercepts Requests**: Catches any `RequestMessage` subclass
 2. **Generates Correlation ID**: Creates unique request_id
 3. **Emits Event**: Sends RequestInfoEvent for external handling
-4. **Waits for Response**: External system calls `workflow.send_response()`
+4. **Waits for Response**: Application sends responses back with the same request_id
 5. **Continues Flow**: Response routed back through workflow edges
 
 **Use Cases:**
