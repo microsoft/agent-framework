@@ -1,28 +1,6 @@
 # OpenTelemetry Console Demo with Aspire Dashboard (Docker)
 # This script starts the Aspire Dashboard via Docker and the Console Application
 
-param(
-    [switch]$SkipBuild,
-    [switch]$Help
-)
-
-if ($Help) {
-    Write-Host "OpenTelemetry Console Demo with Aspire Dashboard" -ForegroundColor Green
-    Write-Host ""
-    Write-Host "Usage: .\start-demo.ps1 [options]"
-    Write-Host ""
-    Write-Host "Options:"
-    Write-Host "  -SkipBuild    Skip building the console application"
-    Write-Host "  -Help         Show this help message"
-    Write-Host ""
-    Write-Host "Prerequisites:"
-    Write-Host "  - Docker installed and running"
-    Write-Host "  - Set OPENAI_API_KEY or AZURE_OPENAI_ENDPOINT environment variable"
-    Write-Host "  - .NET 9.0 SDK installed"
-    Write-Host ""
-    exit 0
-}
-
 Write-Host "Starting OpenTelemetry Console Demo..." -ForegroundColor Green
 Write-Host ""
 
@@ -43,47 +21,32 @@ try {
     exit 1
 }
 
-# Check for API keys
-$hasOpenAI = $env:OPENAI_API_KEY -ne $null -and $env:OPENAI_API_KEY -ne ""
-$hasAzureOpenAI = $env:AZURE_OPENAI_ENDPOINT -ne $null -and $env:AZURE_OPENAI_ENDPOINT -ne ""
-
-if (!$hasOpenAI -and !$hasAzureOpenAI) {
-    Write-Host "Warning: No API keys found!" -ForegroundColor Yellow
-    Write-Host "Please set one of the following environment variables:" -ForegroundColor Yellow
-    Write-Host "  - OPENAI_API_KEY (for OpenAI)" -ForegroundColor Yellow
-    Write-Host "  - AZURE_OPENAI_ENDPOINT (for Azure OpenAI)" -ForegroundColor Yellow
-    Write-Host ""
-    $continue = Read-Host "Continue anyway? (y/N)"
-    if ($continue -ne "y" -and $continue -ne "Y") {
-        exit 1
-    }
-}
-
-if ($hasOpenAI) {
-    Write-Host "Found OpenAI API key" -ForegroundColor Green
-}
-if ($hasAzureOpenAI) {
-    Write-Host "Found Azure OpenAI endpoint" -ForegroundColor Green
+# Check for Azure OpenAI configuration
+if ($env:AZURE_OPENAI_ENDPOINT) {
+    Write-Host "Found Azure OpenAI endpoint: $($env:AZURE_OPENAI_ENDPOINT)" -ForegroundColor Green
     if ($env:AZURE_OPENAI_DEPLOYMENT_NAME) {
         Write-Host "Using deployment: $($env:AZURE_OPENAI_DEPLOYMENT_NAME)" -ForegroundColor Green
     } else {
         Write-Host "Using default deployment: gpt-4o-mini" -ForegroundColor Cyan
     }
-}
-
-# Build console app if not skipped
-if (!$SkipBuild) {
+} else {
+    Write-Host "Warning: AZURE_OPENAI_ENDPOINT not found!" -ForegroundColor Yellow
+    Write-Host "Please set the AZURE_OPENAI_ENDPOINT environment variable" -ForegroundColor Yellow
+    Write-Host "Example: `$env:AZURE_OPENAI_ENDPOINT='https://your-resource.openai.azure.com/'" -ForegroundColor Yellow
     Write-Host ""
-    Write-Host "Building console application..." -ForegroundColor Cyan
-
-    $buildResult = dotnet build --verbosity quiet
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "Failed to build Console App" -ForegroundColor Red
-        exit 1
-    }
-
-    Write-Host "Build completed successfully" -ForegroundColor Green
 }
+
+# Build console application
+Write-Host ""
+Write-Host "Building console application..." -ForegroundColor Cyan
+
+$buildResult = dotnet build --verbosity quiet
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Failed to build Console App" -ForegroundColor Red
+    exit 1
+}
+
+Write-Host "Build completed successfully" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "Starting Aspire Dashboard via Docker..." -ForegroundColor Cyan

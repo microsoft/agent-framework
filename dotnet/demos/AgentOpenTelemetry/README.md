@@ -11,23 +11,17 @@ The demo consists of two main components:
 
 ## Architecture
 
-```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Console App   │───▶│  Agent Framework │───▶│  Azure OpenAI   │
-│  (Interactive)  │    │  with OpenTel    │    │    Service      │
-│                 │    │  Instrumentation │    │                 │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-         │                        │
-         ▼                        ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    Aspire Dashboard                             │
-│              (OpenTelemetry Visualization)                      │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    A["Console App<br/>(Interactive)"] --> B["Agent Framework<br/>with OpenTel<br/>Instrumentation"]
+    B --> C["Azure OpenAI<br/>Service"]
+    A --> D["Aspire Dashboard<br/>(OpenTelemetry Visualization)"]
+    B --> D
 ```
 
 ## Prerequisites
 
-- .NET 9.0 SDK or later
+- .NET 8.0 SDK or later
 - Azure OpenAI service endpoint and deployment configured
 - Azure CLI installed and authenticated (for Azure credential authentication)
 
@@ -164,9 +158,7 @@ Complete demo startup script that handles everything automatically.
 
 **Usage:**
 ```powershell
-.\start-demo.ps1           # Full demo startup
-.\start-demo.ps1 -SkipBuild # Skip building projects
-.\start-demo.ps1 -Help     # Show help information
+.\start-demo.ps1           # Start the complete demo
 ```
 
 **Features:**

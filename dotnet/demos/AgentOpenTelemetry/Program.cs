@@ -72,8 +72,7 @@ serviceCollection.AddLogging(loggingBuilder => loggingBuilder
         });
         options.IncludeScopes = true;
         options.IncludeFormattedMessage = true;
-    })
-    .AddConsole()); // Also log to console for local debugging
+    }));
 
 var serviceProvider = serviceCollection.BuildServiceProvider();
 var logger = serviceProvider.GetRequiredService<ILogger<Program>>();
