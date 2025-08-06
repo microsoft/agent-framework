@@ -64,7 +64,6 @@ class AgentThread(AFBaseModel):
         """Invoked when a new message has been contributed to the chat by any participant."""
         pass
 
-
 # region MessagesRetrievableThread
 
 

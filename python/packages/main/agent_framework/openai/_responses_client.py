@@ -1,9 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import sys
 from collections.abc import AsyncIterable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from itertools import chain
+from time import sleep
 from typing import Any, ClassVar, Literal
 
 from openai import AsyncOpenAI, AsyncStream
@@ -33,6 +36,7 @@ from .._types import (
     ChatResponseUpdate,
     ChatRole,
     ChatToolMode,
+    AsyncMessageContent,
     FunctionCallContent,
     FunctionResultContent,
     TextContent,
@@ -51,7 +55,6 @@ __all__ = ["OpenAIResponsesClient"]
 
 # region ResponsesClient
 
-
 class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
     def _filter_options(self, **kwargs: Any) -> dict[str, Any]:
         """Filter options for the responses call."""
@@ -66,7 +69,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage],
         *,
-        # TODO(peterychang): enable this option. background: bool | None = None,
+        background: bool | None = None,
         include: list[ResponseIncludable] | None = None,
         instruction: str | None = None,
         max_tokens: int | None = None,
@@ -123,8 +126,10 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         Returns:
             A chat response from the model.
         """
+        if background and not store:
+            raise ServiceInvalidResponseError("Background responses must be stored.")
         filtered_options = self._filter_options(
-            background=False,
+            background=background,
             include=include,
             instruction=instruction,
             parallel_tool_calls=parallel_tool_calls,
@@ -156,7 +161,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage],
         *,
-        # TODO(peterychang): enable this option. background: bool | None = None,
+        background: bool | None = None,
         include: list[ResponseIncludable] | None = None,
         instruction: str | None = None,
         max_tokens: int | None = None,
@@ -213,8 +218,11 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         Returns:
             A stream representing the response(s) from the LLM.
         """
+        if background and not store:
+            raise ServiceInvalidResponseError("Background responses must be stored.")
+
         filtered_options = self._filter_options(
-            background=False,
+            background=background,
             include=include,
             instruction=instruction,
             parallel_tool_calls=parallel_tool_calls,
@@ -279,6 +287,18 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
             })
         response = await self._send_request(chat_options, messages=self._prepare_chat_history_for_request(messages))
         assert isinstance(response, OpenAIResponse)  # nosec  # noqa: S101
+        if response.status in {"queued", "in_progress"}:
+            # This is a long-running response, we don't have the final output yet.
+            future = ThreadPoolExecutor().submit(self._await_response, response)
+            return ChatResponse(
+                response_id=response.id,
+                conversation_id=response.id if chat_options.store is True else None,
+                messages=[ChatMessage(
+                    role=ChatRole.ASSISTANT,
+                    message_id=response.id,
+                    contents=[AsyncMessageContent(messages_future=future)]
+                )],
+            )
         return next(self._create_response_content(response, item, store=chat_options.store) for item in response.output)
 
     async def _inner_get_streaming_response(
@@ -303,6 +323,14 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
             if not update:
                 continue
             yield update
+
+    def _await_response(self, response: OpenAIResponse) -> list[ChatMessage]:
+        while response.status in {"queued", "in_progress"}:
+            sleep(2)
+            response = asyncio.run(self.client.responses.retrieve(response.id))
+        # TODO(peterychang): This is a quick and dirty way to get the final response.
+        chat_resp = next(self._create_response_content(response, item, store=False) for item in response.output)
+        return chat_resp.messages
 
     def _create_response_content(
         self, response: OpenAIResponse, item: ResponseOutputItem, store: bool | None
