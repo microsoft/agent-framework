@@ -5,9 +5,9 @@ using Microsoft.Agents.Workflows.Core;
 
 namespace Microsoft.Agents.Workflows.Execution;
 
-internal interface IRunnerContext
+internal interface IRunnerContext : IExternalRequestSink
 {
-    ValueTask AddEventAsync(string executorId, WorkflowEvent workflowEvent);
+    ValueTask AddEventAsync(WorkflowEvent workflowEvent);
     ValueTask SendMessageAsync(string executorId, object message);
 
     // TODO: State Management

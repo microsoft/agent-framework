@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using Microsoft.Agents.Workflows.Core;
+using Microsoft.Agents.Workflows.Specialized;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows;
@@ -43,6 +44,26 @@ public static class WorkflowBuilderExtensions
         }
 
         return builder;
+    }
+
+    /// <summary>
+    /// .
+    /// </summary>
+    /// <typeparam name="TRequest"></typeparam>
+    /// <typeparam name="TResponse"></typeparam>
+    /// <param name="builder"></param>
+    /// <param name="source"></param>
+    /// <param name="portId"></param>
+    /// <returns></returns>
+    public static WorkflowBuilder AddExternalCall<TRequest, TResponse>(this WorkflowBuilder builder, ExecutorIsh source, string portId)
+    {
+        Throw.IfNull(builder);
+        Throw.IfNull(source);
+        Throw.IfNull(portId);
+
+        InputPort port = new(portId, typeof(TRequest), typeof(TResponse));
+        return builder.AddEdge(source, port)
+                      .AddEdge(port, source);
     }
 
     /// <summary>

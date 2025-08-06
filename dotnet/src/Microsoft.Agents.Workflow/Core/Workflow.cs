@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using Microsoft.Agents.Workflows.Specialized;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Core;
@@ -20,6 +21,11 @@ public class Workflow
     /// .
     /// </summary>
     public Dictionary<string, HashSet<Edge>> Edges { get; internal init; } = new();
+
+    /// <summary>
+    /// .
+    /// </summary>
+    public Dictionary<string, InputPort> Ports { get; } = new();
 
     /// <summary>
     /// .

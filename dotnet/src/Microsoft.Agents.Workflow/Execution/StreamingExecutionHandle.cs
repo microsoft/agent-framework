@@ -28,7 +28,7 @@ public class StreamingExecutionHandle
     /// <param name="response"></param>
     /// <returns></returns>
     /// <exception cref="NotImplementedException"></exception>
-    public ValueTask SendResponseAsync(object response)
+    public ValueTask SendResponseAsync(ExternalResponse response)
     {
         return this._stepRunner.EnqueueMessageAsync(response);
     }
@@ -119,20 +119,20 @@ public static class ExecutionHandleExtensions
     /// name="handle"/> and invokes the  <paramref name="eventCallback"/> for each event. If the callback returns a
     /// non-<see langword="null"/> response, the response  is sent back to the workflow using the handle.</remarks>
     /// <param name="handle">The <see cref="StreamingExecutionHandle"/> representing the workflow execution stream to monitor.</param>
-    /// <param name="eventCallback">An optional callback function invoked for each <see cref="WorkflowEvent"/> received from the stream.  The
-    /// callback can return a response object to be sent back to the workflow, or <see langword="null"/> if no response
+    /// <param name="eventCallback">An optional callback function invoked for each <see cref="WorkflowEvent"/> received from the stream.
+    /// The /// callback can return a response object to be sent back to the workflow, or <see langword="null"/> if no response
     /// is required.</param>
     /// <param name="cancellation">A <see cref="CancellationToken"/> to observe while waiting for events. Defaults to <see
     /// cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ValueTask"/> that represents the asynchronous operation. The task completes when the workflow
     /// execution stream is fully processed.</returns>
-    public static async ValueTask RunToCompletionAsync(this StreamingExecutionHandle handle, Func<WorkflowEvent, object?>? eventCallback = null, CancellationToken cancellation = default)
+    public static async ValueTask RunToCompletionAsync(this StreamingExecutionHandle handle, Func<WorkflowEvent, ExternalResponse?>? eventCallback = null, CancellationToken cancellation = default)
     {
         Throw.IfNull(handle);
 
         await foreach (WorkflowEvent @event in handle.WatchStreamAsync(cancellation).ConfigureAwait(false))
         {
-            object? maybeResponse = eventCallback?.Invoke(@event);
+            ExternalResponse? maybeResponse = eventCallback?.Invoke(@event);
             if (maybeResponse != null)
             {
                 await handle.SendResponseAsync(maybeResponse).ConfigureAwait(false);
