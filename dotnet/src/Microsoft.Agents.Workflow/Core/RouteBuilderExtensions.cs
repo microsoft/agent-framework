@@ -74,5 +74,5 @@ internal static class RouteBuilderExtensions
     }
 
     public static RouteBuilder ReflectHandlers<TExecutor>(this RouteBuilder builder, TExecutor executor) where TExecutor : Executor
-        => builder.ReflectHandlers(typeof(TExecutor), executor);
+        => builder.ReflectHandlers(executor.GetType(), executor);
 }
