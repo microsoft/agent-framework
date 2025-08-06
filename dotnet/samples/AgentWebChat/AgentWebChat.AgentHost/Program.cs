@@ -1,8 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Text.Json;
 using AgentWebChat.AgentHost;
 using AgentWebChat.AgentHost.Utilities;
 using Microsoft.Agents.Orchestration;
+using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI.Agents.Hosting;
@@ -18,17 +20,17 @@ builder.Services.AddOpenApi();
 builder.Services.AddProblemDetails();
 
 // Add CosmosDB client integration
-builder.AddAzureCosmosClient("agent-web-chat-cosmosdb");
-//builder.AddAzureCosmosClient("agent-web-chat-cosmosdb", null, CosmosClientOptions =>
-//{
-//    CosmosClientOptions.ApplicationName = "AgentWebChat";
-//    CosmosClientOptions.ConnectionMode = ConnectionMode.Direct;
-//    CosmosClientOptions.ConsistencyLevel = ConsistencyLevel.Session;
-//    CosmosClientOptions.UseSystemTextJsonSerializerWithOptions = new JsonSerializerOptions
-//    {
-//        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-//    };
-//});
+builder.AddAzureCosmosClient("agent-web-chat-cosmosdb", null, CosmosClientOptions =>
+{
+    CosmosClientOptions.ApplicationName = "AgentWebChat";
+    CosmosClientOptions.ConnectionMode = ConnectionMode.Direct;
+    CosmosClientOptions.ConsistencyLevel = ConsistencyLevel.Session;
+    CosmosClientOptions.UseSystemTextJsonSerializerWithOptions = new JsonSerializerOptions()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        TypeInfoResolver = CosmosActorStateJsonContext.Default
+    };
+});
 
 // Configure the chat model and our agent.
 builder.AddKeyedChatClient("chat-model");
