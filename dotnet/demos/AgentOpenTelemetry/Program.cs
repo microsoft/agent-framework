@@ -106,7 +106,7 @@ logger.LogInformation("Initializing Azure OpenAI client with endpoint: {Endpoint
 logger.LogDebug("Using deployment: {DeploymentName}", deploymentName);
 
 // Create a logger specifically for the agent
-var agentLogger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger<OpenTelemetryAgent>();
+var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
 
 // Create the agent with OpenTelemetry instrumentation
 logger.LogInformation("Creating Agent with OpenTelemetry instrumentation");
@@ -116,7 +116,7 @@ using var agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredentia
         .CreateAIAgent(
             name: "OpenTelemetryDemoAgent",
             instructions: "You are a helpful assistant that provides concise and informative responses.")
-        .WithOpenTelemetry(agentLogger, SourceName);
+        .WithOpenTelemetry(loggerFactory, SourceName);
 
 var thread = agent.GetNewThread();
 

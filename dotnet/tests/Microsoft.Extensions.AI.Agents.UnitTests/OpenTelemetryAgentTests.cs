@@ -502,11 +502,14 @@ public class OpenTelemetryAgentTests
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-id");
         mockAgent.Setup(a => a.Name).Returns("TestAgent");
+        var mockLoggerFactory = new Mock<ILoggerFactory>();
         var mockLogger = new Mock<ILogger>();
+        mockLoggerFactory.Setup(f => f.CreateLogger(It.IsAny<string>()))
+            .Returns(mockLogger.Object);
         var sourceName = "test-source";
 
         // Act
-        using var telemetryAgent = mockAgent.Object.WithOpenTelemetry(mockLogger.Object, sourceName);
+        using var telemetryAgent = mockAgent.Object.WithOpenTelemetry(mockLoggerFactory.Object, sourceName);
 
         // Assert
         Assert.IsType<OpenTelemetryAgent>(telemetryAgent);
