@@ -6,7 +6,10 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using OpenTelemetry;
+using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -55,6 +58,25 @@ using var meterProvider = Sdk.CreateMeterProviderBuilder()
     })
     .Build();
 
+// Setup structured logging with OpenTelemetry
+var serviceCollection = new ServiceCollection();
+serviceCollection.AddLogging(loggingBuilder => loggingBuilder
+    .SetMinimumLevel(LogLevel.Debug)
+    .AddOpenTelemetry(options =>
+    {
+        options.SetResourceBuilder(ResourceBuilder.CreateDefault().AddService(ServiceName, serviceVersion: "1.0.0"));
+        options.AddOtlpExporter(otlpOptions =>
+        {
+            otlpOptions.Endpoint = new Uri(otlpEndpoint);
+        });
+        options.IncludeScopes = true;
+        options.IncludeFormattedMessage = true;
+    })
+    .AddConsole()); // Also log to console for local debugging
+
+var serviceProvider = serviceCollection.BuildServiceProvider();
+var logger = serviceProvider.GetRequiredService<ILogger<Program>>();
+
 using var activitySource = new ActivitySource(SourceName);
 using var meter = new Meter(SourceName);
 
@@ -62,97 +84,131 @@ using var meter = new Meter(SourceName);
 var interactionCounter = meter.CreateCounter<int>("agent_interactions_total", description: "Total number of agent interactions");
 var responseTimeHistogram = meter.CreateHistogram<double>("agent_response_time_seconds", description: "Agent response time in seconds");
 
-Console.WriteLine("=== OpenTelemetry Aspire Demo ===\n");
-Console.WriteLine("This demo shows OpenTelemetry integration with the Agent Framework.\n");
-Console.WriteLine("You can view the telemetry data in the Aspire Dashboard.\n");
-Console.WriteLine("Type your message and press Enter. Type 'exit' to quit.\n");
+Console.WriteLine("""
+    === OpenTelemetry Aspire Demo ===
+    This demo shows OpenTelemetry integration with the Agent Framework.
+    You can view the telemetry data in the Aspire Dashboard.
+    Type your message and press Enter. Type 'exit' or empty message to quit.
+    """);
 
-// Create the chat client - try Azure OpenAI first
+// Log application startup
+logger.LogInformation("OpenTelemetry Aspire Demo application started");
+logger.LogInformation("OTLP endpoint configured: {OtlpEndpoint}", otlpEndpoint);
+logger.LogDebug("Service name: {ServiceName}, Source name: {SourceName}", ServiceName, SourceName);
+
+// Create the chat client
 var configuredEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT") ?? "http://localhost:4317";
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT", EnvironmentVariableTarget.Machine) ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT environment variable is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
+logger.LogInformation("Initializing Azure OpenAI client with endpoint: {Endpoint}", endpoint);
+logger.LogDebug("Using deployment: {DeploymentName}", deploymentName);
 
 IChatClient chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
         .GetChatClient(deploymentName)
         .AsIChatClient();
 
 // Create the agent with OpenTelemetry instrumentation
+logger.LogInformation("Creating ChatClientAgent with OpenTelemetry instrumentation");
 var baseAgent = new ChatClientAgent(
     chatClient,
     name: "OpenTelemetryDemoAgent",
     instructions: "You are a helpful assistant that provides concise and informative responses.");
 
-using var agent = baseAgent.WithOpenTelemetry(sourceName: SourceName);
+// Create a logger specifically for the agent
+var agentLogger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger<OpenTelemetryAgent>();
+using var agent = baseAgent.WithOpenTelemetry(agentLogger, SourceName);
 var thread = agent.GetNewThread();
+
+logger.LogInformation("Agent created successfully with ID: {AgentId}", agent.Id);
 
 // Create a parent span for the entire agent session
 using var sessionActivity = activitySource.StartActivity("Agent Session");
+var sessionId = thread.Id ?? Guid.NewGuid().ToString();
 sessionActivity?.SetTag("agent.name", "OpenTelemetryDemoAgent");
-sessionActivity?.SetTag("session.id", thread.Id ?? Guid.NewGuid().ToString());
+sessionActivity?.SetTag("session.id", sessionId);
 sessionActivity?.SetTag("session.start_time", DateTimeOffset.UtcNow.ToString("O"));
 
-var interactionCount = 0;
-
-while (true)
+logger.LogInformation("Starting agent session with ID: {SessionId}", sessionId);
+using (logger.BeginScope(new Dictionary<string, object> { ["SessionId"] = sessionId, ["AgentName"] = "OpenTelemetryDemoAgent" }))
 {
-    Console.Write("You: ");
-    var userInput = Console.ReadLine();
+    var interactionCount = 0;
 
-    if (string.IsNullOrWhiteSpace(userInput) || userInput.Equals("exit", StringComparison.OrdinalIgnoreCase))
+    while (true)
     {
-        break;
+        Console.Write("You: ");
+        var userInput = Console.ReadLine();
+
+        if (string.IsNullOrWhiteSpace(userInput) || userInput.Equals("exit", StringComparison.OrdinalIgnoreCase))
+        {
+            logger.LogInformation("User requested to exit the session");
+            break;
+        }
+
+        interactionCount++;
+        logger.LogInformation("Processing user interaction #{InteractionNumber}: {UserInput}", interactionCount, userInput);
+
+        // Create a child span for each individual interaction
+        using var activity = activitySource.StartActivity("Agent Interaction");
+        activity?.SetTag("user.input", userInput);
+        activity?.SetTag("agent.name", "OpenTelemetryDemoAgent");
+        activity?.SetTag("interaction.number", interactionCount);
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            logger.LogDebug("Starting agent execution for interaction #{InteractionNumber}", interactionCount);
+            Console.Write("Agent: ");
+
+            // Run the agent (this will create its own internal telemetry spans)
+            await foreach (var update in agent.RunStreamingAsync(userInput, thread))
+            {
+                Console.Write(update.Text);
+            }
+
+            Console.WriteLine();
+
+            stopwatch.Stop();
+            var responseTime = stopwatch.Elapsed.TotalSeconds;
+
+            // Record metrics (similar to Python example)
+            interactionCounter.Add(1, new KeyValuePair<string, object?>("status", "success"));
+            responseTimeHistogram.Record(responseTime,
+                new KeyValuePair<string, object?>("status", "success"));
+
+            activity?.SetTag("response.success", true);
+
+            logger.LogInformation("Agent interaction #{InteractionNumber} completed successfully in {ResponseTime:F2} seconds",
+                interactionCount, responseTime);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error: {ex.Message}");
+            Console.WriteLine();
+
+            stopwatch.Stop();
+            var responseTime = stopwatch.Elapsed.TotalSeconds;
+
+            // Record error metrics
+            interactionCounter.Add(1, new KeyValuePair<string, object?>("status", "error"));
+            responseTimeHistogram.Record(responseTime,
+                new KeyValuePair<string, object?>("status", "error"));
+
+            activity?.SetTag("response.success", false);
+            activity?.SetTag("error.message", ex.Message);
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+
+            logger.LogError(ex, "Agent interaction #{InteractionNumber} failed after {ResponseTime:F2} seconds: {ErrorMessage}",
+                interactionCount, responseTime, ex.Message);
+        }
     }
 
-    interactionCount++;
+    // Add session summary to the parent span
+    sessionActivity?.SetTag("session.total_interactions", interactionCount);
+    sessionActivity?.SetTag("session.end_time", DateTimeOffset.UtcNow.ToString("O"));
 
-    // Create a child span for each individual interaction
-    using var activity = activitySource.StartActivity("Agent Interaction");
-    activity?.SetTag("user.input", userInput);
-    activity?.SetTag("agent.name", "OpenTelemetryDemoAgent");
-    activity?.SetTag("interaction.number", interactionCount);
+    logger.LogInformation("Agent session completed. Total interactions: {TotalInteractions}", interactionCount);
+} // End of logging scope
 
-    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-
-    try
-    {
-        Console.WriteLine("Agent: Processing...");
-
-        // Run the agent (this will create its own internal telemetry spans)
-        var response = await agent.RunAsync(userInput, thread);
-
-        Console.WriteLine($"Agent: {response.Messages.LastOrDefault()?.Text}");
-        Console.WriteLine();
-
-        stopwatch.Stop();
-
-        // Record metrics (similar to Python example)
-        interactionCounter.Add(1, new KeyValuePair<string, object?>("status", "success"));
-        responseTimeHistogram.Record(stopwatch.Elapsed.TotalSeconds,
-            new KeyValuePair<string, object?>("status", "success"));
-
-        activity?.SetTag("response.success", true);
-        activity?.SetTag("response.message_count", response.Messages.Count);
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"Error: {ex.Message}");
-        Console.WriteLine();
-
-        stopwatch.Stop();
-
-        // Record error metrics
-        interactionCounter.Add(1, new KeyValuePair<string, object?>("status", "error"));
-        responseTimeHistogram.Record(stopwatch.Elapsed.TotalSeconds,
-            new KeyValuePair<string, object?>("status", "error"));
-
-        activity?.SetTag("response.success", false);
-        activity?.SetTag("error.message", ex.Message);
-        activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-    }
-}
-
-// Add session summary to the parent span
-sessionActivity?.SetTag("session.total_interactions", interactionCount);
-sessionActivity?.SetTag("session.end_time", DateTimeOffset.UtcNow.ToString("O"));
-
-Console.WriteLine("Goodbye!");
+logger.LogInformation("OpenTelemetry Aspire Demo application shutting down");
