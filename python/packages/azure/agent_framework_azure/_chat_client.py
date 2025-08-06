@@ -16,8 +16,8 @@ from agent_framework import (
     TextContent,
 )
 from agent_framework.exceptions import ServiceInitializationError
-from agent_framework.openai import OpenAIModelTypes
 from agent_framework.openai._chat_client import OpenAIChatClientBase
+from agent_framework.openai._shared import OpenAIModelTypes
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
@@ -59,25 +59,25 @@ class AzureChatClient(AzureOpenAIConfigBase, OpenAIChatClientBase):
         """Initialize an AzureChatCompletion service.
 
         Args:
-            api_key  (str | None): The optional api key. If provided, will override the value in the
+            api_key: The optional api key. If provided, will override the value in the
                 env vars or .env file.
-            deployment_name  (str | None): The optional deployment. If provided, will override the value
+            deployment_name: The optional deployment. If provided, will override the value
                 (chat_deployment_name) in the env vars or .env file.
-            endpoint (str | None): The optional deployment endpoint. If provided will override the value
+            endpoint: The optional deployment endpoint. If provided will override the value
                 in the env vars or .env file.
-            base_url (str | None): The optional deployment base_url. If provided will override the value
+            base_url: The optional deployment base_url. If provided will override the value
                 in the env vars or .env file.
-            api_version (str | None): The optional deployment api version. If provided will override the value
+            api_version: The optional deployment api version. If provided will override the value
                 in the env vars or .env file.
-            ad_token (str | None): The Azure Active Directory token. (Optional)
-            ad_token_provider (AsyncAzureADTokenProvider): The Azure Active Directory token provider. (Optional)
-            token_endpoint (str | None): The token endpoint to request an Azure token. (Optional)
-            default_headers (Mapping[str, str]): The default headers mapping of string keys to
+            ad_token: The Azure Active Directory token. (Optional)
+            ad_token_provider: The Azure Active Directory token provider. (Optional)
+            token_endpoint: The token endpoint to request an Azure token. (Optional)
+            default_headers: The default headers mapping of string keys to
                 string values for HTTP requests. (Optional)
-            async_client (AsyncAzureOpenAI | None): An existing client to use. (Optional)
-            env_file_path (str | None): Use the environment settings file as a fallback to using env vars.
-            env_file_encoding (str | None): The encoding of the environment settings file, defaults to 'utf-8'.
-            instruction_role (str | None): The role to use for 'instruction' messages, for example, summarization
+            async_client: An existing client to use. (Optional)
+            env_file_path: Use the environment settings file as a fallback to using env vars.
+            env_file_encoding: The encoding of the environment settings file, defaults to 'utf-8'.
+            instruction_role: The role to use for 'instruction' messages, for example, summarization
                 prompts could use `developer` or `system`. (Optional)
         """
         try:
@@ -120,7 +120,7 @@ class AzureChatClient(AzureOpenAIConfigBase, OpenAIChatClientBase):
         Args:
             settings: A dictionary of settings for the service.
                 should contain keys: service_id, and optionally:
-                    ad_auth, ad_token_provider, default_headers
+                ad_auth, ad_token_provider, default_headers
         """
         return AzureChatClient(
             api_key=settings.get("api_key"),
@@ -193,7 +193,7 @@ class AzureChatClient(AzureOpenAIConfigBase, OpenAIChatClientBase):
         return None  # pragma: no cover
 
     @staticmethod
-    def split_message(message: "ChatResponse") -> ChatResponse:
+    def _split_message(message: "ChatResponse") -> ChatResponse:
         """Split an Azure On Your Data response into separate ChatMessages within the ChatResponse.
 
         If the message does not have three contents, and those three are one each of:

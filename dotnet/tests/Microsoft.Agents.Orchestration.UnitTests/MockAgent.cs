@@ -33,7 +33,7 @@ internal sealed class MockAgent(int index) : AIAgent
 
     public override AgentThread GetNewThread()
     {
-        return new AgentThread() { Id = Guid.NewGuid().ToString() };
+        return new AgentThread() { ConversationId = Guid.NewGuid().ToString() };
     }
 
     public override Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)

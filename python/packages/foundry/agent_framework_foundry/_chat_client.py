@@ -7,7 +7,6 @@ from collections.abc import AsyncIterable, MutableMapping, MutableSequence
 from typing import Any, ClassVar
 
 from agent_framework import (
-    AFBaseSettings,
     AIContents,
     AIFunction,
     ChatClientBase,
@@ -28,6 +27,7 @@ from agent_framework import (
     use_tool_calling,
 )
 from agent_framework._clients import ai_function_to_json_schema_spec
+from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.telemetry import use_telemetry
 from azure.ai.agents.models import (
@@ -74,14 +74,16 @@ class FoundrySettings(AFBaseSettings):
     with the encoding 'utf-8'. If the settings are not found in the .env file, the settings
     are ignored; however, validation will fail alerting that the settings are missing.
 
-    Optional settings for prefix 'FOUNDRY_' are:
-    - project_endpoint: str | None - The Azure AI Foundry project endpoint URL.
-        (Env var FOUNDRY_PROJECT_ENDPOINT)
-    - model_deployment_name: str | None - The name of the model deployment to use.
-        (Env var FOUNDRY_MODEL_DEPLOYMENT_NAME)
-    - agent_name: str | None - Default name for automatically created agents.
-        (Env var FOUNDRY_AGENT_NAME)
-    - env_file_path: str | None - if provided, the .env settings are read from this file path location
+    Attributes:
+        project_endpoint: The Azure AI Foundry project endpoint URL.
+            (Env var FOUNDRY_PROJECT_ENDPOINT)
+        model_deployment_name: The name of the model deployment to use.
+            (Env var FOUNDRY_MODEL_DEPLOYMENT_NAME)
+        agent_name: Default name for automatically created agents.
+            (Env var FOUNDRY_AGENT_NAME)
+    Parameters:
+        env_file_path: If provided, the .env settings are read from this file path location.
+        env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
     """
 
     env_prefix: ClassVar[str] = "FOUNDRY_"
@@ -128,7 +130,7 @@ class FoundryChatClient(ChatClientBase):
                 nor agent_id is provided, both will be created and managed automatically.
             agent_name: The name to use when creating new agents.
             thread_id: Default thread ID to use for conversations. Can be overridden by
-                conversation_id property from ChatOptions, when making a request.
+                conversation_id property, when making a request.
             project_endpoint: The Azure AI Foundry project endpoint URL. Used if client is not provided.
             model_deployment_name: The model deployment name to use for agent creation.
             credential: Azure async credential to use for authentication. If not provided,
@@ -243,7 +245,7 @@ class FoundryChatClient(ChatClientBase):
             raise ValueError("No thread ID was provided, but chat messages includes tool results.")
 
         # Determine which agent to use and create if needed
-        agent_id = await self._get_agent_id_or_create()
+        agent_id = await self._get_agent_id_or_create(run_options)
 
         # Create the streaming response
         stream, thread_id = await self._create_agent_stream(thread_id, agent_id, run_options, tool_results)
@@ -252,7 +254,7 @@ class FoundryChatClient(ChatClientBase):
         async for update in self._process_stream_events(stream, thread_id):
             yield update
 
-    async def _get_agent_id_or_create(self) -> str:
+    async def _get_agent_id_or_create(self, run_options: dict[str, Any] | None = None) -> str:
         """Determine which agent to use and create if needed.
 
         Returns:
@@ -264,9 +266,15 @@ class FoundryChatClient(ChatClientBase):
                 raise ServiceInitializationError("Model deployment name is required for agent creation.")
 
             agent_name = self._foundry_settings.agent_name
-            created_agent = await self.client.agents.create_agent(
-                model=self._foundry_settings.model_deployment_name, name=agent_name
-            )
+            args = {"model": self._foundry_settings.model_deployment_name, "name": agent_name}
+            if run_options:
+                if "tools" in run_options:
+                    args["tools"] = run_options["tools"]
+                if "instructions" in run_options:
+                    args["instructions"] = run_options["instructions"]
+                if "response_format" in run_options:
+                    args["response_format"] = run_options["response_format"]
+            created_agent = await self.client.agents.create_agent(**args)  # type: ignore[arg-type]
             self.agent_id = created_agent.id
             self._should_delete_agent = True
 
@@ -287,6 +295,7 @@ class FoundryChatClient(ChatClientBase):
         # Get any active run for this thread
         thread_run = await self._get_active_thread_run(thread_id)
 
+        stream: AsyncAgentRunStream[AsyncAgentEventHandler[Any]] | AsyncAgentEventHandler[Any]
         handler: AsyncAgentEventHandler[Any] = AsyncAgentEventHandler()
         tool_run_id, tool_outputs = self._convert_function_results_to_tool_output(tool_results)
 
@@ -352,28 +361,21 @@ class FoundryChatClient(ChatClientBase):
         thread_id: str,
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Process events from the agent stream and yield ChatResponseUpdate objects."""
-        response_id: str | None = None
-
-        if stream is not None:
-            # Use 'async with' only if the stream supports async context management (main agent stream).
-            # Tool output handlers only support async iteration, not context management.
-            if isinstance(stream, contextlib.AbstractAsyncContextManager):
-                async with stream as response_stream:  # type: ignore
-                    async for update in self._process_stream_events_from_iterator(
-                        response_stream, thread_id, response_id
-                    ):
-                        yield update
-            else:
-                async for update in self._process_stream_events_from_iterator(stream, thread_id, response_id):
+        # Use 'async with' only if the stream supports async context management (main agent stream).
+        # Tool output handlers only support async iteration, not context management.
+        if isinstance(stream, contextlib.AbstractAsyncContextManager):
+            async with stream as response_stream:  # type: ignore
+                async for update in self._process_stream_events_from_iterator(response_stream, thread_id):
                     yield update
+        else:
+            async for update in self._process_stream_events_from_iterator(stream, thread_id):
+                yield update
 
     async def _process_stream_events_from_iterator(
-        self,
-        stream_iter: Any,
-        thread_id: str,
-        response_id: str | None,
+        self, stream_iter: Any, thread_id: str
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Process events from the stream iterator and yield ChatResponseUpdate objects."""
+        response_id: str | None = None
         async for event_type, event_data, _ in stream_iter:  # type: ignore
             if event_type == AgentStreamEvent.THREAD_RUN_CREATED and isinstance(event_data, ThreadRun):
                 yield ChatResponseUpdate(
@@ -494,7 +496,7 @@ class FoundryChatClient(ChatClientBase):
                 if chat_options.tool_choice != "none" and chat_options.tools is not None:
                     for tool in chat_options.tools:
                         if isinstance(tool, AIFunction):
-                            tool_definitions.append(ai_function_to_json_schema_spec(tool))
+                            tool_definitions.append(ai_function_to_json_schema_spec(tool))  # type: ignore[reportUnknownArgumentType]
                         elif isinstance(tool, HostedCodeInterpreterTool):
                             tool_definitions.append(CodeInterpreterToolDefinition())
                         elif isinstance(tool, MutableMapping):

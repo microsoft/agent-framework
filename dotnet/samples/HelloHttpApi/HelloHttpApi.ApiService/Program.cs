@@ -8,6 +8,9 @@ var builder = WebApplication.CreateBuilder(args);
 // Add service defaults & Aspire client integrations.
 builder.AddServiceDefaults();
 
+// Add CosmosDB client integration
+builder.AddAzureCosmosClient("hello-http-api-cosmosdb");
+
 // Add services to the container.
 builder.Services.AddProblemDetails();
 

@@ -105,26 +105,21 @@ public sealed class Step03_ChatClientAgent_UsingCodeInterpreterTools(ITestOutput
     /// <param name="provider">Provider of the chat client that is used to determine how to extract the output.</param>
     /// <returns>The code interpreter output as a string.</returns>
     private static string? GetCodeInterpreterOutput(object rawRepresentation, ChatClientProviders provider)
-    {
-        switch (provider)
+        => provider switch
         {
-            case ChatClientProviders.OpenAIAssistant
-                when rawRepresentation is OpenAI.Assistants.RunStepDetailsUpdate stepDetails:
-                return $"{stepDetails.CodeInterpreterInput}{string.Join(
-                        string.Empty,
-                        stepDetails.CodeInterpreterOutputs.SelectMany(l => l.Logs)
-                        )}";
+            ChatClientProviders.OpenAIAssistant
+                            when rawRepresentation is OpenAI.Assistants.RunStepDetailsUpdate stepDetails => $"{stepDetails.CodeInterpreterInput}{string.Join(
+                                    string.Empty,
+                                    stepDetails.CodeInterpreterOutputs.SelectMany(l => l.Logs)
+                                    )}",
 
-            case ChatClientProviders.AzureAIAgentsPersistent
-                when rawRepresentation is Azure.AI.Agents.Persistent.RunStepDetailsUpdate stepDetails:
-                return $"{stepDetails.CodeInterpreterInput}{string.Join(
-                    string.Empty,
-                    stepDetails.CodeInterpreterOutputs.OfType<RunStepDeltaCodeInterpreterLogOutput>().SelectMany(l => l.Logs)
-                    )}";
-        }
-
-        return null;
-    }
+            ChatClientProviders.AzureAIAgentsPersistent
+                            when rawRepresentation is Azure.AI.Agents.Persistent.RunStepDetailsUpdate stepDetails => $"{stepDetails.CodeInterpreterInput}{string.Join(
+                                string.Empty,
+                                stepDetails.CodeInterpreterOutputs.OfType<RunStepDeltaCodeInterpreterLogOutput>().SelectMany(l => l.Logs)
+                                )}",
+            _ => null,
+        };
 
     #endregion
 }

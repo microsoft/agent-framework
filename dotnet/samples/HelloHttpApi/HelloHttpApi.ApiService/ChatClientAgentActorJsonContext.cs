@@ -2,7 +2,6 @@
 
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Microsoft.Extensions.AI.Agents;
 
 namespace HelloHttpApi.ApiService;
 
@@ -14,6 +13,5 @@ namespace HelloHttpApi.ApiService;
     UseStringEnumConverter = true,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     WriteIndented = false)]
-[JsonSerializable(typeof(ChatClientAgentThread))]
 [JsonSerializable(typeof(ChatClientAgentRunRequest))]
 internal sealed partial class ChatClientAgentActorJsonContext : JsonSerializerContext;

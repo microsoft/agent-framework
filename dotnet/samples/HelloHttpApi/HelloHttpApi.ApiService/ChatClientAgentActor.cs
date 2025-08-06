@@ -14,7 +14,7 @@ internal sealed class ChatClientAgentActor(
     ILogger<ChatClientAgentActor> logger) : IActor
 {
     private string? _etag;
-    private ChatClientAgentThread? _thread;
+    private AgentThread? _thread;
 
     public ValueTask DisposeAsync() => default;
 
@@ -34,11 +34,11 @@ internal sealed class ChatClientAgentActor(
             if (threadResult.Value is { } threadJson)
             {
                 // Deserialize the thread state if it exist
-                this._thread = threadJson.Deserialize(ChatClientAgentActorJsonContext.Default.ChatClientAgentThread);
+                this._thread = await agent.DeserializeThreadAsync(threadJson, cancellationToken: cancellationToken).ConfigureAwait(false);
             }
         }
 
-        this._thread ??= agent.GetNewThread() as ChatClientAgentThread ?? throw new InvalidOperationException("The agent did not provide a valid thread instance.");
+        this._thread ??= agent.GetNewThread();
         Log.ThreadStateRestored(logger, context.ActorId.ToString(), response.Results[0] is GetValueResult { Value: not null });
 
         while (!cancellationToken.IsCancellationRequested)
