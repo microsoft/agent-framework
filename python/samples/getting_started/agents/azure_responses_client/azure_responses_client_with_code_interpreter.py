@@ -18,7 +18,7 @@ async def main() -> None:
         tools=HostedCodeInterpreterTool(),
     )
 
-    query = "Use code to get the factorial of 100?"
+    query = "Use code to calculate the factorial of 100?"
     print(f"User: {query}")
     result = await agent.run(query)
     print(f"Result: {result}\n")
