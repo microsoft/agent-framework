@@ -12,7 +12,7 @@ If you want to use the latest published packages following the instructions [her
 
 ### 1. Configure required environment variables
 
-This samples used Azure OpenAI by default so you need to set the following environment variable
+This samples uses Azure OpenAI by default so you need to set the following environment variable
 
 ``` powershell
 $env:AZURE_OPENAI_ENDPOINT = "https://<your deployment>.openai.azure.com/"
@@ -20,8 +20,23 @@ $env:AZURE_OPENAI_ENDPOINT = "https://<your deployment>.openai.azure.com/"
 
 If you want to use OpenAI
 
-1. Edit [Program.cs](./demos/MinimalConsole/Program.cs)
+1. Edit [Program.cs](./demos/MinimalConsole/Program.cs) and change the following lines:
     ```csharp
+    AIAgent agent = new AzureOpenAIClient(
+      new Uri(Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")!),
+      new AzureCliCredential())
+       .GetChatClient("gpt-4o-mini")
+       .CreateAIAgent(
+         instructions: "You are a helpful assistant, you can help the user with weather information.",
+         tools: [AIFunctionFactory.Create(GetWeather)]);
+    ```
+    To this:
+    ```csharp
+    AIAgent agent = new OpenAIClient(Environment.GetEnvironmentVariable("OPENAI_API_KEY")!)
+      .GetChatClient("gpt-4o-mini")
+      .CreateAIAgent(
+        instructions: "You are a helpful assistant, you can help the user with weather information.",
+        tools: [AIFunctionFactory.Create(GetWeather)]);
     ```
 2. Create an environment variable with your OpenAI key 
     ``` powershell
@@ -32,7 +47,7 @@ If you want to use OpenAI
 
 ```powershell
 cd demos\MinimalConsole
-dotnet restore
+dotnet build
 ```
 
 ### 3. Run the demonstration
