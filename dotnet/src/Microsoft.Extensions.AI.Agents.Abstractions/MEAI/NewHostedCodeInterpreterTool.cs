@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Microsoft.Extensions.AI;
 
@@ -8,6 +9,7 @@ namespace Microsoft.Extensions.AI;
 /// Proposal for abstraction updates based on the common code interpreter tool properties.
 /// Based on the decision, the <see cref="HostedCodeInterpreterTool"/> abstraction can be updated in M.E.AI directly.
 /// </summary>
+[ExcludeFromCodeCoverage]
 public class NewHostedCodeInterpreterTool : HostedCodeInterpreterTool
 {
     /// <summary>Gets or sets a collection of <see cref="AIContent"/> to be used as input to the code interpreter tool.</summary>

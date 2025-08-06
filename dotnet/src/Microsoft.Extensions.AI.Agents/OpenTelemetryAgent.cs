@@ -364,6 +364,12 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
                 }
             }
         }
+
+        // Log the agent response for choice events
+        if (response is not null)
+        {
+            this.LogAgentResponse(response);
+        }
     }
 
     private void LogChatMessages(IEnumerable<ChatMessage> messages)
@@ -424,6 +430,29 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
         this.Log(id, JsonSerializer.Serialize(new ChoiceEvent()
         {
             FinishReason = response.FinishReason?.Value ?? "error",
+            Index = 0,
+            Message = this.CreateAssistantEvent(response.Messages is { Count: 1 } ? response.Messages[0].Contents : response.Messages.SelectMany(m => m.Contents)),
+        }, OtelContext.Default.ChoiceEvent));
+    }
+
+    private void LogAgentResponse(AgentRunResponse response)
+    {
+        if (this._openTelementryChatClient is not null)
+        {
+            // To avoid duplication of telemetry data the logging will be skipped if the agent is a ChatClientAgent and
+            // its innerChatClient already has telemetry enabled
+            return;
+        }
+
+        if (!this._logger.IsEnabled(EventLogLevel))
+        {
+            return;
+        }
+
+        EventId id = new(1, OpenTelemetryConsts.GenAI.Choice);
+        this.Log(id, JsonSerializer.Serialize(new ChoiceEvent()
+        {
+            FinishReason = (response.RawRepresentation as ChatResponse)?.FinishReason?.Value ?? "stop",
             Index = 0,
             Message = this.CreateAssistantEvent(response.Messages is { Count: 1 } ? response.Messages[0].Contents : response.Messages.SelectMany(m => m.Contents)),
         }, OtelContext.Default.ChoiceEvent));

@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -1809,4 +1810,478 @@ public class OpenTelemetryAgentTests
         // Description should not be present when null
         Assert.Null(activity.GetTagItem(OpenTelemetryConsts.GenAI.Agent.Description));
     }
+
+    #region Coverage Tests for Red Spots
+
+    [Fact]
+    public async Task RunAsync_WithAssistantMessage_LogsAssistantEventAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var mockLogger = new Mock<ILogger>();
+        var loggedEvents = new List<(LogLevel level, EventId eventId, string message)>();
+
+        // Setup IsEnabled to return true for Information level
+        mockLogger.Setup(x => x.IsEnabled(LogLevel.Information)).Returns(true);
+
+        mockLogger.Setup(x => x.Log(
+            It.IsAny<LogLevel>(),
+            It.IsAny<EventId>(),
+            It.IsAny<It.IsAnyType>(),
+            It.IsAny<Exception>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
+            {
+                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
+            });
+
+        var mockAgent = new Mock<AIAgent>();
+        mockAgent.Setup(a => a.Id).Returns("test-agent");
+        mockAgent.Setup(a => a.Name).Returns("TestAgent");
+
+        var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Test assistant response"));
+        mockAgent.Setup(a => a.RunAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<AgentThread>(), It.IsAny<AgentRunOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, mockLogger.Object, sourceName);
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Hello"),
+            new(ChatRole.Assistant, "Hi there!") // This should trigger assistant message logging
+        };
+
+        // Act
+        await telemetryAgent.RunAsync(messages);
+
+        // Assert
+        var assistantLogEvent = loggedEvents.FirstOrDefault(e => e.eventId.Name == "gen_ai.assistant.message");
+        Assert.NotEqual(default, assistantLogEvent);
+        Assert.Equal(LogLevel.Information, assistantLogEvent.level);
+    }
+
+    [Fact]
+    public async Task RunAsync_WithToolMessage_LogsToolEventAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var mockLogger = new Mock<ILogger>();
+        var loggedEvents = new List<(LogLevel level, EventId eventId, string message)>();
+
+        // Setup IsEnabled to return true for Information level
+        mockLogger.Setup(x => x.IsEnabled(LogLevel.Information)).Returns(true);
+
+        mockLogger.Setup(x => x.Log(
+            It.IsAny<LogLevel>(),
+            It.IsAny<EventId>(),
+            It.IsAny<It.IsAnyType>(),
+            It.IsAny<Exception>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
+            {
+                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
+            });
+
+        var mockAgent = new Mock<AIAgent>();
+        mockAgent.Setup(a => a.Id).Returns("test-agent");
+        mockAgent.Setup(a => a.Name).Returns("TestAgent");
+
+        var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
+        mockAgent.Setup(a => a.RunAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<AgentThread>(), It.IsAny<AgentRunOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, mockLogger.Object, sourceName);
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Hello"),
+            new(ChatRole.Tool, [new FunctionResultContent("call-123", "Sunny, 75°F")]) // This should trigger tool message logging
+        };
+
+        // Act
+        await telemetryAgent.RunAsync(messages);
+
+        // Assert
+        var toolLogEvent = loggedEvents.FirstOrDefault(e => e.eventId.Name == OpenTelemetryConsts.GenAI.Tool.Message);
+        Assert.NotEqual(default, toolLogEvent);
+        Assert.Equal(LogLevel.Information, toolLogEvent.level);
+    }
+
+    [Fact]
+    public async Task RunAsync_WithToolMessageAndSensitiveData_LogsToolEventWithContentAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var mockLogger = new Mock<ILogger>();
+        var loggedEvents = new List<(LogLevel level, EventId eventId, string message)>();
+
+        // Setup IsEnabled to return true for Information level
+        mockLogger.Setup(x => x.IsEnabled(LogLevel.Information)).Returns(true);
+
+        mockLogger.Setup(x => x.Log(
+            It.IsAny<LogLevel>(),
+            It.IsAny<EventId>(),
+            It.IsAny<It.IsAnyType>(),
+            It.IsAny<Exception>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
+            {
+                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
+            });
+
+        var mockAgent = new Mock<AIAgent>();
+        mockAgent.Setup(a => a.Id).Returns("test-agent");
+        mockAgent.Setup(a => a.Name).Returns("TestAgent");
+
+        var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
+        mockAgent.Setup(a => a.RunAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<AgentThread>(), It.IsAny<AgentRunOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, mockLogger.Object, sourceName)
+        {
+            EnableSensitiveData = true // Enable sensitive data logging
+        };
+
+        var toolResult = new { temperature = 75, condition = "sunny" };
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Hello"),
+            new(ChatRole.Tool, [new FunctionResultContent("call-123", toolResult)])
+        };
+
+        // Act
+        await telemetryAgent.RunAsync(messages);
+
+        // Assert
+        var toolLogEvent = loggedEvents.FirstOrDefault(e => e.eventId.Name == OpenTelemetryConsts.GenAI.Tool.Message);
+        Assert.NotEqual(default, toolLogEvent);
+        Assert.Equal(LogLevel.Information, toolLogEvent.level);
+        Assert.Contains("call-123", toolLogEvent.message);
+    }
+
+    [Fact]
+    public async Task RunAsync_LoggerNotEnabled_DoesNotLogChatResponseAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var mockLogger = new Mock<ILogger>();
+        var loggedEvents = new List<(LogLevel level, EventId eventId, string message)>();
+
+        // Setup logger to return false for IsEnabled to trigger the early return in LogChatResponse
+        mockLogger.Setup(x => x.IsEnabled(LogLevel.Information)).Returns(false);
+
+        mockLogger.Setup(x => x.Log(
+            It.IsAny<LogLevel>(),
+            It.IsAny<EventId>(),
+            It.IsAny<It.IsAnyType>(),
+            It.IsAny<Exception>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
+            {
+                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
+            });
+
+        var mockAgent = new Mock<AIAgent>();
+        mockAgent.Setup(a => a.Id).Returns("test-agent");
+        mockAgent.Setup(a => a.Name).Returns("TestAgent");
+
+        var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
+        mockAgent.Setup(a => a.RunAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<AgentThread>(), It.IsAny<AgentRunOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, mockLogger.Object, sourceName);
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Hello")
+        };
+
+        // Act
+        await telemetryAgent.RunAsync(messages);
+
+        // Assert - Should not have logged any choice events since logger is not enabled
+        var choiceLogEvent = loggedEvents.FirstOrDefault(e => e.eventId.Name == OpenTelemetryConsts.GenAI.Choice);
+        Assert.Equal(default, choiceLogEvent);
+
+        // Verify IsEnabled was called
+        mockLogger.Verify(x => x.IsEnabled(LogLevel.Information), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task RunAsync_WithResponseMessages_LogsChoiceEventsAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var mockLogger = new Mock<ILogger>();
+        var loggedEvents = new List<(LogLevel level, EventId eventId, string message)>();
+
+        // Setup logger to be enabled
+        mockLogger.Setup(x => x.IsEnabled(LogLevel.Information)).Returns(true);
+
+        mockLogger.Setup(x => x.Log(
+            It.IsAny<LogLevel>(),
+            It.IsAny<EventId>(),
+            It.IsAny<It.IsAnyType>(),
+            It.IsAny<Exception>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
+            {
+                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
+            });
+
+        var mockAgent = new Mock<AIAgent>();
+        mockAgent.Setup(a => a.Id).Returns("test-agent");
+        mockAgent.Setup(a => a.Name).Returns("TestAgent");
+
+        // Create a response with multiple messages to trigger choice event logging
+        var responseMessages = new List<ChatMessage>
+        {
+            new(ChatRole.Assistant, "First response"),
+            new(ChatRole.Assistant, "Second response")
+        };
+        var response = new AgentRunResponse(responseMessages);
+
+        mockAgent.Setup(a => a.RunAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<AgentThread>(), It.IsAny<AgentRunOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, mockLogger.Object, sourceName);
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Hello")
+        };
+
+        // Act
+        await telemetryAgent.RunAsync(messages);
+
+        // Assert - Should have logged choice events for the response messages
+        var choiceLogEvents = loggedEvents.Where(e => e.eventId.Name == OpenTelemetryConsts.GenAI.Choice).ToList();
+        Assert.NotEmpty(choiceLogEvents);
+        Assert.Equal(LogLevel.Information, choiceLogEvents.First().level);
+
+        // Verify the choice events contain the expected structure
+        foreach (var choiceEvent in choiceLogEvents)
+        {
+            Assert.Contains("finish_reason", choiceEvent.message);
+            Assert.Contains("index", choiceEvent.message);
+            Assert.Contains("message", choiceEvent.message);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_WithSingleResponseMessage_LogsChoiceEventAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var mockLogger = new Mock<ILogger>();
+        var loggedEvents = new List<(LogLevel level, EventId eventId, string message)>();
+
+        // Setup logger to be enabled
+        mockLogger.Setup(x => x.IsEnabled(LogLevel.Information)).Returns(true);
+
+        mockLogger.Setup(x => x.Log(
+            It.IsAny<LogLevel>(),
+            It.IsAny<EventId>(),
+            It.IsAny<It.IsAnyType>(),
+            It.IsAny<Exception>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
+            {
+                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
+            });
+
+        var mockAgent = new Mock<AIAgent>();
+        mockAgent.Setup(a => a.Id).Returns("test-agent");
+        mockAgent.Setup(a => a.Name).Returns("TestAgent");
+
+        // Create a response with a single message
+        var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Single response"));
+
+        mockAgent.Setup(a => a.RunAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<AgentThread>(), It.IsAny<AgentRunOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, mockLogger.Object, sourceName);
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Hello")
+        };
+
+        // Act
+        await telemetryAgent.RunAsync(messages);
+
+        // Assert - Should have logged a choice event for the single response message
+        var choiceLogEvent = loggedEvents.FirstOrDefault(e => e.eventId.Name == OpenTelemetryConsts.GenAI.Choice);
+        Assert.NotEqual(default, choiceLogEvent);
+        Assert.Equal(LogLevel.Information, choiceLogEvent.level);
+
+        // Verify the choice event contains the expected structure
+        Assert.Contains("finish_reason", choiceLogEvent.message);
+        Assert.Contains("index", choiceLogEvent.message);
+        Assert.Contains("message", choiceLogEvent.message);
+    }
+
+    [Fact]
+    public void JsonSerializerOptions_GetterReturnsSetValue()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var mockLogger = new Mock<ILogger>();
+        var mockAgent = new Mock<AIAgent>();
+
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, mockLogger.Object, sourceName);
+
+        // Act & Assert - Default value should be AIJsonUtilities.DefaultOptions
+        Assert.NotNull(telemetryAgent.JsonSerializerOptions);
+        Assert.Same(AIJsonUtilities.DefaultOptions, telemetryAgent.JsonSerializerOptions);
+    }
+
+    [Fact]
+    public void JsonSerializerOptions_SetterUpdatesValue()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var mockLogger = new Mock<ILogger>();
+        var mockAgent = new Mock<AIAgent>();
+
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, mockLogger.Object, sourceName);
+
+        var customOptions = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            WriteIndented = true
+        };
+
+        // Act
+        telemetryAgent.JsonSerializerOptions = customOptions;
+
+        // Assert
+        Assert.Same(customOptions, telemetryAgent.JsonSerializerOptions);
+    }
+
+    [Fact]
+    public void JsonSerializerOptions_SetterThrowsOnNull()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var mockLogger = new Mock<ILogger>();
+        var mockAgent = new Mock<AIAgent>();
+
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, mockLogger.Object, sourceName);
+
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() => telemetryAgent.JsonSerializerOptions = null!);
+    }
+
+    [Fact]
+    public async Task RunAsync_WithCustomJsonSerializerOptions_UsesCustomOptionsForSerializationAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var mockLogger = new Mock<ILogger>();
+        var loggedEvents = new List<(LogLevel level, EventId eventId, string message)>();
+
+        // Setup IsEnabled to return true for Information level
+        mockLogger.Setup(x => x.IsEnabled(LogLevel.Information)).Returns(true);
+
+        mockLogger.Setup(x => x.Log(
+            It.IsAny<LogLevel>(),
+            It.IsAny<EventId>(),
+            It.IsAny<It.IsAnyType>(),
+            It.IsAny<Exception>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
+            {
+                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
+            });
+
+        var mockAgent = new Mock<AIAgent>();
+        mockAgent.Setup(a => a.Id).Returns("test-agent");
+        mockAgent.Setup(a => a.Name).Returns("TestAgent");
+
+        var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
+        mockAgent.Setup(a => a.RunAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<AgentThread>(), It.IsAny<AgentRunOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, mockLogger.Object, sourceName)
+        {
+            EnableSensitiveData = true // Enable sensitive data to trigger JsonSerializerOptions usage
+        };
+
+        // Set custom JsonSerializerOptions
+        var customOptions = new JsonSerializerOptions(AIJsonUtilities.DefaultOptions);
+        telemetryAgent.JsonSerializerOptions = customOptions;
+
+        // Use a Dictionary to test serialization
+        var toolResult = new Dictionary<string, object>
+        {
+            ["temperature"] = 75,
+            ["condition"] = "sunny"
+        };
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Hello"),
+            new(ChatRole.Tool, [new FunctionResultContent("call-123", toolResult)])
+        };
+
+        // Act - This should not throw an exception and should use the custom JsonSerializerOptions
+        await telemetryAgent.RunAsync(messages);
+
+        // Assert
+        var toolLogEvent = loggedEvents.FirstOrDefault(e => e.eventId.Name == OpenTelemetryConsts.GenAI.Tool.Message);
+        Assert.NotEqual(default, toolLogEvent);
+
+        // Verify that the custom JsonSerializerOptions were used successfully (no exception thrown)
+        // and that the content was serialized
+        Assert.Contains("temperature", toolLogEvent.message);
+        Assert.Contains("condition", toolLogEvent.message);
+        Assert.Contains("call-123", toolLogEvent.message);
+
+        // Verify that the custom options object is being used
+        Assert.Same(customOptions, telemetryAgent.JsonSerializerOptions);
+    }
+
+    #endregion
 }
