@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Extensions.AI.Agents;
+namespace Microsoft.Extensions.AI;
 
 /// <summary>
 /// Represents a chat client that seeks user approval for function calls and sits behind the <see cref="FunctionInvokingChatClient"/>.
