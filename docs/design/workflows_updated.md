@@ -40,7 +40,7 @@ The workflow framework consists of three core layers that work together to creat
 │  (Processing)   │   (Routing)   │       (Orchestration)           │
 │                 │               │                                 │
 │ ┌─────────────┐ │ ┌───────────┐ │ ┌─────────────────────────────┐ │
-│ │@handles_msg │ │ │Conditional│ │ │ • Manages execution flow    │ │
+│ │@handler     │ │ │Conditional│ │ │ • Manages execution flow    │ │
 │ │┌───────────┐│ │ │  Routing  │ │ │ • Coordinates executors     │ │
 │ ││Handler A  ││ │ └─────┬─────┘ │ │ • Streams events            │ │
 │ │├───────────┤│ │       │       │ └─────────────┬───────────────┘ │
@@ -231,18 +231,18 @@ If an executor fails during a superstep, messages processed during that superste
 ```python
 class SampleExecutor(Executor):
 
-    @handles_message(output_types=[str])
+    @handler(output_types=[str])
     async def reverse_string(self, data: str, ctx: WorkflowContext) -> None:
         """Handler that handles a string and sends a string."""
         await ctx.send_message(data[::-1])
 
-    @handles_message(output_types=[int, float])
+    @handler(output_types=[int, float])
     async def handle_int(self, data: int, ctx: WorkflowContext) -> None:
         """Handler that handles an integer and sends an integer and a float."""
         await ctx.send_message(int(data * 2))
         await ctx.send_message(float(data / 2))
 
-    @handles_message
+    @handler
     async def handle(self, data: str, ctx: WorkflowContext) -> None:
         """Handler that handles a string and emits an event."""
         await ctx.add_event(WorkflowCompletedEvent(data))
@@ -320,7 +320,7 @@ Thread-safe key-value store accessible to all executors.
 
 ```python
 class StatefulExecutor(Executor):
-    @handles_message
+    @handler
     async def process_data(self, data: str, ctx: WorkflowContext) -> None:
         # Read from shared state
         counter = await ctx.get_shared_state("counter") or 0
