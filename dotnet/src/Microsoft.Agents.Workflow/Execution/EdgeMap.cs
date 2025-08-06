@@ -10,19 +10,19 @@ namespace Microsoft.Agents.Workflows.Execution;
 
 internal class EdgeMap
 {
-    private readonly Dictionary<FlowEdge, object> _edgeRunners = new();
-    private readonly Dictionary<FlowEdge, FanInEdgeState> _fanInState = new();
+    private readonly Dictionary<Edge, object> _edgeRunners = new();
+    private readonly Dictionary<Edge, FanInEdgeState> _fanInState = new();
     private readonly InputEdgeRuner _inputRunner;
 
-    public EdgeMap(IRunnerContext runContext, Dictionary<string, HashSet<FlowEdge>> workflowEdges, string startExecutorId)
+    public EdgeMap(IRunnerContext runContext, Dictionary<string, HashSet<Edge>> workflowEdges, string startExecutorId)
     {
-        foreach (FlowEdge edge in workflowEdges.Values.SelectMany(e => e))
+        foreach (Edge edge in workflowEdges.Values.SelectMany(e => e))
         {
             object edgeRunner = edge.EdgeType switch
             {
-                FlowEdge.Type.Direct => new DirectEdgeRunner(runContext, edge.DirectEdgeData!),
-                FlowEdge.Type.FanOut => new FanOutEdgeRunner(runContext, edge.FanOutEdgeData!),
-                FlowEdge.Type.FanIn => new FanInEdgeRunner(runContext, edge.FanInEdgeData!),
+                Edge.Type.Direct => new DirectEdgeRunner(runContext, edge.DirectEdgeData!),
+                Edge.Type.FanOut => new FanOutEdgeRunner(runContext, edge.FanOutEdgeData!),
+                Edge.Type.FanIn => new FanInEdgeRunner(runContext, edge.FanInEdgeData!),
                 _ => throw new NotSupportedException($"Unsupported edge type: {edge.EdgeType}")
             };
 
@@ -32,7 +32,7 @@ internal class EdgeMap
         this._inputRunner = new InputEdgeRuner(runContext, startExecutorId);
     }
 
-    public async ValueTask<IEnumerable<CallResult?>> InvokeEdgeAsync(FlowEdge edge, string sourceId, object message)
+    public async ValueTask<IEnumerable<CallResult?>> InvokeEdgeAsync(Edge edge, string sourceId, object message)
     {
         if (!this._edgeRunners.TryGetValue(edge, out object? edgeRunner))
         {
@@ -48,21 +48,21 @@ internal class EdgeMap
             // in FanIn/Out cases)
             // TODO: Once we have a fixed interface, if it is reasonably generalizable
             // between the Runners, we can normalize it behind an IFace.
-            case FlowEdge.Type.Direct:
+            case Edge.Type.Direct:
             {
                 DirectEdgeRunner runner = (DirectEdgeRunner)this._edgeRunners[edge];
                 edgeResults = await runner.ChaseAsync(message).ConfigureAwait(false);
                 break;
             }
 
-            case FlowEdge.Type.FanOut:
+            case Edge.Type.FanOut:
             {
                 FanOutEdgeRunner runner = (FanOutEdgeRunner)this._edgeRunners[edge];
                 edgeResults = await runner.ChaseAsync(message).ConfigureAwait(false);
                 break;
             }
 
-            case FlowEdge.Type.FanIn:
+            case Edge.Type.FanIn:
             {
                 FanInEdgeState state = this._fanInState[edge];
                 FanInEdgeRunner runner = (FanInEdgeRunner)this._edgeRunners[edge];

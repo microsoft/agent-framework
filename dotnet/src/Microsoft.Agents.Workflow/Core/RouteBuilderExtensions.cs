@@ -65,11 +65,6 @@ internal static class RouteBuilderExtensions
             builder = builder.AddHandler(handlerInfo.InType, handlerInfo.Bind(executor, checkType: true));
         }
 
-        if (executor is IDefaultMessageHandler defaultHandler)
-        {
-            builder = builder.AddHandler<object>(defaultHandler.HandleAsync);
-        }
-
         return builder;
     }
 

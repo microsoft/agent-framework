@@ -21,7 +21,7 @@ public class BaseTestExecutor : Executor
     } = false;
 }
 
-public class DefaultHandler : BaseTestExecutor, IDefaultMessageHandler
+public class DefaultHandler : BaseTestExecutor, IMessageHandler<object>
 {
     public ValueTask HandleAsync(object message, IWorkflowContext context)
     {
