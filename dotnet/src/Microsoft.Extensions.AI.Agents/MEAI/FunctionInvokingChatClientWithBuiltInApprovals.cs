@@ -1026,17 +1026,21 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
                 // Remove the call id for each approval response.
                 if (content is FunctionApprovalResponseContent response_)
                 {
-                    if (requestCallIds is null)
-                    {
-                        Throw.InvalidOperationException("FunctionApprovalResponseContent found without a matching FunctionApprovalRequestContent.");
-                    }
+                    // TODO: We cannot check for a matching request here, since the request is not availble for service managed threads, so consider if this still makes snese.
+                    //if (requestCallIds is null)
+                    //{
+                    //    Throw.InvalidOperationException("FunctionApprovalResponseContent found without a matching FunctionApprovalRequestContent.");
+                    //}
 
-                    if (!requestCallIds.Contains(response_.FunctionCall.CallId))
-                    {
-                        Throw.InvalidOperationException($"FunctionApprovalResponseContent found with a FunctionCall.CallId '{response_.FunctionCall.CallId}' that does not match any FunctionApprovalRequestContent.");
-                    }
+                    //if (!requestCallIds.Contains(response_.FunctionCall.CallId))
+                    //{
+                    //    Throw.InvalidOperationException($"FunctionApprovalResponseContent found with a FunctionCall.CallId '{response_.FunctionCall.CallId}' that does not match any FunctionApprovalRequestContent.");
+                    //}
 
-                    requestCallIds.Remove(response_.FunctionCall.CallId);
+                    if (requestCallIds is not null)
+                    {
+                        requestCallIds.Remove(response_.FunctionCall.CallId);
+                    }
                 }
 
                 // Requests/responses that are already executed.
