@@ -76,6 +76,31 @@ class RunnerContext(Protocol):
         ...
 
 
+@runtime_checkable
+class CheckpointableRunnerContext(RunnerContext, Protocol):
+    """Extended RunnerContext with checkpointing capabilities."""
+
+    def set_workflow_id(self, workflow_id: str) -> None:
+        """Set the workflow ID for this context."""
+        ...
+
+    async def create_checkpoint(self, workflow_id: str | None = None) -> str:
+        """Create a checkpoint of current state."""
+        ...
+
+    async def restore_from_checkpoint(self, checkpoint_id: str) -> bool:
+        """Restore state from checkpoint."""
+        ...
+
+    async def get_checkpoint_state(self) -> dict[str, object]:
+        """Get serializable state for checkpointing."""
+        ...
+
+    async def set_checkpoint_state(self, state: dict[str, object]) -> None:
+        """Restore state from checkpoint data."""
+        ...
+
+
 class InProcRunnerContext(RunnerContext):
     """In-process execution context for local execution of workflows."""
 

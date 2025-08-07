@@ -8,7 +8,7 @@ from typing import Any, cast
 
 from ._edge import Edge
 from ._events import WorkflowEvent
-from ._runner_context import CheckpointableInProcRunnerContext, Message, RunnerContext
+from ._runner_context import CheckpointableRunnerContext, Message, RunnerContext
 from ._shared_state import SharedState
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,7 @@ class Runner:
         self,
         edges: list[Edge],
         shared_state: SharedState,
-        ctx: RunnerContext | CheckpointableInProcRunnerContext,
+        ctx: RunnerContext | CheckpointableRunnerContext,
         max_iterations: int = 100,
         checkpoint_interval: int | None = None,
         workflow_id: str | None = None,
@@ -48,11 +48,11 @@ class Runner:
         self._running = False  # Flag to prevent concurrent execution
 
         # Set workflow ID in context if it's checkpointable
-        if isinstance(ctx, CheckpointableInProcRunnerContext) and workflow_id:
+        if isinstance(ctx, CheckpointableRunnerContext) and workflow_id:
             ctx.set_workflow_id(workflow_id)
 
     @property
-    def context(self) -> RunnerContext | CheckpointableInProcRunnerContext:
+    def context(self) -> RunnerContext | CheckpointableRunnerContext:
         """Get the workflow context."""
         return self._ctx
 
@@ -170,7 +170,7 @@ class Runner:
         Returns:
             Checkpoint ID if created, None otherwise
         """
-        if not isinstance(self._ctx, CheckpointableInProcRunnerContext):
+        if not isinstance(self._ctx, CheckpointableRunnerContext):
             return None
 
         try:
@@ -187,7 +187,7 @@ class Runner:
 
     async def _update_context_with_shared_state(self) -> None:
         """Update the context with current shared state for checkpointing."""
-        if not isinstance(self._ctx, CheckpointableInProcRunnerContext):
+        if not isinstance(self._ctx, CheckpointableRunnerContext):
             return
 
         try:
@@ -220,7 +220,7 @@ class Runner:
         Returns:
             True if restoration was successful, False otherwise
         """
-        if not isinstance(self._ctx, CheckpointableInProcRunnerContext):
+        if not isinstance(self._ctx, CheckpointableRunnerContext):
             logger.warning("Context does not support checkpointing")
             return False
 
@@ -241,7 +241,7 @@ class Runner:
 
     async def _restore_shared_state_from_context(self) -> None:
         """Restore shared state from the checkpointed context."""
-        if not isinstance(self._ctx, CheckpointableInProcRunnerContext):
+        if not isinstance(self._ctx, CheckpointableRunnerContext):
             return
 
         try:

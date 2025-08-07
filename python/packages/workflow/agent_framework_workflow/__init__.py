@@ -30,6 +30,7 @@ from ._executor import (
 )
 from ._runner_context import (
     CheckpointableInProcRunnerContext,
+    CheckpointableRunnerContext,
     InProcRunnerContext,
     Message,
     RunnerContext,
@@ -59,6 +60,7 @@ __all__ = [
     "AgentRunStreamingEvent",
     "CheckpointStorage",
     "CheckpointableInProcRunnerContext",
+    "CheckpointableRunnerContext",
     "EdgeDuplicationError",
     "Executor",
     "ExecutorCompletedEvent",
