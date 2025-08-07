@@ -12,6 +12,7 @@
 @using Microsoft.Extensions.AI.Agents
 @using Microsoft.Extensions.AI.Agents.Hosting
 @using Microsoft.Extensions.AI.Agents.Runtime
+@using A2A
 
 <PageTitle>Agent Web Chat</PageTitle>
 
@@ -70,6 +71,77 @@
             </div>
         </div>
     </div>
+
+    @if (selectedProtocol == Protocol.A2A)
+    {
+        <div class="a2a-configuration-card">
+            <div class="a2a-header" @onclick="ToggleA2AExpanded">
+                <h3 class="a2a-title">
+                    <svg class="a2a-toggle-icon @(isA2AExpanded ? "expanded" : "")" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="6,9 12,15 18,9"></polyline>
+                    </svg>
+                    A2A Configuration
+                </h3>
+                <span class="a2a-subtitle">Discover and configure agent cards</span>
+            </div>
+            
+            @if (isA2AExpanded)
+            {
+                <div class="a2a-content">
+                    <div class="discover-section">
+                        <button class="discover-btn" 
+                                @onclick="DiscoverAgentCard" 
+                                disabled="@(string.IsNullOrEmpty(selectedAgentName) || isDiscoveringCard)">
+                            @if (isDiscoveringCard)
+                            {
+                                <div class="spinner-small"></div>
+                                <span>Discovering...</span>
+                            }
+                            else
+                            {
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <circle cx="11" cy="11" r="8"></circle>
+                                    <path d="m21 21-4.35-4.35"></path>
+                                </svg>
+                                <span>Discover Agent Card</span>
+                            }
+                        </button>
+                        
+                        @if (!string.IsNullOrEmpty(selectedAgentName))
+                        {
+                            <span class="discover-info">for agent: <strong>@GetAgentDisplayName(selectedAgentName)</strong></span>
+                        }
+                        else
+                        {
+                            <span class="discover-info text-muted">Please select an agent first</span>
+                        }
+                    </div>
+
+                    @if (discoveredAgentCardJson != null)
+                    {
+                        <div class="agent-card-display">
+                            <h4 class="card-title">🔗 Discovered Agent Card</h4>
+                            <div class="card-details">
+                                @discoveredAgentCardJson
+                            </div>
+                        </div>
+                    }
+
+                    @if (!string.IsNullOrEmpty(discoveryError))
+                    {
+                        <div class="error-display">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="15" y1="9" x2="9" y2="15"></line>
+                                <line x1="9" y1="9" x2="15" y2="15"></line>
+                            </svg>
+                            <span>@discoveryError</span>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    }
 
     @if (conversations.Any())
     {
@@ -198,7 +270,7 @@
         margin: 0;
     }
 
-    .agent-selection-card, .protocol-selection-card {
+    .agent-selection-card, .protocol-selection-card, .a2a-configuration-card {
         background: white;
         border-radius: 12px;
         padding: 1.5rem;
@@ -255,6 +327,176 @@
         font-size: 0.875rem;
         color: #6b7280;
         font-style: italic;
+    }
+
+    /* A2A Configuration Card Styles */
+    .a2a-header {
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        padding: 0.5rem 0;
+        transition: all 0.2s;
+    }
+
+    .a2a-header:hover {
+        background: rgba(99, 102, 241, 0.05);
+        border-radius: 8px;
+        padding: 0.5rem;
+        margin: -0.5rem;
+    }
+
+    .a2a-title {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin: 0;
+        font-size: 1.125rem;
+        font-weight: 600;
+        color: #374151;
+    }
+
+    .a2a-toggle-icon {
+        transition: transform 0.2s;
+    }
+
+    .a2a-toggle-icon.expanded {
+        transform: rotate(180deg);
+    }
+
+    .a2a-subtitle {
+        font-size: 0.875rem;
+        color: #6b7280;
+        margin-left: 1.25rem;
+    }
+
+    .a2a-content {
+        margin-top: 1rem;
+        padding-top: 1rem;
+        border-top: 1px solid #e5e7eb;
+    }
+
+    .discover-section {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .discover-btn {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.75rem 1.5rem;
+        background: #059669;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .discover-btn:hover:not(:disabled) {
+        background: #047857;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(5, 150, 105, 0.3);
+    }
+
+    .discover-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+    }
+
+    .discover-info {
+        font-size: 0.875rem;
+        color: #6b7280;
+    }
+
+    .text-muted {
+        color: #9ca3af !important;
+    }
+
+    .spinner-small {
+        width: 16px;
+        height: 16px;
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        border-top-color: white;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+
+    /* Agent Card Display */
+    .agent-card-display {
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 1rem;
+        margin-top: 1rem;
+    }
+
+    .card-title {
+        margin: 0 0 1rem 0;
+        font-size: 1rem;
+        font-weight: 600;
+        color: #374151;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .card-details {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    .card-property {
+        display: flex;
+        gap: 0.75rem;
+        align-items: flex-start;
+    }
+
+    .card-property label {
+        font-weight: 600;
+        color: #374151;
+        min-width: 100px;
+        flex-shrink: 0;
+    }
+
+    .card-property span {
+        color: #6b7280;
+        flex: 1;
+    }
+
+    .capabilities-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .capability-tag {
+        background: #dbeafe;
+        color: #1e40af;
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 500;
+    }
+
+    /* Error Display */
+    .error-display {
+        background: #fef2f2;
+        border: 1px solid #fecaca;
+        color: #dc2626;
+        padding: 0.75rem;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-top: 1rem;
     }
 
     .start-chat-btn {
@@ -538,6 +780,21 @@
         .protocol-info {
             min-width: auto;
         }
+
+        .discover-section {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 0.75rem;
+        }
+
+        .card-property {
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .card-property label {
+            min-width: auto;
+        }
     }
 </style>
 
@@ -547,10 +804,18 @@
     private bool isLoadingAgents = true;
     private string currentStreamedMessage = "";
     private string selectedAgentName = "";
-    private Protocol selectedProtocol;
     private List<AgentDiscoveryClient.AgentDiscoveryCard> availableAgents = new();
     private List<Conversation> conversations = new();
     private Conversation? currentConversation;
+
+    // protocol
+    private Protocol selectedProtocol;
+
+    // a2a agent card
+    private bool isA2AExpanded = false;
+    private bool isDiscoveringCard = false;
+    private string? discoveredAgentCardJson = null;
+    private string? discoveryError = null;
 
     private enum Protocol
     {
@@ -615,7 +880,39 @@
         };
     }
 
+    private void ToggleA2AExpanded()
+    {
+        isA2AExpanded = !isA2AExpanded;
+    }
 
+    private async Task DiscoverAgentCard()
+    {
+        if (string.IsNullOrEmpty(selectedAgentName) || isDiscoveringCard)
+            return;
+
+        isDiscoveringCard = true;
+        discoveryError = null;
+        discoveredAgentCardJson = null;
+        StateHasChanged();
+
+        try
+        {
+            Logger.LogInformation("Discovering agent card for agent: {AgentName}", selectedAgentName);
+            var agentCard = await A2AHandlerClient.GetAgentCardAsync(selectedAgentName);
+            discoveredAgentCardJson = JsonSerializer.Serialize(agentCard, new JsonSerializerOptions() { WriteIndented = true });
+            Logger.LogInformation("Successfully discovered agent card for {AgentName}: {CardData}", selectedAgentName, discoveredAgentCardJson);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to discover agent card for {AgentName}", selectedAgentName);
+            discoveryError = $"Failed to discover agent card: {ex.Message}";
+        }
+        finally
+        {
+            isDiscoveringCard = false;
+            StateHasChanged();
+        }
+    }
 
     private void StartNewConversation()
     {

@@ -20,15 +20,17 @@ public class A2AHandlerClient
 
     public async Task<AgentCard> GetAgentCardAsync(string agent, CancellationToken cancellationToken = default)
     {
-        var (_, a2aCardResolver) = this.ResolveClient(agent);
-        return await a2aCardResolver.GetAgentCardAsync(cancellationToken);
+        var (_, _) = this.ResolveClient(agent);
+
+        return new AgentCard() { Name = "agent" };
+        // return await a2aCardResolver.GetAgentCardAsync(cancellationToken);
     }
 
     private (A2AClient, A2ACardResolver) ResolveClient(string agentName)
     {
         return this._clients.GetOrAdd(agentName, name =>
         {
-            var uri = new Uri($"{this._uri}/{name}", UriKind.Relative);
+            var uri = new Uri($"{this._uri}/{name}");
             var a2aClient = new A2AClient(uri);
             var a2aCardResolver = new A2ACardResolver(uri);
             return (a2aClient, a2aCardResolver);
