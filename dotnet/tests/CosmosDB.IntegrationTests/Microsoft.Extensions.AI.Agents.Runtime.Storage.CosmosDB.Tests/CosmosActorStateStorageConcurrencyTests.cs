@@ -247,4 +247,93 @@ public class CosmosActorStateStorageConcurrencyTests
         Assert.NotNull(getValue);
         Assert.Equal("updatedValue", getValue.Value?.GetString());
     }
+
+    [Fact]
+    public async Task ReadThenWrite_OnNonExistentActor_ShouldWorkCorrectlyAsync()
+    {
+        // 1. Read state from a non-existent actor (gets initial ETag)
+        // 2. Write with that ETag (should succeed)
+
+        // Arrange
+        using var cts = new CancellationTokenSource(s_defaultTimeout);
+        var cancellationToken = cts.Token;
+
+        var storage = new CosmosActorStateStorage(this._fixture.Container);
+        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString()); // Fresh actor
+
+        var key = "testKey";
+        var value = JsonSerializer.SerializeToElement("testValue");
+
+        // Act - Read state from non-existent actor (this calls GetActorETagAsync internally)
+        var readOperations = new List<ActorStateReadOperation>
+        {
+            new GetValueOperation(key)
+        };
+        var readResult = await storage.ReadStateAsync(testActorId, readOperations, cancellationToken);
+
+        // Assert - Read should succeed but return null value and initial ETag
+        Assert.Single(readResult.Results);
+        var getValue = readResult.Results[0] as GetValueResult;
+        Assert.NotNull(getValue);
+        Assert.Null(getValue.Value); // No value exists yet
+        Assert.Equal("0", readResult.ETag); // Should return initial ETag for non-existent actor
+
+        // Act - Write using the ETag from the read operation
+        var writeOperations = new List<ActorStateWriteOperation>
+        {
+            new SetValueOperation(key, value)
+        };
+        var writeResult = await storage.WriteStateAsync(testActorId, writeOperations, readResult.ETag, cancellationToken);
+
+        // Assert - Write should succeed
+        Assert.True(writeResult.Success);
+        Assert.NotNull(writeResult.ETag);
+        Assert.NotEqual("0", writeResult.ETag); // Should get a real ETag after write
+
+        // Act - Verify the value was written
+        var verifyReadResult = await storage.ReadStateAsync(testActorId, readOperations, cancellationToken);
+        var verifyGetValue = verifyReadResult.Results[0] as GetValueResult;
+
+        // Assert - Value should now exist
+        Assert.NotNull(verifyGetValue);
+        Assert.NotNull(verifyGetValue.Value);
+        Assert.Equal("testValue", verifyGetValue.Value?.GetString());
+        Assert.Equal(writeResult.ETag, verifyReadResult.ETag); // ETags should match
+    }
+
+    [Fact]
+    public async Task WriteStateAsync_WithInvalidETag_ShouldFailAsync()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource(s_defaultTimeout);
+        var cancellationToken = cts.Token;
+
+        var storage = new CosmosActorStateStorage(this._fixture.Container);
+        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString()); // Non-existent actor
+
+        var key = "testKey";
+        var value = JsonSerializer.SerializeToElement("testValue");
+        var operations = new List<ActorStateWriteOperation>
+        {
+            new SetValueOperation(key, value)
+        };
+
+        // Act - Try to write with a completely fabricated/invalid ETag (no document exists)
+        var fabricatedETag = "\"fabricated-etag-12345\""; // Made-up ETag for non-existent document
+        var resultWithFabricatedETag = await storage.WriteStateAsync(testActorId, operations, fabricatedETag, cancellationToken);
+
+        // Assert - The write should fail due to ETag mismatch (document doesn't exist)
+        Assert.False(resultWithFabricatedETag.Success);
+        Assert.Empty(resultWithFabricatedETag.ETag);
+
+        // Verify no document was created
+        var readOperations = new List<ActorStateReadOperation>
+        {
+            new GetValueOperation(key)
+        };
+        var readResult = await storage.ReadStateAsync(testActorId, readOperations, cancellationToken);
+        var getValue = readResult.Results[0] as GetValueResult;
+        Assert.NotNull(getValue);
+        Assert.Null(getValue.Value); // Should be null since no document exists
+    }
 }

@@ -33,4 +33,25 @@ public sealed class ActorResponse
     /// </summary>
     [JsonPropertyName("status")]
     public RequestStatus Status { get; init; }
+
+    /// <inheritdoc />
+    public override string ToString()
+    {
+        string dataString;
+        if (this.Data.ValueKind == JsonValueKind.Undefined)
+        {
+            dataString = "undefined";
+        }
+        else
+        {
+            var rawText = this.Data.GetRawText();
+            dataString = rawText.Length switch
+            {
+                > 250 => $"{rawText.Substring(0, 250)}...",
+                _ => rawText,
+            };
+        }
+
+        return $"ActorResponse(ActorId: {this.ActorId}, Status: {this.Status}, MessageId: {this.MessageId ?? "null"}, Data: {dataString})";
+    }
 }
