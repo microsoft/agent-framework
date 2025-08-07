@@ -47,6 +47,46 @@ public class RouteBuilder
     /// <summary>
     /// .
     /// </summary>
+    /// <param name="type"></param>
+    /// <param name="handler"></param>
+    /// <param name="overwrite"></param>
+    /// <returns></returns>
+    internal RouteBuilder AddHandler(Type type, Func<object, IWorkflowContext, ValueTask> handler, bool overwrite = false)
+    {
+        Throw.IfNull(handler);
+
+        return this.AddHandler(type, WrappedHandlerAsync, overwrite);
+
+        async ValueTask<CallResult> WrappedHandlerAsync(object msg, IWorkflowContext ctx)
+        {
+            await handler.Invoke(msg, ctx).ConfigureAwait(false);
+            return CallResult.ReturnVoid();
+        }
+    }
+
+    /// <summary>
+    /// .
+    /// </summary>
+    /// <param name="type"></param>
+    /// <param name="handler"></param>
+    /// <param name="overwrite"></param>
+    /// <returns></returns>
+    internal RouteBuilder AddHandler<TResult>(Type type, Func<object, IWorkflowContext, ValueTask<TResult>> handler, bool overwrite = false)
+    {
+        Throw.IfNull(handler);
+
+        return this.AddHandler(type, WrappedHandlerAsync, overwrite);
+
+        async ValueTask<CallResult> WrappedHandlerAsync(object msg, IWorkflowContext ctx)
+        {
+            TResult result = await handler.Invoke(msg, ctx).ConfigureAwait(false);
+            return CallResult.ReturnResult(result);
+        }
+    }
+
+    /// <summary>
+    /// .
+    /// </summary>
     /// <typeparam name="TInput"></typeparam>
     /// <param name="handler"></param>
     /// <param name="overwrite"></param>

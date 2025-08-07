@@ -37,6 +37,7 @@ public class WorkflowBuilder
     private readonly Dictionary<string, HashSet<Edge>> _edges = new();
     private readonly HashSet<string> _unboundExecutors = new();
     private readonly HashSet<EdgeId> _conditionlessEdges = new();
+    private readonly Dictionary<string, InputPort> _inputPorts = new();
 
     private readonly string _startExecutorId;
 
@@ -65,6 +66,12 @@ public class WorkflowBuilder
         {
             // If we already have an executor with this ID, we need to update it (todo: should we throw on double binding?)
             this._executors[executorish.Id] = provider;
+        }
+
+        if (executorish.ExecutorType == ExecutorIsh.Type.InputPort)
+        {
+            InputPort port = executorish._inputPortValue!;
+            this._inputPorts[port.Id] = port;
         }
 
         return executorish;
@@ -217,7 +224,8 @@ public class WorkflowBuilder
         return new Workflow<T>(this._startExecutorId) // Why does it not see the default ctor?
         {
             ExecutorProviders = this._executors,
-            Edges = this._edges
+            Edges = this._edges,
+            Ports = this._inputPorts
         };
     }
 }

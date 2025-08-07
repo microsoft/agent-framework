@@ -48,7 +48,7 @@ public sealed class ExecutorIsh :
 
     private readonly string? _idValue;
     private readonly Executor? _executorValue;
-    private readonly InputPort? _inputPortValue;
+    internal readonly InputPort? _inputPortValue;
     private readonly AIAgent? _aiAgentValue;
 
     /// <summary>

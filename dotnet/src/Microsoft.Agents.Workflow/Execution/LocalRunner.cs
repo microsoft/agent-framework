@@ -89,23 +89,19 @@ public class LocalRunner<TInput> : ISuperStepRunner where TInput : notnull
         return new StreamingExecutionHandle(this);
     }
 
-    private StepContext? _currentStep = null;
+    bool ISuperStepRunner.HasUnservicedRequests => this.RunContext.HasUnservicedRequests;
+    bool ISuperStepRunner.HasUnprocessedMessages => this.RunContext.NextStepHasActions;
+
+    //private StepContext? _currentStep = null;
     async ValueTask<bool> ISuperStepRunner.RunSuperStepAsync(CancellationToken cancellation)
     {
         cancellation.ThrowIfCancellationRequested();
 
-        if (this._currentStep == null)
-        {
-            // TODO: Python-side does not raise this event.
-            // await this.RunContext.AddEventAsync(this.Workflow.StartExecutorId, new WorkflowStartedEvent()).ConfigureAwait(false);
-            this._currentStep = this.RunContext.Advance();
-        }
+        StepContext currentStep = this.RunContext.Advance();
 
-        if (this._currentStep.HasMessages)
+        if (currentStep.HasMessages)
         {
-            await this.RunSuperstepAsync(this._currentStep).ConfigureAwait(false);
-            this._currentStep = this.RunContext.Advance();
-
+            await this.RunSuperstepAsync(currentStep).ConfigureAwait(false);
             return true;
         }
 
@@ -175,11 +171,11 @@ public class LocalRunner<TInput, TResult> : IRunnerWithResult<TResult> where TIn
     /// <param name="input"></param>
     /// <param name="cancellation"></param>
     /// <returns></returns>
-    public async ValueTask<StreamingExecutionHandle> StreamAsync(TInput input, CancellationToken cancellation = default)
+    public async ValueTask<StreamingExecutionHandle<TResult>> StreamAsync(TInput input, CancellationToken cancellation = default)
     {
         await this._innerRunner.EnqueueMessageAsync(input).ConfigureAwait(false);
 
-        return new StreamingExecutionHandle(this._innerRunner);
+        return new StreamingExecutionHandle<TResult>(this);
     }
 
     /// <summary>
