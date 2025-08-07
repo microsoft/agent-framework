@@ -15,12 +15,10 @@ from agent_framework_workflow._checkpoint import (
 def test_workflow_checkpoint_default_values():
     checkpoint = WorkflowCheckpoint()
 
-    # Check that default values are set
-    assert checkpoint.checkpoint_id != ""  # uuid should be generated
+    assert checkpoint.checkpoint_id != ""
     assert checkpoint.workflow_id == ""
-    assert checkpoint.timestamp != ""  # timestamp should be generated
+    assert checkpoint.timestamp != ""
     assert checkpoint.messages == {}
-    assert checkpoint.events == []
     assert checkpoint.shared_state == {}
     assert checkpoint.executor_states == {}
     assert checkpoint.iteration_count == 0
@@ -36,7 +34,6 @@ def test_workflow_checkpoint_custom_values():
         workflow_id="test-workflow-456",
         timestamp=custom_timestamp,
         messages={"executor1": [{"data": "test"}]},
-        events=[{"type": "test_event"}],
         shared_state={"key": "value"},
         executor_states={"executor1": {"state": "active"}},
         iteration_count=5,
@@ -49,7 +46,6 @@ def test_workflow_checkpoint_custom_values():
     assert checkpoint.workflow_id == "test-workflow-456"
     assert checkpoint.timestamp == custom_timestamp
     assert checkpoint.messages == {"executor1": [{"data": "test"}]}
-    assert checkpoint.events == [{"type": "test_event"}]
     assert checkpoint.shared_state == {"key": "value"}
     assert checkpoint.executor_states == {"executor1": {"state": "active"}}
     assert checkpoint.iteration_count == 5

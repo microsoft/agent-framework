@@ -25,7 +25,6 @@ class Runner:
         shared_state: SharedState,
         ctx: RunnerContext | CheckpointableRunnerContext,
         max_iterations: int = 100,
-        checkpoint_interval: int | None = None,
         workflow_id: str | None = None,
     ):
         """Initialize the runner with edges, shared state, and context.
@@ -35,7 +34,6 @@ class Runner:
             shared_state: The shared state for the workflow.
             ctx: The runner context for the workflow.
             max_iterations: The maximum number of iterations to run.
-            checkpoint_interval: The interval for creating scheduled checkpoints.
             workflow_id: The workflow ID for checkpointing.
         """
         self._edge_map = self._parse_edges(edges)
@@ -43,7 +41,6 @@ class Runner:
         self._iteration = 0
         self._max_iterations = max_iterations
         self._shared_state = shared_state
-        self._checkpoint_interval = checkpoint_interval
         self._workflow_id = workflow_id
         self._running = False
 
@@ -105,25 +102,22 @@ class Runner:
                         logger.debug(f"Yielding event: {event}")
                         yield event
 
-                # Create checkpoints after events are processed
-                await self._create_checkpoint_if_enabled(f"superstep_{self._iteration}")
-
-                # Create checkpoint at specified intervals
-                if self._checkpoint_interval and self._iteration % self._checkpoint_interval == 0:
-                    await self._create_checkpoint_if_enabled(f"scheduled_iteration_{self._iteration}")
-
                 has_messages = await self._ctx.has_messages()
                 has_events = await self._ctx.has_events()
                 logger.debug(f"Has messages after superstep {self._iteration}: {has_messages}")
                 logger.debug(f"Has events after superstep {self._iteration}: {has_events}")
-                if not has_messages and not has_events:
+
+                # Only create checkpoints if there are more messages to process
+                # Messages drive the workflow execution between nodes through edges
+                if has_messages:
+                    await self._create_checkpoint_if_enabled(f"superstep_{self._iteration}")
+                else:
                     break
 
             # Check if we reached max iterations without convergence
             if self._iteration >= self._max_iterations:
                 has_messages = await self._ctx.has_messages()
-                has_events = await self._ctx.has_events()
-                if has_messages or has_events:
+                if has_messages:
                     raise RuntimeError(f"Runner did not converge after {self._max_iterations} iterations.")
 
             logger.info(f"Workflow completed after {self._iteration} supersteps")

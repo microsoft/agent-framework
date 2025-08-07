@@ -110,9 +110,9 @@ async def main():
     # Note: You could also create a new workflow instance and call
     # run_stream_from_checkpoint() on it - useful for loading checkpoints
     # in a different process or after application restart
-    print("Resuming from checkpoint...")
-    async for event in workflow.run_streaming_from_checkpoint(checkpoint_id, checkpoint_storage=checkpoint_storage):
-        print(f"Resumed Event: {event}")
+    # print("Resuming from checkpoint...")
+    # async for event in workflow.run_streaming_from_checkpoint(checkpoint_id, checkpoint_storage=checkpoint_storage):
+    #     print(f"Resumed Event: {event}")
 
     """
     Sample Output:

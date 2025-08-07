@@ -384,7 +384,6 @@ async def test_workflow_run_stream_from_checkpoint_with_external_storage(simple_
         test_checkpoint = WorkflowCheckpoint(
             workflow_id="test-workflow",
             messages={},
-            events=[],
             shared_state={},
             executor_states={},
             iteration_count=0,
@@ -422,7 +421,6 @@ async def test_workflow_run_from_checkpoint_non_streaming(simple_executor: Execu
         test_checkpoint = WorkflowCheckpoint(
             workflow_id="test-workflow",
             messages={},
-            events=[],
             shared_state={},
             executor_states={},
             iteration_count=0,
@@ -456,7 +454,6 @@ async def test_workflow_run_stream_from_checkpoint_with_responses(simple_executo
         test_checkpoint = WorkflowCheckpoint(
             workflow_id="test-workflow",
             messages={},
-            events=[],
             shared_state={},
             executor_states={},
             iteration_count=0,
