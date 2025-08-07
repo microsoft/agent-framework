@@ -627,7 +627,7 @@
         var userMessage = currentMessage.Trim();
         currentMessage = "";
 
-        Logger.LogInformation("User sending message: '{UserMessage}' to agent {AgentName} in session {SessionId}", 
+        Logger.LogInformation("User sending message: '{UserMessage}' to agent {AgentName} in session {SessionId}",
             userMessage, currentConversation.AgentName, currentConversation.SessionId);
 
         // Add user message to chat
@@ -647,37 +647,57 @@
             var thread = agent.GetNewThread();
             thread.ConversationId = currentConversation.SessionId;
 
+            // Add timeout to prevent indefinite hanging
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var hasReceivedContent = false;
+
             await foreach (var update in agent.RunStreamingAsync(
-                [new ChatMessage(ChatRole.User, userMessage)], 
+                [new ChatMessage(ChatRole.User, userMessage)],
                 thread,
-                cancellationToken: CancellationToken.None))
+                cancellationToken: timeoutCts.Token))
             {
                 var content = update.Text ?? "";
                 if (!string.IsNullOrEmpty(content))
                 {
+                    hasReceivedContent = true;
                     responseContent.Append(content);
                     currentStreamedMessage = responseContent.ToString();
                     StateHasChanged();
                     await ScrollToBottom();
+
+                    Logger.LogDebug("Received streaming content: {ContentLength} characters", content.Length);
                 }
             }
+
+            Logger.LogInformation("Streaming completed for session {SessionId}, total content length: {ContentLength}",
+                currentConversation.SessionId, responseContent.Length);
 
             // Add the complete agent response to chat messages
             if (responseContent.Length > 0)
             {
                 currentConversation.Messages.Add(new ChatMessage(ChatRole.Assistant, responseContent.ToString()));
             }
+            else if (!hasReceivedContent)
+            {
+                Logger.LogWarning("No content received during streaming for session {SessionId}", currentConversation.SessionId);
+                currentConversation.Messages.Add(new ChatMessage(ChatRole.Assistant, "No response received from the agent."));
+            }
             else
             {
                 currentConversation.Messages.Add(new ChatMessage(ChatRole.Assistant, "Sorry, I couldn't generate a response."));
             }
         }
+        catch (OperationCanceledException) when (isStreaming)
+        {
+            Logger.LogWarning("Streaming operation timed out for session {SessionId}", currentConversation.SessionId);
+            currentConversation.Messages.Add(new ChatMessage(ChatRole.Assistant, "Request timed out. Please try again."));
+        }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Error occurred while processing message in session {SessionId}: {ErrorMessage}", 
+            Logger.LogError(ex, "Error occurred while processing message in session {SessionId}: {ErrorMessage}",
                 currentConversation.SessionId, ex.Message);
             currentConversation.Messages.Add(new ChatMessage(ChatRole.Assistant, $"Error: {ex.Message}"));
-            }
+        }
         finally
         {
             isStreaming = false;
