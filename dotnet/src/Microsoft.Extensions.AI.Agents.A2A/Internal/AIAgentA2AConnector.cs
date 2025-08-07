@@ -1,9 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using A2A;
+using Microsoft.Extensions.AI.Agents.A2A.Converters;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Extensions.AI.Agents.A2A.Internal;
@@ -47,42 +49,35 @@ internal sealed class AIAgentA2AConnector : IA2AConnector
 
     public async Task<Message> ProcessMessageAsync(MessageSendParams messageSendParams, CancellationToken cancellationToken)
     {
-        throw new NotImplementedException();
+        // this is the simplest scenario for A2A agent processing - a single message conversation.
 
-        //this._logger.LogInformation("Processing message in DefaultA2AAgent for agent: {AgentKey}", this._agent.Name);
+        this._logger.LogInformation("Processing message in DefaultA2AAgent for agent: {AgentKey}", this._agent.Name);
 
-        //try
-        //{
-        //    // Convert A2A message to AI message
-        //    var userMessage = messageSendParams.Message.Parts.OfType<TextPart>().FirstOrDefault()?.Text ?? string.Empty;
-        //    var chatMessages = new List<ChatMessage>
-        //    {
-        //        new(ChatRole.User, userMessage)
-        //    };
+        try
+        {
+            var chatMessages = messageSendParams.ToChatMessages();
+            var result = await this._agent.RunAsync(messages: chatMessages, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        //    // Run the agent
-        //    var result = await this._agent.RunAsync(chatMessages, cancellationToken).ConfigureAwait(false);
+            // Convert response back to A2A format
+            var responseMessage = new Message
+            {
+                Role = MessageRole.Agent,
+                MessageId = Guid.NewGuid().ToString(),
+                Parts = new List<Part>
+                {
+                    new TextPart { Text = result.Text }
+                }
+            };
 
-        //    // Convert response back to A2A format
-        //    var responseMessage = new Message
-        //    {
-        //        Role = MessageRole.Agent,
-        //        MessageId = Guid.NewGuid().ToString(),
-        //        Parts = new List<Part>
-        //        {
-        //            new TextPart { Text = result.Text }
-        //        }
-        //    };
+            this._logger.LogInformation("Agent {AgentKey} returning response: {Response}", this._agent.Name, result.Text);
+            return responseMessage;
+        }
+        catch (Exception ex)
+        {
+            this._logger.LogError(ex, "Error processing message in DefaultA2AAgent for agent: {AgentKey}", this._agent.Name);
 
-        //    this._logger.LogInformation("Agent {AgentKey} returning response: {Response}", this._agent.Name, result.Text);
-        //    return responseMessage;
-        //}
-        //catch (Exception ex)
-        //{
-        //    this._logger.LogError(ex, "Error processing message in DefaultA2AAgent for agent: {AgentKey}", this._agent.Name);
-
-        //    // A2A SDK handles the exception under the hood, so we can just throw the exception
-        //    throw;
-        //}
+            // A2A SDK handles the exception under the hood, so we can just throw the exception
+            throw;
+        }
     }
 }

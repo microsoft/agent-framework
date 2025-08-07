@@ -2,6 +2,7 @@
 
 using System.Collections.Concurrent;
 using A2A;
+using Microsoft.Extensions.AI.Agents.Runtime;
 
 namespace AgentWebChat.Web;
 
@@ -20,12 +21,31 @@ public class A2AHandlerClient
         this._uri = baseUri;
     }
 
-    public async Task<AgentCard> GetAgentCardAsync(string agent, CancellationToken cancellationToken = default)
+    public Task<AgentCard> GetAgentCardAsync(string agent, CancellationToken cancellationToken = default)
     {
         this._logger.LogInformation("Retrieving agent card for {Agent}", agent);
 
         var (_, a2aCardResolver) = this.ResolveClient(agent);
-        return await a2aCardResolver.GetAgentCardAsync(cancellationToken);
+        return a2aCardResolver.GetAgentCardAsync(cancellationToken);
+    }
+
+    public Task<A2AResponse> SendMessageAsync(string agent, ActorRequest request, CancellationToken cancellationToken)
+    {
+        this._logger.LogInformation("Sending message for agent '{Agent}'", agent);
+
+        var (a2aClient, _) = this.ResolveClient(agent);
+        var sendParams = new MessageSendParams
+        {
+            Message = new()
+            {
+                Role = MessageRole.User,
+                MessageId = Guid.NewGuid().ToString(),
+                Parts = [ new TextPart { Text = request. }
+                ]
+            };
+        };
+
+        return a2aClient.SendMessageAsync(sendParams, cancellationToken);
     }
 
     private (A2AClient, A2ACardResolver) ResolveClient(string agentName)
