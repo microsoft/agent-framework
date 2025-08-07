@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Core;
 using Moq;
 
-namespace Microsoft.Agents.Orchestration.UnitTest;
+namespace Microsoft.Agents.Workflows.UnitTests;
 
 public class BaseTestExecutor : Executor
 {
