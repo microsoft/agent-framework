@@ -125,6 +125,12 @@ class Workflow:
         Yields:
             WorkflowEvent: The events generated during the workflow execution.
         """
+        # Reset context state for new workflow run if it's checkpointable
+        from ._runner_context import CheckpointableRunnerContext
+
+        if isinstance(self._runner.context, CheckpointableRunnerContext):
+            self._runner.context.reset_for_new_run(self._shared_state)
+
         executor = self._start_executor
         if isinstance(executor, str):
             executor = self._get_executor_by_id(executor)

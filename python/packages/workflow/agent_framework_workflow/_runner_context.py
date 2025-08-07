@@ -8,6 +8,7 @@ from typing import Any, Protocol, TypeVar, cast, runtime_checkable
 
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from ._events import WorkflowEvent
+from ._shared_state import SharedState
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,18 @@ class CheckpointableRunnerContext(RunnerContext, Protocol):
 
     def set_workflow_id(self, workflow_id: str) -> None:
         """Set the workflow ID for this context."""
+        ...
+
+    def reset_for_new_run(self, workflow_shared_state: SharedState | None = None) -> None:
+        """Reset the context state for a new workflow run.
+
+        This clears all runtime state except for checkpoint storage configuration.
+        Should be called before starting a new workflow run (not checkpoint restoration).
+
+        Args:
+            workflow_shared_state: The workflow's shared state to reset. If provided,
+                                 it will be cleared along with the context's internal state.
+        """
         ...
 
     async def create_checkpoint(self, workflow_id: str | None = None) -> str:
@@ -159,6 +172,34 @@ class CheckpointableInProcRunnerContext(InProcRunnerContext):
     def set_workflow_id(self, workflow_id: str) -> None:
         """Set the workflow ID for this context."""
         self._workflow_id = workflow_id
+
+    def reset_for_new_run(self, workflow_shared_state: "SharedState | None" = None) -> None:
+        """Reset the context state for a new workflow run.
+
+        This clears all runtime state except for checkpoint storage configuration.
+        Should be called before starting a new workflow run (not checkpoint restoration).
+
+        Args:
+            workflow_shared_state: The workflow's shared state to reset. If provided,
+                                 it will be cleared along with the context's internal state.
+        """
+        # Clear messages and events (same as base class)
+        self._messages.clear()
+        self._events.clear()
+
+        # Reset checkpointing-specific state for new workflow run
+        self._shared_state.clear()
+        self._executor_states.clear()
+        self._iteration_count = 0
+
+        # Reset the workflow's shared state if provided
+        if workflow_shared_state is not None:
+            # Clear the workflow's shared state by clearing its internal state dict
+            # Access the internal state dict directly to avoid async issues
+            workflow_shared_state._state.clear()  # type: ignore[attr-defined]
+
+        # Note: We keep _workflow_id, _checkpoint_storage, and _max_iterations
+        # as they are configuration, not runtime state
 
     async def create_checkpoint(self) -> str:
         """Create a checkpoint of current state."""

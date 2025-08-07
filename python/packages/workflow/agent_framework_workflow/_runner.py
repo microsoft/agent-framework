@@ -104,11 +104,15 @@ class Runner:
                 logger.debug(f"Has messages after superstep {self._iteration}: {has_messages}")
                 logger.debug(f"Has events after superstep {self._iteration}: {has_events}")
 
-                # Only create checkpoints if there are more messages to process
-                # Messages drive the workflow execution between nodes through edges
+                # Create checkpoint after each superstep iteration
+                await self._create_checkpoint_if_enabled(f"superstep_{self._iteration}")
+
+                # Check if we should continue processing
                 if has_messages:
-                    await self._create_checkpoint_if_enabled(f"superstep_{self._iteration}")
+                    logger.debug("More messages to process, continuing")
                 else:
+                    # No more messages - workflow has converged
+                    logger.debug("No more messages, workflow converged")
                     break
 
             # Check if we reached max iterations without convergence
@@ -164,6 +168,7 @@ class Runner:
 
         Args:
             checkpoint_type: A descriptive name for the checkpoint (e.g., 'initial', 'iteration_5', 'final')
+                Used for logging/debugging.
 
         Returns:
             Checkpoint ID if created, None otherwise
