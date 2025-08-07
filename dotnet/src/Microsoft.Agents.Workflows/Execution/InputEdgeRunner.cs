@@ -19,14 +19,14 @@ internal class InputEdgeRunner(IRunnerContext runContext, string sinkId)
         return new InputEdgeRunner(runContext, port.Id);
     }
 
-    private async ValueTask<Executor> FindExecutorAsync()
+    private async ValueTask<ExecutorBase> FindExecutorAsync()
     {
         return await this.RunContext.EnsureExecutorAsync(this.EdgeData).ConfigureAwait(false);
     }
 
     public async ValueTask<object?> ChaseAsync(object message)
     {
-        Executor target = await this.FindExecutorAsync().ConfigureAwait(false);
+        ExecutorBase target = await this.FindExecutorAsync().ConfigureAwait(false);
         if (target.CanHandle(message.GetType()))
         {
             return await target.ExecuteAsync(message, this.WorkflowContext)

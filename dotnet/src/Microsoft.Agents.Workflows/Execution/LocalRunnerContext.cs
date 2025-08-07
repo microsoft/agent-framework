@@ -15,8 +15,8 @@ namespace Microsoft.Agents.Workflows.Execution;
 internal class LocalRunnerContext<TExternalInput> : IRunnerContext
 {
     private StepContext _nextStep = new();
-    private readonly Dictionary<string, ExecutorProvider<Executor>> _executorProviders;
-    private readonly Dictionary<string, Executor> _executors = new();
+    private readonly Dictionary<string, ExecutorProvider<ExecutorBase>> _executorProviders;
+    private readonly Dictionary<string, ExecutorBase> _executors = new();
     private readonly Dictionary<string, ExternalRequest> _externalRequests = new();
 
     public LocalRunnerContext(Workflow workflow, ILogger? logger = null)
@@ -24,7 +24,7 @@ internal class LocalRunnerContext<TExternalInput> : IRunnerContext
         this._executorProviders = Throw.IfNull(workflow).ExecutorProviders;
     }
 
-    public async ValueTask<Executor> EnsureExecutorAsync(string executorId)
+    public async ValueTask<ExecutorBase> EnsureExecutorAsync(string executorId)
     {
         if (!this._executors.TryGetValue(executorId, out var executor))
         {

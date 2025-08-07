@@ -14,5 +14,5 @@ internal interface IRunnerContext : IExternalRequestSink
 
     StepContext Advance();
     IWorkflowContext Bind(string executorId);
-    ValueTask<Executor> EnsureExecutorAsync(string executorId);
+    ValueTask<ExecutorBase> EnsureExecutorAsync(string executorId);
 }

@@ -3,12 +3,9 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using Microsoft.Shared.Diagnostics;
-
-#if NET9_0_OR_GREATER
-using System.Diagnostics.CodeAnalysis;
-#endif
 
 namespace Microsoft.Agents.Workflows.Core;
 
@@ -47,15 +44,13 @@ internal static class IMessageHandlerReflection
 internal static class RouteBuilderExtensions
 {
     private static IEnumerable<MessageHandlerInfo> GetHandlerInfos(
-#if NET9_0_OR_GREATER
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods |
                                     DynamicallyAccessedMemberTypes.NonPublicMethods |
                                     DynamicallyAccessedMemberTypes.Interfaces)]
-#endif
         this Type executorType)
     {
         // Handlers are defined by implementations of IMessageHandler<TMessage> or IMessageHandler<TMessage, TResult>
-        Debug.Assert(typeof(Executor).IsAssignableFrom(executorType), "executorType must be an Executor type.");
+        Debug.Assert(typeof(ExecutorBase).IsAssignableFrom(executorType), "executorType must be an Executor type.");
 
         foreach (Type interfaceType in executorType.GetInterfaces())
         {
@@ -83,19 +78,18 @@ internal static class RouteBuilderExtensions
         }
     }
 
-    public static RouteBuilder ReflectHandlers(this RouteBuilder builder,
-#if NET9_0_OR_GREATER
+    public static RouteBuilder ReflectHandlers<
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods |
                                     DynamicallyAccessedMemberTypes.NonPublicMethods |
-                                    DynamicallyAccessedMemberTypes.Interfaces)]
-#endif
-        Type executorType,
-        Executor executor)
+                                    DynamicallyAccessedMemberTypes.Interfaces)] TExecutor>
+        (this RouteBuilder builder, Executor<TExecutor> executor)
+        where TExecutor : Executor<TExecutor>
     {
         Throw.IfNull(builder);
-        Throw.IfNull(executorType);
 
-        Debug.Assert(typeof(Executor).IsAssignableFrom(executorType), "executorType must be an Executor type.");
+        Type executorType = typeof(TExecutor);
+        Debug.Assert(executorType.IsAssignableFrom(executor.GetType()),
+            "executorType must be the same type or a base type of the executor instance.");
 
         foreach (MessageHandlerInfo handlerInfo in executorType.GetHandlerInfos())
         {
@@ -103,17 +97,5 @@ internal static class RouteBuilderExtensions
         }
 
         return builder;
-    }
-
-    public static RouteBuilder ReflectHandlers<
-#if NET9_0_OR_GREATER
-        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods |
-                                    DynamicallyAccessedMemberTypes.NonPublicMethods |
-                                    DynamicallyAccessedMemberTypes.Interfaces)]
-#endif
-    TExecutor
-        >(this RouteBuilder builder, TExecutor executor)
-    {
-        return builder.ReflectHandlers(typeof(TExecutor), (Executor)(object)executor!);
     }
 }

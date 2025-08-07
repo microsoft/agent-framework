@@ -32,7 +32,7 @@ internal static class Step1EntryPoint
     }
 }
 
-internal sealed class UppercaseExecutor() : Executor("UppercaseExecutor"), IMessageHandler<string, string>
+internal sealed class UppercaseExecutor() : Executor<UppercaseExecutor>("UppercaseExecutor"), IMessageHandler<string, string>
 {
     public async ValueTask<string> HandleAsync(string message, IWorkflowContext context)
     {
@@ -43,7 +43,7 @@ internal sealed class UppercaseExecutor() : Executor("UppercaseExecutor"), IMess
     }
 }
 
-internal sealed class ReverseTextExecutor() : Executor("ReverseTextExecutor"), IMessageHandler<string, string>
+internal sealed class ReverseTextExecutor() : Executor<ReverseTextExecutor>("ReverseTextExecutor"), IMessageHandler<string, string>
 {
     public async ValueTask<string> HandleAsync(string message, IWorkflowContext context)
     {

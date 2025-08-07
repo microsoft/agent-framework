@@ -19,7 +19,7 @@ public record WorkflowStartedEvent : WorkflowEvent;
 /// Event triggered when a workflow completes execution.
 /// </summary>
 /// <remarks>
-/// The user is expected to raise this event from a terminating <see cref="Executor"/>, or to build
+/// The user is expected to raise this event from a terminating <see cref="ExecutorBase"/>, or to build
 /// the workflow with output capture using <see cref="WorkflowBuilderExtensions.BuildWithOutput"/>.
 /// </remarks>
 public record WorkflowCompletedEvent : WorkflowEvent;
@@ -30,7 +30,7 @@ public record WorkflowCompletedEvent : WorkflowEvent;
 public record RequestInputEvent(ExternalRequest Request) : WorkflowEvent;
 
 /// <summary>
-/// Base class for <see cref="Executor"/>-scoped events.
+/// Base class for <see cref="ExecutorBase"/>-scoped events.
 /// </summary>
 public record ExecutorEvent : WorkflowEvent
 {

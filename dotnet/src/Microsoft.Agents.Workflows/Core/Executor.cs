@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Threading.Tasks;
 
@@ -12,7 +13,7 @@ namespace Microsoft.Agents.Workflows.Core;
 /// A component that processes messages in a <see cref="Workflow"/>.
 /// </summary>
 [DebuggerDisplay("{GetType().Name}{Id}")]
-public abstract class Executor : IIdentified, IAsyncDisposable
+public abstract class ExecutorBase : IIdentified, IAsyncDisposable
 {
     /// <summary>
     /// A unique identifier for the executor.
@@ -26,7 +27,7 @@ public abstract class Executor : IIdentified, IAsyncDisposable
     /// </summary>
     /// <param name="id">A optional unique identifier for the executor. If <c>null</c>, a type-tagged
     /// UUID will be generated.</param>
-    protected Executor(string? id = null)
+    protected ExecutorBase(string? id = null)
     {
         this.Id = id ?? $"{this.GetType().Name}/{Guid.NewGuid():N}";
     }
@@ -35,10 +36,7 @@ public abstract class Executor : IIdentified, IAsyncDisposable
     /// Override this method to register handlers for the executor. The deafult implementation uses reflection to
     /// look for implementations of <see cref="IMessageHandler{TInput}"/> and <see cref="IMessageHandler{TInput, TResult}"/>.
     /// </summary>
-    protected virtual RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
-    {
-        return routeBuilder.ReflectHandlers(this);
-    }
+    protected abstract RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder);
 
     private MessageRouter? _router = null;
     internal MessageRouter Router
@@ -143,5 +141,29 @@ public abstract class Executor : IIdentified, IAsyncDisposable
 
         // Chain to the virtual call to DisposeAsync.
         return this.DisposeAsync();
+    }
+}
+
+/// <summary>
+/// A component that processes messages in a <see cref="Workflow"/>.
+/// </summary>
+/// <typeparam name="TExecutor">The actual type of the <see cref="Executor{TExecutor}"/>.
+/// This is used to reflectively discover handlers for messages without violating ILTrim requirements.
+/// </typeparam>
+public class Executor<
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods |
+                                DynamicallyAccessedMemberTypes.NonPublicMethods |
+                                DynamicallyAccessedMemberTypes.Interfaces)]
+TExecutor
+    > : ExecutorBase where TExecutor : Executor<TExecutor>
+{
+    /// <inheritdoc cref="ExecutorBase.ExecutorBase(string?)"/>
+    protected Executor(string? id = null) : base(id)
+    { }
+
+    /// <inheritdoc />
+    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    {
+        return routeBuilder.ReflectHandlers<TExecutor>(this);
     }
 }

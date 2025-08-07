@@ -7,7 +7,7 @@ using Moq;
 
 namespace Microsoft.Agents.Workflows.UnitTests;
 
-public class BaseTestExecutor : Executor
+public class BaseTestExecutor<TActual> : Executor<TActual> where TActual : Executor<TActual>
 {
     protected void OnInvokedHandler()
     {
@@ -21,7 +21,7 @@ public class BaseTestExecutor : Executor
     } = false;
 }
 
-public class DefaultHandler : BaseTestExecutor, IMessageHandler<object>
+public class DefaultHandler : BaseTestExecutor<DefaultHandler>, IMessageHandler<object>
 {
     public ValueTask HandleAsync(object message, IWorkflowContext context)
     {
@@ -36,7 +36,7 @@ public class DefaultHandler : BaseTestExecutor, IMessageHandler<object>
     } = (message, context) => default;
 }
 
-public class TypedHandler<TInput> : BaseTestExecutor, IMessageHandler<TInput>
+public class TypedHandler<TInput> : BaseTestExecutor<TypedHandler<TInput>>, IMessageHandler<TInput>
 {
     public ValueTask HandleAsync(TInput message, IWorkflowContext context)
     {
@@ -51,7 +51,7 @@ public class TypedHandler<TInput> : BaseTestExecutor, IMessageHandler<TInput>
     } = (message, context) => default;
 }
 
-public class TypedHandlerWithOutput<TInput, TResult> : BaseTestExecutor, IMessageHandler<TInput, TResult>
+public class TypedHandlerWithOutput<TInput, TResult> : BaseTestExecutor<TypedHandlerWithOutput<TInput, TResult>>, IMessageHandler<TInput, TResult>
 {
     public ValueTask<TResult> HandleAsync(TInput message, IWorkflowContext context)
     {
@@ -67,7 +67,7 @@ public class TypedHandlerWithOutput<TInput, TResult> : BaseTestExecutor, IMessag
 
 public class RoutingReflectionTests
 {
-    private async ValueTask<CallResult?> RunTestReflectAndRouteMessageAsync<TInput>(BaseTestExecutor executor, TInput? input = default) where TInput : new()
+    private async ValueTask<CallResult?> RunTestReflectAndRouteMessageAsync<TInput, TE>(BaseTestExecutor<TE> executor, TInput? input = default) where TInput : new() where TE : Executor<TE>
     {
         MessageRouter router = executor.Router;
 
@@ -88,7 +88,7 @@ public class RoutingReflectionTests
     {
         DefaultHandler executor = new();
 
-        CallResult? result = await this.RunTestReflectAndRouteMessageAsync<object>(executor);
+        CallResult? result = await this.RunTestReflectAndRouteMessageAsync<object, DefaultHandler>(executor);
 
         Assert.NotNull(result);
         Assert.True(result.IsSuccess);
@@ -102,7 +102,7 @@ public class RoutingReflectionTests
     {
         TypedHandler<int> executor = new();
 
-        CallResult? result = await this.RunTestReflectAndRouteMessageAsync<object>(executor, 3);
+        CallResult? result = await this.RunTestReflectAndRouteMessageAsync<object, TypedHandler<int>>(executor, 3);
 
         Assert.NotNull(result);
         Assert.True(result.IsSuccess);
@@ -123,7 +123,7 @@ public class RoutingReflectionTests
         };
 
         const string Expected = "3";
-        CallResult? result = await this.RunTestReflectAndRouteMessageAsync<object>(executor, int.Parse(Expected));
+        CallResult? result = await this.RunTestReflectAndRouteMessageAsync<object, TypedHandlerWithOutput<int, string>>(executor, int.Parse(Expected));
 
         Assert.NotNull(result);
         Assert.True(result.IsSuccess);
