@@ -1,60 +1,76 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics;
 using System.Reflection;
 using System.Threading.Tasks;
 
 namespace Microsoft.Agents.Workflows.Core;
 
+internal static class ValueTaskReflection
+{
+    private const string Nameof_AsTask = nameof(ValueTask<object>.AsTask);
+    internal static readonly MethodInfo AsTask = typeof(ValueTask<>).GetMethod(Nameof_AsTask, BindingFlags.Public | BindingFlags.Instance)!;
+
+    internal static MethodInfo ReflectAsTask(this Type specializedType)
+    {
+        Debug.Assert(specializedType.IsGenericType &&
+                     specializedType.GetGenericTypeDefinition() == typeof(ValueTask<>), "specializedType must be a ValueTask<> type.");
+
+        return specializedType.GetMethodFromGenericMethodDefinition(AsTask);
+    }
+
+    internal static bool IsValueTaskType(this Type type) => type.IsGenericType && type.GetGenericTypeDefinition() == typeof(ValueTask<>);
+}
+
+internal static class TaskReflection
+{
+    private const string Nameof_Result = nameof(Task<object>.Result);
+    internal static readonly MethodInfo Result_get = typeof(Task<>).GetProperty(Nameof_Result)!.GetMethod!;
+
+    internal static MethodInfo ReflectResult_get(this Type specializedType)
+    {
+        Debug.Assert(specializedType.IsGenericType &&
+                     specializedType.GetGenericTypeDefinition() == typeof(Task<>), "specializedType must be a ValueTask<> type.");
+
+        return specializedType.GetMethodFromGenericMethodDefinition(Result_get);
+    }
+
+    internal static bool IsTaskType(this Type type) => type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Task<>);
+}
+
 internal static class ValueTaskTypeErasure
 {
-    internal static Func<object, ValueTask<object?>> CreateErasingUnwrapper<TResult>()
+    internal static Func<object, ValueTask<object?>> UnwrapperFor(Type expectedResultType)
     {
         return UnwrapAndEraseAsync;
 
-        static async ValueTask<object?> UnwrapAndEraseAsync(object maybeValueTask)
+        async ValueTask<object?> UnwrapAndEraseAsync(object maybeGenericVT)
         {
-            if (maybeValueTask is ValueTask<TResult> vt)
+            // This method handles only ValueTask<TResult> types.
+            Type maybeVTType = maybeGenericVT.GetType();
+
+            if (!maybeVTType.IsValueTaskType())
             {
-                // If the input is a ValueTask<TResult>, unwrap it.
-                TResult result = await vt.ConfigureAwait(false);
-                return (object?)result;
+                throw new InvalidOperationException($"Expected ValueTask or ValueTask<{expectedResultType.Name}>, but got {maybeGenericVT.GetType().Name}.");
             }
 
-            throw new InvalidOperationException($"Expected ValueTask or ValueTask<{typeof(TResult).Name}>, but got {maybeValueTask.GetType().Name}.");
+            MethodInfo asTaskMethod = maybeVTType.ReflectAsTask();
+            Debug.Assert(asTaskMethod.ReturnType.IsTaskType(), "AsTask must return a Task<> type.");
+
+            MethodInfo getResultMethod = asTaskMethod.ReturnType.ReflectResult_get();
+            Type actualResultType = getResultMethod.ReturnType;
+
+            if (!expectedResultType.IsAssignableFrom(actualResultType))
+            {
+                throw new InvalidOperationException($"Expected ValueTask<{expectedResultType.Name}> or a compatible type, but got ValueTask<{actualResultType.Name}>.");
+            }
+
+            Task task = (Task)asTaskMethod.ReflectionInvoke(maybeGenericVT)!;
+            await task.ConfigureAwait(false); // TODO: Could we need to capture the context here?
+            object? result = getResultMethod.ReflectionInvoke(task);
+
+            return result;
         }
-    }
-
-#if NET5_0_OR_GREATER
-    // This suppression is qualified because for some reason VS is not recognizing the attribute's presence, treating the
-    // import as an error (due to unnecessary using).
-    [System.Diagnostics.CodeAnalysis.RequiresDynamicCode("Calls System.Reflection.MethodInfo.MakeGenericMethod(params Type[])")]
-#endif
-    internal static Func<object, ValueTask<object?>> UnwrapperFor(Type resultType)
-    {
-        // This method creates a type-erased unwrapper for ValueTask<TResult>.
-        // It uses reflection to create a delegate that can handle any TResult type.
-
-        // TODO: AOT: This method is marked with RequiresDynamicCodeAttribute, which will not work well in NativeAOT
-        // scenarios; the solution is to break this up into a Cached/Reflector version (like the MessageRouter does
-        // with handlers), and SourceGenerate the UnwrapAndEraseAsync-equivalent method for each TResult type.
-
-        // Note that this is only necessary because ValueTask<TResult> is a class-generic, rather than an interface
-        // type, which means that the type cannot be co/contravariantly used (e.g. ValueTask<object?> is not a valid
-        // supertype of ValueTask or ValueTask<T>, T != object?).
-
-        MethodInfo createMethod =
-            typeof(ValueTaskTypeErasure)
-                .GetMethod(nameof(CreateErasingUnwrapper), BindingFlags.NonPublic | BindingFlags.Static)
-                !.MakeGenericMethod(resultType);
-
-        // Invoke createMethod (as static) to get the delegate.
-        object? maybeUnwrapper = createMethod.Invoke(null, Array.Empty<object>());
-        if (maybeUnwrapper is not Func<object, ValueTask<object?>> unwrapper)
-        {
-            throw new InvalidOperationException($"Expected a Func<object, ValueTask<object?>> delegate, but got {maybeUnwrapper?.GetType().Name ?? "null"}.");
-        }
-
-        return unwrapper;
     }
 }
