@@ -32,6 +32,7 @@ from ._validation import (
 )
 from ._workflow import Workflow, WorkflowBuilder, WorkflowRunResult
 from ._workflow_context import WorkflowContext
+from ._viz import WorkflowViz
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -66,6 +67,7 @@ __all__ = [
     "WorkflowRunResult",
     "WorkflowStartedEvent",
     "WorkflowValidationError",
+    "WorkflowViz",
     "__version__",
     "handler",
     "validate_workflow_graph",

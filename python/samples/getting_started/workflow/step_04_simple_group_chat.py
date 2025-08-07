@@ -4,6 +4,7 @@ import asyncio
 
 from agent_framework import ChatClientAgent, ChatMessage, ChatRole
 from agent_framework.azure import AzureChatClient
+from agent_framework.openai import OpenAIChatClient
 from agent_framework.workflow import (
     AgentExecutor,
     AgentExecutorRequest,
@@ -13,6 +14,7 @@ from agent_framework.workflow import (
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
+    WorkflowViz,
     handler,
 )
 
@@ -90,7 +92,7 @@ async def main():
     """Main function to run the group chat workflow."""
 
     # Step 1: Create the executors.
-    chat_client = AzureChatClient()
+    chat_client = OpenAIChatClient(ai_model_id="gpt-4.1")
     writer = AgentExecutor(
         ChatClientAgent(
             chat_client,
@@ -127,6 +129,15 @@ async def main():
         .add_edge(reviewer, group_chat_manager)
         .build()
     )
+
+    # Step 2.5: Visualize the workflow (optional)
+    print("🎨 Generating workflow visualization...")
+    try:
+        viz = WorkflowViz(workflow)
+        svg_file = viz.export(format="svg")
+        print(f"🖼️  SVG file saved to: {svg_file}")
+    except ImportError:
+        print("💡 Tip: Install 'graphviz' package to generate workflow visualizations")
 
     # Step 3: Run the workflow with an initial message.
     completion_event = None

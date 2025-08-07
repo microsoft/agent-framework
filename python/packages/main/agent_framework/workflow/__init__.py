@@ -28,6 +28,7 @@ _IMPORTS = [
     "RequestInfoMessage",
     "WorkflowRunResult",
     "Workflow",
+    "WorkflowViz",
 ]
 
 
