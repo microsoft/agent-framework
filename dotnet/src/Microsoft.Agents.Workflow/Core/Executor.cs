@@ -2,49 +2,39 @@
 
 using System;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Reflection;
 using System.Threading.Tasks;
-using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Core;
 
 /// <summary>
-/// .
+/// A component that processes messages in a <see cref="Workflow"/>.
 /// </summary>
-[DebuggerDisplay("{GetType().Name}{Id}({Name})")]
+[DebuggerDisplay("{GetType().Name}{Id}")]
 public abstract class Executor : IIdentified, IAsyncDisposable
 {
     /// <summary>
-    /// .
+    /// A unique identifier for the executor.
     /// </summary>
     public string Id { get; }
-
-    /// <summary>
-    /// .
-    /// </summary>
-    public string Name { get; }
 
     private Dictionary<string, object> State { get; } = new();
 
     /// <summary>
-    /// .
+    /// Initialize the executor with a unique identifier
     /// </summary>
-    /// <param name="id"></param>
-    /// <param name="name"></param>
-    protected Executor(string? id = null, string? name = null)
+    /// <param name="id">A optional unique identifier for the executor. If <c>null</c>, a type-tagged
+    /// UUID will be generated.</param>
+    protected Executor(string? id = null)
     {
-        this.Name = name ?? this.GetType().Name;
-        this.Id = id ?? $"{this.Name}{Guid.NewGuid():N}";
+        this.Id = id ?? $"{this.GetType().Name}/{Guid.NewGuid():N}";
     }
 
     /// <summary>
     /// Override this method to register handlers for the executor. The deafult implementation uses reflection to
     /// look for implementations of <see cref="IMessageHandler{TInput}"/> and <see cref="IMessageHandler{TInput, TResult}"/>.
     /// </summary>
-    /// <param name="routeBuilder"></param>
-    /// <returns></returns>
     protected virtual RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
     {
         return routeBuilder.ReflectHandlers(this);
@@ -66,13 +56,13 @@ public abstract class Executor : IIdentified, IAsyncDisposable
     }
 
     /// <summary>
-    /// .
+    /// Process an incoming message using the registered handlers.
     /// </summary>
-    /// <param name="message"></param>
-    /// <param name="context"></param>
-    /// <returns></returns>
-    /// <exception cref="NotSupportedException"></exception>
-    /// <exception cref="TargetInvocationException"></exception>
+    /// <param name="message">The message to be processed by the executor.</param>
+    /// <param name="context">The workflow context in which the executor executes.</param>
+    /// <returns>A ValueTask representing the asynchronous operation, wrapping the output from the executor.</returns>
+    /// <exception cref="NotSupportedException">No handler found for the message type.</exception>
+    /// <exception cref="TargetInvocationException">An exception is generated while handling the message.</exception>
     public async ValueTask<object?> ExecuteAsync(object message, IWorkflowContext context)
     {
         await context.AddEventAsync(new ExecutorInvokeEvent(this.Id)).ConfigureAwait(false);
@@ -124,104 +114,29 @@ public abstract class Executor : IIdentified, IAsyncDisposable
     }
 
     /// <summary>
-    /// .
+    /// A set of <see cref="Type"/>s, representing the messages this executor can handle.
     /// </summary>
     public ISet<Type> InputTypes => this.Router.IncomingTypes;
 
     /// <summary>
-    /// .
+    /// A set of <see cref="Type"/>s, representing the messages this executor can produce as output.
     /// </summary>
-    public virtual ISet<Type> OutputTypes => new HashSet<Type>();
+    public virtual ISet<Type> OutputTypes => new HashSet<Type>([typeof(object)]);
 
     /// <summary>
-    /// .
+    /// Checks if the executor can handle a specific message type.
     /// </summary>
     /// <param name="messageType"></param>
     /// <returns></returns>
     public bool CanHandle(Type messageType) => this.Router.CanHandle(messageType);
 
-    /// <summary>
-    /// .
-    /// </summary>
-    /// <param name="context"></param>
-    /// <returns></returns>
-    public async ValueTask InitializeAsync(IWorkflowContext context)
-    {
-        if (this._initialized)
-        {
-            return;
-        }
-
-        await this.InitializeOverride(context).ConfigureAwait(false);
-
-        this._initialized = true;
-    }
-
-    /// <summary>
-    /// .
-    /// </summary>
-    public ExecutorCapabilities Capabilities
-        => new()
-        {
-            Id = this.Id,
-            Name = this.Name,
-            ExecutorType = this.GetType(),
-            HandledMessageTypes = new HashSet<Type>(this.InputTypes),
-            IsInitialized = this._initialized,
-            StateKeys = new HashSet<string>(this.State.Keys)
-        };
-
-    /// <summary>
-    /// .
-    /// </summary>
-    /// <returns></returns>
-    public ReadOnlyDictionary<string, object> CurrentState => new(this.State);
-
-    /// <summary>
-    /// .
-    /// </summary>
-    /// <param name="state"></param>
-    /// <exception cref="ArgumentNullException"></exception>
-    public void RestoreState(IDictionary<string, object> state)
-    {
-        Throw.IfNull(state);
-
-        this.State.Clear();
-
-        foreach (KeyValuePair<string, object> kvp in state)
-        {
-            this.State[kvp.Key] = kvp.Value;
-        }
-    }
-
-    /// <summary>
-    /// .
-    /// </summary>
-    /// <returns></returns>
-    protected virtual ValueTask PrepareForCheckpointAsync() => default;
-
-    /// <summary>
-    /// .
-    /// </summary>
-    /// <returns></returns>
-    protected virtual ValueTask AfterCheckpointRestoreAsync() => default;
-
-    /// <summary>
-    /// .
-    /// </summary>
-    /// <param name="context"></param>
-    /// <returns></returns>
-    protected virtual ValueTask InitializeOverride(IWorkflowContext context) => default;
-
-    /// <summary>
-    /// .
-    /// </summary>
-    /// <returns></returns>
+    /// <inheritdoc cref="IAsyncDisposable.DisposeAsync"/>
     protected virtual async ValueTask DisposeAsync()
     {
         this._initialized = false;
     }
 
+    /// <inheritdoc cref="IAsyncDisposable.DisposeAsync"/>
     ValueTask IAsyncDisposable.DisposeAsync()
     {
         GC.SuppressFinalize(this); // Should we be suppressing the finalizer here? CodeAnalysis seems to want it (CA1816)

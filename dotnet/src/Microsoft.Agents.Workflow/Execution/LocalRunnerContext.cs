@@ -35,8 +35,6 @@ internal class LocalRunnerContext<TExternalInput> : IRunnerContext
 
             this._executors[executorId] = executor = provider();
 
-            await executor.InitializeAsync(this.Bind(executor.Id)).ConfigureAwait(false);
-
             if (executor is RequestInputExecutor requestInputExecutor)
             {
                 requestInputExecutor.AttachRequestSink(this);
