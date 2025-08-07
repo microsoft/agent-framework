@@ -309,7 +309,6 @@ async def test_workflow_with_checkpointing_enabled(simple_executor: Executor):
         test_message = Message(data="test message", source_id="test", target_id=None)
         result = await workflow.run(test_message)
         assert result is not None
-        assert result is not None
 
 
 async def test_workflow_checkpointing_not_enabled_for_external_restore(simple_executor: Executor):

@@ -68,9 +68,6 @@ class Runner:
                     logger.info(f"Yielding initial event: {event}")
                     yield event
 
-            # TODO(evmattso): figure out how to remove the first, empty checkpoint
-            # json file that is created during processing.
-
             # Create first checkpoint if there are messages from initial execution
             if await self._ctx.has_messages():
                 logger.info("Creating checkpoint after initial execution")

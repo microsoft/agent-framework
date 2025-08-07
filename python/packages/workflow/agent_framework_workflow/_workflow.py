@@ -210,7 +210,6 @@ class Workflow:
                         ),
                     )
 
-        # Resume execution
         async for event in self._runner.run_until_convergence():
             yield event
 
