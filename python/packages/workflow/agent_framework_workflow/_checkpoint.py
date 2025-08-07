@@ -45,8 +45,12 @@ class CheckpointStorage(Protocol):
         """Load a checkpoint by ID."""
         ...
 
-    def list_checkpoints(self, workflow_id: str) -> list[str]:
-        """List all checkpoint IDs for a workflow."""
+    def list_checkpoint_ids(self, workflow_id: str | None = None) -> list[str]:
+        """List checkpoint IDs. If workflow_id is provided, filter by that workflow."""
+        ...
+
+    def list_checkpoints(self, workflow_id: str | None = None) -> list[WorkflowCheckpoint]:
+        """List checkpoint objects. If workflow_id is provided, filter by that workflow."""
         ...
 
     def delete_checkpoint(self, checkpoint_id: str) -> bool:
@@ -74,9 +78,17 @@ class MemoryCheckpointStorage:
             logger.debug(f"Loaded checkpoint {checkpoint_id} from memory")
         return checkpoint
 
-    def list_checkpoints(self, workflow_id: str) -> list[str]:
-        """List all checkpoint IDs for a workflow."""
+    def list_checkpoint_ids(self, workflow_id: str | None = None) -> list[str]:
+        """List checkpoint IDs. If workflow_id is provided, filter by that workflow."""
+        if workflow_id is None:
+            return list(self._checkpoints.keys())
         return [cp.checkpoint_id for cp in self._checkpoints.values() if cp.workflow_id == workflow_id]
+
+    def list_checkpoints(self, workflow_id: str | None = None) -> list[WorkflowCheckpoint]:
+        """List checkpoint objects. If workflow_id is provided, filter by that workflow."""
+        if workflow_id is None:
+            return list(self._checkpoints.values())
+        return [cp for cp in self._checkpoints.values() if cp.workflow_id == workflow_id]
 
     def delete_checkpoint(self, checkpoint_id: str) -> bool:
         """Delete a checkpoint by ID."""
@@ -123,20 +135,40 @@ class FileCheckpointStorage:
         logger.info(f"Loaded checkpoint {checkpoint_id} from {file_path}")
         return checkpoint
 
-    def list_checkpoints(self, workflow_id: str) -> list[str]:
-        """List all checkpoint IDs for a workflow."""
+    def list_checkpoint_ids(self, workflow_id: str | None = None) -> list[str]:
+        """List checkpoint IDs. If workflow_id is provided, filter by that workflow."""
         checkpoint_ids: list[str] = []
 
         for file_path in self.storage_path.glob("*.json"):
             try:
                 with open(file_path) as f:
                     data = json.load(f)
-                if data.get("workflow_id") == workflow_id:
+
+                # If no workflow filter, include all checkpoints
+                if workflow_id is None or data.get("workflow_id") == workflow_id:
                     checkpoint_ids.append(data.get("checkpoint_id", file_path.stem))
             except Exception as e:
                 logger.warning(f"Failed to read checkpoint file {file_path}: {e}")
 
         return checkpoint_ids
+
+    def list_checkpoints(self, workflow_id: str | None = None) -> list[WorkflowCheckpoint]:
+        """List checkpoint objects. If workflow_id is provided, filter by that workflow."""
+        checkpoints: list[WorkflowCheckpoint] = []
+
+        for file_path in self.storage_path.glob("*.json"):
+            try:
+                with open(file_path) as f:
+                    data = json.load(f)
+
+                # If no workflow filter, include all checkpoints
+                if workflow_id is None or data.get("workflow_id") == workflow_id:
+                    checkpoint = WorkflowCheckpoint(**data)
+                    checkpoints.append(checkpoint)
+            except Exception as e:
+                logger.warning(f"Failed to read checkpoint file {file_path}: {e}")
+
+        return checkpoints
 
     def delete_checkpoint(self, checkpoint_id: str) -> bool:
         """Delete a checkpoint by ID."""

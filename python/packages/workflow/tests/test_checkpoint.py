@@ -93,20 +93,46 @@ def test_memory_checkpoint_storage_list_checkpoints():
     storage.save_checkpoint(checkpoint2)
     storage.save_checkpoint(checkpoint3)
 
-    # List checkpoints for workflow-1
+    # Test list_checkpoint_ids for workflow-1
+    workflow1_checkpoint_ids = storage.list_checkpoint_ids("workflow-1")
+    assert len(workflow1_checkpoint_ids) == 2
+    assert checkpoint1.checkpoint_id in workflow1_checkpoint_ids
+    assert checkpoint2.checkpoint_id in workflow1_checkpoint_ids
+
+    # Test list_checkpoints for workflow-1 (returns objects)
     workflow1_checkpoints = storage.list_checkpoints("workflow-1")
     assert len(workflow1_checkpoints) == 2
-    assert checkpoint1.checkpoint_id in workflow1_checkpoints
-    assert checkpoint2.checkpoint_id in workflow1_checkpoints
+    assert all(isinstance(cp, WorkflowCheckpoint) for cp in workflow1_checkpoints)
+    assert {cp.checkpoint_id for cp in workflow1_checkpoints} == {checkpoint1.checkpoint_id, checkpoint2.checkpoint_id}
 
-    # List checkpoints for workflow-2
+    # Test list_checkpoint_ids for workflow-2
+    workflow2_checkpoint_ids = storage.list_checkpoint_ids("workflow-2")
+    assert len(workflow2_checkpoint_ids) == 1
+    assert checkpoint3.checkpoint_id in workflow2_checkpoint_ids
+
+    # Test list_checkpoints for workflow-2 (returns objects)
     workflow2_checkpoints = storage.list_checkpoints("workflow-2")
     assert len(workflow2_checkpoints) == 1
-    assert checkpoint3.checkpoint_id in workflow2_checkpoints
+    assert workflow2_checkpoints[0].checkpoint_id == checkpoint3.checkpoint_id
 
-    # List checkpoints for non-existent workflow
+    # Test list_checkpoint_ids for non-existent workflow
+    empty_checkpoint_ids = storage.list_checkpoint_ids("nonexistent-workflow")
+    assert len(empty_checkpoint_ids) == 0
+
+    # Test list_checkpoints for non-existent workflow
     empty_checkpoints = storage.list_checkpoints("nonexistent-workflow")
     assert len(empty_checkpoints) == 0
+
+    # Test list_checkpoint_ids without workflow filter (all checkpoints)
+    all_checkpoint_ids = storage.list_checkpoint_ids()
+    assert len(all_checkpoint_ids) == 3
+    expected_ids = {checkpoint1.checkpoint_id, checkpoint2.checkpoint_id, checkpoint3.checkpoint_id}
+    assert expected_ids.issubset(set(all_checkpoint_ids))
+
+    # Test list_checkpoints without workflow filter (all checkpoints)
+    all_checkpoints = storage.list_checkpoints()
+    assert len(all_checkpoints) == 3
+    assert all(isinstance(cp, WorkflowCheckpoint) for cp in all_checkpoints)
 
 
 def test_memory_checkpoint_storage_delete():
@@ -176,16 +202,36 @@ def test_file_checkpoint_storage_list_checkpoints():
         storage.save_checkpoint(checkpoint2)
         storage.save_checkpoint(checkpoint3)
 
-        # List checkpoints for workflow-1
+        # Test list_checkpoint_ids for workflow-1
+        workflow1_checkpoint_ids = storage.list_checkpoint_ids("workflow-1")
+        assert len(workflow1_checkpoint_ids) == 2
+        assert checkpoint1.checkpoint_id in workflow1_checkpoint_ids
+        assert checkpoint2.checkpoint_id in workflow1_checkpoint_ids
+
+        # Test list_checkpoints for workflow-1 (returns objects)
         workflow1_checkpoints = storage.list_checkpoints("workflow-1")
         assert len(workflow1_checkpoints) == 2
-        assert checkpoint1.checkpoint_id in workflow1_checkpoints
-        assert checkpoint2.checkpoint_id in workflow1_checkpoints
+        assert all(isinstance(cp, WorkflowCheckpoint) for cp in workflow1_checkpoints)
+        checkpoint_ids = {cp.checkpoint_id for cp in workflow1_checkpoints}
+        assert checkpoint_ids == {checkpoint1.checkpoint_id, checkpoint2.checkpoint_id}
 
-        # List checkpoints for workflow-2
+        # Test list_checkpoint_ids for workflow-2
+        workflow2_checkpoint_ids = storage.list_checkpoint_ids("workflow-2")
+        assert len(workflow2_checkpoint_ids) == 1
+        assert checkpoint3.checkpoint_id in workflow2_checkpoint_ids
+
+        # Test list_checkpoints for workflow-2 (returns objects)
         workflow2_checkpoints = storage.list_checkpoints("workflow-2")
         assert len(workflow2_checkpoints) == 1
-        assert checkpoint3.checkpoint_id in workflow2_checkpoints
+        assert workflow2_checkpoints[0].checkpoint_id == checkpoint3.checkpoint_id
+
+        # Test list all checkpoints
+        all_checkpoint_ids = storage.list_checkpoint_ids()
+        assert len(all_checkpoint_ids) == 3
+
+        all_checkpoints = storage.list_checkpoints()
+        assert len(all_checkpoints) == 3
+        assert all(isinstance(cp, WorkflowCheckpoint) for cp in all_checkpoints)
 
 
 def test_file_checkpoint_storage_delete():
@@ -284,6 +330,8 @@ def test_checkpoint_storage_protocol_compliance():
             assert callable(storage.save_checkpoint)
             assert hasattr(storage, "load_checkpoint")
             assert callable(storage.load_checkpoint)
+            assert hasattr(storage, "list_checkpoint_ids")
+            assert callable(storage.list_checkpoint_ids)
             assert hasattr(storage, "list_checkpoints")
             assert callable(storage.list_checkpoints)
             assert hasattr(storage, "delete_checkpoint")

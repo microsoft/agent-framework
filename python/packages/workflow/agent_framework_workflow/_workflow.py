@@ -186,7 +186,7 @@ class Workflow:
         else:
             # Use state transfer pattern: load from external storage and transfer to current context
             if checkpoint_storage is None:
-                raise ValueError("checkpoint_storage cannot be None in this branch")
+                raise ValueError("checkpoint_storage cannot be None.")
             restored = await self._restore_from_external_checkpoint(checkpoint_id, checkpoint_storage)
 
         if not restored:
@@ -380,7 +380,7 @@ class Workflow:
             # Set the checkpoint state in temp context
             state = {
                 "messages": checkpoint.messages,
-                "events": checkpoint.events,
+                # events intentionally omitted - they will be regenerated during execution
                 "shared_state": checkpoint.shared_state,
                 "executor_states": checkpoint.executor_states,
                 "iteration_count": checkpoint.iteration_count,

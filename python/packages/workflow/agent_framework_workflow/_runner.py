@@ -45,7 +45,7 @@ class Runner:
         self._shared_state = shared_state
         self._checkpoint_interval = checkpoint_interval
         self._workflow_id = workflow_id
-        self._running = False  # Flag to prevent concurrent execution
+        self._running = False
 
         # Set workflow ID in context if it's checkpointable
         if isinstance(ctx, CheckpointableRunnerContext) and workflow_id:
@@ -79,10 +79,17 @@ class Runner:
                 logger.info("Creating checkpoint after initial execution")
                 await self._create_checkpoint_if_enabled("after_initial_execution")
 
+            # Initialize context with starting iteration state
+            await self._update_context_with_shared_state()
+
             while self._iteration < self._max_iterations:
                 logger.info(f"Starting superstep {self._iteration + 1}")
                 await self._run_iteration()
                 self._iteration += 1
+
+                # Update context with current iteration state immediately
+                await self._update_context_with_shared_state()
+
                 logger.info(f"Completed superstep {self._iteration}")
 
                 # Check what state we have before checkpointing

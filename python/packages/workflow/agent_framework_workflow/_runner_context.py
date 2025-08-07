@@ -150,21 +150,23 @@ class CheckpointableInProcRunnerContext(InProcRunnerContext):
         super().__init__()
         self._checkpoint_storage = checkpoint_storage
         self._workflow_id: str | None = None
+        # Runtime state for checkpointing
+        self._shared_state: dict[str, Any] = {}
+        self._executor_states: dict[str, dict[str, Any]] = {}
+        self._iteration_count: int = 0
+        self._max_iterations: int = 100
 
     def set_workflow_id(self, workflow_id: str) -> None:
         """Set the workflow ID for this context."""
         self._workflow_id = workflow_id
 
-    async def create_checkpoint(self, workflow_id: str | None = None) -> str:
+    async def create_checkpoint(self) -> str:
         """Create a checkpoint of current state."""
         if not self._checkpoint_storage:
             raise ValueError("Checkpoint storage not configured")
 
-        # Use provided workflow_id or the stored one, generate once if neither exists
-        if workflow_id:
-            wf_id = workflow_id
-            self._workflow_id = workflow_id  # Store for future use
-        elif self._workflow_id:
+        # Use provided the stored workflow_id or generate if doesn't exist
+        if self._workflow_id:
             wf_id = self._workflow_id
         else:
             wf_id = str(uuid.uuid4())
@@ -177,7 +179,6 @@ class CheckpointableInProcRunnerContext(InProcRunnerContext):
         checkpoint = WorkflowCheckpoint(
             workflow_id=wf_id,
             messages=cast(dict[str, list[dict[str, Any]]], state["messages"]),
-            events=cast(list[dict[str, Any]], state["events"]),
             shared_state=cast(dict[str, Any], state.get("shared_state", {})),
             executor_states=cast(dict[str, dict[str, Any]], state.get("executor_states", {})),
             iteration_count=cast(int, state.get("iteration_count", 0)),
@@ -203,7 +204,7 @@ class CheckpointableInProcRunnerContext(InProcRunnerContext):
         # Restore state
         state = {
             "messages": checkpoint.messages,
-            "events": checkpoint.events,
+            # events intentionally omitted - they will be regenerated during execution
             "shared_state": checkpoint.shared_state,
             "executor_states": checkpoint.executor_states,
             "iteration_count": checkpoint.iteration_count,
@@ -233,21 +234,17 @@ class CheckpointableInProcRunnerContext(InProcRunnerContext):
                 for msg in message_list
             ]
 
-        # Convert events to serializable format
-        serializable_events: list[dict[str, object]] = []
-        for event in self._events:
-            event_dict: dict[str, object] = {
-                "type": event.__class__.__name__,
-                "data": getattr(event, "__dict__", {}),
-            }
-            # For workflow completion events, include the data directly
-            if hasattr(event, "data"):
-                event_dict["result"] = event.data
-            serializable_events.append(event_dict)
+        # Note: We don't save events in checkpoints because:
+        # 1. Events are outputs that have already been processed/consumed
+        # 2. Events will be regenerated when messages are processed during restoration
+        # 3. Including events could cause duplication when resuming
 
         return {
             "messages": serializable_messages,
-            "events": serializable_events,
+            "shared_state": self._shared_state,
+            "executor_states": self._executor_states,
+            "iteration_count": self._iteration_count,
+            "max_iterations": self._max_iterations,
         }
 
     async def set_checkpoint_state(self, state: dict[str, object]) -> None:
@@ -265,10 +262,8 @@ class CheckpointableInProcRunnerContext(InProcRunnerContext):
                 for msg in message_list
             ]
 
-        # Restore events (simplified - in practice, we'd need to reconstruct event objects)
-        self._events.clear()
-        events_data = cast(list[dict[str, object]], state.get("events", []))
-        for event_data in events_data:
-            # For now, store as a generic event placeholder
-            # In a full implementation, we'd reconstruct proper event objects
-            logger.debug(f"Restored event: {event_data}")
+        # Restore runtime state
+        self._shared_state = cast(dict[str, Any], state.get("shared_state", {}))
+        self._executor_states = cast(dict[str, dict[str, Any]], state.get("executor_states", {}))
+        self._iteration_count = cast(int, state.get("iteration_count", 0))
+        self._max_iterations = cast(int, state.get("max_iterations", 100))
