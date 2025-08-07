@@ -3,6 +3,9 @@
 using A2A;
 using A2A.AspNetCore;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.AI.Agents.A2A.Internal;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Extensions.AI.Agents.A2A;
 
@@ -15,14 +18,33 @@ public static class A2AHostingApplicationBuilderExtensions
     /// Attaches A2A (Agent-to-Agent) communication capabilities to the specified host application builder.
     /// </summary>
     /// <param name="app"></param>
-    /// <param name="a2aConnector"></param>
-    /// <param name="taskStore"></param>
     /// <param name="path"></param>
+    /// <param name="agentName"></param>
     public static void AttachHttpA2A(
         this WebApplication app,
+        string path,
+        string agentName)
+    {
+        var agent = app.Services.GetRequiredKeyedService<AIAgent>(agentName);
+        var logger = app.Services.GetRequiredService<ILogger<AIAgentA2AConnector>>();
+
+        var agentA2AConnector = new AIAgentA2AConnector(logger, agent);
+
+        app.AttachHttpA2A(path, agentA2AConnector);
+    }
+
+    /// <summary>
+    /// Attaches A2A (Agent-to-Agent) communication capabilities to the specified host application builder.
+    /// </summary>
+    /// <param name="app"></param>
+    /// <param name="path"></param>
+    /// <param name="a2aConnector"></param>
+    /// <param name="taskStore"></param>
+    public static void AttachHttpA2A(
+        this WebApplication app,
+        string path,
         IA2AConnector a2aConnector,
-        ITaskStore? taskStore,
-        string path)
+        ITaskStore? taskStore = null)
     {
         var taskManager = new TaskManager(taskStore: taskStore);
         Attach(a2aConnector, taskManager);

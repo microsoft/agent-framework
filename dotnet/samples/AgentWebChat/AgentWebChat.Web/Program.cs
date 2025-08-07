@@ -24,7 +24,14 @@ Uri a2aPirateUrl = new("http://localhost:5390/a2a");
 
 builder.Services.AddHttpClient<IActorClient, HttpActorClient>(client => client.BaseAddress = baseAddress);
 builder.Services.AddHttpClient<AgentDiscoveryClient>(client => client.BaseAddress = baseAddress);
-builder.Services.AddSingleton<A2AHandlerClient>(sp => new A2AHandlerClient(a2aPirateUrl));
+
+builder.Services.AddSingleton<A2AHandlerClient>(sp =>
+{
+    return new A2AHandlerClient(
+        sp.GetRequiredService<ILogger<A2AHandlerClient>>(),
+        a2aPirateUrl
+    );
+});
 
 var app = builder.Build();
 

@@ -2,12 +2,12 @@
 
 using System.Text.Json;
 using AgentWebChat.AgentHost;
-using AgentWebChat.AgentHost.A2A;
 using AgentWebChat.AgentHost.Utilities;
 using Microsoft.Agents.Orchestration;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
+using Microsoft.Extensions.AI.Agents.A2A;
 using Microsoft.Extensions.AI.Agents.Hosting;
 using Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB;
 
@@ -94,7 +94,7 @@ app.UseExceptionHandler();
 app.MapActors();
 
 //
-A2AConfigurator.ConfigureA2A(app);
+app.AttachHttpA2A("/a2a/pirate", agentName: "pirate");
 
 // Map the agents HTTP endpoints
 app.MapAgentDiscovery("/agents");
