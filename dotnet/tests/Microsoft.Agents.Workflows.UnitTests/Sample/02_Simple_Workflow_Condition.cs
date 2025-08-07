@@ -46,7 +46,7 @@ internal static class Step2EntryPoint
     }
 }
 
-internal sealed class DetectSpamExecutor : Executor, IMessageHandler<string, bool>
+internal sealed class DetectSpamExecutor : Executor<DetectSpamExecutor>, IMessageHandler<string, bool>
 {
     public string[] SpamKeywords { get; }
 
@@ -68,7 +68,7 @@ internal sealed class DetectSpamExecutor : Executor, IMessageHandler<string, boo
     }
 }
 
-internal sealed class RespondToMessageExecutor : Executor, IMessageHandler<bool>
+internal sealed class RespondToMessageExecutor : Executor<RespondToMessageExecutor>, IMessageHandler<bool>
 {
     public const string ActionResult = "Message processed successfully.";
 
@@ -87,7 +87,7 @@ internal sealed class RespondToMessageExecutor : Executor, IMessageHandler<bool>
     }
 }
 
-internal sealed class RemoveSpamExecutor : Executor, IMessageHandler<bool>
+internal sealed class RemoveSpamExecutor : Executor<RemoveSpamExecutor>, IMessageHandler<bool>
 {
     public const string ActionResult = "Spam message removed.";
 

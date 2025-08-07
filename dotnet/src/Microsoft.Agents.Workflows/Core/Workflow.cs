@@ -15,7 +15,7 @@ public class Workflow
     /// <summary>
     /// A dictionary of executor providers, keyed by executor ID.
     /// </summary>
-    public Dictionary<string, ExecutorProvider<Executor>> ExecutorProviders { get; internal init; } = new();
+    public Dictionary<string, ExecutorProvider<ExecutorBase>> ExecutorProviders { get; internal init; } = new();
 
     /// <summary>
     /// Gets the collection of edges grouped by their source node identifier.
@@ -67,7 +67,7 @@ public class Workflow<T> : Workflow
     {
     }
 
-    internal Workflow<T, TResult> Promote<TResult>(OutputSink<TResult> outputSource)
+    internal Workflow<T, TResult> Promote<TResult>(IOutputSink<TResult> outputSource)
     {
         Throw.IfNull(outputSource);
 
@@ -88,9 +88,9 @@ public class Workflow<T> : Workflow
 /// <typeparam name="TResult">The type of the output from the workflow.</typeparam>
 public class Workflow<TInput, TResult> : Workflow<TInput>
 {
-    private readonly OutputSink<TResult> _output;
+    private readonly IOutputSink<TResult> _output;
 
-    internal Workflow(string startExecutorId, OutputSink<TResult> outputSource)
+    internal Workflow(string startExecutorId, IOutputSink<TResult> outputSource)
         : base(startExecutorId)
     {
         this._output = Throw.IfNull(outputSource);

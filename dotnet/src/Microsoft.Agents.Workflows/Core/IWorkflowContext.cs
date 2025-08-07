@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 namespace Microsoft.Agents.Workflows.Core;
 
 /// <summary>
-/// Provides services for an <see cref="Executor"/> during the execution of a workflow.
+/// Provides services for an <see cref="ExecutorBase"/> during the execution of a workflow.
 /// </summary>
 public interface IWorkflowContext
 {

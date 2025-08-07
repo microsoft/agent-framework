@@ -8,7 +8,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Specialized;
 
-internal class RequestInputExecutor : Executor, IMessageHandler<object, ExternalRequest>, IMessageHandler<ExternalResponse, ExternalResponse>
+internal class RequestInputExecutor : Executor<RequestInputExecutor>, IMessageHandler<object, ExternalRequest>, IMessageHandler<ExternalResponse, ExternalResponse>
 {
     private InputPort Port { get; }
     private IExternalRequestSink? RequestSink { get; set; }

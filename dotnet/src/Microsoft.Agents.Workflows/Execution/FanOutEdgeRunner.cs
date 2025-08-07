@@ -27,8 +27,8 @@ internal class FanOutEdgeRunner(IRunnerContext runContext, FanOutEdgeData edgeDa
 
         async Task<object?> ProcessTargetAsync(string targetId)
         {
-            Executor executor = await this.RunContext.EnsureExecutorAsync(targetId)
-                                                     .ConfigureAwait(false);
+            ExecutorBase executor = await this.RunContext.EnsureExecutorAsync(targetId)
+                                                         .ConfigureAwait(false);
 
             if (executor.CanHandle(message.GetType()))
             {

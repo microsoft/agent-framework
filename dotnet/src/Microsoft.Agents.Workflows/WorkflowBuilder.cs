@@ -14,7 +14,7 @@ namespace Microsoft.Agents.Workflows;
 /// <typeparam name="TExecutor">The executor type.</typeparam>
 /// <returns>A new <typeparamref name="TExecutor"/> instance.</returns>
 public delegate TExecutor ExecutorProvider<out TExecutor>()
-    where TExecutor : Executor;
+    where TExecutor : ExecutorBase;
 
 /// <summary>
 /// Provides a builder for constructing and configuring a workflow by defining executors and the connections between
@@ -31,7 +31,7 @@ public class WorkflowBuilder
         public override string ToString() => $"{this.SourceId} -> {this.TargetId}";
     }
 
-    private readonly Dictionary<string, ExecutorProvider<Executor>> _executors = new();
+    private readonly Dictionary<string, ExecutorProvider<ExecutorBase>> _executors = new();
     private readonly Dictionary<string, HashSet<Edge>> _edges = new();
     private readonly HashSet<string> _unboundExecutors = new();
     private readonly HashSet<EdgeId> _conditionlessEdges = new();
@@ -50,7 +50,7 @@ public class WorkflowBuilder
 
     private ExecutorIsh Track(ExecutorIsh executorish)
     {
-        ExecutorProvider<Executor> provider = executorish.ExecutorProvider;
+        ExecutorProvider<ExecutorBase> provider = executorish.ExecutorProvider;
 
         // If the executor is unbound, create an entry for it, unless it already exists.
         // Otherwise, update the entry for it, and remove the unbound tag
@@ -75,7 +75,7 @@ public class WorkflowBuilder
         return executorish;
     }
 
-    private void UpdateExecutor(string id, ExecutorProvider<Executor> provider)
+    private void UpdateExecutor(string id, ExecutorProvider<ExecutorBase> provider)
     {
         this._executors[id] = provider;
     }
@@ -86,7 +86,7 @@ public class WorkflowBuilder
     /// <param name="executor">The executor instance to bind. The executor must exist in the workflow and not be already bound.</param>
     /// <returns>The current <see cref="WorkflowBuilder"/> instance, enabling fluent configuration.</returns>
     /// <exception cref="InvalidOperationException">Thrown if the specified executor is already bound or does not exist in the workflow.</exception>
-    public WorkflowBuilder BindExecutor(Executor executor)
+    public WorkflowBuilder BindExecutor(ExecutorBase executor)
     {
         if (!this._unboundExecutors.Contains(executor.Id))
         {
@@ -216,14 +216,14 @@ public class WorkflowBuilder
         }
 
         // Grab the start node, and make sure it has the right type?
-        if (!this._executors.TryGetValue(this._startExecutorId, out ExecutorProvider<Executor>? startProvider))
+        if (!this._executors.TryGetValue(this._startExecutorId, out ExecutorProvider<ExecutorBase>? startProvider))
         {
             // TODO: This should never be able to be hit
             throw new InvalidOperationException($"Start executor with ID '{this._startExecutorId}' is not bound.");
         }
 
         // TODO: Delay-instantiate the start executor, and ensure it is of type T.
-        Executor startExecutor = startProvider();
+        ExecutorBase startExecutor = startProvider();
 
         if (!startExecutor.InputTypes.Any(t => t.IsAssignableFrom(typeof(T))))
         {

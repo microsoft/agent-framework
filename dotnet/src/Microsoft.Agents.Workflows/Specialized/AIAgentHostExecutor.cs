@@ -9,7 +9,7 @@ using Microsoft.Extensions.AI.Agents;
 
 namespace Microsoft.Agents.Workflows.Specialized;
 
-internal class AIAgentHostExecutor : Executor, IMessageHandler<IList<ChatMessage>>
+internal class AIAgentHostExecutor : Executor<AIAgentHostExecutor>, IMessageHandler<IList<ChatMessage>>
 {
     private AIAgent Agent { get; set; }
 

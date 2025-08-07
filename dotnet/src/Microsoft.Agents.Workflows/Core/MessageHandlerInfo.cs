@@ -17,8 +17,6 @@ internal struct MessageHandlerInfo
     public MethodInfo HandlerInfo { get; init; }
     public Func<object, ValueTask<object?>>? Unwrapper { get; init; } = null;
 
-    [SuppressMessage("AOT", "IL3050:Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality " +
-        "when AOT compiling.", Justification = "<Pending>")]
     public MessageHandlerInfo(MethodInfo handlerInfo)
     {
         // The method is one of the following:
@@ -118,7 +116,12 @@ internal struct MessageHandlerInfo
         }
     }
 
-    public Func<object, IWorkflowContext, ValueTask<CallResult>> Bind(Executor executor, bool checkType = false)
+    public Func<object, IWorkflowContext, ValueTask<CallResult>> Bind<
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods |
+                                    DynamicallyAccessedMemberTypes.NonPublicMethods |
+                                    DynamicallyAccessedMemberTypes.Interfaces)] TExecutor>
+        (Executor<TExecutor> executor, bool checkType = false)
+        where TExecutor : Executor<TExecutor>
     {
         MethodInfo handlerMethod = this.HandlerInfo;
         return MessageHandlerInfo.Bind(InvokeHandler, checkType, this.OutType, this.Unwrapper);
