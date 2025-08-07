@@ -74,26 +74,18 @@ public static class WorkflowBuilderExtensions
     /// <param name="builder"></param>
     /// <param name="outputSource"></param>
     /// <param name="aggregator"></param>
+    /// <param name="completionCondition"></param>
     /// <returns></returns>
-    public static Workflow<TInput, TResult> BuildWithOutput<TInput, TResult>(this WorkflowBuilder builder, ExecutorIsh outputSource, StreamingAggregator<TResult, TResult> aggregator)
-        => builder.BuildWithOutput<TInput, TResult, TResult>(outputSource, aggregator);
-
-    /// <summary>
-    /// .
-    /// </summary>
-    /// <typeparam name="TInput"></typeparam>
-    /// <typeparam name="TIntermediate"></typeparam>
-    /// <typeparam name="TResult"></typeparam>
-    /// <param name="builder"></param>
-    /// <param name="outputSource"></param>
-    /// <param name="aggregator"></param>
-    /// <returns></returns>
-    public static Workflow<TInput, TResult> BuildWithOutput<TInput, TIntermediate, TResult>(this WorkflowBuilder builder, ExecutorIsh outputSource, StreamingAggregator<TIntermediate, TResult> aggregator)
+    public static Workflow<TInput, TResult> BuildWithOutput<TInput, TResult>(
+        this WorkflowBuilder builder,
+        ExecutorIsh outputSource,
+        StreamingAggregator<TInput, TResult> aggregator,
+        Func<TInput, TResult?, bool>? completionCondition = null)
     {
         Throw.IfNull(outputSource);
         Throw.IfNull(aggregator);
 
-        OutputCollectorExecutor<TIntermediate, TResult> outputSink = new(aggregator);
+        OutputCollectorExecutor<TInput, TResult> outputSink = new(aggregator, completionCondition);
 
         // TODO: Check taht the outputSource has a TResult output?
         builder.AddEdge(outputSource, outputSink);

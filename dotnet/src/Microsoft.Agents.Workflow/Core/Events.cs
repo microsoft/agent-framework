@@ -22,7 +22,7 @@ public record WorkflowCompletedEvent : WorkflowEvent;
 /// <summary>
 /// .
 /// </summary>
-public record RequestInputEvent(ExternalRequest request) : WorkflowEvent;
+public record RequestInputEvent(ExternalRequest Request) : WorkflowEvent;
 
 /// <summary>
 /// .

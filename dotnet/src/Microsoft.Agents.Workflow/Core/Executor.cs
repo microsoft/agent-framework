@@ -78,7 +78,7 @@ public abstract class Executor : IIdentified, IAsyncDisposable
         await context.AddEventAsync(new ExecutorInvokeEvent(this.Id)).ConfigureAwait(false);
 
         CallResult? result = await this.Router.RouteMessageAsync(message, context, requireRoute: true)
-                                                     .ConfigureAwait(false);
+                                              .ConfigureAwait(false);
 
         ExecutorCompleteEvent completeEvent = new(this.Id)
         {
