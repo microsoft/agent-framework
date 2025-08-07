@@ -10,6 +10,7 @@
     <UserSecretsId>80048040-aaf1-4f44-9970-8aef39651edf</UserSecretsId>
     <IsAspireHost>true</IsAspireHost>
     <GenerateProgramFile>false</GenerateProgramFile>
+    <NoWarn>$(NoWarn);NU1008</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
