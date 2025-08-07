@@ -15,26 +15,25 @@ internal class FanOutEdgeRunner(IRunnerContext runContext, FanOutEdgeData edgeDa
             sinkId => sinkId,
             sinkId => runContext.Bind(sinkId));
 
-    public async ValueTask<IEnumerable<CallResult?>> ChaseAsync(object message)
+    public async ValueTask<IEnumerable<object?>> ChaseAsync(object message)
     {
         List<string> targets =
             this.EdgeData.Partitioner == null
                 ? this.EdgeData.SinkIds
                 : this.EdgeData.Partitioner(message, this.BoundContexts.Count).Select(i => this.EdgeData.SinkIds[i]).ToList();
 
-        CallResult?[] result = await Task.WhenAll(targets.Select(ProcessTargetAsync)).ConfigureAwait(false);
+        object?[] result = await Task.WhenAll(targets.Select(ProcessTargetAsync)).ConfigureAwait(false);
         return result.Where(r => r is not null);
 
-        async Task<CallResult?> ProcessTargetAsync(string targetId)
+        async Task<object?> ProcessTargetAsync(string targetId)
         {
             Executor executor = await this.RunContext.EnsureExecutorAsync(targetId)
                                                      .ConfigureAwait(false);
 
-            MessageRouter router = executor.Router;
-            if (router.CanHandle(message))
+            if (executor.CanHandle(message.GetType()))
             {
-                return await router.RouteMessageAsync(message, this.BoundContexts[targetId])
-                                   .ConfigureAwait(false);
+                return await executor.ExecuteAsync(message, this.BoundContexts[targetId])
+                                     .ConfigureAwait(false);
             }
 
             return null;

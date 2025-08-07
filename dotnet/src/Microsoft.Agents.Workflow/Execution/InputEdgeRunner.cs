@@ -19,20 +19,17 @@ internal class InputEdgeRunner(IRunnerContext runContext, string sinkId)
         return new InputEdgeRunner(runContext, port.Id);
     }
 
-    private async ValueTask<MessageRouter> FindRouterAsync()
+    private async ValueTask<Executor> FindExecutorAsync()
     {
-        Executor sink = await this.RunContext.EnsureExecutorAsync(this.EdgeData)
-                                             .ConfigureAwait(false);
-
-        return sink.Router;
+        return await this.RunContext.EnsureExecutorAsync(this.EdgeData).ConfigureAwait(false);
     }
 
-    public async ValueTask<CallResult?> ChaseAsync(object message)
+    public async ValueTask<object?> ChaseAsync(object message)
     {
-        MessageRouter router = await this.FindRouterAsync().ConfigureAwait(false);
-        if (router.CanHandle(message))
+        Executor target = await this.FindExecutorAsync().ConfigureAwait(false);
+        if (target.CanHandle(message.GetType()))
         {
-            return await router.RouteMessageAsync(message, this.WorkflowContext)
+            return await target.ExecuteAsync(message, this.WorkflowContext)
                                .ConfigureAwait(false);
         }
 
