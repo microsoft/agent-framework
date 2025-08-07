@@ -20,10 +20,8 @@ public class A2AHandlerClient
 
     public async Task<AgentCard> GetAgentCardAsync(string agent, CancellationToken cancellationToken = default)
     {
-        var (_, _) = this.ResolveClient(agent);
-
-        return new AgentCard() { Name = "agent" };
-        // return await a2aCardResolver.GetAgentCardAsync(cancellationToken);
+        var (_, a2aCardResolver) = this.ResolveClient(agent);
+        return await a2aCardResolver.GetAgentCardAsync(cancellationToken);
     }
 
     private (A2AClient, A2ACardResolver) ResolveClient(string agentName)
