@@ -11,15 +11,22 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.Workflows.Execution;
 
 /// <summary>
-/// .
+/// Provides a local, in-process runner for executing a workflow using the specified input type.
 /// </summary>
-/// <typeparam name="TInput"></typeparam>
+/// <remarks><para> <see cref="LocalRunner{TInput}"/> enables step-by-step execution of a workflow graph entirely
+/// within the current process, without distributed coordination. It is primarily intended for testing, debugging, or
+/// scenarios where workflow execution does not require executor distribution. </para></remarks>
+/// <typeparam name="TInput">The type of input accepted by the workflow. Must be non-nullable.</typeparam>
 public class LocalRunner<TInput> : ISuperStepRunner where TInput : notnull
 {
     /// <summary>
-    /// .
+    /// Initializes a new instance of the <see cref="LocalRunner{TInput}"/> class to execute the specified workflow
+    /// locally.
     /// </summary>
-    /// <param name="workflow"></param>
+    /// <remarks>The <see cref="LocalRunner{TInput}"/> manages the execution context and edge mapping for the
+    /// provided workflow, enabling local, in-process execution. The workflow's structure, including its edges and
+    /// ports, is used to set up the runner's internal state.</remarks>
+    /// <param name="workflow">The workflow to be executed. Must not be <c>null</c>.</param>
     public LocalRunner(Workflow<TInput> workflow)
     {
         this.Workflow = Throw.IfNull(workflow);
@@ -77,11 +84,15 @@ public class LocalRunner<TInput> : ISuperStepRunner where TInput : notnull
     }
 
     /// <summary>
-    /// .
+    /// Initiates an asynchronous streaming execution using the specified input.
     /// </summary>
-    /// <param name="input"></param>
-    /// <param name="cancellation"></param>
-    /// <returns></returns>
+    /// <remarks>The returned <see cref="StreamingExecutionHandle"/> provides methods to observe and control
+    /// the ongoing streaming execution. The operation will continue until the streaming execution is finished or
+    /// cancelled.</remarks>
+    /// <param name="input">The input message to be processed as part of the streaming execution.</param>
+    /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation.</param>
+    /// <returns>A <see cref="ValueTask{TResult}"/> that represents the asynchronous operation. The result contains a <see
+    /// cref="StreamingExecutionHandle"/> for managing and interacting with the streaming execution.</returns>
     public async ValueTask<StreamingExecutionHandle> StreamAsync(TInput input, CancellationToken cancellation = default)
     {
         await this.RunContext.AddExternalMessageAsync(input).ConfigureAwait(false);
@@ -146,19 +157,25 @@ public class LocalRunner<TInput> : ISuperStepRunner where TInput : notnull
 }
 
 /// <summary>
-/// .
+/// Provides a local, in-process runner for executing a workflow with input and producing a result.
 /// </summary>
-/// <typeparam name="TInput"></typeparam>
-/// <typeparam name="TResult"></typeparam>
-public class LocalRunner<TInput, TResult> : IRunnerWithResult<TResult> where TInput : notnull
+/// <remarks><para> <see cref="LocalRunner{TInput, TResult}"/> manages the execution of a <see
+/// cref="Workflow{TInput, TResult}"/> instance locally, allowing for streaming input and asynchronous result retrieval.
+/// </para> <para> This class is intended for scenarios where workflow execution does not require distributed procesing.
+/// It supports streaming execution and exposes methods to retrieve the final result asynchronously.
+/// </para></remarks>
+/// <typeparam name="TInput">The type of input accepted by the workflow. Must be non-nullable.</typeparam>
+/// <typeparam name="TResult">The type of output produced by the workflow.</typeparam>
+public class LocalRunner<TInput, TResult> : IRunnerWithOutput<TResult> where TInput : notnull
 {
     private readonly Workflow<TInput, TResult> _workflow;
     private readonly ISuperStepRunner _innerRunner;
 
     /// <summary>
-    /// .
+    /// Initializes a new instance of the <see cref="LocalRunner{TInput, TResult}"/> class to execute the specified
+    /// workflow locally.
     /// </summary>
-    /// <param name="workflow"></param>
+    /// <param name="workflow">The workflow to be executed. Must not be <c>null</c>.</param>
     public LocalRunner(Workflow<TInput, TResult> workflow)
     {
         this._workflow = Throw.IfNull(workflow);
@@ -166,11 +183,15 @@ public class LocalRunner<TInput, TResult> : IRunnerWithResult<TResult> where TIn
     }
 
     /// <summary>
-    /// .
+    /// Initiates an asynchronous streaming execution for the specified input.
     /// </summary>
-    /// <param name="input"></param>
-    /// <param name="cancellation"></param>
-    /// <returns></returns>
+    /// <remarks>The returned <see cref="StreamingExecutionHandle{TResult}"/> can be used to retrieve results
+    /// as they become available. If the operation is cancelled via the <paramref name="cancellation"/> token, the
+    /// streaming execution will be terminated.</remarks>
+    /// <param name="input">The input value to be processed by the streaming execution.</param>
+    /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation.</param>
+    /// <returns>A <see cref="StreamingExecutionHandle{TResult}"/> that provides access to the results of the streaming
+    /// execution.</returns>
     public async ValueTask<StreamingExecutionHandle<TResult>> StreamAsync(TInput input, CancellationToken cancellation = default)
     {
         await this._innerRunner.EnqueueMessageAsync(input).ConfigureAwait(false);
@@ -178,21 +199,8 @@ public class LocalRunner<TInput, TResult> : IRunnerWithResult<TResult> where TIn
         return new StreamingExecutionHandle<TResult>(this);
     }
 
-    /// <summary>
-    /// .
-    /// </summary>
-    /// <param name="cancellation"></param>
-    /// <returns></returns>
-    public ValueTask<TResult> GetResultAsync(CancellationToken cancellation = default)
-    {
-        // TODO: Block on finishing consuming StreamAsync()?
-        return new ValueTask<TResult>(this.RunningOutput!);
-    }
-
-    /// <summary>
-    /// .
-    /// </summary>
+    /// <inheritdoc cref="Workflow{TInput, TResult}.RunningOutput"/>
     public TResult? RunningOutput => this._workflow.RunningOutput;
 
-    ISuperStepRunner IRunnerWithResult<TResult>.StepRunner => this._innerRunner;
+    ISuperStepRunner IRunnerWithOutput<TResult>.StepRunner => this._innerRunner;
 }

@@ -11,7 +11,8 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.Workflows.Execution;
 
 /// <summary>
-/// .
+/// Provides a handle for managing and interacting with a streaming workflow execution, enabling asynchronous response
+/// delivery and event monitoring.
 /// </summary>
 public class StreamingExecutionHandle
 {
@@ -24,11 +25,13 @@ public class StreamingExecutionHandle
     }
 
     /// <summary>
-    /// .
+    /// Asynchronously sends the specified response to the external system and signals completion of the current
+    /// response wait operation.
     /// </summary>
-    /// <param name="response"></param>
-    /// <returns></returns>
-    /// <exception cref="NotImplementedException"></exception>
+    /// <remarks>The response will be queued for processing for the next superstep.</remarks>
+    /// <param name="response">The <see cref="ExternalResponse"/> to send. Must not be <c>null</c>.</param>
+    /// <returns>A <see cref="ValueTask"/> that represents the asynchronous send operation. The task completes when the response
+    /// has been enqueued for processing, but will not wait for processing to complete.</returns>
     public ValueTask SendResponseAsync(ExternalResponse response)
     {
         this._waitForResponseSource?.TrySetResult(new());
@@ -37,11 +40,15 @@ public class StreamingExecutionHandle
     }
 
     /// <summary>
-    /// .
+    /// Asynchronously streams workflow events as they occur during workflow execution.
     /// </summary>
-    /// <param name="cancellation"></param>
-    /// <returns></returns>
-    /// <exception cref="NotImplementedException"></exception>
+    /// <remarks>This method yields <see cref="WorkflowEvent"/> instances in real time as the workflow
+    /// progresses. The stream completes when a <see cref="WorkflowCompletedEvent"/> is encountered. Events are
+    /// delivered in the order they are raised.</remarks>
+    /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation. If cancellation is
+    /// requested, the stream will end and no further events will be yielded.</param>
+    /// <returns>An asynchronous stream of <see cref="WorkflowEvent"/> objects representing significant workflow state changes.
+    /// The stream ends when the workflow completes or when cancellation is requested.</returns>
     public async IAsyncEnumerable<WorkflowEvent> WatchStreamAsync([EnumeratorCancellation] CancellationToken cancellation = default)
     {
         List<WorkflowEvent> eventSink = new();
@@ -103,33 +110,25 @@ public class StreamingExecutionHandle
 }
 
 /// <summary>
-/// .
+/// Represents a handle for managing and retrieving the result of a streaming execution operation.
 /// </summary>
 /// <typeparam name="TResult"></typeparam>
 public class StreamingExecutionHandle<TResult> : StreamingExecutionHandle
 {
-    private readonly IRunnerWithResult<TResult> _resultSource;
+    private readonly IRunnerWithOutput<TResult> _resultSource;
 
-    internal StreamingExecutionHandle(IRunnerWithResult<TResult> runner)
+    internal StreamingExecutionHandle(IRunnerWithOutput<TResult> runner)
         : base(Throw.IfNull(runner.StepRunner))
     {
         this._resultSource = runner;
     }
 
-    /// <summary>
-    /// .
-    /// </summary>
-    /// <param name="cancellation"></param>
-    /// <returns></returns>
-    /// <exception cref="NotImplementedException"></exception>
-    public ValueTask<TResult> GetResultAsync(CancellationToken cancellation = default)
-    {
-        return this._resultSource.GetResultAsync(cancellation);
-    }
+    /// <inheritdoc cref="IRunnerWithOutput{TResult}.RunningOutput"/>
+    public TResult? RunningOutput => this._resultSource.RunningOutput;
 }
 
 /// <summary>
-/// .
+/// Provides extension methods for processing and executing workflows using streaming execution handles.
 /// </summary>
 public static class ExecutionHandleExtensions
 {
@@ -141,10 +140,9 @@ public static class ExecutionHandleExtensions
     /// non-<see langword="null"/> response, the response  is sent back to the workflow using the handle.</remarks>
     /// <param name="handle">The <see cref="StreamingExecutionHandle"/> representing the workflow execution stream to monitor.</param>
     /// <param name="eventCallback">An optional callback function invoked for each <see cref="WorkflowEvent"/> received from the stream.
-    /// The /// callback can return a response object to be sent back to the workflow, or <see langword="null"/> if no response
+    /// The callback can return a response object to be sent back to the workflow, or <see langword="null"/> if no response
     /// is required.</param>
-    /// <param name="cancellation">A <see cref="CancellationToken"/> to observe while waiting for events. Defaults to <see
-    /// cref="CancellationToken.None"/>.</param>
+    /// <param name="cancellation">A <see cref="CancellationToken"/> to observe while waiting for events. </param>
     /// <returns>A <see cref="ValueTask"/> that represents the asynchronous operation. The task completes when the workflow
     /// execution stream is fully processed.</returns>
     public static async ValueTask RunToCompletionAsync(this StreamingExecutionHandle handle, Func<WorkflowEvent, ExternalResponse?>? eventCallback = null, CancellationToken cancellation = default)
@@ -169,20 +167,18 @@ public static class ExecutionHandleExtensions
     /// <paramref name="eventCallback"/> is provided, it will be invoked for each event emitted  during the workflow's
     /// execution, allowing for custom event handling.</remarks>
     /// <typeparam name="TResult">The type of the result produced by the workflow.</typeparam>
-    /// <param name="handle">The <see cref="StreamingExecutionHandle{TResult}"/> representing the workflow to execute.  This parameter cannot
-    /// be <see langword="null"/>.</param>
-    /// <param name="eventCallback">An optional callback function that is invoked for each <see cref="WorkflowEvent"/> emitted during  the workflow
-    /// execution. The callback can process the event and return an object, or <see langword="null"/>  if no processing
-    /// is required.</param>
-    /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the workflow execution.  The default value is <see
-    /// cref="CancellationToken.None"/>.</param>
-    /// <returns>A <see cref="ValueTask{TResult}"/> that represents the asynchronous operation. The task's result  is the final
+    /// <param name="handle">The <see cref="StreamingExecutionHandle{TResult}"/> representing the workflow to execute.</param>
+    /// <param name="eventCallback">An optional callback function that is invoked for each <see cref="WorkflowEvent"/>
+    /// emitted during execution. The callback can process the event and return an object, or <see langword="null"/>
+    /// if no response is required.</param>
+    /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the workflow execution.</param>
+    /// <returns>A <see cref="ValueTask{TResult}"/> that represents the asynchronous operation. The task's result is the final
     /// result of the workflow execution.</returns>
     public static async ValueTask<TResult> RunToCompletionAsync<TResult>(this StreamingExecutionHandle<TResult> handle, Func<WorkflowEvent, object?>? eventCallback = null, CancellationToken cancellation = default)
     {
         Throw.IfNull(handle);
 
         await handle.RunToCompletionAsync(eventCallback, cancellation).ConfigureAwait(false);
-        return await handle.GetResultAsync(cancellation).ConfigureAwait(false);
+        return handle.RunningOutput!;
     }
 }
