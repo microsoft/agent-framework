@@ -13,7 +13,7 @@ internal class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData edgeData
 
     public FanInEdgeState CreateState() => new(this.EdgeData);
 
-    public async ValueTask<CallResult?> ChaseAsync(string sourceId, object message, FanInEdgeState state)
+    public async ValueTask<object?> ChaseAsync(string sourceId, object message, FanInEdgeState state)
     {
         IEnumerable<object>? releasedMessages = state.ProcessMessage(sourceId, message);
         if (releasedMessages is null)
@@ -22,14 +22,13 @@ internal class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData edgeData
             return null;
         }
 
-        Executor sink = await this.RunContext.EnsureExecutorAsync(this.EdgeData.SinkId)
-                                             .ConfigureAwait(false);
+        Executor target = await this.RunContext.EnsureExecutorAsync(this.EdgeData.SinkId)
+                                               .ConfigureAwait(false);
 
-        MessageRouter router = sink.Router;
-        if (router.CanHandle(message))
+        if (target.CanHandle(message.GetType()))
         {
-            return await router.RouteMessageAsync(message, this.BoundContext)
-                                             .ConfigureAwait(false);
+            return await target.ExecuteAsync(message, this.BoundContext)
+                               .ConfigureAwait(false);
         }
         return null;
     }

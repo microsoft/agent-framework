@@ -59,18 +59,14 @@ public class LocalRunner<TInput> : ISuperStepRunner where TInput : notnull
         return message is ExternalResponse;
     }
 
-    private ValueTask<IEnumerable<CallResult?>> RouteExternalMessageAsync(object message)
+    private ValueTask<IEnumerable<object?>> RouteExternalMessageAsync(object message)
     {
-#pragma warning disable CS0219 // Variable is assigned but its value is never used
-        bool isHil = false;
-#pragma warning restore CS0219 // Variable is assigned but its value is never used
-
         return message is ExternalResponse response
             ? this.CompleteExternalResponseAsync(response)
             : this.EdgeMap.InvokeInputAsync(message);
     }
 
-    private ValueTask<IEnumerable<CallResult?>> CompleteExternalResponseAsync(ExternalResponse response)
+    private ValueTask<IEnumerable<object?>> CompleteExternalResponseAsync(ExternalResponse response)
     {
         if (!this.RunContext.CompleteRequest(response.RequestId))
         {
@@ -119,7 +115,7 @@ public class LocalRunner<TInput> : ISuperStepRunner where TInput : notnull
     private async ValueTask RunSuperstepAsync(StepContext currentStep)
     {
         // Deliver the messages and queue the next step
-        List<Task<IEnumerable<CallResult?>>> edgeTasks = new();
+        List<Task<IEnumerable<object?>>> edgeTasks = new();
         foreach (ExecutorIdentity sender in currentStep.QueuedMessages.Keys)
         {
             IEnumerable<object> senderMessages = currentStep.QueuedMessages[sender];
@@ -127,9 +123,8 @@ public class LocalRunner<TInput> : ISuperStepRunner where TInput : notnull
             {
                 edgeTasks.AddRange(senderMessages.Select(message => this.RouteExternalMessageAsync(message).AsTask()));
             }
-            else
+            else if (this.Workflow.Edges.TryGetValue(sender.Id!, out HashSet<Edge>? outgoingEdges))
             {
-                HashSet<Edge> outgoingEdges = this.Workflow.Edges[sender.Id!]; // Id is not null when Identity is not .None
                 foreach (Edge outgoingEdge in outgoingEdges)
                 {
                     edgeTasks.AddRange(senderMessages.Select(message => this.EdgeMap.InvokeEdgeAsync(outgoingEdge, sender.Id, message).AsTask()));
@@ -140,7 +135,7 @@ public class LocalRunner<TInput> : ISuperStepRunner where TInput : notnull
         // TODO: Should we let the user specify that they want strictly turn-based execution of the edges, vs. concurrent?
         // (Simply substitute a strategy that replaces Task.WhenAll with a loop with an await in the middle. Difficulty is
         // that we would need to avoid firing the tasks when we call InvokeEdgeAsync, or RouteExternalMessageAsync.
-        IEnumerable<CallResult?> results = (await Task.WhenAll(edgeTasks).ConfigureAwait(false)).SelectMany(r => r);
+        IEnumerable<object?> results = (await Task.WhenAll(edgeTasks).ConfigureAwait(false)).SelectMany(r => r);
 
         // TODO: Commit the state updates (so they are visible to the next step)
 
@@ -149,6 +144,8 @@ public class LocalRunner<TInput> : ISuperStepRunner where TInput : notnull
         {
             this.RaiseWorkflowEvent(@event);
         }
+
+        this.RunContext.QueuedEvents.Clear();
     }
 }
 

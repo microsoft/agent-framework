@@ -80,7 +80,12 @@ public abstract class Executor : IIdentified, IAsyncDisposable
         CallResult? result = await this.Router.RouteMessageAsync(message, context, requireRoute: true)
                                                      .ConfigureAwait(false);
 
-        await context.AddEventAsync(new ExecutorCompleteEvent(this.Id)).ConfigureAwait(false);
+        ExecutorCompleteEvent completeEvent = new(this.Id)
+        {
+            Data = result == null ? null : result.IsSuccess ? result.Result : result.Exception
+        };
+
+        await context.AddEventAsync(completeEvent).ConfigureAwait(false);
 
         if (result == null)
         {
