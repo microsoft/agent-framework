@@ -1,11 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using Microsoft.Shared.Diagnostics;
 
-using PredicateT = System.Func<object?, bool>;
 using PartitionerT = System.Func<object?, int, System.Collections.Generic.IEnumerable<int>>;
-using System;
+using PredicateT = System.Func<object?, bool>;
 
 namespace Microsoft.Agents.Workflows.Core;
 
