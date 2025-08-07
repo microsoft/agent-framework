@@ -41,7 +41,7 @@ internal sealed class CallResult
     }
 
     /// <summary>
-    /// Create a <see cref="CallResult"/> indicating a successful that returned a result (non-void).
+    /// Create a <see cref="CallResult"/> indicating a successful call that returned a result (non-void).
     /// </summary>
     /// <param name="result">The result to return.</param>
     /// <returns>A <see cref="CallResult"/> indicating the result of the call.</returns>

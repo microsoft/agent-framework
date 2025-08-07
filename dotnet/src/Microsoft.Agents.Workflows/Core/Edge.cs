@@ -22,9 +22,9 @@ public record DirectEdgeData(
     PredicateT? Condition = null)
 {
     /// <summary>
-    /// Converts a <see cref="DirectEdgeData"/> instance to an <see cref="Edge"/> using an implicit conversion.
+    /// Converts a <see cref="DirectEdgeData"/> instance to an <see cref="Edge"/>.
     /// </summary>
-    /// <param name="data">The <see cref="DirectEdgeData"/> to convert to an <see cref="Edge"/>. Cannot be <c>null</c>.</param>
+    /// <param name="data">The <see cref="DirectEdgeData"/> to convert t.</param>
     public static implicit operator Edge(DirectEdgeData data)
     {
         return new Edge(Throw.IfNull(data));
@@ -44,9 +44,9 @@ public record FanOutEdgeData(
     PartitionerT? Partitioner = null)
 {
     /// <summary>
-    /// .
+    /// Converts a <see cref="FanOutEdgeData"/> instance to an <see cref="Edge"/>.
     /// </summary>
-    /// <param name="data"></param>
+    /// <param name="data">The <see cref="FanOutEdgeData"/> to convert.</param>
     public static implicit operator Edge(FanOutEdgeData data)
     {
         return new Edge(data);
@@ -85,9 +85,9 @@ public record FanInEdgeData(
     internal Guid UniqueKey { get; } = Guid.NewGuid();
 
     /// <summary>
-    /// .
+    /// Converts a <see cref="FanInEdgeData"/> instance to an <see cref="Edge"/>.
     /// </summary>
-    /// <param name="data"></param>
+    /// <param name="data">The <see cref="FanInEdgeData"/> to convert.</param>
     public static implicit operator Edge(FanInEdgeData data)
     {
         return new Edge(data);
