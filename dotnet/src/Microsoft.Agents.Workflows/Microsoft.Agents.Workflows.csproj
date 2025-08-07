@@ -26,7 +26,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="Microsoft.Agents.Workflow.UnitTests" />
+    <InternalsVisibleTo Include="Microsoft.Agents.Workflows.UnitTests" />
   </ItemGroup>
 
 </Project>
