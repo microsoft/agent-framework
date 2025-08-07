@@ -44,20 +44,32 @@ class UpperCaseExecutor(Executor):
         await ctx.send_message(result)
 
 
+class LowerCaseExecutor(Executor):
+    """An executor that converts text to lowercase."""
+
+    @handler(output_types=[str])
+    async def to_lower_case(self, text: str, ctx: WorkflowContext) -> None:
+        """Execute the task by converting the input string to lowercase."""
+        result = text.lower()
+        print(f"LowerCaseExecutor: '{text}' -> '{result}'")
+        # Final executor - only emit completion event, don't send message
+        await ctx.add_event(WorkflowCompletedEvent(result))
+
+
 class ReverseTextExecutor(Executor):
     """An executor that reverses text."""
 
-    @handler
+    @handler(output_types=[str])
     async def reverse_text(self, text: str, ctx: WorkflowContext) -> None:
         """Execute the task by reversing the input string."""
         result = text[::-1]
         print(f"ReverseTextExecutor: '{text}' -> '{result}'")
+        # Send message to next executor in the chain
         await ctx.send_message(result)
-        await ctx.add_event(WorkflowCompletedEvent(result))
 
 
-def find_hello_world_checkpoint(checkpoint_storage: FileCheckpointStorage, workflow_id: str) -> str | None:
-    """Find the checkpoint containing 'HELLO WORLD' using the checkpoint storage API."""
+def find_expected_checkpoint(checkpoint_storage: FileCheckpointStorage, workflow_id: str) -> str | None:
+    """Find the checkpoint containing 'DLROW OLLEH' using the checkpoint storage API."""
     # Get all checkpoints for this workflow
     checkpoints = checkpoint_storage.list_checkpoints(workflow_id=workflow_id)
 
@@ -65,7 +77,7 @@ def find_hello_world_checkpoint(checkpoint_storage: FileCheckpointStorage, workf
         messages = checkpoint.messages
         for executor_messages in messages.values():
             for message in executor_messages:
-                if message.get("data") == "HELLO WORLD":
+                if message.get("data") == "DLROW OLLEH":
                     return checkpoint.checkpoint_id
     return None
 
@@ -79,6 +91,7 @@ async def main():
     # Create executors and workflow
     upper_case_executor = UpperCaseExecutor(id="upper_case_executor")
     reverse_text_executor = ReverseTextExecutor(id="reverse_text_executor")
+    lower_case_executor = LowerCaseExecutor(id="lower_case_executor")
 
     # Create a checkpoint storage
     checkpoint_storage = FileCheckpointStorage(storage_path=TEMP_DIR)
@@ -86,6 +99,7 @@ async def main():
     workflow = (
         WorkflowBuilder()
         .add_edge(upper_case_executor, reverse_text_executor)
+        .add_edge(reverse_text_executor, lower_case_executor)
         .set_start_executor(upper_case_executor)
         .with_checkpointing(checkpoint_storage=checkpoint_storage)
         .build()
@@ -104,10 +118,10 @@ async def main():
         return
 
     workflow_id = all_checkpoints[0].workflow_id  # All checkpoints from this run will have the same workflow_id
-    checkpoint_id = find_hello_world_checkpoint(checkpoint_storage, workflow_id)
+    checkpoint_id = find_expected_checkpoint(checkpoint_storage, workflow_id)
 
     if not checkpoint_id:
-        print("Could not find checkpoint with 'HELLO WORLD'!")
+        print("Could not find checkpoint with 'DLROW OLLEH'!")
         return
 
     print(f"\nFound checkpoint: {checkpoint_id}")
