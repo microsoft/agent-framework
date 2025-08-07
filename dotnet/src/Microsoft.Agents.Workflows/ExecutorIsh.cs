@@ -9,7 +9,7 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.Workflows;
 
 /// <summary>
-/// A tagged union representing an object that can function like an <see cref="Executor"/> in a <see cref="Workflow"/>,
+/// A tagged union representing an object that can function like an <see cref="ExecutorBase"/> in a <see cref="Workflow"/>,
 /// or a reference to one by ID.
 /// </summary>
 public sealed class ExecutorIsh :
@@ -47,14 +47,14 @@ public sealed class ExecutorIsh :
     public Type ExecutorType { get; init; }
 
     private readonly string? _idValue;
-    private readonly Executor? _executorValue;
+    private readonly ExecutorBase? _executorValue;
     internal readonly InputPort? _inputPortValue;
     private readonly AIAgent? _aiAgentValue;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ExecutorIsh"/> class as an unbound reference by ID.
     /// </summary>
-    /// <param name="id">A unique identifier for an <see cref="Executor"/> in the <see cref="Workflow"/></param>
+    /// <param name="id">A unique identifier for an <see cref="ExecutorBase"/> in the <see cref="Workflow"/></param>
     public ExecutorIsh(string id)
     {
         this.ExecutorType = Type.Unbound;
@@ -65,7 +65,7 @@ public sealed class ExecutorIsh :
     /// Initializes a new instance of the ExecutorIsh class using the specified executor.
     /// </summary>
     /// <param name="executor">The executor instance to be wrapped.</param>
-    public ExecutorIsh(Executor executor)
+    public ExecutorIsh(ExecutorBase executor)
     {
         this.ExecutorType = Type.Executor;
         this._executorValue = Throw.IfNull(executor);
@@ -104,10 +104,10 @@ public sealed class ExecutorIsh :
     };
 
     /// <summary>
-    /// Gets an <see cref="ExecutorProvider{T}"/> that can be used to obtain an <see cref="Executor"/> instance
+    /// Gets an <see cref="ExecutorProvider{T}"/> that can be used to obtain an <see cref="ExecutorBase"/> instance
     /// corresponding to this <see cref="ExecutorIsh"/>.
     /// </summary>
-    public ExecutorProvider<Executor> ExecutorProvider => this.ExecutorType switch
+    public ExecutorProvider<ExecutorBase> ExecutorProvider => this.ExecutorType switch
     {
         Type.Unbound => throw new InvalidOperationException($"Executor with ID '{this.Id}' is unbound."),
         Type.Executor => () => this._executorValue!,
@@ -117,10 +117,10 @@ public sealed class ExecutorIsh :
     };
 
     /// <summary>
-    /// Defines an implicit conversion from an <see cref="Executor"/> instance to an <see cref="ExecutorIsh"/> object.
+    /// Defines an implicit conversion from an <see cref="ExecutorBase"/> instance to an <see cref="ExecutorIsh"/> object.
     /// </summary>
-    /// <param name="executor">The <see cref="Executor"/> instance to convert to <see cref="ExecutorIsh"/>.</param>
-    public static implicit operator ExecutorIsh(Executor executor) => new(executor);
+    /// <param name="executor">The <see cref="ExecutorBase"/> instance to convert to <see cref="ExecutorIsh"/>.</param>
+    public static implicit operator ExecutorIsh(ExecutorBase executor) => new(executor);
 
     /// <summary>
     /// Defines an implicit conversion from an <see cref="InputPort"/> to an <see cref="ExecutorIsh"/> instance.

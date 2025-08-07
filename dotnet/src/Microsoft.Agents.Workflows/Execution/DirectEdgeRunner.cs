@@ -11,7 +11,7 @@ internal class DirectEdgeRunner(IRunnerContext runContext, DirectEdgeData edgeDa
 {
     public IWorkflowContext WorkflowContext { get; } = runContext.Bind(edgeData.SinkId);
 
-    private async ValueTask<Executor> FindRouterAsync()
+    private async ValueTask<ExecutorBase> FindRouterAsync()
     {
         return await this.RunContext.EnsureExecutorAsync(this.EdgeData.SinkId)
                                     .ConfigureAwait(false);
@@ -24,7 +24,7 @@ internal class DirectEdgeRunner(IRunnerContext runContext, DirectEdgeData edgeDa
             return [];
         }
 
-        Executor target = await this.FindRouterAsync().ConfigureAwait(false);
+        ExecutorBase target = await this.FindRouterAsync().ConfigureAwait(false);
         if (target.CanHandle(message.GetType()))
         {
             return [await target.ExecuteAsync(message, this.WorkflowContext).ConfigureAwait(false)];

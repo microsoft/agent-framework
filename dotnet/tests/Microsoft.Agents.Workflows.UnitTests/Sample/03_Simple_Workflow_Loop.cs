@@ -50,7 +50,7 @@ internal enum NumberSignal
     Matched
 }
 
-internal sealed class GuessNumberExecutor : Executor, IMessageHandler<NumberSignal, int>
+internal sealed class GuessNumberExecutor : Executor<GuessNumberExecutor>, IMessageHandler<NumberSignal, int>
 {
     public int LowerBound { get; private set; }
     public int UpperBound { get; private set; }
@@ -87,7 +87,7 @@ internal sealed class GuessNumberExecutor : Executor, IMessageHandler<NumberSign
     }
 }
 
-internal sealed class JudgeExecutor : Executor, IMessageHandler<int, NumberSignal>
+internal sealed class JudgeExecutor : Executor<JudgeExecutor>, IMessageHandler<int, NumberSignal>
 {
     private readonly int _targetNumber;
 

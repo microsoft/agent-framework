@@ -7,18 +7,20 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Specialized;
 
-internal class OutputSink<TResult> : Executor
+internal interface IOutputSink<TResult>
 {
-    public TResult? Result { get; protected set; } = default;
-
-    internal OutputSink(string? id = null) : base(id)
-    { }
+    TResult? Result { get; }
 }
 
-internal class OutputCollectorExecutor<TInput, TResult> : OutputSink<TResult>, IMessageHandler<TInput>
+internal class OutputCollectorExecutor<TInput, TResult> :
+    Executor<OutputCollectorExecutor<TInput, TResult>>,
+    IMessageHandler<TInput>,
+    IOutputSink<TResult>
 {
     private readonly StreamingAggregator<TInput, TResult> _aggregator;
     private readonly Func<TInput, TResult?, bool>? _completionCondition;
+
+    public TResult? Result { get; private set; }
 
     public OutputCollectorExecutor(StreamingAggregator<TInput, TResult> aggregator, Func<TInput, TResult?, bool>? completionCondition = null, string? id = null) : base(id)
     {

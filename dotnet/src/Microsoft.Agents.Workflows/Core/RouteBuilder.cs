@@ -15,10 +15,10 @@ using MessageHandlerF =
 namespace Microsoft.Agents.Workflows.Core;
 
 /// <summary>
-/// Provides a builder for configuring message type handlers for an <see cref="Executor"/>.
+/// Provides a builder for configuring message type handlers for an <see cref="ExecutorBase"/>.
 /// </summary>
 /// <remarks>
-/// Override the <see cref="Executor.ConfigureRoutes"/> method to customize the routing of messages to handlers. By
+/// Override the <see cref="ExecutorBase.ConfigureRoutes"/> method to customize the routing of messages to handlers. By
 /// default, uses reflection to find implementations of <see cref="IMessageHandler{TMessage}"/> and
 /// <see cref="IMessageHandler{TMessage, TResult}"/>.
 /// </remarks>
