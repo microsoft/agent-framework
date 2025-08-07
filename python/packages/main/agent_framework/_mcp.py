@@ -124,9 +124,9 @@ def _ai_content_to_mcp_types(
                         # uri's are not limited in MCP but they have to be set.
                         # the uri of data content, contains the data uri, which
                         # is not the uri meant here, UriContent would match this.
-                        uri=content.additional_properties.get("uri", "sk://binary")
+                        uri=content.additional_properties.get("uri", "af://binary")
                         if content.additional_properties
-                        else "sk://binary",  # type: ignore[reportArgumentType]
+                        else "af://binary",  # type: ignore[reportArgumentType]
                     ),
                 )
             return None
@@ -386,7 +386,10 @@ class LocalMcpServer:
         try:
             prompt_list = await self.session.list_prompts()
         except Exception as exc:
-            logger.warning("Prompt could not be loaded", exc_info=exc)
+            logger.info(
+                "Prompt could not be loaded, you can exclude trying to load, by setting: load_prompts=False",
+                exc_info=exc,
+            )
             prompt_list = None
         for prompt in prompt_list.prompts if prompt_list else []:
             local_name = _normalize_mcp_name(prompt.name)
@@ -406,7 +409,10 @@ class LocalMcpServer:
         try:
             tool_list = await self.session.list_tools()
         except Exception as exc:
-            logger.warning("Tools could not be loaded", exc_info=exc)
+            logger.info(
+                "Tools could not be loaded, you can exclude trying to load, by setting: load_tools=False",
+                exc_info=exc,
+            )
             tool_list = None
         for tool in tool_list.tools if tool_list else []:
             local_name = _normalize_mcp_name(tool.name)

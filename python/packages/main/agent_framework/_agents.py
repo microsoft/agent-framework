@@ -640,7 +640,7 @@ class ChatClientAgent(AgentBase):
             if not isinstance(tools, list):
                 tools = [tools]  # type: ignore
             for mcp_server in self._local_mcp_tools:
-                tools.extend(mcp_server.functions.values())  # type: ignore
+                tools.extend(mcp_server.functions)  # type: ignore
 
         async for update in self.chat_client.get_streaming_response(
             messages=thread_messages,

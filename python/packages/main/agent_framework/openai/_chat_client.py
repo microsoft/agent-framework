@@ -1,12 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
-from collections.abc import AsyncIterable, Mapping, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Mapping, MutableMapping, MutableSequence, Sequence
 from datetime import datetime
 from itertools import chain
 from typing import Any, ClassVar, cast
 
-from openai import AsyncOpenAI, AsyncStream
+from openai import AsyncOpenAI, BadRequestError
+from openai.lib._parsing._completions import type_to_response_format_param
 from openai.types import CompletionUsage
 from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, ChoiceDeltaToolCall
@@ -14,7 +15,10 @@ from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall
 from pydantic import BaseModel, SecretStr, ValidationError
 
+from agent_framework import AIFunction, AITool, UsageContent
+
 from .._clients import ChatClientBase, use_tool_calling
+from .._logging import get_logger
 from .._types import (
     AIContents,
     ChatFinishReason,
@@ -28,19 +32,18 @@ from .._types import (
     TextContent,
     UsageDetails,
 )
-from ..exceptions import ServiceInitializationError, ServiceInvalidResponseError
+from ..exceptions import (
+    ServiceInitializationError,
+    ServiceInvalidRequestError,
+    ServiceResponseException,
+)
 from ..telemetry import use_telemetry
-from ._shared import OpenAIConfigBase, OpenAIHandler, OpenAIModelTypes, OpenAISettings
+from ._exceptions import OpenAIContentFilterException
+from ._shared import OpenAIConfigBase, OpenAIHandler, OpenAIModelTypes, OpenAISettings, prepare_function_call_results
 
 __all__ = ["OpenAIChatClient"]
 
-
-def _prepare_function_call_results(item: AIContents | Any) -> str:
-    """Prepare the values of the function call results."""
-    if isinstance(item, BaseModel):
-        return item.model_dump_json(exclude_none=True, exclude={"raw_representation", "additional_properties"})
-    # fallback
-    return json.dumps(item)
+logger = get_logger("agent_framework.openai")
 
 
 # region Base Client
@@ -58,16 +61,25 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> ChatResponse:
-        chat_options.additional_properties["stream"] = False
-        if not chat_options.ai_model_id:
-            chat_options.ai_model_id = self.ai_model_id
-
-        response = await self._send_request(chat_options, messages=self._prepare_chat_history_for_request(messages))
-        assert isinstance(response, ChatCompletion)  # nosec  # noqa: S101
-        response_metadata = self._get_metadata_from_chat_response(response)
-        return next(
-            self._create_chat_message_content(response, choice, response_metadata) for choice in response.choices
-        )
+        options_dict = self._prepare_options(messages, chat_options)
+        try:
+            return self._create_chat_response(await self.client.chat.completions.create(stream=False, **options_dict))
+        except BadRequestError as ex:
+            if ex.code == "content_filter":
+                raise OpenAIContentFilterException(
+                    f"{type(self)} service encountered a content error",
+                    ex,
+                ) from ex
+            raise ServiceResponseException(
+                f"{type(self)} service failed to complete the prompt",
+                ex,
+            ) from ex
+        except Exception as ex:
+            raise ServiceResponseException(
+                f"{type(self)} service failed to complete the prompt",
+                ex,
+            ) from ex
+        return options_dict
 
     async def _inner_get_streaming_response(
         self,
@@ -76,85 +88,126 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
-        chat_options.additional_properties["stream"] = True
-        chat_options.additional_properties["stream_options"] = {"include_usage": True}
-        chat_options.ai_model_id = chat_options.ai_model_id or self.ai_model_id
-
-        response = await self._send_request(chat_options, messages=self._prepare_chat_history_for_request(messages))
-        if not isinstance(response, AsyncStream):
-            raise ServiceInvalidResponseError("Expected an AsyncStream[ChatCompletionChunk] response.")
-        async for chunk in response:
-            assert isinstance(chunk, ChatCompletionChunk)  # nosec  # noqa: S101
-            if len(chunk.choices) == 0 and chunk.usage is None:
-                continue
-
-            assert isinstance(chunk, ChatCompletionChunk)  # nosec  # noqa: S101
-            chunk_metadata = self._get_metadata_from_streaming_chat_response(chunk)
-            if chunk.usage is not None:
-                # Usage is contained in the last chunk where the choices are empty
-                # We are duplicating the usage metadata to all the choices in the response
-                yield ChatResponseUpdate(
-                    role=ChatRole.ASSISTANT,
-                    contents=[],
-                    ai_model_id=chat_options.ai_model_id,
-                    additional_properties=chunk_metadata,
-                )
-
-            else:
-                yield next(
-                    self._create_streaming_chat_message_content(chunk, choice, chunk_metadata)
-                    for choice in chunk.choices
-                )
+        options_dict = self._prepare_options(messages, chat_options)
+        options_dict["stream_options"] = {"include_usage": True}
+        try:
+            async for chunk in await self.client.chat.completions.create(stream=True, **options_dict):
+                if len(chunk.choices) == 0 and chunk.usage is None:
+                    continue
+                yield self._create_chat_response_update(chunk)
+        except BadRequestError as ex:
+            if ex.code == "content_filter":
+                raise OpenAIContentFilterException(
+                    f"{type(self)} service encountered a content error",
+                    ex,
+                ) from ex
+            raise ServiceResponseException(
+                f"{type(self)} service failed to complete the prompt",
+                ex,
+            ) from ex
+        except Exception as ex:
+            raise ServiceResponseException(
+                f"{type(self)} service failed to complete the prompt",
+                ex,
+            ) from ex
 
     # region content creation
 
-    def _create_chat_message_content(
-        self, response: ChatCompletion, choice: Choice, response_metadata: dict[str, Any]
-    ) -> "ChatResponse":
-        """Create a chat message content object from a choice."""
-        metadata = self._get_metadata_from_chat_choice(choice)
-        metadata.update(response_metadata)
-        items: MutableSequence[ChatMessage] = []
-        if parsed_tool_calls := [tool for tool in self._get_tool_calls_from_chat_choice(choice)]:
-            items.append(ChatMessage(role="assistant", contents=parsed_tool_calls))
-        if choice.message.content:
-            items.append(ChatMessage(role="assistant", text=choice.message.content))
-        elif hasattr(choice.message, "refusal") and choice.message.refusal:
-            items.append(ChatMessage(role="assistant", text=choice.message.refusal))
+    def _chat_to_tool_spec(self, tools: list[AITool | MutableMapping[str, Any]]) -> list[dict[str, Any]]:
+        chat_tools: list[dict[str, Any]] = []
+        for tool in tools:
+            if isinstance(tool, AITool):
+                match tool:
+                    case AIFunction():
+                        chat_tools.append(tool.to_json_schema_spec())
+                    case _:
+                        logger.debug("Unsupported tool passed (type: %s), ignoring", type(tool))
+            else:
+                chat_tools.append(tool if isinstance(tool, dict) else dict(tool))
+        return chat_tools
 
+    def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
+        options_dict = chat_options.to_provider_settings()
+        if messages and "messages" not in options_dict:
+            options_dict["messages"] = self._prepare_chat_history_for_request(messages)
+        if "messages" not in options_dict:
+            raise ServiceInvalidRequestError("Messages are required for chat completions")
+        if chat_options.tools is None:
+            options_dict.pop("parallel_tool_calls", None)
+        else:
+            options_dict["tools"] = self._chat_to_tool_spec(chat_options.tools)
+        if "model" not in options_dict:
+            options_dict["model"] = self.ai_model_id
+        if (
+            chat_options.response_format
+            and isinstance(chat_options.response_format, type)
+            and issubclass(chat_options.response_format, BaseModel)
+        ):
+            options_dict["response_format"] = type_to_response_format_param(chat_options.response_format)
+        return options_dict
+
+    def _create_chat_response(self, response: ChatCompletion) -> "ChatResponse":
+        """Create a chat message content object from a choice."""
+        response_metadata = self._get_metadata_from_chat_response(response)
+        messages: list[ChatMessage] = []
+        finish_reason: ChatFinishReason | None = None
+        for choice in response.choices:
+            contents: list[AIContents] = []
+            # in principle, there will be only one response.
+            response_metadata.update(self._get_metadata_from_chat_choice(choice))
+            if parsed_tool_calls := [tool for tool in self._get_tool_calls_from_chat_choice(choice)]:
+                contents.extend(parsed_tool_calls)
+            if choice.message.content:
+                contents.append(TextContent(text=choice.message.content, raw_representation=choice))
+            elif hasattr(choice.message, "refusal") and choice.message.refusal:
+                contents.append(TextContent(text=choice.message.refusal, raw_representation=choice))
+            if choice.finish_reason:
+                finish_reason = ChatFinishReason(value=choice.finish_reason)
+
+            messages.append(ChatMessage(role="assistant", contents=contents))
         return ChatResponse(
             response_id=response.id,
             created_at=datetime.fromtimestamp(response.created).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             usage_details=self._usage_details_from_openai(response.usage) if response.usage else None,
-            messages=items,
-            model_id=self.ai_model_id,
-            additional_properties=metadata,
-            finish_reason=(ChatFinishReason(value=choice.finish_reason) if choice.finish_reason else None),
+            messages=messages,
+            model_id=response.model,
+            additional_properties=response_metadata,
+            finish_reason=finish_reason,
         )
 
-    def _create_streaming_chat_message_content(
+    def _create_chat_response_update(
         self,
         chunk: ChatCompletionChunk,
-        choice: ChunkChoice,
-        chunk_metadata: dict[str, Any],
     ) -> ChatResponseUpdate:
         """Create a streaming chat message content object from a choice."""
-        metadata = self._get_metadata_from_chat_choice(choice)
-        metadata.update(chunk_metadata)
-
-        items: list[Any] = self._get_tool_calls_from_chat_choice(choice)
-        if choice.delta and choice.delta.content is not None:
-            items.append(TextContent(text=choice.delta.content))
+        chunk_metadata = self._get_metadata_from_streaming_chat_response(chunk)
+        if chunk.usage:
+            return ChatResponseUpdate(
+                role=ChatRole.ASSISTANT,
+                contents=[UsageContent(details=self._usage_details_from_openai(chunk.usage), raw_representation=chunk)],
+                ai_model_id=chunk.model,
+                additional_properties=chunk_metadata,
+            )
+        items: list[AIContents] = []
+        finish_reason: ChatFinishReason | None = None
+        for choice in chunk.choices:
+            chunk_metadata.update(self._get_metadata_from_chat_choice(choice))
+            items.extend(self._get_tool_calls_from_chat_choice(choice))
+            if choice.delta and choice.delta.content is not None:
+                items.append(TextContent(text=choice.delta.content, raw_representation=choice.delta))
+            if choice.finish_reason:
+                finish_reason = ChatFinishReason(value=choice.finish_reason)
         return ChatResponseUpdate(
             created_at=datetime.fromtimestamp(chunk.created).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             contents=items,
             role=ChatRole.ASSISTANT,
-            ai_model_id=self.ai_model_id,
-            additional_properties=metadata,
-            finish_reason=(ChatFinishReason(value=choice.finish_reason) if choice.finish_reason else None),
+            ai_model_id=chunk.model,
+            additional_properties=chunk_metadata,
+            finish_reason=finish_reason,
+            raw_representation=chunk,
         )
 
-    def _usage_details_from_openai(self, usage: CompletionUsage) -> UsageDetails | None:
+    def _usage_details_from_openai(self, usage: CompletionUsage) -> UsageDetails:
         return UsageDetails(
             prompt_tokens=usage.prompt_tokens,
             completion_tokens=usage.completion_tokens,
@@ -188,8 +241,9 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
                 if tool.function:  # type: ignore[reportAttributeAccessIssue, union-attr]
                     fcc = FunctionCallContent(
                         call_id=tool.id if tool.id else "",
-                        name=tool.function.name if tool.function.name else "",  # type: ignore
-                        arguments=tool.function.arguments if tool.function.arguments else "",  # type: ignore
+                        name=tool.function.name if tool.function.name else "",
+                        arguments=tool.function.arguments if tool.function.arguments else "",
+                        raw_representation=tool.function,
                     )
                     resp.append(fcc)
 
@@ -244,14 +298,8 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
                         args["tool_calls"] = [self._openai_content_parser(content)]  # type: ignore
                 case FunctionResultContent():
                     args["tool_call_id"] = content.call_id
-                    results: list[Any] = []
                     if content.result:
-                        if isinstance(content.result, list):
-                            for item in content.result:
-                                results.append(_prepare_function_call_results(item))
-                        else:
-                            results.append(_prepare_function_call_results(content))
-                    args["content"] = results if len(results) > 1 else results[0] if results else None
+                        args["content"] = prepare_function_call_results(content.result)
                 case _:
                     if "content" not in args:
                         args["content"] = []

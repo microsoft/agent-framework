@@ -119,10 +119,6 @@ class AIFunction(AIToolBase, Generic[ArgsT, ReturnT]):
         )
     )
 
-    def parameters(self) -> dict[str, Any]:
-        """Return the parameter json schemas of the input model."""
-        return self.input_model.model_json_schema()
-
     def __call__(self, *args: Any, **kwargs: Any) -> ReturnT | Awaitable[ReturnT]:
         """Call the wrapped function with the provided arguments."""
         return self.func(*args, **kwargs)
@@ -171,6 +167,21 @@ class AIFunction(AIToolBase, Generic[ArgsT, ReturnT]):
                 duration = perf_counter() - starting_time_stamp
                 self._invocation_duration_histogram.record(duration, attributes=attributes)
                 logger.info("Function completed. Duration: %fs", duration)
+
+    def parameters(self) -> dict[str, Any]:
+        """Create the json schema of the parameters."""
+        return self.input_model.model_json_schema()
+
+    def to_json_schema_spec(self) -> dict[str, Any]:
+        """Convert a AIFunction to the JSON Schema function specification format."""
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.parameters(),
+            },
+        }
 
 
 def _parse_annotation(annotation: Any) -> Any:
