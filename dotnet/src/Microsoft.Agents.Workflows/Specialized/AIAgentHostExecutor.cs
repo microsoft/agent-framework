@@ -26,6 +26,7 @@ internal class AIAgentHostExecutor : Executor, IMessageHandler<IList<ChatMessage
         // incremental updates from the chat model. 
         AgentRunResponse runResponse = await this.Agent.RunAsync(messageList).ConfigureAwait(false);
 
+        await context.AddEventAsync(new AgentRunEvent(this.Id, runResponse)).ConfigureAwait(false);
         await context.SendMessageAsync(runResponse).ConfigureAwait(false);
     }
 }

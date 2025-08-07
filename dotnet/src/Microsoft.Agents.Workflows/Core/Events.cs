@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Core;
@@ -77,44 +78,8 @@ public record ExecutorCompleteEvent : ExecutorEvent
     public ExecutorCompleteEvent(string executorId, object? result = null) : base(executorId, result) { }
 }
 
-// TODO: This is a placeholder for streaming chat message content.
 /// <summary>
-/// .
-/// </summary>
-public class StreamingChatMessageContent
-{ }
-
-/// <summary>
-/// .
-/// </summary>
-public record AgentRunStreamingEvent : ExecutorEvent
-{
-    /// <summary>
-    /// Initializes a new instance of the <see cref="AgentRunStreamingEvent"/> class.
-    /// </summary>
-    /// <param name="executorId">The identifier of the executor that generated this event.</param>
-    /// <param name="content"></param>
-    public AgentRunStreamingEvent(string executorId, StreamingChatMessageContent? content = null) : base(executorId, data: content)
-    {
-        this.Content = content;
-    }
-
-    /// <summary>
-    /// Gets the content of the streaming chat message.
-    /// </summary>
-    public StreamingChatMessageContent? Content { get; }
-}
-
-// TODO: This is a placeholder for non-streaming chat message content.
-/// <summary>
-/// .
-/// </summary>
-public class ChatMessageContent
-{
-}
-
-/// <summary>
-/// .
+/// Event triggered when an agent run is completed.
 /// </summary>
 public record AgentRunEvent : ExecutorEvent
 {
@@ -122,14 +87,14 @@ public record AgentRunEvent : ExecutorEvent
     /// Initializes a new instance of the <see cref="AgentRunEvent"/> class.
     /// </summary>
     /// <param name="executorId">The identifier of the executor that generated this event.</param>
-    /// <param name="content"></param>
-    public AgentRunEvent(string executorId, ChatMessageContent? content = null) : base(executorId, data: content)
+    /// <param name="response"></param>
+    public AgentRunEvent(string executorId, AgentRunResponse? response = null) : base(executorId, data: response)
     {
-        this.Content = content;
+        this.Response = response;
     }
 
     /// <summary>
-    /// Gets the content of the chat message.
+    /// Gets the content of the agent response.
     /// </summary>
-    public ChatMessageContent? Content { get; }
+    public AgentRunResponse? Response { get; }
 }
