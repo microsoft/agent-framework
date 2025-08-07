@@ -443,11 +443,11 @@ class WorkflowBuilder:
     This class provides methods to add edges and set the starting executor for the workflow.
     """
 
-    def __init__(self, checkpoint_storage: CheckpointStorage | None = None):
+    def __init__(self):
         """Initialize the WorkflowBuilder with an empty list of edges and no starting executor."""
         self._edges: list[Edge] = []
         self._start_executor: Executor | str | None = None
-        self._checkpoint_storage: CheckpointStorage | None = checkpoint_storage
+        self._checkpoint_storage: CheckpointStorage | None = None
         self._max_iterations: int = DEFAULT_MAX_ITERATIONS
 
     def add_edge(
