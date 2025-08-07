@@ -9,18 +9,24 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.Workflows;
 
 /// <summary>
-/// .
+/// Provides extension methods for configuring and building workflows using the WorkflowBuilder type.
 /// </summary>
+/// <remarks>These extension methods simplify the process of connecting executors, adding external calls, and
+/// constructing workflows with output aggregation. They are intended to streamline workflow graph construction and
+/// promote common patterns for chaining and aggregating workflow steps.</remarks>
 public static class WorkflowBuilderExtensions
 {
     /// <summary>
-    /// .
+    /// Adds a sequential chain of executors to the workflow, connecting each executor in order so that each is
+    /// executed after the previous one.
     /// </summary>
-    /// <param name="builder"></param>
-    /// <param name="source"></param>
-    /// <param name="executors"></param>
-    /// <returns></returns>
-    /// <exception cref="ArgumentException"></exception>
+    /// <remarks>Each executor in the chain is connected so that execution flows from the source to each subsequent
+    /// executor in the order provided.</remarks>
+    /// <param name="builder">The workflow builder to which the executor chain will be added. </param>
+    /// <param name="source">The initial executor in the chain. Cannot be null.</param>
+    /// <param name="executors">An ordered array of executors to be added to the chain after the source.</param>
+    /// <returns>The original workflow builder instance with the specified executor chain added.</returns>
+    /// <exception cref="ArgumentException">Thrown if there is a cycle in the chain.</exception>
     public static WorkflowBuilder AddChain(this WorkflowBuilder builder, ExecutorIsh source, params ExecutorIsh[] executors)
     {
         Throw.IfNull(builder);
@@ -47,14 +53,18 @@ public static class WorkflowBuilderExtensions
     }
 
     /// <summary>
-    /// .
+    /// Adds an external call to the workflow by connecting the specified source to a new input port with the given
+    /// request and response types.
     /// </summary>
-    /// <typeparam name="TRequest"></typeparam>
-    /// <typeparam name="TResponse"></typeparam>
-    /// <param name="builder"></param>
-    /// <param name="source"></param>
-    /// <param name="portId"></param>
-    /// <returns></returns>
+    /// <remarks>This method creates a bidirectional connection between the source and the new input port,
+    /// allowing the workflow to send requests and receive responses through the specified external call. The port is
+    /// configured to handle messages of the specified request and response types.</remarks>
+    /// <typeparam name="TRequest">The type of the request message that the external call will accept.</typeparam>
+    /// <typeparam name="TResponse">The type of the response message that the external call will produce.</typeparam>
+    /// <param name="builder">The workflow builder to which the external call will be added. </param>
+    /// <param name="source">The source executor representing the external system or process to connect. Cannot be null.</param>
+    /// <param name="portId">The unique identifier for the input port that will handle the external call. Cannot be null.</param>
+    /// <returns>The original workflow builder instance with the external call added.</returns>
     public static WorkflowBuilder AddExternalCall<TRequest, TResponse>(this WorkflowBuilder builder, ExecutorIsh source, string portId)
     {
         Throw.IfNull(builder);
@@ -67,15 +77,21 @@ public static class WorkflowBuilderExtensions
     }
 
     /// <summary>
-    /// .
+    /// Builds a workflow that collects output from the specified executor, aggregates results using the provided
+    /// streaming aggregator, and optionally completes based on a custom condition.
     /// </summary>
-    /// <typeparam name="TInput"></typeparam>
-    /// <typeparam name="TResult"></typeparam>
-    /// <param name="builder"></param>
-    /// <param name="outputSource"></param>
-    /// <param name="aggregator"></param>
-    /// <param name="completionCondition"></param>
-    /// <returns></returns>
+    /// <remarks>The returned workflow promotes the output collector as its result source, allowing consumers
+    /// to access the aggregated output directly. The completion condition can be used to implement custom termination
+    /// logic, such as early stopping when a desired result is reached.</remarks>
+    /// <typeparam name="TInput">The type of input items processed by the workflow.</typeparam>
+    /// <typeparam name="TResult">The type of aggregated result produced by the workflow.</typeparam>
+    /// <param name="builder">The workflow builder used to construct the workflow and define its execution graph.</param>
+    /// <param name="outputSource">The executor that produces output items to be collected and aggregated. Cannot be null.</param>
+    /// <param name="aggregator">The streaming aggregator that processes input items and produces aggregated results. Cannot be null.</param>
+    /// <param name="completionCondition">An optional predicate that determines when the workflow should complete based on the current input and
+    /// aggregated result. If null, the workflow will not raise a <see cref="WorkflowCompletedEvent"/>.</param>
+    /// <returns>A workflow that collects output from the specified executor, aggregates results, and exposes the aggregated
+    /// output.</returns>
     public static Workflow<TInput, TResult> BuildWithOutput<TInput, TResult>(
         this WorkflowBuilder builder,
         ExecutorIsh outputSource,

@@ -3,11 +3,11 @@
 namespace Microsoft.Agents.Workflows.Core;
 
 /// <summary>
-/// .
+/// Represents a request from an external input port.
 /// </summary>
-/// <param name="Port"></param>
-/// <param name="RequestId"></param>
-/// <param name="Data"></param>
+/// <param name="Port">The port invoked.</param>
+/// <param name="RequestId">The unique identifier of the corresponding request.</param>
+/// <param name="Data">The data contained in the response.</param>
 public record ExternalResponse(InputPort Port, string RequestId, object Data)
 {
 }

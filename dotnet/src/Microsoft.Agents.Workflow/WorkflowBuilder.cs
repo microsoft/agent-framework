@@ -24,8 +24,13 @@ public delegate TExecutor ExecutorProvider<out TExecutor>()
     where TExecutor : Executor;
 
 /// <summary>
-/// .
+/// Provides a builder for constructing and configuring a workflow by defining executors and the connections between
+/// them.
 /// </summary>
+/// <remarks>Use the WorkflowBuilder to incrementally add executors and edges, including fan-in and fan-out
+/// patterns, before building a strongly-typed workflow instance. Executors must be bound before building the workflow.
+/// All executors must be bound by calling into <see cref="BindExecutor"/> if they were intially specified as
+/// <see cref="ExecutorIsh.Type.Unbound"/>.</remarks>
 public class WorkflowBuilder
 {
     private record struct EdgeId(string SourceId, string TargetId)
@@ -42,9 +47,9 @@ public class WorkflowBuilder
     private readonly string _startExecutorId;
 
     /// <summary>
-    /// .
+    /// Initializes a new instance of the WorkflowBuilder class with the specified starting executor.
     /// </summary>
-    /// <param name="start"></param>
+    /// <param name="start">The executor that defines the starting point of the workflow. Cannot be null.</param>
     public WorkflowBuilder(ExecutorIsh start)
     {
         this._startExecutorId = this.Track(start).Id;
@@ -83,11 +88,11 @@ public class WorkflowBuilder
     }
 
     /// <summary>
-    /// .
+    /// Binds the specified executor to the workflow, allowing it to participate in workflow execution.
     /// </summary>
-    /// <param name="executor"></param>
-    /// <returns></returns>
-    /// <exception cref="InvalidOperationException"></exception>
+    /// <param name="executor">The executor instance to bind. The executor must exist in the workflow and not be already bound.</param>
+    /// <returns>The current <see cref="WorkflowBuilder"/> instance, enabling fluent configuration.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if the specified executor is already bound or does not exist in the workflow.</exception>
     public WorkflowBuilder BindExecutor(Executor executor)
     {
         if (!this._unboundExecutors.Contains(executor.Id))
@@ -114,13 +119,16 @@ public class WorkflowBuilder
     }
 
     /// <summary>
-    /// .
+    /// Adds a directed edge from the specified source executor to the target executor, optionally guarded by a
+    /// condition.
     /// </summary>
-    /// <param name="source"></param>
-    /// <param name="target"></param>
-    /// <param name="condition"></param>
-    /// <returns></returns>
-    /// <exception cref="InvalidOperationException"></exception>
+    /// <param name="source">The executor that acts as the source node of the edge. Cannot be null.</param>
+    /// <param name="target">The executor that acts as the target node of the edge. Cannot be null.</param>
+    /// <param name="condition">An optional predicate that determines whether the edge should be followed based on the input.
+    /// If null, the edge is always activated when the source sends a message.</param>
+    /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if an unconditional edge between the specified source and target
+    /// executors already exists.</exception>
     public WorkflowBuilder AddEdge(ExecutorIsh source, ExecutorIsh target, Func<object?, bool>? condition = null)
     {
         // Add an edge from source to target with an optional condition.
@@ -144,12 +152,16 @@ public class WorkflowBuilder
     }
 
     /// <summary>
-    /// .
+    /// Adds a fan-out edge from the specified source executor to one or more target executors, optionally using a
+    /// custom partitioning function.
     /// </summary>
-    /// <param name="source"></param>
-    /// <param name="partitioner"></param>
-    /// <param name="targets"></param>
-    /// <returns></returns>
+    /// <remarks>If a partitioner function is provided, it will be used to distribute input across the target
+    /// executors. The order of targets determines their mapping in the partitioning process.</remarks>
+    /// <param name="source">The source executor from which the fan-out edge originates. Cannot be null.</param>
+    /// <param name="partitioner">An optional function that determines how input is partitioned among the target executors.
+    /// If null, messages will route to all targets.</param>
+    /// <param name="targets">One or more target executors that will receive the fan-out edge. Cannot be null or empty.</param>
+    /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
     public WorkflowBuilder AddFanOutEdge(ExecutorIsh source, Func<object?, int, IEnumerable<int>>? partitioner = null, params ExecutorIsh[] targets)
     {
         Throw.IfNull(source);
@@ -165,13 +177,18 @@ public class WorkflowBuilder
     }
 
     /// <summary>
-    /// .
+    /// Adds a fan-in edge to the workflow, connecting multiple source executors to a single target executor with an
+    /// optional trigger condition.
     /// </summary>
-    /// <param name="target"></param>
-    /// <param name="trigger"></param>
-    /// <param name="sources"></param>
-    /// <returns></returns>
-    public WorkflowBuilder AddFanInEdge(ExecutorIsh target, FanInTrigger trigger = default, params ExecutorIsh[] sources)
+    /// <remarks>This method establishes a fan-in relationship, allowing the target executor to be activated
+    /// based on the completion or state of multiple sources. The trigger parameter can be used to customize activation
+    /// behavior.</remarks>
+    /// <param name="target">The target executor that receives input from the specified source executors. Cannot be null.</param>
+    /// <param name="trigger">An optional trigger condition that determines when the fan-in edge activates. Defaults to
+    /// <see cref="FanInTrigger.WhenAll"/>.</param>
+    /// <param name="sources">One or more source executors that provide input to the target. Cannot be null or empty.</param>
+    /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
+    public WorkflowBuilder AddFanInEdge(ExecutorIsh target, FanInTrigger trigger = FanInTrigger.WhenAll, params ExecutorIsh[] sources)
     {
         Throw.IfNull(target);
         Throw.IfNullOrEmpty(sources);
@@ -190,11 +207,13 @@ public class WorkflowBuilder
     }
 
     /// <summary>
-    /// .
+    /// Builds and returns a workflow instance configured to process messages of the specified input type.
     /// </summary>
-    /// <typeparam name="T"></typeparam>
-    /// <returns></returns>
-    /// <exception cref="InvalidOperationException"></exception>
+    /// <typeparam name="T">The type of input messages that the workflow will accept and process.</typeparam>
+    /// <returns>A new instance of <see cref="Workflow{T}"/>.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if there are unbound executors in the workflow definition,
+    /// if the start executor is not bound, or if the start executor does not contain a handler for the specified input
+    /// type <typeparamref name="T"/>.</exception>
     public Workflow<T> Build<T>()
     {
         if (this._unboundExecutors.Count > 0)

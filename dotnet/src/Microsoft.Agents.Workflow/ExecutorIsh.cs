@@ -9,7 +9,8 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.Workflows;
 
 /// <summary>
-/// .
+/// A tagged union representing an object that can function like an <see cref="Executor"/> in a <see cref="Workflow"/>,
+/// or a reference to one by ID.
 /// </summary>
 public sealed class ExecutorIsh :
     IIdentified,
@@ -18,31 +19,30 @@ public sealed class ExecutorIsh :
     IEquatable<string>
 {
     /// <summary>
-    /// .
+    /// The type of the <see cref="ExecutorIsh"/>.
     /// </summary>
     public enum Type
     {
         /// <summary>
-        /// .
+        /// An unbound executor reference, identified only by ID.
         /// </summary>
         Unbound,
         /// <summary>
-        /// .
+        /// An actual <see cref="Executor"/> instance.
         /// </summary>
         Executor,
         /// <summary>
-        /// .
+        /// An <see cref="InputPort"/> for servicing external requests.
         /// </summary>
         InputPort,
         /// <summary>
-        /// .
+        /// An <see cref="AIAgent"/> instance.
         /// </summary>
         Agent,
-        //ProcessStep
     }
 
     /// <summary>
-    /// .
+    /// Gets the type of data contained in this <see cref="ExecutorIsh" /> instance.
     /// </summary>
     public Type ExecutorType { get; init; }
 
@@ -52,9 +52,9 @@ public sealed class ExecutorIsh :
     private readonly AIAgent? _aiAgentValue;
 
     /// <summary>
-    /// .
+    /// Initializes a new instance of the <see cref="ExecutorIsh"/> class as an unbound reference by ID.
     /// </summary>
-    /// <param name="id"></param>
+    /// <param name="id">A unique identifier for an <see cref="Executor"/> in the <see cref="Workflow"/></param>
     public ExecutorIsh(string id)
     {
         this.ExecutorType = Type.Unbound;
@@ -62,9 +62,9 @@ public sealed class ExecutorIsh :
     }
 
     /// <summary>
-    /// .
+    /// Initializes a new instance of the ExecutorIsh class using the specified executor.
     /// </summary>
-    /// <param name="executor"></param>
+    /// <param name="executor">The executor instance to be wrapped.</param>
     public ExecutorIsh(Executor executor)
     {
         this.ExecutorType = Type.Executor;
@@ -72,9 +72,9 @@ public sealed class ExecutorIsh :
     }
 
     /// <summary>
-    /// .
+    /// Initializes a new instance of the ExecutorIsh class using the specified input port.
     /// </summary>
-    /// <param name="port"></param>
+    /// <param name="port">The input port to associate to be wrapped.</param>
     public ExecutorIsh(InputPort port)
     {
         this.ExecutorType = Type.InputPort;
@@ -82,7 +82,7 @@ public sealed class ExecutorIsh :
     }
 
     /// <summary>
-    /// .
+    /// Initializes a new instance of the ExecutorIsh class using the specified AI agent.
     /// </summary>
     /// <param name="aiAgent"></param>
     public ExecutorIsh(AIAgent aiAgent)
@@ -100,12 +100,12 @@ public sealed class ExecutorIsh :
         Type.Executor => this._executorValue!.Id,
         Type.InputPort => this._inputPortValue!.Id,
         Type.Agent => this._aiAgentValue!.Id,
-        //Type.ProcessStep => throw new NotImplementedException("ProcessStep type is not yet implemented."),
         _ => throw new InvalidOperationException($"Unknown ExecutorIsh type: {this.ExecutorType}")
     };
 
     /// <summary>
-    /// .
+    /// Gets an <see cref="ExecutorProvider{T}"/> that can be used to obtain an <see cref="Executor"/> instance
+    /// corresponding to this <see cref="ExecutorIsh"/>.
     /// </summary>
     public ExecutorProvider<Executor> ExecutorProvider => this.ExecutorType switch
     {
@@ -113,32 +113,31 @@ public sealed class ExecutorIsh :
         Type.Executor => () => this._executorValue!,
         Type.InputPort => () => new RequestInputExecutor(this._inputPortValue!),
         Type.Agent => () => new AIAgentHostExecutor(this._aiAgentValue!),
-        //Type.ProcessStep => throw new NotImplementedException("ProcessStep type is not yet implemented."),
         _ => throw new InvalidOperationException($"Unknown ExecutorIsh type: {this.ExecutorType}")
     };
 
     /// <summary>
-    /// .
+    /// Defines an implicit conversion from an <see cref="Executor"/> instance to an <see cref="ExecutorIsh"/> object.
     /// </summary>
-    /// <param name="executor"></param>
+    /// <param name="executor">The <see cref="Executor"/> instance to convert to <see cref="ExecutorIsh"/>.</param>
     public static implicit operator ExecutorIsh(Executor executor) => new(executor);
 
     /// <summary>
-    /// .
+    /// Defines an implicit conversion from an <see cref="InputPort"/> to an <see cref="ExecutorIsh"/> instance.
     /// </summary>
-    /// <param name="inputPort"></param>
+    /// <param name="inputPort">The <see cref="InputPort"/> to convert to an <see cref="ExecutorIsh"/>.</param>
     public static implicit operator ExecutorIsh(InputPort inputPort) => new(inputPort);
 
     /// <summary>
-    /// .
+    /// Defines an implicit conversion from an <see cref="AIAgent"/> to an <see cref="ExecutorIsh"/> instance.
     /// </summary>
-    /// <param name="aiAgent"></param>
+    /// <param name="aiAgent">The <see cref="AIAgent"/> to convert to an <see cref="ExecutorIsh"/>.</param>
     public static implicit operator ExecutorIsh(AIAgent aiAgent) => new(aiAgent);
 
     /// <summary>
-    /// .
+    /// Defines an implicit conversion from a string to an <see cref="ExecutorIsh"/> instance.
     /// </summary>
-    /// <param name="id"></param>
+    /// <param name="id">The string ID to convert to an <see cref="ExecutorIsh"/>.</param>
     public static implicit operator ExecutorIsh(string id)
     {
         return new ExecutorIsh(id);
@@ -204,7 +203,6 @@ public sealed class ExecutorIsh :
             Type.Executor => $"'{this.Id}':{this._executorValue!.GetType().Name}",
             Type.InputPort => $"'{this.Id}':Input({this._inputPortValue!.Request.Name}->{this._inputPortValue!.Response.Name})",
             Type.Agent => $"{this.Id}':AIAgent(@{this._aiAgentValue!.GetType().Name})",
-            //Type.ProcessStep => $"ExecutorIsh for ProcessStep with ID '{this.Id}'",
             _ => $"'{this.Id}':<unknown[{this.ExecutorType}]>"
         };
     }
