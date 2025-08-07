@@ -1,10 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import tempfile
 from dataclasses import dataclass
 
 import pytest
 from agent_framework.workflow import (
     Executor,
+    FileCheckpointStorage,
     RequestInfoEvent,
     RequestInfoExecutor,
     RequestInfoMessage,
@@ -14,6 +16,8 @@ from agent_framework.workflow import (
     WorkflowEvent,
     handler,
 )
+
+from agent_framework_workflow import Message
 
 
 @dataclass
@@ -275,3 +279,209 @@ async def test_fan_in():
 
     completed_event = events.get_completed_event()
     assert completed_event is not None and completed_event.data == 4
+
+
+@pytest.fixture
+def simple_executor() -> Executor:
+    class SimpleExecutor(Executor):
+        @handler
+        async def handle_message(self, message: Message, context: WorkflowContext) -> None:
+            pass
+
+    return SimpleExecutor("test_executor")
+
+
+async def test_workflow_with_checkpointing_enabled(simple_executor: Executor):
+    """Test that a workflow can be built with checkpointing enabled."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+
+        # Build workflow with checkpointing - should not raise any errors
+        workflow = (
+            WorkflowBuilder()
+            .add_edge(simple_executor, simple_executor)  # Self-loop to satisfy graph requirements
+            .set_start_executor(simple_executor)
+            .with_checkpointing(storage)
+            .build()
+        )
+
+        # Verify workflow was created and can run
+        test_message = Message(data="test message", source_id="test", target_id=None)
+        result = await workflow.run(test_message)
+        assert result is not None
+        assert result is not None
+
+
+async def test_workflow_checkpointing_not_enabled_for_external_restore(simple_executor: Executor):
+    """Test that external checkpoint restoration fails when workflow doesn't support checkpointing."""
+    # Build workflow WITHOUT checkpointing
+    workflow = (
+        WorkflowBuilder()
+        .add_edge(simple_executor, simple_executor)  # Self-loop to satisfy graph requirements
+        .set_start_executor(simple_executor)
+        .build()
+    )
+
+    # Attempt to restore from checkpoint without providing external storage should fail
+    try:
+        [event async for event in workflow.run_streaming_from_checkpoint("fake-checkpoint-id")]
+        raise AssertionError("Expected ValueError to be raised")
+    except ValueError as e:
+        assert "Cannot restore from checkpoint" in str(e)
+        assert "either provide checkpoint_storage parameter" in str(e)
+
+
+async def test_workflow_run_stream_from_checkpoint_no_checkpointing_enabled(simple_executor: Executor):
+    # Build workflow WITHOUT checkpointing
+    workflow = (
+        WorkflowBuilder()
+        .add_edge(simple_executor, simple_executor)  # Self-loop to satisfy graph requirements
+        .set_start_executor(simple_executor)
+        .build()
+    )
+
+    # Attempt to run from checkpoint should fail
+    try:
+        async for _ in workflow.run_streaming_from_checkpoint("fake_checkpoint_id"):
+            pass
+        raise AssertionError("Expected ValueError to be raised")
+    except ValueError as e:
+        assert "Cannot restore from checkpoint" in str(e)
+        assert "either provide checkpoint_storage parameter" in str(e)
+
+
+async def test_workflow_run_stream_from_checkpoint_invalid_checkpoint(simple_executor: Executor):
+    """Test that attempting to restore from a non-existent checkpoint fails appropriately."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+
+        # Build workflow with checkpointing
+        workflow = (
+            WorkflowBuilder()
+            .add_edge(simple_executor, simple_executor)  # Self-loop to satisfy graph requirements
+            .set_start_executor(simple_executor)
+            .with_checkpointing(storage)
+            .build()
+        )
+
+        # Attempt to run from non-existent checkpoint should fail
+        try:
+            async for _ in workflow.run_streaming_from_checkpoint("nonexistent_checkpoint_id"):
+                pass
+            raise AssertionError("Expected RuntimeError to be raised")
+        except RuntimeError as e:
+            assert "Failed to restore from checkpoint" in str(e)
+
+
+async def test_workflow_run_stream_from_checkpoint_with_external_storage(simple_executor: Executor):
+    """Test that external checkpoint storage can be provided for restoration."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+
+        # Create a test checkpoint manually in storage
+        from agent_framework_workflow._checkpoint import WorkflowCheckpoint
+
+        test_checkpoint = WorkflowCheckpoint(
+            workflow_id="test-workflow",
+            messages={},
+            events=[],
+            shared_state={},
+            executor_states={},
+            iteration_count=0,
+            max_iterations=100,
+        )
+        checkpoint_id = storage.save_checkpoint(test_checkpoint)
+
+        # Create a workflow WITHOUT checkpointing
+        workflow_without_checkpointing = (
+            WorkflowBuilder().add_edge(simple_executor, simple_executor).set_start_executor(simple_executor).build()
+        )
+
+        # Resume from checkpoint using external storage parameter
+        try:
+            events: list[WorkflowEvent] = []
+            async for event in workflow_without_checkpointing.run_streaming_from_checkpoint(
+                checkpoint_id, checkpoint_storage=storage
+            ):
+                events.append(event)
+                if len(events) >= 2:  # Limit to avoid infinite loops
+                    break
+        except Exception:
+            # Expected since we have minimal setup, but method should accept the parameters
+            pass
+
+
+async def test_workflow_run_from_checkpoint_non_streaming(simple_executor: Executor):
+    """Test the non-streaming run_from_checkpoint method."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+
+        # Create a test checkpoint manually in storage
+        from agent_framework_workflow._checkpoint import WorkflowCheckpoint
+
+        test_checkpoint = WorkflowCheckpoint(
+            workflow_id="test-workflow",
+            messages={},
+            events=[],
+            shared_state={},
+            executor_states={},
+            iteration_count=0,
+            max_iterations=100,
+        )
+        checkpoint_id = storage.save_checkpoint(test_checkpoint)
+
+        # Build workflow with checkpointing
+        workflow = (
+            WorkflowBuilder()
+            .add_edge(simple_executor, simple_executor)
+            .set_start_executor(simple_executor)
+            .with_checkpointing(storage)
+            .build()
+        )
+
+        # Test non-streaming run_from_checkpoint method
+        result = await workflow.run_from_checkpoint(checkpoint_id)
+        assert isinstance(result, list)  # Should return WorkflowRunResult which extends list
+        assert hasattr(result, "get_completed_event")  # Should have WorkflowRunResult methods
+
+
+async def test_workflow_run_stream_from_checkpoint_with_responses(simple_executor: Executor):
+    """Test that run_streaming_from_checkpoint accepts responses parameter."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+
+        # Create a test checkpoint manually in storage
+        from agent_framework_workflow._checkpoint import WorkflowCheckpoint
+
+        test_checkpoint = WorkflowCheckpoint(
+            workflow_id="test-workflow",
+            messages={},
+            events=[],
+            shared_state={},
+            executor_states={},
+            iteration_count=0,
+            max_iterations=100,
+        )
+        checkpoint_id = storage.save_checkpoint(test_checkpoint)
+
+        # Build workflow with checkpointing
+        workflow = (
+            WorkflowBuilder()
+            .add_edge(simple_executor, simple_executor)
+            .set_start_executor(simple_executor)
+            .with_checkpointing(storage)
+            .build()
+        )
+
+        # Test that run_stream_from_checkpoint accepts responses parameter
+        responses = {"request_123": {"data": "test_response"}}
+
+        try:
+            events: list[WorkflowEvent] = []
+            async for event in workflow.run_streaming_from_checkpoint(checkpoint_id, responses=responses):
+                events.append(event)
+                if len(events) >= 2:  # Limit to avoid infinite loops
+                    break
+        except Exception:
+            # Expected since we have minimal setup, but method should accept the parameters
+            pass

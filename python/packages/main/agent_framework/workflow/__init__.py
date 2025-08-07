@@ -28,6 +28,10 @@ _IMPORTS = [
     "RequestInfoMessage",
     "WorkflowRunResult",
     "Workflow",
+    "FileCheckpointStorage",
+    "MemoryCheckpointStorage",
+    "CheckpointStorage",
+    "WorkflowCheckpoint",
 ]
 
 

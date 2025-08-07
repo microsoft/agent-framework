@@ -4,10 +4,11 @@ import asyncio
 import logging
 from collections import defaultdict
 from collections.abc import AsyncIterable
+from typing import Any, cast
 
 from ._edge import Edge
 from ._events import WorkflowEvent
-from ._runner_context import Message, RunnerContext
+from ._runner_context import CheckpointableInProcRunnerContext, Message, RunnerContext
 from ._shared_state import SharedState
 
 logger = logging.getLogger(__name__)
@@ -22,9 +23,11 @@ class Runner:
         self,
         edges: list[Edge],
         shared_state: SharedState,
-        ctx: RunnerContext,
-        max_iterations: int = DEFAULT_MAX_ITERATIONS,
-    ) -> None:
+        ctx: RunnerContext | CheckpointableInProcRunnerContext,
+        max_iterations: int = 100,
+        checkpoint_interval: int | None = None,
+        workflow_id: str | None = None,
+    ):
         """Initialize the runner with edges, shared state, and context.
 
         Args:
@@ -32,41 +35,94 @@ class Runner:
             shared_state: The shared state for the workflow.
             ctx: The runner context for the workflow.
             max_iterations: The maximum number of iterations to run.
+            checkpoint_interval: The interval for creating scheduled checkpoints.
+            workflow_id: The workflow ID for checkpointing.
         """
         self._edge_map = self._parse_edges(edges)
         self._ctx = ctx
         self._iteration = 0
         self._max_iterations = max_iterations
         self._shared_state = shared_state
-        self._is_running = False
+        self._checkpoint_interval = checkpoint_interval
+        self._workflow_id = workflow_id
+        self._running = False  # Flag to prevent concurrent execution
+
+        # Set workflow ID in context if it's checkpointable
+        if isinstance(ctx, CheckpointableInProcRunnerContext) and workflow_id:
+            ctx.set_workflow_id(workflow_id)
 
     @property
-    def context(self) -> RunnerContext:
+    def context(self) -> RunnerContext | CheckpointableInProcRunnerContext:
         """Get the workflow context."""
         return self._ctx
 
     async def run_until_convergence(self) -> AsyncIterable[WorkflowEvent]:
         """Run the workflow until no more messages are sent."""
+        if self._running:
+            raise RuntimeError("Runner is already running.")
+
+        self._running = True
         try:
-            if self._is_running:
-                raise RuntimeError("Runner is already running.")
-            self._is_running = True
+            # Process any events from initial execution before checkpointing
+            if await self._ctx.has_events():
+                logger.info("Processing events from initial execution")
+                events = await self._ctx.drain_events()
+                for event in events:
+                    logger.info(f"Yielding initial event: {event}")
+                    yield event
+
+            # TODO(evmattso): figure out how to remove the first, empty checkpoint
+            # json file that is created during processing.
+
+            # Create first checkpoint if there are messages from initial execution
+            if await self._ctx.has_messages():
+                logger.info("Creating checkpoint after initial execution")
+                await self._create_checkpoint_if_enabled("after_initial_execution")
+
             while self._iteration < self._max_iterations:
+                logger.info(f"Starting superstep {self._iteration + 1}")
                 await self._run_iteration()
                 self._iteration += 1
+                logger.info(f"Completed superstep {self._iteration}")
 
+                # Check what state we have before checkpointing
+                has_messages_before = await self._ctx.has_messages()
+                has_events_before = await self._ctx.has_events()
+                logger.debug(f"Before checkpoint: messages={has_messages_before}, events={has_events_before}")
+
+                # Process events first before any checkpointing
                 if await self._ctx.has_events():
+                    logger.info("Processing events before checkpointing")
                     events = await self._ctx.drain_events()
                     for event in events:
+                        logger.debug(f"Yielding event: {event}")
                         yield event
 
-                if not await self._ctx.has_messages():
+                # Create checkpoints after events are processed
+                await self._create_checkpoint_if_enabled(f"superstep_{self._iteration}")
+
+                # Create checkpoint at specified intervals
+                if self._checkpoint_interval and self._iteration % self._checkpoint_interval == 0:
+                    await self._create_checkpoint_if_enabled(f"scheduled_iteration_{self._iteration}")
+
+                has_messages = await self._ctx.has_messages()
+                has_events = await self._ctx.has_events()
+                logger.debug(f"Has messages after superstep {self._iteration}: {has_messages}")
+                logger.debug(f"Has events after superstep {self._iteration}: {has_events}")
+                if not has_messages and not has_events:
                     break
-            else:
-                raise RuntimeError(f"Runner did not converge after {self._max_iterations} iterations.")
-        finally:
-            self._is_running = False
+
+            # Check if we reached max iterations without convergence
+            if self._iteration >= self._max_iterations:
+                has_messages = await self._ctx.has_messages()
+                has_events = await self._ctx.has_events()
+                if has_messages or has_events:
+                    raise RuntimeError(f"Runner did not converge after {self._max_iterations} iterations.")
+
+            logger.info(f"Workflow completed after {self._iteration} supersteps")
             self._iteration = 0
+        finally:
+            self._running = False
 
     async def _run_iteration(self):
         """Run a superstep of the workflow execution."""
@@ -104,6 +160,107 @@ class Runner:
             for source_executor_id, messages in messages.items()
         ]
         await asyncio.gather(*tasks)
+
+    async def _create_checkpoint_if_enabled(self, checkpoint_type: str) -> str | None:
+        """Create a checkpoint if the context supports it.
+
+        Args:
+            checkpoint_type: A descriptive name for the checkpoint (e.g., 'initial', 'iteration_5', 'final')
+
+        Returns:
+            Checkpoint ID if created, None otherwise
+        """
+        if not isinstance(self._ctx, CheckpointableInProcRunnerContext):
+            return None
+
+        try:
+            # Update shared state information without interfering with events
+            await self._update_context_with_shared_state()
+
+            # Create checkpoint with descriptive ID
+            checkpoint_id = await self._ctx.create_checkpoint()
+            logger.info(f"Created {checkpoint_type} checkpoint: {checkpoint_id}")
+            return checkpoint_id
+        except Exception as e:
+            logger.warning(f"Failed to create {checkpoint_type} checkpoint: {e}")
+            return None
+
+    async def _update_context_with_shared_state(self) -> None:
+        """Update the context with current shared state for checkpointing."""
+        if not isinstance(self._ctx, CheckpointableInProcRunnerContext):
+            return
+
+        try:
+            # Get current checkpoint state
+            current_state = await self._ctx.get_checkpoint_state()
+
+            # Add shared state and runtime info
+            shared_state_data = {}
+            async with self._shared_state.hold():
+                # Extract the internal state (this is implementation-specific)
+                if hasattr(self._shared_state, "_state"):
+                    shared_state_data = dict(self._shared_state._state)  # type: ignore[attr-defined]
+
+            # Update the state with current runtime information
+            current_state["shared_state"] = shared_state_data
+            current_state["iteration_count"] = self._iteration
+            current_state["max_iterations"] = self._max_iterations
+
+            # Set the updated state back
+            await self._ctx.set_checkpoint_state(current_state)
+        except Exception as e:
+            logger.warning(f"Failed to update context with shared state: {e}")
+
+    async def restore_from_checkpoint(self, checkpoint_id: str) -> bool:
+        """Restore workflow state from a checkpoint.
+
+        Args:
+            checkpoint_id: The ID of the checkpoint to restore from
+
+        Returns:
+            True if restoration was successful, False otherwise
+        """
+        if not isinstance(self._ctx, CheckpointableInProcRunnerContext):
+            logger.warning("Context does not support checkpointing")
+            return False
+
+        try:
+            # Restore the context state
+            success = await self._ctx.restore_from_checkpoint(checkpoint_id)
+            if not success:
+                return False
+
+            # Restore shared state and runtime info
+            await self._restore_shared_state_from_context()
+
+            logger.info(f"Successfully restored workflow from checkpoint: {checkpoint_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to restore from checkpoint {checkpoint_id}: {e}")
+            return False
+
+    async def _restore_shared_state_from_context(self) -> None:
+        """Restore shared state from the checkpointed context."""
+        if not isinstance(self._ctx, CheckpointableInProcRunnerContext):
+            return
+
+        try:
+            # Get the restored state
+            restored_state = await self._ctx.get_checkpoint_state()
+
+            # Restore shared state
+            shared_state_data = cast(dict[str, Any], restored_state.get("shared_state", {}))
+            if shared_state_data and hasattr(self._shared_state, "_state"):
+                async with self._shared_state.hold():
+                    self._shared_state._state.clear()  # type: ignore[attr-defined]
+                    self._shared_state._state.update(shared_state_data)  # type: ignore[attr-defined]
+
+            # Restore runtime state
+            self._iteration = cast(int, restored_state.get("iteration_count", 0))
+            self._max_iterations = cast(int, restored_state.get("max_iterations", self._max_iterations))
+
+        except Exception as e:
+            logger.warning(f"Failed to restore shared state from context: {e}")
 
     def _parse_edges(self, edges: list[Edge]) -> dict[str, list[Edge]]:
         """Parse the edges of the workflow into a more convenient format.

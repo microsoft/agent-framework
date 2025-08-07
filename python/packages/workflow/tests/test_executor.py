@@ -62,7 +62,7 @@ def test_executor_with_valid_handlers():
 
     executor = MockExecutorWithValidHandlers()
     assert executor.id is not None
-    assert len(executor._handlers) == 2  # type: ignore
+    assert len(executor._message_handlers) == 2  # type: ignore
     assert executor.can_handle("text") is True
     assert executor.can_handle(42) is True
     assert executor.can_handle(3.14) is False
@@ -85,16 +85,16 @@ def test_executor_handlers_with_output_types():
             pass
 
     executor = MockExecutorWithOutputTypes()
-    assert len(executor._handlers) == 2  # type: ignore
+    assert len(executor._message_handlers) == 2  # type: ignore
 
-    string_handler = executor._handlers[str]  # type: ignore
+    string_handler = executor._message_handlers[str]  # type: ignore
     assert string_handler is not None
     assert string_handler._handler_spec is not None  # type: ignore
     assert string_handler._handler_spec["name"] == "handle_string"  # type: ignore
     assert string_handler._handler_spec["message_type"] is str  # type: ignore
     assert string_handler._handler_spec["output_types"] == [str]  # type: ignore
 
-    int_handler = executor._handlers[int]  # type: ignore
+    int_handler = executor._message_handlers[int]  # type: ignore
     assert int_handler is not None
     assert int_handler._handler_spec is not None  # type: ignore
     assert int_handler._handler_spec["name"] == "handle_integer"  # type: ignore
