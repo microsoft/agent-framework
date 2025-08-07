@@ -29,7 +29,7 @@ public class A2AHandlerClient
         return a2aCardResolver.GetAgentCardAsync(cancellationToken);
     }
 
-    public Task<A2AResponse> SendMessageAsync(string agent, ActorRequest request, CancellationToken cancellationToken)
+    public async Task<Message> SendMessageAsync(string agent, string userMessage, CancellationToken cancellationToken)
     {
         this._logger.LogInformation("Sending message for agent '{Agent}'", agent);
 
@@ -40,12 +40,14 @@ public class A2AHandlerClient
             {
                 Role = MessageRole.User,
                 MessageId = Guid.NewGuid().ToString(),
-                Parts = [ new TextPart { Text = request. }
-                ]
-            };
+                Parts = [new TextPart { Text = userMessage }]
+            }
         };
 
-        return a2aClient.SendMessageAsync(sendParams, cancellationToken);
+        var result = await a2aClient.SendMessageAsync(sendParams, cancellationToken);
+
+        // this is an easy-conversation send message - so it should not be an AgentTask from A2A perspective
+        return (Message)result;
     }
 
     private (A2AClient, A2ACardResolver) ResolveClient(string agentName)

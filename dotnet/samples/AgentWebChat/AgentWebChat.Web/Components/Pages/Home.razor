@@ -1070,32 +1070,52 @@
         currentStreamedMessage = "";
         StateHasChanged();
 
+        StringBuilder responseContent = new();
+        var hasReceivedContent = false;
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
         try
         {
-            var responseContent = new StringBuilder();
-            var agent = new AgentProxy(currentConversation.AgentName, ActorClient);
-            var thread = agent.GetNewThread();
-            thread.ConversationId = currentConversation.SessionId;
-
-            // Add timeout to prevent indefinite hanging
-            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            var hasReceivedContent = false;
-
-            await foreach (var update in agent.RunStreamingAsync(
-                [new ChatMessage(ChatRole.User, userMessage)],
-                thread,
-                cancellationToken: timeoutCts.Token))
+            if (selectedProtocol == Protocol.A2A)
             {
-                var content = update.Text ?? "";
-                if (!string.IsNullOrEmpty(content))
+                var response = await A2AHandlerClient.SendMessageAsync(agent: selectedAgentName, userMessage, timeoutCts.Token);
+                foreach (var part in response.Parts.OfType<TextPart>())
                 {
                     hasReceivedContent = true;
-                    responseContent.Append(content);
+                    responseContent.Append(part.Text);
                     currentStreamedMessage = responseContent.ToString();
                     StateHasChanged();
                     await ScrollToBottom();
 
-                    Logger.LogDebug("Received streaming content: {ContentLength} characters", content.Length);
+                    Logger.LogDebug("Received A2A-message content: {ContentLength} characters", part.Text.Length);
+                }
+            }
+            else
+            {
+                responseContent = new StringBuilder();
+                var agent = new AgentProxy(currentConversation.AgentName, ActorClient);
+                var thread = agent.GetNewThread();
+                thread.ConversationId = currentConversation.SessionId;
+
+                // Add timeout to prevent indefinite hanging
+                hasReceivedContent = false;
+
+                await foreach (var update in agent.RunStreamingAsync(
+                [new ChatMessage(ChatRole.User, userMessage)],
+                    thread,
+                    cancellationToken: timeoutCts.Token))
+                {
+                    var content = update.Text ?? "";
+                    if (!string.IsNullOrEmpty(content))
+                    {
+                        hasReceivedContent = true;
+                        responseContent.Append(content);
+                        currentStreamedMessage = responseContent.ToString();
+                        StateHasChanged();
+                        await ScrollToBottom();
+
+                        Logger.LogDebug("Received streaming content: {ContentLength} characters", content.Length);
+                    }
                 }
             }
 

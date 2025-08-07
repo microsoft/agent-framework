@@ -10,7 +10,7 @@ internal static class A2AConfigurator
     {
         var a2aConnector = app.BuildA2AConnector();
 
-        app.AttachHttpA2A(
+        app.AttachA2A(
             a2aConnector: a2aConnector,
             taskStore: null,
             path: "/a2a");

@@ -94,7 +94,7 @@ app.UseExceptionHandler();
 app.MapActors();
 
 //
-app.AttachHttpA2A("/a2a/pirate", agentName: "pirate");
+app.AttachA2A("/a2a/pirate", agentName: "pirate");
 
 // Map the agents HTTP endpoints
 app.MapAgentDiscovery("/agents");

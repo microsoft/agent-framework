@@ -20,7 +20,7 @@ public static class A2AHostingApplicationBuilderExtensions
     /// <param name="app"></param>
     /// <param name="path"></param>
     /// <param name="agentName"></param>
-    public static void AttachHttpA2A(
+    public static void AttachA2A(
         this WebApplication app,
         string path,
         string agentName)
@@ -30,7 +30,7 @@ public static class A2AHostingApplicationBuilderExtensions
 
         var agentA2AConnector = new AIAgentA2AConnector(logger, agent);
 
-        app.AttachHttpA2A(path, agentA2AConnector);
+        app.AttachA2A(path, agentA2AConnector);
     }
 
     /// <summary>
@@ -40,7 +40,7 @@ public static class A2AHostingApplicationBuilderExtensions
     /// <param name="path"></param>
     /// <param name="a2aConnector"></param>
     /// <param name="taskStore"></param>
-    public static void AttachHttpA2A(
+    public static void AttachA2A(
         this WebApplication app,
         string path,
         IA2AConnector a2aConnector,
@@ -49,7 +49,7 @@ public static class A2AHostingApplicationBuilderExtensions
         var taskManager = new TaskManager(taskStore: taskStore);
         Attach(a2aConnector, taskManager);
 
-        app.AttachHttpA2A(taskManager, path);
+        app.AttachA2A(taskManager, path);
     }
 
     /// <summary>
@@ -59,11 +59,12 @@ public static class A2AHostingApplicationBuilderExtensions
     /// <param name="app"></param>
     /// <param name="taskManager"></param>
     /// <param name="path"></param>
-    public static void AttachHttpA2A(
+    public static void AttachA2A(
         this WebApplication app,
         TaskManager taskManager,
         string path)
     {
+        app.MapA2A(taskManager, path);
         app.MapHttpA2A(taskManager, path);
     }
 
