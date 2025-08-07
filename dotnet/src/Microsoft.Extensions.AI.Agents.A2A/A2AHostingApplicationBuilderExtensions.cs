@@ -3,7 +3,6 @@
 using A2A;
 using A2A.AspNetCore;
 using Microsoft.AspNetCore.Builder;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace Microsoft.Extensions.AI.Agents.A2A;
 
@@ -24,7 +23,7 @@ public static class A2AHostingApplicationBuilderExtensions
         string path)
     {
         var agentKey = $"agent:{agentName}";
-        var agent = app.Services.GetRequiredKeyedService<AIAgent>(agentKey);
+        // var agent = app.Services.GetRequiredKeyedService<AIAgent>(agentKey);
         // var loggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
 
         //var a2aConnector = new A2AConnector(loggerFactory.CreateLogger<A2AConnector>(), agent);

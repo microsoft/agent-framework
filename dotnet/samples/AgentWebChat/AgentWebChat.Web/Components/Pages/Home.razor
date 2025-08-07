@@ -48,6 +48,28 @@
         </div>
     </div>
 
+    <div class="protocol-selection-card">
+        <label for="protocol-select" class="protocol-select-label">Choose communication protocol:</label>
+        <div class="protocol-select-wrapper">
+            <select id="protocol-select" class="protocol-select" @bind="selectedProtocol" disabled="@(isStreaming)">
+                <option value="AgenticFramework">Agentic Framework</option>
+                <option value="A2A">A2A (Agent-to-Agent)</option>
+            </select>
+            <div class="protocol-info">
+                @switch (selectedProtocol)
+                {
+                    case Protocol.A2A:
+                        <span class="protocol-description">🔗 A2A protocol supports long-running agentic processes</span>
+                        break;
+                    case Protocol.AgenticFramework:
+                    default:
+                        <span class="protocol-description">⚡ Direct agentic framework communication</span>
+                        break;
+                }
+            </div>
+        </div>
+    </div>
+
     @if (conversations.Any())
     {
         <div class="conversations-section">
@@ -175,7 +197,7 @@
         margin: 0;
     }
 
-    .agent-selection-card {
+    .agent-selection-card, .protocol-selection-card {
         background: white;
         border-radius: 12px;
         padding: 1.5rem;
@@ -183,20 +205,20 @@
         margin-bottom: 2rem;
     }
 
-    .agent-select-label {
+    .agent-select-label, .protocol-select-label {
         display: block;
         font-weight: 600;
         color: #374151;
         margin-bottom: 0.75rem;
     }
 
-    .agent-select-wrapper {
+    .agent-select-wrapper, .protocol-select-wrapper {
         display: flex;
         gap: 1rem;
         align-items: center;
     }
 
-    .agent-select {
+    .agent-select, .protocol-select {
         flex: 1;
         padding: 0.75rem 1rem;
         font-size: 1rem;
@@ -208,19 +230,30 @@
         transition: all 0.2s;
     }
 
-    .agent-select:hover:not(:disabled) {
+    .agent-select:hover:not(:disabled), .protocol-select:hover:not(:disabled) {
         border-color: #6366f1;
     }
 
-    .agent-select:focus {
+    .agent-select:focus, .protocol-select:focus {
         outline: none;
         border-color: #6366f1;
         box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
     }
 
-    .agent-select:disabled {
+    .agent-select:disabled, .protocol-select:disabled {
         opacity: 0.5;
         cursor: not-allowed;
+    }
+
+    .protocol-info {
+        flex: 1;
+        min-width: 200px;
+    }
+
+    .protocol-description {
+        font-size: 0.875rem;
+        color: #6b7280;
+        font-style: italic;
     }
 
     .start-chat-btn {
@@ -494,6 +527,16 @@
         .chat-container {
             height: 500px;
         }
+
+        .protocol-select-wrapper {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 0.5rem;
+        }
+
+        .protocol-info {
+            min-width: auto;
+        }
     }
 </style>
 
@@ -503,9 +546,16 @@
     private bool isLoadingAgents = true;
     private string currentStreamedMessage = "";
     private string selectedAgentName = "";
+    private Protocol selectedProtocol;
     private List<AgentDiscoveryClient.AgentDiscoveryCard> availableAgents = new();
     private List<Conversation> conversations = new();
     private Conversation? currentConversation;
+
+    private enum Protocol
+    {
+        AgenticFramework,
+        A2A // Agent-to-Agent protocol
+    }
 
     private class Conversation
     {
