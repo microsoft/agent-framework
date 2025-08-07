@@ -38,7 +38,7 @@ public class PreFICCApprovalGeneratingChatClient : DelegatingChatClient
 
         // If we got any FunctionApprovalResponseContent, we can remove the FunctionApprovalRequestContent for those responses, since the FunctionApprovalResponseContent
         // will be turned into FunctionCallContent and FunctionResultContent later, but the FunctionApprovalRequestContent is now unecessary.
-        // If we got any approval request/responses, and we also already have FunctionResultContent for those, we can filter out those too requests/responses
+        // If we got any approval request/responses, and we also already have FunctionResultContent for those, we can filter out those requests/responses too
         // since they are already handled.
         // This is since the downstream service, may not know what to do with the FunctionApprovalRequestContent/FunctionApprovalResponseContent.
         RemoveExecutedApprovedApprovalRequests(messagesList);

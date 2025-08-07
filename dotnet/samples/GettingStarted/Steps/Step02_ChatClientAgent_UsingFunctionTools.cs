@@ -149,6 +149,7 @@ public sealed class Step02_ChatClientAgent_UsingFunctionTools(ITestOutputHelper 
 
         // Respond to user input, invoking functions where appropriate.
         await RunAgentAsync("What is the special soup and its price?");
+        await RunAgentAsync("What is the special drink?");
 
         async Task RunAgentAsync(string input)
         {
