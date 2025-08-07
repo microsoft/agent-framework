@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import json
 import os
 from pathlib import Path
 
@@ -23,7 +22,7 @@ The workflow processes a text string through two executors:
 
 The sample shows:
 - Running a workflow with run_streaming() and automatic checkpoint creation
-- Finding a specific checkpoint by searching for message content
+- Finding a specific checkpoint by using the checkpoint storage API to search for message content
 - Resuming workflow execution from a checkpoint using run_streaming_from_checkpoint()
 """
 
@@ -57,17 +56,17 @@ class ReverseTextExecutor(Executor):
         await ctx.add_event(WorkflowCompletedEvent(result))
 
 
-def find_hello_world_checkpoint(checkpoint_dir: Path) -> str | None:
-    """Find the checkpoint containing 'HELLO WORLD'."""
-    for checkpoint_file in checkpoint_dir.glob("*.json"):
-        with checkpoint_file.open() as f:
-            data = json.load(f)
+def find_hello_world_checkpoint(checkpoint_storage: FileCheckpointStorage, workflow_id: str) -> str | None:
+    """Find the checkpoint containing 'HELLO WORLD' using the checkpoint storage API."""
+    # Get all checkpoints for this workflow
+    checkpoints = checkpoint_storage.list_checkpoints(workflow_id=workflow_id)
 
-        messages = data.get("messages", {})
+    for checkpoint in checkpoints:
+        messages = checkpoint.messages
         for executor_messages in messages.values():
             for message in executor_messages:
                 if message.get("data") == "HELLO WORLD":
-                    return data["checkpoint_id"]
+                    return checkpoint.checkpoint_id
     return None
 
 
@@ -97,8 +96,15 @@ async def main():
     async for event in workflow.run_streaming(message="hello world"):
         print(f"Event: {event}")
 
-    # Find checkpoint with "HELLO WORLD"
-    checkpoint_id = find_hello_world_checkpoint(checkpoint_dir)
+    # Get all checkpoints and find one with "HELLO WORLD"
+    # Note: We need to get the workflow_id from one of the checkpoints since it's generated automatically
+    all_checkpoints = checkpoint_storage.list_checkpoints()
+    if not all_checkpoints:
+        print("No checkpoints found!")
+        return
+
+    workflow_id = all_checkpoints[0].workflow_id  # All checkpoints from this run will have the same workflow_id
+    checkpoint_id = find_hello_world_checkpoint(checkpoint_storage, workflow_id)
 
     if not checkpoint_id:
         print("Could not find checkpoint with 'HELLO WORLD'!")
