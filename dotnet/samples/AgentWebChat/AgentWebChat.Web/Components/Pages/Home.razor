@@ -4,6 +4,7 @@
 @inject IJSRuntime JSRuntime
 @inject ILogger<Home> Logger
 @inject IActorClient ActorClient
+@inject A2AHandlerClient A2AHandlerClient
 @rendermode InteractiveServer
 @using System.Text
 @using System.Text.Json
@@ -573,6 +574,7 @@
         {
             availableAgents = await AgentClient.GetAgentsAsync();
             Logger.LogInformation("Loaded {AgentCount} agents", availableAgents.Count);
+            Logger.LogInformation("Loaded Agents info: {AgentData}", JsonSerializer.Serialize(availableAgents, new JsonSerializerOptions() { WriteIndented = true }));
 
             // Default to first agent and start a conversation
             if (availableAgents.Any())

@@ -15,24 +15,39 @@ public static class A2AHostingApplicationBuilderExtensions
     /// Attaches A2A (Agent-to-Agent) communication capabilities to the specified host application builder.
     /// </summary>
     /// <param name="app"></param>
-    /// <param name="agentName"></param>
+    /// <param name="a2aConnector"></param>
+    /// <param name="taskStore"></param>
     /// <param name="path"></param>
-    public static void AttachA2A(
+    public static void AttachHttpA2A(
         this WebApplication app,
-        string agentName,
+        IA2AConnector a2aConnector,
+        ITaskStore? taskStore,
         string path)
     {
-        var agentKey = $"agent:{agentName}";
-        // var agent = app.Services.GetRequiredKeyedService<AIAgent>(agentKey);
-        // var loggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
+        var taskManager = new TaskManager(taskStore: taskStore);
+        Attach(a2aConnector, taskManager);
 
-        //var a2aConnector = new A2AConnector(loggerFactory.CreateLogger<A2AConnector>(), agent);
-        //var taskStore = new A2ATaskStore(loggerFactory.CreateLogger<A2ATaskStore>(), agent);
+        app.AttachHttpA2A(taskManager, path);
+    }
 
-        //var taskManager = new TaskManager(taskStore: taskStore);
-        //a2aConnector.Attach(taskManager);
-
-        var taskManager = new TaskManager();
+    /// <summary>
+    /// Maps HTTP A2A communication endpoints to the specified path using the provided TaskManager.
+    /// TaskManager should be preconfigured before calling this method.
+    /// </summary>
+    /// <param name="app"></param>
+    /// <param name="taskManager"></param>
+    /// <param name="path"></param>
+    public static void AttachHttpA2A(
+        this WebApplication app,
+        TaskManager taskManager,
+        string path)
+    {
         app.MapHttpA2A(taskManager, path);
+    }
+
+    private static void Attach(IA2AConnector a2aConnector, TaskManager taskManager)
+    {
+        taskManager.OnAgentCardQuery += a2aConnector.GetAgentCardAsync;
+        taskManager.OnMessageReceived += a2aConnector.ProcessMessageAsync;
     }
 }

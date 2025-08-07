@@ -7,6 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="A2A.AspNetCore" />
     <PackageReference Include="System.Net.ServerSentEvents" />
   </ItemGroup>
 
