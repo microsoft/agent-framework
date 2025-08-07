@@ -4,10 +4,9 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflow.UnitTests.Sample;
 using Microsoft.Agents.Workflows.Sample;
 
-namespace Microsoft.Agents.Workflow.UnitTests;
+namespace Microsoft.Agents.Workflows.UnitTests;
 
 public class SampleSmokeTest
 {

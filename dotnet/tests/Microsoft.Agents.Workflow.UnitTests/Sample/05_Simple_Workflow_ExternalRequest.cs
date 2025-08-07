@@ -3,12 +3,10 @@
 using System;
 using System.IO;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Core;
 using Microsoft.Agents.Workflows.Execution;
-using Microsoft.Agents.Workflows.Sample;
 
-namespace Microsoft.Agents.Workflow.UnitTests.Sample;
+namespace Microsoft.Agents.Workflows.Sample;
 
 internal static class Step5EntryPoint
 {
