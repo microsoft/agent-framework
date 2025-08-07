@@ -11,8 +11,9 @@ namespace Microsoft.Agents.Workflows;
 /// <typeparam name="TInput"></typeparam>
 /// <typeparam name="TResult"></typeparam>
 /// <param name="input"></param>
+/// <param name="runningResult"></param>
 /// <returns></returns>
-public delegate TResult? StreamingAggregator<TInput, TResult>(TInput input);
+public delegate TResult? StreamingAggregator<TInput, TResult>(TInput input, TResult? runningResult);
 
 /// <summary>
 /// .
@@ -34,7 +35,7 @@ public static class StreamingAggregators
 
         return Aggregate;
 
-        TResult? Aggregate(TInput input)
+        TResult? Aggregate(TInput input, TResult? runningResult)
         {
             if (!hasRun)
             {
@@ -68,7 +69,7 @@ public static class StreamingAggregators
 
         return Aggregate;
 
-        TResult? Aggregate(TInput input)
+        TResult? Aggregate(TInput input, TResult? runningResult)
         {
             local = conversion(input);
             return local;
@@ -97,7 +98,7 @@ public static class StreamingAggregators
 
         return Aggregate;
 
-        IEnumerable<TResult> Aggregate(TInput input)
+        IEnumerable<TResult> Aggregate(TInput input, IEnumerable<TResult>? runningResult)
         {
             results.Add(conversion(input));
             return results;

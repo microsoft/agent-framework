@@ -25,7 +25,7 @@ public class Workflow
     /// <summary>
     /// .
     /// </summary>
-    public Dictionary<string, InputPort> Ports { get; } = new();
+    public Dictionary<string, InputPort> Ports { get; internal init; } = new();
 
     /// <summary>
     /// .
@@ -68,6 +68,7 @@ public class Workflow<T> : Workflow
         {
             ExecutorProviders = this.ExecutorProviders,
             Edges = this.Edges,
+            Ports = this.Ports
         };
     }
 }

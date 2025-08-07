@@ -15,6 +15,7 @@ namespace Microsoft.Agents.Workflows.Execution;
 /// </summary>
 public class StreamingExecutionHandle
 {
+    private TaskCompletionSource<object>? _waitForResponseSource = null;
     private readonly ISuperStepRunner _stepRunner;
 
     internal StreamingExecutionHandle(ISuperStepRunner stepRunner)
@@ -30,6 +31,8 @@ public class StreamingExecutionHandle
     /// <exception cref="NotImplementedException"></exception>
     public ValueTask SendResponseAsync(ExternalResponse response)
     {
+        this._waitForResponseSource?.TrySetResult(new());
+
         return this._stepRunner.EnqueueMessageAsync(response);
     }
 
@@ -47,8 +50,11 @@ public class StreamingExecutionHandle
 
         try
         {
-            while (await this._stepRunner.RunSuperStepAsync(cancellation).ConfigureAwait(false))
+            do
             {
+                // Drain SuperSteps while there are steps to run
+                await this._stepRunner.RunSuperStepAsync(cancellation).ConfigureAwait(false);
+
                 bool hadCompletionEvent = false;
                 List<WorkflowEvent> outputEvents = Interlocked.Exchange(ref eventSink, new());
                 foreach (WorkflowEvent raisedEvent in outputEvents)
@@ -67,7 +73,22 @@ public class StreamingExecutionHandle
                     // If we had a completion event, we are done.
                     yield break;
                 }
-            }
+
+                // If we do not have any actions to take on the Workflow, but have unprocessed
+                // requests, wait for the responses to come in before exiting out of the workflow
+                // execution.
+                if (!this._stepRunner.HasUnprocessedMessages &&
+                    this._stepRunner.HasUnservicedRequests)
+                {
+                    if (this._waitForResponseSource == null)
+                    {
+                        this._waitForResponseSource = new();
+                    }
+
+                    await this._waitForResponseSource.Task.ConfigureAwait(false);
+                    this._waitForResponseSource = null;
+                }
+            } while (this._stepRunner.HasUnprocessedMessages);
         }
         finally
         {

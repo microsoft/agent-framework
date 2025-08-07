@@ -4,6 +4,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Agents.Workflow.UnitTests.Sample;
 using Microsoft.Agents.Workflows.Sample;
 
 namespace Microsoft.Agents.Workflow.UnitTests;
@@ -50,5 +51,42 @@ public class SampleSmokeTest
         string guessResult = await Step3EntryPoint.RunAsync(writer);
 
         Assert.Equal("Guessed the number: 42", guessResult);
+    }
+
+    [Fact]
+    public async Task Test_RunSample_Step5Async()
+    {
+        using StringWriter writer = new();
+
+        VerifyingPlaybackResponder<string, int> responder = new(
+            ("Guess the number.", 50),
+            ("Your guess was too high. Try again.", 23),
+            ("Your guess was too low. Try again.", 42));
+
+        string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: responder.InvokeNext);
+        Assert.Equal("You guessed correctly! You Win!", guessResult);
+    }
+}
+
+internal sealed class VerifyingPlaybackResponder<TInput, TResponse>
+{
+    public (TInput input, TResponse response)[] Responses { get; }
+    private int _position = 0;
+
+    public VerifyingPlaybackResponder(params (TInput input, TResponse response)[] responses)
+    {
+        this.Responses = responses;
+    }
+
+    public int Remaining => Math.Max(0, this.Responses.Length - this._position);
+
+    public TResponse InvokeNext(TInput input)
+    {
+        Assert.True(this.Remaining > 0);
+
+        (TInput expectedInput, TResponse expectedResponse) = this.Responses[this._position++];
+        Assert.Equal(expectedInput, input);
+
+        return expectedResponse;
     }
 }

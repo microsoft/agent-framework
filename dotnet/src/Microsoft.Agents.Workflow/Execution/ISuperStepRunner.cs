@@ -9,6 +9,9 @@ namespace Microsoft.Agents.Workflows.Execution;
 
 internal interface ISuperStepRunner
 {
+    bool HasUnservicedRequests { get; }
+    bool HasUnprocessedMessages { get; }
+
     ValueTask EnqueueMessageAsync(object message);
 
     event EventHandler<WorkflowEvent>? WorkflowEvent;

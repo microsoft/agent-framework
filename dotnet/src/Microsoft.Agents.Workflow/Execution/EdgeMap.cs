@@ -100,6 +100,6 @@ internal class EdgeMap
             throw new InvalidOperationException($"Port {response.Port.Id} not found in the edge map.");
         }
 
-        return [await portRunner.ChaseAsync(response.Data).ConfigureAwait(false)];
+        return [await portRunner.ChaseAsync(response).ConfigureAwait(false)];
     }
 }

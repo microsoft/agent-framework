@@ -66,8 +66,7 @@ public record ExternalRequest(InputPort Port, string RequestId, object Data)
     /// .
     /// </summary>
     /// <typeparam name="T"></typeparam>
-    /// <param name="port"></param>
     /// <param name="data"></param>
     /// <returns></returns>
-    public ExternalResponse CreateResponse<T>(InputPort port, T data) => this.CreateResponse(port, (object)Throw.IfNull(data));
+    public ExternalResponse CreateResponse<T>(T data) => this.CreateResponse((object)Throw.IfNull(data));
 }
