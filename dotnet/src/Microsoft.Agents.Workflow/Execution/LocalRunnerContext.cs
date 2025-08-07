@@ -70,7 +70,7 @@ internal class LocalRunnerContext<TExternalInput> : IRunnerContext
 
     public ValueTask SendMessageAsync(string executorId, object message)
     {
-        this._nextStep.MessagesFor(message.GetType().Name).Add(message);
+        this._nextStep.MessagesFor(executorId).Add(message);
         return default;
     }
 

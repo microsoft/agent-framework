@@ -39,7 +39,7 @@ public class StreamingExecutionHandle
     /// <param name="cancellation"></param>
     /// <returns></returns>
     /// <exception cref="NotImplementedException"></exception>
-    public async IAsyncEnumerable<WorkflowEvent> WatchStreamAsync([EnumeratorCancellation] CancellationToken cancellation)
+    public async IAsyncEnumerable<WorkflowEvent> WatchStreamAsync([EnumeratorCancellation] CancellationToken cancellation = default)
     {
         List<WorkflowEvent> eventSink = new();
 
