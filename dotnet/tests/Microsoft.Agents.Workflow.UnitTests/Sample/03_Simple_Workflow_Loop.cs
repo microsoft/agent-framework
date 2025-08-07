@@ -1,14 +1,16 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.IO;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Core;
 using Microsoft.Agents.Workflows.Execution;
 
 namespace Microsoft.Agents.Workflows.Sample;
 
-internal static class Step2bEntryPoint
+internal static class Step3EntryPoint
 {
-    public static async ValueTask RunAsync()
+    public static async ValueTask<string> RunAsync(TextWriter writer)
     {
         GuessNumberExecutor guessNumber = new(1, 100);
         JudgeExecutor judge = new(42); // Let's say the target number is 42
@@ -20,7 +22,23 @@ internal static class Step2bEntryPoint
 
         LocalRunner<NumberSignal> runner = new(workflow);
         StreamingExecutionHandle handle = await runner.StreamAsync(NumberSignal.Init).ConfigureAwait(false);
-        await handle.RunToCompletionAsync();
+
+        await foreach (WorkflowEvent evt in handle.WatchStreamAsync().ConfigureAwait(false))
+        {
+            switch (evt)
+            {
+                case WorkflowCompletedEvent workflowCompleteEvt:
+                    // The workflow has completed successfully, return the result
+                    string workflowResult = workflowCompleteEvt.Data!.ToString()!;
+                    writer.WriteLine($"Result: {workflowResult}");
+                    return workflowResult;
+                case ExecutorCompleteEvent executorCompleteEvt:
+                    writer.WriteLine($"'{executorCompleteEvt.ExecutorId}: {executorCompleteEvt.Data}");
+                    break;
+            }
+        }
+
+        throw new InvalidOperationException("Workflow failed to yield the completion event.");
     }
 }
 
@@ -63,7 +81,9 @@ internal sealed class GuessNumberExecutor : Executor, IMessageHandler<NumberSign
                 break;
         }
 
-        return this._currGuess = this.NextGuess;
+        this._currGuess = this.NextGuess;
+        await context.SendMessageAsync(this._currGuess).ConfigureAwait(false);
+        return this._currGuess;
     }
 }
 
@@ -76,19 +96,23 @@ internal sealed class JudgeExecutor : Executor, IMessageHandler<int, NumberSigna
         this._targetNumber = targetNumber;
     }
 
-    public ValueTask<NumberSignal> HandleAsync(int message, IWorkflowContext context)
+    public async ValueTask<NumberSignal> HandleAsync(int message, IWorkflowContext context)
     {
+        NumberSignal result;
         if (message == this._targetNumber)
         {
-            return new ValueTask<NumberSignal>(NumberSignal.Matched);
+            result = NumberSignal.Matched;
         }
         else if (message < this._targetNumber)
         {
-            return new ValueTask<NumberSignal>(NumberSignal.Below);
+            result = NumberSignal.Below;
         }
         else
         {
-            return new ValueTask<NumberSignal>(NumberSignal.Above);
+            result = NumberSignal.Above;
         }
+
+        await context.SendMessageAsync(result).ConfigureAwait(false);
+        return result;
     }
 }

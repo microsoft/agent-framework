@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Core;
@@ -8,9 +9,9 @@ using Microsoft.Agents.Workflows.Execution;
 
 namespace Microsoft.Agents.Workflows.Sample;
 
-internal static class Step2aEntryPoint
+internal static class Step2EntryPoint
 {
-    public static async ValueTask RunAsync()
+    public static async ValueTask<string> RunAsync(TextWriter writer, string input = "This is a spam message.")
     {
         string[] spamKeywords = { "spam", "advertisement", "offer" };
 
@@ -19,14 +20,29 @@ internal static class Step2aEntryPoint
         RemoveSpamExecutor removeSpam = new();
 
         Workflow<string> workflow = new WorkflowBuilder(detectSpam)
-            .AddEdge(detectSpam, respondToMessage, isSpam => isSpam is true) // If not spam, respond
-            .AddEdge(detectSpam, removeSpam, isSpam => isSpam is false) // If spam, remove
+            .AddEdge(detectSpam, respondToMessage, isSpam => isSpam is false) // If not spam, respond
+            .AddEdge(detectSpam, removeSpam, isSpam => isSpam is true) // If spam, remove
             .Build<string>();
 
         LocalRunner<string> runner = new(workflow);
 
-        StreamingExecutionHandle handle = await runner.StreamAsync("This is a spam message.").ConfigureAwait(false);
-        await handle.RunToCompletionAsync().ConfigureAwait(false);
+        StreamingExecutionHandle handle = await runner.StreamAsync(input).ConfigureAwait(false);
+        await foreach (WorkflowEvent evt in handle.WatchStreamAsync().ConfigureAwait(false))
+        {
+            switch (evt)
+            {
+                case WorkflowCompletedEvent workflowCompleteEvt:
+                    // The workflow has completed successfully, return the result
+                    string workflowResult = workflowCompleteEvt.Data!.ToString()!;
+                    writer.WriteLine($"Result: {workflowResult}");
+                    return workflowResult;
+                case ExecutorCompleteEvent executorCompleteEvt:
+                    writer.WriteLine($"'{executorCompleteEvt.ExecutorId}: {executorCompleteEvt.Data}");
+                    break;
+            }
+        }
+
+        throw new InvalidOperationException("Workflow failed to yield the completion event.");
     }
 }
 
@@ -39,7 +55,7 @@ internal sealed class DetectSpamExecutor : Executor, IMessageHandler<string, boo
         this.SpamKeywords = spamKeywords;
     }
 
-    public ValueTask<bool> HandleAsync(string message, IWorkflowContext context)
+    public async ValueTask<bool> HandleAsync(string message, IWorkflowContext context)
     {
 #if NET5_0_OR_GREATER
         bool isSpam = this.SpamKeywords.Any(keyword => message.Contains(keyword, StringComparison.OrdinalIgnoreCase));
@@ -47,12 +63,15 @@ internal sealed class DetectSpamExecutor : Executor, IMessageHandler<string, boo
         bool isSpam = this.SpamKeywords.Any(keyword => message.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0);
 #endif
 
-        return new ValueTask<bool>(isSpam);
+        await context.SendMessageAsync(isSpam).ConfigureAwait(false);
+        return isSpam;
     }
 }
 
 internal sealed class RespondToMessageExecutor : Executor, IMessageHandler<bool>
 {
+    public const string ActionResult = "Message processed successfully.";
+
     public async ValueTask HandleAsync(bool message, IWorkflowContext context)
     {
         if (message)
@@ -63,13 +82,15 @@ internal sealed class RespondToMessageExecutor : Executor, IMessageHandler<bool>
 
         await Task.Delay(1000).ConfigureAwait(false); // Simulate some processing delay
 
-        await context.AddEventAsync(new WorkflowCompletedEvent { Data = "Message processed successfully." })
+        await context.AddEventAsync(new WorkflowCompletedEvent { Data = RespondToMessageExecutor.ActionResult })
                      .ConfigureAwait(false);
     }
 }
 
 internal sealed class RemoveSpamExecutor : Executor, IMessageHandler<bool>
 {
+    public const string ActionResult = "Spam message removed.";
+
     public async ValueTask HandleAsync(bool message, IWorkflowContext context)
     {
         if (!message)
@@ -80,7 +101,7 @@ internal sealed class RemoveSpamExecutor : Executor, IMessageHandler<bool>
 
         await Task.Delay(1000).ConfigureAwait(false); // Simulate some processing delay
 
-        await context.AddEventAsync(new WorkflowCompletedEvent { Data = "Spam message removed." })
+        await context.AddEventAsync(new WorkflowCompletedEvent { Data = RemoveSpamExecutor.ActionResult })
                      .ConfigureAwait(false);
     }
 }
