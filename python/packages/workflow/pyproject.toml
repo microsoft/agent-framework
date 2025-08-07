@@ -1,6 +1,6 @@
 [project]
-name = "agent-framework"
-description = "Microsoft Agent Framework for building AI Agents with Python."
+name = "agent-framework-workflow"
+description = "Workflow integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "SK-Support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
@@ -23,23 +23,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "openai>=1.94.0",
-    "pydantic>=2.11.7",
-    "pydantic-settings>=2.10.1",
-    "typing-extensions>=4.14.0",
-    "opentelemetry-api ~= 1.24",
-    "opentelemetry-sdk ~= 1.24",
-]
-
-[project.optional-dependencies]
-azure = [
-    "agent-framework-azure"
-]
-foundry = [
-    "agent-framework-foundry"
-]
-workflow = [
-    "agent-framework-workflow"
+    "agent-framework",
 ]
 
 [tool.uv]
@@ -52,7 +36,6 @@ environments = [
 
 [tool.uv-dynamic-versioning]
 fallback-version = "0.0.0"
-
 [tool.pytest.ini_options]
 testpaths = 'tests'
 addopts = "-ra -q -r fEX"
@@ -84,17 +67,15 @@ disallow_untyped_decorators = true
 disallow_any_unimported = true
 
 [tool.bandit]
-targets = ["agent_framework"]
+targets = ["agent_framework_workflow"]
 exclude_dirs = ["tests"]
 
 [tool.poe]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
-[tool.poe.tasks]
-mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework"
 
 [tool.uv.build-backend]
-module-name = "agent_framework"
+module-name = "agent_framework_workflow"
 module-root = ""
 
 [build-system]
