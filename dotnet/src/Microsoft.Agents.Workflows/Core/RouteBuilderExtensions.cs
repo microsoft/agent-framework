@@ -3,23 +3,56 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using Microsoft.Shared.Diagnostics;
 
+#if NET9_0_OR_GREATER
+using System.Diagnostics.CodeAnalysis;
+#endif
+
 namespace Microsoft.Agents.Workflows.Core;
+
+internal static class IMessageHandlerReflection
+{
+    private const string Nameof_HandleAsync = nameof(IMessageHandler<object>.HandleAsync);
+    internal static readonly MethodInfo HandleAsync_1 = typeof(IMessageHandler<>).GetMethod(Nameof_HandleAsync, BindingFlags.Public | BindingFlags.Instance)!;
+    internal static readonly MethodInfo HandleAsync_2 = typeof(IMessageHandler<,>).GetMethod(Nameof_HandleAsync, BindingFlags.Public | BindingFlags.Instance)!;
+
+    internal static MethodInfo ReflectHandleAsync(this Type specializedType, int genericArgumentCount)
+    {
+        Debug.Assert(specializedType.IsGenericType &&
+                     (specializedType.GetGenericTypeDefinition() == typeof(IMessageHandler<>) ||
+                      specializedType.GetGenericTypeDefinition() == typeof(IMessageHandler<,>)),
+            "specializedType must be an IMessageHandler<> or IMessageHandler<,> type.");
+        return genericArgumentCount switch
+        {
+            1 => specializedType.GetMethodFromGenericMethodDefinition(HandleAsync_1),
+            2 => specializedType.GetMethodFromGenericMethodDefinition(HandleAsync_2),
+            _ => throw new ArgumentOutOfRangeException(nameof(genericArgumentCount), "Must be 1 or 2.")
+        };
+    }
+
+    internal static int GenericArgumentCount(this Type type)
+    {
+        Debug.Assert(type.IsMessageHandlerType(), "type must be an IMessageHandler<> or IMessageHandler<,> type.");
+        return type.GetGenericArguments().Length;
+    }
+
+    internal static bool IsMessageHandlerType(this Type type) =>
+        type.IsGenericType &&
+        (type.GetGenericTypeDefinition() == typeof(IMessageHandler<>) ||
+         type.GetGenericTypeDefinition() == typeof(IMessageHandler<,>));
+}
 
 internal static class RouteBuilderExtensions
 {
-    [SuppressMessage("Trimming",
-    "IL2075:'this' argument does not satisfy 'DynamicallyAccessedMembersAttribute' in call to target method. The return value " +
-    "of the source method does not have matching annotations.",
-    Justification = "Trimming attributes are inaccessible in 472")]
-    [SuppressMessage("Trimming",
-    "IL2070:'this' argument does not satisfy 'DynamicallyAccessedMembersAttribute' in call to target method. The parameter of " +
-    "method does not have matching annotations.",
-    Justification = "Trimming attributes are inaccessible in 472")]
-    private static IEnumerable<MessageHandlerInfo> GetHandlerInfos(this Type executorType)
+    private static IEnumerable<MessageHandlerInfo> GetHandlerInfos(
+#if NET9_0_OR_GREATER
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods |
+                                    DynamicallyAccessedMemberTypes.NonPublicMethods |
+                                    DynamicallyAccessedMemberTypes.Interfaces)]
+#endif
+        this Type executorType)
     {
         // Handlers are defined by implementations of IMessageHandler<TMessage> or IMessageHandler<TMessage, TResult>
         Debug.Assert(typeof(Executor).IsAssignableFrom(executorType), "executorType must be an Executor type.");
@@ -27,33 +60,37 @@ internal static class RouteBuilderExtensions
         foreach (Type interfaceType in executorType.GetInterfaces())
         {
             // Check if the interface is a message handler.
-            if (!interfaceType.IsGenericType)
+            if (!interfaceType.IsMessageHandlerType())
             {
                 continue;
             }
 
-            if (interfaceType.IsGenericType && (interfaceType.GetGenericTypeDefinition() == typeof(IMessageHandler<>) ||
-                                                interfaceType.GetGenericTypeDefinition() == typeof(IMessageHandler<,>)))
+            // Get the generic arguments of the interface.
+            Type[] genericArguments = interfaceType.GetGenericArguments();
+            if (genericArguments.Length < 1 || genericArguments.Length > 2)
             {
-                // Get the generic arguments of the interface.
-                Type[] genericArguments = interfaceType.GetGenericArguments();
-                if (genericArguments.Length < 1 || genericArguments.Length > 2)
-                {
-                    continue; // Invalid handler signature.
-                }
-                Type inType = genericArguments[0];
-                Type? outType = genericArguments.Length == 2 ? genericArguments[1] : null;
-                MethodInfo? method = interfaceType.GetMethod("HandleAsync");
+                continue; // Invalid handler signature.
+            }
+            Type inType = genericArguments[0];
+            Type? outType = genericArguments.Length == 2 ? genericArguments[1] : null;
 
-                if (method != null)
-                {
-                    yield return new MessageHandlerInfo(method) { InType = inType, OutType = outType };
-                }
+            MethodInfo? method = interfaceType.ReflectHandleAsync(genericArguments.Length);
+
+            if (method != null)
+            {
+                yield return new MessageHandlerInfo(method) { InType = inType, OutType = outType };
             }
         }
     }
 
-    public static RouteBuilder ReflectHandlers(this RouteBuilder builder, Type executorType, Executor executor)
+    public static RouteBuilder ReflectHandlers(this RouteBuilder builder,
+#if NET9_0_OR_GREATER
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods |
+                                    DynamicallyAccessedMemberTypes.NonPublicMethods |
+                                    DynamicallyAccessedMemberTypes.Interfaces)]
+#endif
+        Type executorType,
+        Executor executor)
     {
         Throw.IfNull(builder);
         Throw.IfNull(executorType);
@@ -68,6 +105,15 @@ internal static class RouteBuilderExtensions
         return builder;
     }
 
-    public static RouteBuilder ReflectHandlers<TExecutor>(this RouteBuilder builder, TExecutor executor) where TExecutor : Executor
-        => builder.ReflectHandlers(executor.GetType(), executor);
+    public static RouteBuilder ReflectHandlers<
+#if NET9_0_OR_GREATER
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods |
+                                    DynamicallyAccessedMemberTypes.NonPublicMethods |
+                                    DynamicallyAccessedMemberTypes.Interfaces)]
+#endif
+    TExecutor
+        >(this RouteBuilder builder, TExecutor executor)
+    {
+        return builder.ReflectHandlers(typeof(TExecutor), (Executor)(object)executor!);
+    }
 }
