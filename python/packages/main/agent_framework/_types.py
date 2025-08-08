@@ -442,8 +442,15 @@ class TextContent(AIContent):
             raw_representation = self.raw_representation
         else:
             raw_representation = [self.raw_representation, other.raw_representation]
+        if self.annotations is None:
+            annotations = other.annotations
+        elif other.annotations is None:
+            annotations = self.annotations
+        else:
+            annotations = self.annotations + other.annotations
         return TextContent(
             text=self.text + other.text,
+            annotations=annotations,
             additional_properties={**(self.additional_properties or {}), **(other.additional_properties or {})},
             raw_representation=raw_representation,
         )
@@ -461,6 +468,10 @@ class TextContent(AIContent):
             self.raw_representation = other.raw_representation
         elif other.raw_representation is not None:
             self.raw_representation = [self.raw_representation, other.raw_representation]
+        if other.annotations:
+            if self.annotations is None:
+                self.annotations = []
+            self.annotations.extend(other.annotations)
         return self
 
 
@@ -518,8 +529,15 @@ class TextReasoningContent(AIContent):
             raw_representation = self.raw_representation
         else:
             raw_representation = [self.raw_representation, other.raw_representation]
+        if self.annotations is None:
+            annotations = other.annotations
+        elif other.annotations is None:
+            annotations = self.annotations
+        else:
+            annotations = self.annotations + other.annotations
         return TextReasoningContent(
             text=self.text + other.text,
+            annotations=annotations,
             additional_properties={**(self.additional_properties or {}), **(other.additional_properties or {})},
             raw_representation=raw_representation,
         )
@@ -537,6 +555,10 @@ class TextReasoningContent(AIContent):
             self.raw_representation = other.raw_representation
         elif other.raw_representation is not None:
             self.raw_representation = [self.raw_representation, other.raw_representation]
+        if other.annotations:
+            if self.annotations is None:
+                self.annotations = []
+            self.annotations.extend(other.annotations)
         return self
 
 
