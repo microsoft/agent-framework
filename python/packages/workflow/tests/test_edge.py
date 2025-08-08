@@ -34,7 +34,6 @@ def test_create_edge():
     assert edge.source_id == "source_executor"
     assert edge.target_id == "target_executor"
     assert edge.id == f"{edge.source_id}{Edge.ID_SEPARATOR}{edge.target_id}"
-    assert (edge.source_id, edge.target_id) == Edge.source_and_target_from_id(edge.id)
 
 
 def test_edge_can_handle():

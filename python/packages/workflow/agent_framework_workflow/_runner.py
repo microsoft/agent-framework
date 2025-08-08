@@ -3,9 +3,9 @@
 import asyncio
 import logging
 from collections import defaultdict
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Sequence
 
-from ._edge import Edge
+from ._edge import EdgeGroup
 from ._events import WorkflowEvent
 from ._runner_context import Message, RunnerContext
 from ._shared_state import SharedState
@@ -20,7 +20,7 @@ class Runner:
 
     def __init__(
         self,
-        edges: list[Edge],
+        edge_groups: Sequence[EdgeGroup],
         shared_state: SharedState,
         ctx: RunnerContext,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
@@ -28,12 +28,12 @@ class Runner:
         """Initialize the runner with edges, shared state, and context.
 
         Args:
-            edges: The edges of the workflow.
+            edge_groups: The edge groups of the workflow.
             shared_state: The shared state for the workflow.
             ctx: The runner context for the workflow.
             max_iterations: The maximum number of iterations to run.
         """
-        self._edge_map = self._parse_edges(edges)
+        self._edge_group_map = self._parse_edge_groups(edge_groups)
         self._ctx = ctx
         self._iteration = 0
         self._max_iterations = max_iterations
@@ -72,49 +72,39 @@ class Runner:
         """Run a superstep of the workflow execution."""
 
         async def _deliver_messages(source_executor_id: str, messages: list[Message]) -> None:
-            """Deliver messages to the executors.
+            """Outer loop to concurrently deliver messages from all sources to their targets."""
 
-            Outer loop to concurrently deliver messages from all sources to their targets.
-            """
+            async def _deliver_message_inner(edge_group: EdgeGroup, message: Message) -> bool:
+                """Inner loop to deliver a single message through an edge group."""
+                return await edge_group.send_message(message, self._shared_state, self._ctx)
 
-            async def _deliver_messages_inner(
-                edge: Edge,
-                messages: list[Message],
-            ) -> None:
-                """Deliver messages to a specific target executor.
-
-                Inner loop to deliver messages to a specific target executor.
-                """
-                for message in messages:
-                    if message.target_id is not None and message.target_id != edge.target_id:
-                        continue
-
-                    if not edge.can_handle(message.data):
-                        continue
-
-                    await edge.send_message(message, self._shared_state, self._ctx)
-
-            associated_edges = self._edge_map.get(source_executor_id, [])
-            tasks = [asyncio.create_task(_deliver_messages_inner(edge, messages)) for edge in associated_edges]
-            await asyncio.gather(*tasks)
+            associated_edge_groups = self._edge_group_map.get(source_executor_id, [])
+            for message in messages:
+                # Deliver a message through all edge groups associated with the source executor concurrently.
+                tasks = [_deliver_message_inner(edge_group, message) for edge_group in associated_edge_groups]
+                results = await asyncio.gather(*tasks)
+                if not any(results):
+                    logger.warning(
+                        f"Message {message} could not be delivered. "
+                        "This may be due to type incompatibility or no matching targets."
+                    )
 
         messages = await self._ctx.drain_messages()
-        tasks = [
-            asyncio.create_task(_deliver_messages(source_executor_id, messages))
-            for source_executor_id, messages in messages.items()
-        ]
+        tasks = [_deliver_messages(source_executor_id, messages) for source_executor_id, messages in messages.items()]
         await asyncio.gather(*tasks)
 
-    def _parse_edges(self, edges: list[Edge]) -> dict[str, list[Edge]]:
-        """Parse the edges of the workflow into a more convenient format.
+    def _parse_edge_groups(self, edge_groups: Sequence[EdgeGroup]) -> dict[str, list[EdgeGroup]]:
+        """Parse the edge groups of the workflow into a mapping where each source executor ID maps to its edge groups.
 
         Args:
-            edges: A list of edges in the workflow.
+            edge_groups: A list of edge groups in the workflow.
 
         Returns:
-            A dictionary mapping each source executor ID to a list of target executor IDs.
+            A dictionary mapping each source executor ID to a list of edge groups.
         """
-        parsed: defaultdict[str, list[Edge]] = defaultdict(list)
-        for edge in edges:
-            parsed[edge.source_id].append(edge)
+        parsed: defaultdict[str, list[EdgeGroup]] = defaultdict(list)
+        for group in edge_groups:
+            for source_executor in group.source_executors():
+                parsed[source_executor.id].append(group)
+
         return parsed
