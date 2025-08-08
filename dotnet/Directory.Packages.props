@@ -61,6 +61,8 @@
     <PackageVersion Include="Microsoft.Agents.CopilotStudio.Client" Version="1.1.151" />
     <!-- Identity -->
     <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.74.1" />
+    <!-- Other -->
+    <PackageVersion Include="ModelContextProtocol" Version="0.3.0-preview.2" />
     <!-- Test -->
     <PackageVersion Include="FluentAssertions" Version="8.5.0" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />

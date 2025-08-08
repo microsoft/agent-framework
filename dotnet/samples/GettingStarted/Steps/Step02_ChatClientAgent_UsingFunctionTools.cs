@@ -3,6 +3,8 @@
 using System.ComponentModel;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
+using Microsoft.Extensions.AI.ModelContextProtocol;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Steps;
 
@@ -131,8 +133,13 @@ public sealed class Step02_ChatClientAgent_UsingFunctionTools(ITestOutputHelper 
             instructions: "Answer questions about the menu",
             tools: [
                 AIFunctionFactory.Create(menuTools.GetMenu),
-                AIFunctionFactory.Create(menuTools.GetSpecials),
-                AIFunctionFactory.Create(menuTools.GetItemPrice)
+                new ApprovalRequiredAIFunction(AIFunctionFactory.Create(menuTools.GetSpecials)),
+                AIFunctionFactory.Create(menuTools.GetItemPrice),
+                new HostedMcpServerTool("MyService", new Uri("https://mcp-server.example.com"))
+                {
+                    AllowedTools = ["add"],
+                    ApprovalMode = HostedMcpServerToolApprovalMode.AlwaysRequire,
+                }
             ]);
 
         // Create the server-side agent Id when applicable (depending on the provider).
@@ -141,8 +148,25 @@ public sealed class Step02_ChatClientAgent_UsingFunctionTools(ITestOutputHelper 
         // Get the chat client to use for the agent.
         using var chatClient = base.GetChatClient(provider, agentOptions);
 
+        var chatBuilder = chatClient.AsBuilder();
+        if (chatClient.GetService<HostedMCPChatClient>() is null)
+        {
+            chatBuilder.Use((IChatClient innerClient, IServiceProvider services) =>
+            {
+                return new HostedMCPChatClient(innerClient);
+            });
+        }
+        if (chatClient.GetService<FunctionInvokingChatClientWithBuiltInApprovals>() is null)
+        {
+            chatBuilder.Use((IChatClient innerClient, IServiceProvider services) =>
+            {
+                return new FunctionInvokingChatClientWithBuiltInApprovals(innerClient, null, services);
+            });
+        }
+        using var chatClientWithMCPAndApprovals = chatBuilder.Build();
+
         // Define the agent
-        var agent = new ChatClientAgent(chatClient, agentOptions);
+        var agent = new ChatClientAgent(chatClientWithMCPAndApprovals, agentOptions);
 
         // Create the chat history thread to capture the agent interaction.
         var thread = agent.GetNewThread();
@@ -150,6 +174,7 @@ public sealed class Step02_ChatClientAgent_UsingFunctionTools(ITestOutputHelper 
         // Respond to user input, invoking functions where appropriate.
         await RunAgentAsync("What is the special soup and its price?");
         await RunAgentAsync("What is the special drink?");
+        await RunAgentAsync("What is 2 + 2?");
 
         async Task RunAgentAsync(string input)
         {
@@ -164,8 +189,8 @@ public sealed class Step02_ChatClientAgent_UsingFunctionTools(ITestOutputHelper 
             {
                 List<ChatMessage> nextIterationMessages = [];
 
-                var approvedRequests = userInputRequests.OfType<FunctionApprovalRequestContent>().Where(x => x.FunctionCall.Name == "GetSpecials").ToList();
-                var rejectedRequests = userInputRequests.OfType<FunctionApprovalRequestContent>().Where(x => x.FunctionCall.Name != "GetSpecials").ToList();
+                var approvedRequests = userInputRequests.OfType<FunctionApprovalRequestContent>().Where(x => x.FunctionCall.Name == "GetSpecials" || x.FunctionCall.Name == "add").ToList();
+                var rejectedRequests = userInputRequests.OfType<FunctionApprovalRequestContent>().Where(x => x.FunctionCall.Name != "GetSpecials" && x.FunctionCall.Name != "add").ToList();
 
                 approvedRequests.ForEach(x => Console.WriteLine($"Approving the {x.FunctionCall.Name} function call."));
                 rejectedRequests.ForEach(x => Console.WriteLine($"Rejecting the {x.FunctionCall.Name} function call."));

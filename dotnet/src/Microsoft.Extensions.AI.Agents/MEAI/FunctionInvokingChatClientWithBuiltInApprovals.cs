@@ -255,6 +255,10 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
 
         // ** Approvals additions on top of FICC - start **//
 
+        List<ChatMessage>? augmentedPreInvocationHistory = null;
+        List<AITool> allTools = [.. options?.Tools ?? [], .. AdditionalTools ?? []];
+        Dictionary<string, ApprovalRequiredAIFunction> approvalRequiredFunctionMap = allTools.OfType<ApprovalRequiredAIFunction>().ToDictionary(x => x.Name) ?? new();
+
         // Remove any approval requests and approval request/response pairs that have already been executed.
         var notExecutedResponses = ProcessApprovalRequestsAndResponses(originalMessages);
 
@@ -271,7 +275,8 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
                 rejectedFunctionCallMessages.Add(new ChatMessage(ChatRole.Tool, [functionResult]));
             }
 
-            originalMessages.AddRange(rejectedFunctionCallMessages);
+            augmentedPreInvocationHistory ??= [];
+            augmentedPreInvocationHistory.AddRange(rejectedFunctionCallMessages);
         }
 
         var rejectedFunctionCalls = notExecutedResponses.rejections;
@@ -280,18 +285,23 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
         // Check if there are any function calls to do from any approved functions and execute them.
         if (notExecutedResponses.approvals is { Count: > 0 })
         {
-            originalMessages.AddRange(notExecutedResponses.approvals.Select(x => new ChatMessage(ChatRole.Assistant, [x])));
+            var approvalFunctionCalls = notExecutedResponses.approvals.Select(x => new ChatMessage(ChatRole.Assistant, [x])).ToList();
+            originalMessages.AddRange(approvalFunctionCalls);
+            augmentedPreInvocationHistory ??= [];
+            augmentedPreInvocationHistory.AddRange(approvalFunctionCalls);
 
             // Add the responses from the function calls into the augmented history and also into the tracked
             // list of response messages.
             var modeAndMessages = await ProcessFunctionCallsAsync(originalMessages, options, notExecutedResponses.approvals, iteration, consecutiveErrorCount, isStreaming: false, cancellationToken);
-            responseMessages = [.. modeAndMessages.MessagesAdded, ..rejectedFunctionCallMessages];
+            responseMessages = [.. modeAndMessages.MessagesAdded, .. rejectedFunctionCallMessages];
             consecutiveErrorCount = modeAndMessages.NewConsecutiveErrorCount;
 
             if (modeAndMessages.ShouldTerminate)
             {
                 return new ChatResponse(responseMessages);
             }
+
+            augmentedPreInvocationHistory.AddRange(modeAndMessages.MessagesAdded);
         }
 
         // ** Approvals additions on top of FICC - end **//
@@ -311,7 +321,7 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
 
             // Before we do any function execution, make sure that any functions that require approval, have been turned into approval requests
             // so that they don't get executed here.
-            ReplaceFunctionCallsWithApprovalRequests(response.Messages);
+            ReplaceFunctionCallsWithApprovalRequests(response.Messages, approvalRequiredFunctionMap);
 
             // ** Approvals additions on top of FICC - end **//
 
@@ -320,6 +330,23 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
                 (options?.Tools is { Count: > 0 } || AdditionalTools is { Count: > 0 }) &&
                 iteration < MaximumIterationsPerRequest &&
                 CopyFunctionCalls(response.Messages, ref functionCallContents);
+
+            // ** Approvals additions on top of FICC - start **//
+
+            // TODO: Ensure that this works correctly in all cases, and doesn't have any sideaffects.
+            // Insert any pre-invocation FCC and FRC that were converted from approval responses into the response here,
+            // so they are processed as normal.
+            if (augmentedPreInvocationHistory?.Count > 0)
+            {
+                for (int i = augmentedPreInvocationHistory.Count - 1; i >= 0; i--)
+                {
+                    response.Messages.Insert(0, augmentedPreInvocationHistory[i]);
+                }
+
+                augmentedPreInvocationHistory = null;
+            }
+
+            // ** Approvals additions on top of FICC - end **//
 
             // In a common case where we make a request and there's no function calling work required,
             // fast path out by just returning the original response.
@@ -1086,24 +1113,37 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
     }
 
     /// <summary>Replaces any <see cref="FunctionCallContent"/> from <paramref name="messages"/> with <see cref="FunctionApprovalRequestContent"/>.</summary>
-    private static void ReplaceFunctionCallsWithApprovalRequests(IList<ChatMessage> messages)
+    private static void ReplaceFunctionCallsWithApprovalRequests(IList<ChatMessage> messages, Dictionary<string, ApprovalRequiredAIFunction> approvalRequiredAIFunctionMap)
     {
+        bool anyApprovalRequired = false;
+        List<(int, int)>? functionsToReplace = null;
+
         int count = messages.Count;
         for (int i = 0; i < count; i++)
         {
-            ReplaceFunctionCallsWithApprovalRequests(messages[i].Contents);
-        }
-    }
+            var content = messages[i].Contents;
+            int contentCount = content.Count;
 
-    /// <summary>Copies any <see cref="FunctionCallContent"/> from <paramref name="content"/> with <see cref="FunctionApprovalRequestContent"/>.</summary>
-    private static void ReplaceFunctionCallsWithApprovalRequests(IList<AIContent> content)
-    {
-        int count = content.Count;
-        for (int i = 0; i < count; i++)
-        {
-            if (content[i] is FunctionCallContent functionCall)
+            for (int j = 0; j < contentCount; j++)
             {
-                content[i] = new FunctionApprovalRequestContent
+                if (content[j] is FunctionCallContent functionCall)
+                {
+                    functionsToReplace ??= [];
+                    functionsToReplace.Add((i, j));
+
+                    anyApprovalRequired |= approvalRequiredAIFunctionMap.TryGetValue(functionCall.Name, out var approvalFunction) && approvalFunction.RequiresApprovalCallback(functionCall);
+                }
+            }
+        }
+
+        // If any function calls were found, and any of them required approval, we should replace all of them with approval requests.
+        // This is because we do not have a way to deal with cases where some function calls require approval and others do not, so we just replace all of them.
+        if (functionsToReplace is not null && anyApprovalRequired)
+        {
+            foreach (var (messageIndex, contentIndex) in functionsToReplace)
+            {
+                var functionCall = (FunctionCallContent)messages[messageIndex].Contents[contentIndex];
+                messages[messageIndex].Contents[contentIndex] = new FunctionApprovalRequestContent
                 {
                     FunctionCall = functionCall,
                     ApprovalId = functionCall.CallId

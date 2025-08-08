@@ -152,8 +152,20 @@
       <BuildType Solution="Publish|*" Project="Release" />
     </Project>
     <Project Path="src/Microsoft.Extensions.AI.Agents/Microsoft.Extensions.AI.Agents.csproj" />
+    <Project Path="src/Microsoft.Extensions.AI.ModelContextProtocol/Microsoft.Extensions.AI.ModelContextProtocol.csproj" Id="4859a869-0c6b-417d-b6d8-6ccbcb60786c">
+      <BuildType Solution="Publish|*" Project="Release" />
+    </Project>
   </Folder>
   <Folder Name="/UnitTests/">
+    <Folder Name="/CosmosDB/">
+
+    </Folder>
+    <Project Path="tests/CosmosDB.IntegrationTests/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests.AppHost/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests.AppHost.csproj">
+      <BuildType Solution="Publish|*" Project="Release" />
+    </Project>
+    <Project Path="tests/CosmosDB.IntegrationTests/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests.csproj">
+      <BuildType Solution="Publish|*" Project="Release" />
+    </Project>
     <Project Path="tests/Microsoft.Agents.Orchestration.UnitTests/Microsoft.Agents.Orchestration.UnitTests.csproj">
       <BuildType Solution="Publish|*" Project="Debug" />
     </Project>
@@ -166,14 +178,5 @@
     <Project Path="tests/Microsoft.Extensions.AI.Agents.UnitTests/Microsoft.Extensions.AI.Agents.UnitTests.csproj">
       <BuildType Solution="Publish|*" Project="Debug" />
     </Project>
-      <Project Path="tests/CosmosDB.IntegrationTests/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests.AppHost/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests.AppHost.csproj">
-        <BuildType Solution="Publish|*" Project="Release" />
-      </Project>
-      <Project Path="tests/CosmosDB.IntegrationTests/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests.csproj">
-        <BuildType Solution="Publish|*" Project="Release" />
-      </Project>
-    <Folder Name="/CosmosDB/">
-
-    </Folder>
   </Folder>
 </Solution>

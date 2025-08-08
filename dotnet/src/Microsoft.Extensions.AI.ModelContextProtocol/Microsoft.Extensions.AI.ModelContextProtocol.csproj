@@ -1,0 +1,31 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
+    <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
+    <VersionSuffix>alpha</VersionSuffix>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <InjectSharedThrow>true</InjectSharedThrow>
+    <InjectDiagnosticClassesOnLegacy>true</InjectDiagnosticClassesOnLegacy>
+    <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>
+  </PropertyGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <PropertyGroup>
+    <!-- NuGet Package Settings -->
+    <Title>Microsoft Extensions AI Model Context Protocol extensions</Title>
+    <Description>Contains ChatClient that helps call MCP tooling automatically as part of a ChatClient stack.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Extensions.AI.Agents\Microsoft.Extensions.AI.Agents.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ModelContextProtocol" />
+  </ItemGroup>
+
+</Project>
