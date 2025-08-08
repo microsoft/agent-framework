@@ -219,6 +219,54 @@ def ai_function(
     return decorator(func) if func else decorator  # type: ignore[reportReturnType, return-value]
 
 
+def _parse_inputs(
+    inputs: "AIContents | dict[str, Any] | str | list[AIContents | dict[str, Any] | str] | None",
+) -> list["AIContents"]:
+    """Parse the inputs for a tool, ensuring they are of type AIContents."""
+    if inputs is None:
+        return []
+    parsed_inputs: list["AIContents"] = []
+    if not isinstance(inputs, list):
+        inputs = [inputs]
+    for input_item in inputs:
+        if isinstance(input_item, str):
+            # If it's a string, we assume it's a URI or similar identifier.
+            # Convert it to a UriContent or similar type as needed.
+            from ._types import UriContent
+
+            parsed_inputs.append(UriContent(uri=input_item, media_type="text/plain"))
+        elif isinstance(input_item, dict):
+            # If it's a dict, we assume it contains properties for a specific content type.
+            # Convert it to the appropriate AIContents subclass.
+            if "uri" in input_item:
+                from ._types import UriContent
+
+                parsed_inputs.append(UriContent(**input_item))
+            elif "file_id" in input_item:
+                from ._types import HostedFileContent
+
+                parsed_inputs.append(HostedFileContent(**input_item))
+            elif "vector_store_id" in input_item:
+                from ._types import HostedVectorStoreContent
+
+                parsed_inputs.append(HostedVectorStoreContent(**input_item))
+            elif "data" in input_item:
+                from ._types import DataContent
+
+                parsed_inputs.append(DataContent(**input_item))
+            else:
+                raise ValueError(f"Unsupported input type: {input_item}")
+        else:
+            # If it's already an AIContent instance, we can use it directly.
+            from ._types import AIContent
+
+            if isinstance(input_item, AIContent):
+                parsed_inputs.append(input_item)
+            else:
+                raise TypeError(f"Unsupported input type: {type(input_item).__name__}. Expected AIContents or dict.")
+    return parsed_inputs
+
+
 class HostedCodeInterpreterTool(AITool):
     """Represents a hosted tool that can be specified to an AI service to enable it to execute generated code.
 
@@ -229,7 +277,7 @@ class HostedCodeInterpreterTool(AITool):
     def __init__(
         self,
         name: str = "code_interpreter",
-        inputs: list["AIContents"] | None = None,
+        inputs: "AIContents | dict[str, Any] | str | list[AIContents | dict[str, Any] | str] | None" = None,
         description: str | None = None,
         additional_properties: dict[str, Any] | None = None,
     ):
@@ -240,11 +288,16 @@ class HostedCodeInterpreterTool(AITool):
             inputs: A list of contents that the tool can accept as input. Defaults to None.
                 This should mostly be HostedFileContent or HostedVectorStoreContent.
                 Can also be DataContent, depending on the service used.
+                When supplying a list, it can contain:
+                - AIContents instances
+                - dicts with properties for AIContents (e.g., {"uri": "http://example.com", "media_type": "text/html"})
+                - strings (which will be converted to UriContent with media_type "text/plain").
+                If None, defaults to an empty list.
             description: A description of the tool.
             additional_properties: Additional properties associated with the tool, specific to the service used.
         """
         self.name = name
-        self.inputs = inputs or []
+        self.inputs = _parse_inputs(inputs)
         self.description = description
         self.additional_properties = additional_properties
 
