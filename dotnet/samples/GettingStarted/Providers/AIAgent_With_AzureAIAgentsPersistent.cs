@@ -23,6 +23,10 @@ public sealed class AIAgent_With_AzureAIAgentsPersistent(ITestOutputHelper outpu
     [Fact]
     public async Task GetWithAzureAIAgentsPersistent()
     {
+        [Description("Get the weather for a given location.")]
+        static string GetWeather([Description("The location to get the weather for.")] string location)
+            => $"The weather in {location} is cloudy with a high of 15°C.";
+
         // Get a client to create server side agents with.
         var persistentAgentsClient = new PersistentAgentsClient(TestConfiguration.AzureAI.Endpoint, new AzureCliCredential());
 
@@ -32,13 +36,16 @@ public sealed class AIAgent_With_AzureAIAgentsPersistent(ITestOutputHelper outpu
             name: JokerName,
             instructions: JokerInstructions);
 
-        // Get a server side agent.
-        AIAgent agent = await persistentAgentsClient.GetAIAgentAsync(persistentAgent.Value.Id);
+        // Get a server side AI Agent.
+        AIAgent agent = await persistentAgentsClient.GetAIAgentAsync(
+            agentId: persistentAgent.Value.Id,
+            chatOptions: new() { Tools = [AIFunctionFactory.Create(GetWeather)] }); // Add a tool to the agent.
 
         // Start a new thread for the agent conversation.
         AgentThread thread = agent.GetNewThread();
 
         // Respond to user input
+        await RunAgentAsync("What's the weather in Amsterdam?"); // This will invoke the GetWeather tool.
         await RunAgentAsync("Tell me a joke about a pirate.");
         await RunAgentAsync("Now add some emojis to the joke.");
 
@@ -81,6 +88,7 @@ public sealed class AIAgent_With_AzureAIAgentsPersistent(ITestOutputHelper outpu
 
         // Respond to user input
         await RunAgentAsync("What's the weather in Amsterdam?");
+        await RunAgentAsync("Tell me a joke about a pirate.");
         await RunAgentAsync("Now add some emojis to the joke.");
 
         // Local function to run agent and display the conversation messages for the thread.

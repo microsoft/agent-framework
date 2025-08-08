@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 
@@ -124,8 +123,6 @@ public static class PersistentAgentsClientExtensions
             throw new ArgumentNullException(nameof(persistentAgentsClient));
         }
 
-        var (toolsDefinitions, toolResources) = GetToolsAndResources(tools);
-
         var createPersistentAgentResponse = await persistentAgentsClient.Administration.CreateAgentAsync(
              model,
              name,
@@ -139,75 +136,10 @@ public static class PersistentAgentsClientExtensions
         // Get a local proxy for the agent to work with.
         return await persistentAgentsClient.GetAIAgentAsync(
             createPersistentAgentResponse.Value.Id,
+
+            // As of now, providing the tools as definitions and resources at the Agent creation didn't work (no functions were invoked).
+            // Due to this, we are providing the tools to the ChatClientAgent instance that per-request basis will use the tools provided at the agent creation.
             chatOptions: new() { Tools = tools?.ToList() },
             cancellationToken: cancellationToken).ConfigureAwait(false);
-    }
-
-    private static (List<ToolDefinition>? Tools, ToolResources? ToolResources) GetToolsAndResources(IEnumerable<AITool>? tools)
-    {
-        if (tools is null)
-        {
-            return (null, null);
-        }
-
-        List<ToolDefinition> toolDefinitions = [];
-        ToolResources? toolResources = null;
-
-        // Now add the tools from ChatOptions.Tools.
-        foreach (AITool tool in tools)
-        {
-            switch (tool)
-            {
-                case AIFunction aiFunction:
-                    toolDefinitions.Add(new FunctionToolDefinition(
-                        aiFunction.Name,
-                        aiFunction.Description,
-                        BinaryData.FromBytes(JsonSerializer.SerializeToUtf8Bytes(aiFunction.JsonSchema, NewPersistentAgentsChatClient.AgentsChatClientJsonContext.Default.JsonElement))));
-                    break;
-
-                case NewHostedCodeInterpreterTool codeTool:
-                    toolDefinitions.Add(new CodeInterpreterToolDefinition());
-
-                    if (codeTool.Inputs is { Count: > 0 })
-                    {
-                        foreach (var input in codeTool.Inputs)
-                        {
-                            switch (input)
-                            {
-                                case HostedFileContent hostedFile:
-                                    // If the input is a HostedFileContent, we can use its ID directly.
-                                    (toolResources ??= new() { CodeInterpreter = new() }).CodeInterpreter.FileIds.Add(hostedFile.FileId);
-                                    break;
-                            }
-                        }
-                    }
-                    break;
-
-                case NewHostedFileSearchTool fileSearchTool:
-                    toolDefinitions.Add(new FileSearchToolDefinition());
-
-                    if (fileSearchTool.Inputs is { Count: > 0 })
-                    {
-                        foreach (var input in fileSearchTool.Inputs)
-                        {
-                            switch (input)
-                            {
-                                case HostedVectorStoreContent hostedVectorStore:
-                                    // If the input is a HostedFileContent, we can use its ID directly.
-                                    (toolResources ??= new() { FileSearch = new() }).FileSearch.VectorStoreIds.Add(hostedVectorStore.VectorStoreId);
-                                    break;
-                            }
-                        }
-                    }
-
-                    break;
-
-                case HostedWebSearchTool webSearch when webSearch.AdditionalProperties?.TryGetValue("connectionId", out object? connectionId) is true:
-                    toolDefinitions.Add(new BingGroundingToolDefinition(new BingGroundingSearchToolParameters([new BingGroundingSearchConfiguration(connectionId!.ToString())])));
-                    break;
-            }
-        }
-
-        return (toolDefinitions.Count == 0 ? null : toolDefinitions, toolResources);
     }
 }
