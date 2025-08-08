@@ -4,7 +4,7 @@ from typing import Any
 from pytest import fixture
 
 
-# region: Connector Settings fixtures
+# region Connector Settings fixtures
 @fixture
 def exclude_list(request: Any) -> list[str]:
     """Fixture that returns a list of environment variables to exclude."""

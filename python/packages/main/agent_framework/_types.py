@@ -36,7 +36,7 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self  # pragma: no cover
 
-# region: Constants and types
+# region Constants and types
 _T = TypeVar("_T")
 TValue = TypeVar("TValue")
 TEmbedding = TypeVar("TEmbedding")
@@ -271,7 +271,7 @@ def _coalesce_text_content(
     if not contents:
         return
     coalesced_contents: list["AIContents"] = []
-    first_new_content: type_ | None = None
+    first_new_content: Any | None = None
     for content in contents:
         if isinstance(content, type_):
             if first_new_content is None:
@@ -953,7 +953,7 @@ AIContents = Annotated[
     Field(discriminator="type"),
 ]
 
-# region: Chat Response constants
+# region Chat Response constants
 
 
 class ChatRole(AFBaseModel):
@@ -1024,7 +1024,7 @@ ChatFinishReason.LENGTH = ChatFinishReason(value="length")  # type: ignore[assig
 ChatFinishReason.STOP = ChatFinishReason(value="stop")  # type: ignore[assignment]
 ChatFinishReason.TOOL_CALLS = ChatFinishReason(value="tool_calls")  # type: ignore[assignment]
 
-# region: ChatMessage
+# region ChatMessage
 
 
 class ChatMessage(AFBaseModel):
@@ -1133,7 +1133,7 @@ class ChatMessage(AFBaseModel):
         return " ".join(content.text for content in self.contents if isinstance(content, TextContent))
 
 
-# region: ChatResponse
+# region ChatResponse
 
 
 class ChatResponse(AFBaseModel):
@@ -1394,7 +1394,7 @@ class StructuredResponse(ChatResponse, Generic[TValue]):
         )
 
 
-# region: ChatResponseUpdate
+# region ChatResponseUpdate
 
 
 class ChatResponseUpdate(AFBaseModel):
@@ -1537,7 +1537,7 @@ class ChatResponseUpdate(AFBaseModel):
         )
 
 
-# region: ChatOptions
+# region ChatOptions
 
 
 class ChatToolMode(AFBaseModel):
@@ -1707,7 +1707,7 @@ class ChatOptions(AFBaseModel):
         return combined
 
 
-# region: GeneratedEmbeddings
+# region GeneratedEmbeddings
 
 
 class GeneratedEmbeddings(AFBaseModel, MutableSequence[TEmbedding], Generic[TEmbedding]):
@@ -1924,7 +1924,7 @@ class AgentRunResponseUpdate(AFBaseModel):
         return self.text
 
 
-# region: SpeechToTextOptions
+# region SpeechToTextOptions
 
 
 class SpeechToTextOptions(AFBaseModel):
@@ -1959,7 +1959,7 @@ class SpeechToTextOptions(AFBaseModel):
         return settings
 
 
-# region: TextToSpeechOptions
+# region TextToSpeechOptions
 
 
 class TextToSpeechOptions(AFBaseModel):

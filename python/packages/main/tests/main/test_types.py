@@ -1,13 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import MutableSequence
-from typing import Any, AsyncIterable
+from collections.abc import AsyncIterable, MutableSequence
+from typing import Any
 
 from pydantic import BaseModel, ValidationError
 from pytest import fixture, mark, raises
 
-# region: TextContent
-# Import new annotation types directly from module (not re-exported)
 from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
@@ -72,6 +70,9 @@ def ai_function_tool() -> AITool:
     return simple_function
 
 
+# region TextContent
+
+
 def test_text_content_positional():
     """Test the TextContent class to ensure it initializes correctly and inherits from AIContent."""
     # Create an instance of TextContent
@@ -106,7 +107,7 @@ def test_text_content_keyword():
         content.type = "ai"
 
 
-# region: DataContent
+# region DataContent
 
 
 def test_data_content_bytes():
@@ -167,7 +168,7 @@ def test_data_content_empty():
         DataContent(uri="")
 
 
-# region: UriContent
+# region UriContent
 
 
 def test_uri_content():
@@ -186,7 +187,7 @@ def test_uri_content():
     assert isinstance(content, AIContent)
 
 
-# region: FunctionCallContent
+# region FunctionCallContent
 
 
 def test_function_call_content():
@@ -239,7 +240,7 @@ def test_function_call_content_add_merging_and_errors():
         _ = a + b
 
 
-# region: FunctionResultContent
+# region FunctionResultContent
 
 
 def test_function_result_content():
@@ -254,7 +255,7 @@ def test_function_result_content():
     assert isinstance(content, AIContent)
 
 
-# region: UsageDetails
+# region UsageDetails
 
 
 def test_usage_details():
@@ -316,7 +317,7 @@ def test_usage_details_add_with_none_and_type_errors():
         u += 42  # type: ignore[arg-type]
 
 
-# region: AIContent Serialization
+# region AIContent Serialization
 
 
 @mark.parametrize(
@@ -343,7 +344,7 @@ def test_ai_content_serialization(content_type: type[AIContent], args: dict):
     assert isinstance(test_item.content, content_type)
 
 
-# region: ChatMessage
+# region ChatMessage
 
 
 def test_chat_message_text():
@@ -385,7 +386,7 @@ def test_chat_message_with_chatrole_instance():
     assert m.text == "hi"
 
 
-# region: ChatResponse
+# region ChatResponse
 
 
 def test_chat_response():
@@ -404,7 +405,7 @@ def test_chat_response():
     assert str(response) == response.text
 
 
-# region: StructuredResponse
+# region StructuredResponse
 
 
 def test_structured_response():
@@ -427,7 +428,7 @@ def test_structured_response():
     assert isinstance(response.text, str)
 
 
-# region: ChatResponseUpdate
+# region ChatResponseUpdate
 
 
 def test_chat_response_update():
@@ -567,7 +568,7 @@ async def test_chat_response_from_async_generator():
     assert resp.text == "Hello world"
 
 
-# region: ChatToolMode
+# region ChatToolMode
 
 
 def test_chat_tool_mode():
@@ -625,7 +626,7 @@ def test_generated_embeddings():
     assert issubclass(GeneratedEmbeddings, MutableSequence)
 
 
-# region: ChatOptions
+# region ChatOptions
 
 
 def test_chat_options_init() -> None:
@@ -787,7 +788,7 @@ def test_agent_run_response_update_str_method(text_content: TextContent) -> None
     assert str(update) == "Test content"
 
 
-# region: ErrorContent
+# region ErrorContent
 
 
 def test_error_content_str():
@@ -799,7 +800,7 @@ def test_error_content_str():
     assert str(e3) == "Unknown error"
 
 
-# region: Annotations
+# region Annotations
 
 
 def test_annotations_models_and_roundtrip():
@@ -849,7 +850,7 @@ def test_function_call_incompatible_ids_are_not_merged():
     assert len(fcs) == 2
 
 
-# region: Speech/Text To Speech options
+# region Speech/Text To Speech options
 
 
 def test_speech_to_text_options_provider_settings():
@@ -868,7 +869,7 @@ def test_text_to_speech_options_provider_settings():
     assert settings["x"] == 2
 
 
-# region: GeneratedEmbeddings operations
+# region GeneratedEmbeddings operations
 
 
 def test_generated_embeddings_operations():
@@ -922,7 +923,7 @@ def test_generated_embeddings_operations():
     assert g.additional_properties == {}
 
 
-# region: ChatRole & ChatFinishReason basics
+# region ChatRole & ChatFinishReason basics
 
 
 def test_chat_role_str_and_repr():
@@ -994,7 +995,7 @@ def test_chat_options_tool_choice_dict_mapping(ai_tool):
     assert settings["tool_choice"] == "required"
 
 
-# region: AgentRunResponse
+# region AgentRunResponse
 
 
 @fixture
