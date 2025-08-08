@@ -225,6 +225,9 @@ def _parse_inputs(
     """Parse the inputs for a tool, ensuring they are of type AIContents."""
     if inputs is None:
         return []
+
+    from ._types import AIContent, DataContent, HostedFileContent, HostedVectorStoreContent, UriContent
+
     parsed_inputs: list["AIContents"] = []
     if not isinstance(inputs, list):
         inputs = [inputs]
@@ -232,38 +235,26 @@ def _parse_inputs(
         if isinstance(input_item, str):
             # If it's a string, we assume it's a URI or similar identifier.
             # Convert it to a UriContent or similar type as needed.
-            from ._types import UriContent
-
             parsed_inputs.append(UriContent(uri=input_item, media_type="text/plain"))
         elif isinstance(input_item, dict):
             # If it's a dict, we assume it contains properties for a specific content type.
-            # Convert it to the appropriate AIContents subclass.
+            # we check if the required keys are present to determine the type.
             if "uri" in input_item:
-                from ._types import UriContent
-
-                parsed_inputs.append(UriContent(**input_item))
+                parsed_inputs.append(
+                    UriContent(**input_item) if "media_type" in input_item else DataContent(**input_item)
+                )
             elif "file_id" in input_item:
-                from ._types import HostedFileContent
-
                 parsed_inputs.append(HostedFileContent(**input_item))
             elif "vector_store_id" in input_item:
-                from ._types import HostedVectorStoreContent
-
                 parsed_inputs.append(HostedVectorStoreContent(**input_item))
             elif "data" in input_item:
-                from ._types import DataContent
-
                 parsed_inputs.append(DataContent(**input_item))
             else:
                 raise ValueError(f"Unsupported input type: {input_item}")
+        elif isinstance(input_item, AIContent):
+            parsed_inputs.append(input_item)
         else:
-            # If it's already an AIContent instance, we can use it directly.
-            from ._types import AIContent
-
-            if isinstance(input_item, AIContent):
-                parsed_inputs.append(input_item)
-            else:
-                raise TypeError(f"Unsupported input type: {type(input_item).__name__}. Expected AIContents or dict.")
+            raise TypeError(f"Unsupported input type: {type(input_item).__name__}. Expected AIContents or dict.")
     return parsed_inputs
 
 

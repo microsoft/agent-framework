@@ -511,3 +511,9 @@ def test_hosted_code_interpreter_tool_with_single_input():
     assert len(tool.inputs) == 1
     assert isinstance(tool.inputs[0], HostedFileContent)
     assert tool.inputs[0].file_id == "file-single"
+
+
+def test_hosted_code_interpreter_tool_with_unknown_input():
+    """Test HostedCodeInterpreterTool with single unknown input."""
+    with pytest.raises(ValueError, match="Unsupported input type"):
+        HostedCodeInterpreterTool(inputs={"file": "file-single"})
