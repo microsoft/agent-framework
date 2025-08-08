@@ -1042,7 +1042,7 @@ class HostedFileContent(AIContent):
     """Represents a hosted file content.
 
     Attributes:
-        type: The type of content, which is always "hosted_file" for this class.
+        type: The type of content, which is always "file" for this class.
         uri: The URI of the hosted file.
         media_type: The media type of the hosted file.
         additional_properties: Optional additional properties associated with the content.
@@ -1074,7 +1074,7 @@ class HostedVectorStoreContent(AIContent):
     """Represents a hosted vector store content.
 
     Attributes:
-        type: The type of content, which is always "hosted_vector_store" for this class.
+        type: The type of content, which is always "vector_store" for this class.
         vector_store_id: The identifier of the hosted vector store.
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content.
