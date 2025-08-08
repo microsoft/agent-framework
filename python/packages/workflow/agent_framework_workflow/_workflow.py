@@ -6,18 +6,16 @@ import uuid
 from collections.abc import AsyncIterable, Callable, Sequence
 from typing import Any
 
-from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
+from ._checkpoint import CheckpointStorage
+from ._const import DEFAULT_MAX_ITERATIONS
 from ._edge import Edge
 from ._events import RequestInfoEvent, WorkflowCompletedEvent, WorkflowEvent
 from ._executor import Executor, RequestInfoExecutor
 from ._runner import Runner
-from ._runner_context import InProcRunnerContext, RunnerContext
+from ._runner_context import CheckpointState, InProcRunnerContext, RunnerContext
 from ._shared_state import SharedState
 from ._validation import validate_workflow_graph
 from ._workflow_context import WorkflowContext
-
-# Default maximum iterations for workflow convergence
-DEFAULT_MAX_ITERATIONS = 100
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -86,7 +84,6 @@ class Workflow:
 
         self._shared_state = SharedState()
 
-        # Generate a workflow ID for checkpointing
         workflow_id = str(uuid.uuid4())
         self._runner = Runner(
             self._edges, self._shared_state, runner_context, max_iterations=max_iterations, workflow_id=workflow_id
@@ -113,10 +110,7 @@ class Workflow:
         """Get the list of executors in the workflow."""
         return list(self._executors.values())
 
-    async def run_streaming(
-        self,
-        message: Any,
-    ) -> AsyncIterable[WorkflowEvent]:
+    async def run_streaming(self, message: Any) -> AsyncIterable[WorkflowEvent]:
         """Run the workflow with a starting message and stream events.
 
         Args:
@@ -125,11 +119,8 @@ class Workflow:
         Yields:
             WorkflowEvent: The events generated during the workflow execution.
         """
-        # Reset context state for new workflow run if it's checkpointable
-        from ._runner_context import CheckpointableRunnerContext
-
-        if isinstance(self._runner.context, CheckpointableRunnerContext):
-            self._runner.context.reset_for_new_run(self._shared_state)
+        # Reset context for a new run if supported
+        self._runner.context.reset_for_new_run(self._shared_state)
 
         executor = self._start_executor
         if isinstance(executor, str):
@@ -139,11 +130,7 @@ class Workflow:
             message,
             WorkflowContext(
                 executor.id,
-                [
-                    # Using the workflow class name as the source executor ID when
-                    # delivering the first message to the starting executor
-                    self.__class__.__name__
-                ],
+                [self.__class__.__name__],
                 self._shared_state,
                 self._runner.context,
             ),
@@ -174,10 +161,7 @@ class Workflow:
             ValueError: If neither checkpoint_storage is provided nor checkpointing is enabled.
             RuntimeError: If checkpoint restoration fails.
         """
-        # Check if we have a way to restore from checkpoint
-        from ._runner_context import CheckpointableInProcRunnerContext
-
-        has_checkpointing = isinstance(self._runner.context, CheckpointableInProcRunnerContext)
+        has_checkpointing = self._runner.context.has_checkpointing()
 
         if not has_checkpointing and not checkpoint_storage:
             raise ValueError(
@@ -185,12 +169,10 @@ class Workflow:
                 "or build workflow with WorkflowBuilder.with_checkpointing(checkpoint_storage)."
             )
 
-        # Restore from checkpoint using appropriate method
         if has_checkpointing:
-            # Use existing checkpointing-enabled context
-            restored = await self._restore_from_checkpoint(checkpoint_id)
+            # restore via Runner so shared state and iteration are synchronized
+            restored = await self._runner.restore_from_checkpoint(checkpoint_id)
         else:
-            # Use state transfer pattern: load from external storage and transfer to current context
             if checkpoint_storage is None:
                 raise ValueError("checkpoint_storage cannot be None.")
             restored = await self._restore_from_external_checkpoint(checkpoint_id, checkpoint_storage)
@@ -198,10 +180,7 @@ class Workflow:
         if not restored:
             raise RuntimeError(f"Failed to restore from checkpoint: {checkpoint_id}")
 
-        # Inject any responses if provided
         if responses:
-            from ._executor import RequestInfoExecutor
-
             request_info_executor = self._get_executor_by_id(RequestInfoExecutor.EXECUTOR_ID)
             if isinstance(request_info_executor, RequestInfoExecutor):
                 for request_id, response_data in responses.items():
@@ -240,11 +219,7 @@ class Workflow:
                 request_id,
                 WorkflowContext(
                     request_info_executor.id,
-                    [
-                        # Using the workflow class name as the source executor ID when
-                        # delivering the first message to the starting executor
-                        self.__class__.__name__
-                    ],
+                    [self.__class__.__name__],
                     self._shared_state,
                     self._runner.context,
                 ),
@@ -303,27 +278,7 @@ class Workflow:
         Returns:
             A WorkflowRunResult instance containing a list of events generated during the workflow execution.
         """
-        from ._executor import RequestInfoExecutor
-
-        request_info_executor = self._get_executor_by_id(RequestInfoExecutor.EXECUTOR_ID)
-        if not isinstance(request_info_executor, RequestInfoExecutor):
-            raise ValueError(f"Executor with ID {RequestInfoExecutor.EXECUTOR_ID} is not a RequestInfoExecutor.")
-
-        # Send all responses
-        for request_id, response in responses.items():
-            await request_info_executor.handle_response(
-                response,
-                request_id,
-                WorkflowContext(
-                    request_info_executor.id,
-                    [self.__class__.__name__],
-                    self._shared_state,
-                    self._runner.context,
-                ),
-            )
-
-        # Run workflow and collect events
-        events = [event async for event in self._runner.run_until_convergence()]
+        events = [event async for event in self.send_responses_streaming(responses)]
         return WorkflowRunResult(events)
 
     def _get_executor_by_id(self, executor_id: str) -> Executor:
@@ -338,21 +293,6 @@ class Workflow:
         if executor_id not in self._executors:
             raise ValueError(f"Executor with ID {executor_id} not found.")
         return self._executors[executor_id]
-
-    async def _restore_from_checkpoint(self, checkpoint_id: str) -> bool:
-        """Restore workflow state from a checkpoint.
-
-        Args:
-            checkpoint_id: The ID of the checkpoint to restore from.
-
-        Returns:
-            True if restoration was successful, False otherwise.
-        """
-        from ._runner_context import CheckpointableInProcRunnerContext
-
-        if isinstance(self._runner.context, CheckpointableInProcRunnerContext):
-            return await self._runner.context.restore_from_checkpoint(checkpoint_id)
-        raise ValueError("Checkpointing not supported by this workflow context")
 
     async def _restore_from_external_checkpoint(
         self, checkpoint_id: str, checkpoint_storage: CheckpointStorage
@@ -369,36 +309,26 @@ class Workflow:
         Returns:
             True if restoration was successful, False otherwise.
         """
-        from typing import cast
-
-        from ._runner_context import CheckpointableInProcRunnerContext
-
         try:
-            # Load checkpoint from external storage
-            checkpoint = checkpoint_storage.load_checkpoint(checkpoint_id)
+            checkpoint = await checkpoint_storage.load_checkpoint(checkpoint_id)
             if not checkpoint:
                 return False
 
-            # Create temporary checkpointable context to extract state
-            temp_context = CheckpointableInProcRunnerContext(checkpoint_storage)
-
-            # Set the checkpoint state in temp context
-            state = {
+            temp_context = InProcRunnerContext(checkpoint_storage)
+            state: CheckpointState = {
                 "messages": checkpoint.messages,
-                # events intentionally omitted - they will be regenerated during execution
                 "shared_state": checkpoint.shared_state,
                 "executor_states": checkpoint.executor_states,
                 "iteration_count": checkpoint.iteration_count,
                 "max_iterations": checkpoint.max_iterations,
             }
 
-            await temp_context.set_checkpoint_state(cast(dict[str, object], state))
-
-            # Extract the restored state from temp context
+            await temp_context.set_checkpoint_state(state)
             restored_state = await temp_context.get_checkpoint_state()
+            await self._transfer_state_to_context(restored_state)
 
-            # Transfer state to current context
-            await self._transfer_state_to_context(restored_state, checkpoint)
+            # Also set runner iteration/max so superstep numbering continues
+            self._runner.mark_resumed(iteration=checkpoint.iteration_count, max_iterations=checkpoint.max_iterations)
 
             return True
 
@@ -409,35 +339,27 @@ class Workflow:
             logger.error(f"Failed to restore from external checkpoint {checkpoint_id}: {e}")
             return False
 
-    async def _transfer_state_to_context(
-        self, restored_state: dict[str, object], checkpoint: WorkflowCheckpoint
-    ) -> None:
-        """Transfer state from checkpoint to the current context.
-
-        Args:
-            restored_state: The restored state data.
-            checkpoint: The original checkpoint object.
-        """
-        from typing import cast
-
-        from ._runner_context import Message
-
-        # Transfer messages
-        messages_data = cast(dict[str, list[dict[str, object]]], restored_state.get("messages", {}))
-        for _source_id, message_list in messages_data.items():
+    async def _transfer_state_to_context(self, restored_state: CheckpointState) -> None:
+        """Transfer messages from a restored checkpoint state into the current context."""
+        messages_data = restored_state["messages"]
+        for _, message_list in messages_data.items():
             for msg_data in message_list:
-                message = Message(
-                    data=msg_data.get("data"),
-                    source_id=cast(str, msg_data.get("source_id", "")),
-                    target_id=cast(str | None, msg_data.get("target_id")),
+                source_any = msg_data.get("source_id", "")
+                source_id: str = source_any if isinstance(source_any, str) else str(source_any)
+                if not source_id:
+                    source_id = ""
+                target_raw = msg_data.get("target_id")
+                target_id: str | None = (
+                    target_raw if target_raw is None or isinstance(target_raw, str) else str(target_raw)
                 )
-                await self._runner.context.send_message(message)
 
-        # Note: In a full implementation, we would also restore shared state
-        # and iteration state, but that requires more complex runner interface changes.
+                # Build and send Message via runner context
+                from ._runner_context import Message as _Msg
 
+                await self._runner.context.send_message(
+                    _Msg(data=msg_data.get("data"), source_id=source_id, target_id=target_id)
+                )
 
-# endregion
 
 # region WorkflowBuilder
 
@@ -448,12 +370,12 @@ class WorkflowBuilder:
     This class provides methods to add edges and set the starting executor for the workflow.
     """
 
-    def __init__(self):
+    def __init__(self, max_iterations: int = DEFAULT_MAX_ITERATIONS):
         """Initialize the WorkflowBuilder with an empty list of edges and no starting executor."""
         self._edges: list[Edge] = []
         self._start_executor: Executor | str | None = None
         self._checkpoint_storage: CheckpointStorage | None = None
-        self._max_iterations: int = DEFAULT_MAX_ITERATIONS
+        self._max_iterations: int = max_iterations
 
     def add_edge(
         self,
@@ -596,13 +518,7 @@ class WorkflowBuilder:
 
         validate_workflow_graph(self._edges, self._start_executor)
 
-        # Choose appropriate context based on checkpoint storage
-        if self._checkpoint_storage:
-            from ._runner_context import CheckpointableInProcRunnerContext
-
-            context = CheckpointableInProcRunnerContext(self._checkpoint_storage)
-        else:
-            context = InProcRunnerContext()
+        context = InProcRunnerContext(self._checkpoint_storage)
 
         return Workflow(self._edges, self._start_executor, context, self._max_iterations)
 

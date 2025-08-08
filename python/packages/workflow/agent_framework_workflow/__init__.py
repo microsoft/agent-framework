@@ -5,8 +5,11 @@ import importlib.metadata
 from ._checkpoint import (
     CheckpointStorage,
     FileCheckpointStorage,
-    MemoryCheckpointStorage,
+    InMemoryCheckpointStorage,
     WorkflowCheckpoint,
+)
+from ._const import (
+    DEFAULT_MAX_ITERATIONS,
 )
 from ._events import (
     AgentRunEvent,
@@ -29,8 +32,6 @@ from ._executor import (
     handler,
 )
 from ._runner_context import (
-    CheckpointableInProcRunnerContext,
-    CheckpointableRunnerContext,
     InProcRunnerContext,
     Message,
     RunnerContext,
@@ -53,14 +54,13 @@ except importlib.metadata.PackageNotFoundError:
 
 
 __all__ = [
+    "DEFAULT_MAX_ITERATIONS",
     "AgentExecutor",
     "AgentExecutorRequest",
     "AgentExecutorResponse",
     "AgentRunEvent",
     "AgentRunStreamingEvent",
     "CheckpointStorage",
-    "CheckpointableInProcRunnerContext",
-    "CheckpointableRunnerContext",
     "EdgeDuplicationError",
     "Executor",
     "ExecutorCompletedEvent",
@@ -68,8 +68,8 @@ __all__ = [
     "ExecutorInvokeEvent",
     "FileCheckpointStorage",
     "GraphConnectivityError",
+    "InMemoryCheckpointStorage",
     "InProcRunnerContext",
-    "MemoryCheckpointStorage",
     "Message",
     "RequestInfoEvent",
     "RequestInfoEvent",

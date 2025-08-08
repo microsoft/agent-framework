@@ -1,23 +1,29 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import json
 import logging
+import os
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
+from ._const import DEFAULT_MAX_ITERATIONS
+
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(slots=True)
 class WorkflowCheckpoint:
     """Represents a complete checkpoint of workflow state."""
 
     checkpoint_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     workflow_id: str = ""
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    label: str = ""  # Can be a user-friendly label
 
     # Core workflow state
     messages: dict[str, list[dict[str, Any]]] = field(default_factory=dict)  # type: ignore[misc]
@@ -26,70 +32,77 @@ class WorkflowCheckpoint:
 
     # Runtime state
     iteration_count: int = 0
-    max_iterations: int = 100
+    max_iterations: int = DEFAULT_MAX_ITERATIONS
 
     # Metadata
     metadata: dict[str, Any] = field(default_factory=dict)  # type: ignore[misc]
     version: str = "1.0"
 
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "WorkflowCheckpoint":
+        return cls(**data)
+
 
 class CheckpointStorage(Protocol):
     """Protocol for checkpoint storage backends."""
 
-    def save_checkpoint(self, checkpoint: WorkflowCheckpoint) -> str:
+    async def save_checkpoint(self, checkpoint: WorkflowCheckpoint) -> str:
         """Save a checkpoint and return its ID."""
         ...
 
-    def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:
+    async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:
         """Load a checkpoint by ID."""
         ...
 
-    def list_checkpoint_ids(self, workflow_id: str | None = None) -> list[str]:
+    async def list_checkpoint_ids(self, workflow_id: str | None = None) -> list[str]:
         """List checkpoint IDs. If workflow_id is provided, filter by that workflow."""
         ...
 
-    def list_checkpoints(self, workflow_id: str | None = None) -> list[WorkflowCheckpoint]:
+    async def list_checkpoints(self, workflow_id: str | None = None) -> list[WorkflowCheckpoint]:
         """List checkpoint objects. If workflow_id is provided, filter by that workflow."""
         ...
 
-    def delete_checkpoint(self, checkpoint_id: str) -> bool:
+    async def delete_checkpoint(self, checkpoint_id: str) -> bool:
         """Delete a checkpoint by ID."""
         ...
 
 
-class MemoryCheckpointStorage:
+class InMemoryCheckpointStorage:
     """In-memory checkpoint storage for testing and development."""
 
     def __init__(self):
         """Initialize the memory storage."""
         self._checkpoints: dict[str, WorkflowCheckpoint] = {}
 
-    def save_checkpoint(self, checkpoint: WorkflowCheckpoint) -> str:
+    async def save_checkpoint(self, checkpoint: WorkflowCheckpoint) -> str:
         """Save a checkpoint and return its ID."""
         self._checkpoints[checkpoint.checkpoint_id] = checkpoint
         logger.debug(f"Saved checkpoint {checkpoint.checkpoint_id} to memory")
         return checkpoint.checkpoint_id
 
-    def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:
+    async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:
         """Load a checkpoint by ID."""
         checkpoint = self._checkpoints.get(checkpoint_id)
         if checkpoint:
             logger.debug(f"Loaded checkpoint {checkpoint_id} from memory")
         return checkpoint
 
-    def list_checkpoint_ids(self, workflow_id: str | None = None) -> list[str]:
+    async def list_checkpoint_ids(self, workflow_id: str | None = None) -> list[str]:
         """List checkpoint IDs. If workflow_id is provided, filter by that workflow."""
         if workflow_id is None:
             return list(self._checkpoints.keys())
         return [cp.checkpoint_id for cp in self._checkpoints.values() if cp.workflow_id == workflow_id]
 
-    def list_checkpoints(self, workflow_id: str | None = None) -> list[WorkflowCheckpoint]:
+    async def list_checkpoints(self, workflow_id: str | None = None) -> list[WorkflowCheckpoint]:
         """List checkpoint objects. If workflow_id is provided, filter by that workflow."""
         if workflow_id is None:
             return list(self._checkpoints.values())
         return [cp for cp in self._checkpoints.values() if cp.workflow_id == workflow_id]
 
-    def delete_checkpoint(self, checkpoint_id: str) -> bool:
+    async def delete_checkpoint(self, checkpoint_id: str) -> bool:
         """Delete a checkpoint by ID."""
         if checkpoint_id in self._checkpoints:
             del self._checkpoints[checkpoint_id]
@@ -107,75 +120,82 @@ class FileCheckpointStorage:
         self.storage_path.mkdir(parents=True, exist_ok=True)
         logger.info(f"Initialized file checkpoint storage at {self.storage_path}")
 
-    def save_checkpoint(self, checkpoint: WorkflowCheckpoint) -> str:
+    async def save_checkpoint(self, checkpoint: WorkflowCheckpoint) -> str:
         """Save a checkpoint and return its ID."""
         file_path = self.storage_path / f"{checkpoint.checkpoint_id}.json"
         checkpoint_dict = asdict(checkpoint)
 
-        # Note: Using synchronous I/O for simplicity in this prototype
-        # In production, consider using aiofiles for truly async I/O
-        with open(file_path, "w") as f:
-            json.dump(checkpoint_dict, f, indent=2, ensure_ascii=False)
+        def _write_atomic() -> None:
+            tmp_path = file_path.with_suffix(".json.tmp")
+            with open(tmp_path, "w") as f:
+                json.dump(checkpoint_dict, f, indent=2, ensure_ascii=False)
+            os.replace(tmp_path, file_path)
+
+        await asyncio.to_thread(_write_atomic)
 
         logger.info(f"Saved checkpoint {checkpoint.checkpoint_id} to {file_path}")
         return checkpoint.checkpoint_id
 
-    def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:
+    async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:
         """Load a checkpoint by ID."""
         file_path = self.storage_path / f"{checkpoint_id}.json"
 
         if not file_path.exists():
             return None
 
-        with open(file_path) as f:
-            checkpoint_dict = json.load(f)
+        def _read() -> dict[str, Any]:
+            with open(file_path) as f:
+                return json.load(f)
+
+        checkpoint_dict = await asyncio.to_thread(_read)
 
         checkpoint = WorkflowCheckpoint(**checkpoint_dict)
         logger.info(f"Loaded checkpoint {checkpoint_id} from {file_path}")
         return checkpoint
 
-    def list_checkpoint_ids(self, workflow_id: str | None = None) -> list[str]:
+    async def list_checkpoint_ids(self, workflow_id: str | None = None) -> list[str]:
         """List checkpoint IDs. If workflow_id is provided, filter by that workflow."""
-        checkpoint_ids: list[str] = []
 
-        for file_path in self.storage_path.glob("*.json"):
-            try:
-                with open(file_path) as f:
-                    data = json.load(f)
+        def _list_ids() -> list[str]:
+            checkpoint_ids: list[str] = []
+            for file_path in self.storage_path.glob("*.json"):
+                try:
+                    with open(file_path) as f:
+                        data = json.load(f)
+                    if workflow_id is None or data.get("workflow_id") == workflow_id:
+                        checkpoint_ids.append(data.get("checkpoint_id", file_path.stem))
+                except Exception as e:
+                    logger.warning(f"Failed to read checkpoint file {file_path}: {e}")
+            return checkpoint_ids
 
-                # If no workflow filter, include all checkpoints
-                if workflow_id is None or data.get("workflow_id") == workflow_id:
-                    checkpoint_ids.append(data.get("checkpoint_id", file_path.stem))
-            except Exception as e:
-                logger.warning(f"Failed to read checkpoint file {file_path}: {e}")
+        return await asyncio.to_thread(_list_ids)
 
-        return checkpoint_ids
-
-    def list_checkpoints(self, workflow_id: str | None = None) -> list[WorkflowCheckpoint]:
+    async def list_checkpoints(self, workflow_id: str | None = None) -> list[WorkflowCheckpoint]:
         """List checkpoint objects. If workflow_id is provided, filter by that workflow."""
-        checkpoints: list[WorkflowCheckpoint] = []
 
-        for file_path in self.storage_path.glob("*.json"):
-            try:
-                with open(file_path) as f:
-                    data = json.load(f)
+        def _list_checkpoints() -> list[WorkflowCheckpoint]:
+            checkpoints: list[WorkflowCheckpoint] = []
+            for file_path in self.storage_path.glob("*.json"):
+                try:
+                    with open(file_path) as f:
+                        data = json.load(f)
+                    if workflow_id is None or data.get("workflow_id") == workflow_id:
+                        checkpoints.append(WorkflowCheckpoint(**data))
+                except Exception as e:
+                    logger.warning(f"Failed to read checkpoint file {file_path}: {e}")
+            return checkpoints
 
-                # If no workflow filter, include all checkpoints
-                if workflow_id is None or data.get("workflow_id") == workflow_id:
-                    checkpoint = WorkflowCheckpoint(**data)
-                    checkpoints.append(checkpoint)
-            except Exception as e:
-                logger.warning(f"Failed to read checkpoint file {file_path}: {e}")
+        return await asyncio.to_thread(_list_checkpoints)
 
-        return checkpoints
-
-    def delete_checkpoint(self, checkpoint_id: str) -> bool:
+    async def delete_checkpoint(self, checkpoint_id: str) -> bool:
         """Delete a checkpoint by ID."""
         file_path = self.storage_path / f"{checkpoint_id}.json"
 
-        if file_path.exists():
-            file_path.unlink()
-            logger.info(f"Deleted checkpoint {checkpoint_id} from {file_path}")
-            return True
+        def _delete() -> bool:
+            if file_path.exists():
+                file_path.unlink()
+                logger.info(f"Deleted checkpoint {checkpoint_id} from {file_path}")
+                return True
+            return False
 
-        return False
+        return await asyncio.to_thread(_delete)

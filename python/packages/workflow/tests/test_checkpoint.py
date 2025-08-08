@@ -7,7 +7,7 @@ from pathlib import Path
 
 from agent_framework_workflow._checkpoint import (
     FileCheckpointStorage,
-    MemoryCheckpointStorage,
+    InMemoryCheckpointStorage,
     WorkflowCheckpoint,
 )
 
@@ -54,104 +54,104 @@ def test_workflow_checkpoint_custom_values():
     assert checkpoint.version == "2.0"
 
 
-def test_memory_checkpoint_storage_save_and_load():
-    storage = MemoryCheckpointStorage()
+async def test_memory_checkpoint_storage_save_and_load():
+    storage = InMemoryCheckpointStorage()
     checkpoint = WorkflowCheckpoint(workflow_id="test-workflow", messages={"executor1": [{"data": "hello"}]})
 
     # Save checkpoint
-    saved_id = storage.save_checkpoint(checkpoint)
+    saved_id = await storage.save_checkpoint(checkpoint)
     assert saved_id == checkpoint.checkpoint_id
 
     # Load checkpoint
-    loaded_checkpoint = storage.load_checkpoint(checkpoint.checkpoint_id)
+    loaded_checkpoint = await storage.load_checkpoint(checkpoint.checkpoint_id)
     assert loaded_checkpoint is not None
     assert loaded_checkpoint.checkpoint_id == checkpoint.checkpoint_id
     assert loaded_checkpoint.workflow_id == checkpoint.workflow_id
     assert loaded_checkpoint.messages == checkpoint.messages
 
 
-def test_memory_checkpoint_storage_load_nonexistent():
-    storage = MemoryCheckpointStorage()
+async def test_memory_checkpoint_storage_load_nonexistent():
+    storage = InMemoryCheckpointStorage()
 
-    result = storage.load_checkpoint("nonexistent-id")
+    result = await storage.load_checkpoint("nonexistent-id")
     assert result is None
 
 
-def test_memory_checkpoint_storage_list_checkpoints():
-    storage = MemoryCheckpointStorage()
+async def test_memory_checkpoint_storage_list_checkpoints():
+    storage = InMemoryCheckpointStorage()
 
     # Create checkpoints for different workflows
     checkpoint1 = WorkflowCheckpoint(workflow_id="workflow-1")
     checkpoint2 = WorkflowCheckpoint(workflow_id="workflow-1")
     checkpoint3 = WorkflowCheckpoint(workflow_id="workflow-2")
 
-    storage.save_checkpoint(checkpoint1)
-    storage.save_checkpoint(checkpoint2)
-    storage.save_checkpoint(checkpoint3)
+    await storage.save_checkpoint(checkpoint1)
+    await storage.save_checkpoint(checkpoint2)
+    await storage.save_checkpoint(checkpoint3)
 
     # Test list_checkpoint_ids for workflow-1
-    workflow1_checkpoint_ids = storage.list_checkpoint_ids("workflow-1")
+    workflow1_checkpoint_ids = await storage.list_checkpoint_ids("workflow-1")
     assert len(workflow1_checkpoint_ids) == 2
     assert checkpoint1.checkpoint_id in workflow1_checkpoint_ids
     assert checkpoint2.checkpoint_id in workflow1_checkpoint_ids
 
     # Test list_checkpoints for workflow-1 (returns objects)
-    workflow1_checkpoints = storage.list_checkpoints("workflow-1")
+    workflow1_checkpoints = await storage.list_checkpoints("workflow-1")
     assert len(workflow1_checkpoints) == 2
     assert all(isinstance(cp, WorkflowCheckpoint) for cp in workflow1_checkpoints)
     assert {cp.checkpoint_id for cp in workflow1_checkpoints} == {checkpoint1.checkpoint_id, checkpoint2.checkpoint_id}
 
     # Test list_checkpoint_ids for workflow-2
-    workflow2_checkpoint_ids = storage.list_checkpoint_ids("workflow-2")
+    workflow2_checkpoint_ids = await storage.list_checkpoint_ids("workflow-2")
     assert len(workflow2_checkpoint_ids) == 1
     assert checkpoint3.checkpoint_id in workflow2_checkpoint_ids
 
     # Test list_checkpoints for workflow-2 (returns objects)
-    workflow2_checkpoints = storage.list_checkpoints("workflow-2")
+    workflow2_checkpoints = await storage.list_checkpoints("workflow-2")
     assert len(workflow2_checkpoints) == 1
     assert workflow2_checkpoints[0].checkpoint_id == checkpoint3.checkpoint_id
 
     # Test list_checkpoint_ids for non-existent workflow
-    empty_checkpoint_ids = storage.list_checkpoint_ids("nonexistent-workflow")
+    empty_checkpoint_ids = await storage.list_checkpoint_ids("nonexistent-workflow")
     assert len(empty_checkpoint_ids) == 0
 
     # Test list_checkpoints for non-existent workflow
-    empty_checkpoints = storage.list_checkpoints("nonexistent-workflow")
+    empty_checkpoints = await storage.list_checkpoints("nonexistent-workflow")
     assert len(empty_checkpoints) == 0
 
     # Test list_checkpoint_ids without workflow filter (all checkpoints)
-    all_checkpoint_ids = storage.list_checkpoint_ids()
+    all_checkpoint_ids = await storage.list_checkpoint_ids()
     assert len(all_checkpoint_ids) == 3
     expected_ids = {checkpoint1.checkpoint_id, checkpoint2.checkpoint_id, checkpoint3.checkpoint_id}
     assert expected_ids.issubset(set(all_checkpoint_ids))
 
     # Test list_checkpoints without workflow filter (all checkpoints)
-    all_checkpoints = storage.list_checkpoints()
+    all_checkpoints = await storage.list_checkpoints()
     assert len(all_checkpoints) == 3
     assert all(isinstance(cp, WorkflowCheckpoint) for cp in all_checkpoints)
 
 
-def test_memory_checkpoint_storage_delete():
-    storage = MemoryCheckpointStorage()
+async def test_memory_checkpoint_storage_delete():
+    storage = InMemoryCheckpointStorage()
     checkpoint = WorkflowCheckpoint(workflow_id="test-workflow")
 
     # Save checkpoint
-    storage.save_checkpoint(checkpoint)
-    assert storage.load_checkpoint(checkpoint.checkpoint_id) is not None
+    await storage.save_checkpoint(checkpoint)
+    assert await storage.load_checkpoint(checkpoint.checkpoint_id) is not None
 
     # Delete checkpoint
-    result = storage.delete_checkpoint(checkpoint.checkpoint_id)
+    result = await storage.delete_checkpoint(checkpoint.checkpoint_id)
     assert result is True
 
     # Verify deletion
-    assert storage.load_checkpoint(checkpoint.checkpoint_id) is None
+    assert await storage.load_checkpoint(checkpoint.checkpoint_id) is None
 
     # Try to delete again
-    result = storage.delete_checkpoint(checkpoint.checkpoint_id)
+    result = await storage.delete_checkpoint(checkpoint.checkpoint_id)
     assert result is False
 
 
-def test_file_checkpoint_storage_save_and_load():
+async def test_file_checkpoint_storage_save_and_load():
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
         checkpoint = WorkflowCheckpoint(
@@ -161,7 +161,7 @@ def test_file_checkpoint_storage_save_and_load():
         )
 
         # Save checkpoint
-        saved_id = storage.save_checkpoint(checkpoint)
+        saved_id = await storage.save_checkpoint(checkpoint)
         assert saved_id == checkpoint.checkpoint_id
 
         # Verify file was created
@@ -169,7 +169,7 @@ def test_file_checkpoint_storage_save_and_load():
         assert file_path.exists()
 
         # Load checkpoint
-        loaded_checkpoint = storage.load_checkpoint(checkpoint.checkpoint_id)
+        loaded_checkpoint = await storage.load_checkpoint(checkpoint.checkpoint_id)
         assert loaded_checkpoint is not None
         assert loaded_checkpoint.checkpoint_id == checkpoint.checkpoint_id
         assert loaded_checkpoint.workflow_id == checkpoint.workflow_id
@@ -177,15 +177,15 @@ def test_file_checkpoint_storage_save_and_load():
         assert loaded_checkpoint.shared_state == checkpoint.shared_state
 
 
-def test_file_checkpoint_storage_load_nonexistent():
+async def test_file_checkpoint_storage_load_nonexistent():
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
 
-        result = storage.load_checkpoint("nonexistent-id")
+        result = await storage.load_checkpoint("nonexistent-id")
         assert result is None
 
 
-def test_file_checkpoint_storage_list_checkpoints():
+async def test_file_checkpoint_storage_list_checkpoints():
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
 
@@ -194,63 +194,63 @@ def test_file_checkpoint_storage_list_checkpoints():
         checkpoint2 = WorkflowCheckpoint(workflow_id="workflow-1")
         checkpoint3 = WorkflowCheckpoint(workflow_id="workflow-2")
 
-        storage.save_checkpoint(checkpoint1)
-        storage.save_checkpoint(checkpoint2)
-        storage.save_checkpoint(checkpoint3)
+        await storage.save_checkpoint(checkpoint1)
+        await storage.save_checkpoint(checkpoint2)
+        await storage.save_checkpoint(checkpoint3)
 
         # Test list_checkpoint_ids for workflow-1
-        workflow1_checkpoint_ids = storage.list_checkpoint_ids("workflow-1")
+        workflow1_checkpoint_ids = await storage.list_checkpoint_ids("workflow-1")
         assert len(workflow1_checkpoint_ids) == 2
         assert checkpoint1.checkpoint_id in workflow1_checkpoint_ids
         assert checkpoint2.checkpoint_id in workflow1_checkpoint_ids
 
         # Test list_checkpoints for workflow-1 (returns objects)
-        workflow1_checkpoints = storage.list_checkpoints("workflow-1")
+        workflow1_checkpoints = await storage.list_checkpoints("workflow-1")
         assert len(workflow1_checkpoints) == 2
         assert all(isinstance(cp, WorkflowCheckpoint) for cp in workflow1_checkpoints)
         checkpoint_ids = {cp.checkpoint_id for cp in workflow1_checkpoints}
         assert checkpoint_ids == {checkpoint1.checkpoint_id, checkpoint2.checkpoint_id}
 
         # Test list_checkpoint_ids for workflow-2
-        workflow2_checkpoint_ids = storage.list_checkpoint_ids("workflow-2")
+        workflow2_checkpoint_ids = await storage.list_checkpoint_ids("workflow-2")
         assert len(workflow2_checkpoint_ids) == 1
         assert checkpoint3.checkpoint_id in workflow2_checkpoint_ids
 
         # Test list_checkpoints for workflow-2 (returns objects)
-        workflow2_checkpoints = storage.list_checkpoints("workflow-2")
+        workflow2_checkpoints = await storage.list_checkpoints("workflow-2")
         assert len(workflow2_checkpoints) == 1
         assert workflow2_checkpoints[0].checkpoint_id == checkpoint3.checkpoint_id
 
         # Test list all checkpoints
-        all_checkpoint_ids = storage.list_checkpoint_ids()
+        all_checkpoint_ids = await storage.list_checkpoint_ids()
         assert len(all_checkpoint_ids) == 3
 
-        all_checkpoints = storage.list_checkpoints()
+        all_checkpoints = await storage.list_checkpoints()
         assert len(all_checkpoints) == 3
         assert all(isinstance(cp, WorkflowCheckpoint) for cp in all_checkpoints)
 
 
-def test_file_checkpoint_storage_delete():
+async def test_file_checkpoint_storage_delete():
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
         checkpoint = WorkflowCheckpoint(workflow_id="test-workflow")
 
         # Save checkpoint
-        storage.save_checkpoint(checkpoint)
+        await storage.save_checkpoint(checkpoint)
         file_path = Path(temp_dir) / f"{checkpoint.checkpoint_id}.json"
         assert file_path.exists()
 
         # Delete checkpoint
-        result = storage.delete_checkpoint(checkpoint.checkpoint_id)
+        result = await storage.delete_checkpoint(checkpoint.checkpoint_id)
         assert result is True
         assert not file_path.exists()
 
         # Try to delete again
-        result = storage.delete_checkpoint(checkpoint.checkpoint_id)
+        result = await storage.delete_checkpoint(checkpoint.checkpoint_id)
         assert result is False
 
 
-def test_file_checkpoint_storage_directory_creation():
+async def test_file_checkpoint_storage_directory_creation():
     with tempfile.TemporaryDirectory() as temp_dir:
         nested_path = Path(temp_dir) / "nested" / "checkpoint" / "storage"
         storage = FileCheckpointStorage(nested_path)
@@ -261,27 +261,27 @@ def test_file_checkpoint_storage_directory_creation():
 
         # Should be able to save checkpoints
         checkpoint = WorkflowCheckpoint(workflow_id="test")
-        storage.save_checkpoint(checkpoint)
+        await storage.save_checkpoint(checkpoint)
 
         file_path = nested_path / f"{checkpoint.checkpoint_id}.json"
         assert file_path.exists()
 
 
-def test_file_checkpoint_storage_corrupted_file():
+async def test_file_checkpoint_storage_corrupted_file():
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
 
         # Create a corrupted JSON file
         corrupted_file = Path(temp_dir) / "corrupted.json"
-        with open(corrupted_file, "w") as f:
+        with open(corrupted_file, "w") as f:  # noqa: ASYNC230
             f.write("{ invalid json }")
 
         # list_checkpoints should handle the corrupted file gracefully
-        checkpoints = storage.list_checkpoints("any-workflow")
+        checkpoints = await storage.list_checkpoints("any-workflow")
         assert checkpoints == []
 
 
-def test_file_checkpoint_storage_json_serialization():
+async def test_file_checkpoint_storage_json_serialization():
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
 
@@ -294,8 +294,8 @@ def test_file_checkpoint_storage_json_serialization():
         )
 
         # Save and load
-        storage.save_checkpoint(checkpoint)
-        loaded = storage.load_checkpoint(checkpoint.checkpoint_id)
+        await storage.save_checkpoint(checkpoint)
+        loaded = await storage.load_checkpoint(checkpoint.checkpoint_id)
 
         assert loaded is not None
         assert loaded.messages == checkpoint.messages
@@ -304,7 +304,7 @@ def test_file_checkpoint_storage_json_serialization():
 
         # Verify the JSON file is properly formatted
         file_path = Path(temp_dir) / f"{checkpoint.checkpoint_id}.json"
-        with open(file_path) as f:
+        with open(file_path) as f:  # noqa: ASYNC230
             data = json.load(f)
 
         assert data["messages"]["executor1"][0]["data"]["nested"]["value"] == 42
@@ -315,7 +315,7 @@ def test_file_checkpoint_storage_json_serialization():
 
 def test_checkpoint_storage_protocol_compliance():
     # This test ensures both implementations have all required methods
-    memory_storage = MemoryCheckpointStorage()
+    memory_storage = InMemoryCheckpointStorage()
 
     with tempfile.TemporaryDirectory() as temp_dir:
         file_storage = FileCheckpointStorage(temp_dir)

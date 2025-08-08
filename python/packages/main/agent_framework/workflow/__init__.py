@@ -29,7 +29,7 @@ _IMPORTS = [
     "WorkflowRunResult",
     "Workflow",
     "FileCheckpointStorage",
-    "MemoryCheckpointStorage",
+    "InMemoryCheckpointStorage",
     "CheckpointStorage",
     "WorkflowCheckpoint",
 ]

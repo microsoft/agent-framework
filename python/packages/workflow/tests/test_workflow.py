@@ -388,7 +388,7 @@ async def test_workflow_run_stream_from_checkpoint_with_external_storage(simple_
             iteration_count=0,
             max_iterations=100,
         )
-        checkpoint_id = storage.save_checkpoint(test_checkpoint)
+        checkpoint_id = await storage.save_checkpoint(test_checkpoint)
 
         # Create a workflow WITHOUT checkpointing
         workflow_without_checkpointing = (
@@ -425,7 +425,7 @@ async def test_workflow_run_from_checkpoint_non_streaming(simple_executor: Execu
             iteration_count=0,
             max_iterations=100,
         )
-        checkpoint_id = storage.save_checkpoint(test_checkpoint)
+        checkpoint_id = await storage.save_checkpoint(test_checkpoint)
 
         # Build workflow with checkpointing
         workflow = (
@@ -458,7 +458,7 @@ async def test_workflow_run_stream_from_checkpoint_with_responses(simple_executo
             iteration_count=0,
             max_iterations=100,
         )
-        checkpoint_id = storage.save_checkpoint(test_checkpoint)
+        checkpoint_id = await storage.save_checkpoint(test_checkpoint)
 
         # Build workflow with checkpointing
         workflow = (
