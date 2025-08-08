@@ -138,7 +138,11 @@ class AIFunction(AITool, Generic[ArgsT, ReturnT]):
 
 
 def _parse_annotation(annotation: Any) -> Any:
-    """Parse a type annotation and return the corresponding type."""
+    """Parse a type annotation and return the corresponding type.
+
+    If the second annotation (after the type) is a string, then we convert that to a pydantic Field description.
+    The rest are returned as-is, allowing for multiple annotations.
+    """
     origin = get_origin(annotation)
     if origin is not None:
         args = get_args(annotation)
