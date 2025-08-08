@@ -145,7 +145,10 @@ def _parse_annotation(annotation: Any) -> Any:
         # For other generics, return the origin type (e.g., list for List[int])
         if len(args) > 1 and isinstance(args[1], str):
             # Create a new Annotated type with the updated Field
-            return Annotated[args[0], Field(description=args[1])]
+            args_list = list(args)
+            if len(args_list) == 2:
+                return Annotated[args_list[0], Field(description=args_list[1])]
+            return Annotated[args_list[0], Field(description=args_list[1]), tuple(args_list[2:])]
     return annotation
 
 
