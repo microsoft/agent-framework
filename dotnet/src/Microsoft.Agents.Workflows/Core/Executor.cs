@@ -151,10 +151,9 @@ public abstract class ExecutorBase : IIdentified, IAsyncDisposable
 /// This is used to reflectively discover handlers for messages without violating ILTrim requirements.
 /// </typeparam>
 public class Executor<
-    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods |
-                                DynamicallyAccessedMemberTypes.NonPublicMethods |
-                                DynamicallyAccessedMemberTypes.Interfaces)]
-TExecutor
+    [DynamicallyAccessedMembers(
+        ReflectionDemands.RuntimeInterfaceDiscoveryAndInvocation)
+    ] TExecutor
     > : ExecutorBase where TExecutor : Executor<TExecutor>
 {
     /// <inheritdoc cref="ExecutorBase.ExecutorBase(string?)"/>

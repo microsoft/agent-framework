@@ -117,9 +117,10 @@ internal struct MessageHandlerInfo
     }
 
     public Func<object, IWorkflowContext, ValueTask<CallResult>> Bind<
-        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods |
-                                    DynamicallyAccessedMemberTypes.NonPublicMethods |
-                                    DynamicallyAccessedMemberTypes.Interfaces)] TExecutor>
+        [DynamicallyAccessedMembers(
+            ReflectionDemands.RuntimeInterfaceDiscoveryAndInvocation)
+        ] TExecutor
+        >
         (Executor<TExecutor> executor, bool checkType = false)
         where TExecutor : Executor<TExecutor>
     {
