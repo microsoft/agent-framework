@@ -433,7 +433,14 @@ class TextContent(AIContent):
         )
 
     def __add__(self, other: "TextContent") -> "TextContent":
-        """Concatenate two TextContent instances."""
+        """Concatenate two TextContent instances.
+
+        The following things happen:
+        The text is concatenated.
+        The annotations are combined.
+        The additional properties are merged, with the values of shared keys of the 'self' instance taking precedence.
+        The raw_representations are combined into a list of them, if they both have one.
+        """
         if not isinstance(other, TextContent):
             raise TypeError("Incompatible type")
         if self.raw_representation is None:
@@ -441,7 +448,9 @@ class TextContent(AIContent):
         elif other.raw_representation is None:
             raw_representation = self.raw_representation
         else:
-            raw_representation = [self.raw_representation, other.raw_representation]
+            raw_representation = (
+                self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
+            ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
         if self.annotations is None:
             annotations = other.annotations
         elif other.annotations is None:
@@ -451,23 +460,35 @@ class TextContent(AIContent):
         return TextContent(
             text=self.text + other.text,
             annotations=annotations,
-            additional_properties={**(self.additional_properties or {}), **(other.additional_properties or {})},
+            additional_properties={
+                **(other.additional_properties or {}),
+                **(self.additional_properties or {}),
+            },
             raw_representation=raw_representation,
         )
 
     def __iadd__(self, other: "TextContent") -> Self:
-        """In-place concatenation of two TextContent instances."""
+        """In-place concatenation of two TextContent instances.
+
+        The following things happen:
+        The text is concatenated.
+        The annotations are combined.
+        The additional properties are merged, with the values of shared keys of the 'self' instance taking precedence.
+        The raw_representations are combined into a list of them, if they both have one.
+        """
         if not isinstance(other, TextContent):
             raise TypeError("Incompatible type")
         self.text += other.text
         if self.additional_properties is None:
             self.additional_properties = {}
         if other.additional_properties:
-            self.additional_properties.update(other.additional_properties)
+            self.additional_properties = {**other.additional_properties, **self.additional_properties}
         if self.raw_representation is None:
             self.raw_representation = other.raw_representation
         elif other.raw_representation is not None:
-            self.raw_representation = [self.raw_representation, other.raw_representation]
+            self.raw_representation = (
+                self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
+            ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
         if other.annotations:
             if self.annotations is None:
                 self.annotations = []
@@ -487,11 +508,7 @@ class TextReasoningContent(AIContent):
         annotations: Optional annotations associated with the content.
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content.
-
-
     """
-
-    # TODO(eavanvalkenburg): Should we merge these two classes, and use a property to distinguish them?
 
     text: str
     type: Literal["text_reasoning"] = "text_reasoning"  # type: ignore[assignment]
@@ -520,7 +537,14 @@ class TextReasoningContent(AIContent):
         )
 
     def __add__(self, other: "TextReasoningContent") -> "TextReasoningContent":
-        """Concatenate two TextReasoningContent instances."""
+        """Concatenate two TextReasoningContent instances.
+
+        The following things happen:
+        The text is concatenated.
+        The annotations are combined.
+        The additional properties are merged, with the values of shared keys of the 'self' instance taking precedence.
+        The raw_representations are combined into a list of them, if they both have one.
+        """
         if not isinstance(other, TextReasoningContent):
             raise TypeError("Incompatible type")
         if self.raw_representation is None:
@@ -528,7 +552,9 @@ class TextReasoningContent(AIContent):
         elif other.raw_representation is None:
             raw_representation = self.raw_representation
         else:
-            raw_representation = [self.raw_representation, other.raw_representation]
+            raw_representation = (
+                self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
+            ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
         if self.annotations is None:
             annotations = other.annotations
         elif other.annotations is None:
@@ -543,7 +569,14 @@ class TextReasoningContent(AIContent):
         )
 
     def __iadd__(self, other: "TextReasoningContent") -> Self:
-        """In-place concatenation of two TextReasoningContent instances."""
+        """In-place concatenation of two TextReasoningContent instances.
+
+        The following things happen:
+        The text is concatenated.
+        The annotations are combined.
+        The additional properties are merged, with the values of shared keys of the 'self' instance taking precedence.
+        The raw_representations are combined into a list of them, if they both have one.
+        """
         if not isinstance(other, TextReasoningContent):
             raise TypeError("Incompatible type")
         self.text += other.text
@@ -554,7 +587,9 @@ class TextReasoningContent(AIContent):
         if self.raw_representation is None:
             self.raw_representation = other.raw_representation
         elif other.raw_representation is not None:
-            self.raw_representation = [self.raw_representation, other.raw_representation]
+            self.raw_representation = (
+                self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
+            ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
         if other.annotations:
             if self.annotations is None:
                 self.annotations = []
