@@ -21,7 +21,7 @@ internal static class Step3EntryPoint
             .Build<NumberSignal>();
 
         LocalRunner<NumberSignal> runner = new(workflow);
-        StreamingExecutionHandle handle = await runner.StreamAsync(NumberSignal.Init).ConfigureAwait(false);
+        StreamingRun handle = await runner.StreamAsync(NumberSignal.Init).ConfigureAwait(false);
 
         await foreach (WorkflowEvent evt in handle.WatchStreamAsync().ConfigureAwait(false))
         {

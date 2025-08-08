@@ -86,24 +86,40 @@ public class LocalRunner<TInput> : ISuperStepRunner where TInput : notnull
     /// <summary>
     /// Initiates an asynchronous streaming execution using the specified input.
     /// </summary>
-    /// <remarks>The returned <see cref="StreamingExecutionHandle"/> provides methods to observe and control
+    /// <remarks>The returned <see cref="StreamingRun"/> provides methods to observe and control
     /// the ongoing streaming execution. The operation will continue until the streaming execution is finished or
     /// cancelled.</remarks>
-    /// <param name="input">The input message to be processed as part of the streaming execution.</param>
+    /// <param name="input">The input message to be processed as part of the streaming run.</param>
     /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation.</param>
-    /// <returns>A <see cref="ValueTask{TResult}"/> that represents the asynchronous operation. The result contains a <see
-    /// cref="StreamingExecutionHandle"/> for managing and interacting with the streaming execution.</returns>
-    public async ValueTask<StreamingExecutionHandle> StreamAsync(TInput input, CancellationToken cancellation = default)
+    /// <returns>A <see cref="ValueTask{StreamingRun}"/> that represents the asynchronous operation. The result contains a <see
+    /// cref="StreamingRun"/> for managing and interacting with the streaming run.</returns>
+    public async ValueTask<StreamingRun> StreamAsync(TInput input, CancellationToken cancellation = default)
     {
         await this.RunContext.AddExternalMessageAsync(input).ConfigureAwait(false);
 
-        return new StreamingExecutionHandle(this);
+        return new StreamingRun(this);
+    }
+
+    /// <summary>
+    /// Initiates a non-streaming execution of the workflow with the specified input.
+    /// </summary>
+    /// <remarks>The workflow will run until its first halt, and the returned <see cref="Run"/> will capture
+    /// all outgoing events. Use the <c>Run</c> instance to resume execution with responses to outgoing events.</remarks>
+    /// <param name="input">The input message to be processed as part of the run.</param>
+    /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation.</param>
+    /// <returns>A <see cref="ValueTask{Run}"/> that represents the asynchronous operation. The result contains a <see
+    /// cref="Run"/> for managing and interacting with the streaming run.</returns>
+    public async ValueTask<Run> RunAsync(TInput input, CancellationToken cancellation = default)
+    {
+        StreamingRun streamingRun = await this.StreamAsync(input, cancellation).ConfigureAwait(false);
+        cancellation.ThrowIfCancellationRequested();
+
+        return await Run.CaptureStreamAsync(streamingRun, cancellation).ConfigureAwait(false);
     }
 
     bool ISuperStepRunner.HasUnservicedRequests => this.RunContext.HasUnservicedRequests;
     bool ISuperStepRunner.HasUnprocessedMessages => this.RunContext.NextStepHasActions;
 
-    //private StepContext? _currentStep = null;
     async ValueTask<bool> ISuperStepRunner.RunSuperStepAsync(CancellationToken cancellation)
     {
         cancellation.ThrowIfCancellationRequested();
@@ -185,18 +201,35 @@ public class LocalRunner<TInput, TResult> : IRunnerWithOutput<TResult> where TIn
     /// <summary>
     /// Initiates an asynchronous streaming execution for the specified input.
     /// </summary>
-    /// <remarks>The returned <see cref="StreamingExecutionHandle{TResult}"/> can be used to retrieve results
+    /// <remarks>The returned <see cref="StreamingRun{TResult}"/> can be used to retrieve results
     /// as they become available. If the operation is cancelled via the <paramref name="cancellation"/> token, the
     /// streaming execution will be terminated.</remarks>
-    /// <param name="input">The input value to be processed by the streaming execution.</param>
+    /// <param name="input">The input value to be processed by the streaming run.</param>
     /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation.</param>
-    /// <returns>A <see cref="StreamingExecutionHandle{TResult}"/> that provides access to the results of the streaming
-    /// execution.</returns>
-    public async ValueTask<StreamingExecutionHandle<TResult>> StreamAsync(TInput input, CancellationToken cancellation = default)
+    /// <returns>A <see cref="StreamingRun{TResult}"/> that provides access to the results of the streaming
+    /// run.</returns>
+    public async ValueTask<StreamingRun<TResult>> StreamAsync(TInput input, CancellationToken cancellation = default)
     {
         await this._innerRunner.EnqueueMessageAsync(input).ConfigureAwait(false);
 
-        return new StreamingExecutionHandle<TResult>(this);
+        return new StreamingRun<TResult>(this);
+    }
+
+    /// <summary>
+    /// Initiates a non-streaming execution of the workflow with the specified input.
+    /// </summary>
+    /// <remarks>The workflow will run until its first halt, and the returned <see cref="Run"/> will capture
+    /// all outgoing events. Use the <c>Run</c> instance to resume execution with responses to outgoing events.</remarks>
+    /// <param name="input">The input message to be processed as part of the run.</param>
+    /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation.</param>
+    /// <returns>A <see cref="ValueTask{Run}"/> that represents the asynchronous operation. The result contains a <see
+    /// cref="Run"/> for managing and interacting with the streaming run.</returns>
+    public async ValueTask<Run> RunAsync(TInput input, CancellationToken cancellation = default)
+    {
+        StreamingRun<TResult> streamingRun = await this.StreamAsync(input, cancellation).ConfigureAwait(false);
+        cancellation.ThrowIfCancellationRequested();
+
+        return await Run<TResult>.CaptureStreamAsync(streamingRun, cancellation).ConfigureAwait(false);
     }
 
     /// <inheritdoc cref="Workflow{TInput, TResult}.RunningOutput"/>

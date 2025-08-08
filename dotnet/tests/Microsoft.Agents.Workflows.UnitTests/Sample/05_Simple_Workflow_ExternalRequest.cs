@@ -21,7 +21,7 @@ internal static class Step5EntryPoint
             .BuildWithOutput<NumberSignal, string>(judge, ComputeStreamingOutput, (NumberSignal s, string? _) => s == NumberSignal.Matched);
 
         LocalRunner<NumberSignal, string> runner = new(workflow);
-        StreamingExecutionHandle<string> handle = await runner.StreamAsync(NumberSignal.Init).ConfigureAwait(false);
+        StreamingRun<string> handle = await runner.StreamAsync(NumberSignal.Init).ConfigureAwait(false);
 
         await foreach (WorkflowEvent evt in handle.WatchStreamAsync().ConfigureAwait(false))
         {
