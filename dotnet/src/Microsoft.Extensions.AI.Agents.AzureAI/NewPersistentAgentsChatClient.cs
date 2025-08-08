@@ -542,6 +542,6 @@ namespace Azure.AI.Agents.Persistent
         [JsonSerializable(typeof(JsonObject))]
         [JsonSerializable(typeof(string[]))]
         [JsonSerializable(typeof(IDictionary<string, object>))]
-        private sealed partial class AgentsChatClientJsonContext : JsonSerializerContext;
+        internal sealed partial class AgentsChatClientJsonContext : JsonSerializerContext;
     }
 }
