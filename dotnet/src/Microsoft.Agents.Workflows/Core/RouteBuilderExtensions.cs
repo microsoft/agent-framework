@@ -44,9 +44,7 @@ internal static class IMessageHandlerReflection
 internal static class RouteBuilderExtensions
 {
     private static IEnumerable<MessageHandlerInfo> GetHandlerInfos(
-        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods |
-                                    DynamicallyAccessedMemberTypes.NonPublicMethods |
-                                    DynamicallyAccessedMemberTypes.Interfaces)]
+        [DynamicallyAccessedMembers(ReflectionDemands.RuntimeInterfaceDiscoveryAndInvocation)]
         this Type executorType)
     {
         // Handlers are defined by implementations of IMessageHandler<TMessage> or IMessageHandler<TMessage, TResult>
@@ -79,9 +77,9 @@ internal static class RouteBuilderExtensions
     }
 
     public static RouteBuilder ReflectHandlers<
-        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods |
-                                    DynamicallyAccessedMemberTypes.NonPublicMethods |
-                                    DynamicallyAccessedMemberTypes.Interfaces)] TExecutor>
+        [DynamicallyAccessedMembers(
+            ReflectionDemands.RuntimeInterfaceDiscoveryAndInvocation)
+        ] TExecutor>
         (this RouteBuilder builder, Executor<TExecutor> executor)
         where TExecutor : Executor<TExecutor>
     {

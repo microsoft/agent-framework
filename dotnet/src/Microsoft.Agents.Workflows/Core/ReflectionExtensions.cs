@@ -2,6 +2,7 @@
 
 using System;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 
 #if !NET
@@ -9,6 +10,14 @@ using System.Linq;
 #endif
 
 namespace Microsoft.Agents.Workflows.Core;
+
+internal static class ReflectionDemands
+{
+    internal const DynamicallyAccessedMemberTypes ReflectedMethods = DynamicallyAccessedMemberTypes.PublicMethods | DynamicallyAccessedMemberTypes.NonPublicMethods;
+    internal const DynamicallyAccessedMemberTypes ReflectedInterfaces = DynamicallyAccessedMemberTypes.Interfaces;
+
+    internal const DynamicallyAccessedMemberTypes RuntimeInterfaceDiscoveryAndInvocation = ReflectedMethods | ReflectedInterfaces;
+}
 
 internal static class ReflectionExtensions
 {
