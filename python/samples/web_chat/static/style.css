@@ -1,0 +1,25 @@
+body { font-family: system-ui, Arial, sans-serif; margin: 0; padding: 0; background:#0f1115; color:#e5e7eb; }
+header { background:#1f2430; padding:1rem 1.5rem; }
+h1 { margin:0; font-size:1.4rem; }
+.subtitle { margin:0.25rem 0 0; font-size:0.8rem; color:#9ca3af; }
+section.agents { padding:0 1.5rem 1rem; }
+section.agents ul { list-style:none; padding:0; margin:0; display:flex; gap:1rem; flex-wrap:wrap; }
+section.agents li { list-style:none; }
+section.agents button.agent-btn { background:#252b37; padding:0.55rem 0.75rem; border-radius:6px; font-size:0.75rem; color:#e5e7eb; border:1px solid #2c3342; cursor:pointer; display:flex; flex-direction:column; gap:0.15rem; min-width:160px; text-align:left; }
+section.agents button.agent-btn:hover { background:#2d3543; }
+section.agents button.agent-btn.selected { background:#3b82f6; border-color:#60a5fa; }
+section.agents button.agent-btn.selected .desc { color:#e5e7eb; }
+.current-agent { margin-top:0.6rem; font-size:0.7rem; color:#9ca3af; }
+.desc { color:#9ca3af; }
+section.chat { background:#14181f; padding:1rem 1.5rem 4.5rem; min-height:55vh; position:relative; }
+.messages { max-width:860px; margin:0 auto 1rem; display:flex; flex-direction:column; gap:0.6rem; }
+.message { padding:0.65rem 0.85rem; border-radius:8px; line-height:1.3; font-size:0.9rem; white-space:pre-wrap; }
+.message.user { background:#2563eb; align-self:flex-end; color:#fff; }
+.message.assistant { background:#1f2430; border:1px solid #2c3342; }
+.role { font-weight:600; margin-right:0.35rem; opacity:0.8; }
+form#chat-form { position:fixed; bottom:0; left:0; right:0; background:#1f2430; display:flex; gap:0.75rem; padding:0.75rem 1rem; border-top:1px solid #2c3342; }
+form#chat-form textarea { flex:1; resize:vertical; min-height:50px; max-height:160px; background:#14181f; color:#e5e7eb; border:1px solid #2c3342; border-radius:6px; padding:0.5rem 0.65rem; font:inherit; }
+form#chat-form button { background:#10b981; color:#fff; border:none; padding:0 1.1rem; border-radius:6px; cursor:pointer; font-weight:600; }
+form#chat-form button:hover { background:#059669; }
+.error { color:#f87171; font-size:0.85rem; }
+footer { padding:0.75rem 1rem 1.25rem; font-size:0.65rem; text-transform:uppercase; letter-spacing:0.05em; color:#6b7280; }

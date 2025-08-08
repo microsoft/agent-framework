@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Python Agent Web Chat</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>Python Agent Web Chat</h1>
+  <p class="subtitle">Connected to runtime at {{ runtime_url }}</p>
+  </header>
+
+  <section class="agents">
+    <h2>Agents</h2>
+    <ul id="agent-list">
+      {% for agent in agents %}
+      <li>
+        <button type="button" class="agent-btn{% if default_agent and agent.name == default_agent.name %} selected{% endif %}" data-agent="{{ agent.name }}" aria-pressed="{% if default_agent and agent.name == default_agent.name %}true{% else %}false{% endif %}">
+          <span class="agent-name">{{ agent.name }}</span>
+          <span class="desc">{{ agent.description }}</span>
+        </button>
+      </li>
+      {% endfor %}
+    </ul>
+    <div class="current-agent">Current agent: <strong id="current-agent-label">{{ default_agent.name if default_agent else 'helpful' }}</strong></div>
+  </section>
+
+  <section class="chat" hx-ext="sse">
+    <div id="messages" class="messages"></div>
+    <form id="chat-form" hx-post="/chat/send" hx-target="#messages" hx-swap="beforeend">
+  <input id="active-agent-input" type="hidden" name="agent" value="{{ default_agent.name if default_agent else 'helpful' }}" />
+  <textarea name="message" placeholder="Type your message... (Enter to send, Shift+Enter for newline)" required></textarea>
+      <button type="submit">Send</button>
+    </form>
+  </section>
+
+  <footer>
+    <p>Conversation ID: {{ conversation_id }}</p>
+    <p>Sample inspired by .NET AgentWebChat</p>
+  </footer>
+
+  <script>
+  // Progressive enhancement: agent selection + Enter-to-send
+  (function() {
+    const list = document.getElementById('agent-list');
+    const hidden = document.getElementById('active-agent-input');
+    const label = document.getElementById('current-agent-label');
+    const form = document.getElementById('chat-form');
+    const textarea = form ? form.querySelector('textarea[name="message"]') : null;
+
+    if (list && hidden) {
+      list.addEventListener('click', (e) => {
+        const btn = e.target.closest('button.agent-btn');
+        if (!btn) return;
+        const agent = btn.getAttribute('data-agent');
+        if (!agent) return;
+        hidden.value = agent;
+        label && (label.textContent = agent);
+        list.querySelectorAll('button.agent-btn').forEach(b => {
+          const selected = b === btn;
+          b.classList.toggle('selected', selected);
+          b.setAttribute('aria-pressed', selected ? 'true' : 'false');
+        });
+      });
+    }
+
+    if (form && textarea) {
+      textarea.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+          e.preventDefault();
+          // Avoid empty submissions
+          if (textarea.value.trim().length === 0) return;
+          form.requestSubmit();
+        }
+      });
+      // Clear & refocus after HTMX swap into #messages
+      document.body.addEventListener('htmx:afterSwap', (e) => {
+        if (e.target && e.target.id === 'messages') {
+          textarea.value = '';
+          textarea.focus();
+        }
+      });
+    }
+  })();
+  </script>
+</body>
+</html>
