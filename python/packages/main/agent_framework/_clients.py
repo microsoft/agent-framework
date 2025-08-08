@@ -4,7 +4,7 @@ import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, MutableSequence, Sequence
 from functools import wraps
-from typing import Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -22,6 +22,9 @@ from ._types import (
     FunctionResultContent,
     GeneratedEmbeddings,
 )
+
+if TYPE_CHECKING:
+    from ._agents import ChatClientAgent
 
 TInput = TypeVar("TInput", contravariant=True)
 TEmbedding = TypeVar("TEmbedding")
@@ -640,6 +643,36 @@ class ChatClientBase(AFBaseModel, ABC):
         If the service does not have a URL, return None.
         """
         return None
+
+    def create_agent(
+        self,
+        *,
+        name: str,
+        instructions: str,
+        tools: AITool
+        | list[AITool]
+        | Callable[..., Any]
+        | list[Callable[..., Any]]
+        | MutableMapping[str, Any]
+        | list[MutableMapping[str, Any]]
+        | None = None,
+        **kwargs: Any,
+    ) -> "ChatClientAgent":
+        """Create an agent with the given name and instructions.
+
+        Args:
+            name: The name of the agent.
+            instructions: The instructions for the agent.
+            tools: Optional list of tools to associate with the agent.
+            **kwargs: Additional keyword arguments to pass to the agent.
+                See ChatClientAgent for all the available options.
+
+        Returns:
+            An instance of ChatClientAgent.
+        """
+        from ._agents import ChatClientAgent
+
+        return ChatClientAgent(chat_client=self, name=name, instructions=instructions, tools=tools, **kwargs)
 
 
 # region: Embedding Client
