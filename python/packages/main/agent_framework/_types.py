@@ -99,6 +99,8 @@ __all__ = [
     "FunctionCallContent",
     "FunctionResultContent",
     "GeneratedEmbeddings",
+    "HostedFileContent",
+    "HostedVectorStoreContent",
     "SpeechToTextOptions",
     "StructuredResponse",
     "TextContent",
@@ -1036,6 +1038,69 @@ class UsageContent(AIContent):
         )
 
 
+class HostedFileContent(AIContent):
+    """Represents a hosted file content.
+
+    Attributes:
+        type: The type of content, which is always "hosted_file" for this class.
+        uri: The URI of the hosted file.
+        media_type: The media type of the hosted file.
+        additional_properties: Optional additional properties associated with the content.
+        raw_representation: Optional raw representation of the content.
+
+    """
+
+    type: Literal["file"] = "file"  # type: ignore[assignment]
+    file_id: str
+
+    def __init__(
+        self,
+        file_id: str,
+        *,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initializes a HostedFileContent instance."""
+        super().__init__(
+            file_id=file_id,  # type: ignore[reportCallIssue]
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
+        )
+
+
+class HostedVectorStoreContent(AIContent):
+    """Represents a hosted vector store content.
+
+    Attributes:
+        type: The type of content, which is always "hosted_vector_store" for this class.
+        vector_store_id: The identifier of the hosted vector store.
+        additional_properties: Optional additional properties associated with the content.
+        raw_representation: Optional raw representation of the content.
+
+    """
+
+    type: Literal["vector_store"] = "vector_store"  # type: ignore[assignment]
+    vector_store_id: str
+
+    def __init__(
+        self,
+        vector_store_id: str,
+        *,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initializes a HostedVectorStoreContent instance."""
+        super().__init__(
+            vector_store_id=vector_store_id,  # type: ignore[reportCallIssue]
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
+        )
+
+
 AIContents = Annotated[
     TextContent
     | DataContent
@@ -1044,7 +1109,9 @@ AIContents = Annotated[
     | FunctionCallContent
     | FunctionResultContent
     | ErrorContent
-    | UsageContent,
+    | UsageContent
+    | HostedFileContent
+    | HostedVectorStoreContent,
     Field(discriminator="type"),
 ]
 

@@ -4,13 +4,16 @@ import inspect
 from collections.abc import Awaitable, Callable
 from functools import wraps
 from time import perf_counter
-from typing import Annotated, Any, Generic, Protocol, TypeVar, get_args, get_origin, runtime_checkable
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Protocol, TypeVar, get_args, get_origin, runtime_checkable
 
 from opentelemetry import metrics, trace
 from pydantic import BaseModel, Field, create_model
 
 from ._logging import get_logger
 from .telemetry import GenAIAttributes, start_as_current_span
+
+if TYPE_CHECKING:
+    from ._types import AIContents
 
 tracer: trace.Tracer = trace.get_tracer("agent_framework")
 meter: metrics.Meter = metrics.get_meter_provider().get_meter("agent_framework")
@@ -226,6 +229,7 @@ class HostedCodeInterpreterTool(AITool):
     def __init__(
         self,
         name: str = "code_interpreter",
+        inputs: list["AIContents"] | None = None,
         description: str | None = None,
         additional_properties: dict[str, Any] | None = None,
     ):
@@ -233,10 +237,14 @@ class HostedCodeInterpreterTool(AITool):
 
         Args:
             name: The name of the tool. Defaults to "code_interpreter".
+            inputs: A list of contents that the tool can accept as input. Defaults to None.
+                This should mostly be HostedFileContent or HostedVectorStoreContent.
+                Can also be DataContent, depending on the service used.
             description: A description of the tool.
             additional_properties: Additional properties associated with the tool, specific to the service used.
         """
         self.name = name
+        self.inputs = inputs or []
         self.description = description
         self.additional_properties = additional_properties
 
