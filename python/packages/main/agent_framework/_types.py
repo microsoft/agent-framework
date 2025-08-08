@@ -334,13 +334,13 @@ class AIAnnotation(AFBaseModel):
     """Base class for all AI Annotation types.
 
     Args:
-        type: The type of content, which is always "ai" for this class.
+        type: The type of content, which is always "ai_annotation" for this class.
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content from an underlying implementation.
 
     """
 
-    type: Literal["ai"] = "ai"
+    type: Literal["ai_annotation"] = "ai_annotation"
     annotated_regions: list[AnnotatedRegions] | None = None
     additional_properties: dict[str, Any] | None = None
     raw_representation: Any | None = Field(default=None, repr=False)
@@ -438,7 +438,7 @@ class TextContent(AIContent):
         The following things happen:
         The text is concatenated.
         The annotations are combined.
-        The additional properties are merged, with the values of shared keys of the 'self' instance taking precedence.
+        The additional properties are merged, with the values of shared keys of the first instance taking precedence.
         The raw_representations are combined into a list of them, if they both have one.
         """
         if not isinstance(other, TextContent):
@@ -473,7 +473,7 @@ class TextContent(AIContent):
         The following things happen:
         The text is concatenated.
         The annotations are combined.
-        The additional properties are merged, with the values of shared keys of the 'self' instance taking precedence.
+        The additional properties are merged, with the values of shared keys of the first instance taking precedence.
         The raw_representations are combined into a list of them, if they both have one.
         """
         if not isinstance(other, TextContent):
@@ -542,7 +542,7 @@ class TextReasoningContent(AIContent):
         The following things happen:
         The text is concatenated.
         The annotations are combined.
-        The additional properties are merged, with the values of shared keys of the 'self' instance taking precedence.
+        The additional properties are merged, with the values of shared keys of the first instance taking precedence.
         The raw_representations are combined into a list of them, if they both have one.
         """
         if not isinstance(other, TextReasoningContent):
@@ -574,7 +574,7 @@ class TextReasoningContent(AIContent):
         The following things happen:
         The text is concatenated.
         The annotations are combined.
-        The additional properties are merged, with the values of shared keys of the 'self' instance taking precedence.
+        The additional properties are merged, with the values of shared keys of the first instance taking precedence.
         The raw_representations are combined into a list of them, if they both have one.
         """
         if not isinstance(other, TextReasoningContent):
