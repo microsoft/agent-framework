@@ -95,7 +95,7 @@ public static class PersistentAgentsClientExtensions
     /// </summary>
     /// <param name="persistentAgentsClient">The <see cref="PersistentAgentsClient"/> to create the agent with.</param>
     /// <param name="model">The model to be used by the agent.</param>
-    /// <param name="tools">The AI tools to be used by the agent.</param>
+    /// <param name="tools">The AI tools to be used by the agent. Can be <c>null</c> if no tools are to be used.</param>
     /// <param name="name">The name of the agent.</param>
     /// <param name="description">The description of the agent.</param>
     /// <param name="instructions">The instructions for the agent.</param>
