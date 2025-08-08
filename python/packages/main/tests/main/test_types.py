@@ -527,7 +527,7 @@ def test_chat_response_updates_to_chat_response_multiple():
 def test_chat_response_updates_to_chat_response_multiple_multiple():
     """Test converting ChatResponseUpdate to ChatResponse."""
     # Create a ChatMessage
-    message1 = TextContent("I'm doing well, ")
+    message1 = TextContent("I'm doing well, ", raw_representation="I'm doing well, ")
     message2 = TextContent("thank you!")
 
     # Create a ChatResponseUpdate with the message
@@ -546,6 +546,7 @@ def test_chat_response_updates_to_chat_response_multiple_multiple():
     assert len(chat_response.messages) == 1
     assert isinstance(chat_response.messages[0], ChatMessage)
     assert chat_response.messages[0].message_id == "1"
+    assert chat_response.messages[0].contents[0].raw_representation is not None
 
     assert len(chat_response.messages[0].contents) == 3
     assert isinstance(chat_response.messages[0].contents[0], TextContent)

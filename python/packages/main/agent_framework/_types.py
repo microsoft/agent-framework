@@ -14,6 +14,7 @@ from collections.abc import (
     MutableSequence,
     Sequence,
 )
+from copy import deepcopy
 from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, overload
 
 from pydantic import (
@@ -275,7 +276,7 @@ def _coalesce_text_content(
     for content in contents:
         if isinstance(content, type_):
             if first_new_content is None:
-                first_new_content = content
+                first_new_content = deepcopy(content)
             else:
                 first_new_content += content
         else:
