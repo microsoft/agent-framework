@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-
 import logging
+import sys
 from collections.abc import Awaitable, Callable, Mapping
 from copy import copy
 from typing import Any, ClassVar, Final
@@ -11,9 +11,14 @@ from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai._shared import OpenAIHandler, OpenAIModelTypes
 from agent_framework.telemetry import USER_AGENT_KEY
 from openai.lib.azure import AsyncAzureOpenAI
-from pydantic import ConfigDict, SecretStr, validate_call
+from pydantic import ConfigDict, SecretStr, model_validator, validate_call
 
 from ._entra_id_authentication import get_entra_auth_token
+
+if sys.version_info >= (3, 11):
+    from typing import Self  # pragma: no cover
+else:
+    from typing_extensions import Self  # pragma: no cover
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -94,11 +99,15 @@ class AzureOpenAISettings(AFBaseSettings):
             your resource from the Azure portal, the endpoint should end in openai.azure.com.
             If both base_url and endpoint are supplied, base_url will be used.
             (Env var AZURE_OPENAI_ENDPOINT)
-        api_version: The API version to use. The default value is "2024-02-01".
+        api_version: The API version to use. The default value is `default_api_version`.
             (Env var AZURE_OPENAI_API_VERSION)
         token_endpoint: The token endpoint to use to retrieve the authentication token.
-            The default value is "https://cognitiveservices.azure.com/.default".
+            The default value is `default_token_endpoint`.
             (Env var AZURE_OPENAI_TOKEN_ENDPOINT)
+        default_api_version: The default API version to use if not specified.
+            The default value is "2024-10-21".
+        default_token_endpoint: The default token endpoint to use if not specified.
+            The default value is "https://cognitiveservices.azure.com/.default".
 
     Parameters:
         env_file_path: The path to the .env file to load settings from.
@@ -118,8 +127,10 @@ class AzureOpenAISettings(AFBaseSettings):
     endpoint: HttpsUrl | None = None
     base_url: HttpsUrl | None = None
     api_key: SecretStr | None = None
-    api_version: str = DEFAULT_AZURE_API_VERSION
-    token_endpoint: str = DEFAULT_AZURE_TOKEN_ENDPOINT
+    api_version: str | None = None
+    token_endpoint: str | None = None
+    default_api_version: str = DEFAULT_AZURE_API_VERSION
+    default_token_endpoint: str = DEFAULT_AZURE_TOKEN_ENDPOINT
 
     def get_azure_openai_auth_token(self, token_endpoint: str | None = None) -> str | None:
         """Retrieve a Microsoft Entra Auth Token for a given token endpoint for the use with Azure OpenAI.
@@ -142,6 +153,12 @@ class AzureOpenAISettings(AFBaseSettings):
         if endpoint_to_use is None:  # type: ignore
             raise ServiceInitializationError("Please provide a token endpoint to retrieve the authentication token.")
         return get_entra_auth_token(endpoint_to_use)
+
+    @model_validator(mode="after")
+    def _validate_fields(self) -> Self:
+        self.api_version = self.api_version or self.default_api_version
+        self.token_endpoint = self.token_endpoint or self.default_token_endpoint
+        return self
 
 
 class AzureOpenAIConfigBase(OpenAIHandler):
