@@ -10,41 +10,11 @@ using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Extensions.AI.Agents.A2A.Internal;
 
-internal sealed class AIAgentA2AConnector : IA2AConnector
+internal sealed class A2AMessageProcessor : A2AAgentCardProvider, IA2AMessageProcessor
 {
-    private readonly ILogger _logger;
-    private readonly AIAgent _agent;
-
-    public AIAgentA2AConnector(ILogger<AIAgentA2AConnector> logger, AIAgent agent)
+    public A2AMessageProcessor(ILogger<A2AMessageProcessor> logger, AIAgent agent)
+        : base(logger, agent)
     {
-        this._logger = logger;
-        this._agent = agent;
-    }
-
-    public Task<AgentCard> GetAgentCardAsync(string agentPath, CancellationToken cancellationToken)
-    {
-        if (cancellationToken.IsCancellationRequested)
-        {
-            return Task.FromCanceled<AgentCard>(cancellationToken);
-        }
-
-        var capabilities = new AgentCapabilities()
-        {
-            Streaming = true,
-            PushNotifications = false,
-        };
-
-        return Task.FromResult(new AgentCard()
-        {
-            Name = this._agent.Name ?? string.Empty,
-            Description = this._agent.Description ?? string.Empty,
-            Url = agentPath,
-            Version = this._agent.Id,
-            DefaultInputModes = ["text"],
-            DefaultOutputModes = ["text"],
-            Capabilities = capabilities,
-            Skills = [],
-        });
     }
 
     public async Task<Message> ProcessMessageAsync(MessageSendParams messageSendParams, CancellationToken cancellationToken)

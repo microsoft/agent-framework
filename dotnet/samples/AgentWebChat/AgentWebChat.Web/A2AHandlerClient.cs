@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using A2A;
 using Microsoft.Extensions.AI.Agents.Runtime;
 
@@ -27,6 +28,32 @@ public class A2AHandlerClient
 
         var (_, a2aCardResolver) = this.ResolveClient(agent);
         return a2aCardResolver.GetAgentCardAsync(cancellationToken);
+    }
+
+    public async IAsyncEnumerable<Message> SendMessageStreamingAsync(string agent, string userMessage, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        this._logger.LogInformation("Starting message streaming for '{Agent}'", agent);
+
+        var (a2aClient, _) = this.ResolveClient(agent);
+        var sendParams = new MessageSendParams
+        {
+            Message = new()
+            {
+                Role = MessageRole.User,
+                MessageId = Guid.NewGuid().ToString(),
+                Parts = [new TextPart { Text = userMessage }]
+            }
+        };
+
+        await foreach (var sseEvent in a2aClient.SendMessageStreamAsync(sendParams, cancellationToken))
+        {
+            this._logger.LogInformation("Received SSE event for agent '{Agent}': type={EventType}; id={EventId}", agent, sseEvent.EventType, sseEvent.EventId);
+            var innerEvent = sseEvent.Data;
+
+            // simpliest case is Message
+            var innerMessage = (Message)innerEvent;
+            yield return innerMessage;
+        }
     }
 
     public async Task<Message> SendMessageAsync(string agent, string userMessage, CancellationToken cancellationToken)
