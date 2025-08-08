@@ -26,7 +26,7 @@ internal static class Step2EntryPoint
 
         LocalRunner<string> runner = new(workflow);
 
-        StreamingExecutionHandle handle = await runner.StreamAsync(input).ConfigureAwait(false);
+        StreamingRun handle = await runner.StreamAsync(input).ConfigureAwait(false);
         await foreach (WorkflowEvent evt in handle.WatchStreamAsync().ConfigureAwait(false))
         {
             switch (evt)
