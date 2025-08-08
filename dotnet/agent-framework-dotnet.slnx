@@ -12,20 +12,6 @@
       <BuildType Solution="Publish|*" Project="Release" />
     </Project>
   </Folder>
-  <Folder Name="/Demos/HelloHttpApi/">
-    <Project Path="samples/HelloHttpApi/HelloHttpApi.ApiService/HelloHttpApi.ApiService.csproj">
-      <BuildType Solution="Publish|*" Project="Release" />
-    </Project>
-    <Project Path="samples/HelloHttpApi/HelloHttpApi.AppHost/HelloHttpApi.AppHost.csproj" Id="17db642e-bf19-413c-bdb1-ccbccc753d7b">
-      <BuildType Solution="Publish|*" Project="Release" />
-    </Project>
-    <Project Path="samples/HelloHttpApi/HelloHttpApi.ServiceDefaults/HelloHttpApi.ServiceDefaults.csproj">
-      <BuildType Solution="Publish|*" Project="Release" />
-    </Project>
-    <Project Path="samples/HelloHttpApi/HelloHttpApi.Web/HelloHttpApi.Web.csproj">
-      <BuildType Solution="Publish|*" Project="Release" />
-    </Project>
-  </Folder>
   <Folder Name="/Samples/">
     <Project Path="samples/GettingStarted/GettingStarted.csproj" />
   </Folder>
@@ -137,6 +123,7 @@
     <Project Path="src/Microsoft.Extensions.AI.Agents.Runtime/Microsoft.Extensions.AI.Agents.Runtime.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents/Microsoft.Extensions.AI.Agents.csproj" />
   </Folder>
+  <Folder Name="/Tests/" />
   <Folder Name="/Tests/IntegrationTests/">
     <Project Path="tests/AgentConformance.IntegrationTests/AgentConformance.IntegrationTests.csproj">
       <BuildType Solution="Publish|*" Project="Release" />
