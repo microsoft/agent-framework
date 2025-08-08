@@ -436,10 +436,16 @@ class TextContent(AIContent):
         """Concatenate two TextContent instances."""
         if not isinstance(other, TextContent):
             raise TypeError("Incompatible type")
+        if self.raw_representation is None:
+            raw_representation = other.raw_representation
+        elif other.raw_representation is None:
+            raw_representation = self.raw_representation
+        else:
+            raw_representation = [self.raw_representation, other.raw_representation]
         return TextContent(
             text=self.text + other.text,
             additional_properties={**(self.additional_properties or {}), **(other.additional_properties or {})},
-            raw_representation=[self.raw_representation, other.raw_representation],
+            raw_representation=raw_representation,
         )
 
     def __iadd__(self, other: "TextContent") -> Self:
@@ -501,6 +507,37 @@ class TextReasoningContent(AIContent):
             additional_properties=additional_properties,
             **kwargs,
         )
+
+    def __add__(self, other: "TextReasoningContent") -> "TextReasoningContent":
+        """Concatenate two TextReasoningContent instances."""
+        if not isinstance(other, TextReasoningContent):
+            raise TypeError("Incompatible type")
+        if self.raw_representation is None:
+            raw_representation = other.raw_representation
+        elif other.raw_representation is None:
+            raw_representation = self.raw_representation
+        else:
+            raw_representation = [self.raw_representation, other.raw_representation]
+        return TextReasoningContent(
+            text=self.text + other.text,
+            additional_properties={**(self.additional_properties or {}), **(other.additional_properties or {})},
+            raw_representation=raw_representation,
+        )
+
+    def __iadd__(self, other: "TextReasoningContent") -> Self:
+        """In-place concatenation of two TextReasoningContent instances."""
+        if not isinstance(other, TextReasoningContent):
+            raise TypeError("Incompatible type")
+        self.text += other.text
+        if self.additional_properties is None:
+            self.additional_properties = {}
+        if other.additional_properties:
+            self.additional_properties.update(other.additional_properties)
+        if self.raw_representation is None:
+            self.raw_representation = other.raw_representation
+        elif other.raw_representation is not None:
+            self.raw_representation = [self.raw_representation, other.raw_representation]
+        return self
 
 
 class DataContent(AIContent):
