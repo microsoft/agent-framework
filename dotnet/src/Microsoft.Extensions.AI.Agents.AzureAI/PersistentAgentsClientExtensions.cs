@@ -126,6 +126,7 @@ public static class PersistentAgentsClientExtensions
         var createPersistentAgentResponse = await persistentAgentsClient.Administration.CreateAgentAsync(
              model,
              name,
+             description,
              instructions,
              temperature: temperature,
              topP: topP,
