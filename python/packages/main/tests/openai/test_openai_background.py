@@ -1,8 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import datetime
 import os
 from typing import Annotated
-import datetime
 
 import pytest
 from pydantic import BaseModel
@@ -32,6 +32,7 @@ async def get_weather(location: Annotated[str, "The location as a city name"]) -
     # Implementation of the tool to get weather
     return f"The current weather in {location} is sunny."
 
+
 async def test_openai_responses_client_response() -> None:
     """Test OpenAI chat completion responses."""
     openai_responses_client = OpenAIResponsesClient(ai_model_id="gpt-4.1-mini")
@@ -60,10 +61,11 @@ async def test_openai_responses_client_response() -> None:
     for message in response.messages:
         for content in message.contents:
             assert isinstance(content, AsyncMessageContent)
+            future = openai_responses_client.get_long_running_response(content.message_id)
             # Optionally pollable:
-            # while content.status in {"in_progress", "queued"}:
+            # while future.running():
             #     sleep(1)  # Wait for the content to be ready
-            output_messages = content.messages
+            output_messages = future.result()
 
     end = datetime.datetime.now()
     print("response received at: ", end)

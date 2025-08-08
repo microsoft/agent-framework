@@ -14,7 +14,6 @@ from collections.abc import (
     MutableSequence,
     Sequence,
 )
-from concurrent.futures import Future
 from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, overload
 
 from pydantic import (
@@ -809,24 +808,26 @@ class UsageContent(AIContent):
             **kwargs,
         )
 
+
 class AsyncMessageContent(AIContent):
     """Represents a background task or process whose response will be generated asynchronously.
 
     Attributes:
         type: The type of content, which is always "async_message" for this class.
-        details: The usage information, including input and output token counts, and any additional counts.
+        message_id: The identifier of the background task.
+        source: The source of the background task.
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content.
     """
 
-    message_id: str | None = None
+    message_id: str
+    source: str | None = None
     type: Literal["async_message"] = "async_message"  # type: ignore[assignment]
-    _messages: Future[list["ChatMessage"]] = PrivateAttr()
 
     def __init__(
         self,
-        messages_future: Future[list["ChatMessage"]],
-        message_id: str | None = None,
+        message_id: str,
+        source: str | None = None,
         *,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -835,23 +836,22 @@ class AsyncMessageContent(AIContent):
         """Initializes a AsyncMessageContent instance."""
         super().__init__(
             message_id=message_id,  # type: ignore[reportCallIssue]
+            source=source,  # type: ignore[reportCallIssue]
             raw_representation=raw_representation,
             additional_properties=additional_properties,
             **kwargs,
         )
-        self._messages = messages_future
 
     @property
     def status(self) -> Literal["in_progress", "completed", "failed", "cancelled"]:
         """Returns the status of the background task."""
         if self._messages.exception():
             return "failed"
-        elif self._messages.cancelled():
+        if self._messages.cancelled():
             return "cancelled"
-        elif self._messages.done():
+        if self._messages.done():
             return "completed"
-        else:
-            return "in_progress"
+        return "in_progress"
 
     @property
     def messages(self) -> list["ChatMessage"]:
@@ -862,6 +862,7 @@ class AsyncMessageContent(AIContent):
             CancelledError: If the background task was cancelled.
         """
         return self._messages.result()
+
 
 AIContents = Annotated[
     TextContent

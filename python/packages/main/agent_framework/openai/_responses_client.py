@@ -3,7 +3,7 @@
 import asyncio
 import sys
 from collections.abc import AsyncIterable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
 from itertools import chain
 from time import sleep
@@ -25,18 +25,18 @@ from openai.types.responses.response_text_delta_event import ResponseTextDeltaEv
 from openai.types.responses.response_usage import ResponseUsage
 from pydantic import BaseModel, SecretStr, ValidationError
 
-from .._clients import ChatClientBase, use_tool_calling
+from .._clients import LongRunningChatClient, use_tool_calling
 from .._tools import HostedCodeInterpreterTool
 from .._types import (
     AIContents,
     AITool,
+    AsyncMessageContent,
     ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     ChatRole,
     ChatToolMode,
-    AsyncMessageContent,
     FunctionCallContent,
     FunctionResultContent,
     TextContent,
@@ -55,7 +55,10 @@ __all__ = ["OpenAIResponsesClient"]
 
 # region ResponsesClient
 
-class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
+
+class OpenAIResponsesClientBase(OpenAIHandler, LongRunningChatClient):
+    MODEL_PROVIDER_NAME: ClassVar[str] = ""  # type: ignore[reportIncompatibleVariableOverride, misc]
+
     def _filter_options(self, **kwargs: Any) -> dict[str, Any]:
         """Filter options for the responses call."""
         # The responses call does not support all the options that the chat completion call does.
@@ -289,15 +292,21 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         assert isinstance(response, OpenAIResponse)  # nosec  # noqa: S101
         if response.status in {"queued", "in_progress"}:
             # This is a long-running response, we don't have the final output yet.
-            future = ThreadPoolExecutor().submit(self._await_response, response)
             return ChatResponse(
                 response_id=response.id,
                 conversation_id=response.id if chat_options.store is True else None,
-                messages=[ChatMessage(
-                    role=ChatRole.ASSISTANT,
-                    message_id=response.id,
-                    contents=[AsyncMessageContent(messages_future=future)]
-                )],
+                messages=[
+                    ChatMessage(
+                        role=ChatRole.ASSISTANT,
+                        message_id=response.id,
+                        contents=[
+                            AsyncMessageContent(
+                                message_id=response.id,
+                                source=f"f{self.MODEL_PROVIDER_NAME}:{self.ai_model_type}:{self.ai_model_id}",
+                            )
+                        ],
+                    )
+                ],
             )
         return next(self._create_response_content(response, item, store=chat_options.store) for item in response.output)
 
@@ -324,10 +333,11 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                 continue
             yield update
 
-    def _await_response(self, response: OpenAIResponse) -> list[ChatMessage]:
+    def _await_response(self, message_id: str) -> list[ChatMessage]:
+        response = asyncio.run(self.client.responses.retrieve(message_id))
         while response.status in {"queued", "in_progress"}:
             sleep(2)
-            response = asyncio.run(self.client.responses.retrieve(response.id))
+            response = asyncio.run(self.client.responses.retrieve(message_id))
         # TODO(peterychang): This is a quick and dirty way to get the final response.
         chat_resp = next(self._create_response_content(response, item, store=False) for item in response.output)
         return chat_resp.messages
@@ -510,6 +520,12 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         return {
             "logprobs": getattr(output, "logprobs", None),
         }
+
+    def get_long_running_response(
+        self,
+        message_id: str,
+    ) -> Future[list[ChatMessage]]:
+        return ThreadPoolExecutor().submit(self._await_response, message_id)
 
 
 @use_telemetry
