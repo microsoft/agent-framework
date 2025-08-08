@@ -12,7 +12,7 @@ internal static class Step5EntryPoint
 {
     public static async ValueTask<string> RunAsync(TextWriter writer, Func<string, int> userGuessCallback)
     {
-        InputPort guessNumber = new("GuessNumber", typeof(NumberSignal), typeof(int));
+        InputPort guessNumber = InputPort.Create<NumberSignal, int>("GuessNumber");
         JudgeExecutor judge = new(42); // Let's say the target number is 42
 
         Workflow<NumberSignal, string> workflow = new WorkflowBuilder(guessNumber)
