@@ -30,9 +30,9 @@ from ._validation import (
     WorkflowValidationError,
     validate_workflow_graph,
 )
+from ._viz import WorkflowViz
 from ._workflow import Workflow, WorkflowBuilder, WorkflowRunResult
 from ._workflow_context import WorkflowContext
-from ._viz import WorkflowViz
 
 try:
     __version__ = importlib.metadata.version(__name__)
