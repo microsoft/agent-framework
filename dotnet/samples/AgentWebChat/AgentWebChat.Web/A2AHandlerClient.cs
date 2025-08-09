@@ -62,6 +62,16 @@ public class A2AHandlerClient
                     yield return message;
                 }
             }
+            else if (innerEvent is TaskStatusUpdateEvent updateEvent)
+            {
+                var message = updateEvent.Status.Message;
+                this._logger.LogInformation("Received TaskStatus update event for agent '{Agent}': taskId={TaskId};contextId={CtxId}", agent, updateEvent.TaskId, updateEvent.ContextId);
+
+                if (message is not null)
+                {
+                    yield return message;
+                }
+            }
             else
             {
                 throw new NotSupportedException("Not supported type of data response: " + innerEvent);

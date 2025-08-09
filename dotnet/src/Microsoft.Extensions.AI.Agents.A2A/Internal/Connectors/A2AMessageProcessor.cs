@@ -8,12 +8,12 @@ using A2A;
 using Microsoft.Extensions.AI.Agents.A2A.Converters;
 using Microsoft.Extensions.Logging;
 
-namespace Microsoft.Extensions.AI.Agents.A2A.Internal;
+namespace Microsoft.Extensions.AI.Agents.A2A.Internal.Connectors;
 
 internal sealed class A2AMessageProcessor : A2AAgentCardProvider, IA2AMessageProcessor
 {
-    public A2AMessageProcessor(ILogger<A2AMessageProcessor> logger, AIAgent agent)
-        : base(logger, agent)
+    public A2AMessageProcessor(ILogger<A2AMessageProcessor> logger, AIAgent agent, TaskManager taskManager)
+        : base(logger, agent, taskManager)
     {
     }
 

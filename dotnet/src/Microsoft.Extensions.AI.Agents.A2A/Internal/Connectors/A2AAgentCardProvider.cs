@@ -5,17 +5,17 @@ using System.Threading.Tasks;
 using A2A;
 using Microsoft.Extensions.Logging;
 
-namespace Microsoft.Extensions.AI.Agents.A2A.Internal;
+namespace Microsoft.Extensions.AI.Agents.A2A.Internal.Connectors;
 
 internal abstract class A2AAgentCardProvider : IA2AAgentCardProvider
 {
     protected readonly ILogger _logger;
-    protected readonly AIAgent _agent;
+    protected readonly A2AAgent _agent;
 
-    public A2AAgentCardProvider(ILogger logger, AIAgent agent)
+    public A2AAgentCardProvider(ILogger logger, AIAgent agent, TaskManager taskManager)
     {
         this._logger = logger;
-        this._agent = agent;
+        this._agent = new A2AAgent(agent, taskManager);
     }
 
     public Task<AgentCard> GetAgentCardAsync(string agentPath, CancellationToken cancellationToken)

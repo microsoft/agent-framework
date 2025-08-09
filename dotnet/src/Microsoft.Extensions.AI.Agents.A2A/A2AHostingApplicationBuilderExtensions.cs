@@ -3,7 +3,7 @@
 using A2A;
 using A2A.AspNetCore;
 using Microsoft.AspNetCore.Builder;
-using Microsoft.Extensions.AI.Agents.A2A.Internal;
+using Microsoft.Extensions.AI.Agents.A2A.Internal.Connectors;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -49,22 +49,17 @@ public static class A2AHostingApplicationBuilderExtensions
     /// <param name="agentName"></param>
     public static void AttachA2AMessaging(this WebApplication app, string path, string agentName)
     {
-        var agent = app.Services.GetRequiredKeyedService<AIAgent>(agentName);
-        var logger = app.Services.GetRequiredService<ILogger<A2AMessageProcessor>>();
-        var agentA2AConnector = new A2AMessageProcessor(logger, agent);
-
-        app.AttachA2A(path, agentA2AConnector);
-    }
-
-    /// <summary>
-    /// Attaches A2A (Agent-to-Agent) communication capabilities to the specified host application builder.
-    /// </summary>
-    /// <param name="app"></param>
-    /// <param name="path"></param>
-    /// <param name="a2aConnector"></param>
-    public static void AttachA2A(this WebApplication app, string path, IA2AMessageProcessor a2aConnector)
-    {
         var taskManager = new TaskManager();
+
+        var a2aConnector = app.Services.GetKeyedService<IA2AMessageProcessor>(agentName);
+        if (a2aConnector is null)
+        {
+            var agent = app.Services.GetRequiredKeyedService<AIAgent>(agentName);
+            var logger = app.Services.GetRequiredService<ILogger<A2AMessageProcessor>>();
+            a2aConnector = new A2AMessageProcessor(logger, agent, taskManager);
+        }
+
+        // attach A2A.SDK calls of TaskManager to the A2A connector
         AttachMessageProcessor(a2aConnector, taskManager);
 
         app.AttachA2A(taskManager, path);

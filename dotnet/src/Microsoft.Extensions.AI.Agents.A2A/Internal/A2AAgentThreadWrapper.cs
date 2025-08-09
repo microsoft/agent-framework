@@ -17,11 +17,11 @@ internal sealed class A2AAgentThreadWrapper : AgentThread
     private readonly string _taskId;
     private readonly TaskManager _taskManager;
 
-    public A2AAgentThreadWrapper(AgentThread agentThread, TaskManager taskManager, AgentTask task)
+    public A2AAgentThreadWrapper(AgentThread agentThread, TaskManager taskManager, string taskId)
         : base(agentThread)
     {
         this._taskManager = taskManager;
-        this._taskId = task.Id;
+        this._taskId = taskId;
     }
 
     protected internal override async Task OnNewMessagesAsync(IReadOnlyCollection<ChatMessage> newMessages, CancellationToken cancellationToken = default)
