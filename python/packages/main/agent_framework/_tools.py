@@ -4,10 +4,10 @@ import inspect
 from collections.abc import Awaitable, Callable
 from functools import wraps
 from time import perf_counter
-from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
+from typing import Annotated, Any, Generic, Protocol, TypeVar, get_args, get_origin, runtime_checkable
 
 from opentelemetry import metrics, trace
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel, Field, create_model
 
 from ._logging import get_logger
 from .telemetry import GenAIAttributes, start_as_current_span
@@ -137,6 +137,25 @@ class AIFunction(AITool, Generic[ArgsT, ReturnT]):
                 logger.info("Function completed. Duration: %fs", duration)
 
 
+def _parse_annotation(annotation: Any) -> Any:
+    """Parse a type annotation and return the corresponding type.
+
+    If the second annotation (after the type) is a string, then we convert that to a pydantic Field description.
+    The rest are returned as-is, allowing for multiple annotations.
+    """
+    origin = get_origin(annotation)
+    if origin is not None:
+        args = get_args(annotation)
+        # For other generics, return the origin type (e.g., list for List[int])
+        if len(args) > 1 and isinstance(args[1], str):
+            # Create a new Annotated type with the updated Field
+            args_list = list(args)
+            if len(args_list) == 2:
+                return Annotated[args_list[0], Field(description=args_list[1])]
+            return Annotated[args_list[0], Field(description=args_list[1]), tuple(args_list[2:])]
+    return annotation
+
+
 def ai_function(
     func: Callable[..., ReturnT | Awaitable[ReturnT]] | None = None,
     *,
@@ -174,7 +193,7 @@ def ai_function(
             sig = inspect.signature(f)
             fields = {
                 pname: (
-                    param.annotation if param.annotation is not inspect.Parameter.empty else str,
+                    _parse_annotation(param.annotation) if param.annotation is not inspect.Parameter.empty else str,
                     param.default if param.default is not inspect.Parameter.empty else ...,
                 )
                 for pname, param in sig.parameters.items()

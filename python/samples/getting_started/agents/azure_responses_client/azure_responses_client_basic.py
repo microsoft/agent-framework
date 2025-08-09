@@ -4,11 +4,13 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework.openai import OpenAIChatClient
+from agent_framework import ChatClientAgent
+from agent_framework.azure import AzureResponsesClient
+from pydantic import Field
 
 
 def get_weather(
-    location: Annotated[str, "The location to get the weather for."],
+    location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
     """Get the weather for a given location."""
     conditions = ["sunny", "cloudy", "rainy", "stormy"]
@@ -19,8 +21,8 @@ async def non_streaming_example() -> None:
     """Example of non-streaming response (get the complete result at once)."""
     print("=== Non-streaming Response Example ===")
 
-    agent = OpenAIChatClient().create_agent(
-        name="WeatherAgent",
+    agent = ChatClientAgent(
+        chat_client=AzureResponsesClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -35,8 +37,8 @@ async def streaming_example() -> None:
     """Example of streaming response (get results as they are generated)."""
     print("=== Streaming Response Example ===")
 
-    agent = OpenAIChatClient().create_agent(
-        name="WeatherAgent",
+    agent = ChatClientAgent(
+        chat_client=AzureResponsesClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -51,7 +53,7 @@ async def streaming_example() -> None:
 
 
 async def main() -> None:
-    print("=== Basic OpenAI Chat Client Agent Example ===")
+    print("=== Basic Azure OpenAI Responses Client Agent Example ===")
 
     await non_streaming_example()
     await streaming_example()

@@ -1,32 +1,40 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import MutableSequence
+from collections.abc import AsyncIterable, MutableSequence
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
 from pytest import fixture, mark, raises
 
-# region: TextContent
 from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
+    AIAnnotation,
     AIContent,
     AIContents,
     AITool,
+    AnnotatedRegion,
+    ChatFinishReason,
     ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     ChatRole,
     ChatToolMode,
+    CitationAnnotation,
     DataContent,
+    ErrorContent,
     FunctionCallContent,
     FunctionResultContent,
     GeneratedEmbeddings,
+    SpeechToTextOptions,
     StructuredResponse,
     TextContent,
     TextReasoningContent,
+    TextSpanRegion,
+    TextToSpeechOptions,
     UriContent,
+    UsageContent,
     UsageDetails,
     ai_function,
 )
@@ -60,6 +68,9 @@ def ai_function_tool() -> AITool:
         return x + y
 
     return simple_function
+
+
+# region TextContent
 
 
 def test_text_content_positional():
@@ -96,7 +107,7 @@ def test_text_content_keyword():
         content.type = "ai"
 
 
-# region: DataContent
+# region DataContent
 
 
 def test_data_content_bytes():
@@ -107,6 +118,8 @@ def test_data_content_bytes():
     # Check the type and content
     assert content.type == "data"
     assert content.uri == "data:application/octet-stream;base64,dGVzdA=="
+    assert content.has_top_level_media_type("application") is True
+    assert content.has_top_level_media_type("image") is False
     assert content.additional_properties["version"] == 1
 
     # Ensure the instance is of type AIContent
@@ -121,6 +134,8 @@ def test_data_content_uri():
     # Check the type and content
     assert content.type == "data"
     assert content.uri == "data:application/octet-stream;base64,dGVzdA=="
+    # media_type attribute is None when created from uri-only
+    assert content.has_top_level_media_type("application") is False
     assert content.additional_properties["version"] == 1
 
     # Ensure the instance is of type AIContent
@@ -153,7 +168,7 @@ def test_data_content_empty():
         DataContent(uri="")
 
 
-# region: UriContent
+# region UriContent
 
 
 def test_uri_content():
@@ -164,13 +179,15 @@ def test_uri_content():
     assert content.type == "uri"
     assert content.uri == "http://example.com"
     assert content.media_type == "image/jpg"
+    assert content.has_top_level_media_type("image") is True
+    assert content.has_top_level_media_type("application") is False
     assert content.additional_properties["version"] == 1
 
     # Ensure the instance is of type AIContent
     assert isinstance(content, AIContent)
 
 
-# region: FunctionCallContent
+# region FunctionCallContent
 
 
 def test_function_call_content():
@@ -186,7 +203,44 @@ def test_function_call_content():
     assert isinstance(content, AIContent)
 
 
-# region: FunctionResultContent
+def test_function_call_content_parse_arguments():
+    c1 = FunctionCallContent(call_id="1", name="f", arguments='{"a": 1, "b": 2}')
+    assert c1.parse_arguments() == {"a": 1, "b": 2}
+    c2 = FunctionCallContent(call_id="1", name="f", arguments="not json")
+    assert c2.parse_arguments() == {"raw": "not json"}
+    c3 = FunctionCallContent(call_id="1", name="f", arguments={"x": None})
+    assert c3.parse_arguments() == {"x": None}
+
+
+def test_function_call_content_add_merging_and_errors():
+    # str + str concatenation
+    a = FunctionCallContent(call_id="1", name="f", arguments="abc")
+    b = FunctionCallContent(call_id="1", name="f", arguments="def")
+    c = a + b
+    assert isinstance(c.arguments, str) and c.arguments == "abcdef"
+
+    # dict + dict merge
+    a = FunctionCallContent(call_id="1", name="f", arguments={"x": 1})
+    b = FunctionCallContent(call_id="1", name="f", arguments={"y": 2})
+    c = a + b
+    assert c.arguments == {"x": 1, "y": 2}
+
+    # incompatible argument types
+    a = FunctionCallContent(call_id="1", name="f", arguments="abc")
+    b = FunctionCallContent(call_id="1", name="f", arguments={"y": 2})
+    with raises(TypeError):
+        _ = a + b
+
+    # incompatible call ids
+    a = FunctionCallContent(call_id="1", name="f", arguments="abc")
+    b = FunctionCallContent(call_id="2", name="f", arguments="def")
+    from agent_framework.exceptions import AgentFrameworkException
+
+    with raises(AgentFrameworkException):
+        _ = a + b
+
+
+# region FunctionResultContent
 
 
 def test_function_result_content():
@@ -201,7 +255,7 @@ def test_function_result_content():
     assert isinstance(content, AIContent)
 
 
-# region: UsageDetails
+# region UsageDetails
 
 
 def test_usage_details():
@@ -247,7 +301,23 @@ def test_usage_details_additional_counts():
     assert usage.additional_counts["test"] == 1
 
 
-# region: AIContent Serialization
+def test_usage_details_add_with_none_and_type_errors():
+    u = UsageDetails(input_token_count=1)
+    # __add__ with None returns self (no change)
+    v = u + None
+    assert v is u
+    # __iadd__ with None leaves unchanged
+    u2 = UsageDetails(input_token_count=2)
+    u2 += None
+    assert u2.input_token_count == 2
+    # wrong type raises
+    with raises(ValueError):
+        _ = u + 42  # type: ignore[arg-type]
+    with raises(ValueError):
+        u += 42  # type: ignore[arg-type]
+
+
+# region AIContent Serialization
 
 
 @mark.parametrize(
@@ -274,7 +344,7 @@ def test_ai_content_serialization(content_type: type[AIContent], args: dict):
     assert isinstance(test_item.content, content_type)
 
 
-# region: ChatMessage
+# region ChatMessage
 
 
 def test_chat_message_text():
@@ -310,7 +380,13 @@ def test_chat_message_contents():
     assert message.text == "Hello, how are you? I'm fine, thank you!"
 
 
-# region: ChatResponse
+def test_chat_message_with_chatrole_instance():
+    m = ChatMessage(role=ChatRole.USER, text="hi")
+    assert m.role == ChatRole.USER
+    assert m.text == "hi"
+
+
+# region ChatResponse
 
 
 def test_chat_response():
@@ -325,9 +401,11 @@ def test_chat_response():
     assert response.messages[0].role == ChatRole.ASSISTANT
     assert response.messages[0].text == "I'm doing well, thank you!"
     assert isinstance(response.messages[0], ChatMessage)
+    # __str__ returns text
+    assert str(response) == response.text
 
 
-# region: StructuredResponse
+# region StructuredResponse
 
 
 def test_structured_response():
@@ -346,9 +424,11 @@ def test_structured_response():
     # Check the type and content
     assert response.value == ResponseModel(content="Hello, world!", action="test")
     assert isinstance(response, StructuredResponse)
+    # text property returns joined messages text (single message present)
+    assert isinstance(response.text, str)
 
 
-# region: ChatResponseUpdate
+# region ChatResponseUpdate
 
 
 def test_chat_response_update():
@@ -362,6 +442,15 @@ def test_chat_response_update():
     # Check the type and content
     assert response_update.contents[0].text == "I'm doing well, thank you!"
     assert isinstance(response_update.contents[0], TextContent)
+    assert response_update.text == "I'm doing well, thank you!"
+
+
+def test_chat_response_update_with_method():
+    u = ChatResponseUpdate(text="Hello", message_id="1")
+    v = u.with_(contents=[TextContent(" world")])
+    assert v is not u
+    assert v.text == "Hello world"
+    assert v.message_id == "1"
 
 
 def test_chat_response_updates_to_chat_response_one():
@@ -438,7 +527,7 @@ def test_chat_response_updates_to_chat_response_multiple():
 def test_chat_response_updates_to_chat_response_multiple_multiple():
     """Test converting ChatResponseUpdate to ChatResponse."""
     # Create a ChatMessage
-    message1 = TextContent("I'm doing well, ")
+    message1 = TextContent("I'm doing well, ", raw_representation="I'm doing well, ")
     message2 = TextContent("thank you!")
 
     # Create a ChatResponseUpdate with the message
@@ -457,6 +546,7 @@ def test_chat_response_updates_to_chat_response_multiple_multiple():
     assert len(chat_response.messages) == 1
     assert isinstance(chat_response.messages[0], ChatMessage)
     assert chat_response.messages[0].message_id == "1"
+    assert chat_response.messages[0].contents[0].raw_representation is not None
 
     assert len(chat_response.messages[0].contents) == 3
     assert isinstance(chat_response.messages[0].contents[0], TextContent)
@@ -469,7 +559,17 @@ def test_chat_response_updates_to_chat_response_multiple_multiple():
     assert chat_response.text == "I'm doing well, thank you! More contextFinal part"
 
 
-# region: ChatToolMode
+@mark.asyncio
+async def test_chat_response_from_async_generator():
+    async def gen() -> AsyncIterable[ChatResponseUpdate]:
+        yield ChatResponseUpdate(text="Hello", message_id="1")
+        yield ChatResponseUpdate(text=" world", message_id="1")
+
+    resp = await ChatResponse.from_chat_response_generator(gen())
+    assert resp.text == "Hello world"
+
+
+# region ChatToolMode
 
 
 def test_chat_tool_mode():
@@ -497,6 +597,8 @@ def test_chat_tool_mode():
     assert isinstance(none_mode, ChatToolMode)
 
     assert ChatToolMode.REQUIRED("example_function") == ChatToolMode.REQUIRED("example_function")
+    # serializer returns just the mode
+    assert ChatToolMode.REQUIRED_ANY.model_dump() == "required"
 
 
 def test_chat_tool_mode_from_dict():
@@ -525,7 +627,7 @@ def test_generated_embeddings():
     assert issubclass(GeneratedEmbeddings, MutableSequence)
 
 
-# region: ChatOptions
+# region ChatOptions
 
 
 def test_chat_options_init() -> None:
@@ -543,6 +645,10 @@ def test_chat_options_init_with_args(ai_function_tool, ai_tool) -> None:
         frequency_penalty=0.0,
         user="user-123",
         tools=[ai_function_tool, ai_tool],
+        tool_choice="required",
+        additional_properties={"custom": True},
+        logit_bias={"a": 1},
+        metadata={"m": "v"},
     )
     assert options.ai_model_id == "gpt-4"
     assert options.max_tokens == 1024
@@ -557,10 +663,27 @@ def test_chat_options_init_with_args(ai_function_tool, ai_tool) -> None:
         assert tool.description is not None
         assert tool.parameters() is not None
 
+    settings = options.to_provider_settings()
+    assert settings["model"] == "gpt-4"  # uses alias
+    assert settings["tool_choice"] == "required"  # serialized via model_serializer
+    assert settings["custom"] is True  # from additional_properties
+    assert "additional_properties" not in settings
+
+
+def test_chat_options_tool_choice_validation_errors():
+    with raises((ValidationError, TypeError)):
+        ChatOptions(tool_choice="invalid-choice")
+
+
+def test_chat_options_tool_choice_excluded_when_no_tools():
+    options = ChatOptions(tool_choice="auto")
+    settings = options.to_provider_settings()
+    assert "tool_choice" not in settings
+
 
 def test_chat_options_and(ai_function_tool, ai_tool) -> None:
-    options1 = ChatOptions(ai_model_id="gpt-4o", tools=[ai_function_tool])
-    options2 = ChatOptions(ai_model_id="gpt-4.1", tools=[ai_tool])
+    options1 = ChatOptions(ai_model_id="gpt-4o", tools=[ai_function_tool], logit_bias={"x": 1}, metadata={"a": "b"})
+    options2 = ChatOptions(ai_model_id="gpt-4.1", tools=[ai_tool], additional_properties={"p": 1})
     assert options1 != options2
     options3 = options1 & options2
 
@@ -568,6 +691,9 @@ def test_chat_options_and(ai_function_tool, ai_tool) -> None:
     assert len(options3._ai_tools) == 2
     assert options3._ai_tools == [ai_function_tool, ai_tool]
     assert options3.tools == [ai_function_tool, ai_tool]
+    assert options3.logit_bias == {"x": 1}
+    assert options3.metadata == {"a": "b"}
+    assert options3.additional_properties.get("p") == 1
 
 
 # region Agent Response Fixtures
@@ -661,3 +787,228 @@ def test_agent_run_response_update_text_property_empty() -> None:
 def test_agent_run_response_update_str_method(text_content: TextContent) -> None:
     update = AgentRunResponseUpdate(contents=[text_content])
     assert str(update) == "Test content"
+
+
+# region ErrorContent
+
+
+def test_error_content_str():
+    e1 = ErrorContent(message="Oops", error_code="E1")
+    assert str(e1) == "Error E1: Oops"
+    e2 = ErrorContent(message="Oops")
+    assert str(e2) == "Oops"
+    e3 = ErrorContent()
+    assert str(e3) == "Unknown error"
+
+
+# region Annotations
+
+
+def test_annotations_models_and_roundtrip():
+    span = TextSpanRegion(start_index=0, end_index=5)
+    base_region = AnnotatedRegion()
+    ann: AIAnnotation = AIAnnotation(annotated_regions=[span, base_region])
+    cit = CitationAnnotation(title="Doc", url="http://example.com", snippet="Snippet", annotated_regions=[span])
+
+    # Attach to content
+    content = TextContent(text="hello", additional_properties={"v": 1})
+    content.annotations = [ann, cit]
+
+    dumped = content.model_dump()
+    loaded = TextContent.model_validate(dumped)
+    assert isinstance(loaded.annotations, list)
+    assert len(loaded.annotations) == 2
+    assert isinstance(loaded.annotations[0], dict) is False  # pydantic parsed into models
+    # discriminators preserved
+    assert any(getattr(a, "type", None) == "citation" for a in loaded.annotations)
+
+
+def test_function_call_merge_in_process_update_and_usage_aggregation():
+    # Two function call chunks with same call_id should merge
+    u1 = ChatResponseUpdate(contents=[FunctionCallContent(call_id="c1", name="f", arguments="{")], message_id="m")
+    u2 = ChatResponseUpdate(contents=[FunctionCallContent(call_id="c1", name="f", arguments="}")], message_id="m")
+    # plus usage
+    u3 = ChatResponseUpdate(contents=[UsageContent(UsageDetails(input_token_count=1, output_token_count=2))])
+
+    resp = ChatResponse.from_chat_response_updates([u1, u2, u3])
+    assert len(resp.messages) == 1
+    last_contents = resp.messages[0].contents
+    assert any(isinstance(c, FunctionCallContent) for c in last_contents)
+    fcs = [c for c in last_contents if isinstance(c, FunctionCallContent)]
+    assert len(fcs) == 1
+    assert fcs[0].arguments == "{}"
+    assert resp.usage_details is not None
+    assert resp.usage_details.input_token_count == 1
+    assert resp.usage_details.output_token_count == 2
+
+
+def test_function_call_incompatible_ids_are_not_merged():
+    u1 = ChatResponseUpdate(contents=[FunctionCallContent(call_id="a", name="f", arguments="x")], message_id="m")
+    u2 = ChatResponseUpdate(contents=[FunctionCallContent(call_id="b", name="f", arguments="y")], message_id="m")
+
+    resp = ChatResponse.from_chat_response_updates([u1, u2])
+    fcs = [c for c in resp.messages[0].contents if isinstance(c, FunctionCallContent)]
+    assert len(fcs) == 2
+
+
+# region Speech/Text To Speech options
+
+
+def test_speech_to_text_options_provider_settings():
+    o = SpeechToTextOptions(ai_model_id="stt", additional_properties={"x": 1})
+    settings = o.to_provider_settings()
+    assert settings["model"] == "stt"
+    assert settings["x"] == 1
+    assert "additional_properties" not in settings
+
+
+def test_text_to_speech_options_provider_settings():
+    o = TextToSpeechOptions(ai_model_id="tts", response_format="wav", speed=1.2, additional_properties={"x": 2})
+    settings = o.to_provider_settings()
+    assert settings["model"] == "tts"
+    assert settings["response_format"] == "wav"
+    assert settings["x"] == 2
+
+
+# region GeneratedEmbeddings operations
+
+
+def test_generated_embeddings_operations():
+    g = GeneratedEmbeddings[int](embeddings=[1, 2, 3])
+    assert 2 in g
+    assert list(iter(g)) == [1, 2, 3]
+    assert len(g) == 3
+    assert list(reversed(g)) == [3, 2, 1]
+    assert g.index(2) == 1
+    assert g.count(2) == 1
+    assert g[0] == 1
+    assert g[0:2] == [1, 2]
+
+    g[1] = 5
+    assert g[1] == 5
+    g[1:3] = [7, 8]
+    assert g[1:] == [7, 8]
+
+    with raises(TypeError):
+        g[0] = [9]  # int index cannot be set with iterable
+    with raises(TypeError):
+        g[0:1] = 9  # slice requires iterable
+
+    del g[0]
+    assert g.embeddings == [7, 8]
+    del g[0:1]
+    assert g.embeddings == [8]
+
+    g.insert(0, 1)
+    g.append(2)
+    g.extend([3, 4])
+    assert g.embeddings == [1, 8, 2, 3, 4]
+    g.reverse()
+    assert g.embeddings == [4, 3, 2, 8, 1]
+    assert g.pop() == 1
+    g.remove(8)
+    assert g.embeddings == [4, 3, 2]
+
+    # iadd with another GeneratedEmbeddings, including usage merge
+    g2 = GeneratedEmbeddings[int](embeddings=[5], usage=UsageDetails(input_token_count=1))
+    g.usage = UsageDetails(input_token_count=2)
+    g += g2
+    assert g.embeddings[-1] == 5
+    assert g.usage.input_token_count == 3
+
+    # clear
+    g.additional_properties = {"a": 1}
+    g.clear()
+    assert g.embeddings == []
+    assert g.usage is None
+    assert g.additional_properties == {}
+
+
+# region ChatRole & ChatFinishReason basics
+
+
+def test_chat_role_str_and_repr():
+    assert str(ChatRole.USER) == "user"
+    assert "ChatRole(value=" in repr(ChatRole.USER)
+
+
+def test_chat_finish_reason_constants():
+    assert ChatFinishReason.STOP.value == "stop"
+
+
+def test_response_update_propagates_fields_and_metadata():
+    upd = ChatResponseUpdate(
+        text="hello",
+        role="assistant",
+        author_name="bot",
+        response_id="rid",
+        message_id="mid",
+        conversation_id="cid",
+        ai_model_id="model-x",
+        created_at="t0",
+        finish_reason=ChatFinishReason.STOP,
+        additional_properties={"k": "v"},
+    )
+    resp = ChatResponse.from_chat_response_updates([upd])
+    assert resp.response_id == "rid"
+    assert resp.created_at == "t0"
+    assert resp.conversation_id == "cid"
+    assert resp.ai_model_id == "model-x"
+    assert resp.finish_reason == ChatFinishReason.STOP
+    assert resp.additional_properties and resp.additional_properties["k"] == "v"
+    assert resp.messages[0].role == ChatRole.ASSISTANT
+    assert resp.messages[0].author_name == "bot"
+    assert resp.messages[0].message_id == "mid"
+
+
+def test_text_coalescing_preserves_first_properties():
+    t1 = TextContent("A", raw_representation={"r": 1}, additional_properties={"p": 1})
+    t2 = TextContent("B")
+    upd1 = ChatResponseUpdate(text=t1, message_id="x")
+    upd2 = ChatResponseUpdate(text=t2, message_id="x")
+    resp = ChatResponse.from_chat_response_updates([upd1, upd2])
+    # After coalescing there should be a single TextContent with merged text and preserved props from first
+    items = [c for c in resp.messages[0].contents if isinstance(c, TextContent)]
+    assert len(items) >= 1
+    assert items[0].text == "AB"
+    assert items[0].raw_representation == {"r": 1}
+    assert items[0].additional_properties == {"p": 1}
+
+
+def test_function_call_content_parse_numeric_or_list():
+    c_num = FunctionCallContent(call_id="1", name="f", arguments="123")
+    assert c_num.parse_arguments() == {"raw": 123}
+    c_list = FunctionCallContent(call_id="1", name="f", arguments="[1,2]")
+    assert c_list.parse_arguments() == {"raw": [1, 2]}
+
+
+def test_chat_tool_mode_eq_with_string():
+    assert ChatToolMode.AUTO == "auto"
+
+
+def test_chat_options_tool_choice_dict_mapping(ai_tool):
+    opts = ChatOptions(tool_choice={"mode": "required", "required_function_name": "fn"}, tools=[ai_tool])
+    assert isinstance(opts.tool_choice, ChatToolMode)
+    assert opts.tool_choice.mode == "required"
+    assert opts.tool_choice.required_function_name == "fn"
+    # provider settings serialize to just the mode
+    settings = opts.to_provider_settings()
+    assert settings["tool_choice"] == "required"
+
+
+# region AgentRunResponse
+
+
+@fixture
+def agent_run_response_async() -> AgentRunResponse:
+    return AgentRunResponse(messages=[ChatMessage(role="user", text="Hello")])
+
+
+@mark.asyncio
+async def test_agent_run_response_from_async_generator():
+    async def gen():
+        yield AgentRunResponseUpdate(contents=[TextContent("A")])
+        yield AgentRunResponseUpdate(contents=[TextContent("B")])
+
+    r = await AgentRunResponse.from_agent_response_generator(gen())
+    assert r.text == "AB"
