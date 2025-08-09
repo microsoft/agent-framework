@@ -141,3 +141,71 @@ def test_workflow_viz_unsupported_format():
 
     with pytest.raises(ValueError, match="Unsupported format: invalid"):
         viz.export(format="invalid")  # type: ignore
+
+
+def test_workflow_viz_conditional_edge():
+    """Test that conditional edges are rendered dashed with a label."""
+    start = MockExecutor(id="start")
+    mid = MockExecutor(id="mid")
+    end = MockExecutor(id="end")
+
+    # Condition that is never used during viz, but presence should mark the edge
+    def only_if_foo(msg: str) -> bool:  # pragma: no cover - simple predicate
+        return msg == "foo"
+
+    wf = (
+        WorkflowBuilder()
+        .add_edge(start, mid, condition=only_if_foo)
+        .add_edge(mid, end)
+        .set_start_executor(start)
+        .build()
+    )
+
+    dot = WorkflowViz(wf).to_digraph()
+
+    # Conditional edge should be dashed and labeled
+    assert '"start" -> "mid" [style=dashed, label="conditional"];' in dot
+    # Non-conditional edge should be plain
+    assert '"mid" -> "end"' in dot
+    assert '"mid" -> "end" [style=dashed' not in dot
+
+
+def test_workflow_viz_fan_in_edge_group():
+    """Test that fan-in edges render an intermediate node with label and routed edges."""
+    start = MockExecutor(id="start")
+    s1 = MockExecutor(id="s1")
+    s2 = MockExecutor(id="s2")
+    t = MockExecutor(id="t")
+
+    # Build a connected workflow: start fans out to s1 and s2, which then fan-in to t
+    wf = (
+        WorkflowBuilder()
+        .add_fan_out_edges(start, [s1, s2])
+        .add_fan_in_edges([s1, s2], t)
+        .set_start_executor(start)
+        .build()
+    )
+
+    dot = WorkflowViz(wf).to_digraph()
+
+    # There should be a single fan-in node with special styling and label
+    lines = [line.strip() for line in dot.splitlines()]
+    fan_in_lines = [line for line in lines if "shape=ellipse" in line and 'label="fan-in"' in line]
+    assert len(fan_in_lines) == 1
+
+    # Extract the intermediate node id from the line: "<id>" [shape=ellipse, ... label="fan-in"];
+    fan_in_line = fan_in_lines[0]
+    first_quote = fan_in_line.find('"')
+    second_quote = fan_in_line.find('"', first_quote + 1)
+    assert first_quote != -1 and second_quote != -1
+    fan_in_node_id = fan_in_line[first_quote + 1 : second_quote]
+    assert fan_in_node_id  # non-empty
+
+    # Edges should be routed through the intermediate node, not direct to target
+    assert f'"s1" -> "{fan_in_node_id}";' in dot
+    assert f'"s2" -> "{fan_in_node_id}";' in dot
+    assert f'"{fan_in_node_id}" -> "t";' in dot
+
+    # Ensure direct edges are not present
+    assert '"s1" -> "t"' not in dot
+    assert '"s2" -> "t"' not in dot

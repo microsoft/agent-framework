@@ -2,9 +2,10 @@
 
 """Workflow visualization module using graphviz."""
 
+import hashlib
 import tempfile
 from pathlib import Path
-from typing import Literal
+from typing import Dict, Literal, Set, Tuple, TypedDict
 
 from ._workflow import Workflow
 
@@ -41,17 +42,58 @@ class WorkflowViz:
             if executor.id != start_executor.id:
                 lines.append(f'  "{executor.id}" [label="{executor.id}"];')
 
+        # Build fan-in groups:
+        # - key: sorted tuple of edge IDs in the group (including self)
+        # - value: info about target, sources set, and a synthetic node id
+        class _FanInGroup(TypedDict):
+            target: str
+            sources: Set[str]
+            node_id: str
+
+        groups: Dict[Tuple[str, ...], _FanInGroup] = {}
+        for edge in self._workflow.edges:
+            if edge.has_edge_group():
+                group_ids = tuple(sorted([*edge._edge_group_ids, edge.id]))
+                if group_ids not in groups:
+                    # Deterministic node id based on target + group ids
+                    digest = hashlib.sha256((edge.target_id + "|" + "|".join(group_ids)).encode("utf-8")).hexdigest()[
+                        :8
+                    ]
+                    node_id = f"fan_in::{edge.target_id}::{digest}"
+                    groups[group_ids] = {"target": edge.target_id, "sources": set(), "node_id": node_id}
+                # Track the source for this group
+                sources = groups[group_ids]["sources"]
+                if not isinstance(sources, set):
+                    raise TypeError("Internal error: 'sources' is expected to be a set of str.")
+                sources.add(edge.source_id)
+
         lines.append("")
+
+        # Add intermediate fan-in nodes with special styling and label on the node
+        for group in groups.values():
+            node_id = group["node_id"]
+            # Use a distinct shape/color to differentiate aggregation nodes
+            lines.append(f'  "{node_id}" [shape=ellipse, fillcolor=lightgoldenrod, label="fan-in"];')
 
         # Add edges
         for edge in self._workflow.edges:
             edge_attr = ""
             if edge._condition is not None:
                 edge_attr = ' [style=dashed, label="conditional"]'
-            elif edge.has_edge_group():
-                edge_attr = ' [color=red, style=bold, label="fan-in"]'
+            # Skip direct rendering of grouped edges; they'll be routed via the fan-in node below
+            if edge.has_edge_group():
+                continue
 
             lines.append(f'  "{edge.source_id}" -> "{edge.target_id}"{edge_attr};')
+
+        # Route grouped edges through the intermediate fan-in node
+        for group in groups.values():
+            node_id = group["node_id"]
+            target_id = group["target"]
+            sources = group["sources"]
+            for src in sorted(sources):
+                lines.append(f'  "{src}" -> "{node_id}";')
+            lines.append(f'  "{node_id}" -> "{target_id}";')
 
         lines.append("}")
         return "\n".join(lines)
