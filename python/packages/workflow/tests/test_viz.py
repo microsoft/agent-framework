@@ -49,7 +49,7 @@ def test_workflow_viz_export_dot():
     file_path = viz.export(format="dot")
     assert file_path.endswith(".dot")
 
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open(file_path, encoding="utf-8") as f:
         content = f.read()
 
     assert "digraph Workflow {" in content

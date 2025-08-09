@@ -3,7 +3,6 @@
 import asyncio
 
 from agent_framework import ChatClientAgent, ChatMessage, ChatRole
-from agent_framework.azure import AzureChatClient
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.workflow import (
     AgentExecutor,
@@ -137,7 +136,7 @@ async def main():
         svg_file = viz.export(format="svg")
         print(f"🖼️  SVG file saved to: {svg_file}")
     except ImportError:
-        print("💡 Tip: Install 'graphviz' package to generate workflow visualizations")
+        print("💡 Tip: Install 'viz' extra to enable workflow visualization: pip install agent-framework-workflow[viz]")
 
     # Step 3: Run the workflow with an initial message.
     completion_event = None
