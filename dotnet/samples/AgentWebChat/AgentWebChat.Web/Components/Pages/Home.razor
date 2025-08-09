@@ -1072,7 +1072,14 @@
 
         StringBuilder responseContent = new();
         var hasReceivedContent = false;
-        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+        using var timeoutCts = new CancellationTokenSource(
+#if DEBUG
+            TimeSpan.FromSeconds(120)
+#else
+            TimeSpan.FromSeconds(20)
+#endif
+        );
 
         try
         {

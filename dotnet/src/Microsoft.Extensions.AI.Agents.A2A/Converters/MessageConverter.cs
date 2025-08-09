@@ -35,6 +35,31 @@ internal static class MessageConverter
     }
 
     /// <summary>
+    /// Converts A2A MessageSendParams to a collection of Microsoft.Extensions.AI ChatMessage objects.
+    /// </summary>
+    /// <param name="messages"></param>
+    /// <returns>A read-only collection of ChatMessage objects.</returns>
+    public static IReadOnlyCollection<ChatMessage> ToChatMessages(this ICollection<Message> messages)
+    {
+        if (messages is null || messages.Count == 0)
+        {
+            return [];
+        }
+
+        var result = new List<ChatMessage>();
+        foreach (var message in messages)
+        {
+            var chatMessage = ConvertMessageToChatMessage(message);
+            if (chatMessage is not null)
+            {
+                result.Add(chatMessage);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// Converts a single <see cref="Message"/> to a <see cref="ChatMessage"/>.
     /// </summary>
     /// <param name="message">The A2A message to convert.</param>
@@ -120,7 +145,7 @@ internal static class MessageConverter
     /// </summary>
     /// <param name="chatMessage">The ChatMessage to convert.</param>
     /// <returns>An A2A Message object.</returns>
-    public static Message ToA2AMessage(ChatMessage chatMessage)
+    public static Message ToA2AMessage(this ChatMessage chatMessage)
     {
         if (chatMessage == null)
         {

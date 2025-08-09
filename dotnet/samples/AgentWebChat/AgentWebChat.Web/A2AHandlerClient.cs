@@ -3,7 +3,6 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using A2A;
-using Microsoft.Extensions.AI.Agents.Runtime;
 
 namespace AgentWebChat.Web;
 
@@ -50,9 +49,23 @@ public class A2AHandlerClient
             this._logger.LogInformation("Received SSE event for agent '{Agent}': type={EventType}; id={EventId}", agent, sseEvent.EventType, sseEvent.EventId);
             var innerEvent = sseEvent.Data;
 
-            // simpliest case is Message
-            var innerMessage = (Message)innerEvent;
-            yield return innerMessage;
+            if (innerEvent is Message innerMessage)
+            {
+                this._logger.LogInformation("Received SSE event as Message for agent '{Agent}'.", agent);
+                yield return innerMessage;
+            }
+            else if (innerEvent is AgentTask { History.Count: > 0 } agentTask)
+            {
+                this._logger.LogInformation("Received SSE event as AgentTask for agent '{Agent}': taskId={TaskId};contextId={CtxId}", agent, agentTask.Id, agentTask.ContextId);
+                foreach (var message in agentTask.History)
+                {
+                    yield return message;
+                }
+            }
+            else
+            {
+                throw new NotSupportedException("Not supported type of data response: " + innerEvent);
+            }
         }
     }
 

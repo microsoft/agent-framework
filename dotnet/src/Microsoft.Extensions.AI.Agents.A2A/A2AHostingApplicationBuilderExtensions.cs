@@ -22,13 +22,23 @@ public static class A2AHostingApplicationBuilderExtensions
     /// <param name="agentName"></param>
     public static void AttachA2ATasks(this WebApplication app, string path, string agentName)
     {
-        var agent = app.Services.GetRequiredKeyedService<AIAgent>(agentName);
-        var logger = app.Services.GetRequiredService<ILogger<A2AAgentTaskProcessor>>();
+        // user provided taskStore
+        var taskStore = app.Services.GetKeyedService<ITaskStore>(agentName) ?? new InMemoryTaskStore();
+        var taskManager = new TaskManager(taskStore: taskStore);
 
-        var agentA2AConnector = new A2AAgentTaskProcessor(logger, agent);
-        var taskStore = new InMemoryTaskStore();
+        // user provided a2aConnector
+        var a2aConnector = app.Services.GetKeyedService<IA2AAgentTaskProcessor>(agentName);
+        if (a2aConnector is null)
+        {
+            var agent = app.Services.GetRequiredKeyedService<AIAgent>(agentName);
+            var logger = app.Services.GetRequiredService<ILogger<A2AAgentTaskProcessor>>();
+            a2aConnector = new A2AAgentTaskProcessor(logger, agent, taskManager);
+        }
 
-        app.AttachA2A(path, agentA2AConnector, taskStore);
+        // attach A2A.SDK calls of TaskManager to the A2A connector
+        AttachAgentTaskProcessor(a2aConnector, taskManager);
+
+        app.AttachA2A(taskManager, path);
     }
 
     /// <summary>
@@ -41,7 +51,6 @@ public static class A2AHostingApplicationBuilderExtensions
     {
         var agent = app.Services.GetRequiredKeyedService<AIAgent>(agentName);
         var logger = app.Services.GetRequiredService<ILogger<A2AMessageProcessor>>();
-
         var agentA2AConnector = new A2AMessageProcessor(logger, agent);
 
         app.AttachA2A(path, agentA2AConnector);
@@ -57,21 +66,6 @@ public static class A2AHostingApplicationBuilderExtensions
     {
         var taskManager = new TaskManager();
         AttachMessageProcessor(a2aConnector, taskManager);
-
-        app.AttachA2A(taskManager, path);
-    }
-
-    /// <summary>
-    /// Attaches A2A (Agent-to-Agent) communication capabilities to the specified host application builder.
-    /// </summary>
-    /// <param name="app"></param>
-    /// <param name="path"></param>
-    /// <param name="a2aConnector"></param>
-    /// <param name="taskStore"></param>
-    public static void AttachA2A(this WebApplication app, string path, IA2AAgentTaskProcessor a2aConnector, ITaskStore taskStore)
-    {
-        var taskManager = new TaskManager(taskStore: taskStore);
-        AttachAgentTaskProcessor(a2aConnector, taskManager);
 
         app.AttachA2A(taskManager, path);
     }
