@@ -91,7 +91,7 @@ async def main():
     """Main function to run the group chat workflow."""
 
     # Step 1: Create the executors.
-    chat_client = OpenAIChatClient(ai_model_id="gpt-4.1")
+    chat_client = OpenAIChatClient()
     writer = AgentExecutor(
         ChatClientAgent(
             chat_client,
