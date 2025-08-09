@@ -72,6 +72,12 @@ class AgentActor(IActor):
             
             # Parse messages from request to framework types
             framework_messages = self._parse_framework_messages(request)
+
+            # Ensure a thread exists (may be None if _restore_thread_state not yet called in some test paths)
+            if self._thread is None:
+                self._thread = self._agent.get_new_thread()
+
+            # Don't manually append incoming messages; allow agent implementation to manage thread.
             
             # Call framework agent directly (like .NET does)
             response = await self._agent.run(framework_messages, thread=self._thread)
@@ -100,19 +106,24 @@ class AgentActor(IActor):
     
     def _parse_framework_messages(self, request: ActorRequestMessage) -> List[ChatMessage]:
         """Convert runtime request to framework ChatMessage objects"""
-        messages = []
-        try:
-            messages_data = request.params.get("messages", []) if request.params else []
-            for msg_data in messages_data:
-                # Create framework ChatMessage with proper role enum
-                role = getattr(ChatRole, msg_data["role"].upper(), ChatRole.USER)
+        if not request.params:
+            return []
+        messages_data = request.params.get("messages", [])
+        if not isinstance(messages_data, list):
+            raise ValueError("messages must be a list")
+        messages: List[ChatMessage] = []
+        for msg_data in messages_data:
+            try:
+                role_value = msg_data.get("role", "user")
+                role = getattr(ChatRole, str(role_value).upper(), ChatRole.USER)
+                content = msg_data.get("content", "")
                 framework_msg = ChatMessage(
                     role=role,
-                    text=msg_data["content"]  # Framework uses 'text' not 'content'
+                    text=content  # Framework uses 'text'
                 )
                 messages.append(framework_msg)
-        except Exception as e:
-            logger.error(f"Error parsing framework messages: {e}")
+            except Exception as e:
+                logger.error(f"Skipping invalid message entry: {e}")
         return messages
     
     def _convert_framework_response(self, framework_response: AgentRunResponse) -> dict:
@@ -180,13 +191,24 @@ class AgentActor(IActor):
         """Save framework thread state to runtime storage"""
         try:
             if self._thread:
-                # Simplified thread state saving - full implementation would serialize thread
+                # Serialize basic thread info plus messages for persistence tests
                 thread_data = {
                     "thread_id": getattr(self._thread, 'id', None),
-                    "last_updated": str(context.actor_id)
+                    "last_updated": str(context.actor_id),
                 }
+                if hasattr(self._thread, 'messages'):
+                    serialized_messages = []
+                    for m in getattr(self._thread, 'messages'):
+                        try:
+                            serialized_messages.append({
+                                "role": self._extract_role(m),
+                                "content": self._extract_content(m)
+                            })
+                        except Exception as e:
+                            logger.debug(f"Failed to serialize message for state: {e}")
+                    thread_data["messages"] = serialized_messages
                 await context.write_state(self.THREAD_STATE_KEY, thread_data)
-                logger.debug("Saved thread state (simplified)")
+                logger.debug("Saved thread state (messages count=%s)", len(thread_data.get("messages", [])))
         except Exception as e:
             logger.error(f"Error saving thread state: {e}")
     

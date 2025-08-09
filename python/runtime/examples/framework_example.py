@@ -19,7 +19,7 @@ async def main():
     
     # Import our runtime components
     from agent_runtime.runtime import InProcessActorRuntime, InProcessActorClient
-    from agent_runtime.abstractions import ActorId
+    from agent_runtime.runtime_abstractions import ActorId
     # Import framework directly
     try:
         from agent_framework import ChatClientAgent, ChatMessage, AgentRunResponse

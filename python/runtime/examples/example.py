@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agent_runtime.runtime import InProcessActorRuntime, InProcessActorClient
 from agent_runtime.agent_actor import AgentActor, EchoAgent, MockAIAgent
-from agent_runtime.abstractions import ActorId, ChatMessage
+from agent_runtime.runtime_abstractions import ActorId
 
 # Configure logging
 logging.basicConfig(

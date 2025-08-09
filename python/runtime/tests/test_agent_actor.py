@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock, Mock
 
-from agent_runtime.agent_actor import SimpleAgentActor, SimpleEchoAgent, MockAIAgent, SimpleChatMessage, SimpleAgentRunResponse
+from agent_runtime.agent_actor import AgentActor, EchoAgent, MockAIAgent, ChatMessage, AgentRunResponse, ChatRole
 from agent_runtime.runtime_abstractions import (
     ActorId, ActorRequestMessage, ActorResponseMessage,
     ActorMessageType, RequestStatus, IActorRuntimeContext
@@ -32,22 +32,21 @@ class MockActorContext:
         self._completed_requests[message_id] = response
 
 
-class TestSimpleEchoAgent:
+class TestEchoAgent:
     def test_echo_agent_creation(self):
-        agent = SimpleEchoAgent()
+        agent = EchoAgent()
         assert agent is not None
-    
+
     @pytest.mark.asyncio
     async def test_echo_agent_run(self):
-        agent = SimpleEchoAgent()
-        messages = [SimpleChatMessage(role="user", content="Hello, echo!")]
-        
-        response = await agent.run_async(messages)
-        
+        agent = EchoAgent()
+        messages = [ChatMessage(role=ChatRole.USER, text="Hello, echo!")]
+
+        response = await agent.run(messages)
+
         assert len(response.messages) == 1
-        assert response.messages[0].role == "assistant"
-        assert response.messages[0].content == "Echo: Hello, echo!"
-        assert response.status == "completed"
+        assert response.messages[0].role == ChatRole.ASSISTANT
+        assert "Echo: Hello, echo!" in str(response.messages[0].text)
 
 
 class TestMockAIAgent:
@@ -55,40 +54,39 @@ class TestMockAIAgent:
         agent = MockAIAgent()
         assert agent is not None
         assert len(agent._responses) > 0
-    
+
     @pytest.mark.asyncio
     async def test_mock_ai_agent_run(self):
         agent = MockAIAgent()
-        messages = [SimpleChatMessage(role="user", content="Hello!")]
-        
-        response = await agent.run_async(messages)
-        
+        messages = [ChatMessage(role=ChatRole.USER, text="Hello!")]
+
+        response = await agent.run(messages)
+
         assert len(response.messages) == 1
-        assert response.messages[0].role == "assistant"
-        assert response.messages[0].content in agent._responses
-        assert response.status == "completed"
-    
+        assert response.messages[0].role == ChatRole.ASSISTANT
+        assert str(response.messages[0].text) in agent._responses
+
     @pytest.mark.asyncio
     async def test_mock_ai_agent_conversation(self):
         agent = MockAIAgent()
-        
+
         # First message
-        response1 = await agent.run_async([
-            SimpleChatMessage(role="user", content="Hello!")
+        response1 = await agent.run([
+            ChatMessage(role=ChatRole.USER, text="Hello!")
         ])
-        
+
         # Second message with context
-        response2 = await agent.run_async([
-            SimpleChatMessage(role="user", content="Hello!"),
+        response2 = await agent.run([
+            ChatMessage(role=ChatRole.USER, text="Hello!"),
             response1.messages[0],
-            SimpleChatMessage(role="user", content="How are you?")
+            ChatMessage(role=ChatRole.USER, text="How are you?")
         ])
-        
+
         assert len(response2.messages) == 1
-        assert response2.messages[0].role == "assistant"
+        assert response2.messages[0].role == ChatRole.ASSISTANT
 
 
-class TestSimpleAgentActor:
+class TestAgentActorWrapper:
     @pytest.fixture
     def actor_id(self):
         return ActorId(type_name="echo", instance_id="test-123")
@@ -99,11 +97,12 @@ class TestSimpleAgentActor:
     
     @pytest.fixture
     def echo_actor(self, actor_id):
-        return SimpleAgentActor(SimpleEchoAgent())
+        return AgentActor(EchoAgent())
     
     @pytest.mark.asyncio
     async def test_agent_actor_creation(self, echo_actor, actor_id):
-        assert isinstance(echo_actor._agent, SimpleEchoAgent)
+        """Ensure the wrapped agent is an EchoAgent instance."""
+        assert isinstance(echo_actor._agent, EchoAgent)
     
     @pytest.mark.asyncio
     async def test_agent_actor_run_request(self, echo_actor, mock_context):
