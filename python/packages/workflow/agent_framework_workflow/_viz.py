@@ -5,7 +5,7 @@
 import hashlib
 import tempfile
 from pathlib import Path
-from typing import Dict, Literal, Set, Tuple, TypedDict
+from typing import Literal, TypedDict
 
 from ._workflow import Workflow
 
@@ -47,10 +47,10 @@ class WorkflowViz:
         # - value: info about target, sources set, and a synthetic node id
         class _FanInGroup(TypedDict):
             target: str
-            sources: Set[str]
+            sources: set[str]
             node_id: str
 
-        groups: Dict[Tuple[str, ...], _FanInGroup] = {}
+        groups: dict[tuple[str, ...], _FanInGroup] = {}
         for edge in self._workflow.edges:
             if edge.has_edge_group():
                 group_ids = tuple(sorted([*edge._edge_group_ids, edge.id]))

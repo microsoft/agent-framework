@@ -3,8 +3,7 @@
 """Tests for the workflow visualization module."""
 
 import pytest
-
-from agent_framework_workflow import Executor, WorkflowBuilder, WorkflowContext, WorkflowViz, handler
+from agent_framework.workflow import Executor, WorkflowBuilder, WorkflowContext, WorkflowViz, handler
 
 
 class MockExecutor(Executor):
