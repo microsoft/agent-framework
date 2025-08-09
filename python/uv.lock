@@ -203,6 +203,10 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+serve = [
+    { name = "starlette", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "uvicorn", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
 viz = [
     { name = "graphviz", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
@@ -211,8 +215,10 @@ viz = [
 requires-dist = [
     { name = "agent-framework", editable = "packages/main" },
     { name = "graphviz", marker = "extra == 'viz'", specifier = ">=0.20.0" },
+    { name = "starlette", marker = "extra == 'serve'", specifier = ">=0.39.0" },
+    { name = "uvicorn", marker = "extra == 'serve'", specifier = ">=0.30.5" },
 ]
-provides-extras = ["viz"]
+provides-extras = ["viz", "serve"]
 
 [[package]]
 name = "aiofiles"

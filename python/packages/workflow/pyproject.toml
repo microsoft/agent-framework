@@ -30,6 +30,10 @@ dependencies = [
 viz = [
     "graphviz>=0.20.0",
 ]
+serve = [
+    "uvicorn>=0.30.5",
+    "starlette>=0.39.0",
+]
 
 [tool.uv]
 prerelease = "if-necessary-or-explicit"
