@@ -5,7 +5,14 @@ import sys
 from collections.abc import AsyncIterable, Callable, Sequence
 from typing import Any
 
-from ._edge import EdgeGroup, SingleEdgeGroup, SourceEdgeGroup, TargetEdgeGroup
+from ._edge import (
+    ConditionalEdgeGroup,
+    EdgeGroup,
+    PartitioningEdgeGroup,
+    SingleEdgeGroup,
+    SourceEdgeGroup,
+    TargetEdgeGroup,
+)
 from ._events import RequestInfoEvent, WorkflowCompletedEvent, WorkflowEvent
 from ._executor import Executor, RequestInfoExecutor
 from ._runner import DEFAULT_MAX_ITERATIONS, Runner
@@ -260,6 +267,55 @@ class WorkflowBuilder:
             targets: A list of target executors for the edges.
         """
         self._edge_groups.append(SourceEdgeGroup(source, targets))
+
+        return self
+
+    def add_conditional_fan_out_edges(
+        self, source: Executor, targets: Sequence[Executor], conditions: Sequence[Callable[[Any], bool]]
+    ) -> "Self":
+        """Add a conditional fan out group of edges to the workflow.
+
+        The output types of the source and the input types of the targets must be compatible.
+        Messages from the source executor will be sent to one of the target executors based on
+        the provided conditions.
+
+        Think of this as a switch statement where each target executor corresponds to a case.
+        Each condition function will be evaluated in order, and the first one that returns True
+        will determine which target executor receives the message.
+
+        The number of targets must be one greater than the number of conditions. The last target
+        executor will receive messages that fall through all conditions (i.e., no condition matched).
+
+        Args:
+            source: The source executor of the edges.
+            targets: A list of target executors for the edges.
+            conditions: A list of condition functions that determine whether each edge should be traversed.
+        """
+        self._edge_groups.append(ConditionalEdgeGroup(source, targets, conditions))
+
+        return self
+
+    def add_partitioning_fan_out_edges(
+        self,
+        source: Executor,
+        targets: Sequence[Executor],
+        partition_func: Callable[[Any, int], list[int]],
+    ) -> "Self":
+        """Add a partitioning fan out group of edges to the workflow.
+
+        The output types of the source and the input types of the targets must be compatible.
+        Messages from the source executor will be sent to multiple target executors based on
+        the provided partition function.
+
+        The partition function should take a message and the number of target executors,
+        and return a list of indices indicating which target executors should receive the message.
+
+        Args:
+            source: The source executor of the edges.
+            targets: A list of target executors for the edges.
+            partition_func: A function that partitions messages to target executors.
+        """
+        self._edge_groups.append(PartitioningEdgeGroup(source, targets, partition_func))
 
         return self
 

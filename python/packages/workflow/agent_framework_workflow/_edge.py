@@ -72,6 +72,13 @@ class Edge:
         """
         return self.target.can_handle(message_data)
 
+    def should_route(self, data: Any) -> bool:
+        """Determine if message should be routed through this edge based on the condition."""
+        if self._condition is None:
+            return True
+
+        return self._condition(data)
+
     async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> None:
         """Send a message along this edge.
 
@@ -84,17 +91,10 @@ class Edge:
             # Caller of this method should ensure that the edge can handle the data.
             raise RuntimeError(f"Edge {self.id} cannot handle data of type {type(message.data)}.")
 
-        if self._should_route(message.data):
+        if self.should_route(message.data):
             await self.target.execute(
                 message.data, WorkflowContext(self.target.id, [self.source.id], shared_state, ctx)
             )
-
-    def _should_route(self, data: Any) -> bool:
-        """Determine if message should be routed through this edge based on the condition."""
-        if self._condition is None:
-            return True
-
-        return self._condition(data)
 
 
 class EdgeGroup(ABC):
@@ -144,7 +144,15 @@ class SingleEdgeGroup(EdgeGroup):
     """Represents a single edge group that contains only one edge."""
 
     def __init__(self, source: Executor, target: Executor, condition: Callable[[Any], bool] | None = None) -> None:
-        """Initialize the single edge group with an edge."""
+        """Initialize the single edge group with an edge.
+
+        Args:
+            source (Executor): The source executor.
+            target (Executor): The target executor that the source executor can send messages to.
+            condition (Callable[[Any], bool], optional): A condition function that determines
+                if the edge will pass the data to the target executor. If None, the edge can
+                will always pass the data to the target executor.
+        """
         self._edge = Edge(source=source, target=target, condition=condition)
 
     @override
@@ -183,7 +191,12 @@ class SourceEdgeGroup(EdgeGroup):
     """
 
     def __init__(self, source: Executor, targets: Sequence[Executor]) -> None:
-        """Initialize the source edge group with a list of edges."""
+        """Initialize the source edge group with a list of edges.
+
+        Args:
+            source (Executor): The source executor.
+            targets (Sequence[Executor]): A list of target executors that the source executor can send messages to.
+        """
         if len(targets) <= 1:
             raise ValueError("SourceEdgeGroup must contain at least two targets.")
         self._edges = [Edge(source=source, target=target) for target in targets]
@@ -227,7 +240,12 @@ class TargetEdgeGroup(EdgeGroup):
     """
 
     def __init__(self, sources: Sequence[Executor], target: Executor) -> None:
-        """Initialize the target edge group with a list of edges."""
+        """Initialize the target edge group with a list of edges.
+
+        Args:
+            sources (Sequence[Executor]): A list of source executors that can send messages to the target executor.
+            target (Executor): The target executor that receives a list of messages aggregated from all sources.
+        """
         if len(sources) <= 1:
             raise ValueError("TargetEdgeGroup must contain at least two sources.")
         self._edges = [Edge(source=source, target=target) for source in sources]
@@ -279,3 +297,129 @@ class TargetEdgeGroup(EdgeGroup):
     def edges(self) -> list[Edge]:
         """Get the edges in the group."""
         return self._edges
+
+
+class ConditionalEdgeGroup(SourceEdgeGroup):
+    """Represents a group of edges that assemble a conditional routing pattern.
+
+    This is similar to a switch-case construct:
+        switch(data):
+            case condition_1:
+                edge_1
+                break
+            case condition_2:
+                edge_2
+                break
+            default:
+                edge_3
+                break
+    Or equivalently an if-elif-else construct:
+        if condition_1:
+            edge_1
+        elif condition_2:
+            edge_2
+        else:
+            edge_4
+    """
+
+    def __init__(
+        self,
+        source: Executor,
+        targets: Sequence[Executor],
+        conditions: Sequence[Callable[[Any], bool]],
+    ) -> None:
+        """Initialize the conditional edge group with a list of edges.
+
+        Args:
+            source (Executor): The source executor.
+            targets (Sequence[Executor]): A list of target executors that the source executor can send messages to.
+            conditions (Sequence[Callable[[Any], bool]]): A list of condition functions that determine
+                which target executor to route the message to based on the data. The number of conditions
+                must be one less than the number of targets, as the last target is the default case. The
+                index of the condition corresponds to the index of the target executor.
+        """
+        if len(targets) <= 1:
+            raise ValueError("ConditionalEdgeGroup must contain at least two targets.")
+
+        if len(targets) != len(conditions) + 1:
+            raise ValueError("Number of targets must be one more than the number of conditions.")
+
+        self._edges = [
+            Edge(source, target, condition) for target, condition in zip(targets, [*conditions, None], strict=False)
+        ]
+
+    @override
+    async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
+        """Send a message through the conditional edge group."""
+        if message.target_id:
+            # Find the index of the target edge in the edges list if target_id is specified
+            index = next((i for i, edge in enumerate(self._edges) if edge.target_id == message.target_id), None)
+            if index is None:
+                return False
+            if self._edges[index].can_handle(message.data) and self._edges[index].should_route(message.data):
+                await self._edges[index].send_message(message, shared_state, ctx)
+                return True
+            return False
+
+        for edge in self._edges:
+            if edge.can_handle(message.data) and edge.should_route(message.data):
+                await edge.send_message(message, shared_state, ctx)
+                return True
+
+        return False
+
+
+class PartitioningEdgeGroup(SourceEdgeGroup):
+    """Represents a group of edges that can route messages based on a partitioning strategy.
+
+    Messages from the source executor are routed to multiple target executors based on a partitioning function.
+    """
+
+    def __init__(
+        self, source: Executor, targets: Sequence[Executor], partition_func: Callable[[Any, int], list[int]]
+    ) -> None:
+        """Initialize the partitioning edge group with a list of edges.
+
+        Args:
+            source (Executor): The source executor.
+            targets (Sequence[Executor]): A list of target executors that the source executor can send messages to.
+            partition_func (Callable[[Any, int], list[int]]): A partitioning function that determines which target
+                executors to route the message to based on the data. The function should take the message data and
+                the number of targets, and return a list of indices of the target executors to route the message to.
+        """
+        self._edges = [Edge(source=source, target=target) for target in targets]
+        self._partition_func = partition_func
+
+    @override
+    async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
+        """Send a message through the partitioning edge group."""
+        partition_result = self._partition_func(message.data, len(self._edges))
+        if not self._validate_partition_result(partition_result):
+            raise RuntimeError(
+                f"Invalid partition result: {partition_result}. Expected indices in range [0, {len(self._edges) - 1}]."
+            )
+
+        if message.target_id:
+            # If the target ID is specified and the partition result contains it, send the message to that edge
+            has_target = message.target_id in [self._edges[index].target_id for index in partition_result]
+            if has_target:
+                edge = next((edge for edge in self._edges if edge.target_id == message.target_id), None)
+                if edge and edge.can_handle(message.data):
+                    await edge.send_message(message, shared_state, ctx)
+                    return True
+            return False
+
+        async def send_to_edge(edge: Edge) -> bool:
+            """Send the message to the edge at the specified index."""
+            if edge.can_handle(message.data):
+                await edge.send_message(message, shared_state, ctx)
+                return True
+            return False
+
+        tasks = [send_to_edge(self._edges[index]) for index in partition_result]
+        results = await asyncio.gather(*tasks)
+        return any(results)
+
+    def _validate_partition_result(self, partition_result: list[int]) -> bool:
+        """Validate the partition result to ensure all indices are within bounds."""
+        return all(0 <= index < len(self._edges) for index in partition_result)
