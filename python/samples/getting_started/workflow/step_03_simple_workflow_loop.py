@@ -9,6 +9,7 @@ from agent_framework.workflow import (
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
+    WorkflowViz,
     handler,
 )
 
@@ -102,6 +103,15 @@ async def main():
         .set_start_executor(guess_number_executor)
         .build()
     )
+
+    # Step 2.5: Visualize the workflow (optional)
+    print("🎨 Generating workflow visualization...")
+    try:
+        viz = WorkflowViz(workflow)
+        svg_file = viz.export(format="svg")
+        print(f"🖼️  SVG file saved to: {svg_file}")
+    except ImportError:
+        print("💡 Tip: Install 'viz' extra to enable workflow visualization: pip install agent-framework-workflow[viz]")
 
     # Step 3: Run the workflow and print the events.
     iterations = 0

@@ -13,6 +13,7 @@ from agent_framework.workflow import (
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
+    WorkflowViz,
     handler,
 )
 
@@ -119,7 +120,8 @@ class Map(Executor):
             data: An instance of SplitCompleted signaling the map step can be started.
             ctx: The execution context containing the shared state and other information.
         """
-        # Retrieve the data to be processed from the shared state.# Define a key for the shared state to store the data to be processed
+    # Retrieve the data to be processed from the shared state.
+    # Define a key for the shared state to store the data to be processed
         data_to_be_processed: list[str] = await ctx.get_shared_state(SHARED_STATE_DATA_KEY)
         chunk_start, chunk_end = await ctx.get_shared_state(self.id)
 
@@ -292,6 +294,15 @@ async def main():
         .add_fan_in_edges(reduce_operations, completion_executor)
         .build()
     )
+
+    # Step 2.5: Visualize the workflow (optional)
+    print("🎨 Generating workflow visualization...")
+    try:
+        viz = WorkflowViz(workflow)
+        svg_file = viz.export(format="svg")
+        print(f"🖼️  SVG file saved to: {svg_file}")
+    except ImportError:
+        print("💡 Tip: Install 'viz' extra to enable workflow visualization: pip install agent-framework-workflow[viz]")
 
     # Step 3: Open the text file and read its content.
     async with aiofiles.open(os.path.join(DIR, "resources", "long_text.txt"), "r") as f:

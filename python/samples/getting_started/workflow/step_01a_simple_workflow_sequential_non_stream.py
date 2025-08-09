@@ -2,7 +2,14 @@
 
 import asyncio
 
-from agent_framework.workflow import Executor, WorkflowBuilder, WorkflowCompletedEvent, WorkflowContext, handler
+from agent_framework.workflow import (
+    Executor,
+    WorkflowBuilder,
+    WorkflowCompletedEvent,
+    WorkflowContext,
+    WorkflowViz,
+    handler,
+)
 
 """
 The following sample demonstrates a basic workflow with two executors
@@ -48,6 +55,15 @@ async def main():
         .set_start_executor(upper_case_executor)
         .build()
     )
+
+    # Step 2.5: Visualize the workflow (optional)
+    print("🎨 Generating workflow visualization...")
+    try:
+        viz = WorkflowViz(workflow)
+        svg_file = viz.export(format="svg")
+        print(f"🖼️  SVG file saved to: {svg_file}")
+    except ImportError:
+        print("💡 Tip: Install 'viz' extra to enable workflow visualization: pip install agent-framework-workflow[viz]")
 
     # Step 3: Run the workflow with an initial message.
     events = await workflow.run("hello world")

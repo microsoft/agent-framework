@@ -8,6 +8,7 @@ from agent_framework.workflow import (
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
+    WorkflowViz,
     handler,
 )
 
@@ -109,6 +110,15 @@ async def main():
         )
         .build()
     )
+
+    # Step 2.5: Visualize the workflow (optional)
+    print("🎨 Generating workflow visualization...")
+    try:
+        viz = WorkflowViz(workflow)
+        svg_file = viz.export(format="svg")
+        print(f"🖼️  SVG file saved to: {svg_file}")
+    except ImportError:
+        print("💡 Tip: Install 'viz' extra to enable workflow visualization: pip install agent-framework-workflow[viz]")
 
     # Step 3: Run the workflow with an input message.
     async for event in workflow.run_streaming("This is a spam."):
