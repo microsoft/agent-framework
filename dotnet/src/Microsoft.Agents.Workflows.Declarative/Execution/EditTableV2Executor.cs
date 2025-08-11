@@ -3,7 +3,6 @@
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Declarative.Execution;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
@@ -11,27 +10,24 @@ using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.Workflows.Declarative.Handlers;
+namespace Microsoft.Agents.Workflows.Declarative.Execution;
 
-internal sealed class EditTableV2Action : AssignmentAction<EditTableV2>
+internal sealed class EditTableV2Executor(EditTableV2 model) : WorkflowActionExecutor<EditTableV2>(model)
 {
-    public EditTableV2Action(EditTableV2 model)
-        : base(model, Throw.IfNull(model.ItemsVariable?.Path, $"{nameof(model)}.{nameof(model.ItemsVariable)}.{nameof(InitializablePropertyPath.Path)}"))
+    protected async override ValueTask ExecuteAsync(CancellationToken cancellationToken)
     {
-    }
+        PropertyPath variablePath = Throw.IfNull(this.Model.ItemsVariable?.Path, $"{nameof(this.Model)}.{nameof(this.Model.ItemsVariable)}");
 
-    protected override async Task HandleAsync(ProcessActionContext context, CancellationToken cancellationToken)
-    {
-        FormulaValue table = context.Scopes.Get(this.Target.VariableName!, WorkflowScopeType.Parse(this.Target.VariableScopeName));
+        FormulaValue table = this.Context.Scopes.Get(variablePath.VariableName!, WorkflowScopeType.Parse(variablePath.VariableScopeName));
         TableValue tableValue = (TableValue)table;
 
         EditTableOperation? changeType = this.Model.ChangeType;
         if (changeType is AddItemOperation addItemOperation)
         {
-            EvaluationResult<DataValue> result = context.ExpressionEngine.GetValue(addItemOperation.Value!, context.Scopes); // %%% FAILURE CASE (CATCH) & NULL OVERRIDE
+            EvaluationResult<DataValue> result = this.Context.ExpressionEngine.GetValue(addItemOperation.Value!, this.Context.Scopes); // %%% FAILURE CASE (CATCH) & NULL OVERRIDE
             RecordValue newRecord = BuildRecord(tableValue.Type.ToRecord(), result.Value.ToFormulaValue());
             await tableValue.AppendAsync(newRecord, cancellationToken).ConfigureAwait(false);
-            this.AssignTarget(context, tableValue);
+            this.AssignTarget(this.Context, variablePath, tableValue);
         }
         else if (changeType is ClearItemsOperation)
         {

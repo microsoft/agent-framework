@@ -40,7 +40,7 @@ public class Workflows_Declarative(ITestOutputHelper output) : OrchestrationSamp
         Console.WriteLine("WORKFLOW INIT\n");
 
         using StreamReader yamlReader = File.OpenText(@$"{nameof(Workflows)}\{fileName}.yaml");
-        WorkflowContext workflowContext =
+        DeclarativeWorkflowContext workflowContext =
             new()
             {
                 //HttpClient = customClient,
@@ -57,9 +57,13 @@ public class Workflows_Declarative(ITestOutputHelper output) : OrchestrationSamp
         StreamingRun handle = await runner.StreamAsync("<placeholder>");
         await foreach (WorkflowEvent evt in handle.WatchStreamAsync().ConfigureAwait(false))
         {
-            if (evt is ExecutorCompleteEvent executorComplete)
+            if (evt is ExecutorInvokeEvent executorInvoked)
             {
-                Console.WriteLine($"WORKFLOW EVENT: {executorComplete.Data}");
+                Console.WriteLine($"!!! ENTER #{executorInvoked.ExecutorId}");
+            }
+            else if (evt is ExecutorCompleteEvent executorComplete)
+            {
+                Console.WriteLine($"!!! EXIT #{executorComplete.ExecutorId}");
             }
         }
         Console.WriteLine("\nWORKFLOW DONE");

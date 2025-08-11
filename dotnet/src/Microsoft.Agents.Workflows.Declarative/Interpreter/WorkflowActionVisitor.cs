@@ -2,16 +2,11 @@
 
 using System;
 using System.Threading.Tasks;
-using Azure.AI.Agents.Persistent;
-using Azure.Core.Pipeline;
 using Microsoft.Agents.Workflows.Core;
 using Microsoft.Agents.Workflows.Declarative.Execution;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
-using Microsoft.Agents.Workflows.Declarative.Handlers;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
-using Microsoft.PowerFx;
-using Microsoft.SemanticKernel.Process.Workflows.Actions;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
@@ -20,19 +15,24 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 {
     private readonly WorkflowBuilder _workflowBuilder;
     private readonly WorkflowModel _workflowModel;
-    private readonly WorkflowContext _context;
+    private readonly DeclarativeWorkflowContext _workflowContext;
     private readonly WorkflowScopes _scopes;
+    private readonly WorkflowExecutionContext _executionContext;
 
     public WorkflowActionVisitor(
         ExecutorIsh rootAction,
-        WorkflowContext context,
+        DeclarativeWorkflowContext workflowContext,
         WorkflowScopes scopes)
     {
         this._workflowModel = new WorkflowModel(rootAction);
         this._workflowBuilder = new WorkflowBuilder(rootAction);
-        this._context = context;
+        this._workflowContext = workflowContext;
         this._scopes = scopes;
+
+        this._executionContext = workflowContext.CreateActionContext(rootAction.Id, scopes);
     }
+
+    public bool HasUnsupportedActions { get; private set; }
 
     public Workflow<string> Complete()
     {
@@ -45,7 +45,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     protected override void Visit(ActionScope item)
     {
-        this.Trace(item, isSkipped: false);
+        this.Trace(item);
 
         string parentId = Throw.IfNull(item.GetParentId(), nameof(BotElement.Parent)); // %%% NULL PARENT CASE ???
         if (item.Id.Equals(parentId))
@@ -58,7 +58,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     protected override void Visit(ConditionGroup item)
     {
-        this.Trace(item, isSkipped: false);
+        this.Trace(item);
 
         //ConditionGroupAction action = new(item);
         //this.ContinueWith(action);
@@ -111,7 +111,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     protected override void Visit(GotoAction item)
     {
-        this.Trace(item, isSkipped: false);
+        this.Trace(item);
 
         string parentId = Throw.IfNull(item.GetParentId(), nameof(BotElement.Parent)); // %%% NULL PARENT CASE ???
         this.ContinueWith(this.CreateStep(item.Id.Value, nameof(GotoAction)), parentId);
@@ -121,28 +121,28 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     protected override void Visit(Foreach item)
     {
-        this.Trace(item, isSkipped: false);
+        this.Trace(item);
 
-        ForeachAction action = new(item);
-        string loopId = ForeachAction.Steps.Next(action.Id);
+        ForeachExecutor action = new(item);
+        string loopId = ForeachExecutor.Steps.Next(action.Id);
         this.ContinueWith(action, callback: CompletionHandler);
         string restartId = this.RestartFrom(action);
-        this.ContinueWith(this.CreateStep(loopId, $"{nameof(ForeachAction)}_Next", action.TakeNext), action.Id);
+        this.ContinueWith(this.CreateStep(loopId, $"{nameof(ForeachExecutor)}_Next", action.TakeNext), action.Id);
         this._workflowModel.AddLink(loopId, restartId, (_) => !action.HasValue);
-        this.ContinueWith(this.CreateStep(ForeachAction.Steps.Start(action.Id), $"{nameof(ForeachAction)}_Start"), action.Id, (_) => action.HasValue);
+        this.ContinueWith(this.CreateStep(ForeachExecutor.Steps.Start(action.Id), $"{nameof(ForeachExecutor)}_Start"), action.Id, (_) => action.HasValue);
         void CompletionHandler()
         {
-            string completionId = ForeachAction.Steps.End(action.Id);
-            this.ContinueWith(this.CreateStep(completionId, $"{nameof(ForeachAction)}_End"), action.Id);
+            string completionId = ForeachExecutor.Steps.End(action.Id);
+            this.ContinueWith(this.CreateStep(completionId, $"{nameof(ForeachExecutor)}_End"), action.Id);
             this._workflowModel.AddLink(completionId, loopId);
         }
     }
 
     protected override void Visit(BreakLoop item) // %%% SUPPORT
     {
-        this.Trace(item, isSkipped: false);
+        this.Trace(item);
 
-        string? loopId = this._workflowModel.LocateParent<ForeachAction>(item.GetParentId());
+        string? loopId = this._workflowModel.LocateParent<ForeachExecutor>(item.GetParentId());
         if (loopId is not null)
         {
             string parentId = Throw.IfNull(item.GetParentId(), nameof(BotElement.Parent)); // %%% NULL PARENT CASE ???
@@ -154,288 +154,290 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     protected override void Visit(ContinueLoop item) // %%% SUPPORT
     {
-        this.Trace(item, isSkipped: false);
+        this.Trace(item);
 
-        string? loopId = this._workflowModel.LocateParent<ForeachAction>(item.GetParentId());
+        string? loopId = this._workflowModel.LocateParent<ForeachExecutor>(item.GetParentId());
         if (loopId is not null)
         {
             string parentId = Throw.IfNull(item.GetParentId(), nameof(BotElement.Parent)); // %%% NULL PARENT CASE ???
             this.ContinueWith(this.CreateStep(item.Id.Value, nameof(ContinueLoop)), parentId);
-            this._workflowModel.AddLink(item.Id.Value, ForeachAction.Steps.Next(loopId));
+            this._workflowModel.AddLink(item.Id.Value, ForeachExecutor.Steps.Next(loopId));
             this.RestartFrom(item.Id.Value, nameof(ContinueLoop), parentId);
         }
     }
 
     protected override void Visit(EndConversation item)
     {
-        this.Trace(item, isSkipped: false);
+        this.Trace(item);
 
-        EndConversationAction action = new(item);
+        EndConversationExecutor action = new(item);
         this.ContinueWith(action);
         this.RestartFrom(action);
     }
 
     protected override void Visit(AnswerQuestionWithAI item)
     {
-        this.Trace(item, isSkipped: false);
+        this.Trace(item);
 
-        this.ContinueWith(new AnswerQuestionWithAIAction(item));
+        this.ContinueWith(new AnswerQuestionWithAIExecutor(item));
     }
 
     protected override void Visit(SetVariable item)
     {
-        this.Trace(item, isSkipped: false);
+        this.Trace(item);
 
-        this.ContinueWith(new SetVariableAction(item));
+        this.ContinueWith(new SetVariableExecutor(item));
     }
 
     protected override void Visit(SetTextVariable item)
     {
-        this.Trace(item, isSkipped: false);
+        this.Trace(item);
 
-        this.ContinueWith(new SetTextVariableAction(item));
+        this.ContinueWith(new SetTextVariableExecutor(item));
     }
 
     protected override void Visit(ClearAllVariables item)
     {
-        this.Trace(item, isSkipped: false);
+        this.Trace(item);
 
-        this.ContinueWith(new ClearAllVariablesAction(item));
+        this.ContinueWith(new ClearAllVariablesExecutor(item));
     }
 
     protected override void Visit(ResetVariable item)
     {
-        this.Trace(item, isSkipped: false);
+        this.Trace(item);
 
-        this.ContinueWith(new ResetVariableAction(item));
+        this.ContinueWith(new ResetVariableExecutor(item));
     }
 
     protected override void Visit(EditTable item)
     {
-        this.Trace(item);
+        this.Trace(item); // %%% TODO
     }
 
     protected override void Visit(EditTableV2 item)
     {
-        this.Trace(item, isSkipped: false);
+        this.Trace(item);
 
-        this.ContinueWith(new EditTableV2Action(item));
+        this.ContinueWith(new EditTableV2Executor(item));
     }
 
     protected override void Visit(ParseValue item)
     {
-        this.Trace(item, isSkipped: false);
+        this.Trace(item);
 
-        this.ContinueWith(new ParseValueAction(item));
+        this.ContinueWith(new ParseValueExecutor(item));
     }
 
     protected override void Visit(SendActivity item)
     {
-        this.Trace(item, isSkipped: false);
+        this.Trace(item);
 
-        this.ContinueWith(new SendActivityAction(item, this._context.ActivityChannel));
+        this.ContinueWith(new SendActivityExecutor(item, this._workflowContext.ActivityChannel));
     }
 
     #region Not supported
 
     protected override void Visit(DeleteActivity item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(GetActivityMembers item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(UpdateActivity item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(ActivateExternalTrigger item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(DisableTrigger item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(WaitForConnectorTrigger item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(InvokeConnectorAction item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(InvokeCustomModelAction item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(InvokeFlowAction item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(InvokeAIBuilderModelAction item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(InvokeSkillAction item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(AdaptiveCardPrompt item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(Question item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(CSATQuestion item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(OAuthInput item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(BeginDialog item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(UnknownDialogAction item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(EndDialog item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(RepeatDialog item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(ReplaceDialog item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(CancelAllDialogs item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(CancelDialog item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(EmitEvent item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(GetConversationMembers item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(HttpRequestAction item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(RecognizeIntent item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(TransferConversation item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(TransferConversationV2 item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(SignOutUser item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(LogCustomTelemetryEvent item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(DisconnectedNodeContainer item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(CreateSearchQuery item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(SearchKnowledgeSources item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(SearchAndSummarizeWithCustomModel item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     protected override void Visit(SearchAndSummarizeContent item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
     }
 
     #endregion
 
     private void ContinueWith(
-        ProcessAction action,
+        WorkflowActionExecutor executor,
         Func<object?, bool>? condition = null,
-        ScopeCompletionHandler? callback = null) =>
-        this.ContinueWith(this.DefineActionExecutor(action), action.ParentId, condition, action.GetType(), callback);
-
-    private void ContinueWith(
-        ExecutorIsh executor,
-        string parentId,
-        Func<object?, bool>? condition = null,
-        Type? actionType = null,
         ScopeCompletionHandler? callback = null)
     {
-        this._workflowModel.AddNode(executor, parentId, actionType, callback);
+        executor.Attach(this._executionContext);
+        this.ContinueWith(executor, executor.ParentId, condition, callback);
+    }
+
+    private void ContinueWith(
+        ExecutorBase executor,
+        string parentId,
+        Func<object?, bool>? condition = null,
+        ScopeCompletionHandler? callback = null)
+    {
+        this._workflowModel.AddNode(executor, parentId, callback);
         this._workflowModel.AddLinkFromPeer(parentId, executor.Id, condition);
     }
 
     private static string RestartId(string actionId) => $"post_{actionId}";
 
-    private string RestartFrom(ProcessAction action) =>
-        this.RestartFrom(action.Id, action.GetType().Name, action.ParentId);
+    private string RestartFrom(WorkflowActionExecutor executor) =>
+        this.RestartFrom(executor.Id, executor.GetType().Name, executor.ParentId);
 
     private string RestartFrom(string actionId, string name, string parentId)
     {
@@ -444,14 +446,13 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         return restartId;
     }
 
-    private ExecutorIsh CreateStep(string actionId, string name, Action<ProcessActionContext>? stepAction = null)
+    private DeclarativeActionExecutor CreateStep(string actionId, string name, Action<WorkflowExecutionContext>? stepAction = null)
     {
         DeclarativeActionExecutor stepExecutor =
             new(actionId,
                 () =>
                 {
-                    Console.WriteLine($"!!! STEP {name} [{actionId}]"); // %%% REMOVE
-                    stepAction?.Invoke(this.CreateActionContext(actionId));
+                    stepAction?.Invoke(this._executionContext); // %%% FIX
                     return new ValueTask();
                 });
 
@@ -460,75 +461,25 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         return stepExecutor;
     }
 
-    // This implementation accepts the context as a parameter in order to pin the context closure.
-    // The step cannot reference this.CurrentContext directly, as this will always be the final context.
-    private ExecutorIsh DefineActionExecutor(ProcessAction action)
+    private void NotSupported(DialogAction item)
     {
-        DeclarativeActionExecutor stepExecutor =
-            new(action.Id,
-                async () =>
-                {
-                    Console.WriteLine($"!!! STEP {action.GetType().Name} [{action.Id}]"); // %%% REMOVE
-
-                    if (action.Model.Disabled) // %%% VALIDATE
-                    {
-                        Console.WriteLine($"!!! DISABLED {action.GetType().Name} [{action.Id}]"); // %%% REMOVE
-                        return;
-                    }
-
-                    try
-                    {
-                        await action.ExecuteAsync(
-                            this.CreateActionContext(action.Id),
-                            cancellationToken: default).ConfigureAwait(false); // %%% CANCELTOKEN
-                    }
-                    catch (ProcessActionException)
-                    {
-                        Console.WriteLine($"*** STEP [{action.Id}] ERROR - Action failure"); // %%% LOGGER
-                        throw;
-                    }
-                    catch (Exception exception)
-                    {
-                        Console.WriteLine($"*** STEP [{action.Id}] ERROR - {exception.GetType().Name}\n{exception.Message}"); // %%% LOGGER
-                        throw;
-                    }
-                });
-
-        //this._workflowBuilder.BindExecutor(stepExecutor);
-
-        return stepExecutor;
+        Console.WriteLine($"> UNKNOWN: {new string('\t', this._workflowModel.GetDepth(item.GetParentId()))}{FormatItem(item)} => {FormatParent(item)}"); // %%% LOGGER
+        this.HasUnsupportedActions = true;
     }
-
-    private ProcessActionContext CreateActionContext(string actionId) => new(this.CreateEngine(), this._scopes, this.CreateClient, this._context.LoggerFactory.CreateLogger(actionId));
-
-    private PersistentAgentsClient CreateClient()
-    {
-        PersistentAgentsAdministrationClientOptions clientOptions = new();
-
-        if (this._context.HttpClient is not null)
-        {
-            clientOptions.Transport = new HttpClientTransport(this._context.HttpClient);
-            //clientOptions.RetryPolicy = new RetryPolicy(maxRetries: 0);
-        }
-
-        return new PersistentAgentsClient(this._context.ProjectEndpoint, this._context.ProjectCredentials, clientOptions);
-    }
-
-    private RecalcEngine CreateEngine() => RecalcEngineFactory.Create(this._scopes, this._context.MaximumExpressionLength);
 
     private void Trace(BotElement item)
     {
         Console.WriteLine($"> VISIT: {new string('\t', this._workflowModel.GetDepth(item.GetParentId()))}{FormatItem(item)} => {FormatParent(item)}"); // %%% LOGGER
     }
 
-    private void Trace(DialogAction item, bool isSkipped = true)
+    private void Trace(DialogAction item)
     {
         string? parentId = item.GetParentId();
         if (item.Id.Equals(parentId ?? string.Empty))
         {
             parentId = $"root_{parentId}";
         }
-        Console.WriteLine($"> {(isSkipped ? "EMPTY" : "VISIT")}: {new string('\t', this._workflowModel.GetDepth(parentId))}{FormatItem(item)} => {FormatParent(item)}"); // %%% LOGGER
+        Console.WriteLine($"> VISIT: {new string('\t', this._workflowModel.GetDepth(parentId))}{FormatItem(item)} => {FormatParent(item)}"); // %%% LOGGER
     }
 
     private static string FormatItem(BotElement element) => $"{element.GetType().Name} ({element.GetId()})";

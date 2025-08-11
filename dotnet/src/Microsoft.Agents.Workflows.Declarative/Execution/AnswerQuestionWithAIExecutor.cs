@@ -4,9 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.Agents.Persistent;
-using Microsoft.Agents.Workflows.Declarative.Execution;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
-using Microsoft.Agents.Workflows.Declarative.Handlers;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.Extensions.AI;
@@ -14,25 +12,22 @@ using Microsoft.Extensions.AI.Agents;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.SemanticKernel.Process.Workflows.Actions;
+namespace Microsoft.Agents.Workflows.Declarative.Execution;
 
-internal sealed class AnswerQuestionWithAIAction : AssignmentAction<AnswerQuestionWithAI>
+internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model) : WorkflowActionExecutor<AnswerQuestionWithAI>(model)
 {
-    public AnswerQuestionWithAIAction(AnswerQuestionWithAI model)
-        : base(model, Throw.IfNull(model.Variable?.Path, $"{nameof(model)}.{nameof(model.Variable)}.{nameof(InitializablePropertyPath.Path)}"))
+    protected override async ValueTask ExecuteAsync(CancellationToken cancellationToken)
     {
-    }
+        PropertyPath variablePath = Throw.IfNull(this.Model.Variable?.Path, $"{nameof(this.Model)}.{nameof(this.Model.Variable)}");
 
-    protected override async Task HandleAsync(ProcessActionContext context, CancellationToken cancellationToken)
-    {
-        PersistentAgentsClient client = context.ClientFactory.Invoke();
+        PersistentAgentsClient client = this.Context.ClientFactory.Invoke();
         using NewPersistentAgentsChatClient chatClient = new(client, "asst_ueIjfGxAjsnZ4A61LlbjG9vJ");
         ChatClientAgent agent = new(chatClient);
 
         string? userInput = null;
         if (this.Model.UserInput is not null)
         {
-            EvaluationResult<string> result = context.ExpressionEngine.GetValue(this.Model.UserInput!, context.Scopes); // %%% FAILURE CASE (CATCH) & NULL OVERRIDE
+            EvaluationResult<string> result = this.Context.ExpressionEngine.GetValue(this.Model.UserInput!, this.Context.Scopes); // %%% FAILURE CASE (CATCH) & NULL OVERRIDE
             userInput = result.Value;
         }
 
@@ -40,7 +35,7 @@ internal sealed class AnswerQuestionWithAIAction : AssignmentAction<AnswerQuesti
             new(
                 new ChatOptions()
                 {
-                    Instructions = context.Engine.Format(this.Model.AdditionalInstructions) ?? string.Empty,
+                    Instructions = this.Context.Engine.Format(this.Model.AdditionalInstructions) ?? string.Empty,
                 });
         AgentRunResponse response =
             userInput != null ?
@@ -48,6 +43,6 @@ internal sealed class AnswerQuestionWithAIAction : AssignmentAction<AnswerQuesti
                 await agent.RunAsync(thread: null, options, cancellationToken).ConfigureAwait(false);
         StringValue responseValue = FormulaValue.New(response.Messages.Last().ToString());
 
-        this.AssignTarget(context, responseValue);
+        this.AssignTarget(this.Context, variablePath, responseValue);
     }
 }

@@ -14,7 +14,6 @@ internal sealed class DeclarativeWorkflowExecutor(WorkflowScopes scopes, string 
 {
     public async ValueTask HandleAsync(string message, IWorkflowContext context)
     {
-        Console.WriteLine("!!! INIT WORKFLOW"); // %%% REMOVE
         scopes.Set("LastMessage", WorkflowScopeType.System, FormulaValue.New(message)); // %%% MAGIC CONST "LastMessage"
 
         //await context.AddEventAsync(new ExecutorInvokeEvent(this.Id, $"{this.Id}: {DateTime.UtcNow.ToShortTimeString()}")).ConfigureAwait(false);

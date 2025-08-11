@@ -3,7 +3,6 @@
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Declarative.Execution;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
@@ -11,9 +10,9 @@ using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.Workflows.Declarative.Handlers;
+namespace Microsoft.Agents.Workflows.Declarative.Execution;
 
-internal sealed class ForeachAction : ProcessAction<Foreach>
+internal sealed class ForeachExecutor : WorkflowActionExecutor<Foreach>
 {
     public static class Steps
     {
@@ -25,7 +24,7 @@ internal sealed class ForeachAction : ProcessAction<Foreach>
     private int _index;
     private FormulaValue[] _values;
 
-    public ForeachAction(Foreach model)
+    public ForeachExecutor(Foreach model)
         : base(model)
     {
         this._values = [];
@@ -33,7 +32,7 @@ internal sealed class ForeachAction : ProcessAction<Foreach>
 
     public bool HasValue { get; private set; }
 
-    protected override Task HandleAsync(ProcessActionContext context, CancellationToken cancellationToken)
+    protected override ValueTask ExecuteAsync(CancellationToken cancellationToken)
     {
         this._index = 0;
 
@@ -41,18 +40,20 @@ internal sealed class ForeachAction : ProcessAction<Foreach>
         {
             this._values = [];
             this.HasValue = false;
-            return Task.CompletedTask;
+        }
+        else
+        {
+            EvaluationResult<DataValue> result = this.Context.ExpressionEngine.GetValue(this.Model.Items, this.Context.Scopes);
+            TableDataValue tableValue = (TableDataValue)result.Value; // %%% CAST - TYPE ASSUMPTION (TableDataValue)
+            this._values = [.. tableValue.Values.Select(value => value.Properties.Values.First().ToFormulaValue())];
         }
 
-        EvaluationResult<DataValue> result = context.ExpressionEngine.GetValue(this.Model.Items, context.Scopes);
-        TableDataValue tableValue = (TableDataValue)result.Value; // %%% CAST - TYPE ASSUMPTION (TableDataValue)
-        this._values = [.. tableValue.Values.Select(value => value.Properties.Values.First().ToFormulaValue())];
-        return Task.CompletedTask;
+        return new ValueTask();
     }
 
-    public void TakeNext(ProcessActionContext context)
+    public void TakeNext(WorkflowExecutionContext context)
     {
-        if (this.HasValue = (this._index < this._values.Length))
+        if (this.HasValue = this._index < this._values.Length)
         {
             FormulaValue value = this._values[this._index];
 
@@ -67,7 +68,7 @@ internal sealed class ForeachAction : ProcessAction<Foreach>
         }
     }
 
-    public void Reset(ProcessActionContext context)
+    public void Reset(WorkflowExecutionContext context)
     {
         context.Engine.ClearScopedVariable(context.Scopes, Throw.IfNull(this.Model.Value));
         if (this.Model.Index is not null)

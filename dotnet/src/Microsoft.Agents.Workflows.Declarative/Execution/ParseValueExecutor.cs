@@ -1,31 +1,25 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+﻿
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Declarative.Execution;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.Workflows.Declarative.Handlers;
+namespace Microsoft.Agents.Workflows.Declarative.Execution;
 
-internal sealed class ParseValueAction : AssignmentAction<ParseValue>
+internal sealed class ParseValueExecutor(ParseValue model) :
+    WorkflowActionExecutor<ParseValue>(model)
 {
-    public ParseValueAction(ParseValue model)
-        : base(model, Throw.IfNull(model.Variable?.Path, $"{nameof(model)}.{nameof(model.Variable)}.{nameof(InitializablePropertyPath.Path)}"))
+    protected override ValueTask ExecuteAsync(CancellationToken cancellationToken)
     {
-        if (this.Model.Value is null)
-        {
-            throw new InvalidActionException($"{nameof(ParseValue)} must define {nameof(ParseValue.Value)}");
-        }
-    }
+        PropertyPath variablePath = Throw.IfNull(this.Model.Variable?.Path, $"{nameof(this.Model)}.{nameof(model.Variable)}");
 
-    protected override Task HandleAsync(ProcessActionContext context, CancellationToken cancellationToken)
-    {
-        EvaluationResult<DataValue> result = context.ExpressionEngine.GetValue(this.Model.Value!, context.Scopes); // %%% FAILURE CASE (CATCH) & NULL OVERRIDE
+        EvaluationResult<DataValue> result = this.Context.ExpressionEngine.GetValue(this.Model.Value!, this.Context.Scopes); // %%% FAILURE CASE (CATCH) & NULL OVERRIDE
 
         FormulaValue? parsedResult = null;
 
@@ -54,9 +48,9 @@ internal sealed class ParseValueAction : AssignmentAction<ParseValue>
             throw new ProcessActionException($"Unable to parse {result.Value.GetType().Name}");
         }
 
-        this.AssignTarget(context, parsedResult);
+        this.AssignTarget(this.Context, variablePath, parsedResult);
 
-        return Task.CompletedTask;
+        return new ValueTask();
     }
 
     private static RecordValue ParseRecord(RecordDataType recordType, string rawText)

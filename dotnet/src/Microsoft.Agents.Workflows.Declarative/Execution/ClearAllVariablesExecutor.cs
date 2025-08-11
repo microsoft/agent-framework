@@ -2,30 +2,24 @@
 
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Declarative.Execution;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 
-namespace Microsoft.Agents.Workflows.Declarative.Handlers;
+namespace Microsoft.Agents.Workflows.Declarative.Execution;
 
-internal sealed class ClearAllVariablesAction : ProcessAction<ClearAllVariables>
+internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : WorkflowActionExecutor<ClearAllVariables>(model)
 {
-    public ClearAllVariablesAction(ClearAllVariables source)
-        : base(source)
+    protected override ValueTask ExecuteAsync(CancellationToken cancellationToken)
     {
+        EvaluationResult<VariablesToClearWrapper> result = this.Context.ExpressionEngine.GetValue<VariablesToClearWrapper>(this.Model.Variables, this.Context.Scopes); // %%% FAILURE CASE (CATCH) & NULL OVERRIDE
+
+        result.Value.Handle(new ScopeHandler(this.Context));
+
+        return new ValueTask();
     }
 
-    protected override Task HandleAsync(ProcessActionContext context, CancellationToken cancellationToken)
-    {
-        EvaluationResult<VariablesToClearWrapper> result = context.ExpressionEngine.GetValue<VariablesToClearWrapper>(this.Model.Variables, context.Scopes); // %%% FAILURE CASE (CATCH) & NULL OVERRIDE
-
-        result.Value.Handle(new ScopeHandler(context));
-
-        return Task.CompletedTask;
-    }
-
-    private sealed class ScopeHandler(ProcessActionContext context) : IEnumVariablesToClearHandler
+    private sealed class ScopeHandler(WorkflowExecutionContext context) : IEnumVariablesToClearHandler
     {
         public void HandleAllGlobalVariables()
         {

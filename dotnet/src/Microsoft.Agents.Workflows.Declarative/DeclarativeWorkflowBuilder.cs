@@ -23,18 +23,19 @@ public static class DeclarativeWorkflowBuilder
     /// <param name="messageId">The identifier for the message.</param>
     /// <param name="context">The hosting context for the workflow.</param>
     /// <returns>The <see cref="Workflow"/> that corresponds with the YAML object model.</returns>
-    public static Workflow<string> Build(TextReader yamlReader, string messageId, WorkflowContext? context = null)
+    public static Workflow<string> Build(TextReader yamlReader, string messageId, DeclarativeWorkflowContext? context = null)
     {
         Console.WriteLine("@ PARSING YAML");
         BotElement rootElement = YamlSerializer.Deserialize<BotElement>(yamlReader) ?? throw new InvalidOperationException("Unable to parse YAML content."); // %%% EXCEPTION TYPE
         string rootId = $"root_{GetRootId(rootElement)}";
 
         Console.WriteLine("@ INITIALIZING BUILDER");
+        context ??= DeclarativeWorkflowContext.Default;
         WorkflowScopes scopes = new();
-        DeclarativeWorkflowExecutor rootExecutor = new(scopes, rootId);
+        DeclarativeWorkflowExecutor rootExecutor = new(scopes, rootId); // %%% DISPOSE
 
         Console.WriteLine("@ INTERPRETING WORKFLOW");
-        WorkflowActionVisitor visitor = new(rootExecutor, context ?? new WorkflowContext(), scopes); // %%% DEFAULT CONTEXT (IMMUTABLE)
+        WorkflowActionVisitor visitor = new(rootExecutor, context, scopes);
         WorkflowElementWalker walker = new(rootElement, visitor);
 
         //Console.WriteLine("@ FINALIZING WORKFLOW");
