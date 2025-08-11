@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Microsoft.Shared.Diagnostics;
+
 namespace Microsoft.Extensions.AI;
 
 /// <summary>
@@ -10,17 +12,13 @@ public class FunctionApprovalResponseContent : UserInputResponseContent
     /// <summary>
     /// Initializes a new instance of the <see cref="FunctionApprovalResponseContent"/> class.
     /// </summary>
-    public FunctionApprovalResponseContent()
-    {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="FunctionApprovalResponseContent"/> class with the specified approval status.
-    /// </summary>
+    /// <param name="approvalId">The ID to uniquely identify the user input request/response pair.</param>
     /// <param name="approved">Indicates whether the request was approved.</param>
-    public FunctionApprovalResponseContent(bool approved)
+    /// <param name="functionCall">The function call that requires user approval.</param>
+    public FunctionApprovalResponseContent(string approvalId, bool approved, FunctionCallContent functionCall)
     {
         this.Approved = approved;
+        this.FunctionCall = Throw.IfNull(functionCall);
     }
 
     /// <summary>
@@ -31,5 +29,5 @@ public class FunctionApprovalResponseContent : UserInputResponseContent
     /// <summary>
     /// Gets or sets the function call that pre-invoke approval is required for.
     /// </summary>
-    public FunctionCallContent FunctionCall { get; set; } = default!;
+    public FunctionCallContent FunctionCall { get; }
 }

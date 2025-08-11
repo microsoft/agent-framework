@@ -202,11 +202,7 @@ public class PostFICCApprovalGeneratingChatClient : DelegatingChatClient
         {
             if (content[i] is FunctionCallContent functionCall)
             {
-                content[i] = new FunctionApprovalRequestContent
-                {
-                    FunctionCall = functionCall,
-                    ApprovalId = functionCall.CallId
-                };
+                content[i] = new FunctionApprovalRequestContent(functionCall.CallId, functionCall);
             }
         }
     }

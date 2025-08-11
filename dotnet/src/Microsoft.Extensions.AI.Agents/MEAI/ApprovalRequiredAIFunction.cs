@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Threading.Tasks;
 
 namespace Microsoft.Extensions.AI;
 
@@ -13,5 +14,5 @@ public sealed class ApprovalRequiredAIFunction(AIFunction function) : Delegating
     /// <summary>
     /// An optional callback that can be used to determine if the function call requires approval, instead of the default behavior, which is to always require approval.
     /// </summary>
-    public Func<FunctionCallContent, bool> RequiresApprovalCallback { get; set; } = delegate { return true; };
+    public Func<FunctionCallContent, ValueTask<bool>> RequiresApprovalCallback { get; set; } = delegate { return new ValueTask<bool>(true); };
 }

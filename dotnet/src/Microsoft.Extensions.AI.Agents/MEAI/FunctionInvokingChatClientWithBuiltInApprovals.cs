@@ -319,7 +319,7 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
 
             // Before we do any function execution, make sure that any functions that require approval, have been turned into approval requests
             // so that they don't get executed here.
-            ReplaceFunctionCallsWithApprovalRequests(response.Messages, approvalRequiredFunctionMap);
+            await ReplaceFunctionCallsWithApprovalRequests(response.Messages, approvalRequiredFunctionMap);
 
             // ** Approvals additions on top of FICC - end **//
 
@@ -1114,7 +1114,7 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
     }
 
     /// <summary>Replaces any <see cref="FunctionCallContent"/> from <paramref name="messages"/> with <see cref="FunctionApprovalRequestContent"/>.</summary>
-    private static void ReplaceFunctionCallsWithApprovalRequests(IList<ChatMessage> messages, Dictionary<string, ApprovalRequiredAIFunction> approvalRequiredAIFunctionMap)
+    private static async Task ReplaceFunctionCallsWithApprovalRequests(IList<ChatMessage> messages, Dictionary<string, ApprovalRequiredAIFunction> approvalRequiredAIFunctionMap)
     {
         bool anyApprovalRequired = false;
         List<(int, int)>? functionsToReplace = null;
@@ -1132,7 +1132,7 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
                     functionsToReplace ??= [];
                     functionsToReplace.Add((i, j));
 
-                    anyApprovalRequired |= approvalRequiredAIFunctionMap.TryGetValue(functionCall.Name, out var approvalFunction) && approvalFunction.RequiresApprovalCallback(functionCall);
+                    anyApprovalRequired |= approvalRequiredAIFunctionMap.TryGetValue(functionCall.Name, out var approvalFunction) && await approvalFunction.RequiresApprovalCallback(functionCall);
                 }
             }
         }
@@ -1144,11 +1144,7 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
             foreach (var (messageIndex, contentIndex) in functionsToReplace)
             {
                 var functionCall = (FunctionCallContent)messages[messageIndex].Contents[contentIndex];
-                messages[messageIndex].Contents[contentIndex] = new FunctionApprovalRequestContent
-                {
-                    FunctionCall = functionCall,
-                    ApprovalId = functionCall.CallId
-                };
+                messages[messageIndex].Contents[contentIndex] = new FunctionApprovalRequestContent(functionCall.CallId, functionCall);
             }
         }
     }
