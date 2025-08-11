@@ -17,7 +17,7 @@ internal sealed class A2AAgentRunOptions : AgentRunOptions
     }
 
     public static A2AAgentRunOptions CreateA2AMessagingOptions()
-        => new(taskId: null!);
+        => new(taskId: null);
 
     public static A2AAgentRunOptions CreateA2AAgentTaskOptions(AgentTask agentTask)
         => new(agentTask.Id);

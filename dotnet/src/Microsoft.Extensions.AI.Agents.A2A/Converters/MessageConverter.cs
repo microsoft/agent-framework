@@ -133,7 +133,7 @@ internal static class MessageConverter
                 RawRepresentation = textPart,
                 AdditionalProperties = textPart.Metadata?.ToAdditionalPropertiesDictionary()
             },
-            FilePart or DataPart or _ => throw new NotSupportedException("Parts are not supported.")
+            FilePart or DataPart or _ => throw new NotSupportedException($"Part type '{part.GetType().Name}' is not supported. Only TextPart is supported.")
         };
 
         return result;

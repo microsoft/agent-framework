@@ -14,26 +14,26 @@ namespace Microsoft.Extensions.AI.Agents.A2A;
 public interface IA2AAgentTaskProcessor : IA2AAgentCardProvider
 {
     /// <summary>
-    /// todo
+    /// Creates a new agent task, representing a stateful, potentially long-running conversation between a user and the agent.
     /// </summary>
-    /// <param name="task"></param>
-    /// <param name="token"></param>
-    /// <returns></returns>
+    /// <param name="task">The <see cref="AgentTask"/> to be created.</param>
+    /// <param name="token">A <see cref="CancellationToken"/> to observe while waiting for the task to complete.</param>
+    /// <returns>A <see cref="Task"/> that represents the asynchronous operation.</returns>
     Task CreateTaskAsync(AgentTask task, CancellationToken token);
 
     /// <summary>
-    /// todo
+    /// Cancels an existing agent task, terminating the associated conversation or operation.
     /// </summary>
-    /// <param name="task"></param>
-    /// <param name="token"></param>
-    /// <returns></returns>
+    /// <param name="task">The <see cref="AgentTask"/> to be cancelled.</param>
+    /// <param name="token">A <see cref="CancellationToken"/> to observe while waiting for the cancellation to complete.</param>
+    /// <returns>A <see cref="Task"/> that represents the asynchronous cancellation operation.</returns>
     Task CancelTaskAsync(AgentTask task, CancellationToken token);
 
     /// <summary>
-    /// todo
+    /// Updates an existing agent task, modifying its state or associated data as needed.
     /// </summary>
-    /// <param name="task"></param>
-    /// <param name="token"></param>
-    /// <returns></returns>
+    /// <param name="task">The <see cref="AgentTask"/> to be updated.</param>
+    /// <param name="token">A <see cref="CancellationToken"/> to observe while waiting for the update to complete.</param>
+    /// <returns>A <see cref="Task"/> that represents the asynchronous update operation.</returns>
     Task UpdateTaskAsync(AgentTask task, CancellationToken token);
 }
