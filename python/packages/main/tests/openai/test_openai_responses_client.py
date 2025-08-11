@@ -6,7 +6,15 @@ from typing import Annotated
 import pytest
 from pydantic import BaseModel
 
-from agent_framework import ChatClient, ChatMessage, ChatResponse, ChatResponseUpdate, TextContent, ai_function
+from agent_framework import (
+    ChatClient,
+    ChatMessage,
+    ChatResponse,
+    ChatResponseUpdate,
+    TextContent,
+    WebSearchTool,
+    ai_function,
+)
 from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
 from agent_framework.openai import OpenAIResponsesClient
 
@@ -132,7 +140,7 @@ def test_serialize_with_org_id(openai_unit_test_env: dict[str, str]) -> None:
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_response() -> None:
     """Test OpenAI chat completion responses."""
-    openai_responses_client = OpenAIResponsesClient(ai_model_id="gpt-4.1-mini")
+    openai_responses_client = OpenAIResponsesClient()
 
     assert isinstance(openai_responses_client, ChatClient)
 
@@ -175,7 +183,7 @@ async def test_openai_responses_client_response() -> None:
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_response_tools() -> None:
     """Test OpenAI chat completion responses."""
-    openai_responses_client = OpenAIResponsesClient(ai_model_id="gpt-4o-mini")
+    openai_responses_client = OpenAIResponsesClient()
 
     assert isinstance(openai_responses_client, ChatClient)
 
@@ -214,7 +222,7 @@ async def test_openai_responses_client_response_tools() -> None:
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_streaming() -> None:
     """Test Azure OpenAI chat completion responses."""
-    openai_responses_client = OpenAIResponsesClient(ai_model_id="gpt-4.1-mini")
+    openai_responses_client = OpenAIResponsesClient()
 
     assert isinstance(openai_responses_client, ChatClient)
 
@@ -269,7 +277,7 @@ async def test_openai_responses_client_streaming() -> None:
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_streaming_tools() -> None:
     """Test OpenAI chat completion responses."""
-    openai_responses_client = OpenAIResponsesClient(ai_model_id="gpt-4o-mini")
+    openai_responses_client = OpenAIResponsesClient()
 
     assert isinstance(openai_responses_client, ChatClient)
 
@@ -313,3 +321,29 @@ async def test_openai_responses_client_streaming_tools() -> None:
         output = OutputStruct.model_validate_json(full_message)
         assert "Seattle" in output.location
         assert "sunny" in output.weather
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_web_search() -> None:
+    openai_responses_client = OpenAIResponsesClient()
+
+    assert isinstance(openai_responses_client, ChatClient)
+
+    messages: list[ChatMessage] = [
+        ChatMessage(
+            role="user", text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer."
+        )
+    ]
+
+    # Test that the client can be used to get a response
+    response = await openai_responses_client.get_response(
+        messages=messages,
+        tools=[WebSearchTool()],
+        tool_choice="auto",
+    )
+
+    assert response is not None
+    assert isinstance(response, ChatResponse)
+    assert "Rumi" in response.text
+    assert "Mira" in response.text
+    assert "Zoey" in response.text

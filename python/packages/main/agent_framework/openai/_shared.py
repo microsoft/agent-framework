@@ -229,9 +229,6 @@ class OpenAIHandler(AFBaseModel, ABC):
                 raise ServiceInvalidRequestError("Messages are required for chat completions")
             if chat_options.tools is None:
                 options_dict.pop("parallel_tool_calls", None)
-            else:
-                options_dict["tools"] = options_dict["response_tools"]
-                options_dict.pop("response_tools", None)
             if chat_options.response_format:
                 # create call does not support response_format, so we need to handle it via parse call
                 resp_format = options_dict.pop("response_format", None)

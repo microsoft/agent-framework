@@ -73,18 +73,6 @@ async def _auto_invoke_function(
     )
 
 
-def ai_function_to_json_schema_spec(function: AIFunction[BaseModel, Any]) -> dict[str, Any]:
-    """Convert a AIFunction to the JSON Schema function specification format."""
-    return {
-        "type": "function",
-        "function": {
-            "name": function.name,
-            "description": function.description,
-            "parameters": function.parameters(),
-        },
-    }
-
-
 def _tool_call_non_streaming(
     func: Callable[..., Awaitable["ChatResponse"]],
 ) -> Callable[..., Awaitable["ChatResponse"]]:
@@ -628,7 +616,7 @@ class ChatClientBase(AFBaseModel, ABC):
             chat_options.tool_choice = ChatToolMode.NONE.mode
             return
         chat_options.tools = [
-            (ai_function_to_json_schema_spec(t) if isinstance(t, AIFunction) else t)  # type: ignore[reportUnknownArgumentType]
+            (t.to_json_tool() if isinstance(t, AIFunction) else t)  # type: ignore[reportUnknownArgumentType]
             for t in chat_options._ai_tools or []  # type: ignore[reportPrivateUsage]
         ]
         if not chat_options.tools:

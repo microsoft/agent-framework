@@ -20,7 +20,7 @@ from openai.types.beta.threads.run_submit_tool_outputs_params import ToolOutput
 from openai.types.beta.threads.runs import RunStep
 from pydantic import Field, PrivateAttr, SecretStr, ValidationError
 
-from .._clients import ChatClientBase, ai_function_to_json_schema_spec, use_tool_calling
+from .._clients import ChatClientBase, use_tool_calling
 from .._tools import AIFunction, HostedCodeInterpreterTool
 from .._types import (
     AIContents,
@@ -362,7 +362,7 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
                 if chat_options.tool_choice != "none" and chat_options.tools is not None:
                     for tool in chat_options.tools:
                         if isinstance(tool, AIFunction):
-                            tool_definitions.append(ai_function_to_json_schema_spec(tool))  # type: ignore[reportUnknownArgumentType]
+                            tool_definitions.append(tool.to_json_tool())  # type: ignore[reportUnknownArgumentType]
                         elif isinstance(tool, HostedCodeInterpreterTool):
                             tool_definitions.append({"type": "code_interpreter"})
                         elif isinstance(tool, MutableMapping):

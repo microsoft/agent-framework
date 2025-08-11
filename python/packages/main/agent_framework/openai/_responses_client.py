@@ -23,10 +23,9 @@ from openai.types.responses.response_usage import ResponseUsage
 from pydantic import BaseModel, SecretStr, ValidationError
 
 from .._clients import ChatClientBase, use_tool_calling
-from .._tools import HostedCodeInterpreterTool
+from .._tools import AIFunction, AITool
 from .._types import (
     AIContents,
-    AITool,
     ChatMessage,
     ChatOptions,
     ChatResponse,
@@ -242,26 +241,39 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         ):
             yield update
 
-    def _chat_to_response_tool_spec(self, tools: list[AITool | MutableMapping[str, Any]]) -> list[dict[str, Any]]:
-        response_tools: list[dict[str, Any]] = []
-        for tool in tools:
-            if isinstance(tool, AITool):
-                # TODO(peterychang): Support AITools
-                if isinstance(tool, HostedCodeInterpreterTool):
-                    response_tools.append({"type": "code_interpreter", "container": {"type": "auto"}})
-                continue
-            if "function" not in tool:
-                response_tools.append(tool if isinstance(tool, dict) else dict(tool))
-            parameters = {"additionalProperties": False}
-            parameters.update(tool.get("function", {}).get("parameters", {}))
-            response_tools.append({
-                "type": "function",
-                "name": tool.get("function", {}).get("name", ""),
-                "strict": True,
-                "description": tool.get("function", {}).get("description", None),
-                "parameters": parameters,
-            })
-        return response_tools
+    def _prepare_tools_and_tool_choice(self, chat_options: ChatOptions) -> None:
+        """Prepare the tools and tool choice for the chat options.
+
+        This function should be overridden by subclasses to customize tool handling.
+        Because it currently parses only AIFunctions.
+        """
+        chat_tool_mode: ChatToolMode | None = chat_options.tool_choice  # type: ignore
+        if chat_tool_mode is None or chat_tool_mode == ChatToolMode.NONE:
+            chat_options.tools = None
+            chat_options.tool_choice = ChatToolMode.NONE.mode
+            return
+
+        tools = []
+        for t in chat_options._ai_tools or []:
+            if isinstance(t, AIFunction):
+                parameters = t.parameters() or {}
+                parameters.update({"additionalProperties": False})
+                tools.append({
+                    "type": "function",
+                    "name": t.name,
+                    "strict": True,
+                    "description": t.description,
+                    "parameters": parameters,
+                })
+            elif isinstance(t, AITool):
+                tools.append(t.to_json_tool())
+            else:
+                tools.append(t)
+        chat_options.tools = tools
+        if not chat_options.tools:
+            chat_options.tool_choice = ChatToolMode.NONE.mode
+        else:
+            chat_options.tool_choice = chat_tool_mode.mode
 
     async def _inner_get_response(
         self,
@@ -273,13 +285,15 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         chat_options.additional_properties["stream"] = False
         if not chat_options.ai_model_id:
             chat_options.ai_model_id = self.ai_model_id
-        if chat_options.tools:
-            chat_options.additional_properties.update({
-                "response_tools": self._chat_to_response_tool_spec(chat_options.tools)
-            })
         response = await self._send_request(chat_options, messages=self._prepare_chat_history_for_request(messages))
         assert isinstance(response, OpenAIResponse)  # nosec  # noqa: S101
-        return next(self._create_response_content(response, item, store=chat_options.store) for item in response.output)
+        for item in response.output:
+            chat_response = self._create_response_content(response, item, store=chat_options.store)
+            if chat_response is None:
+                continue
+            return chat_response
+        # TODO(peterychang): Hitting this means we're missing a response content type.
+        raise RuntimeError("No valid response content found in the OpenAI response.")
 
     async def _inner_get_streaming_response(
         self,
@@ -291,10 +305,6 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         chat_options.additional_properties["stream"] = True
         chat_options.ai_model_id = chat_options.ai_model_id or self.ai_model_id
 
-        if chat_options.tools:
-            chat_options.additional_properties.update({
-                "response_tools": self._chat_to_response_tool_spec(chat_options.tools)
-            })
         response = await self._send_request(chat_options, messages=self._prepare_chat_history_for_request(messages))
         if not isinstance(response, AsyncStream):
             raise ServiceInvalidResponseError("Expected an AsyncStream[ResponseStreamEvent] response.")
@@ -306,7 +316,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
 
     def _create_response_content(
         self, response: OpenAIResponse, item: ResponseOutputItem, store: bool | None
-    ) -> "ChatResponse":
+    ) -> ChatResponse | None:
         """Create a chat message content object from a choice."""
         items: MutableSequence[ChatMessage] = []
         metadata: dict[str, Any] = response.metadata or {}
@@ -323,6 +333,8 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                     items.append(ChatMessage(role=item.role, text=content.refusal))
         if isinstance(item, ResponseCodeInterpreterToolCall):
             items.append(ChatMessage(role=ChatRole.ASSISTANT, text=response.output_text))
+        if not items:
+            return None
         return ChatResponse(
             response_id=response.id,
             conversation_id=response.id if store is True else None,
@@ -378,7 +390,6 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                 additional_properties={"call_id": item.call_id},
             )
             resp.append(fcc)
-
         return resp
 
     def _usage_details_from_openai(self, usage: ResponseUsage) -> UsageDetails | None:

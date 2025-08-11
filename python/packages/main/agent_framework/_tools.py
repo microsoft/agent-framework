@@ -4,12 +4,24 @@ import inspect
 from collections.abc import Awaitable, Callable
 from functools import wraps
 from time import perf_counter
-from typing import TYPE_CHECKING, Annotated, Any, Generic, Protocol, TypeVar, get_args, get_origin, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    Generic,
+    Literal,
+    Protocol,
+    TypeVar,
+    get_args,
+    get_origin,
+    runtime_checkable,
+)
 
 from opentelemetry import metrics, trace
 from pydantic import BaseModel, Field, create_model
 
 from ._logging import get_logger
+from ._pydantic import AFBaseModel
 from .telemetry import GenAIAttributes, start_as_current_span
 
 if TYPE_CHECKING:
@@ -19,9 +31,18 @@ tracer: trace.Tracer = trace.get_tracer("agent_framework")
 meter: metrics.Meter = metrics.get_meter_provider().get_meter("agent_framework")
 logger = get_logger()
 
-__all__ = ["AIFunction", "AITool", "HostedCodeInterpreterTool", "ai_function"]
+__all__ = [
+    "AIFunction",
+    "AITool",
+    "FileSearchTool",
+    "HostedCodeInterpreterTool",
+    "WebSearchLocation",
+    "WebSearchTool",
+    "ai_function",
+]
 
 
+# TODO(peterychang): We can probably convert several of the to_json_tool methods to a common piece of code
 @runtime_checkable
 class AITool(Protocol):
     """Represents a generic tool that can be specified to an AI service.
@@ -44,6 +65,10 @@ class AITool(Protocol):
 
     def __str__(self) -> str:
         """Return a string representation of the tool."""
+        ...
+
+    def to_json_tool(self) -> dict[str, Any]:
+        """Convert the tool to a JSON Schema representation."""
         ...
 
 
@@ -138,6 +163,16 @@ class AIFunction(AITool, Generic[ArgsT, ReturnT]):
                 duration = perf_counter() - starting_time_stamp
                 self.invocation_duration_histogram.record(duration, attributes=attributes)
                 logger.info("Function completed. Duration: %fs", duration)
+
+    def to_json_tool(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.parameters(),
+            },
+        }
 
 
 def _parse_annotation(annotation: Any) -> Any:
@@ -295,3 +330,85 @@ class HostedCodeInterpreterTool(AITool):
     def __str__(self) -> str:
         """Return a string representation of the tool."""
         return f"HostedCodeInterpreterTool(name={self.name})"
+
+    def to_json_tool(self) -> dict[str, Any]:
+        """Convert the tool to a JSON Schema representation."""
+        return {"type": "code_interpreter", "container": {"type": "auto"}}
+
+
+class WebSearchLocation(AFBaseModel):
+    type: Literal["approximate"] = "approximate"
+    country: str | None = None
+    city: str | None = None
+    region: str | None = None
+
+
+class WebSearchTool(AITool):
+    """Represents a web search tool that can be specified to an AI service to enable it to perform web searches."""
+
+    def __init__(
+        self,
+        name: str = "web_search",
+        location: WebSearchLocation | None = None,
+        description: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
+    ):
+        """Initialize a HostedWebSearchTool.
+
+        Args:
+            name: The name of the tool. Defaults to "web_search".
+            location: A WebSearchLocation instance specifying the user's location for the search.
+            description: A description of the tool.
+            additional_properties: Additional properties associated with the tool, specific to the service used.
+        """
+        self.name = name
+        self.location = location
+        self.description = description
+        self.additional_properties = additional_properties
+
+    def __str__(self) -> str:
+        """Return a string representation of the tool."""
+        return f"HostedWebSearchTool(name={self.name})"
+
+    def to_json_tool(self) -> dict[str, Any]:
+        """Convert the tool to a JSON Schema representation."""
+        json = {
+            "type": "web_search_preview",
+        }
+        if self.location:
+            json["user_location"] = self.location.model_dump(exclude_none=True)  # type: ignore
+        return json
+
+
+# TODO(peterychang): Test once the vector store is merged in.
+class FileSearchTool(AITool):
+    """Represents a file search tool that can be specified to an AI service to enable it to perform file searches."""
+
+    def __init__(
+        self,
+        # TODO(peterychang): Change this to a list[str | HostedVectorStoreContent]
+        vector_store_ids: list[str],
+        name: str = "file_search",
+        description: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
+    ):
+        """Initialize a FileSearchTool.
+
+        Args:
+            vector_store_ids: A list of vector store IDs to search in.
+            name: The name of the tool. Defaults to "file_search".
+            description: A description of the tool.
+            additional_properties: Additional properties associated with the tool, specific to the service used.
+        """
+        self.name = name
+        self.vector_store_ids = vector_store_ids
+        self.description = description
+        self.additional_properties = additional_properties
+
+    def __str__(self) -> str:
+        """Return a string representation of the tool."""
+        return f"HostedFileSearchTool(name={self.name})"
+
+    def to_json_tool(self) -> dict[str, Any]:
+        """Convert the tool to a JSON Schema representation."""
+        return {"type": "file_search", "vector_store_ids": self.vector_store_ids}

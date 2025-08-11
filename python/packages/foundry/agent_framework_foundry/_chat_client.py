@@ -26,7 +26,6 @@ from agent_framework import (
     UsageDetails,
     use_tool_calling,
 )
-from agent_framework._clients import ai_function_to_json_schema_spec
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.telemetry import use_telemetry
@@ -496,7 +495,7 @@ class FoundryChatClient(ChatClientBase):
                 if chat_options.tool_choice != "none" and chat_options.tools is not None:
                     for tool in chat_options.tools:
                         if isinstance(tool, AIFunction):
-                            tool_definitions.append(ai_function_to_json_schema_spec(tool))  # type: ignore[reportUnknownArgumentType]
+                            tool_definitions.append(tool.to_json_tool())  # type: ignore[reportUnknownArgumentType]
                         elif isinstance(tool, HostedCodeInterpreterTool):
                             tool_definitions.append(CodeInterpreterToolDefinition())
                         elif isinstance(tool, MutableMapping):
