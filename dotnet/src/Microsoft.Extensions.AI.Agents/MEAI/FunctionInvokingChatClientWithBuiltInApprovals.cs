@@ -277,23 +277,21 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
 
             augmentedPreInvocationHistory ??= [];
             augmentedPreInvocationHistory.AddRange(rejectedFunctionCallMessages);
+            originalMessages.AddRange(rejectedFunctionCallMessages);
         }
-
-        var rejectedFunctionCalls = notExecutedResponses.rejections;
-        var rejectedFunctionResults = rejectedFunctionCalls?.Select(x => new FunctionResultContent(x.CallId, "Error: Function invocation approval was not granted."));
 
         // Check if there are any function calls to do from any approved functions and execute them.
         if (notExecutedResponses.approvals is { Count: > 0 })
         {
-            var approvalFunctionCalls = notExecutedResponses.approvals.Select(x => new ChatMessage(ChatRole.Assistant, [x])).ToList();
-            originalMessages.AddRange(approvalFunctionCalls);
+            var approvedFunctionCalls = notExecutedResponses.approvals.Select(x => new ChatMessage(ChatRole.Assistant, [x])).ToList();
+            originalMessages.AddRange(approvedFunctionCalls);
             augmentedPreInvocationHistory ??= [];
-            augmentedPreInvocationHistory.AddRange(approvalFunctionCalls);
+            augmentedPreInvocationHistory.AddRange(approvedFunctionCalls);
 
             // Add the responses from the function calls into the augmented history and also into the tracked
             // list of response messages.
             var modeAndMessages = await ProcessFunctionCallsAsync(originalMessages, options, notExecutedResponses.approvals, iteration, consecutiveErrorCount, isStreaming: false, cancellationToken);
-            responseMessages = [.. modeAndMessages.MessagesAdded, .. rejectedFunctionCallMessages];
+            responseMessages = [.. rejectedFunctionCallMessages, .. approvedFunctionCalls, .. modeAndMessages.MessagesAdded];
             consecutiveErrorCount = modeAndMessages.NewConsecutiveErrorCount;
 
             if (modeAndMessages.ShouldTerminate)
@@ -331,27 +329,27 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
                 iteration < MaximumIterationsPerRequest &&
                 CopyFunctionCalls(response.Messages, ref functionCallContents);
 
-            // ** Approvals additions on top of FICC - start **//
-
-            // TODO: Ensure that this works correctly in all cases, and doesn't have any sideaffects.
-            // Insert any pre-invocation FCC and FRC that were converted from approval responses into the response here,
-            // so they are processed as normal.
-            if (augmentedPreInvocationHistory?.Count > 0)
-            {
-                for (int i = augmentedPreInvocationHistory.Count - 1; i >= 0; i--)
-                {
-                    response.Messages.Insert(0, augmentedPreInvocationHistory[i]);
-                }
-
-                augmentedPreInvocationHistory = null;
-            }
-
-            // ** Approvals additions on top of FICC - end **//
-
             // In a common case where we make a request and there's no function calling work required,
             // fast path out by just returning the original response.
             if (iteration == 0 && !requiresFunctionInvocation)
             {
+                // ** Approvals additions on top of FICC - start **//
+
+                // TODO: Ensure that this works correctly in all cases, and doesn't have any sideaffects.
+                // Insert any pre-invocation FCC and FRC that were converted from approval responses into the response here,
+                // so they are processed as normal.
+                if (augmentedPreInvocationHistory?.Count > 0)
+                {
+                    for (int i = augmentedPreInvocationHistory.Count - 1; i >= 0; i--)
+                    {
+                        response.Messages.Insert(0, augmentedPreInvocationHistory[i]);
+                    }
+
+                    augmentedPreInvocationHistory = null;
+                }
+
+                // ** Approvals additions on top of FICC - end **//
+
                 return response;
             }
 
@@ -1028,21 +1026,6 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
             {
                 var content = message.Contents[j];
 
-                // Save response that are not yet executed, so that we can execute them later.
-                if (content is FunctionApprovalResponseContent response && !functionResultCallIds.Contains(response.FunctionCall.CallId))
-                {
-                    if (response.Approved)
-                    {
-                        notExecutedApprovedFunctionCalls ??= [];
-                        notExecutedApprovedFunctionCalls.Add(response.FunctionCall);
-                    }
-                    else
-                    {
-                        notExecutedRejectedFunctionCalls ??= [];
-                        notExecutedRejectedFunctionCalls.Add(response.FunctionCall);
-                    }
-                }
-
                 // Capture each call id for each approval request.
                 if (content is FunctionApprovalRequestContent request_)
                 {
@@ -1074,6 +1057,24 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
                 if (content is FunctionApprovalRequestContent request__ && functionResultCallIds.Contains(request__.FunctionCall.CallId) ||
                     content is FunctionApprovalResponseContent response__ && functionResultCallIds.Contains(response__.FunctionCall.CallId))
                 {
+                    continue;
+                }
+
+                // Build a list of response that are not yet executed, so that we can execute them before we invoke the LLM.
+                // We can also remove them from the list of messages, since they will be turned back into FunctionCallContent and FunctionResultContent.
+                if (content is FunctionApprovalResponseContent response && !functionResultCallIds.Contains(response.FunctionCall.CallId))
+                {
+                    if (response.Approved)
+                    {
+                        notExecutedApprovedFunctionCalls ??= [];
+                        notExecutedApprovedFunctionCalls.Add(response.FunctionCall);
+                    }
+                    else
+                    {
+                        notExecutedRejectedFunctionCalls ??= [];
+                        notExecutedRejectedFunctionCalls.Add(response.FunctionCall);
+                    }
+
                     continue;
                 }
 
