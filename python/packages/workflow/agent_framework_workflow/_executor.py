@@ -19,7 +19,7 @@ from ._events import (
 from ._typing_utils import is_instance_of
 from ._workflow_context import WorkflowContext
 
-# region: Executor
+# region Executor
 
 
 class Executor:
@@ -96,7 +96,7 @@ class Executor:
 
 # endregion: Executor
 
-# region: Handler Decorator
+# region Handler Decorator
 
 
 ExecutorT = TypeVar("ExecutorT", bound="Executor")
@@ -183,7 +183,7 @@ def handler(
 
 # endregion: Handler Decorator
 
-# region: Agent Executor
+# region Agent Executor
 
 
 @dataclass
@@ -268,7 +268,7 @@ class AgentExecutor(Executor):
 # endregion: Agent Executor
 
 
-# region: Request Info Executor
+# region Request Info Executor
 
 
 @dataclass

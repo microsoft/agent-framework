@@ -177,11 +177,11 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
         content = choice.message if isinstance(choice, Choice) else choice.delta
         if content and (tool_calls := getattr(content, "tool_calls", None)) is not None:
             for tool in cast(list[ChatCompletionMessageToolCall] | list[ChoiceDeltaToolCall], tool_calls):
-                if tool.function:
+                if tool.function:  # type: ignore[reportAttributeAccessIssue, union-attr]
                     fcc = FunctionCallContent(
                         call_id=tool.id if tool.id else "",
-                        name=tool.function.name if tool.function.name else "",
-                        arguments=tool.function.arguments if tool.function.arguments else "",
+                        name=tool.function.name if tool.function.name else "",  # type: ignore
+                        arguments=tool.function.arguments if tool.function.arguments else "",  # type: ignore
                     )
                     resp.append(fcc)
 

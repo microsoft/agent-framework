@@ -19,7 +19,7 @@ class AgentExecutionException(AgentException):
     pass
 
 
-# region: Service Exceptions
+# region Service Exceptions
 
 
 class ServiceException(AgentFrameworkException):

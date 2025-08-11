@@ -5,7 +5,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import ChatClientAgent, ChatClientAgentThread
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework.azure import AzureResponsesClient
 from pydantic import Field
 
 
@@ -22,7 +22,7 @@ async def example_with_automatic_thread_creation() -> None:
     print("=== Automatic Thread Creation Example ===")
 
     agent = ChatClientAgent(
-        chat_client=OpenAIResponsesClient(),
+        chat_client=AzureResponsesClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -49,7 +49,7 @@ async def example_with_thread_persistence_in_memory() -> None:
     print("=== Thread Persistence Example (In-Memory) ===")
 
     agent = ChatClientAgent(
-        chat_client=OpenAIResponsesClient(),
+        chat_client=AzureResponsesClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -84,7 +84,7 @@ async def example_with_thread_persistence_in_memory() -> None:
 async def example_with_existing_thread_id() -> None:
     """
     Example showing how to work with an existing thread ID from the service.
-    In this example, messages are stored on the server using OpenAI conversation state.
+    In this example, messages are stored on the server using Azure OpenAI conversation state.
     """
     print("=== Existing Thread ID Example ===")
 
@@ -92,7 +92,7 @@ async def example_with_existing_thread_id() -> None:
     existing_thread_id = None
 
     agent = ChatClientAgent(
-        chat_client=OpenAIResponsesClient(),
+        chat_client=AzureResponsesClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -103,7 +103,7 @@ async def example_with_existing_thread_id() -> None:
 
     query1 = "What's the weather in Paris?"
     print(f"User: {query1}")
-    # Enable OpenAI conversation state by setting `store` parameter to True
+    # Enable Azure OpenAI conversation state by setting `store` parameter to True
     result1 = await agent.run(query1, thread=thread, store=True)
     print(f"Agent: {result1.text}")
     print(f"Thread contains {len(thread.chat_messages or [])} messages in-memory.")
@@ -116,7 +116,7 @@ async def example_with_existing_thread_id() -> None:
         print("\n--- Continuing with the same thread ID in a new agent instance ---")
 
         agent = ChatClientAgent(
-            chat_client=OpenAIResponsesClient(),
+            chat_client=AzureResponsesClient(),
             instructions="You are a helpful weather agent.",
             tools=get_weather,
         )
@@ -133,7 +133,7 @@ async def example_with_existing_thread_id() -> None:
 
 
 async def main() -> None:
-    print("=== OpenAI Response Client Agent Thread Management Examples ===\n")
+    print("=== Azure OpenAI Response Client Agent Thread Management Examples ===\n")
 
     await example_with_automatic_thread_creation()
     await example_with_thread_persistence_in_memory()
