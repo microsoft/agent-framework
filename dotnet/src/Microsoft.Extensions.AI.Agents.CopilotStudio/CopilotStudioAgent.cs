@@ -48,7 +48,7 @@ public class CopilotStudioAgent : AIAgent
 
         // Ensure that we have a valid thread to work with.
         // If the thread ID is null, we need to start a new conversation and set the thread ID accordingly.
-        thread ??= this.GetNewThread();
+        thread ??= options?.GetAgentThread?.Invoke() ?? this.GetNewThread();
         thread.ConversationId ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
 
         // Invoke the Copilot Studio agent with the provided messages.

@@ -28,7 +28,7 @@ internal sealed class A2AAgentTaskProcessor : A2AAgentCardProvider, IA2AAgentTas
         this._logger.LogInformation("Creating task {TaskId} for agent {AgentName}", task.Id, this._agent.Name);
 
         // options are essential to keep track of the A2A task.
-        var options = new A2AAgentRunOptions(task);
+        var options = A2AAgentRunOptions.CreateA2AAgentTaskOptions(task);
 
         try
         {

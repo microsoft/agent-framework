@@ -26,7 +26,8 @@ internal sealed class A2AMessageProcessor : A2AAgentCardProvider, IA2AMessagePro
         try
         {
             var chatMessages = messageSendParams.ToChatMessages();
-            var result = await this._agent.RunAsync(messages: chatMessages, cancellationToken: cancellationToken).ConfigureAwait(false);
+            var options = A2AAgentRunOptions.CreateA2AMessagingOptions();
+            var result = await this._agent.RunAsync(messages: chatMessages, options: options, cancellationToken: cancellationToken).ConfigureAwait(false);
 
             // Convert response back to A2A format
             var responseMessage = new Message
