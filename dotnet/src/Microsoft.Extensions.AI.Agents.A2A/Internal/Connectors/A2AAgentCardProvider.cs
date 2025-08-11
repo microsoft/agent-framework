@@ -10,12 +10,12 @@ namespace Microsoft.Extensions.AI.Agents.A2A.Internal.Connectors;
 internal abstract class A2AAgentCardProvider : IA2AAgentCardProvider
 {
     protected readonly ILogger _logger;
-    protected readonly A2AAgent _agent;
+    protected readonly A2AAgent _a2aAgent;
 
     public A2AAgentCardProvider(ILogger logger, AIAgent agent, TaskManager taskManager)
     {
         this._logger = logger;
-        this._agent = new A2AAgent(logger, agent, taskManager);
+        this._a2aAgent = new A2AAgent(logger, agent, taskManager);
     }
 
     public Task<AgentCard> GetAgentCardAsync(string agentPath, CancellationToken cancellationToken)
@@ -33,10 +33,10 @@ internal abstract class A2AAgentCardProvider : IA2AAgentCardProvider
 
         return Task.FromResult(new AgentCard()
         {
-            Name = this._agent.Name ?? string.Empty,
-            Description = this._agent.Description ?? string.Empty,
+            Name = this._a2aAgent.Name ?? string.Empty,
+            Description = this._a2aAgent.InnerAgent.Description ?? string.Empty,
             Url = agentPath,
-            Version = this._agent.Id,
+            Version = this._a2aAgent.InnerAgent.Id,
             DefaultInputModes = ["text"],
             DefaultOutputModes = ["text"],
             Capabilities = capabilities,

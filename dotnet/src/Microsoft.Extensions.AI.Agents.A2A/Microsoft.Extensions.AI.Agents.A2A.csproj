@@ -19,4 +19,8 @@
     <ProjectReference Include="..\Microsoft.Extensions.AI.Agents.Abstractions\Microsoft.Extensions.AI.Agents.Abstractions.csproj" />
   </ItemGroup>
 
+  <ItemGroup Condition="'$(TargetFrameworkIdentifier)' != '.NETCoreApp'">
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" />
+  </ItemGroup>
+
 </Project>

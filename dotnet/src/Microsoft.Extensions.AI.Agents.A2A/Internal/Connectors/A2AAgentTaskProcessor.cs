@@ -25,7 +25,7 @@ internal sealed class A2AAgentTaskProcessor : A2AAgentCardProvider, IA2AAgentTas
 
     public Task CreateTaskAsync(AgentTask task, CancellationToken token)
     {
-        this._logger.LogInformation("Creating task {TaskId} for agent {AgentName}", task.Id, this._agent.Name);
+        this._logger.LogInformation("Creating task {TaskId} for agent {AgentName}", task.Id, this._a2aAgent.Name);
 
         // options are essential to keep track of the A2A task.
         var options = A2AAgentRunOptions.CreateA2AAgentTaskOptions(task);
@@ -36,15 +36,15 @@ internal sealed class A2AAgentTaskProcessor : A2AAgentCardProvider, IA2AAgentTas
             if (chatMessages.Count > 0)
             {
                 this._logger.LogInformation("Creating task {TaskId} with initial messages", task.Id);
-                return this._agent.RunAsync(chatMessages, options: options, cancellationToken: token);
+                return this._a2aAgent.RunAsync(options, chatMessages, cancellationToken: token);
             }
 
             this._logger.LogInformation("Creating task {TaskId} without initial messages", task.Id);
-            return this._agent.RunAsync(options: options, cancellationToken: token);
+            return this._a2aAgent.RunAsync(messages: null, options: options, cancellationToken: token);
         }
         catch (Exception ex)
         {
-            this._logger.LogError(ex, "Failed to create task {TaskId} for agent {AgentName}", task.Id, this._agent.Name);
+            this._logger.LogError(ex, "Failed to create task {TaskId} for agent {AgentName}", task.Id, this._a2aAgent.Name);
             throw;
         }
     }
