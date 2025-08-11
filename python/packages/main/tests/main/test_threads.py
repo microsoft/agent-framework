@@ -1,0 +1,507 @@
+# Copyright (c) Microsoft. All rights reserved.
+
+from collections.abc import Collection, Iterable
+from typing import Any
+
+import pytest
+
+from agent_framework import ChatMessage, ChatRole
+from agent_framework._threads import (
+    AgentThread,
+    InMemoryChatMessageStore,
+    StoreState,
+    ThreadState,
+)
+
+
+class MockChatMessageStore:
+    """Mock implementation of ChatMessageStore for testing."""
+
+    def __init__(self, messages: list[ChatMessage] | None = None) -> None:
+        self._messages = messages or []
+        self._serialize_calls = 0
+        self._deserialize_calls = 0
+
+    async def get_messages(self) -> Iterable[ChatMessage]:
+        return self._messages
+
+    async def add_messages(self, messages: Collection[ChatMessage]) -> None:
+        self._messages.extend(messages)
+
+    async def serialize_state(self, **kwargs: Any) -> Any:
+        self._serialize_calls += 1
+        return {"messages": [msg.__dict__ for msg in self._messages], "kwargs": kwargs}
+
+    async def deserialize_state(self, serialized_store_state: Any, **kwargs: Any) -> None:
+        self._deserialize_calls += 1
+        if serialized_store_state and "messages" in serialized_store_state:
+            self._messages = serialized_store_state["messages"]
+
+
+@pytest.fixture
+def sample_messages() -> list[ChatMessage]:
+    """Fixture providing sample chat messages for testing."""
+    return [
+        ChatMessage(role=ChatRole.USER, text="Hello", message_id="msg1"),
+        ChatMessage(role=ChatRole.ASSISTANT, text="Hi there!", message_id="msg2"),
+        ChatMessage(role=ChatRole.USER, text="How are you?", message_id="msg3"),
+    ]
+
+
+@pytest.fixture
+def sample_message() -> ChatMessage:
+    """Fixture providing a single sample chat message for testing."""
+    return ChatMessage(role=ChatRole.USER, text="Test message", message_id="test1")
+
+
+class TestAgentThread:
+    """Test cases for AgentThread class."""
+
+    def test_init_with_no_parameters(self) -> None:
+        """Test AgentThread initialization with no parameters."""
+        thread = AgentThread()
+        assert thread.conversation_id is None
+        assert thread.message_store is None
+
+    def test_init_with_conversation_id(self) -> None:
+        """Test AgentThread initialization with conversation_id."""
+        conv_id = "test-conversation-123"
+        thread = AgentThread(conversation_id=conv_id)
+        assert thread.conversation_id == conv_id
+        assert thread.message_store is None
+
+    def test_init_with_message_store(self) -> None:
+        """Test AgentThread initialization with message_store."""
+        store = InMemoryChatMessageStore()
+        thread = AgentThread(message_store=store)
+        assert thread.conversation_id is None
+        assert thread.message_store is store
+
+    def test_init_with_both_parameters_raises_error(self) -> None:
+        """Test that initializing with both conversation_id and message_store raises ValueError."""
+        store = InMemoryChatMessageStore()
+        conv_id = "test-conversation-123"
+
+        with pytest.raises(ValueError, match="Only the conversation_id or message_store may be set"):
+            AgentThread(conversation_id=conv_id, message_store=store)
+
+    def test_conversation_id_property_setter(self) -> None:
+        """Test conversation_id property setter."""
+        thread = AgentThread()
+        conv_id = "test-conversation-456"
+
+        thread.conversation_id = conv_id
+        assert thread.conversation_id == conv_id
+
+    def test_conversation_id_setter_with_existing_message_store_raises_error(self) -> None:
+        """Test that setting conversation_id when message_store exists raises ValueError."""
+        store = InMemoryChatMessageStore()
+        thread = AgentThread(message_store=store)
+
+        with pytest.raises(ValueError, match="Only the conversation_id or message_store may be set"):
+            thread.conversation_id = "test-conversation-789"
+
+    def test_conversation_id_setter_with_none_values(self) -> None:
+        """Test conversation_id setter with None values does nothing."""
+        thread = AgentThread()
+        thread.conversation_id = None  # Should not raise error
+        assert thread.conversation_id is None
+
+    def test_message_store_property_setter(self) -> None:
+        """Test message_store property setter."""
+        thread = AgentThread()
+        store = InMemoryChatMessageStore()
+
+        thread.message_store = store
+        assert thread.message_store is store
+
+    def test_message_store_setter_with_existing_conversation_id_raises_error(self) -> None:
+        """Test that setting message_store when conversation_id exists raises ValueError."""
+        conv_id = "test-conversation-999"
+        thread = AgentThread(conversation_id=conv_id)
+        store = InMemoryChatMessageStore()
+
+        with pytest.raises(ValueError, match="Only the conversation_id or message_store may be set"):
+            thread.message_store = store
+
+    def test_message_store_setter_with_none_values(self) -> None:
+        """Test message_store setter with None values does nothing."""
+        thread = AgentThread()
+        thread.message_store = None  # Should not raise error
+        assert thread.message_store is None
+
+    async def test_get_messages_with_message_store(self, sample_messages: list[ChatMessage]) -> None:
+        """Test get_messages when message_store is set."""
+        store = InMemoryChatMessageStore(sample_messages)
+        thread = AgentThread(message_store=store)
+
+        messages: list[ChatMessage] = []
+        async for message in thread.get_messages():
+            messages.append(message)
+
+        assert len(messages) == 3
+        assert messages[0].text == "Hello"
+        assert messages[1].text == "Hi there!"
+        assert messages[2].text == "How are you?"
+
+    async def test_get_messages_with_no_message_store(self) -> None:
+        """Test get_messages when no message_store is set."""
+        thread = AgentThread()
+
+        messages: list[ChatMessage] = []
+        async for message in thread.get_messages():
+            messages.append(message)
+
+        assert len(messages) == 0
+
+    async def test_on_new_messages_with_conversation_id(self, sample_message: ChatMessage) -> None:
+        """Test _on_new_messages when conversation_id is set (should do nothing)."""
+        thread = AgentThread(conversation_id="test-conv")
+
+        await thread._on_new_messages(sample_message)  # pyright: ignore[reportPrivateUsage]
+
+        # Should not create a message store
+        assert thread.message_store is None
+
+    async def test_on_new_messages_single_message_creates_store(self, sample_message: ChatMessage) -> None:
+        """Test _on_new_messages with single message creates InMemoryChatMessageStore."""
+        thread = AgentThread()
+
+        await thread._on_new_messages(sample_message)  # pyright: ignore[reportPrivateUsage]
+
+        assert thread.message_store is not None
+        assert isinstance(thread.message_store, InMemoryChatMessageStore)
+        messages = await thread.message_store.get_messages()
+        messages_list = list(messages)
+        assert len(messages_list) == 1
+        assert messages_list[0].text == "Test message"
+
+    async def test_on_new_messages_multiple_messages(self, sample_messages: list[ChatMessage]) -> None:
+        """Test _on_new_messages with multiple messages."""
+        thread = AgentThread()
+
+        await thread._on_new_messages(sample_messages)  # pyright: ignore[reportPrivateUsage]
+
+        assert thread.message_store is not None
+        messages = await thread.message_store.get_messages()
+        messages_list = list(messages)
+        assert len(messages_list) == 3
+
+    async def test_on_new_messages_with_existing_store(self, sample_message: ChatMessage) -> None:
+        """Test _on_new_messages adds to existing message store."""
+        initial_messages = [ChatMessage(role=ChatRole.USER, text="Initial", message_id="init1")]
+        store = InMemoryChatMessageStore(initial_messages)
+        thread = AgentThread(message_store=store)
+
+        await thread._on_new_messages(sample_message)  # pyright: ignore[reportPrivateUsage]
+
+        assert thread.message_store is not None
+        messages = await thread.message_store.get_messages()
+        messages_list = list(messages)
+        assert len(messages_list) == 2
+        assert messages_list[0].text == "Initial"
+        assert messages_list[1].text == "Test message"
+
+    async def test_deserialize_with_conversation_id(self) -> None:
+        """Test _deserialize with conversation_id."""
+        thread = AgentThread()
+        serialized_data = {"conversation_id": "test-conv-123", "store_state": None}
+
+        await thread._deserialize(serialized_data)  # pyright: ignore[reportPrivateUsage]
+
+        assert thread.conversation_id == "test-conv-123"
+        assert thread.message_store is None
+
+    async def test_deserialize_with_store_state(self, sample_messages: list[ChatMessage]) -> None:
+        """Test _deserialize with store_state."""
+        thread = AgentThread()
+        store_state = {"messages": sample_messages}
+        serialized_data = {"conversation_id": None, "store_state": store_state}
+
+        await thread._deserialize(serialized_data)  # pyright: ignore[reportPrivateUsage]
+
+        assert thread.conversation_id is None
+        assert thread.message_store is not None
+        assert isinstance(thread.message_store, InMemoryChatMessageStore)
+
+    async def test_deserialize_with_no_state(self) -> None:
+        """Test _deserialize with no state."""
+        thread = AgentThread()
+        serialized_data = {"conversation_id": None, "store_state": None}
+
+        await thread._deserialize(serialized_data)  # pyright: ignore[reportPrivateUsage]
+
+        assert thread.conversation_id is None
+        assert thread.message_store is None
+
+    async def test_deserialize_with_existing_store(self) -> None:
+        """Test _deserialize with existing message store."""
+        store = MockChatMessageStore()
+        thread = AgentThread(message_store=store)
+        serialized_data: dict[str, Any] = {"conversation_id": None, "store_state": {"messages": []}}
+
+        await thread._deserialize(serialized_data)  # pyright: ignore[reportPrivateUsage]
+
+        assert store._deserialize_calls == 1  # pyright: ignore[reportPrivateUsage]
+
+    async def test_serialize_with_conversation_id(self) -> None:
+        """Test serialize with conversation_id."""
+        thread = AgentThread(conversation_id="test-conv-456")
+
+        result = await thread.serialize()
+
+        assert result["conversation_id"] == "test-conv-456"
+        assert result["store_state"] is None
+
+    async def test_serialize_with_message_store(self) -> None:
+        """Test serialize with message_store."""
+        store = MockChatMessageStore()
+        thread = AgentThread(message_store=store)
+
+        result = await thread.serialize()
+
+        assert result["conversation_id"] is None
+        assert result["store_state"] is not None
+        assert store._serialize_calls == 1  # pyright: ignore[reportPrivateUsage]
+
+    async def test_serialize_with_no_state(self) -> None:
+        """Test serialize with no state."""
+        thread = AgentThread()
+
+        result = await thread.serialize()
+
+        assert result["conversation_id"] is None
+        assert result["store_state"] is None
+
+    async def test_serialize_with_kwargs(self) -> None:
+        """Test serialize passes kwargs to message store."""
+        store = MockChatMessageStore()
+        thread = AgentThread(message_store=store)
+
+        await thread.serialize(custom_param="test_value")
+
+        assert store._serialize_calls == 1  # pyright: ignore[reportPrivateUsage]
+
+
+class TestInMemoryChatMessageStore:
+    """Test cases for InMemoryChatMessageStore class."""
+
+    def test_init_empty(self) -> None:
+        """Test InMemoryChatMessageStore initialization with no messages."""
+        store = InMemoryChatMessageStore()
+        assert len(store) == 0
+
+    def test_init_with_messages(self, sample_messages: list[ChatMessage]) -> None:
+        """Test InMemoryChatMessageStore initialization with messages."""
+        store = InMemoryChatMessageStore(sample_messages)
+        assert len(store) == 3
+
+    async def test_add_messages(self, sample_messages: list[ChatMessage]) -> None:
+        """Test adding messages to the store."""
+        store = InMemoryChatMessageStore()
+
+        await store.add_messages(sample_messages)
+
+        assert len(store) == 3
+        messages = await store.get_messages()
+        messages_list = list(messages)
+        assert messages_list[0].text == "Hello"
+
+    async def test_get_messages(self, sample_messages: list[ChatMessage]) -> None:
+        """Test getting messages from the store."""
+        store = InMemoryChatMessageStore(sample_messages)
+
+        messages = await store.get_messages()
+
+        assert len(list(messages)) == 3
+        # Re-fetch since we consumed the iterator
+        messages = await store.get_messages()
+        messages_list = list(messages)
+        assert isinstance(messages_list, list)
+        assert messages_list[0].message_id == "msg1"
+
+    async def test_serialize_state(self, sample_messages: list[ChatMessage]) -> None:
+        """Test serializing store state."""
+        store = InMemoryChatMessageStore(sample_messages)
+
+        result = await store.serialize_state()
+
+        assert "messages" in result
+        assert len(result["messages"]) == 3
+
+    async def test_serialize_state_empty(self) -> None:
+        """Test serializing empty store state."""
+        store = InMemoryChatMessageStore()
+
+        result = await store.serialize_state()
+
+        assert "messages" in result
+        assert len(result["messages"]) == 0
+
+    async def test_deserialize_state(self, sample_messages: list[ChatMessage]) -> None:
+        """Test deserializing store state."""
+        store = InMemoryChatMessageStore()
+        state_data = {"messages": sample_messages}
+
+        await store.deserialize_state(state_data)
+
+        messages = await store.get_messages()
+        messages_list = list(messages)
+        assert len(messages_list) == 3
+        assert messages_list[0].text == "Hello"
+
+    async def test_deserialize_state_none(self) -> None:
+        """Test deserializing None state."""
+        store = InMemoryChatMessageStore()
+
+        await store.deserialize_state(None)
+
+        assert len(store) == 0
+
+    async def test_deserialize_state_empty(self) -> None:
+        """Test deserializing empty state."""
+        store = InMemoryChatMessageStore()
+
+        await store.deserialize_state({})
+
+        assert len(store) == 0
+
+    def test_len(self, sample_messages: list[ChatMessage]) -> None:
+        """Test __len__ method."""
+        store = InMemoryChatMessageStore(sample_messages)
+        assert len(store) == 3
+
+        empty_store = InMemoryChatMessageStore()
+        assert len(empty_store) == 0
+
+    def test_getitem(self, sample_messages: list[ChatMessage]) -> None:
+        """Test __getitem__ method."""
+        store = InMemoryChatMessageStore(sample_messages)
+
+        assert store[0].text == "Hello"
+        assert store[1].text == "Hi there!"
+        assert store[2].text == "How are you?"
+
+    def test_setitem(self, sample_messages: list[ChatMessage], sample_message: ChatMessage) -> None:
+        """Test __setitem__ method."""
+        store = InMemoryChatMessageStore(sample_messages)
+
+        store[1] = sample_message
+        assert store[1].text == "Test message"
+        assert store[1].message_id == "test1"
+
+    def test_append(self, sample_message: ChatMessage) -> None:
+        """Test append method."""
+        store = InMemoryChatMessageStore()
+
+        store.append(sample_message)
+
+        assert len(store) == 1
+        assert store[0].text == "Test message"
+
+    def test_clear(self, sample_messages: list[ChatMessage]) -> None:
+        """Test clear method."""
+        store = InMemoryChatMessageStore(sample_messages)
+        assert len(store) == 3
+
+        store.clear()
+        assert len(store) == 0
+
+    def test_index(self, sample_messages: list[ChatMessage]) -> None:
+        """Test index method."""
+        store = InMemoryChatMessageStore(sample_messages)
+
+        index = store.index(sample_messages[1])
+        assert index == 1
+
+    def test_insert(self, sample_messages: list[ChatMessage], sample_message: ChatMessage) -> None:
+        """Test insert method."""
+        store = InMemoryChatMessageStore(sample_messages)
+
+        store.insert(1, sample_message)
+
+        assert len(store) == 4
+        assert store[1].text == "Test message"
+        assert store[2].text == "Hi there!"  # Original message at index 1 is now at index 2
+
+    def test_remove(self, sample_messages: list[ChatMessage]) -> None:
+        """Test remove method."""
+        store = InMemoryChatMessageStore(sample_messages)
+        message_to_remove = sample_messages[1]
+
+        store.remove(message_to_remove)
+
+        assert len(store) == 2
+        assert store[0].text == "Hello"
+        assert store[1].text == "How are you?"
+
+    def test_pop_default(self, sample_messages: list[ChatMessage]) -> None:
+        """Test pop method with default index."""
+        store = InMemoryChatMessageStore(sample_messages)
+
+        popped_message = store.pop()
+
+        assert len(store) == 2
+        assert popped_message.text == "How are you?"  # Last message
+
+    def test_pop_with_index(self, sample_messages: list[ChatMessage]) -> None:
+        """Test pop method with specific index."""
+        store = InMemoryChatMessageStore(sample_messages)
+
+        popped_message = store.pop(1)
+
+        assert len(store) == 2
+        assert popped_message.text == "Hi there!"
+        assert store[0].text == "Hello"
+        assert store[1].text == "How are you?"
+
+
+class TestStoreState:
+    """Test cases for StoreState class."""
+
+    def test_init(self, sample_messages: list[ChatMessage]) -> None:
+        """Test StoreState initialization."""
+        state = StoreState(messages=sample_messages)
+
+        assert len(state.messages) == 3
+        assert state.messages[0].text == "Hello"
+
+    def test_init_empty(self) -> None:
+        """Test StoreState initialization with empty messages."""
+        state = StoreState(messages=[])
+
+        assert len(state.messages) == 0
+
+
+class TestThreadState:
+    """Test cases for ThreadState class."""
+
+    def test_init_with_conversation_id(self) -> None:
+        """Test ThreadState initialization with conversation_id."""
+        state = ThreadState(conversation_id="test-conv-123")
+
+        assert state.conversation_id == "test-conv-123"
+        assert state.store_state is None
+
+    def test_init_with_store_state(self) -> None:
+        """Test ThreadState initialization with store_state."""
+        store_data: dict[str, Any] = {"messages": []}
+        state = ThreadState(store_state=store_data)
+
+        assert state.conversation_id is None
+        assert state.store_state == store_data
+
+    def test_init_with_both(self) -> None:
+        """Test ThreadState initialization with both parameters."""
+        store_data: dict[str, Any] = {"messages": []}
+        state = ThreadState(conversation_id="test-conv-456", store_state=store_data)
+
+        assert state.conversation_id == "test-conv-456"
+        assert state.store_state == store_data
+
+    def test_init_defaults(self) -> None:
+        """Test ThreadState initialization with defaults."""
+        state = ThreadState()
+
+        assert state.conversation_id is None
+        assert state.store_state is None

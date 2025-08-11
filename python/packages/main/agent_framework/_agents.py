@@ -154,6 +154,16 @@ class AgentBase(AFBaseModel):
         """
         return self.name or self.id
 
+    def get_new_thread(self) -> AgentThread:
+        """Returns AgentThread instance that is compatible with the agent."""
+        return AgentThread()
+
+    async def deserialize_thread(self, serialized_thread: Any, **kwargs: Any) -> AgentThread:
+        """Deserializes the thread."""
+        thread: AgentThread = self.get_new_thread()
+        await thread._deserialize(serialized_thread)
+        return thread
+
 
 # region ChatClientAgent
 
