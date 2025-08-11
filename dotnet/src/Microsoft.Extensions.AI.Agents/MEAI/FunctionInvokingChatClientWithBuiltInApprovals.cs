@@ -256,10 +256,6 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
         // ** Approvals additions on top of FICC - start **//
 
         List<ChatMessage>? augmentedPreInvocationHistory = null;
-        Dictionary<string, ApprovalRequiredAIFunction> approvalRequiredFunctionMap =
-            (options?.Tools ?? []).Concat(AdditionalTools ?? [])
-            .OfType<ApprovalRequiredAIFunction>()
-            .ToDictionary(x => x.Name);
 
         // Remove any approval requests and approval request/response pairs that have already been executed.
         var notExecutedResponses = ProcessApprovalRequestsAndResponses(originalMessages);
@@ -322,7 +318,7 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
 
             // Before we do any function execution, make sure that any functions that require approval, have been turned into approval requests
             // so that they don't get executed here.
-            await ReplaceFunctionCallsWithApprovalRequests(response.Messages, approvalRequiredFunctionMap);
+            await ReplaceFunctionCallsWithApprovalRequests(response.Messages, options?.Tools, AdditionalTools);
 
             // ** Approvals additions on top of FICC - end **//
 
@@ -1117,10 +1113,12 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
     }
 
     /// <summary>Replaces any <see cref="FunctionCallContent"/> from <paramref name="messages"/> with <see cref="FunctionApprovalRequestContent"/>.</summary>
-    private static async Task ReplaceFunctionCallsWithApprovalRequests(IList<ChatMessage> messages, Dictionary<string, ApprovalRequiredAIFunction> approvalRequiredAIFunctionMap)
+    private static async Task ReplaceFunctionCallsWithApprovalRequests(IList<ChatMessage> messages, IList<AITool>? requestOptionsTools, IList<AITool>? additionalTools)
     {
         bool anyApprovalRequired = false;
         List<(int, int)>? functionsToReplace = null;
+
+        ApprovalRequiredAIFunction[]? approvalRequiredFunctions = null;
 
         int count = messages.Count;
         for (int i = 0; i < count; i++)
@@ -1135,7 +1133,11 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
                     functionsToReplace ??= [];
                     functionsToReplace.Add((i, j));
 
-                    anyApprovalRequired |= approvalRequiredAIFunctionMap.TryGetValue(functionCall.Name, out var approvalFunction) && await approvalFunction.RequiresApprovalCallback(new(functionCall));
+                    approvalRequiredFunctions ??= (requestOptionsTools ?? []).Concat(additionalTools ?? [])
+                        .OfType<ApprovalRequiredAIFunction>()
+                        .ToArray();
+
+                    anyApprovalRequired |= approvalRequiredFunctions.FirstOrDefault(x => x.Name == functionCall.Name) is { } approvalFunction && await approvalFunction.RequiresApprovalCallback(new(functionCall));
                 }
             }
         }
