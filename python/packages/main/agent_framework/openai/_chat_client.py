@@ -4,15 +4,15 @@ import json
 from collections.abc import AsyncIterable, Mapping, MutableMapping, MutableSequence, Sequence
 from datetime import datetime
 from itertools import chain
-from typing import Any, ClassVar, cast
+from typing import Any, TypeVar
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.lib._parsing._completions import type_to_response_format_param
 from openai.types import CompletionUsage
 from openai.types.chat.chat_completion import ChatCompletion, Choice
-from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, ChoiceDeltaToolCall
+from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
-from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall
+from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
 from pydantic import BaseModel, SecretStr, ValidationError
 
 from agent_framework import AIFunction, AITool, UsageContent
@@ -39,7 +39,7 @@ from ..exceptions import (
 )
 from ..telemetry import use_telemetry
 from ._exceptions import OpenAIContentFilterException
-from ._shared import OpenAIConfigBase, OpenAIHandler, OpenAIModelTypes, OpenAISettings, prepare_function_call_results
+from ._shared import OpenAIConfigBase, OpenAIHandler, OpenAISettings, prepare_function_call_results
 
 __all__ = ["OpenAIChatClient"]
 
@@ -51,8 +51,6 @@ logger = get_logger("agent_framework.openai")
 @use_tool_calling
 class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
     """OpenAI Chat completion class."""
-
-    MODEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     async def _inner_get_response(
         self,
@@ -79,7 +77,6 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
                 f"{type(self)} service failed to complete the prompt",
                 ex,
             ) from ex
-        return options_dict
 
     async def _inner_get_streaming_response(
         self,
@@ -152,18 +149,14 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
         messages: list[ChatMessage] = []
         finish_reason: ChatFinishReason | None = None
         for choice in response.choices:
-            contents: list[AIContents] = []
-            # in principle, there will be only one response.
             response_metadata.update(self._get_metadata_from_chat_choice(choice))
-            if parsed_tool_calls := [tool for tool in self._get_tool_calls_from_chat_choice(choice)]:
-                contents.extend(parsed_tool_calls)
-            if choice.message.content:
-                contents.append(TextContent(text=choice.message.content, raw_representation=choice))
-            elif hasattr(choice.message, "refusal") and choice.message.refusal:
-                contents.append(TextContent(text=choice.message.refusal, raw_representation=choice))
             if choice.finish_reason:
                 finish_reason = ChatFinishReason(value=choice.finish_reason)
-
+            contents: list[AIContents] = []
+            if parsed_tool_calls := [tool for tool in self._get_tool_calls_from_chat_choice(choice)]:
+                contents.extend(parsed_tool_calls)
+            if text_content := self._parse_text_from_choice(choice):
+                contents.append(text_content)
             messages.append(ChatMessage(role="assistant", contents=contents))
         return ChatResponse(
             response_id=response.id,
@@ -188,18 +181,19 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
                 ai_model_id=chunk.model,
                 additional_properties=chunk_metadata,
             )
-        items: list[AIContents] = []
+        contents: list[AIContents] = []
         finish_reason: ChatFinishReason | None = None
         for choice in chunk.choices:
             chunk_metadata.update(self._get_metadata_from_chat_choice(choice))
-            items.extend(self._get_tool_calls_from_chat_choice(choice))
-            if choice.delta and choice.delta.content is not None:
-                items.append(TextContent(text=choice.delta.content, raw_representation=choice.delta))
+            contents.extend(self._get_tool_calls_from_chat_choice(choice))
             if choice.finish_reason:
                 finish_reason = ChatFinishReason(value=choice.finish_reason)
+
+            if text_content := self._parse_text_from_choice(choice):
+                contents.append(text_content)
         return ChatResponseUpdate(
             created_at=datetime.fromtimestamp(chunk.created).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-            contents=items,
+            contents=contents,
             role=ChatRole.ASSISTANT,
             ai_model_id=chunk.model,
             additional_properties=chunk_metadata,
@@ -213,6 +207,15 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
             completion_tokens=usage.completion_tokens,
             total_tokens=usage.total_tokens,
         )
+
+    def _parse_text_from_choice(self, choice: Choice | ChunkChoice) -> TextContent | None:
+        """Parse the choice into a TextContent object."""
+        message = choice.message if isinstance(choice, Choice) else choice.delta
+        if message.content:
+            return TextContent(text=message.content, raw_representation=choice)
+        if hasattr(message, "refusal") and message.refusal:
+            return TextContent(text=message.refusal, raw_representation=choice)
+        return None
 
     def _get_metadata_from_chat_response(self, response: ChatCompletion) -> dict[str, Any]:
         """Get metadata from a chat response."""
@@ -236,9 +239,10 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
         """Get tool calls from a chat choice."""
         resp: list[AIContents] = []
         content = choice.message if isinstance(choice, Choice) else choice.delta
-        if content and (tool_calls := getattr(content, "tool_calls", None)) is not None:
-            for tool in cast(list[ChatCompletionMessageToolCall] | list[ChoiceDeltaToolCall], tool_calls):
-                if tool.function:  # type: ignore[reportAttributeAccessIssue, union-attr]
+        if content and content.tool_calls:
+            for tool in content.tool_calls:
+                if not isinstance(tool, ChatCompletionMessageCustomToolCall) and tool.function:
+                    # ignoring tool.custom
                     fcc = FunctionCallContent(
                         call_id=tool.id if tool.id else "",
                         name=tool.function.name if tool.function.name else "",
@@ -338,6 +342,8 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
 
 # region Public client
 
+TOpenAIChatClient = TypeVar("TOpenAIChatClient", bound="OpenAIChatClient")
+
 
 class OpenAIChatClient(OpenAIConfigBase, OpenAIChatClientBase):
     """OpenAI Chat completion class."""
@@ -391,23 +397,19 @@ class OpenAIChatClient(OpenAIConfigBase, OpenAIChatClientBase):
             ai_model_id=openai_settings.chat_model_id,
             api_key=openai_settings.api_key.get_secret_value() if openai_settings.api_key else None,
             org_id=openai_settings.org_id,
-            ai_model_type=OpenAIModelTypes.CHAT,
             default_headers=default_headers,
             client=async_client,
             instruction_role=instruction_role,
         )
 
     @classmethod
-    def from_dict(cls, settings: dict[str, Any]) -> "OpenAIChatClient":
-        """Initialize an Open AI service from a dictionary of settings.
+    def from_dict(cls: type[TOpenAIChatClient], settings: dict[str, Any]) -> TOpenAIChatClient:
+        """Initialize an Open AI Chat Client from a dictionary of settings.
 
         Args:
             settings: A dictionary of settings for the service.
         """
-        return OpenAIChatClient(
-            ai_model_id=settings["ai_model_id"],
-            default_headers=settings.get("default_headers"),
-        )
+        return cls(**settings)
 
 
 # endregion

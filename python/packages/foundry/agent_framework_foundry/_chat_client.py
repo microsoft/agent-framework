@@ -4,7 +4,7 @@ import contextlib
 import json
 import sys
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypeVar
 
 from agent_framework import (
     AIContents,
@@ -63,6 +63,10 @@ if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
 else:
     from typing_extensions import Self  # pragma: no cover
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 
 class FoundrySettings(AFBaseSettings):
@@ -92,6 +96,9 @@ class FoundrySettings(AFBaseSettings):
     agent_name: str | None = "UnnamedAgent"
 
 
+TFoundryChatClient = TypeVar("TFoundryChatClient", bound="FoundryChatClient")
+
+
 @use_telemetry
 @use_tool_calling
 class FoundryChatClient(ChatClientBase):
@@ -101,14 +108,16 @@ class FoundryChatClient(ChatClientBase):
     client: AIProjectClient = Field(...)
     credential: AsyncTokenCredential | None = Field(...)
     agent_id: str | None = Field(default=None)
+    agent_name: str | None = Field(default=None)
+    ai_model_deployment_name: str | None = Field(default=None)
     thread_id: str | None = Field(default=None)
     _should_delete_agent: bool = PrivateAttr(default=False)  # Track whether we should delete the agent
     _should_close_client: bool = PrivateAttr(default=False)  # Track whether we should close client connection
     _should_close_credential: bool = PrivateAttr(default=False)  # Track whether we should close credential
-    _foundry_settings: FoundrySettings = PrivateAttr()
 
     def __init__(
         self,
+        *,
         client: AIProjectClient | None = None,
         agent_id: str | None = None,
         agent_name: str | None = None,
@@ -174,13 +183,12 @@ class FoundryChatClient(ChatClientBase):
             credential=credential,  # type: ignore[reportCallIssue]
             agent_id=agent_id,  # type: ignore[reportCallIssue]
             thread_id=thread_id,  # type: ignore[reportCallIssue]
+            agent_name=foundry_settings.agent_name,  # type: ignore[reportCallIssue]
+            ai_model_deployment_name=foundry_settings.model_deployment_name,  # type: ignore[reportCallIssue]
             **kwargs,
         )
-
-        self._should_delete_agent = False
         self._should_close_client = should_close_client
         self._should_close_credential = should_close_credential
-        self._foundry_settings = foundry_settings
 
     async def __aenter__(self) -> "Self":
         """Async context manager entry."""
@@ -197,7 +205,7 @@ class FoundryChatClient(ChatClientBase):
         await self._close_credential_if_needed()
 
     @classmethod
-    def from_dict(cls, settings: dict[str, Any]) -> "FoundryChatClient":
+    def from_dict(cls: type[TFoundryChatClient], settings: dict[str, Any]) -> TFoundryChatClient:
         """Initialize a FoundryChatClient from a dictionary of settings.
 
         Args:
@@ -261,11 +269,11 @@ class FoundryChatClient(ChatClientBase):
         """
         # If no agent_id is provided, create a temporary agent
         if self.agent_id is None:
-            if not self._foundry_settings.model_deployment_name:
+            if not self.ai_model_deployment_name:
                 raise ServiceInitializationError("Model deployment name is required for agent creation.")
 
-            agent_name = self._foundry_settings.agent_name
-            args = {"model": self._foundry_settings.model_deployment_name, "name": agent_name}
+            agent_name = self.agent_name
+            args = {"model": self.ai_model_deployment_name, "name": agent_name}
             if run_options:
                 if "tools" in run_options:
                     args["tools"] = run_options["tools"]
@@ -604,3 +612,15 @@ class FoundryChatClient(ChatClientBase):
                 tool_outputs.append(ToolOutput(tool_call_id=call_id, output=str(function_result_content.result)))
 
         return run_id, tool_outputs
+
+    @override
+    def update_agent_name(self, agent_name: str | None) -> None:
+        """Update the agent name in the chat client.
+
+        Args:
+            agent_name: The new name for the agent.
+        """
+        # This is a no-op in the base class, but can be overridden by subclasses
+        # to update the agent name in the client.
+        if agent_name and not self.agent_name:
+            self.agent_name = agent_name

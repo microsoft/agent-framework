@@ -412,6 +412,7 @@ class ChatClientAgent(AgentBase):
             args["id"] = id
 
         super().__init__(**args)
+        self._update_agent_name()
 
     async def __aenter__(self) -> "Self":
         """Async context manager entry.
@@ -429,6 +430,16 @@ class ChatClientAgent(AgentBase):
         """
         if isinstance(self.chat_client, AbstractAsyncContextManager):
             await self.chat_client.__aexit__(exc_type, exc_val, exc_tb)  # type: ignore[reportUnknownMemberType]
+
+    def _update_agent_name(self) -> None:
+        """Update the agent name in a chat client.
+
+        Checks if there is a agent name, the implementation
+        should check if there is already a agent name defined, and if not
+        set it to this value.
+        """
+        if hasattr(self.chat_client, "update_agent_name") and callable(self.chat_client.update_agent_name):  # type: ignore[reportAttributeAccessIssue]
+            self.chat_client.update_agent_name(self.name)  # type: ignore[reportAttributeAccessIssue]
 
     async def run(
         self,

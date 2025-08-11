@@ -9,9 +9,7 @@ from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from pydantic import SecretStr, ValidationError
 from pydantic.networks import AnyUrl
 
-from ._shared import (
-    AzureOpenAISettings,
-)
+from ._shared import AzureOpenAISettings
 
 __all__ = ["AzureAssistantsClient"]
 
@@ -20,7 +18,6 @@ class AzureAssistantsClient(OpenAIAssistantsClient):
     """Azure OpenAI Assistants client."""
 
     DEFAULT_AZURE_API_VERSION: ClassVar[str] = "2024-05-01-preview"
-    MODEL_PROVIDER_NAME: ClassVar[str] = "azure_openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     def __init__(
         self,
@@ -94,10 +91,7 @@ class AzureAssistantsClient(OpenAIAssistantsClient):
             and not ad_token_provider
             and azure_openai_settings.token_endpoint
         ):
-            # Try to get token using Entra ID if no other auth method is provided
-            from ._entra_id_authentication import get_entra_auth_token
-
-            ad_token = get_entra_auth_token(azure_openai_settings.token_endpoint)
+            ad_token = azure_openai_settings.get_azure_auth_token()
 
         if not async_client and not azure_openai_settings.api_key and not ad_token and not ad_token_provider:
             raise ServiceInitializationError("The Azure OpenAI API key, ad_token, or ad_token_provider is required.")

@@ -12,8 +12,6 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    FunctionCallContent,
-    FunctionResultContent,
     TextContent,
     ai_function,
 )
@@ -123,6 +121,7 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
         "api_key": azure_openai_unit_test_env["AZURE_OPENAI_API_KEY"],
         "api_version": azure_openai_unit_test_env["AZURE_OPENAI_API_VERSION"],
         "default_headers": default_headers,
+        "env_file_path": "test.env",
     }
 
     azure_chat_client = AzureChatClient.from_dict(settings)
@@ -258,13 +257,15 @@ async def test_azure_on_your_data(
                 content="test",
                 role="assistant",
                 context={  # type: ignore
-                    "citations": {
-                        "content": "test content",
-                        "title": "test title",
-                        "url": "test url",
-                        "filepath": "test filepath",
-                        "chunk_id": "test chunk_id",
-                    },
+                    "citations": [
+                        {
+                            "content": "test content",
+                            "title": "test title",
+                            "url": "test url",
+                            "filepath": "test filepath",
+                            "chunk_id": "test chunk_id",
+                        }
+                    ],
                     "intent": "query used",
                 },
             ),
@@ -298,11 +299,11 @@ async def test_azure_on_your_data(
         additional_properties={"extra_body": expected_data_settings},
     )
     assert len(content.messages) == 1
-    assert len(content.messages[0].contents) == 3
-    assert isinstance(content.messages[0].contents[0], FunctionCallContent)
-    assert isinstance(content.messages[0].contents[1], FunctionResultContent)
-    assert isinstance(content.messages[0].contents[2], TextContent)
-    assert content.messages[0].contents[2].text == "test"
+    assert len(content.messages[0].contents) == 1
+    assert isinstance(content.messages[0].contents[0], TextContent)
+    assert len(content.messages[0].contents[0].annotations) == 1
+    assert content.messages[0].contents[0].annotations[0].title == "test title"
+    assert content.messages[0].contents[0].text == "test"
 
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
@@ -326,13 +327,15 @@ async def test_azure_on_your_data_string(
                 content="test",
                 role="assistant",
                 context=json.dumps({  # type: ignore
-                    "citations": {
-                        "content": "test content",
-                        "title": "test title",
-                        "url": "test url",
-                        "filepath": "test filepath",
-                        "chunk_id": "test chunk_id",
-                    },
+                    "citations": [
+                        {
+                            "content": "test content",
+                            "title": "test title",
+                            "url": "test url",
+                            "filepath": "test filepath",
+                            "chunk_id": "test chunk_id",
+                        }
+                    ],
                     "intent": "query used",
                 }),
             ),
@@ -366,11 +369,11 @@ async def test_azure_on_your_data_string(
         additional_properties={"extra_body": expected_data_settings},
     )
     assert len(content.messages) == 1
-    assert len(content.messages[0].contents) == 3
-    assert isinstance(content.messages[0].contents[0], FunctionCallContent)
-    assert isinstance(content.messages[0].contents[1], FunctionResultContent)
-    assert isinstance(content.messages[0].contents[2], TextContent)
-    assert content.messages[0].contents[2].text == "test"
+    assert len(content.messages[0].contents) == 1
+    assert isinstance(content.messages[0].contents[0], TextContent)
+    assert len(content.messages[0].contents[0].annotations) == 1
+    assert content.messages[0].contents[0].annotations[0].title == "test title"
+    assert content.messages[0].contents[0].text == "test"
 
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
@@ -435,55 +438,6 @@ async def test_azure_on_your_data_fail(
         stream=False,
         extra_body=expected_data_settings,
     )
-
-
-@patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
-async def test_azure_on_your_data_split_messages(
-    mock_create: AsyncMock,
-    azure_openai_unit_test_env: dict[str, str],
-    chat_history: list[ChatMessage],
-    mock_chat_completion_response: ChatCompletion,
-) -> None:
-    mock_chat_completion_response.choices = [
-        Choice(
-            index=0,
-            message=ChatCompletionMessage(
-                content="test",
-                role="assistant",
-                context={  # type: ignore
-                    "citations": {
-                        "content": "test content",
-                        "title": "test title",
-                        "url": "test url",
-                        "filepath": "test filepath",
-                        "chunk_id": "test chunk_id",
-                    },
-                    "intent": "query used",
-                },
-            ),
-            finish_reason="stop",
-        )
-    ]
-    mock_create.return_value = mock_chat_completion_response
-    prompt = "hello world"
-    messages_in = chat_history
-    messages_in.append(ChatMessage(text=prompt, role="user"))
-    messages_out: list[ChatMessage] = []
-    messages_out.append(ChatMessage(text=prompt, role="user"))
-
-    azure_chat_client = AzureChatClient()
-
-    content = await azure_chat_client.get_response(
-        messages=messages_in,
-    )
-    message = azure_chat_client._split_message(content)
-    assert len(content.messages) == 1
-    assert len(content.messages[0].contents) == 3
-    assert isinstance(content.messages[0].contents[0], FunctionCallContent)
-    assert isinstance(content.messages[0].contents[1], FunctionResultContent)
-    assert isinstance(content.messages[0].contents[2], TextContent)
-    assert content.messages[0].contents[2].text == "test"
-    assert message.messages[0].contents == [content.messages[0].contents[0]]
 
 
 CONTENT_FILTERED_ERROR_MESSAGE = (
@@ -607,7 +561,7 @@ async def test_bad_request_non_content_filter(
 
 
 @patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
-async def test_cmc_streaming(
+async def test_get_streaming(
     mock_create: AsyncMock,
     azure_openai_unit_test_env: dict[str, str],
     chat_history: list[ChatMessage],

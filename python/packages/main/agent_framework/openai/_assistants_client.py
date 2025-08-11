@@ -3,7 +3,7 @@
 import json
 import sys
 from collections.abc import AsyncIterable, Mapping, MutableMapping, MutableSequence
-from typing import Any, ClassVar
+from typing import Any
 
 from openai import AsyncOpenAI
 from openai.types.beta.threads import (
@@ -45,6 +45,10 @@ if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
 else:
     from typing_extensions import Self  # pragma: no cover
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 __all__ = ["OpenAIAssistantsClient"]
 
@@ -54,7 +58,6 @@ __all__ = ["OpenAIAssistantsClient"]
 class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
     """OpenAI Assistants client."""
 
-    MODEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
     assistant_id: str | None = Field(default=None)
     assistant_name: str | None = Field(default=None)
     thread_id: str | None = Field(default=None)
@@ -467,3 +470,15 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
                 tool_outputs.append(ToolOutput(tool_call_id=call_id, output=str(function_result_content.result)))
 
         return run_id, tool_outputs
+
+    @override
+    def update_agent_name(self, agent_name: str | None) -> None:
+        """Update the agent name in the chat client.
+
+        Args:
+            agent_name: The new name for the agent.
+        """
+        # This is a no-op in the base class, but can be overridden by subclasses
+        # to update the agent name in the client.
+        if agent_name and not self.assistant_name:
+            self.assistant_name = agent_name

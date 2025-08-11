@@ -4,22 +4,19 @@ import sys
 from collections.abc import AsyncIterable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
 from datetime import datetime
 from itertools import chain
-from typing import Any, ClassVar, Literal
+from typing import Any, Literal, TypeVar
 
-from openai import AsyncOpenAI, AsyncStream, BadRequestError
+from openai import AsyncOpenAI, BadRequestError
 from openai.types.responses.function_tool_param import FunctionToolParam
 from openai.types.responses.parsed_response import (
     ParsedResponse,
 )
 from openai.types.responses.response import Response as OpenAIResponse
-from openai.types.responses.response_code_interpreter_tool_call import ResponseCodeInterpreterToolCall
 from openai.types.responses.response_completed_event import ResponseCompletedEvent
 from openai.types.responses.response_content_part_added_event import ResponseContentPartAddedEvent
 from openai.types.responses.response_function_call_arguments_delta_event import ResponseFunctionCallArgumentsDeltaEvent
-from openai.types.responses.response_function_tool_call import ResponseFunctionToolCall
 from openai.types.responses.response_includable import ResponseIncludable
 from openai.types.responses.response_output_item_added_event import ResponseOutputItemAddedEvent
-from openai.types.responses.response_output_message import ResponseOutputMessage
 from openai.types.responses.response_output_refusal import ResponseOutputRefusal
 from openai.types.responses.response_output_text import ResponseOutputText
 from openai.types.responses.response_stream_event import ResponseStreamEvent as OpenAIResponseStreamEvent
@@ -32,7 +29,7 @@ from openai.types.responses.tool_param import (
 )
 from pydantic import BaseModel, SecretStr, ValidationError
 
-from agent_framework import UriContent, UsageContent
+from agent_framework import DataContent, TextReasoningContent, UriContent, UsageContent
 
 from .._clients import ChatClientBase, use_tool_calling
 from .._logging import get_logger
@@ -46,21 +43,22 @@ from .._types import (
     ChatResponseUpdate,
     ChatRole,
     ChatToolMode,
+    CitationAnnotation,
     FunctionCallContent,
     FunctionResultContent,
     StructuredResponse,
     TextContent,
+    TextSpanRegion,
     UsageDetails,
 )
 from ..exceptions import (
     ServiceInitializationError,
     ServiceInvalidRequestError,
-    ServiceInvalidResponseError,
     ServiceResponseException,
 )
 from ..telemetry import use_telemetry
 from ._exceptions import OpenAIContentFilterException
-from ._shared import OpenAIConfigBase, OpenAIHandler, OpenAIModelTypes, OpenAISettings, prepare_function_call_results
+from ._shared import OpenAIConfigBase, OpenAIHandler, OpenAISettings, prepare_function_call_results
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
@@ -298,7 +296,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                 response_tools.append(tool if isinstance(tool, dict) else dict(tool))
         return response_tools
 
-    def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions):
+    def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
         """Take ChatOptions and create the specific options for Responses."""
         options_dict = chat_options.to_provider_settings(exclude={"response_format"})
         request_input = self._prepare_chat_history_for_request(messages)
@@ -403,8 +401,6 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                 f"{type(self)} service failed to complete the prompt",
                 inner_exception=ex,
             ) from ex
-        if not isinstance(response, AsyncStream):
-            raise ServiceInvalidResponseError("Expected an AsyncStream[ResponseStreamEvent] response.")
 
     def _create_response_content(
         self,
@@ -414,21 +410,113 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         """Create a chat message content object from a choice."""
         structured_response: BaseModel | None = response.output_parsed if isinstance(response, ParsedResponse) else None  # type: ignore[reportUnknownMemberType]
 
-        items: list[ChatMessage] = []
         metadata: dict[str, Any] = response.metadata or {}
+        contents: list[AIContents] = []
         for item in response.output:  # type: ignore[reportUnknownMemberType]
-            contents: list[AIContents] = []
-            match item:
-                case ResponseOutputMessage():
-                    for content in item.content:  # type: ignore[reportMissingTypeArgument]
-                        match content:
-                            # TODO(peterychang): Add annotations when available
-                            case ResponseOutputText():
-                                contents.append(TextContent(text=content.text, raw_representation=content))  # type: ignore[reportUnknownArgumentType]
-                                metadata.update(self._get_metadata_from_response(content))
-                            case ResponseOutputRefusal():
-                                contents.append(TextContent(text=content.refusal, raw_representation=content))
-                case ResponseCodeInterpreterToolCall():
+            match item.type:
+                # types:
+                # ParsedResponseOutputMessage[Unknown] |
+                # ParsedResponseFunctionToolCall |
+                # ResponseFileSearchToolCall |
+                # ResponseFunctionWebSearch |
+                # ResponseComputerToolCall |
+                # ResponseReasoningItem |
+                # McpCall |
+                # McpApprovalRequest |
+                # ImageGenerationCall |
+                # LocalShellCall |
+                # LocalShellCallAction |
+                # McpListTools |
+                # ResponseCodeInterpreterToolCall |
+                # ResponseCustomToolCall |
+                # ParsedResponseOutputMessage[BaseModel] |
+                # ResponseOutputMessage |
+                # ResponseFunctionToolCall
+                case "message":  # ResponseOutputMessage
+                    for message_content in item.content:  # type: ignore[reportMissingTypeArgument]
+                        match message_content.type:
+                            case "output_text":
+                                text_content = TextContent(
+                                    text=message_content.text, raw_representation=message_content
+                                )
+                                metadata.update(self._get_metadata_from_response(message_content))
+                                if message_content.annotations:
+                                    text_content.annotations = []
+                                    for annotation in message_content.annotations:
+                                        match annotation.type:
+                                            case "file_path":
+                                                text_content.annotations.append(
+                                                    CitationAnnotation(
+                                                        file_id=annotation.file_id,
+                                                        additional_properties={
+                                                            "index": annotation.index,
+                                                        },
+                                                        raw_representation=annotation,
+                                                    )
+                                                )
+                                            case "file_citation":
+                                                text_content.annotations.append(
+                                                    CitationAnnotation(
+                                                        url=annotation.filename,
+                                                        file_id=annotation.file_id,
+                                                        raw_representation=annotation,
+                                                        additional_properties={
+                                                            "index": annotation.index,
+                                                        },
+                                                    )
+                                                )
+                                            case "url_citation":
+                                                text_content.annotations.append(
+                                                    CitationAnnotation(
+                                                        title=annotation.title,
+                                                        url=annotation.url,
+                                                        annotated_regions=[
+                                                            TextSpanRegion(
+                                                                start_index=annotation.start_index,
+                                                                end_index=annotation.end_index,
+                                                            )
+                                                        ],
+                                                        raw_representation=annotation,
+                                                    )
+                                                )
+                                            case "container_file_citation":
+                                                text_content.annotations.append(
+                                                    CitationAnnotation(
+                                                        file_id=annotation.file_id,
+                                                        url=annotation.filename,
+                                                        additional_properties={
+                                                            "container_id": annotation.container_id,
+                                                        },
+                                                        annotated_regions=[
+                                                            TextSpanRegion(
+                                                                start_index=annotation.start_index,
+                                                                end_index=annotation.end_index,
+                                                            )
+                                                        ],
+                                                        raw_representation=annotation,
+                                                    )
+                                                )
+                                            case _:
+                                                logger.debug("Unparsed annotation type: %s", annotation.type)
+                                contents.append(text_content)
+                            case "refusal":
+                                contents.append(
+                                    TextContent(text=message_content.refusal, raw_representation=message_content)
+                                )
+                case "reasoning":  # ResponseOutputReasoning
+                    if item.content:
+                        for index, reasoning_content in enumerate(item.content):
+                            additional_properties = None
+                            if item.summary and index < len(item.summary):
+                                additional_properties = {"summary": item.summary[index]}
+                            contents.append(
+                                TextReasoningContent(
+                                    text=reasoning_content.text,
+                                    raw_representation=reasoning_content,
+                                    additional_properties=additional_properties,
+                                )
+                            )
+                case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
                     if item.outputs:
                         for code_output in item.outputs:
                             if code_output.type == "logs":
@@ -443,10 +531,9 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                                     )
                                 )
                     elif item.code:
-                        # fallback if not output was returned is the code:
+                        # fallback if no output was returned is the code:
                         contents.append(TextContent(text=item.code, raw_representation=item))
-                # TODO(peterychang): Add support for other content types
-                case ResponseFunctionToolCall():
+                case "function_call":  # ResponseOutputFunctionCall
                     contents.append(
                         FunctionCallContent(
                             call_id=item.call_id if item.call_id else "",
@@ -456,13 +543,22 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                             raw_representation=item,
                         )
                     )
+                case "image_generation_call":  # ResponseOutputImageGenerationCall
+                    if item.result:
+                        contents.append(
+                            DataContent(
+                                uri=item.result,
+                                raw_representation=item,
+                            )
+                        )
+                # TODO(peterychang): Add support for other content types
                 case _:
-                    logger.debug("Unparsed contents: %s", item)
-            items.append(ChatMessage(role="assistant", contents=contents, raw_representation=item))  # type: ignore[reportUnknownArgumentType]
+                    logger.debug("Unparsed content of type: %s: %s", item.type, item)
+        response_message = ChatMessage(role="assistant", contents=contents)
         args: dict[str, Any] = {
             "response_id": response.id,
             "created_at": datetime.fromtimestamp(response.created_at).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-            "messages": items,
+            "messages": response_message,
             "model_id": response.model,
             "additional_properties": metadata,
             "raw_representation": response,
@@ -477,7 +573,10 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         return ChatResponse(**args)
 
     def _create_streaming_response_content(
-        self, event: OpenAIResponseStreamEvent, chat_options: ChatOptions, function_call_ids: dict[int, tuple[str, str]]
+        self,
+        event: OpenAIResponseStreamEvent,
+        chat_options: ChatOptions,
+        function_call_ids: dict[int, tuple[str, str]],
     ) -> ChatResponseUpdate:
         """Create a streaming chat message content object from a choice."""
         metadata: dict[str, Any] = {}
@@ -584,7 +683,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                 }
             case FunctionResultContent():
                 # call_id for the result needs to be the same as the call_id for the function call
-                args = {
+                args: dict[str, Any] = {
                     "call_id": content.call_id,
                     "id": call_id_to_id[content.call_id],
                     "type": "function_call_output",
@@ -640,12 +739,13 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         return {}
 
 
+TOpenAIResponsesClient = TypeVar("TOpenAIResponsesClient", bound="OpenAIResponsesClient")
+
+
 @use_telemetry
 @use_tool_calling
 class OpenAIResponsesClient(OpenAIConfigBase, OpenAIResponsesClientBase):
     """OpenAI Responses client class."""
-
-    MODEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     def __init__(
         self,
@@ -696,25 +796,19 @@ class OpenAIResponsesClient(OpenAIConfigBase, OpenAIResponsesClientBase):
             ai_model_id=openai_settings.responses_model_id,
             api_key=openai_settings.api_key.get_secret_value() if openai_settings.api_key else None,
             org_id=openai_settings.org_id,
-            ai_model_type=OpenAIModelTypes.RESPONSE,
             default_headers=default_headers,
             client=async_client,
             instruction_role=instruction_role,
         )
 
     @classmethod
-    def from_dict(cls, settings: dict[str, Any]) -> "OpenAIResponsesClient":
+    def from_dict(cls: type[TOpenAIResponsesClient], settings: dict[str, Any]) -> TOpenAIResponsesClient:
         """Initialize an Open AI service from a dictionary of settings.
 
         Args:
             settings: A dictionary of settings for the service.
         """
-        return OpenAIResponsesClient(
-            ai_model_id=settings["ai_model_id"],
-            default_headers=settings.get("default_headers"),
-            api_key=settings.get("api_key"),
-            org_id=settings.get("org_id"),
-        )
+        return cls(**settings)
 
 
 # endregion

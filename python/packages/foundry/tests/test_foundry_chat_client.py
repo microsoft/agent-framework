@@ -44,7 +44,8 @@ def create_test_foundry_chat_client(
         agent_id=agent_id,
         thread_id=thread_id,
         _should_delete_agent=should_delete_agent,
-        _foundry_settings=foundry_settings,
+        agent_name=foundry_settings.agent_name,  # type: ignore[reportCallIssue]
+        ai_model_deployment_name=foundry_settings.model_deployment_name,  # type:
         credential=None,
     )
 
