@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from agent_framework.exceptions import ServiceInvalidAuthError
 from azure.core.exceptions import ClientAuthenticationError
@@ -13,7 +13,11 @@ if TYPE_CHECKING:
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-def get_entra_auth_token(credential: "ChainedTokenCredential", token_endpoint: str) -> str | None:
+def get_entra_auth_token(
+    credential: "ChainedTokenCredential",
+    token_endpoint: str,
+    **kwargs: Any,
+) -> str | None:
     """Retrieve a Microsoft Entra Auth Token for a given token endpoint.
 
     The token endpoint may be specified as an environment variable, via the .env
@@ -23,6 +27,7 @@ def get_entra_auth_token(credential: "ChainedTokenCredential", token_endpoint: s
         credential: The Azure credential to use for authentication.
             for dev, you can use `DefaultAzureCredential`, but this is not recommended for production.
         token_endpoint: The token endpoint to use to retrieve the authentication token.
+        **kwargs: Additional keyword arguments to pass to the token retrieval method.
 
     Returns:
         The Azure token or None if the token could not be retrieved.
@@ -33,7 +38,7 @@ def get_entra_auth_token(credential: "ChainedTokenCredential", token_endpoint: s
         )
 
     try:
-        auth_token = credential.get_token(token_endpoint)
+        auth_token = credential.get_token(token_endpoint, **kwargs)
     except ClientAuthenticationError as ex:
         logger.error(f"Failed to retrieve Azure token for the specified endpoint: `{token_endpoint}`, with error: {ex}")
         return None
@@ -41,7 +46,9 @@ def get_entra_auth_token(credential: "ChainedTokenCredential", token_endpoint: s
     return auth_token.token if auth_token else None
 
 
-async def get_entra_auth_token_async(credential: "AsyncChainedTokenCredential", token_endpoint: str) -> str | None:
+async def get_entra_auth_token_async(
+    credential: "AsyncChainedTokenCredential", token_endpoint: str, **kwargs: Any
+) -> str | None:
     """Retrieve a async Microsoft Entra Auth Token for a given token endpoint.
 
     The token endpoint may be specified as an environment variable, via the .env
@@ -51,6 +58,7 @@ async def get_entra_auth_token_async(credential: "AsyncChainedTokenCredential", 
         credential: The async Azure credential to use for authentication.
             for dev, you can use `DefaultAzureCredential`, but this is not recommended for production.
         token_endpoint: The token endpoint to use to retrieve the authentication token.
+        **kwargs: Additional keyword arguments to pass to the token retrieval method.
 
     Returns:
         The Azure token or None if the token could not be retrieved.
@@ -61,7 +69,7 @@ async def get_entra_auth_token_async(credential: "AsyncChainedTokenCredential", 
         )
 
     try:
-        auth_token = await credential.get_token(token_endpoint)
+        auth_token = await credential.get_token(token_endpoint, **kwargs)
     except ClientAuthenticationError as ex:
         logger.error(f"Failed to retrieve Azure token for the specified endpoint: `{token_endpoint}`, with error: {ex}")
         return None
