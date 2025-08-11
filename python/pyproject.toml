@@ -174,7 +174,7 @@ docs-serve = "sphinx-autobuild --watch docs/agent-framework docs/build --port 80
 docs-check = "sphinx-build --fail-on-warning docs/agent-framework docs/build"
 docs-check-examples = "sphinx-build -b code_lint docs/agent-framework docs/build"
 pre-commit-install = "uv run pre-commit install --install-hooks --overwrite"
-install = "uv sync --all-packages --dev -U --prerelease=if-necessary-or-explicit"
+install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit"
 test = "python run_tasks_in_packages_if_exists.py test"
 fmt = "python run_tasks_in_packages_if_exists.py fmt"
 format.ref = "fmt"
