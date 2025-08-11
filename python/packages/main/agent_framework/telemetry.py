@@ -18,8 +18,9 @@ from ._pydantic import AFBaseSettings
 if TYPE_CHECKING:  # pragma: no cover
     from opentelemetry.util._decorator import _AgnosticContextManager  # type: ignore[reportPrivateUsage]
 
-    from ._agents import AgentThread, AIAgent, ChatClientAgent
+    from ._agents import AIAgent, ChatClientAgent
     from ._clients import ChatClientBase
+    from ._threads import AgentThread
     from ._tools import AIFunction
     from ._types import (
         AgentRunResponse,
