@@ -187,16 +187,14 @@ public sealed class Step02_ChatClientAgent_UsingFunctionTools(ITestOutputHelper 
             // Loop until all user input requests are handled.
             while (userInputRequests.Count > 0)
             {
-                List<ChatMessage> nextIterationMessages = [];
+                List<ChatMessage> nextIterationMessages = userInputRequests?.Select((request) => request switch
+                {
+                    FunctionApprovalRequestContent functionApprovalRequest when functionApprovalRequest.FunctionCall.Name == "GetSpecials" || functionApprovalRequest.FunctionCall.Name == "add" => functionApprovalRequest.Approve(),
+                    FunctionApprovalRequestContent functionApprovalRequest => functionApprovalRequest.Reject(),
+                    _ => throw new NotSupportedException($"Unsupported request type: {request.GetType().Name}")
+                })?.ToList() ?? [];
 
-                var approvedRequests = userInputRequests.OfType<FunctionApprovalRequestContent>().Where(x => x.FunctionCall.Name == "GetSpecials" || x.FunctionCall.Name == "add").ToList();
-                var rejectedRequests = userInputRequests.OfType<FunctionApprovalRequestContent>().Where(x => x.FunctionCall.Name != "GetSpecials" && x.FunctionCall.Name != "add").ToList();
-
-                approvedRequests.ForEach(x => Console.WriteLine($"Approving the {x.FunctionCall.Name} function call."));
-                rejectedRequests.ForEach(x => Console.WriteLine($"Rejecting the {x.FunctionCall.Name} function call."));
-
-                nextIterationMessages.AddRange(approvedRequests.Select(x => x.Approve()));
-                nextIterationMessages.AddRange(rejectedRequests.Select(x => x.Reject()));
+                nextIterationMessages.ForEach(x => Console.WriteLine($"Approval for the {(x.Contents[0] as FunctionApprovalResponseContent)?.FunctionCall.Name} function call is set to {(x.Contents[0] as FunctionApprovalResponseContent)?.Approved}."));
 
                 response = await agent.RunAsync(nextIterationMessages, thread);
                 this.WriteResponseOutput(response);
