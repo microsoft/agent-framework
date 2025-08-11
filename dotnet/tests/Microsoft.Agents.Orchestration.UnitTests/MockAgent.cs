@@ -54,9 +54,4 @@ internal sealed class MockAgent(int index) : AIAgent
 
         return this.Response.Select(message => new AgentRunResponseUpdate(message.Role, message.Text)).ToAsyncEnumerable();
     }
-
-    public override object? GetService(Type serviceType, object? serviceKey = null)
-    {
-        throw new NotImplementedException();
-    }
 }
