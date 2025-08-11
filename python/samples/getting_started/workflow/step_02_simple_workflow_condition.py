@@ -97,15 +97,10 @@ async def main():
     workflow = (
         WorkflowBuilder()
         .set_start_executor(spam_detector)
-        .add_edge(
+        .add_conditional_fan_out_edges(
             spam_detector,
-            send_response,
-            condition=lambda x: x.is_spam is False,
-        )
-        .add_edge(
-            spam_detector,
-            remove_spam,
-            condition=lambda x: x.is_spam is True,
+            [send_response, remove_spam],
+            conditions=[lambda x: not x.is_spam],
         )
         .build()
     )

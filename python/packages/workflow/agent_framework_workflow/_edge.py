@@ -297,7 +297,7 @@ class TargetEdgeGroup(EdgeGroup):
             self._buffer.clear()
             # Only trigger one edge to send the messages to avoid duplicate sends
             await self._edges[0].send_message(
-                Message([msg.data for msg in messages_to_send], self._edges[0].source_id),
+                Message([msg.data for msg in messages_to_send], self.__class__.__name__),
                 shared_state,
                 ctx,
             )
