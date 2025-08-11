@@ -118,7 +118,7 @@ class HostedCodeInterpreterTool(AIToolBase):
     that it is allowed to execute generated code if the service is capable of doing so.
     """
 
-    inputs: list["AIContents"] = Field(default_factory=list)
+    inputs: list[Any] = Field(default_factory=list)
 
     def __init__(
         self,
@@ -144,7 +144,7 @@ class HostedCodeInterpreterTool(AIToolBase):
             **kwargs: Additional keyword arguments to pass to the base class.
         """
         args: dict[str, Any] = {
-            "name": "hosted_code_interpreter",
+            "name": "code_interpreter",
         }
         if inputs:
             args["inputs"] = _parse_inputs(inputs)

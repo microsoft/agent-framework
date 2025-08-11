@@ -79,7 +79,6 @@ __all__ = [
     "AIAnnotations",
     "AIContent",
     "AIContents",
-    "AITool",
     "AgentRunResponse",
     "AgentRunResponseUpdate",
     "AnnotatedRegion",

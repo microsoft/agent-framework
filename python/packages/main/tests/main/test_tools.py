@@ -300,29 +300,19 @@ def test_hosted_code_interpreter_tool_default():
 
     assert tool.name == "code_interpreter"
     assert tool.inputs == []
-    assert tool.description is None
+    assert tool.description == ""
     assert tool.additional_properties is None
     assert str(tool) == "HostedCodeInterpreterTool(name=code_interpreter)"
-
-
-def test_hosted_code_interpreter_tool_custom_name():
-    """Test HostedCodeInterpreterTool with custom name."""
-    tool = HostedCodeInterpreterTool(name="custom_interpreter")
-
-    assert tool.name == "custom_interpreter"
-    assert tool.inputs == []
-    assert str(tool) == "HostedCodeInterpreterTool(name=custom_interpreter)"
 
 
 def test_hosted_code_interpreter_tool_with_description():
     """Test HostedCodeInterpreterTool with description and additional properties."""
     tool = HostedCodeInterpreterTool(
-        name="test_interpreter",
         description="A test code interpreter",
         additional_properties={"version": "1.0", "language": "python"},
     )
 
-    assert tool.name == "test_interpreter"
+    assert tool.name == "code_interpreter"
     assert tool.description == "A test code interpreter"
     assert tool.additional_properties == {"version": "1.0", "language": "python"}
 
