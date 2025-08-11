@@ -27,6 +27,8 @@ from agent_framework import (
     FunctionCallContent,
     FunctionResultContent,
     GeneratedEmbeddings,
+    HostedFileContent,
+    HostedVectorStoreContent,
     SpeechToTextOptions,
     StructuredResponse,
     TextContent,
@@ -187,6 +189,68 @@ def test_uri_content():
     assert isinstance(content, AIContent)
 
 
+# region: HostedFileContent
+
+
+def test_hosted_file_content():
+    """Test the HostedFileContent class to ensure it initializes correctly."""
+    content = HostedFileContent(file_id="file-123", additional_properties={"version": 1})
+
+    # Check the type and content
+    assert content.type == "hosted_file"
+    assert content.file_id == "file-123"
+    assert content.additional_properties["version"] == 1
+
+    # Ensure the instance is of type AIContent
+    assert isinstance(content, AIContent)
+
+
+def test_hosted_file_content_minimal():
+    """Test the HostedFileContent class with minimal parameters."""
+    content = HostedFileContent(file_id="file-456")
+
+    # Check the type and content
+    assert content.type == "hosted_file"
+    assert content.file_id == "file-456"
+    assert content.additional_properties is None
+    assert content.raw_representation is None
+
+    # Ensure the instance is of type AIContent
+    assert isinstance(content, AIContent)
+
+
+# region: HostedVectorStoreContent
+
+
+def test_hosted_vector_store_content():
+    """Test the HostedVectorStoreContent class to ensure it initializes correctly."""
+    content = HostedVectorStoreContent(vector_store_id="vs-789", additional_properties={"version": 1})
+
+    # Check the type and content
+    assert content.type == "hosted_vector_store"
+    assert content.vector_store_id == "vs-789"
+    assert content.additional_properties["version"] == 1
+
+    # Ensure the instance is of type AIContent
+    assert isinstance(content, HostedVectorStoreContent)
+    assert isinstance(content, AIContent)
+
+
+def test_hosted_vector_store_content_minimal():
+    """Test the HostedVectorStoreContent class with minimal parameters."""
+    content = HostedVectorStoreContent(vector_store_id="vs-101112")
+
+    # Check the type and content
+    assert content.type == "hosted_vector_store"
+    assert content.vector_store_id == "vs-101112"
+    assert content.additional_properties is None
+    assert content.raw_representation is None
+
+    # Ensure the instance is of type AIContent
+    assert isinstance(content, HostedVectorStoreContent)
+    assert isinstance(content, AIContent)
+
+
 # region FunctionCallContent
 
 
@@ -328,6 +392,8 @@ def test_usage_details_add_with_none_and_type_errors():
         (UriContent, {"uri": "http://example.com", "media_type": "text/html"}),
         (FunctionCallContent, {"call_id": "1", "name": "example_function", "arguments": {}}),
         (FunctionResultContent, {"call_id": "1", "result": {}}),
+        (HostedFileContent, {"file_id": "file-123"}),
+        (HostedVectorStoreContent, {"vector_store_id": "vs-789"}),
     ],
 )
 def test_ai_content_serialization(content_type: type[AIContent], args: dict):
