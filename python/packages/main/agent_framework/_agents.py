@@ -241,7 +241,8 @@ class ChatClientAgent(AgentBase):
             top_p: the nucleus sampling probability to use.
             user: the user to associate with the request.
             additional_properties: additional properties to include in the request.
-            chat_message_store_factory: factory function to create an instance of ChatMessageStore.
+            chat_message_store_factory: factory function to create an instance of ChatMessageStore. If not provided,
+                the default in-memory store will be used.
             kwargs: any additional keyword arguments.
                 Unused, can be used by subclasses of this Agent.
         """
