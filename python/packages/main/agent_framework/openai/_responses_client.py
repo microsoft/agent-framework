@@ -44,6 +44,7 @@ from .._types import (
     CitationAnnotation,
     FunctionCallContent,
     FunctionResultContent,
+    HostedFileContent,
     StructuredResponse,
     TextContent,
     TextSpanRegion,
@@ -171,10 +172,18 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
             if isinstance(tool, AITool):
                 match tool:
                     case HostedCodeInterpreterTool():
+                        tool_args: dict[str, Any] = {"type": "auto"}
+                        if tool.inputs:
+                            tool_args["file_ids"] = []
+                            for tool_input in tool.inputs:
+                                if isinstance(tool_input, HostedFileContent):
+                                    tool_args["file_ids"].append(tool_input.file_id)
+                            if not tool_args["file_ids"]:
+                                tool_args.pop("file_ids")
                         response_tools.append(
                             CodeInterpreter(
                                 type="code_interpreter",
-                                container=CodeInterpreterContainerCodeInterpreterToolAuto(type="auto"),
+                                container=CodeInterpreterContainerCodeInterpreterToolAuto(**tool_args),
                             )
                         )
                     case AIFunction():
