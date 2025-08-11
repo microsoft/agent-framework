@@ -52,7 +52,7 @@ internal sealed class ReverseTextExecutor() : Executor<ReverseTextExecutor>("Rev
         string result = new(charArray);
 
         await context.SendMessageAsync(result).ConfigureAwait(false);
-        await context.AddEventAsync(new WorkflowCompletedEvent() { Data = result }).ConfigureAwait(false);
+        await context.AddEventAsync(new WorkflowCompletedEvent(result)).ConfigureAwait(false);
         return result;
     }
 }

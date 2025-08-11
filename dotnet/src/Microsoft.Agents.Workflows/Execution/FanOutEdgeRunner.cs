@@ -18,9 +18,9 @@ internal class FanOutEdgeRunner(IRunnerContext runContext, FanOutEdgeData edgeDa
     public async ValueTask<IEnumerable<object?>> ChaseAsync(object message)
     {
         List<string> targets =
-            this.EdgeData.Partitioner == null
+            this.EdgeData.PartitionAssigner == null
                 ? this.EdgeData.SinkIds
-                : this.EdgeData.Partitioner(message, this.BoundContexts.Count).Select(i => this.EdgeData.SinkIds[i]).ToList();
+                : this.EdgeData.PartitionAssigner(message, this.BoundContexts.Count).Select(i => this.EdgeData.SinkIds[i]).ToList();
 
         object?[] result = await Task.WhenAll(targets.Select(ProcessTargetAsync)).ConfigureAwait(false);
         return result.Where(r => r is not null);

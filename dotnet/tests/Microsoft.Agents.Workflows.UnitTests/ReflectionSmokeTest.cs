@@ -93,8 +93,6 @@ public class RoutingReflectionTests
         Assert.NotNull(result);
         Assert.True(result.IsSuccess);
         Assert.True(result.IsVoid);
-
-        await ((IAsyncDisposable)executor).DisposeAsync();
     }
 
     [Fact]
@@ -107,8 +105,6 @@ public class RoutingReflectionTests
         Assert.NotNull(result);
         Assert.True(result.IsSuccess);
         Assert.True(result.IsVoid);
-
-        await ((IAsyncDisposable)executor).DisposeAsync();
     }
 
     [Fact]
@@ -130,7 +126,5 @@ public class RoutingReflectionTests
         Assert.False(result.IsVoid);
 
         Assert.Equal(Expected, result.Result);
-
-        await ((IAsyncDisposable)executor).DisposeAsync();
     }
 }

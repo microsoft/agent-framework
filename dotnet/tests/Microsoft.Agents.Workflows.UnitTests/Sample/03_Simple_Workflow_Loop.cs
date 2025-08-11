@@ -69,7 +69,7 @@ internal sealed class GuessNumberExecutor : Executor<GuessNumberExecutor>, IMess
         switch (message)
         {
             case NumberSignal.Matched:
-                await context.AddEventAsync(new WorkflowCompletedEvent { Data = $"Guessed the number: {this._currGuess}" })
+                await context.AddEventAsync(new WorkflowCompletedEvent($"Guessed the number: {this._currGuess}"))
                              .ConfigureAwait(false);
                 break;
 
