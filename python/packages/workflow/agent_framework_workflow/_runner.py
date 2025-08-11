@@ -153,17 +153,16 @@ class Runner:
             return None
 
         try:
-            # Auto-snapshot executor states (opt-in via snapshot_state attribute or method)
+            # Auto-snapshot executor states
             await self._auto_snapshot_executor_states()
             await self._update_context_with_shared_state()
-            label = checkpoint_type
+            checkpoint_category = "initial" if checkpoint_type == "after_initial_execution" else "superstep"
             metadata = {
-                "label": label,
                 "superstep": self._iteration,
-                "checkpoint_type": checkpoint_type,
+                "checkpoint_type": checkpoint_category,
             }
-            checkpoint_id = await self._ctx.create_checkpoint(label=label, metadata=metadata)
-            logger.info(f"Created {checkpoint_type} checkpoint '{label}': {checkpoint_id}")
+            checkpoint_id = await self._ctx.create_checkpoint(metadata=metadata)
+            logger.info(f"Created {checkpoint_type} checkpoint: {checkpoint_id}")
             return checkpoint_id
         except Exception as e:
             logger.warning(f"Failed to create {checkpoint_type} checkpoint: {e}")

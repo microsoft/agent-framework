@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import logging
 import sys
 import uuid
 from collections.abc import AsyncIterable, Callable, Sequence
@@ -21,6 +22,9 @@ if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
 else:
     from typing_extensions import Self  # pragma: no cover
+
+
+logger = logging.getLogger(__name__)
 
 
 class WorkflowRunResult(list[WorkflowEvent]):
@@ -340,7 +344,36 @@ class Workflow:
             return False
 
     async def _transfer_state_to_context(self, restored_state: CheckpointState) -> None:
-        """Transfer messages from a restored checkpoint state into the current context."""
+        """Transfer restored checkpoint state into the current workflow runtime.
+
+        This transfers:
+        - messages -> into the current RunnerContext so delivery can continue
+        - executor_states -> into the current RunnerContext so ctx.get_state() works after resume
+        - shared_state -> into the Workflow's SharedState so executors can read values set before the checkpoint
+        """
+        # Best-effort restoration
+        # Restore shared state so downstream executors can read values (e.g., original_input)
+        try:
+            shared_state_data = restored_state.get("shared_state", {})
+            if shared_state_data and hasattr(self._shared_state, "_state"):
+                async with self._shared_state.hold():
+                    self._shared_state._state.clear()  # type: ignore[attr-defined]
+                    self._shared_state._state.update(shared_state_data)  # type: ignore[attr-defined]
+        except Exception as exc:  # pragma: no cover
+            logger.debug("Failed to restore shared_state during external restore: %s", exc)
+
+        # Restore executor states into the context so ctx.get_state() calls after resume succeed
+        try:
+            executor_states = restored_state.get("executor_states", {})
+            for exec_id, state in executor_states.items():
+                try:
+                    await self._runner.context.set_state(exec_id, state)
+                except Exception as exc:  # pragma: no cover - ignore per-executor failures
+                    logger.debug("Failed to restore executor state for %s during external restore: %s", exec_id, exc)
+        except Exception as exc:  # pragma: no cover
+            logger.debug("Failed to iterate executor_states during external restore: %s", exc)
+
+        # Transfer pending messages into the context for delivery in the next superstep
         messages_data = restored_state["messages"]
         for _, message_list in messages_data.items():
             for msg_data in message_list:

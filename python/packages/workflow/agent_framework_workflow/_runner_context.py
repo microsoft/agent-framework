@@ -127,11 +127,10 @@ class RunnerContext(Protocol):
         """Reset the context for a new workflow run."""
         ...
 
-    async def create_checkpoint(self, label: str | None = None, metadata: dict[str, Any] | None = None) -> str:
+    async def create_checkpoint(self, metadata: dict[str, Any] | None = None) -> str:
         """Create a checkpoint of the current workflow state.
 
         Args:
-            label: An optional label for the checkpoint.
             metadata: Optional metadata to associate with the checkpoint.
         """
         ...
@@ -223,7 +222,7 @@ class InProcRunnerContext:
         if workflow_shared_state is not None and hasattr(workflow_shared_state, "_state"):
             workflow_shared_state._state.clear()  # type: ignore[attr-defined]
 
-    async def create_checkpoint(self, label: str | None = None, metadata: dict[str, Any] | None = None) -> str:
+    async def create_checkpoint(self, metadata: dict[str, Any] | None = None) -> str:
         if not self._checkpoint_storage:
             raise ValueError("Checkpoint storage not configured")
 
@@ -233,16 +232,15 @@ class InProcRunnerContext:
 
         checkpoint = WorkflowCheckpoint(
             workflow_id=wf_id,
-            label=label or "",
             messages=state["messages"],
             shared_state=state.get("shared_state", {}),
             executor_states=state.get("executor_states", {}),
             iteration_count=state.get("iteration_count", 0),
             max_iterations=state.get("max_iterations", DEFAULT_MAX_ITERATIONS),
-            metadata=metadata or ({"label": label} if label else {}),
+            metadata=metadata or {},
         )
         checkpoint_id = await self._checkpoint_storage.save_checkpoint(checkpoint)
-        logger.info(f"Created checkpoint {checkpoint_id} for workflow {wf_id} with label '{checkpoint.label}'")
+        logger.info(f"Created checkpoint {checkpoint_id} for workflow {wf_id}'")
         return checkpoint_id
 
     async def restore_from_checkpoint(self, checkpoint_id: str) -> bool:
@@ -263,7 +261,7 @@ class InProcRunnerContext:
         }
         await self.set_checkpoint_state(state)
         self._workflow_id = checkpoint.workflow_id
-        logger.info(f"Restored state from checkpoint {checkpoint_id} with label '{checkpoint.label}'")
+        logger.info(f"Restored state from checkpoint {checkpoint_id}'")
         return True
 
     async def get_checkpoint_state(self) -> CheckpointState:

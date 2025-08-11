@@ -150,12 +150,11 @@ async def main():
     print("\nCheckpoint summary:")
     for cp in sorted(all_checkpoints, key=lambda c: c.timestamp):
         msg_count = sum(len(v) for v in cp.messages.values())
-        label = cp.label or cp.metadata.get("label", "")
         state_keys = sorted(list(cp.executor_states.keys())) if hasattr(cp, "executor_states") else []
         orig = cp.shared_state.get("original_input") if hasattr(cp, "shared_state") else None
         upper = cp.shared_state.get("upper_output") if hasattr(cp, "shared_state") else None
         print(
-            f"- {cp.checkpoint_id} | label='{label}' | "
+            f"- {cp.checkpoint_id} | "
             f"iter={cp.iteration_count} | messages={msg_count} | states={state_keys} | "
             f"shared_state: original_input='{orig}', upper_output='{upper}'"
         )
@@ -167,8 +166,19 @@ async def main():
         print("Could not find checkpoint with 'DLROW OLLEH'!")
         return
 
+    # The previous workflow can also be used.
+    # Showing that the workflow can run from a previous checkpoint,
+    # when checkpointing is not enabled for the particular instance.
+    new_workflow = (
+        WorkflowBuilder(max_iterations=5)
+        .add_edge(upper_case_executor, reverse_text_executor)
+        .add_edge(reverse_text_executor, lower_case_executor)
+        .set_start_executor(upper_case_executor)
+        .build()
+    )
+
     print(f"\nResuming from checkpoint: {checkpoint_id}")
-    async for event in workflow.run_streaming_from_checkpoint(checkpoint_id, checkpoint_storage=checkpoint_storage):
+    async for event in new_workflow.run_streaming_from_checkpoint(checkpoint_id, checkpoint_storage=checkpoint_storage):
         print(f"Resumed Event: {event}")
 
     """

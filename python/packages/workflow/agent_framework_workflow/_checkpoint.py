@@ -23,8 +23,6 @@ class WorkflowCheckpoint:
     workflow_id: str = ""
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
-    label: str = ""  # Can be a user-friendly label
-
     # Core workflow state
     messages: dict[str, list[dict[str, Any]]] = field(default_factory=dict)  # type: ignore[misc]
     shared_state: dict[str, Any] = field(default_factory=dict)  # type: ignore[misc]
@@ -180,7 +178,7 @@ class FileCheckpointStorage:
                     with open(file_path) as f:
                         data = json.load(f)
                     if workflow_id is None or data.get("workflow_id") == workflow_id:
-                        checkpoints.append(WorkflowCheckpoint(**data))
+                        checkpoints.append(WorkflowCheckpoint.from_dict(data))
                 except Exception as e:
                     logger.warning(f"Failed to read checkpoint file {file_path}: {e}")
             return checkpoints
