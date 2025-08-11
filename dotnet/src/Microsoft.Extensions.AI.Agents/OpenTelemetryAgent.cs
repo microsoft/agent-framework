@@ -111,9 +111,10 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
     public bool EnableSensitiveData { get; set; }
 
     /// <inheritdoc/>
-    public override object? GetService(Type serviceType, object? serviceKey = null) =>
-        serviceType == typeof(ActivitySource) ? this._activitySource :
-        this._innerAgent.GetService(serviceType, serviceKey);
+    public override object? GetService(Type serviceType, object? serviceKey = null)
+        => base.GetService(serviceType, serviceKey)
+            ?? (serviceType == typeof(ActivitySource) ? this._activitySource
+            : this._innerAgent.GetService(serviceType, serviceKey));
 
     /// <inheritdoc/>
     public override string Id => this._innerAgent.Id;

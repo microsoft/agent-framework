@@ -840,6 +840,95 @@ public class OpenTelemetryAgentTests
     }
 
     /// <summary>
+    /// Verify that GetService calls base.GetService() first and returns the agent itself when requesting OpenTelemetryAgent type.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingOpenTelemetryAgentType_ReturnsBaseImplementation()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        mockAgent.Setup(a => a.Id).Returns("test-id");
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object);
+
+        // Act
+        var result = telemetryAgent.GetService(typeof(OpenTelemetryAgent));
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Same(telemetryAgent, result);
+        // Verify that the inner agent's GetService was not called for this type since base.GetService() handled it
+        mockAgent.Verify(a => a.GetService(typeof(OpenTelemetryAgent), null), Times.Never);
+    }
+
+    /// <summary>
+    /// Verify that GetService calls base.GetService() first and returns the agent itself when requesting AIAgent type.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingAIAgentType_ReturnsBaseImplementation()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        mockAgent.Setup(a => a.Id).Returns("test-id");
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object);
+
+        // Act
+        var result = telemetryAgent.GetService(typeof(AIAgent));
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Same(telemetryAgent, result);
+        // Verify that the inner agent's GetService was not called for this type since base.GetService() handled it
+        mockAgent.Verify(a => a.GetService(typeof(AIAgent), null), Times.Never);
+    }
+
+    /// <summary>
+    /// Verify that GetService calls base.GetService() first but continues to derived logic when base returns null.
+    /// For ActivitySource, it returns the agent's own ActivitySource regardless of service key.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingActivitySourceWithServiceKey_ReturnsOwnActivitySource()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        mockAgent.Setup(a => a.Id).Returns("test-id");
+        var sourceName = "test-source";
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: sourceName);
+
+        // Act - Request ActivitySource with a service key (base.GetService will return null due to serviceKey)
+        var result = telemetryAgent.GetService(typeof(ActivitySource), "some-key");
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.IsType<ActivitySource>(result);
+        var activitySource = (ActivitySource)result;
+        Assert.Equal(sourceName, activitySource.Name);
+        // Verify that the inner agent's GetService was NOT called because ActivitySource is handled by the telemetry agent itself
+        mockAgent.Verify(a => a.GetService(typeof(ActivitySource), "some-key"), Times.Never);
+    }
+
+    /// <summary>
+    /// Verify that GetService calls base.GetService() first but continues to inner agent when base returns null and it's not ActivitySource.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingUnknownServiceWithServiceKey_CallsInnerAgent()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        mockAgent.Setup(a => a.Id).Returns("test-id");
+        mockAgent.Setup(a => a.GetService(typeof(string), "some-key")).Returns("test-result");
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object);
+
+        // Act - Request string with a service key (base.GetService will return null due to serviceKey)
+        var result = telemetryAgent.GetService(typeof(string), "some-key");
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal("test-result", result);
+        // Verify that the inner agent's GetService was called after base.GetService() returned null
+        mockAgent.Verify(a => a.GetService(typeof(string), "some-key"), Times.Once);
+    }
+
+    /// <summary>
     /// Verify that OpenTelemetryAgent delegates AIAgentMetadata requests to inner agent.
     /// </summary>
     [Fact]

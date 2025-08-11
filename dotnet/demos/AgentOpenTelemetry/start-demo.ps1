@@ -53,14 +53,14 @@ Write-Host "Starting Aspire Dashboard via Docker..." -ForegroundColor Cyan
 
 # Stop any existing Aspire Dashboard container
 Write-Host "Stopping any existing Aspire Dashboard container..." -ForegroundColor Gray
-docker stop aspire-dashboard 2>$null | Out-Null
-docker rm aspire-dashboard 2>$null | Out-Null
+docker stop aspire-dashboard-afdemo 2>$null | Out-Null
+docker rm aspire-dashboard-afdemo 2>$null | Out-Null
 
 # Start Aspire Dashboard in Docker daemon mode with fixed token
 Write-Host "Starting Aspire Dashboard container..." -ForegroundColor Green
 $fixedToken = "demo-token-12345"
 $dockerResult = docker run -d `
-    --name aspire-dashboard `
+    --name aspire-dashboard-afdemo `
     -p 4318:18888 `
     -p 4317:18889 `
     -e DOTNET_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS=true `
@@ -130,10 +130,10 @@ Write-Host "Starting the console application..." -ForegroundColor Green
 Write-Host "Tip: The dashboard should now be open in your browser!" -ForegroundColor Cyan
 Write-Host ""
 
-dotnet run
+dotnet run --no-build
 
 Write-Host ""
 Write-Host "Demo completed!" -ForegroundColor Green
 Write-Host "The Aspire Dashboard is still running in Docker." -ForegroundColor Gray
 Write-Host "You can view telemetry data in the browser tab that opened." -ForegroundColor Gray
-Write-Host "To stop the dashboard: docker stop aspire-dashboard" -ForegroundColor Gray
+Write-Host "To stop the dashboard: docker stop aspire-dashboard-afdemo" -ForegroundColor Gray

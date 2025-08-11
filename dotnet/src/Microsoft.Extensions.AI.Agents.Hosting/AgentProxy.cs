@@ -148,10 +148,4 @@ public sealed class AgentProxy : AIAgent
         var handle = await this._client.SendRequestAsync(actorRequest, cancellationToken).ConfigureAwait(false);
         return handle;
     }
-
-    /// <inheritdoc/>
-    public override object? GetService(Type serviceType, object? serviceKey = null)
-    {
-        return null; // AgentProxy does not support service resolution.
-    }
 }

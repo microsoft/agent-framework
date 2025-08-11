@@ -26,7 +26,7 @@ public class CopilotStudioAgent : AIAgent
     /// </summary>
     public CopilotClient Client { get; }
 
-    private readonly AIAgentMetadata _agentMetadata;
+    private readonly static AIAgentMetadata s_agentMetadata = new("copilot-studio");
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CopilotStudioAgent"/> class.
@@ -36,7 +36,6 @@ public class CopilotStudioAgent : AIAgent
     public CopilotStudioAgent(CopilotClient client, ILoggerFactory? loggerFactory = null)
     {
         this.Client = client;
-        this._agentMetadata = new AIAgentMetadata("copilot-studio");
         this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<CopilotStudioAgent>();
     }
 
@@ -130,7 +129,8 @@ public class CopilotStudioAgent : AIAgent
 
     /// <inheritdoc/>
     public override object? GetService(Type serviceType, object? serviceKey = null)
-        => serviceType == typeof(CopilotClient) ? this.Client :
-           serviceType == typeof(AIAgentMetadata) ? this._agentMetadata :
-           null;
+        => base.GetService(serviceType, serviceKey)
+           ?? (serviceType == typeof(CopilotClient) ? this.Client
+            : serviceType == typeof(AIAgentMetadata) ? s_agentMetadata
+            : null);
 }

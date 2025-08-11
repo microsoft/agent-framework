@@ -376,10 +376,7 @@ public class InMemoryChatMessageStoreTests
 
         // Act
         var messages = new List<ChatMessage>();
-        foreach (var message in store)
-        {
-            messages.Add(message);
-        }
+        messages.AddRange(store);
 
         // Assert
         Assert.Equal(2, messages.Count);

@@ -1364,6 +1364,100 @@ public class ChatClientAgentTests
         Assert.NotEqual(metadata1.ProviderName, metadata2.ProviderName);
     }
 
+    /// <summary>
+    /// Verify that GetService calls base.GetService() first and returns the agent itself when requesting ChatClientAgent type.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingChatClientAgentType_ReturnsBaseImplementation()
+    {
+        // Arrange
+        var mockChatClient = new Mock<IChatClient>();
+        var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            Instructions = "Test instructions"
+        });
+
+        // Act
+        var result = agent.GetService(typeof(ChatClientAgent));
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Same(agent, result);
+        // Verify that the ChatClient's GetService was not called for this type since base.GetService() handled it
+        mockChatClient.Verify(c => c.GetService(typeof(ChatClientAgent), null), Times.Never);
+    }
+
+    /// <summary>
+    /// Verify that GetService calls base.GetService() first and returns the agent itself when requesting AIAgent type.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingAIAgentType_ReturnsBaseImplementation()
+    {
+        // Arrange
+        var mockChatClient = new Mock<IChatClient>();
+        var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            Instructions = "Test instructions"
+        });
+
+        // Act
+        var result = agent.GetService(typeof(AIAgent));
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Same(agent, result);
+        // Verify that the ChatClient's GetService was not called for this type since base.GetService() handled it
+        mockChatClient.Verify(c => c.GetService(typeof(AIAgent), null), Times.Never);
+    }
+
+    /// <summary>
+    /// Verify that GetService calls base.GetService() first but continues to derived logic when base returns null.
+    /// For IChatClient, it returns the agent's own ChatClient regardless of service key.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingIChatClientWithServiceKey_ReturnsOwnChatClient()
+    {
+        // Arrange
+        var mockChatClient = new Mock<IChatClient>();
+        var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            Instructions = "Test instructions"
+        });
+
+        // Act - Request IChatClient with a service key (base.GetService will return null due to serviceKey)
+        var result = agent.GetService(typeof(IChatClient), "some-key");
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.IsAssignableFrom<IChatClient>(result);
+        // Verify that the ChatClient's GetService was NOT called because IChatClient is handled by the agent itself
+        mockChatClient.Verify(c => c.GetService(typeof(IChatClient), "some-key"), Times.Never);
+    }
+
+    /// <summary>
+    /// Verify that GetService calls base.GetService() first but continues to underlying ChatClient when base returns null and it's not IChatClient or AIAgentMetadata.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingUnknownServiceWithServiceKey_CallsUnderlyingChatClient()
+    {
+        // Arrange
+        var mockChatClient = new Mock<IChatClient>();
+        mockChatClient.Setup(c => c.GetService(typeof(string), "some-key")).Returns("test-result");
+        var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            Instructions = "Test instructions"
+        });
+
+        // Act - Request string with a service key (base.GetService will return null due to serviceKey)
+        var result = agent.GetService(typeof(string), "some-key");
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal("test-result", result);
+        // Verify that the ChatClient's GetService was called after base.GetService() returned null
+        mockChatClient.Verify(c => c.GetService(typeof(string), "some-key"), Times.Once);
+    }
+
     #endregion
 
     #region RunStreamingAsync Tests

@@ -48,7 +48,14 @@ public abstract class AIAgent
     /// including itself or any services it might be wrapping. For example, to access the <see cref="AIAgentMetadata"/> for the instance,
     /// <see cref="GetService"/> may be used to request it.
     /// </remarks>
-    public abstract object? GetService(Type serviceType, object? serviceKey = null);
+    public virtual object? GetService(Type serviceType, object? serviceKey = null)
+    {
+        _ = Throw.IfNull(serviceType);
+
+        return serviceKey is null && serviceType.IsInstanceOfType(this)
+            ? this
+            : null;
+    }
 
     /// <summary>Asks the <see cref="AIAgent"/> for an object of type <typeparamref name="TService"/>.</summary>
     /// <typeparam name="TService">The type of the object to be retrieved.</typeparam>
