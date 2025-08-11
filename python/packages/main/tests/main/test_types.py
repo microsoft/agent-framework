@@ -12,6 +12,7 @@ from agent_framework import (
     AIAnnotation,
     AIContent,
     AIContents,
+    AIFunction,
     AITool,
     AnnotatedRegion,
     ChatFinishReason,
@@ -723,11 +724,12 @@ def test_chat_options_init_with_args(ai_function_tool, ai_tool) -> None:
     assert options.presence_penalty == 0.0
     assert options.frequency_penalty == 0.0
     assert options.user == "user-123"
-    for tool in options._ai_tools:
+    for tool in options.tools:
         assert isinstance(tool, AITool)
         assert tool.name is not None
         assert tool.description is not None
-        assert tool.parameters() is not None
+        if isinstance(tool, AIFunction):
+            assert tool.parameters() is not None
 
     settings = options.to_provider_settings()
     assert settings["model"] == "gpt-4"  # uses alias
@@ -754,8 +756,6 @@ def test_chat_options_and(ai_function_tool, ai_tool) -> None:
     options3 = options1 & options2
 
     assert options3.ai_model_id == "gpt-4.1"
-    assert len(options3._ai_tools) == 2
-    assert options3._ai_tools == [ai_function_tool, ai_tool]
     assert options3.tools == [ai_function_tool, ai_tool]
     assert options3.logit_bias == {"x": 1}
     assert options3.metadata == {"a": "b"}

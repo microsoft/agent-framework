@@ -134,28 +134,21 @@ class AzureChatClient(AzureOpenAIConfigBase, OpenAIChatClientBase):
             env_file_path=settings.get("env_file_path"),
         )
 
-    def _create_chat_message_content(
-        self, response: ChatCompletion, choice: Choice, response_metadata: dict[str, Any]
-    ) -> ChatResponse:
+    # TODO (eavanvalkenburg): disabling this for a sec, will reenable when we have annotations.
+    def _create_chat_response(self, response: ChatCompletion) -> ChatResponse:
         """Create an Azure chat message content object from a choice."""
-        content = super()._create_chat_message_content(response, choice, response_metadata)
-        return self._add_tool_message_to_chat_message_content(content, choice)
+        return super()._create_chat_response(response)
 
-    def _create_streaming_chat_message_content(
+    # TODO (eavanvalkenburg): disabling this for a sec, will reenable when we have annotations.
+    def _create_chat_response_update(
         self,
         chunk: ChatCompletionChunk,
-        choice: ChunkChoice,
-        chunk_metadata: dict[str, Any],
     ) -> ChatResponseUpdate:
         """Create an Azure streaming chat message content object from a choice."""
-        content = super()._create_streaming_chat_message_content(chunk, choice, chunk_metadata)
-        assert isinstance(content, ChatResponseUpdate) and isinstance(choice, ChunkChoice)  # nosec # noqa: S101
-        return self._add_tool_message_to_chat_message_content(content, choice)
+        return super()._create_chat_response_update(chunk)
 
     def _add_tool_message_to_chat_message_content(
-        self,
-        content: TChatResponse,
-        choice: Choice | ChunkChoice,
+        self, content: TChatResponse, choice: Choice | ChunkChoice
     ) -> TChatResponse:
         if tool_message := self._get_tool_message_from_chat_choice(choice=choice):
             if not isinstance(tool_message, dict):

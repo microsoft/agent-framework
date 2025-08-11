@@ -21,11 +21,9 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    PrivateAttr,
     ValidationError,
     field_validator,
     model_serializer,
-    model_validator,
 )
 
 from ._pydantic import AFBaseModel
@@ -394,7 +392,7 @@ class AIContent(AFBaseModel):
     type: Literal["ai"] = "ai"
     annotations: list[AIAnnotations] | None = None
     additional_properties: dict[str, Any] | None = None
-    raw_representation: Any | None = Field(default=None, repr=False)
+    raw_representation: Any | None = Field(default=None, repr=False, exclude=True)
 
 
 class TextContent(AIContent):
@@ -1130,7 +1128,7 @@ class ChatRole(AFBaseModel):
         TOOL: The role that provides additional information and references in response to tool use requests.
     """
 
-    value: str
+    value: str = Field(..., kw_only=False)
 
     SYSTEM: ClassVar[Self]  # type: ignore[assignment]
     """The role that instructs or sets the behaviour of the AI system."""
@@ -1211,7 +1209,7 @@ class ChatMessage(AFBaseModel):
     """The ID of the chat message."""
     additional_properties: dict[str, Any] | None = None
     """Any additional properties associated with the chat message."""
-    raw_representation: Any | None = None
+    raw_representation: Any | None = Field(default=None, exclude=True)
     """The raw representation of the chat message from an underlying implementation."""
 
     @overload
@@ -1760,13 +1758,6 @@ class ChatOptions(AFBaseModel):
     tools: list[AITool | MutableMapping[str, Any]] | None = None
     top_p: Annotated[float | None, Field(ge=0.0, le=1.0)] = None
     user: str | None = None
-    _ai_tools: list[AITool | MutableMapping[str, Any]] | None = PrivateAttr(default=None)
-
-    @model_validator(mode="after")
-    def _copy_to_ai_tools(self) -> Self:
-        if self.tools and not self._ai_tools:
-            self._ai_tools = self.tools
-        return self
 
     @field_validator("tools", mode="before")
     @classmethod
@@ -1782,10 +1773,7 @@ class ChatOptions(AFBaseModel):
             | None
         ),
     ) -> list[AITool | MutableMapping[str, Any]] | None:
-        """Parse the tools field.
-
-        All tools are stored in both tools and _ai_tools.
-        """
+        """Parse the tools field."""
         if not tools:
             return None
         if not isinstance(tools, list):
@@ -1849,22 +1837,22 @@ class ChatOptions(AFBaseModel):
         """
         if not isinstance(other, ChatOptions):
             return self
-        ai_tools = other._ai_tools
-        updated_values = other.model_dump(exclude_none=True)
-        updated_values.pop("tools", [])
+        other_tools = other.tools
+        updated_values = other.model_dump(exclude_none=True, exclude={"tools"})
         logit_bias = updated_values.pop("logit_bias", {})
         metadata = updated_values.pop("metadata", {})
         additional_properties = updated_values.pop("additional_properties", {})
         combined = self.model_copy(update=updated_values)
-        if ai_tools:
-            if not combined._ai_tools:
-                combined._ai_tools = []
-            for tool in ai_tools:
-                if tool not in combined._ai_tools:
-                    combined._ai_tools.append(tool)
         combined.logit_bias = {**(combined.logit_bias or {}), **logit_bias}
         combined.metadata = {**(combined.metadata or {}), **metadata}
         combined.additional_properties = {**(combined.additional_properties or {}), **additional_properties}
+        if other_tools:
+            if not combined.tools:
+                combined.tools = other_tools
+            else:
+                for tool in other_tools:
+                    if tool not in combined.tools:
+                        combined.tools.append(tool)
         return combined
 
 

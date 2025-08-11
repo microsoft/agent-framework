@@ -138,6 +138,7 @@ class GenAIAttributes(str, Enum):
 
     # Agent Framework specific attributes
     MEASUREMENT_FUNCTION_TAG_NAME = "agent_framework.function.name"
+    MEASUREMENT_FUNCTION_INVOCATION_DURATION = "agent_framework.function.invocation.duration"
     AGENT_FRAMEWORK_GEN_AI_SYSTEM = "microsoft.agent_framework"
 
 
