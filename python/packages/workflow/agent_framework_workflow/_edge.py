@@ -213,7 +213,20 @@ class SourceEdgeGroup(EdgeGroup):
             return False
 
         # If no target ID, send the message to all edges in the group
-        await asyncio.gather(*(edge.send_message(message, shared_state, ctx) for edge in self._edges))
+        if all(not edge.can_handle(message.data) for edge in self._edges):
+            return False
+
+        await asyncio.gather(
+            *(
+                edge.send_message(
+                    message,
+                    shared_state,
+                    ctx,
+                )
+                for edge in self._edges
+                if edge.can_handle(message.data)
+            ),
+        )
         return True
 
     @override
@@ -387,6 +400,8 @@ class PartitioningEdgeGroup(SourceEdgeGroup):
                 executors to route the message to based on the data. The function should take the message data and
                 the number of targets, and return a list of indices of the target executors to route the message to.
         """
+        if len(targets) <= 1:
+            raise ValueError("PartitioningEdgeGroup must contain at least two targets.")
         self._edges = [Edge(source=source, target=target) for target in targets]
         self._partition_func = partition_func
 
@@ -396,7 +411,7 @@ class PartitioningEdgeGroup(SourceEdgeGroup):
         partition_result = self._partition_func(message.data, len(self._edges))
         if not self._validate_partition_result(partition_result):
             raise RuntimeError(
-                f"Invalid partition result: {partition_result}. Expected indices in range [0, {len(self._edges) - 1}]."
+                f"Invalid partition result: {partition_result}. Expected indices in range: [0, {len(self._edges) - 1}]."
             )
 
         if message.target_id:
