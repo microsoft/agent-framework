@@ -135,7 +135,9 @@ class AzureOpenAISettings(AFBaseSettings):
     default_token_endpoint: str = DEFAULT_AZURE_TOKEN_ENDPOINT
 
     def get_azure_auth_token(
-        self, credential: "ChainedTokenCredential | None" = None, token_endpoint: str | None = None
+        self,
+        credential: "ChainedTokenCredential",
+        token_endpoint: str | None = None,
     ) -> str | None:
         """Retrieve a Microsoft Entra Auth Token for a given token endpoint for the use with Azure OpenAI.
 
@@ -145,8 +147,7 @@ class AzureOpenAISettings(AFBaseSettings):
         The `token_endpoint` argument takes precedence over the `token_endpoint` attribute.
 
         Args:
-            credential: The Azure AD credential to use. Defaults to `DefaultAzureCredential`.
-                It is advised to use a more specific credential type for production.
+            credential: The Azure AD credential to use.
             token_endpoint: The token endpoint to use. Defaults to `https://cognitiveservices.azure.com/.default`.
 
         Returns:
@@ -155,11 +156,6 @@ class AzureOpenAISettings(AFBaseSettings):
         Raises:
             ServiceInitializationError: If the token endpoint is not provided.
         """
-        if not credential:
-            from azure.identity import DefaultAzureCredential
-
-            credential = DefaultAzureCredential()
-
         endpoint_to_use = token_endpoint or self.token_endpoint or self.default_token_endpoint
         if endpoint_to_use is None:  # type: ignore
             raise ServiceInitializationError("Please provide a token endpoint to retrieve the authentication token.")
