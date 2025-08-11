@@ -43,6 +43,9 @@ def _parse_inputs(
         elif isinstance(input_item, dict):
             # If it's a dict, we assume it contains properties for a specific content type.
             # we check if the required keys are present to determine the type.
+            # for instance, if it has "uri" and "media_type", we treat it as UriContent.
+            # if is only has uri, then we treat it as DataContent.
+            # etc.
             if "uri" in input_item:
                 parsed_inputs.append(
                     UriContent(**input_item) if "media_type" in input_item else DataContent(**input_item)
