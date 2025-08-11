@@ -15,7 +15,7 @@ internal abstract class A2AAgentCardProvider : IA2AAgentCardProvider
     public A2AAgentCardProvider(ILogger logger, AIAgent agent, TaskManager taskManager)
     {
         this._logger = logger;
-        this._agent = new A2AAgent(agent, taskManager);
+        this._agent = new A2AAgent(logger, agent, taskManager);
     }
 
     public Task<AgentCard> GetAgentCardAsync(string agentPath, CancellationToken cancellationToken)

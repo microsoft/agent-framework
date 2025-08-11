@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using A2A;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Extensions.AI.Agents.A2A.Internal;
 
@@ -13,11 +14,13 @@ namespace Microsoft.Extensions.AI.Agents.A2A.Internal;
 /// </summary>
 internal sealed class A2AAgent : AIAgent
 {
+    private readonly ILogger _logger;
     private readonly AIAgent _innerAgent;
     private readonly TaskManager _taskManager;
 
-    public A2AAgent(AIAgent innerAgent, TaskManager taskManager)
+    public A2AAgent(ILogger logger, AIAgent innerAgent, TaskManager taskManager)
     {
+        this._logger = logger ?? throw new ArgumentNullException(nameof(logger));
         this._innerAgent = innerAgent ?? throw new ArgumentNullException(nameof(innerAgent));
         this._taskManager = taskManager ?? throw new ArgumentNullException(nameof(taskManager));
     }
@@ -28,7 +31,7 @@ internal sealed class A2AAgent : AIAgent
     public override string? Description => this._innerAgent.Description;
 
     // Delegate the core methods to the inner agent
-    public override Task<AgentRunResponse> RunAsync(
+    public override async Task<AgentRunResponse> RunAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -42,7 +45,26 @@ internal sealed class A2AAgent : AIAgent
         thread ??= this._innerAgent.GetNewThread();
         thread = new A2AAgentThreadWrapper(thread, this._taskManager, a2aRunOptions.TaskId);
 
-        return this._innerAgent.RunAsync(messages, thread, options, cancellationToken);
+        AgentRunResponse response;
+        try
+        {
+            response = await this._innerAgent.RunAsync(messages, thread, options, cancellationToken).ConfigureAwait(false);
+            await this.CompleteAgentTask(a2aRunOptions.TaskId, TaskState.Completed, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException ex)
+        {
+            this._logger.LogError(ex, "Cancelled A2A agent {AgentName} task ID {TaskId} run.", this._innerAgent.Name, a2aRunOptions.TaskId);
+            await this.CompleteAgentTask(a2aRunOptions.TaskId, TaskState.Canceled, cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            this._logger.LogError(ex, "Error running A2A agent {AgentName} with task ID {TaskId}", this._innerAgent.Name, a2aRunOptions.TaskId);
+            await this.CompleteAgentTask(a2aRunOptions.TaskId, TaskState.Failed, cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+
+        return response;
     }
 
     public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
@@ -52,5 +74,10 @@ internal sealed class A2AAgent : AIAgent
         CancellationToken cancellationToken = default)
     {
         return this._innerAgent.RunStreamingAsync(messages, thread, options, cancellationToken);
+    }
+
+    private Task CompleteAgentTask(string taskId, TaskState state, CancellationToken cancellationToken)
+    {
+        return this._taskManager.UpdateStatusAsync(taskId, state, final: true, cancellationToken: cancellationToken);
     }
 }

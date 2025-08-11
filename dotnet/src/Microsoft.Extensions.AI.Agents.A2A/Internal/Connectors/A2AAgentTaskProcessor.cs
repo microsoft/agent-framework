@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using A2A;
 using Microsoft.Extensions.AI.Agents.A2A.Converters;
+using Microsoft.Extensions.AI.Agents.A2A.Extensions;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Extensions.AI.Agents.A2A.Internal.Connectors;
@@ -50,11 +51,13 @@ internal sealed class A2AAgentTaskProcessor : A2AAgentCardProvider, IA2AAgentTas
 
     public Task UpdateTaskAsync(AgentTask task, CancellationToken token)
     {
-        throw new NotImplementedException();
+        var final = task.Status.IsCompleted();
+        return this._taskManager.UpdateStatusAsync(task.Id, task.Status.State, final: final, cancellationToken: token);
     }
 
     public Task CancelTaskAsync(AgentTask task, CancellationToken token)
     {
-        throw new NotImplementedException();
+        // cancellation is just updating a status, so that all subscribers are notified.
+        return this._taskManager.UpdateStatusAsync(task.Id, task.Status.State, final: true, cancellationToken: token);
     }
 }

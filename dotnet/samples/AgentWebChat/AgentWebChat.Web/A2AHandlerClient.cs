@@ -3,6 +3,7 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using A2A;
+using Microsoft.Extensions.AI.Agents.A2A.Extensions;
 
 namespace AgentWebChat.Web;
 
@@ -61,8 +62,23 @@ public class A2AHandlerClient
             }
             else if (innerEvent is TaskStatusUpdateEvent updateEvent)
             {
-                var message = updateEvent.Status.Message!;
-                this._logger.LogInformation("Received TaskStatus update event for agent '{Agent}': taskId={TaskId};contextId={CtxId}", agent, updateEvent.TaskId, updateEvent.ContextId);
+                this._logger.LogInformation("Received TaskStatus update event for agent '{Agent}': taskId={TaskId};contextId={CtxId}. Status={Status}", agent, updateEvent.TaskId, updateEvent.ContextId, updateEvent.Status);
+
+                // handle taskStatus updates
+                if (updateEvent.Status.IsCompleted())
+                {
+                    this._logger.LogInformation("Received TaskStatus update with {Status} status for agent '{Agent}'", updateEvent.Status, agent);
+                    yield break;
+                }
+
+                // handle message
+                var message = updateEvent.Status.Message;
+                if (message is null)
+                {
+                    this._logger.LogWarning("Received TaskStatus update without message for agent '{Agent}'", agent);
+                    continue;
+                }
+
                 if (message.Role == MessageRole.User)
                 {
                     // this is a user message in the TaskStatus update, we can skip it
