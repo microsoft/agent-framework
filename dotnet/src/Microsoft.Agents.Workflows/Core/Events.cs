@@ -1,19 +1,37 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using Microsoft.Extensions.AI.Agents;
-using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Core;
 
 /// <summary>
 /// Base class for <see cref="Workflow"/>-scoped events.
 /// </summary>
-public record WorkflowEvent(object? Data = null);
+public class WorkflowEvent(object? data = null)
+{
+    /// <summary>
+    /// Optional payload
+    /// </summary>
+    public object? Data => data;
+
+    /// <inheritdoc/>
+    public override string ToString()
+    {
+        if (this.Data != null)
+        {
+            return $"{this.GetType().Name}(Data: {this.Data.GetType()} = {this.Data})";
+        }
+
+        return $"{this.GetType().Name}()";
+    }
+}
 
 /// <summary>
 /// Event triggered when a workflow starts execution.
 /// </summary>
-public record WorkflowStartedEvent : WorkflowEvent;
+/// <param name="message">The message triggering the start of workflow execution.</param>
+public sealed class WorkflowStartedEvent(object? message = null) : WorkflowEvent(data: message);
 
 /// <summary>
 /// Event triggered when a workflow completes execution.
@@ -22,66 +40,81 @@ public record WorkflowStartedEvent : WorkflowEvent;
 /// The user is expected to raise this event from a terminating <see cref="ExecutorBase"/>, or to build
 /// the workflow with output capture using <see cref="WorkflowBuilderExtensions.BuildWithOutput"/>.
 /// </remarks>
-public record WorkflowCompletedEvent : WorkflowEvent;
+/// <param name="result">The result of the execution of the workflow.</param>
+public sealed class WorkflowCompletedEvent(object? result = null) : WorkflowEvent(data: result);
+
+/// <summary>
+/// Event triggered when a workflow encounters an error.
+/// </summary>
+/// <param name="e">
+/// Optionally, the <see cref="Exception"/> representing the error.
+/// </param>
+public sealed class WorkflowErrorEvent(Exception? e) : WorkflowEvent(e);
+
+/// <summary>
+/// Event triggered when a workflow encounters a warning-condition.
+/// </summary>
+/// <param name="message">The warning message.</param>
+public sealed class WorkflowWarningEvent(string message) : WorkflowEvent(message);
 
 /// <summary>
 /// Event triggered when a workflow executor request external information.
 /// </summary>
-public record RequestInputEvent(ExternalRequest Request) : WorkflowEvent;
+public sealed class RequestInputEvent(ExternalRequest request) : WorkflowEvent(request)
+{
+    /// <summary>
+    /// The request to be serviced and data payload associated with it.
+    /// </summary>
+    public ExternalRequest Request => request;
+}
 
 /// <summary>
 /// Base class for <see cref="ExecutorBase"/>-scoped events.
 /// </summary>
-public record ExecutorEvent : WorkflowEvent
+public class ExecutorEvent(string executorId, object? data) : WorkflowEvent(data)
 {
     /// <summary>
     /// The identifier of the executor that generated this event.
     /// </summary>
-    public string ExecutorId { get; }
+    public string ExecutorId => executorId;
 
-    /// <summary>
-    /// Initializes a new instance of the <see cref="ExecutorEvent"/> class with the specified executor identifier and
-    /// optional event data.
-    /// </summary>
-    /// <param name="executorId">The unique identifier of the executor associated with this event. Cannot be <c>null</c>.</param>
-    /// <param name="data">Optional event data to associate with the event. May be <c>null</c> if no additional data is required.</param>
-    public ExecutorEvent(string executorId, object? data = null) : base(data)
+    /// <inheritdoc/>
+    public override string ToString()
     {
-        this.ExecutorId = Throw.IfNull(executorId);
+        if (this.Data != null)
+        {
+            return $"{this.GetType().Name}(Executor = {this.ExecutorId}, Data: {this.Data.GetType()} = {this.Data})";
+        }
+
+        return $"{this.GetType().Name}(Executor = {this.ExecutorId})";
     }
 }
 
 /// <summary>
 /// Event triggered when an executor handler is invoked.
 /// </summary>
-public record ExecutorInvokeEvent : ExecutorEvent
-{
-    /// <summary>
-    /// Initializes a new instance of the <see cref="ExecutorInvokeEvent"/> class.
-    /// </summary>
-    public ExecutorInvokeEvent(string executorId, object? data = null) : base(executorId, data)
-    {
-    }
-}
+/// <param name="executorId">The unique identifier of the executor being invoked.</param>
+/// <param name="message">The invocation message.</param>
+public sealed class ExecutorInvokeEvent(string executorId, object message) : ExecutorEvent(executorId, data: message);
 
 /// <summary>
 /// Event triggered when an executor handler has completed.
 /// </summary>
-public record ExecutorCompleteEvent : ExecutorEvent
-{
-    /// <summary>
-    /// Initializes a new instance of the <see cref="ExecutorCompleteEvent"/> class to signal that an executor has
-    /// completed its operation.
-    /// </summary>
-    /// <param name="executorId">The unique identifier of the executor that has completed. Cannot be <c>null</c> or empty.</param>
-    /// <param name="result">The result produced by the executor upon completion, or <c>null</c> if no result is available.</param>
-    public ExecutorCompleteEvent(string executorId, object? result = null) : base(executorId, result) { }
-}
+/// <param name="executorId">The unique identifier of the executor that has completed.</param>
+/// <param name="result">The result produced by the executor upon completion, or <c>null</c> if no result is available.</param>
+public sealed class ExecutorCompleteEvent(string executorId, object? result) : ExecutorEvent(executorId, data: result);
+
+/// <summary>
+/// Event triggered when an executor handler fails.
+/// </summary>
+/// <param name="executorId">The unique identifier of the executor that has failed.</param>
+/// <param name="err">The exception representing the error.</param>
+public sealed class ExecutorFailureEvent(string executorId, Exception? err) : ExecutorEvent(executorId, data: err);
 
 /// <summary>
 /// Event triggered when an agent run is completed.
 /// </summary>
-public record AgentRunEvent : ExecutorEvent
+public class AgentRunEvent : ExecutorEvent
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentRunEvent"/> class.
