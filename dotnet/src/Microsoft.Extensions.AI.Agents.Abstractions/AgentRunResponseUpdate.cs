@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Text.Json.Serialization;
 using Microsoft.Shared.Diagnostics;
 
@@ -97,7 +98,7 @@ public class AgentRunResponseUpdate
     /// This property concatenates all <see cref="UserInputRequestContent"/> instances in the response.
     /// </remarks>
     [JsonIgnore]
-    public IEnumerable<UserInputRequestContent> UserInputRequests => this._contents?.EnumerateUserInputRequests() ?? Array.Empty<UserInputRequestContent>();
+    public IEnumerable<UserInputRequestContent> UserInputRequests => this._contents?.OfType<UserInputRequestContent>() ?? Array.Empty<UserInputRequestContent>();
 
     /// <summary>Gets or sets the agent run response update content items.</summary>
     [AllowNull]

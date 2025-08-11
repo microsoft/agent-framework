@@ -115,10 +115,4 @@ internal static class AIContentExtensions
 #endif
         }
     }
-
-    public static IEnumerable<UserInputRequestContent> EnumerateUserInputRequests(this IList<ChatMessage> messages)
-        => messages.SelectMany(x => x.Contents).OfType<UserInputRequestContent>();
-
-    public static IEnumerable<UserInputRequestContent> EnumerateUserInputRequests(this IList<AIContent> contents)
-        => contents.OfType<UserInputRequestContent>();
 }
