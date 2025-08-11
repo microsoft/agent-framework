@@ -32,10 +32,9 @@ from agent_framework import DataContent, TextReasoningContent, UriContent, Usage
 
 from .._clients import ChatClientBase, use_tool_calling
 from .._logging import get_logger
-from .._tools import AIFunction, HostedCodeInterpreterTool
+from .._tools import AIFunction, AITool, HostedCodeInterpreterTool
 from .._types import (
     AIContents,
-    AITool,
     ChatMessage,
     ChatOptions,
     ChatResponse,
@@ -183,7 +182,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                         response_tools.append(
                             CodeInterpreter(
                                 type="code_interpreter",
-                                container=CodeInterpreterContainerCodeInterpreterToolAuto(**tool_args),
+                                container=CodeInterpreterContainerCodeInterpreterToolAuto(**tool_args),  # type: ignore[typeddict-item]
                             )
                         )
                     case AIFunction():

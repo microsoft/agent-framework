@@ -179,7 +179,7 @@ class UsageDetails(AFBaseModel):
         if not isinstance(value, int):
             raise ValueError("Additional counts must be integers.")
         if self.model_extra is None:
-            self.model_extra = {}  # type: ignore[reportAttributeAccessIssue]
+            self.model_extra = {}  # type: ignore[reportAttributeAccessIssue, misc]
         self.model_extra[key] = value
 
     def __add__(self, other: "UsageDetails | None") -> "UsageDetails":
