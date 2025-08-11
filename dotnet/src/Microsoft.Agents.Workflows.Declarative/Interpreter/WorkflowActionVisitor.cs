@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Azure.AI.Agents.Persistent;
 using Azure.Core.Pipeline;
 using Microsoft.Agents.Workflows.Core;
+using Microsoft.Agents.Workflows.Declarative.Execution;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Handlers;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
@@ -13,23 +14,23 @@ using Microsoft.PowerFx;
 using Microsoft.SemanticKernel.Process.Workflows.Actions;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.Workflows.Declarative;
+namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
-internal sealed class ProcessActionVisitor : DialogActionVisitor
+internal sealed class WorkflowActionVisitor : DialogActionVisitor
 {
     private readonly WorkflowBuilder _workflowBuilder;
-    private readonly ProcessWorkflowBuilder _workflowModel;
+    private readonly WorkflowModel _workflowModel;
     private readonly ProcessActionStack _actionStack;
     private readonly WorkflowContext _context;
-    private readonly ProcessActionScopes _scopes;
+    private readonly WorkflowScopes _scopes;
 
-    public ProcessActionVisitor(
+    public WorkflowActionVisitor(
         ExecutorIsh rootAction,
         WorkflowContext context,
-        ProcessActionScopes scopes)
+        WorkflowScopes scopes)
     {
         this._actionStack = new ProcessActionStack();
-        this._workflowModel = new ProcessWorkflowBuilder(rootAction);
+        this._workflowModel = new WorkflowModel(rootAction);
         this._workflowBuilder = new WorkflowBuilder(rootAction);
         this._context = context;
         this._scopes = scopes;

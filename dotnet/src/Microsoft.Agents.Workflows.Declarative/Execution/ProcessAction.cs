@@ -10,13 +10,13 @@ using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.Logging;
 using Microsoft.PowerFx;
 
-namespace Microsoft.Agents.Workflows.Declarative;
+namespace Microsoft.Agents.Workflows.Declarative.Execution;
 
-internal sealed record class ProcessActionContext(RecalcEngine Engine, ProcessActionScopes Scopes, Func<PersistentAgentsClient> ClientFactory, ILogger Logger)
+internal sealed record class ProcessActionContext(RecalcEngine Engine, WorkflowScopes Scopes, Func<PersistentAgentsClient> ClientFactory, ILogger Logger)
 {
-    private FoundryExpressionEngine? _expressionEngine;
+    private WorkflowExpressionEngine? _expressionEngine;
 
-    public FoundryExpressionEngine ExpressionEngine => this._expressionEngine ??= new FoundryExpressionEngine(this.Engine);
+    public WorkflowExpressionEngine ExpressionEngine => this._expressionEngine ??= new WorkflowExpressionEngine(this.Engine);
 }
 
 internal abstract class ProcessAction<TAction>(TAction model) : ProcessAction(model)

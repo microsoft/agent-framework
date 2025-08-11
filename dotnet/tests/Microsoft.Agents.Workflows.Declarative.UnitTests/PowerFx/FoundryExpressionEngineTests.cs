@@ -16,7 +16,7 @@ public class FoundryExpressionEngineTests(ITestOutputHelper output) : RecalcEngi
     {
         // Act
         RecalcEngine engine = this.CreateEngine();
-        FoundryExpressionEngine expressionEngine = new(engine);
+        WorkflowExpressionEngine expressionEngine = new(engine);
         this.Scopes.Set("test", FormulaValue.New("value"));
         engine.SetScopedVariable(this.Scopes, PropertyPath.TopicVariable("test"), FormulaValue.New("value"));
 

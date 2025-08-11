@@ -3,7 +3,9 @@
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.Workflows.Declarative.Execution;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.PowerFx.Types;
@@ -20,7 +22,7 @@ internal sealed class EditTableV2Action : AssignmentAction<EditTableV2>
 
     protected override async Task HandleAsync(ProcessActionContext context, CancellationToken cancellationToken)
     {
-        FormulaValue table = context.Scopes.Get(this.Target.VariableName!, ActionScopeType.Parse(this.Target.VariableScopeName));
+        FormulaValue table = context.Scopes.Get(this.Target.VariableName!, WorkflowScopeType.Parse(this.Target.VariableScopeName));
         TableValue tableValue = (TableValue)table;
 
         EditTableOperation? changeType = this.Model.ChangeType;

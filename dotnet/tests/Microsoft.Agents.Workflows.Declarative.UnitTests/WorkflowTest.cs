@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Xunit.Abstractions;
 
 namespace Microsoft.Agents.Workflows.Declarative.UnitTests;
@@ -32,5 +33,5 @@ public abstract class WorkflowTest : IDisposable
         }
     }
 
-    internal static string FormatVariablePath(string variableName, ActionScopeType? scope = null) => $"{scope ?? ActionScopeType.Topic}.{variableName}";
+    internal static string FormatVariablePath(string variableName, WorkflowScopeType? scope = null) => $"{scope ?? WorkflowScopeType.Topic}.{variableName}";
 }

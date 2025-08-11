@@ -3,6 +3,9 @@
 using System;
 using System.IO;
 using Microsoft.Agents.Workflows.Core;
+using Microsoft.Agents.Workflows.Declarative.Execution;
+using Microsoft.Agents.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Yaml;
 
@@ -27,12 +30,12 @@ public static class DeclarativeWorkflowBuilder
         string rootId = $"root_{GetRootId(rootElement)}";
 
         Console.WriteLine("@ INITIALIZING BUILDER");
-        ProcessActionScopes scopes = new();
+        WorkflowScopes scopes = new();
         DeclarativeWorkflowExecutor rootExecutor = new(scopes, rootId);
 
         Console.WriteLine("@ INTERPRETING WORKFLOW");
-        ProcessActionVisitor visitor = new(rootExecutor, context ?? new WorkflowContext(), scopes); // %%% DEFAULT CONTEXT (IMMUTABLE)
-        ProcessActionWalker walker = new(rootElement, visitor);
+        WorkflowActionVisitor visitor = new(rootExecutor, context ?? new WorkflowContext(), scopes); // %%% DEFAULT CONTEXT (IMMUTABLE)
+        WorkflowElementWalker walker = new(rootElement, visitor);
 
         Console.WriteLine("@ FINALIZING WORKFLOW");
         //ProcessStepBuilder errorHandler = // %%% DYNAMIC/CONTEXT ???

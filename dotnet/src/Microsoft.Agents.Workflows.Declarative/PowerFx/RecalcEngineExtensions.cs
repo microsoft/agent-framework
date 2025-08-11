@@ -9,7 +9,7 @@ namespace Microsoft.Agents.Workflows.Declarative.PowerFx;
 
 internal static class RecalcEngineExtensions
 {
-    public static void ClearScope(this RecalcEngine engine, ProcessActionScopes scopes, ActionScopeType scope)
+    public static void ClearScope(this RecalcEngine engine, WorkflowScopes scopes, WorkflowScopeType scope)
     {
         // Clear all scope values.
         scopes.Clear(scope);
@@ -18,10 +18,10 @@ internal static class RecalcEngineExtensions
         engine.UpdateScope(scopes, scope);
     }
 
-    public static void ClearScopedVariable(this RecalcEngine engine, ProcessActionScopes scopes, PropertyPath variablePath) =>
-        engine.ClearScopedVariable(scopes, ActionScopeType.Parse(variablePath.VariableScopeName), Throw.IfNull(variablePath.VariableName));
+    public static void ClearScopedVariable(this RecalcEngine engine, WorkflowScopes scopes, PropertyPath variablePath) =>
+        engine.ClearScopedVariable(scopes, WorkflowScopeType.Parse(variablePath.VariableScopeName), Throw.IfNull(variablePath.VariableName));
 
-    public static void ClearScopedVariable(this RecalcEngine engine, ProcessActionScopes scopes, ActionScopeType scope, string varName)
+    public static void ClearScopedVariable(this RecalcEngine engine, WorkflowScopes scopes, WorkflowScopeType scope, string varName)
     {
         // Clear value.
         scopes.Remove(varName, scope);
@@ -30,10 +30,10 @@ internal static class RecalcEngineExtensions
         engine.UpdateScope(scopes, scope);
     }
 
-    public static void SetScopedVariable(this RecalcEngine engine, ProcessActionScopes scopes, PropertyPath variablePath, FormulaValue value) =>
-        engine.SetScopedVariable(scopes, ActionScopeType.Parse(variablePath.VariableScopeName), Throw.IfNull(variablePath.VariableName), value);
+    public static void SetScopedVariable(this RecalcEngine engine, WorkflowScopes scopes, PropertyPath variablePath, FormulaValue value) =>
+        engine.SetScopedVariable(scopes, WorkflowScopeType.Parse(variablePath.VariableScopeName), Throw.IfNull(variablePath.VariableName), value);
 
-    public static void SetScopedVariable(this RecalcEngine engine, ProcessActionScopes scopes, ActionScopeType scope, string varName, FormulaValue value)
+    public static void SetScopedVariable(this RecalcEngine engine, WorkflowScopes scopes, WorkflowScopeType scope, string varName, FormulaValue value)
     {
         // Assign value.
         scopes.Set(varName, scope, value);
@@ -48,7 +48,7 @@ internal static class RecalcEngineExtensions
         engine.UpdateVariable(scopeName, scopeRecord);
     }
 
-    private static void UpdateScope(this RecalcEngine engine, ProcessActionScopes scopes, ActionScopeType scope)
+    private static void UpdateScope(this RecalcEngine engine, WorkflowScopes scopes, WorkflowScopeType scope)
     {
         RecordValue scopeRecord = scopes.BuildRecord(scope);
         engine.SetScope(scope.Name, scopeRecord);

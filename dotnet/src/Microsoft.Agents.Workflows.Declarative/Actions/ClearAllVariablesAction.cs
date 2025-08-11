@@ -2,6 +2,7 @@
 
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.Workflows.Declarative.Execution;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
@@ -28,7 +29,7 @@ internal sealed class ClearAllVariablesAction : ProcessAction<ClearAllVariables>
     {
         public void HandleAllGlobalVariables()
         {
-            context.Engine.ClearScope(context.Scopes, ActionScopeType.Global);
+            context.Engine.ClearScope(context.Scopes, WorkflowScopeType.Global);
         }
 
         public void HandleConversationHistory()
@@ -38,7 +39,7 @@ internal sealed class ClearAllVariablesAction : ProcessAction<ClearAllVariables>
 
         public void HandleConversationScopedVariables()
         {
-            context.Engine.ClearScope(context.Scopes, ActionScopeType.Topic);
+            context.Engine.ClearScope(context.Scopes, WorkflowScopeType.Topic);
         }
 
         public void HandleUnknownValue()
@@ -48,7 +49,7 @@ internal sealed class ClearAllVariablesAction : ProcessAction<ClearAllVariables>
 
         public void HandleUserScopedVariables()
         {
-            context.Engine.ClearScope(context.Scopes, ActionScopeType.Env);
+            context.Engine.ClearScope(context.Scopes, WorkflowScopeType.Env);
         }
     }
 }

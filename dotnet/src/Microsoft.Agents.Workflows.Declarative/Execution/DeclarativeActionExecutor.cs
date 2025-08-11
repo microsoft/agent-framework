@@ -4,7 +4,7 @@ using System;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Core;
 
-namespace Microsoft.Agents.Workflows.Declarative;
+namespace Microsoft.Agents.Workflows.Declarative.Execution;
 
 internal sealed class DeclarativeActionExecutor(string actionId, Func<ValueTask> action) :
     Executor<DeclarativeActionExecutor>(actionId),

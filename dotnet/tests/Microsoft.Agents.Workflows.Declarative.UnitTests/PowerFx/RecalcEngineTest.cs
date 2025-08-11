@@ -11,7 +11,7 @@ namespace Microsoft.Agents.Workflows.Declarative.UnitTests.PowerFx;
 /// </summary>
 public abstract class RecalcEngineTest(ITestOutputHelper output) : WorkflowTest(output)
 {
-    internal ProcessActionScopes Scopes { get; } = new();
+    internal WorkflowScopes Scopes { get; } = new();
 
     protected RecalcEngine CreateEngine(int maximumExpressionLength = 500) => RecalcEngineFactory.Create(this.Scopes, maximumExpressionLength);
 }

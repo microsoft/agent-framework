@@ -4,7 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.Agents.Persistent;
-using Microsoft.Agents.Workflows.Declarative;
+using Microsoft.Agents.Workflows.Declarative.Execution;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Handlers;
 using Microsoft.Bot.ObjectModel;

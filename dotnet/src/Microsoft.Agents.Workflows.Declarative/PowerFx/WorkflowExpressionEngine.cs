@@ -15,51 +15,51 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.PowerFx;
 
-internal class FoundryExpressionEngine : IExpressionEngine
+internal class WorkflowExpressionEngine : IExpressionEngine
 {
     //private static readonly JsonSerializerOptions s_options = new(); // %%% INVESTIGATE: ElementSerializer.CreateOptions();
 
     private readonly RecalcEngine _engine;
 
-    public FoundryExpressionEngine(RecalcEngine engine)
+    public WorkflowExpressionEngine(RecalcEngine engine)
     {
         this._engine = engine;
     }
 
-    public EvaluationResult<bool> GetValue(BoolExpression boolean, ProcessActionScopes state) => this.GetValue(boolean, state, this.EvaluateScope);
+    public EvaluationResult<bool> GetValue(BoolExpression boolean, WorkflowScopes state) => this.GetValue(boolean, state, this.EvaluateScope);
 
     public EvaluationResult<bool> GetValue(BoolExpression boolean, RecordDataValue state) => this.GetValue(boolean, state, this.EvaluateState);
 
-    public EvaluationResult<string> GetValue(StringExpression expression, ProcessActionScopes state) => this.GetValue(expression, state, this.EvaluateScope);
+    public EvaluationResult<string> GetValue(StringExpression expression, WorkflowScopes state) => this.GetValue(expression, state, this.EvaluateScope);
 
     public EvaluationResult<string> GetValue(StringExpression expression, RecordDataValue state) => this.GetValue(expression, state, this.EvaluateState);
 
-    public EvaluationResult<DataValue> GetValue(ValueExpression expression, ProcessActionScopes state) => this.GetValue(expression, state, this.EvaluateScope);
+    public EvaluationResult<DataValue> GetValue(ValueExpression expression, WorkflowScopes state) => this.GetValue(expression, state, this.EvaluateScope);
 
     public EvaluationResult<DataValue> GetValue(ValueExpression expression, RecordDataValue state) => this.GetValue(expression, state, this.EvaluateState);
 
-    public EvaluationResult<long> GetValue(IntExpression expression, ProcessActionScopes state) => this.GetValue(expression, state, this.EvaluateScope);
+    public EvaluationResult<long> GetValue(IntExpression expression, WorkflowScopes state) => this.GetValue(expression, state, this.EvaluateScope);
 
     public EvaluationResult<long> GetValue(IntExpression expression, RecordDataValue state) => this.GetValue(expression, state, this.EvaluateState);
 
-    public EvaluationResult<double> GetValue(NumberExpression expression, ProcessActionScopes state) => this.GetValue(expression, state, this.EvaluateScope);
+    public EvaluationResult<double> GetValue(NumberExpression expression, WorkflowScopes state) => this.GetValue(expression, state, this.EvaluateScope);
 
     public EvaluationResult<double> GetValue(NumberExpression expression, RecordDataValue state) => this.GetValue(expression, state, this.EvaluateState);
 
-    public EvaluationResult<TValue?> GetValue<TValue>(ObjectExpression<TValue> expression, ProcessActionScopes state) where TValue : BotElement => this.GetValue(expression, state, this.EvaluateScope);
+    public EvaluationResult<TValue?> GetValue<TValue>(ObjectExpression<TValue> expression, WorkflowScopes state) where TValue : BotElement => this.GetValue(expression, state, this.EvaluateScope);
 
     public EvaluationResult<TValue?> GetValue<TValue>(ObjectExpression<TValue> expression, RecordDataValue state) where TValue : BotElement => this.GetValue(expression, state, this.EvaluateState);
 
-    public ImmutableArray<T> GetValue<T>(ArrayExpression<T> expression, ProcessActionScopes state) => this.GetValue(expression, state, this.EvaluateScope).Value;
+    public ImmutableArray<T> GetValue<T>(ArrayExpression<T> expression, WorkflowScopes state) => this.GetValue(expression, state, this.EvaluateScope).Value;
 
     public ImmutableArray<T> GetValue<T>(ArrayExpression<T> expression, RecordDataValue state) => this.GetValue(expression, state, this.EvaluateState).Value;
 
-    public ImmutableArray<T> GetValue<T>(ArrayExpressionOnly<T> expression, ProcessActionScopes state) => this.GetValue(expression, state, this.EvaluateScope).Value;
+    public ImmutableArray<T> GetValue<T>(ArrayExpressionOnly<T> expression, WorkflowScopes state) => this.GetValue(expression, state, this.EvaluateScope).Value;
 
     public ImmutableArray<T> GetValue<T>(ArrayExpressionOnly<T> expression, RecordDataValue state) => this.GetValue(expression, state, this.EvaluateState).Value;
 
-    public EvaluationResult<TValue> GetValue<TValue>(EnumExpression<TValue> expression, ProcessActionScopes state) where TValue : EnumWrapper =>
-        this.GetValue<TValue, ProcessActionScopes>(expression, state, this.EvaluateScope);
+    public EvaluationResult<TValue> GetValue<TValue>(EnumExpression<TValue> expression, WorkflowScopes state) where TValue : EnumWrapper =>
+        this.GetValue<TValue, WorkflowScopes>(expression, state, this.EvaluateScope);
 
     public EvaluationResult<TValue> GetValue<TValue>(EnumExpression<TValue> expression, RecordDataValue state) where TValue : EnumWrapper =>
         this.GetValue<TValue, RecordDataValue>(expression, state, this.EvaluateState);
@@ -307,12 +307,12 @@ internal class FoundryExpressionEngine : IExpressionEngine
         return this.Evaluate(expression);
     }
 
-    private EvaluationResult<FormulaValue> EvaluateScope(ExpressionBase expression, ProcessActionScopes state)
+    private EvaluationResult<FormulaValue> EvaluateScope(ExpressionBase expression, WorkflowScopes state)
     {
-        this._engine.SetScope(ActionScopeType.System.Name, state.BuildRecord(ActionScopeType.System));
-        this._engine.SetScope(ActionScopeType.Env.Name, state.BuildRecord(ActionScopeType.Env));
-        this._engine.SetScope(ActionScopeType.Global.Name, state.BuildRecord(ActionScopeType.Global));
-        this._engine.SetScope(ActionScopeType.Topic.Name, state.BuildRecord(ActionScopeType.Topic));
+        this._engine.SetScope(WorkflowScopeType.System.Name, state.BuildRecord(WorkflowScopeType.System));
+        this._engine.SetScope(WorkflowScopeType.Env.Name, state.BuildRecord(WorkflowScopeType.Env));
+        this._engine.SetScope(WorkflowScopeType.Global.Name, state.BuildRecord(WorkflowScopeType.Global));
+        this._engine.SetScope(WorkflowScopeType.Topic.Name, state.BuildRecord(WorkflowScopeType.Topic));
 
         return this.Evaluate(expression);
     }

@@ -3,11 +3,11 @@
 using System;
 using System.Collections.Generic;
 
-namespace Microsoft.Agents.Workflows.Declarative;
+namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
 internal delegate void ScopeCompletionAction(string scopeId); // %%% NEEDED: scopeId ???
 
-internal sealed class ProcessActionStack
+internal sealed class ProcessActionStack // %%% REMOVE ME
 {
     private readonly Stack<string> _actionStack = [];
     private readonly Dictionary<string, ScopeCompletionAction?> _actionScopes = [];

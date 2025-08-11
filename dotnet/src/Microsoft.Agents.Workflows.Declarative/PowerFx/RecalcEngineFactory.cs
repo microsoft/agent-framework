@@ -8,20 +8,20 @@ namespace Microsoft.Agents.Workflows.Declarative.PowerFx;
 internal static class RecalcEngineFactory
 {
     public static RecalcEngine Create(
-        ProcessActionScopes scopes,
+        WorkflowScopes scopes,
         int? maximumExpressionLength = null,
         int? maximumCallDepth = null)
     {
         RecalcEngine engine = new(CreateConfig());
 
-        SetScope(ActionScopeType.Topic);
-        SetScope(ActionScopeType.Global);
-        SetScope(ActionScopeType.Env);
-        SetScope(ActionScopeType.System);
+        SetScope(WorkflowScopeType.Topic);
+        SetScope(WorkflowScopeType.Global);
+        SetScope(WorkflowScopeType.Env);
+        SetScope(WorkflowScopeType.System);
 
         return engine;
 
-        void SetScope(ActionScopeType scope)
+        void SetScope(WorkflowScopeType scope)
         {
             RecordValue record = scopes.BuildRecord(scope);
             engine.UpdateVariable(scope.Name, record);

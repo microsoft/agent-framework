@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Linq;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.Workflows.Declarative.UnitTests;
@@ -11,13 +12,13 @@ public class ProcessActionScopesTests
     public void ConstructorInitializesAllScopes()
     {
         // Arrange & Act
-        ProcessActionScopes scopes = new();
+        WorkflowScopes scopes = new();
 
         // Assert
-        RecordValue envRecord = scopes.BuildRecord(ActionScopeType.Env);
-        RecordValue topicRecord = scopes.BuildRecord(ActionScopeType.Topic);
-        RecordValue globalRecord = scopes.BuildRecord(ActionScopeType.Global);
-        RecordValue systemRecord = scopes.BuildRecord(ActionScopeType.System);
+        RecordValue envRecord = scopes.BuildRecord(WorkflowScopeType.Env);
+        RecordValue topicRecord = scopes.BuildRecord(WorkflowScopeType.Topic);
+        RecordValue globalRecord = scopes.BuildRecord(WorkflowScopeType.Global);
+        RecordValue systemRecord = scopes.BuildRecord(WorkflowScopeType.System);
 
         Assert.NotNull(envRecord);
         Assert.NotNull(topicRecord);
@@ -29,10 +30,10 @@ public class ProcessActionScopesTests
     public void BuildRecordWhenEmpty()
     {
         // Arrange
-        ProcessActionScopes scopes = new();
+        WorkflowScopes scopes = new();
 
         // Act
-        RecordValue record = scopes.BuildRecord(ActionScopeType.Topic);
+        RecordValue record = scopes.BuildRecord(WorkflowScopeType.Topic);
 
         // Assert
         Assert.NotNull(record);
@@ -43,12 +44,12 @@ public class ProcessActionScopesTests
     public void BuildRecordContainsSetValues()
     {
         // Arrange
-        ProcessActionScopes scopes = new();
+        WorkflowScopes scopes = new();
         FormulaValue testValue = FormulaValue.New("test");
-        scopes.Set("key1", ActionScopeType.Topic, testValue);
+        scopes.Set("key1", WorkflowScopeType.Topic, testValue);
 
         // Act
-        RecordValue record = scopes.BuildRecord(ActionScopeType.Topic);
+        RecordValue record = scopes.BuildRecord(WorkflowScopeType.Topic);
 
         // Assert
         Assert.NotNull(record);
@@ -61,24 +62,24 @@ public class ProcessActionScopesTests
     public void BuildRecordForAllScopeTypes()
     {
         // Arrange
-        ProcessActionScopes scopes = new();
+        WorkflowScopes scopes = new();
         FormulaValue testValue = FormulaValue.New("test");
 
         // Act & Assert
-        scopes.Set("envKey", ActionScopeType.Env, testValue);
-        RecordValue envRecord = scopes.BuildRecord(ActionScopeType.Env);
+        scopes.Set("envKey", WorkflowScopeType.Env, testValue);
+        RecordValue envRecord = scopes.BuildRecord(WorkflowScopeType.Env);
         Assert.Single(envRecord.Fields);
 
-        scopes.Set("topicKey", ActionScopeType.Topic, testValue);
-        RecordValue topicRecord = scopes.BuildRecord(ActionScopeType.Topic);
+        scopes.Set("topicKey", WorkflowScopeType.Topic, testValue);
+        RecordValue topicRecord = scopes.BuildRecord(WorkflowScopeType.Topic);
         Assert.Single(topicRecord.Fields);
 
-        scopes.Set("globalKey", ActionScopeType.Global, testValue);
-        RecordValue globalRecord = scopes.BuildRecord(ActionScopeType.Global);
+        scopes.Set("globalKey", WorkflowScopeType.Global, testValue);
+        RecordValue globalRecord = scopes.BuildRecord(WorkflowScopeType.Global);
         Assert.Single(globalRecord.Fields);
 
-        scopes.Set("systemKey", ActionScopeType.System, testValue);
-        RecordValue systemRecord = scopes.BuildRecord(ActionScopeType.System);
+        scopes.Set("systemKey", WorkflowScopeType.System, testValue);
+        RecordValue systemRecord = scopes.BuildRecord(WorkflowScopeType.System);
         Assert.Single(systemRecord.Fields);
     }
 
@@ -86,9 +87,9 @@ public class ProcessActionScopesTests
     public void GetWithImplicitScope()
     {
         // Arrange
-        ProcessActionScopes scopes = new();
+        WorkflowScopes scopes = new();
         FormulaValue testValue = FormulaValue.New("test");
-        scopes.Set("key1", ActionScopeType.Topic, testValue);
+        scopes.Set("key1", WorkflowScopeType.Topic, testValue);
 
         // Act
         FormulaValue result = scopes.Get("key1");
@@ -101,12 +102,12 @@ public class ProcessActionScopesTests
     public void GetWithSpecifiedScope()
     {
         // Arrange
-        ProcessActionScopes scopes = new();
+        WorkflowScopes scopes = new();
         FormulaValue testValue = FormulaValue.New("test");
-        scopes.Set("key1", ActionScopeType.Global, testValue);
+        scopes.Set("key1", WorkflowScopeType.Global, testValue);
 
         // Act
-        FormulaValue result = scopes.Get("key1", ActionScopeType.Global);
+        FormulaValue result = scopes.Get("key1", WorkflowScopeType.Global);
 
         // Assert
         Assert.Equal(testValue, result);
@@ -116,14 +117,14 @@ public class ProcessActionScopesTests
     public void SetDefaultScope()
     {
         // Arrange
-        ProcessActionScopes scopes = new();
+        WorkflowScopes scopes = new();
         FormulaValue testValue = FormulaValue.New("test");
 
         // Act
         scopes.Set("key1", testValue);
 
         // Assert
-        FormulaValue result = scopes.Get("key1", ActionScopeType.Topic);
+        FormulaValue result = scopes.Get("key1", WorkflowScopeType.Topic);
         Assert.Equal(testValue, result);
     }
 
@@ -131,14 +132,14 @@ public class ProcessActionScopesTests
     public void SetSpecifiedScope()
     {
         // Arrange
-        ProcessActionScopes scopes = new();
+        WorkflowScopes scopes = new();
         FormulaValue testValue = FormulaValue.New("test");
 
         // Act
-        scopes.Set("key1", ActionScopeType.System, testValue);
+        scopes.Set("key1", WorkflowScopeType.System, testValue);
 
         // Assert
-        FormulaValue result = scopes.Get("key1", ActionScopeType.System);
+        FormulaValue result = scopes.Get("key1", WorkflowScopeType.System);
         Assert.Equal(testValue, result);
     }
 
@@ -146,16 +147,16 @@ public class ProcessActionScopesTests
     public void SetOverwritesExistingValue()
     {
         // Arrange
-        ProcessActionScopes scopes = new();
+        WorkflowScopes scopes = new();
         FormulaValue initialValue = FormulaValue.New("initial");
         FormulaValue newValue = FormulaValue.New("new");
 
         // Act
-        scopes.Set("key1", ActionScopeType.Topic, initialValue);
-        scopes.Set("key1", ActionScopeType.Topic, newValue);
+        scopes.Set("key1", WorkflowScopeType.Topic, initialValue);
+        scopes.Set("key1", WorkflowScopeType.Topic, newValue);
 
         // Assert
-        FormulaValue result = scopes.Get("key1", ActionScopeType.Topic);
+        FormulaValue result = scopes.Get("key1", WorkflowScopeType.Topic);
         Assert.Equal(newValue, result);
     }
 }
