@@ -20,7 +20,7 @@ builder.Services.AddOutputCache();
 Uri baseAddress = new("https+http://agenthost");
 
 // for some reason does not resolve with `apiservice` url
-Uri a2aPirateUrl = new("http://localhost:5390/a2a");
+Uri a2aAddress = new("http://localhost:5390/a2a");
 
 builder.Services.AddHttpClient<IActorClient, HttpActorClient>(client => client.BaseAddress = baseAddress);
 builder.Services.AddHttpClient<AgentDiscoveryClient>(client => client.BaseAddress = baseAddress);
@@ -29,7 +29,7 @@ builder.Services.AddSingleton<A2AHandlerClient>(sp =>
 {
     return new A2AHandlerClient(
         sp.GetRequiredService<ILogger<A2AHandlerClient>>(),
-        a2aPirateUrl
+        a2aAddress
     );
 });
 
