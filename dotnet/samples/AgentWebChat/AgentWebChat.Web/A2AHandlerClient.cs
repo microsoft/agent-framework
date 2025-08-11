@@ -57,20 +57,22 @@ public class A2AHandlerClient
             else if (innerEvent is AgentTask { History.Count: > 0 } agentTask)
             {
                 this._logger.LogInformation("Received SSE event as AgentTask for agent '{Agent}': taskId={TaskId};contextId={CtxId}", agent, agentTask.Id, agentTask.ContextId);
-                foreach (var message in agentTask.History)
-                {
-                    yield return message;
-                }
+                continue;
             }
             else if (innerEvent is TaskStatusUpdateEvent updateEvent)
             {
-                var message = updateEvent.Status.Message;
+                var message = updateEvent.Status.Message!;
                 this._logger.LogInformation("Received TaskStatus update event for agent '{Agent}': taskId={TaskId};contextId={CtxId}", agent, updateEvent.TaskId, updateEvent.ContextId);
-
-                if (message is not null)
+                if (message.Role == MessageRole.User)
                 {
-                    yield return message;
+                    // this is a user message in the TaskStatus update, we can skip it
+                    // otherwise it will appear as duplicate message in the UI
+
+                    this._logger.LogInformation("Received TaskStatus update with user message: {UserMessage}", message.Parts.First().AsTextPart().Text);
+                    continue;
                 }
+
+                yield return message;
             }
             else
             {
