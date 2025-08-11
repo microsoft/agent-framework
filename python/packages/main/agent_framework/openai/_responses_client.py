@@ -1,10 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import sys
-from collections.abc import AsyncIterable, Mapping, MutableMapping, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
 from datetime import datetime
 from itertools import chain
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.types.responses.function_tool_param import FunctionToolParam
@@ -59,9 +59,15 @@ from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIConfigBase, OpenAIHandler, OpenAISettings, prepare_function_call_results
 
 if sys.version_info >= (3, 12):
-    pass  # type: ignore # pragma: no cover
+    from typing import override  # type: ignore # pragma: no cover
 else:
-    pass  # type: ignore[import] # pragma: no cover
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+
+if TYPE_CHECKING:
+    from openai.types.responses.response_includable import ResponseIncludable
+
+    from .._types import ChatToolMode
+
 
 logger = get_logger("agent_framework.openai")
 
@@ -72,6 +78,178 @@ __all__ = ["OpenAIResponsesClient"]
 
 class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
     """Base class for all OpenAI Responses based API's."""
+
+    @override
+    async def get_response(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage],
+        *,
+        include: list["ResponseIncludable"] | None = None,
+        instruction: str | None = None,
+        max_tokens: int | None = None,
+        parallel_tool_calls: bool | None = None,
+        model: str | None = None,
+        previous_response_id: str | None = None,
+        reasoning: dict[str, str] | None = None,
+        service_tier: str | None = None,
+        response_format: type[BaseModel] | None = None,
+        seed: int | None = None,
+        store: bool | None = None,
+        temperature: float | None = None,
+        tool_choice: "ChatToolMode" | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
+        tools: AITool
+        | list[AITool]
+        | Callable[..., Any]
+        | list[Callable[..., Any]]
+        | MutableMapping[str, Any]
+        | list[MutableMapping[str, Any]]
+        | None = None,
+        top_p: float | None = None,
+        user: str | None = None,
+        truncation: str | None = None,
+        timeout: float | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
+        """Get a response from the OpenAI API.
+
+        Args:
+            messages: the message or messages to send to the model
+            include: additional output data to include in the model response.
+            instruction: a system (or developer) message inserted into the model's context.
+            max_tokens: The maximum number of tokens to generate.
+            parallel_tool_calls: Whether to enable parallel tool calls.
+            model: The model to use for the agent.
+            previous_response_id: The ID of the previous response.
+            reasoning: The reasoning to use for the response.
+            service_tier: The service tier to use for the response.
+            response_format: The format of the response.
+            seed: The random seed to use for the response.
+            store: whether to store the response.
+            temperature: the sampling temperature to use.
+            tool_choice: the tool choice for the request.
+            tools: the tools to use for the request.
+            top_p: the nucleus sampling probability to use.
+            user: the user to associate with the request.
+            truncation: the truncation strategy to use.
+            timeout: the timeout for the request.
+            additional_properties: additional properties to include in the request.
+            kwargs: any additional keyword arguments,
+                will only be passed to functions that are called.
+
+        Returns:
+            A chat response from the model.
+        """
+        return await super().get_response(
+            messages=messages,
+            include=include,
+            instruction=instruction,
+            max_tokens=max_tokens,
+            parallel_tool_calls=parallel_tool_calls,
+            model=model,
+            previous_response_id=previous_response_id,
+            reasoning=reasoning,
+            service_tier=service_tier,
+            response_format=response_format,
+            seed=seed,
+            store=store,
+            temperature=temperature,
+            tool_choice=tool_choice,
+            tools=tools,
+            top_p=top_p,
+            user=user,
+            truncation=truncation,
+            timeout=timeout,
+            additional_properties=additional_properties,
+            **kwargs,
+        )
+
+    @override
+    async def get_streaming_response(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage],
+        *,
+        # TODO(peterychang): enable this option. background: bool | None = None,
+        include: list["ResponseIncludable"] | None = None,
+        instruction: str | None = None,
+        max_tokens: int | None = None,
+        parallel_tool_calls: bool | None = None,
+        model: str | None = None,
+        previous_response_id: str | None = None,
+        reasoning: dict[str, str] | None = None,
+        service_tier: str | None = None,
+        response_format: type[BaseModel] | None = None,
+        seed: int | None = None,
+        store: bool | None = None,
+        temperature: float | None = None,
+        tool_choice: "ChatToolMode" | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
+        tools: AITool
+        | list[AITool]
+        | Callable[..., Any]
+        | list[Callable[..., Any]]
+        | MutableMapping[str, Any]
+        | list[MutableMapping[str, Any]]
+        | None = None,
+        top_p: float | None = None,
+        user: str | None = None,
+        truncation: str | None = None,
+        timeout: float | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterable[ChatResponseUpdate]:
+        """Get a streaming response from the OpenAI API.
+
+        Args:
+            messages: the message or messages to send to the model
+            include: additional output data to include in the model response.
+            instruction: a system (or developer) message inserted into the model's context.
+            max_tokens: The maximum number of tokens to generate.
+            parallel_tool_calls: Whether to enable parallel tool calls.
+            model: The model to use for the agent.
+            previous_response_id: The ID of the previous response.
+            reasoning: The reasoning to use for the response.
+            service_tier: The service tier to use for the response.
+            response_format: The format of the response.
+            seed: The random seed to use for the response.
+            store: whether to store the response.
+            temperature: the sampling temperature to use.
+            tool_choice: the tool choice for the request.
+            tools: the tools to use for the request.
+            top_p: the nucleus sampling probability to use.
+            user: the user to associate with the request.
+            truncation: the truncation strategy to use.
+            timeout: the timeout for the request.
+            additional_properties: additional properties to include in the request.
+            kwargs: any additional keyword arguments,
+                will only be passed to functions that are called.
+
+        Returns:
+            A stream representing the response(s) from the LLM.
+        """
+        async for update in super().get_streaming_response(
+            messages=messages,
+            include=include,
+            instruction=instruction,
+            max_tokens=max_tokens,
+            parallel_tool_calls=parallel_tool_calls,
+            model=model,
+            previous_response_id=previous_response_id,
+            reasoning=reasoning,
+            service_tier=service_tier,
+            response_format=response_format,
+            seed=seed,
+            store=store,
+            temperature=temperature,
+            tool_choice=tool_choice,
+            tools=tools,
+            top_p=top_p,
+            user=user,
+            truncation=truncation,
+            timeout=timeout,
+            additional_properties=additional_properties,
+            **kwargs,
+        ):
+            yield update
 
     # region Inner Methods
 
