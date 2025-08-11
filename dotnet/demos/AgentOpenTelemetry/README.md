@@ -29,7 +29,7 @@ graph TD
 
 ### Azure OpenAI Setup
 Set the following environment variables:
-```bash
+```powershell
 $env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
 $env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
 ```
@@ -61,7 +61,7 @@ If you prefer to run the components manually:
 
 #### Step 1: Start the Aspire Dashboard via Docker
 
-```bash
+```powershell
 docker run -d --name aspire-dashboard -p 4318:18888 -p 4317:18889 -e DOTNET_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS=true mcr.microsoft.com/dotnet/aspire-dashboard:9.0
 ```
 
@@ -71,7 +71,7 @@ Open your browser to: http://localhost:4318
 
 #### Step 3: Run the Console Application
 
-```bash
+```powershell
 cd dotnet/demos/AgentOpenTelemetry
 $env:OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317"
 dotnet run

@@ -101,5 +101,6 @@ public class OpenAIChatClientAgent : AIAgent
 
     /// <inheritdoc/>
     public override object? GetService(Type serviceType, object? serviceKey = null)
-        => this._chatClientAgent.GetService(serviceType, serviceKey);
+        => base.GetService(serviceType, serviceKey)
+        ?? this._chatClientAgent.GetService(serviceType, serviceKey);
 }

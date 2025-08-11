@@ -412,6 +412,132 @@ public class OpenTelemetryAgentTests
         Assert.IsType<OpenTelemetryAgent>(telemetryAgent);
         Assert.Equal("test-id", telemetryAgent.Id);
         Assert.Equal("TestAgent", telemetryAgent.Name);
+        Assert.False(telemetryAgent.EnableSensitiveData); // Default should be false
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    [InlineData(null)]
+    public void WithOpenTelemetry_ExtensionMethodWithEnableSensitiveData_SetsPropertyCorrectly(bool? enableSensitiveData)
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        mockAgent.Setup(a => a.Id).Returns("test-id");
+        mockAgent.Setup(a => a.Name).Returns("TestAgent");
+
+        // Act
+        using var telemetryAgent = mockAgent.Object.WithOpenTelemetry(enableSensitiveData: enableSensitiveData);
+
+        // Assert
+        Assert.IsType<OpenTelemetryAgent>(telemetryAgent);
+        Assert.Equal("test-id", telemetryAgent.Id);
+        Assert.Equal("TestAgent", telemetryAgent.Name);
+        Assert.Equal(enableSensitiveData ?? false, telemetryAgent.EnableSensitiveData);
+    }
+
+    [Fact]
+    public void WithOpenTelemetry_ExtensionMethodWithAllParameters_CreatesOpenTelemetryAgentWithCorrectSettings()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        mockAgent.Setup(a => a.Id).Returns("test-id");
+        mockAgent.Setup(a => a.Name).Returns("TestAgent");
+        var mockLoggerFactory = new Mock<ILoggerFactory>();
+        var mockLogger = new Mock<ILogger>();
+        mockLoggerFactory.Setup(f => f.CreateLogger(It.IsAny<string>()))
+            .Returns(mockLogger.Object);
+        var sourceName = "custom-source";
+        var enableSensitiveData = true;
+
+        // Act
+        using var telemetryAgent = mockAgent.Object.WithOpenTelemetry(
+            loggerFactory: mockLoggerFactory.Object,
+            sourceName: sourceName,
+            enableSensitiveData: enableSensitiveData);
+
+        // Assert
+        Assert.IsType<OpenTelemetryAgent>(telemetryAgent);
+        Assert.Equal("test-id", telemetryAgent.Id);
+        Assert.Equal("TestAgent", telemetryAgent.Name);
+        Assert.True(telemetryAgent.EnableSensitiveData);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task WithOpenTelemetry_EnableSensitiveDataParameter_SetsPropertyCorrectlyAsync(bool enableSensitiveData)
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var mockLoggerFactory = new Mock<ILoggerFactory>();
+        var mockLogger = new Mock<ILogger>();
+        mockLoggerFactory.Setup(f => f.CreateLogger(It.IsAny<string>()))
+            .Returns(mockLogger.Object);
+
+        var mockAgent = CreateMockAgent(false);
+
+        // Use the extension method with enableSensitiveData parameter
+        using var telemetryAgent = mockAgent.Object.WithOpenTelemetry(
+            loggerFactory: mockLoggerFactory.Object,
+            sourceName: sourceName,
+            enableSensitiveData: enableSensitiveData);
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "What's the weather like?"),
+            new(ChatRole.Assistant, [
+                new TextContent("I'll check the weather for you."),
+                new FunctionCallContent("get_weather", "call_123", new Dictionary<string, object?> { ["location"] = "Seattle" })
+            ]),
+            new(ChatRole.Tool, [
+                new FunctionResultContent("call_123", "Sunny, 75°F")
+            ])
+        };
+
+        // Act
+        await telemetryAgent.RunAsync(messages);
+
+        // Assert
+        var activity = Assert.Single(activities);
+        Assert.NotNull(activity);
+
+        // Verify that EnableSensitiveData property is set correctly
+        Assert.Equal(enableSensitiveData, telemetryAgent.EnableSensitiveData);
+
+        // Verify that the telemetry agent was created successfully
+        Assert.IsType<OpenTelemetryAgent>(telemetryAgent);
+    }
+
+    [Fact]
+    public void WithOpenTelemetry_EnableSensitiveDataParameterOverridesDefault_WhenSpecified()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        mockAgent.Setup(a => a.Id).Returns("test-id");
+        mockAgent.Setup(a => a.Name).Returns("TestAgent");
+
+        // Act & Assert - Test that explicit true overrides default false
+        using var telemetryAgentTrue = mockAgent.Object.WithOpenTelemetry(enableSensitiveData: true);
+        Assert.True(telemetryAgentTrue.EnableSensitiveData);
+
+        // Act & Assert - Test that explicit false is respected
+        using var telemetryAgentFalse = mockAgent.Object.WithOpenTelemetry(enableSensitiveData: false);
+        Assert.False(telemetryAgentFalse.EnableSensitiveData);
+
+        // Act & Assert - Test that null uses default (false)
+        using var telemetryAgentDefault = mockAgent.Object.WithOpenTelemetry(enableSensitiveData: null);
+        Assert.False(telemetryAgentDefault.EnableSensitiveData);
+
+        // Act & Assert - Test that omitting parameter uses default (false)
+        using var telemetryAgentOmitted = mockAgent.Object.WithOpenTelemetry();
+        Assert.False(telemetryAgentOmitted.EnableSensitiveData);
     }
 
     #region ILogger Tests

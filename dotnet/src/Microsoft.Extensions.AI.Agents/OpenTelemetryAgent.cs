@@ -453,7 +453,7 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
         EventId id = new(1, OpenTelemetryConsts.GenAI.Choice);
         this.Log(id, JsonSerializer.Serialize(new ChoiceEvent()
         {
-            FinishReason = (response.RawRepresentation as ChatResponse)?.FinishReason?.Value ?? "stop",
+            FinishReason = (response.RawRepresentation as ChatResponse)?.FinishReason?.Value ?? string.Empty,
             Index = 0,
             Message = this.CreateAssistantEvent(response.Messages is { Count: 1 } ? response.Messages[0].Contents : response.Messages.SelectMany(m => m.Contents)),
         }, OtelContext.Default.ChoiceEvent));
