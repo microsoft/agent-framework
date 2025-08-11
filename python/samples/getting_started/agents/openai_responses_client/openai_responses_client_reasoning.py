@@ -6,9 +6,9 @@ from agent_framework import HostedCodeInterpreterTool, TextContent, TextReasonin
 from agent_framework.openai import OpenAIResponsesClient
 
 
-async def streaming_example() -> None:
-    """Example of streaming response (get results as they are generated)."""
-    print("=== Streaming Response Example ===")
+async def reasoning_example() -> None:
+    """Example of reasoning response (get results as they are generated)."""
+    print("=== Reasoning Example ===")
 
     agent = OpenAIResponsesClient(ai_model_id="o4-mini").create_agent(
         name="MathHelper",
@@ -37,10 +37,9 @@ async def streaming_example() -> None:
 
 
 async def main() -> None:
-    print("=== Basic OpenAI Responses Client Agent Example ===")
+    print("=== Basic OpenAI Responses Reasoning Agent Example ===")
 
-    # await non_streaming_example()
-    await streaming_example()
+    await reasoning_example()
 
 
 if __name__ == "__main__":
