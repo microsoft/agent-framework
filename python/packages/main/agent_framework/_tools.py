@@ -4,13 +4,16 @@ import inspect
 from collections.abc import Awaitable, Callable
 from functools import wraps
 from time import perf_counter
-from typing import Annotated, Any, Generic, Protocol, TypeVar, get_args, get_origin, runtime_checkable
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Protocol, TypeVar, get_args, get_origin, runtime_checkable
 
 from opentelemetry import metrics, trace
 from pydantic import BaseModel, Field, create_model
 
 from ._logging import get_logger
 from .telemetry import GenAIAttributes, start_as_current_span
+
+if TYPE_CHECKING:
+    from ._types import AIContents
 
 tracer: trace.Tracer = trace.get_tracer("agent_framework")
 meter: metrics.Meter = metrics.get_meter_provider().get_meter("agent_framework")
@@ -216,6 +219,45 @@ def ai_function(
     return decorator(func) if func else decorator  # type: ignore[reportReturnType, return-value]
 
 
+def _parse_inputs(
+    inputs: "AIContents | dict[str, Any] | str | list[AIContents | dict[str, Any] | str] | None",
+) -> list["AIContents"]:
+    """Parse the inputs for a tool, ensuring they are of type AIContents."""
+    if inputs is None:
+        return []
+
+    from ._types import AIContent, DataContent, HostedFileContent, HostedVectorStoreContent, UriContent
+
+    parsed_inputs: list["AIContents"] = []
+    if not isinstance(inputs, list):
+        inputs = [inputs]
+    for input_item in inputs:
+        if isinstance(input_item, str):
+            # If it's a string, we assume it's a URI or similar identifier.
+            # Convert it to a UriContent or similar type as needed.
+            parsed_inputs.append(UriContent(uri=input_item, media_type="text/plain"))
+        elif isinstance(input_item, dict):
+            # If it's a dict, we assume it contains properties for a specific content type.
+            # we check if the required keys are present to determine the type.
+            if "uri" in input_item:
+                parsed_inputs.append(
+                    UriContent(**input_item) if "media_type" in input_item else DataContent(**input_item)
+                )
+            elif "file_id" in input_item:
+                parsed_inputs.append(HostedFileContent(**input_item))
+            elif "vector_store_id" in input_item:
+                parsed_inputs.append(HostedVectorStoreContent(**input_item))
+            elif "data" in input_item:
+                parsed_inputs.append(DataContent(**input_item))
+            else:
+                raise ValueError(f"Unsupported input type: {input_item}")
+        elif isinstance(input_item, AIContent):
+            parsed_inputs.append(input_item)
+        else:
+            raise TypeError(f"Unsupported input type: {type(input_item).__name__}. Expected AIContents or dict.")
+    return parsed_inputs
+
+
 class HostedCodeInterpreterTool(AITool):
     """Represents a hosted tool that can be specified to an AI service to enable it to execute generated code.
 
@@ -226,6 +268,7 @@ class HostedCodeInterpreterTool(AITool):
     def __init__(
         self,
         name: str = "code_interpreter",
+        inputs: "AIContents | dict[str, Any] | str | list[AIContents | dict[str, Any] | str] | None" = None,
         description: str | None = None,
         additional_properties: dict[str, Any] | None = None,
     ):
@@ -233,10 +276,19 @@ class HostedCodeInterpreterTool(AITool):
 
         Args:
             name: The name of the tool. Defaults to "code_interpreter".
+            inputs: A list of contents that the tool can accept as input. Defaults to None.
+                This should mostly be HostedFileContent or HostedVectorStoreContent.
+                Can also be DataContent, depending on the service used.
+                When supplying a list, it can contain:
+                - AIContents instances
+                - dicts with properties for AIContents (e.g., {"uri": "http://example.com", "media_type": "text/html"})
+                - strings (which will be converted to UriContent with media_type "text/plain").
+                If None, defaults to an empty list.
             description: A description of the tool.
             additional_properties: Additional properties associated with the tool, specific to the service used.
         """
         self.name = name
+        self.inputs = _parse_inputs(inputs)
         self.description = description
         self.additional_properties = additional_properties
 
