@@ -89,6 +89,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                     stream=False,
                     **options_dict,
                 )
+                chat_options.conversation_id = response.id if chat_options.store is True else None
                 return self._create_response_content(response, chat_options=chat_options)
             # create call does not support response_format, so we need to handle it via parse call
             resp_format = chat_options.response_format
@@ -97,6 +98,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                 stream=False,
                 **options_dict,
             )
+            chat_options.conversation_id = parsed_response.id if chat_options.store is True else None
             return self._create_response_content(parsed_response, chat_options=chat_options)
         except BadRequestError as ex:
             if ex.code == "content_filter":
@@ -546,7 +548,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                 # call_id for the result needs to be the same as the call_id for the function call
                 args: dict[str, Any] = {
                     "call_id": content.call_id,
-                    "id": call_id_to_id[content.call_id],
+                    "id": call_id_to_id.get(content.call_id),
                     "type": "function_call_output",
                 }
                 if content.result:

@@ -14,6 +14,7 @@ from agent_framework import (
 )
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai._chat_client import OpenAIChatClientBase
+from azure.identity import ChainedTokenCredential
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from openai.types.chat.chat_completion import Choice
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
@@ -49,6 +50,7 @@ class AzureChatClient(AzureOpenAIConfigBase, OpenAIChatClientBase):
         ad_token: str | None = None,
         ad_token_provider: AsyncAzureADTokenProvider | None = None,
         token_endpoint: str | None = None,
+        ad_credential: ChainedTokenCredential | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | None = None,
         env_file_path: str | None = None,
@@ -71,6 +73,7 @@ class AzureChatClient(AzureOpenAIConfigBase, OpenAIChatClientBase):
             ad_token: The Azure Active Directory token. (Optional)
             ad_token_provider: The Azure Active Directory token provider. (Optional)
             token_endpoint: The token endpoint to request an Azure token. (Optional)
+            ad_credential: The Azure Active Directory credential. (Optional)
             default_headers: The default headers mapping of string keys to
                 string values for HTTP requests. (Optional)
             async_client: An existing client to use. (Optional)
@@ -108,6 +111,7 @@ class AzureChatClient(AzureOpenAIConfigBase, OpenAIChatClientBase):
             ad_token=ad_token,
             ad_token_provider=ad_token_provider,
             token_endpoint=azure_openai_settings.token_endpoint,
+            ad_credential=ad_credential,
             default_headers=default_headers,
             client=async_client,
             instruction_role=instruction_role,

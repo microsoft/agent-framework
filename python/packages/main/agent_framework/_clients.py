@@ -112,7 +112,8 @@ def _tool_call_non_streaming(
                     for seq_idx, function_call in enumerate(function_calls)
                 ])
                 # add a single ChatMessage to the response with the results
-                response.messages.append(ChatMessage(role="tool", contents=results))
+                result_message = ChatMessage(role="tool", contents=results)
+                response.messages.append(result_message)
                 # response should contain 2 messages after this,
                 # one with function call contents
                 # and one with function result contents
@@ -121,7 +122,11 @@ def _tool_call_non_streaming(
                 # we need to keep track of all function call messages
                 fcc_messages.extend(response.messages)
                 # and add them as additional context to the messages
-                messages.extend(response.messages)
+                if chat_options.store:
+                    messages.clear()
+                    messages.append(result_message)
+                else:
+                    messages.extend(response.messages)
                 continue
             # If we reach this point, it means there were no function calls to handle,
             # we'll add the previous function call and responses
@@ -631,8 +636,8 @@ class ChatClientBase(AFBaseModel, ABC):
     def create_agent(
         self,
         *,
-        name: str,
-        instructions: str,
+        name: str | None = None,
+        instructions: str | None = None,
         tools: AITool
         | list[AITool]
         | Callable[..., Any]
