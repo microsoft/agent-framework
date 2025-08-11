@@ -256,16 +256,19 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
         // ** Approvals additions on top of FICC - start **//
 
         List<ChatMessage>? augmentedPreInvocationHistory = null;
-        List<AITool> allTools = [.. options?.Tools ?? [], .. AdditionalTools ?? []];
-        Dictionary<string, ApprovalRequiredAIFunction> approvalRequiredFunctionMap = allTools.OfType<ApprovalRequiredAIFunction>().ToDictionary(x => x.Name) ?? new();
+        Dictionary<string, ApprovalRequiredAIFunction> approvalRequiredFunctionMap =
+            (options?.Tools ?? []).Concat(AdditionalTools ?? [])
+            .OfType<ApprovalRequiredAIFunction>()
+            .ToDictionary(x => x.Name);
 
         // Remove any approval requests and approval request/response pairs that have already been executed.
         var notExecutedResponses = ProcessApprovalRequestsAndResponses(originalMessages);
 
         // Generate failed function result contents for any rejected requests.
-        List<ChatMessage> rejectedFunctionCallMessages = [];
+        List<ChatMessage>? rejectedFunctionCallMessages = null;
         if (notExecutedResponses.rejections is { Count: > 0 })
         {
+            rejectedFunctionCallMessages = [];
             foreach (var rejectedCall in notExecutedResponses.rejections)
             {
                 // Create a FunctionResultContent for the rejected function call.
@@ -291,7 +294,7 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
             // Add the responses from the function calls into the augmented history and also into the tracked
             // list of response messages.
             var modeAndMessages = await ProcessFunctionCallsAsync(originalMessages, options, notExecutedResponses.approvals, iteration, consecutiveErrorCount, isStreaming: false, cancellationToken);
-            responseMessages = [.. rejectedFunctionCallMessages, .. approvedFunctionCalls, .. modeAndMessages.MessagesAdded];
+            responseMessages = [.. rejectedFunctionCallMessages ?? [], .. approvedFunctionCalls, .. modeAndMessages.MessagesAdded];
             consecutiveErrorCount = modeAndMessages.NewConsecutiveErrorCount;
 
             if (modeAndMessages.ShouldTerminate)
@@ -1036,7 +1039,7 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
                 // Remove the call id for each approval response.
                 if (content is FunctionApprovalResponseContent response_)
                 {
-                    // TODO: We cannot check for a matching request here, since the request is not availble for service managed threads, so consider if this still makes snese.
+                    // TODO: We cannot check for a matching request here, since the request is not availble for service managed threads, so consider if this still makes sense.
                     //if (requestCallIds is null)
                     //{
                     //    Throw.InvalidOperationException("FunctionApprovalResponseContent found without a matching FunctionApprovalRequestContent.");
@@ -1132,7 +1135,7 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
                     functionsToReplace ??= [];
                     functionsToReplace.Add((i, j));
 
-                    anyApprovalRequired |= approvalRequiredAIFunctionMap.TryGetValue(functionCall.Name, out var approvalFunction) && await approvalFunction.RequiresApprovalCallback(functionCall);
+                    anyApprovalRequired |= approvalRequiredAIFunctionMap.TryGetValue(functionCall.Name, out var approvalFunction) && await approvalFunction.RequiresApprovalCallback(new(functionCall));
                 }
             }
         }
