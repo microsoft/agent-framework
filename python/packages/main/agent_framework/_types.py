@@ -1043,13 +1043,13 @@ class HostedFileContent(AIContent):
 
     Attributes:
         file_id: The identifier of the hosted file.
-        type: The type of content, which is always "file" for this class.
+        type: The type of content, which is always "hosted_file" for this class.
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content.
 
     """
 
-    type: Literal["file"] = "file"  # type: ignore[assignment]
+    type: Literal["hosted_file"] = "hosted_file"  # type: ignore[assignment]
     file_id: str
 
     def __init__(
@@ -1074,13 +1074,13 @@ class HostedVectorStoreContent(AIContent):
 
     Attributes:
         vector_store_id: The identifier of the hosted vector store.
-        type: The type of content, which is always "vector_store" for this class.
+        type: The type of content, which is always "hosted_vector_store" for this class.
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content.
 
     """
 
-    type: Literal["vector_store"] = "vector_store"  # type: ignore[assignment]
+    type: Literal["hosted_vector_store"] = "hosted_vector_store"  # type: ignore[assignment]
     vector_store_id: str
 
     def __init__(
