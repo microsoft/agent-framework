@@ -2,7 +2,6 @@
 
 #if NET
 
-using System.Text.Json;
 using Azure.Identity;
 using Microsoft.Agents.Orchestration;
 using Microsoft.Agents.Workflows.Core;
