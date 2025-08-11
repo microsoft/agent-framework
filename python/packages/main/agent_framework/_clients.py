@@ -658,16 +658,6 @@ class ChatClientBase(AFBaseModel, ABC):
 
         return ChatClientAgent(chat_client=self, name=name, instructions=instructions, tools=tools, **kwargs)
 
-    def update_agent_name(self, agent_name: str | None) -> None:
-        """Update the agent name in the chat client.
-
-        Args:
-            agent_name: The new name for the agent.
-        """
-        # This is a no-op in the base class, but can be overridden by subclasses
-        # to update the agent name in the client.
-        pass
-
 
 # region Embedding Client
 

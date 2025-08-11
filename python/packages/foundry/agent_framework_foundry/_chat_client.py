@@ -63,10 +63,6 @@ if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
 else:
     from typing_extensions import Self  # pragma: no cover
-if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
-else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 
 class FoundrySettings(AFBaseSettings):
@@ -613,8 +609,7 @@ class FoundryChatClient(ChatClientBase):
 
         return run_id, tool_outputs
 
-    @override
-    def update_agent_name(self, agent_name: str | None) -> None:
+    def _update_agent_name(self, agent_name: str | None) -> None:
         """Update the agent name in the chat client.
 
         Args:

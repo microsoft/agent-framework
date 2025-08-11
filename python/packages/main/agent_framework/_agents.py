@@ -440,8 +440,8 @@ class ChatClientAgent(AgentBase):
         should check if there is already a agent name defined, and if not
         set it to this value.
         """
-        if hasattr(self.chat_client, "update_agent_name") and callable(self.chat_client.update_agent_name):  # type: ignore[reportAttributeAccessIssue]
-            self.chat_client.update_agent_name(self.name)  # type: ignore[reportAttributeAccessIssue]
+        if hasattr(self.chat_client, "_update_agent_name") and callable(self.chat_client._update_agent_name):  # type: ignore[reportAttributeAccessIssue]
+            self.chat_client._update_agent_name(self.name)  # type: ignore[reportAttributeAccessIssue]
 
     async def run(
         self,
