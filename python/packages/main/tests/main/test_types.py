@@ -227,7 +227,7 @@ def test_hosted_vector_store_content():
     content = HostedVectorStoreContent(vector_store_id="vs-789", additional_properties={"version": 1})
 
     # Check the type and content
-    assert content.type == "vector_store"
+    assert content.type == "hosted_vector_store"
     assert content.vector_store_id == "vs-789"
     assert content.additional_properties["version"] == 1
 
@@ -241,7 +241,7 @@ def test_hosted_vector_store_content_minimal():
     content = HostedVectorStoreContent(vector_store_id="vs-101112")
 
     # Check the type and content
-    assert content.type == "vector_store"
+    assert content.type == "hosted_vector_store"
     assert content.vector_store_id == "vs-101112"
     assert content.additional_properties is None
     assert content.raw_representation is None
