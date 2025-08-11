@@ -20,7 +20,6 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 {
     private readonly WorkflowBuilder _workflowBuilder;
     private readonly WorkflowModel _workflowModel;
-    private readonly ProcessActionStack _actionStack;
     private readonly WorkflowContext _context;
     private readonly WorkflowScopes _scopes;
 
@@ -29,7 +28,6 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         WorkflowContext context,
         WorkflowScopes scopes)
     {
-        this._actionStack = new ProcessActionStack();
         this._workflowModel = new WorkflowModel(rootAction);
         this._workflowBuilder = new WorkflowBuilder(rootAction);
         this._context = context;
@@ -126,13 +124,13 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this.Trace(item, isSkipped: false);
 
         ForeachAction action = new(item);
-        this.ContinueWith(action);
-        string restartId = this.RestartFrom(action);
         string loopId = ForeachAction.Steps.Next(action.Id);
-        this.ContinueWith(this.CreateStep(loopId, $"{nameof(ForeachAction)}_Next", action.TakeNext), action.Id, callback: CompletionHandler);
+        this.ContinueWith(action, callback: CompletionHandler);
+        string restartId = this.RestartFrom(action);
+        this.ContinueWith(this.CreateStep(loopId, $"{nameof(ForeachAction)}_Next", action.TakeNext), action.Id);
         this._workflowModel.AddLink(loopId, restartId, (_) => !action.HasValue);
         this.ContinueWith(this.CreateStep(ForeachAction.Steps.Start(action.Id), $"{nameof(ForeachAction)}_Start"), action.Id, (_) => action.HasValue);
-        void CompletionHandler(string _)
+        void CompletionHandler()
         {
             string completionId = ForeachAction.Steps.End(action.Id);
             this.ContinueWith(this.CreateStep(completionId, $"{nameof(ForeachAction)}_End"), action.Id);
@@ -420,20 +418,18 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     private void ContinueWith(
         ProcessAction action,
         Func<object?, bool>? condition = null,
-        ScopeCompletionAction? callback = null) =>
-        this.ContinueWith(this.CreateActionStep(action), action.ParentId, condition, action.GetType(), callback);
+        ScopeCompletionHandler? callback = null) =>
+        this.ContinueWith(this.DefineActionExecutor(action), action.ParentId, condition, action.GetType(), callback);
 
     private void ContinueWith(
-        ExecutorIsh step,
+        ExecutorIsh executor,
         string parentId,
         Func<object?, bool>? condition = null,
         Type? actionType = null,
-        ScopeCompletionAction? callback = null)
+        ScopeCompletionHandler? callback = null)
     {
-        Console.WriteLine($"##### RECOGNIZE {parentId} <= {step.Id}"); // %%% LOGGER
-        this._actionStack.Recognize(parentId, callback);
-        this._workflowModel.AddNode(step, parentId, actionType);
-        this._workflowModel.AddLinkFromPeer(parentId, step.Id, condition);
+        this._workflowModel.AddNode(executor, parentId, actionType, callback);
+        this._workflowModel.AddLinkFromPeer(parentId, executor.Id, condition);
     }
 
     private static string RestartId(string actionId) => $"post_{actionId}";
@@ -466,7 +462,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     // This implementation accepts the context as a parameter in order to pin the context closure.
     // The step cannot reference this.CurrentContext directly, as this will always be the final context.
-    private ExecutorIsh CreateActionStep(ProcessAction action)
+    private ExecutorIsh DefineActionExecutor(ProcessAction action)
     {
         DeclarativeActionExecutor stepExecutor =
             new(action.Id,

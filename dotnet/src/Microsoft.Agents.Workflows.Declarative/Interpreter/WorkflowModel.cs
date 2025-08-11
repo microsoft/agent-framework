@@ -2,11 +2,17 @@
 
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 
 namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
 /// <summary>
-/// Provides builder patterns for constructing a declarative process workflow.
+/// %%% COMMENT
+/// </summary>
+internal delegate void ScopeCompletionHandler(); // %%% ACTION ???
+
+/// <summary>
+/// Provides dynamic model for constructing a declarative workflow.
 /// </summary>
 internal sealed class WorkflowModel
 {
@@ -17,7 +23,7 @@ internal sealed class WorkflowModel
 
     private ModelNode RootNode { get; }
 
-    private Dictionary<string, ModelNode> Steps { get; } = [];
+    private Dictionary<string, ModelNode> Nodes { get; } = [];
 
     private List<ModelLink> Links { get; } = [];
 
@@ -28,7 +34,7 @@ internal sealed class WorkflowModel
             return 0;
         }
 
-        if (!this.Steps.TryGetValue(nodeId, out ModelNode? sourceNode))
+        if (!this.Nodes.TryGetValue(nodeId, out ModelNode? sourceNode))
         {
             throw new UnknownActionException($"Unresolved step: {nodeId}.");
         }
@@ -36,21 +42,21 @@ internal sealed class WorkflowModel
         return sourceNode.Depth;
     }
 
-    public void AddNode(ExecutorIsh step, string parentId, Type? actionType = null)
+    public void AddNode(ExecutorIsh step, string parentId, Type? actionType = null, ScopeCompletionHandler? completionHandler = null)
     {
-        if (!this.Steps.TryGetValue(parentId, out ModelNode? parentNode))
+        if (!this.Nodes.TryGetValue(parentId, out ModelNode? parentNode))
         {
             throw new UnknownActionException($"Unresolved parent for {step.Id}: {parentId}.");
         }
 
-        ModelNode stepNode = this.DefineNode(step, parentNode, actionType);
+        ModelNode stepNode = this.DefineNode(step, parentNode, actionType, completionHandler);
 
         parentNode.Children.Add(stepNode);
     }
 
     public void AddLinkFromPeer(string parentId, string targetId, Func<object?, bool>? condition = null)
     {
-        if (!this.Steps.TryGetValue(parentId, out ModelNode? parentNode))
+        if (!this.Nodes.TryGetValue(parentId, out ModelNode? parentNode))
         {
             throw new UnknownActionException($"Unresolved step: {parentId}.");
         }
@@ -67,7 +73,7 @@ internal sealed class WorkflowModel
 
     public void AddLink(string sourceId, string targetId, Func<object?, bool>? condition = null)
     {
-        if (!this.Steps.TryGetValue(sourceId, out ModelNode? sourceNode))
+        if (!this.Nodes.TryGetValue(sourceId, out ModelNode? sourceNode))
         {
             throw new UnknownActionException($"Unresolved step: {sourceId}.");
         }
@@ -75,21 +81,16 @@ internal sealed class WorkflowModel
         this.Links.Add(new ModelLink(sourceNode, targetId, condition));
     }
 
-    //public void AddStop(string nodeId) // %%% REMOVE
-    //{
-    //    if (!this.Steps.TryGetValue(nodeId, out ProcessWorkflowNode? sourceNode))
-    //    {
-    //        throw new UnknownActionException($"Unresolved node: {nodeId}.");
-    //    }
-
-    //    sourceNode.Step.OnFunctionResult(KernelDelegateProcessStep.FunctionName).StopProcess();
-    //}
-
     public void ConnectNodes(WorkflowBuilder workflowBuilder)
     {
+        foreach (ModelNode node in this.Nodes.Values.ToImmutableArray())
+        {
+            node.CompletionHandler?.Invoke();
+        }
+
         foreach (ModelLink link in this.Links)
         {
-            if (!this.Steps.TryGetValue(link.TargetId, out ModelNode? targetNode))
+            if (!this.Nodes.TryGetValue(link.TargetId, out ModelNode? targetNode))
             {
                 throw new WorkflowBuilderException($"Unresolved target for {link.Source.Id}: {link.TargetId}.");
             }
@@ -100,10 +101,11 @@ internal sealed class WorkflowModel
         }
     }
 
-    private ModelNode DefineNode(ExecutorIsh step, ModelNode? parentNode = null, Type? actionType = null)
+    private ModelNode DefineNode(ExecutorIsh step, ModelNode? parentNode = null, Type? actionType = null, ScopeCompletionHandler? completionHandler = null)
     {
-        ModelNode stepNode = new(step, parentNode, actionType);
-        this.Steps[stepNode.Id] = stepNode;
+        ModelNode stepNode = new(step, parentNode, actionType, completionHandler);
+
+        this.Nodes[stepNode.Id] = stepNode;
 
         return stepNode;
     }
@@ -117,7 +119,7 @@ internal sealed class WorkflowModel
 
         while (itemId != null)
         {
-            if (!this.Steps.TryGetValue(itemId, out ModelNode? itemNode))
+            if (!this.Nodes.TryGetValue(itemId, out ModelNode? itemNode))
             {
                 throw new UnknownActionException($"Unresolved child: {itemId}.");
             }
@@ -133,7 +135,7 @@ internal sealed class WorkflowModel
         return null;
     }
 
-    private sealed class ModelNode(ExecutorIsh step, ModelNode? parent = null, Type? actionType = null)
+    private sealed class ModelNode(ExecutorIsh step, ModelNode? parent = null, Type? actionType = null, ScopeCompletionHandler? completionHandler = null)
     {
         public string Id => step.Id;
 
@@ -146,6 +148,8 @@ internal sealed class WorkflowModel
         public int Depth => this.Parent?.Depth + 1 ?? 0;
 
         public Type? ActionType => actionType;
+
+        public ScopeCompletionHandler? CompletionHandler => completionHandler;
     }
 
     private sealed record class ModelLink(ModelNode Source, string TargetId, Func<object?, bool>? Condition = null);
