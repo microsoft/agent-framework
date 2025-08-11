@@ -2190,6 +2190,257 @@ public class OpenTelemetryAgentTests
         Assert.NotEqual(default, toolLogEvent);
         Assert.Equal(LogLevel.Information, toolLogEvent.level);
         Assert.Contains("call-123", toolLogEvent.message);
+
+        // Verify that sensitive content (tool result data) IS included when EnableSensitiveData is true
+        Assert.Contains("temperature", toolLogEvent.message);
+        Assert.Contains("75", toolLogEvent.message);
+        Assert.Contains("sunny", toolLogEvent.message);
+
+        // Verify that the content field is present
+        Assert.Contains("\"content\":", toolLogEvent.message);
+    }
+
+    [Fact]
+    public async Task RunAsync_WithFunctionCallAndSensitiveDataEnabled_LogsWithSensitiveContentAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var mockLogger = new Mock<ILogger>();
+        var loggedEvents = new List<(LogLevel level, EventId eventId, string message)>();
+
+        // Setup IsEnabled to return true for Information level
+        mockLogger.Setup(x => x.IsEnabled(LogLevel.Information)).Returns(true);
+
+        mockLogger.Setup(x => x.Log(
+            It.IsAny<LogLevel>(),
+            It.IsAny<EventId>(),
+            It.IsAny<It.IsAnyType>(),
+            It.IsAny<Exception>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
+            {
+                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
+            });
+
+        var mockAgent = new Mock<AIAgent>();
+        mockAgent.Setup(a => a.Id).Returns("test-agent");
+        mockAgent.Setup(a => a.Name).Returns("TestAgent");
+
+        var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, [
+            new TextContent("I'll get the weather for you in Seattle."),
+            new FunctionCallContent("get_weather", "call-456", new Dictionary<string, object?>
+            {
+                ["location"] = "Seattle",
+                ["api_key"] = "secret-key-789",
+                ["units"] = "fahrenheit"
+            })
+        ]));
+
+        mockAgent.Setup(a => a.RunAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<AgentThread>(), It.IsAny<AgentRunOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, mockLogger.Object, sourceName)
+        {
+            EnableSensitiveData = true // Enable sensitive data logging
+        };
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "What's the weather in Seattle? Use my API key: user-secret-123")
+        };
+
+        // Act
+        await telemetryAgent.RunAsync(messages);
+
+        // Assert - Check that user message logging includes sensitive content
+        var userLogEvent = loggedEvents.FirstOrDefault(e => e.eventId.Name == OpenTelemetryConsts.GenAI.User.Message);
+        if (userLogEvent != default)
+        {
+            // Check for the content (may be JSON escaped)
+            Assert.True(userLogEvent.message.Contains("weather in Seattle") || userLogEvent.message.Contains("weather in Se"),
+                $"Expected user message to contain weather content, but got: {userLogEvent.message}");
+            Assert.Contains("user-secret-123", userLogEvent.message);
+            Assert.Contains("\"content\":", userLogEvent.message);
+        }
+
+        // Assert - Check that assistant message logging includes sensitive content
+        var assistantLogEvent = loggedEvents.FirstOrDefault(e => e.eventId.Name == OpenTelemetryConsts.GenAI.Assistant.Message);
+        if (assistantLogEvent != default)
+        {
+            // Call ID should be logged
+            Assert.Contains("call-456", assistantLogEvent.message);
+
+            // Function arguments should be logged when EnableSensitiveData is true
+            Assert.Contains("Seattle", assistantLogEvent.message);
+            Assert.Contains("secret-key-789", assistantLogEvent.message);
+            Assert.Contains("fahrenheit", assistantLogEvent.message);
+
+            // Message content should be logged when EnableSensitiveData is true (may be JSON escaped)
+            Assert.True(assistantLogEvent.message.Contains("get the weather") || assistantLogEvent.message.Contains("weather for you"),
+                $"Expected assistant message to contain weather content, but got: {assistantLogEvent.message}");
+
+            // Verify that arguments field is present
+            Assert.Contains("\"arguments\":", assistantLogEvent.message);
+            Assert.Contains("\"content\":", assistantLogEvent.message);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_WithToolMessageAndSensitiveDataDisabled_LogsToolEventWithoutContentAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var mockLogger = new Mock<ILogger>();
+        var loggedEvents = new List<(LogLevel level, EventId eventId, string message)>();
+
+        // Setup IsEnabled to return true for Information level
+        mockLogger.Setup(x => x.IsEnabled(LogLevel.Information)).Returns(true);
+
+        mockLogger.Setup(x => x.Log(
+            It.IsAny<LogLevel>(),
+            It.IsAny<EventId>(),
+            It.IsAny<It.IsAnyType>(),
+            It.IsAny<Exception>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
+            {
+                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
+            });
+
+        var mockAgent = new Mock<AIAgent>();
+        mockAgent.Setup(a => a.Id).Returns("test-agent");
+        mockAgent.Setup(a => a.Name).Returns("TestAgent");
+
+        var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
+        mockAgent.Setup(a => a.RunAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<AgentThread>(), It.IsAny<AgentRunOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, mockLogger.Object, sourceName)
+        {
+            EnableSensitiveData = false // Explicitly disable sensitive data logging
+        };
+
+        var toolResult = new { temperature = 75, condition = "sunny", secret = "api-key-12345" };
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "What's the weather in Seattle?"),
+            new(ChatRole.Tool, [new FunctionResultContent("call-123", toolResult)])
+        };
+
+        // Act
+        await telemetryAgent.RunAsync(messages);
+
+        // Assert
+        var toolLogEvent = loggedEvents.FirstOrDefault(e => e.eventId.Name == OpenTelemetryConsts.GenAI.Tool.Message);
+        Assert.NotEqual(default, toolLogEvent);
+        Assert.Equal(LogLevel.Information, toolLogEvent.level);
+
+        // Verify that call ID is still logged (it's metadata, not sensitive content)
+        Assert.Contains("call-123", toolLogEvent.message);
+
+        // Verify that sensitive content (function result data) is NOT included when EnableSensitiveData is false
+        Assert.DoesNotContain("api-key-12345", toolLogEvent.message);
+        Assert.DoesNotContain("temperature", toolLogEvent.message);
+        Assert.DoesNotContain("sunny", toolLogEvent.message);
+
+        // Verify that the content field is omitted when EnableSensitiveData is false
+        Assert.DoesNotContain("\"content\":", toolLogEvent.message);
+    }
+
+    [Fact]
+    public async Task RunAsync_WithFunctionCallAndSensitiveDataDisabled_LogsWithoutSensitiveContentAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var mockLogger = new Mock<ILogger>();
+        var loggedEvents = new List<(LogLevel level, EventId eventId, string message)>();
+
+        // Setup IsEnabled to return true for Information level
+        mockLogger.Setup(x => x.IsEnabled(LogLevel.Information)).Returns(true);
+
+        mockLogger.Setup(x => x.Log(
+            It.IsAny<LogLevel>(),
+            It.IsAny<EventId>(),
+            It.IsAny<It.IsAnyType>(),
+            It.IsAny<Exception>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
+            {
+                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
+            });
+
+        var mockAgent = new Mock<AIAgent>();
+        mockAgent.Setup(a => a.Id).Returns("test-agent");
+        mockAgent.Setup(a => a.Name).Returns("TestAgent");
+
+        var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, [
+            new TextContent("I'll get the weather for you."),
+            new FunctionCallContent("get_weather", "call-456", new Dictionary<string, object?>
+            {
+                ["location"] = "Seattle",
+                ["api_key"] = "secret-key-789"
+            })
+        ]));
+
+        mockAgent.Setup(a => a.RunAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<AgentThread>(), It.IsAny<AgentRunOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, mockLogger.Object, sourceName)
+        {
+            EnableSensitiveData = false // Explicitly disable sensitive data logging
+        };
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "What's the weather in Seattle? Use API key: secret-123")
+        };
+
+        // Act
+        await telemetryAgent.RunAsync(messages);
+
+        // Assert - Check that user message logging excludes sensitive content
+        var userLogEvent = loggedEvents.FirstOrDefault(e => e.eventId.Name == OpenTelemetryConsts.GenAI.User.Message);
+        if (userLogEvent != default)
+        {
+            Assert.DoesNotContain("secret-123", userLogEvent.message);
+            Assert.DoesNotContain("What's the weather in Seattle?", userLogEvent.message);
+        }
+
+        // Assert - Check that assistant message logging excludes sensitive content
+        var assistantLogEvent = loggedEvents.FirstOrDefault(e => e.eventId.Name == OpenTelemetryConsts.GenAI.Assistant.Message);
+        if (assistantLogEvent != default)
+        {
+            // Call ID is always logged (metadata, not sensitive)
+            Assert.Contains("call-456", assistantLogEvent.message);
+
+            // Function arguments should NOT be logged when EnableSensitiveData is false
+            Assert.DoesNotContain("secret-key-789", assistantLogEvent.message);
+            Assert.DoesNotContain("Seattle", assistantLogEvent.message);
+
+            // Message content should NOT be logged when EnableSensitiveData is false
+            Assert.DoesNotContain("I'll get the weather for you.", assistantLogEvent.message);
+
+            // Verify that arguments field is omitted when EnableSensitiveData is false
+            Assert.DoesNotContain("\"arguments\":", assistantLogEvent.message);
+        }
     }
 
     [Fact]
