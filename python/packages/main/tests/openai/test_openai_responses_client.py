@@ -12,6 +12,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     TextContent,
+    WebSearchLocation,
     WebSearchTool,
     ai_function,
 )
@@ -329,15 +330,14 @@ async def test_openai_responses_client_web_search() -> None:
 
     assert isinstance(openai_responses_client, ChatClient)
 
-    messages: list[ChatMessage] = [
-        ChatMessage(
-            role="user", text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer."
-        )
-    ]
-
-    # Test that the client can be used to get a response
+    # Test that the client will use the web search tool
     response = await openai_responses_client.get_response(
-        messages=messages,
+        messages=[
+            ChatMessage(
+                role="user",
+                text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
+            )
+        ],
         tools=[WebSearchTool()],
         tool_choice="auto",
     )
@@ -347,3 +347,58 @@ async def test_openai_responses_client_web_search() -> None:
     assert "Rumi" in response.text
     assert "Mira" in response.text
     assert "Zoey" in response.text
+
+    # Test that the client will use the web search tool with location
+    response = await openai_responses_client.get_response(
+        messages=[ChatMessage(role="user", text="What is the current weather? Do not ask for my current location.")],
+        tools=[WebSearchTool(location=WebSearchLocation(city="Seattle", country="US"))],
+        tool_choice="auto",
+    )
+    assert "Seattle" in response.text
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_web_search_streaming() -> None:
+    openai_responses_client = OpenAIResponsesClient()
+
+    assert isinstance(openai_responses_client, ChatClient)
+
+    # Test that the client will use the web search tool
+    response = openai_responses_client.get_streaming_response(
+        messages=[
+            ChatMessage(
+                role="user",
+                text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
+            )
+        ],
+        tools=[WebSearchTool()],
+        tool_choice="auto",
+    )
+
+    assert response is not None
+    full_message: str = ""
+    async for chunk in response:
+        assert chunk is not None
+        assert isinstance(chunk, ChatResponseUpdate)
+        for content in chunk.contents:
+            if isinstance(content, TextContent) and content.text:
+                full_message += content.text
+    assert "Rumi" in full_message
+    assert "Mira" in full_message
+    assert "Zoey" in full_message
+
+    # Test that the client will use the web search tool with location
+    response = openai_responses_client.get_streaming_response(
+        messages=[ChatMessage(role="user", text="What is the current weather? Do not ask for my current location.")],
+        tools=[WebSearchTool(location=WebSearchLocation(city="Seattle", country="US"))],
+        tool_choice="auto",
+    )
+    assert response is not None
+    full_message: str = ""
+    async for chunk in response:
+        assert chunk is not None
+        assert isinstance(chunk, ChatResponseUpdate)
+        for content in chunk.contents:
+            if isinstance(content, TextContent) and content.text:
+                full_message += content.text
+    assert "Seattle" in full_message

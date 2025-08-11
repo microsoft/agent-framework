@@ -349,6 +349,7 @@ class WebSearchTool(AITool):
     def __init__(
         self,
         name: str = "web_search",
+        # TODO(peterychang): Should we make this configurable on a per-request basis?
         location: WebSearchLocation | None = None,
         description: str | None = None,
         additional_properties: dict[str, Any] | None = None,
