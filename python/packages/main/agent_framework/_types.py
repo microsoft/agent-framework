@@ -157,6 +157,10 @@ class UsageDetails(AFBaseModel):
             **kwargs,
         )
 
+    def __str__(self) -> str:
+        """Returns a string representation of the usage details."""
+        return self.model_dump_json(indent=4, exclude_none=True)
+
     @property
     def additional_counts(self) -> dict[str, int]:
         """Represents well-known additional counts for usage. This is not an exhaustive list.
@@ -170,6 +174,14 @@ class UsageDetails(AFBaseModel):
             Over time additional counts may be added to the base class.
         """
         return self.model_extra or {}
+
+    def __setitem__(self, key: str, value: int) -> None:
+        """Sets an additional count for the usage details."""
+        if not isinstance(value, int):
+            raise ValueError("Additional counts must be integers.")
+        if self.model_extra is None:
+            self.model_extra = {}  # type: ignore[reportAttributeAccessIssue]
+        self.model_extra[key] = value
 
     def __add__(self, other: "UsageDetails | None") -> "UsageDetails":
         """Combines two `UsageDetails` instances."""

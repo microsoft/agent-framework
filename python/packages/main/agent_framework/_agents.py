@@ -381,6 +381,8 @@ class ChatClientAgent(AgentBase):
             kwargs: any additional keyword arguments.
                 Unused, can be used by subclasses of this Agent.
         """
+        kwargs.update(additional_properties or {})
+
         args: dict[str, Any] = {
             "chat_client": chat_client,
             "chat_options": ChatOptions(
@@ -399,7 +401,7 @@ class ChatClientAgent(AgentBase):
                 tools=tools,  # type: ignore
                 top_p=top_p,
                 user=user,
-                additional_properties=additional_properties or {},
+                additional_properties=kwargs,
             ),
         }
         if instructions is not None:

@@ -1,10 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import sys
-from collections.abc import AsyncIterable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Mapping, MutableMapping, MutableSequence, Sequence
 from datetime import datetime
 from itertools import chain
-from typing import Any, Literal, TypeVar
+from typing import Any, TypeVar
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.types.responses.function_tool_param import FunctionToolParam
@@ -15,7 +15,6 @@ from openai.types.responses.response import Response as OpenAIResponse
 from openai.types.responses.response_completed_event import ResponseCompletedEvent
 from openai.types.responses.response_content_part_added_event import ResponseContentPartAddedEvent
 from openai.types.responses.response_function_call_arguments_delta_event import ResponseFunctionCallArgumentsDeltaEvent
-from openai.types.responses.response_includable import ResponseIncludable
 from openai.types.responses.response_output_item_added_event import ResponseOutputItemAddedEvent
 from openai.types.responses.response_output_refusal import ResponseOutputRefusal
 from openai.types.responses.response_output_text import ResponseOutputText
@@ -42,7 +41,6 @@ from .._types import (
     ChatResponse,
     ChatResponseUpdate,
     ChatRole,
-    ChatToolMode,
     CitationAnnotation,
     FunctionCallContent,
     FunctionResultContent,
@@ -61,9 +59,9 @@ from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIConfigBase, OpenAIHandler, OpenAISettings, prepare_function_call_results
 
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    pass  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    pass  # type: ignore[import] # pragma: no cover
 
 logger = get_logger("agent_framework.openai")
 
@@ -75,246 +73,7 @@ __all__ = ["OpenAIResponsesClient"]
 class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
     """Base class for all OpenAI Responses based API's."""
 
-    def _filter_options(self, **kwargs: Any) -> dict[str, Any]:
-        """Filter options for the responses call."""
-        # The responses call does not support all the options that the chat completion call does.
-        # We filter out the unsupported options.
-        return {key: value for key, value in kwargs.items() if value is not None}
-
-    # The responses create call takes very different parameters than the chat completion call,
-    # so we override the get_response method to handle the specific parameters for responses.
-    @override
-    async def get_response(
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage],
-        *,
-        # TODO(peterychang): enable this option. background: bool | None = None,
-        include: list[ResponseIncludable] | None = None,
-        instruction: str | None = None,
-        max_tokens: int | None = None,
-        parallel_tool_calls: bool | None = None,
-        model: str | None = None,
-        previous_response_id: str | None = None,
-        reasoning: dict[str, str] | None = None,
-        service_tier: str | None = None,
-        response_format: type[BaseModel] | None = None,
-        seed: int | None = None,
-        store: bool | None = None,
-        temperature: float | None = None,
-        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: AITool
-        | list[AITool]
-        | Callable[..., Any]
-        | list[Callable[..., Any]]
-        | MutableMapping[str, Any]
-        | list[MutableMapping[str, Any]]
-        | None = None,
-        top_p: float | None = None,
-        user: str | None = None,
-        truncation: str | None = None,
-        timeout: float | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> ChatResponse:
-        """Get a response from the OpenAI API.
-
-        Args:
-            messages: the message or messages to send to the model
-            include: additional output data to include in the model response.
-            instruction: a system (or developer) message inserted into the model's context.
-            max_tokens: The maximum number of tokens to generate.
-            parallel_tool_calls: Whether to enable parallel tool calls.
-            model: The model to use for the agent.
-            previous_response_id: The ID of the previous response.
-            reasoning: The reasoning to use for the response.
-            service_tier: The service tier to use for the response.
-            response_format: The format of the response.
-            seed: The random seed to use for the response.
-            store: whether to store the response.
-            temperature: the sampling temperature to use.
-            tool_choice: the tool choice for the request.
-            tools: the tools to use for the request.
-            top_p: the nucleus sampling probability to use.
-            user: the user to associate with the request.
-            truncation: the truncation strategy to use.
-            timeout: the timeout for the request.
-            additional_properties: additional properties to include in the request.
-            kwargs: any additional keyword arguments,
-                will only be passed to functions that are called.
-
-        Returns:
-            A chat response from the model.
-        """
-        filtered_options = self._filter_options(
-            background=False,
-            include=include,
-            instruction=instruction,
-            parallel_tool_calls=parallel_tool_calls,
-            previous_response_id=previous_response_id,
-            reasoning=reasoning,
-            service_tier=service_tier,
-            truncation=truncation,
-            timeout=timeout,
-        )
-        filtered_options.update(additional_properties or {})
-        return await super().get_response(
-            messages=messages,
-            model=model,
-            max_tokens=max_tokens,
-            response_format=response_format,
-            seed=seed,
-            store=store,
-            temperature=temperature,
-            top_p=top_p,
-            tool_choice=tool_choice,
-            tools=tools,
-            user=user,
-            additional_properties=filtered_options,
-            **kwargs,
-        )
-
-    @override
-    async def get_streaming_response(
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage],
-        *,
-        # TODO(peterychang): enable this option. background: bool | None = None,
-        include: list[ResponseIncludable] | None = None,
-        instruction: str | None = None,
-        max_tokens: int | None = None,
-        parallel_tool_calls: bool | None = None,
-        model: str | None = None,
-        previous_response_id: str | None = None,
-        reasoning: dict[str, str] | None = None,
-        service_tier: str | None = None,
-        response_format: type[BaseModel] | None = None,
-        seed: int | None = None,
-        store: bool | None = None,
-        temperature: float | None = None,
-        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: AITool
-        | list[AITool]
-        | Callable[..., Any]
-        | list[Callable[..., Any]]
-        | MutableMapping[str, Any]
-        | list[MutableMapping[str, Any]]
-        | None = None,
-        top_p: float | None = None,
-        user: str | None = None,
-        truncation: str | None = None,
-        timeout: float | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        """Get a streaming response from the OpenAI API.
-
-        Args:
-            messages: the message or messages to send to the model
-            include: additional output data to include in the model response.
-            instruction: a system (or developer) message inserted into the model's context.
-            max_tokens: The maximum number of tokens to generate.
-            parallel_tool_calls: Whether to enable parallel tool calls.
-            model: The model to use for the agent.
-            previous_response_id: The ID of the previous response.
-            reasoning: The reasoning to use for the response.
-            service_tier: The service tier to use for the response.
-            response_format: The format of the response.
-            seed: The random seed to use for the response.
-            store: whether to store the response.
-            temperature: the sampling temperature to use.
-            tool_choice: the tool choice for the request.
-            tools: the tools to use for the request.
-            top_p: the nucleus sampling probability to use.
-            user: the user to associate with the request.
-            truncation: the truncation strategy to use.
-            timeout: the timeout for the request.
-            additional_properties: additional properties to include in the request.
-            kwargs: any additional keyword arguments,
-                will only be passed to functions that are called.
-
-        Returns:
-            A stream representing the response(s) from the LLM.
-        """
-        filtered_options = self._filter_options(
-            background=False,
-            include=include,
-            instruction=instruction,
-            parallel_tool_calls=parallel_tool_calls,
-            previous_response_id=previous_response_id,
-            reasoning=reasoning,
-            service_tier=service_tier,
-            truncation=truncation,
-            timeout=timeout,
-        )
-        filtered_options.update(additional_properties or {})
-        async for update in super().get_streaming_response(
-            messages=messages,
-            model=model,
-            max_tokens=max_tokens,
-            response_format=response_format,
-            seed=seed,
-            store=store,
-            temperature=temperature,
-            top_p=top_p,
-            tool_choice=tool_choice,
-            tools=tools,
-            user=user,
-            additional_properties=filtered_options,
-            **kwargs,
-        ):
-            yield update
-
-    def _chat_to_response_tool_spec(
-        self, tools: list[AITool | MutableMapping[str, Any]]
-    ) -> list[ToolParam | dict[str, Any]]:
-        response_tools: list[ToolParam | dict[str, Any]] = []
-        for tool in tools:
-            if isinstance(tool, AITool):
-                match tool:
-                    case HostedCodeInterpreterTool():
-                        response_tools.append(
-                            CodeInterpreter(
-                                type="code_interpreter",
-                                container=CodeInterpreterContainerCodeInterpreterToolAuto(type="auto"),
-                            )
-                        )
-                    case AIFunction():
-                        params = tool.parameters()
-                        params["additionalProperties"] = False
-                        response_tools.append(
-                            FunctionToolParam(
-                                name=tool.name,
-                                parameters=params,
-                                strict=False,
-                                type="function",
-                                description=tool.description,
-                            )
-                        )
-                    case _:
-                        logger.debug("Unsupported tool passed (type: %s)", type(tool))
-            else:
-                response_tools.append(tool if isinstance(tool, dict) else dict(tool))
-        return response_tools
-
-    def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
-        """Take ChatOptions and create the specific options for Responses."""
-        options_dict = chat_options.to_provider_settings(exclude={"response_format"})
-        request_input = self._prepare_chat_history_for_request(messages)
-        if not request_input:
-            raise ServiceInvalidRequestError("Messages are required for chat completions")
-        options_dict["input"] = request_input
-        if "store" not in options_dict:
-            options_dict["store"] = False
-        if "conversation_id" in options_dict:
-            options_dict["previous_response_id"] = options_dict["conversation_id"]
-            options_dict.pop("conversation_id")
-        if "model" not in options_dict:
-            options_dict["model"] = self.ai_model_id
-        if chat_options.tools is None:
-            options_dict.pop("parallel_tool_calls", None)
-        else:
-            options_dict["tools"] = self._chat_to_response_tool_spec(chat_options.tools)
-        return options_dict
+    # region Inner Methods
 
     async def _inner_get_response(
         self,
@@ -401,6 +160,95 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                 f"{type(self)} service failed to complete the prompt",
                 inner_exception=ex,
             ) from ex
+
+    # region Prep methods
+
+    def _chat_to_response_tool_spec(
+        self, tools: list[AITool | MutableMapping[str, Any]]
+    ) -> list[ToolParam | dict[str, Any]]:
+        response_tools: list[ToolParam | dict[str, Any]] = []
+        for tool in tools:
+            if isinstance(tool, AITool):
+                match tool:
+                    case HostedCodeInterpreterTool():
+                        response_tools.append(
+                            CodeInterpreter(
+                                type="code_interpreter",
+                                container=CodeInterpreterContainerCodeInterpreterToolAuto(type="auto"),
+                            )
+                        )
+                    case AIFunction():
+                        params = tool.parameters()
+                        params["additionalProperties"] = False
+                        response_tools.append(
+                            FunctionToolParam(
+                                name=tool.name,
+                                parameters=params,
+                                strict=False,
+                                type="function",
+                                description=tool.description,
+                            )
+                        )
+                    case _:
+                        logger.debug("Unsupported tool passed (type: %s)", type(tool))
+            else:
+                response_tools.append(tool if isinstance(tool, dict) else dict(tool))
+        return response_tools
+
+    def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
+        """Take ChatOptions and create the specific options for Responses."""
+        options_dict = chat_options.to_provider_settings(exclude={"response_format"})
+        # messages
+        request_input = self._prepare_chat_messages_for_request(messages)
+        if not request_input:
+            raise ServiceInvalidRequestError("Messages are required for chat completions")
+        options_dict["input"] = request_input
+        # tools
+        if chat_options.tools is None:
+            options_dict.pop("parallel_tool_calls", None)
+        else:
+            options_dict["tools"] = self._chat_to_response_tool_spec(chat_options.tools)
+        # other settings
+        if "store" not in options_dict:
+            options_dict["store"] = False
+        if "conversation_id" in options_dict:
+            options_dict["previous_response_id"] = options_dict["conversation_id"]
+            options_dict.pop("conversation_id")
+        if "model" not in options_dict:
+            options_dict["model"] = self.ai_model_id
+        return options_dict
+
+    def _prepare_chat_messages_for_request(self, chat_messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:
+        """Prepare the chat messages for a request.
+
+        Allowing customization of the key names for role/author, and optionally overriding the role.
+
+        ChatRole.TOOL messages need to be formatted different than system/user/assistant messages:
+            They require a "tool_call_id" and (function) "name" key, and the "metadata" key should
+            be removed. The "encoding" key should also be removed.
+
+        Override this method to customize the formatting of the chat history for a request.
+
+        Args:
+            chat_messages: The chat history to prepare.
+
+        Returns:
+            The prepared chat messages for a request.
+        """
+        call_id_to_id: dict[str, str] = {}
+        for message in chat_messages:
+            for content in message.contents:
+                if (
+                    isinstance(content, FunctionCallContent)
+                    and content.additional_properties
+                    and "fc_id" in content.additional_properties
+                ):
+                    call_id_to_id[content.call_id] = content.additional_properties["fc_id"]
+        list_of_list = [self._openai_chat_message_parser(message, call_id_to_id) for message in chat_messages]
+        # Flatten the list of lists into a single list
+        return list(chain.from_iterable(list_of_list))
+
+    # region Response creation methods
 
     def _create_response_content(
         self,
@@ -630,11 +478,16 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         )
 
     def _usage_details_from_openai(self, usage: ResponseUsage) -> UsageDetails | None:
-        return UsageDetails(
-            prompt_tokens=usage.input_tokens,
-            completion_tokens=usage.output_tokens,
-            total_tokens=usage.total_tokens,
+        details = UsageDetails(
+            input_token_count=usage.input_tokens,
+            output_token_count=usage.output_tokens,
+            total_token_count=usage.total_tokens,
         )
+        if usage.input_tokens_details and usage.input_tokens_details.cached_tokens:
+            details["openai.cached_input_tokens"] = usage.input_tokens_details.cached_tokens
+        if usage.output_tokens_details and usage.output_tokens_details.reasoning_tokens:
+            details["openai.reasoning_tokens"] = usage.output_tokens_details.reasoning_tokens
+        return details
 
     def _openai_chat_message_parser(
         self,
@@ -699,36 +552,6 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
             # TODO(peterychang): We'll probably need to specialize the other content types as well
             case _:
                 return content.model_dump(exclude_none=True)
-
-    def _prepare_chat_history_for_request(self, chat_messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:
-        """Prepare the chat history for a request.
-
-        Allowing customization of the key names for role/author, and optionally overriding the role.
-
-        ChatRole.TOOL messages need to be formatted different than system/user/assistant messages:
-            They require a "tool_call_id" and (function) "name" key, and the "metadata" key should
-            be removed. The "encoding" key should also be removed.
-
-        Override this method to customize the formatting of the chat history for a request.
-
-        Args:
-            chat_messages: The chat history to prepare.
-
-        Returns:
-            prepared_chat_history (Any): The prepared chat history for a request.
-        """
-        call_id_to_id: dict[str, str] = {}
-        for message in chat_messages:
-            for content in message.contents:
-                if (
-                    isinstance(content, FunctionCallContent)
-                    and content.additional_properties
-                    and "fc_id" in content.additional_properties
-                ):
-                    call_id_to_id[content.call_id] = content.additional_properties["fc_id"]
-        list_of_list = [self._openai_chat_message_parser(message, call_id_to_id) for message in chat_messages]
-        # Flatten the list of lists into a single list
-        return list(chain.from_iterable(list_of_list))
 
     def _get_metadata_from_response(self, output: Any) -> dict[str, Any]:
         """Get metadata from a chat choice."""
