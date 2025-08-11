@@ -95,10 +95,10 @@ def test_single_edge_group():
 
     edge_group = SingleEdgeGroup(source=source, target=target)
 
-    assert edge_group.source_executors() == [source]
-    assert edge_group.target_executors() == [target]
-    assert edge_group.edges()[0].source_id == "source_executor"
-    assert edge_group.edges()[0].target_id == "target_executor"
+    assert edge_group.source_executors == [source]
+    assert edge_group.target_executors == [target]
+    assert edge_group.edges[0].source_id == "source_executor"
+    assert edge_group.edges[0].target_id == "target_executor"
 
 
 def test_single_edge_group_with_condition():
@@ -108,11 +108,11 @@ def test_single_edge_group_with_condition():
 
     edge_group = SingleEdgeGroup(source=source, target=target, condition=lambda x: x.data == "test")
 
-    assert edge_group.source_executors() == [source]
-    assert edge_group.target_executors() == [target]
-    assert edge_group.edges()[0].source_id == "source_executor"
-    assert edge_group.edges()[0].target_id == "target_executor"
-    assert edge_group.edges()[0]._condition is not None  # type: ignore
+    assert edge_group.source_executors == [source]
+    assert edge_group.target_executors == [target]
+    assert edge_group.edges[0].source_id == "source_executor"
+    assert edge_group.edges[0].target_id == "target_executor"
+    assert edge_group.edges[0]._condition is not None  # type: ignore
 
 
 async def test_single_edge_group_send_message():
@@ -209,13 +209,13 @@ def test_source_edge_group():
 
     edge_group = SourceEdgeGroup(source=source, targets=[target1, target2])
 
-    assert edge_group.source_executors() == [source]
-    assert edge_group.target_executors() == [target1, target2]
-    assert len(edge_group.edges()) == 2
-    assert edge_group.edges()[0].source_id == "source_executor"
-    assert edge_group.edges()[0].target_id == "target_executor_1"
-    assert edge_group.edges()[1].source_id == "source_executor"
-    assert edge_group.edges()[1].target_id == "target_executor_2"
+    assert edge_group.source_executors == [source]
+    assert edge_group.target_executors == [target1, target2]
+    assert len(edge_group.edges) == 2
+    assert edge_group.edges[0].source_id == "source_executor"
+    assert edge_group.edges[0].target_id == "target_executor_1"
+    assert edge_group.edges[1].source_id == "source_executor"
+    assert edge_group.edges[1].target_id == "target_executor_2"
 
 
 def test_source_edge_group_invalid_number_of_targets():
@@ -355,13 +355,13 @@ def test_target_edge_group():
 
     edge_group = TargetEdgeGroup(sources=[source1, source2], target=target)
 
-    assert edge_group.source_executors() == [source1, source2]
-    assert edge_group.target_executors() == [target]
-    assert len(edge_group.edges()) == 2
-    assert edge_group.edges()[0].source_id == "source_executor_1"
-    assert edge_group.edges()[0].target_id == "target_executor"
-    assert edge_group.edges()[1].source_id == "source_executor_2"
-    assert edge_group.edges()[1].target_id == "target_executor"
+    assert edge_group.source_executors == [source1, source2]
+    assert edge_group.target_executors == [target]
+    assert len(edge_group.edges) == 2
+    assert edge_group.edges[0].source_id == "source_executor_1"
+    assert edge_group.edges[0].target_id == "target_executor"
+    assert edge_group.edges[1].source_id == "source_executor_2"
+    assert edge_group.edges[1].target_id == "target_executor"
 
 
 def test_target_edge_group_invalid_number_of_sources():
@@ -471,15 +471,15 @@ def test_conditional_edge_group():
         conditions=[lambda x: x.data < 0],
     )
 
-    assert edge_group.source_executors() == [source]
-    assert edge_group.target_executors() == [target1, target2]
-    assert len(edge_group.edges()) == 2
-    assert edge_group.edges()[0].source_id == "source_executor"
-    assert edge_group.edges()[0].target_id == "target_executor_1"
-    assert edge_group.edges()[0]._condition is not None  # type: ignore
-    assert edge_group.edges()[1].source_id == "source_executor"
-    assert edge_group.edges()[1].target_id == "target_executor_2"
-    assert edge_group.edges()[1]._condition is None  # type: ignore
+    assert edge_group.source_executors == [source]
+    assert edge_group.target_executors == [target1, target2]
+    assert len(edge_group.edges) == 2
+    assert edge_group.edges[0].source_id == "source_executor"
+    assert edge_group.edges[0].target_id == "target_executor_1"
+    assert edge_group.edges[0]._condition is not None  # type: ignore
+    assert edge_group.edges[1].source_id == "source_executor"
+    assert edge_group.edges[1].target_id == "target_executor_2"
+    assert edge_group.edges[1]._condition is None  # type: ignore
 
 
 def test_conditional_edge_group_invalid_number_of_targets():
@@ -644,13 +644,13 @@ def test_partitioning_edge_group():
         partition_func=lambda data, num_edges: [0],
     )
 
-    assert edge_group.source_executors() == [source]
-    assert edge_group.target_executors() == [target1, target2]
-    assert len(edge_group.edges()) == 2
-    assert edge_group.edges()[0].source_id == "source_executor"
-    assert edge_group.edges()[0].target_id == "target_executor_1"
-    assert edge_group.edges()[1].source_id == "source_executor"
-    assert edge_group.edges()[1].target_id == "target_executor_2"
+    assert edge_group.source_executors == [source]
+    assert edge_group.target_executors == [target1, target2]
+    assert len(edge_group.edges) == 2
+    assert edge_group.edges[0].source_id == "source_executor"
+    assert edge_group.edges[0].target_id == "target_executor_1"
+    assert edge_group.edges[1].source_id == "source_executor"
+    assert edge_group.edges[1].target_id == "target_executor_2"
 
 
 def test_partitioning_edge_group_invalid_number_of_targets():

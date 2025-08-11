@@ -124,16 +124,19 @@ class EdgeGroup(ABC):
         """Get the unique ID of the edge group."""
         return self._id
 
+    @property
     @abstractmethod
     def source_executors(self) -> list[Executor]:
         """Get the source executor IDs of the edges in the group."""
         ...
 
+    @property
     @abstractmethod
     def target_executors(self) -> list[Executor]:
         """Get the target executor IDs of the edges in the group."""
         ...
 
+    @property
     @abstractmethod
     def edges(self) -> list[Edge]:
         """Get the edges in the group."""
@@ -141,7 +144,10 @@ class EdgeGroup(ABC):
 
 
 class SingleEdgeGroup(EdgeGroup):
-    """Represents a single edge group that contains only one edge."""
+    """Represents a single edge group that contains only one edge.
+
+    A concrete implementation of EdgeGroup that represent a group containing exactly one edge.
+    """
 
     def __init__(self, source: Executor, target: Executor, condition: Callable[[Any], bool] | None = None) -> None:
         """Initialize the single edge group with an edge.
@@ -167,16 +173,19 @@ class SingleEdgeGroup(EdgeGroup):
 
         return False
 
+    @property
     @override
     def source_executors(self) -> list[Executor]:
         """Get the source executor of the edge."""
         return [self._edge.source]
 
+    @property
     @override
     def target_executors(self) -> list[Executor]:
         """Get the target executor of the edge."""
         return [self._edge.target]
 
+    @property
     @override
     def edges(self) -> list[Edge]:
         """Get the edges in the group."""
@@ -229,16 +238,19 @@ class SourceEdgeGroup(EdgeGroup):
         )
         return True
 
+    @property
     @override
     def source_executors(self) -> list[Executor]:
         """Get the source executor of the edges in the group."""
         return [self._edges[0].source]
 
+    @property
     @override
     def target_executors(self) -> list[Executor]:
         """Get the target executors of the edges in the group."""
         return [edge.target for edge in self._edges]
 
+    @property
     @override
     def edges(self) -> list[Edge]:
         """Get the edges in the group."""
@@ -296,16 +308,19 @@ class TargetEdgeGroup(EdgeGroup):
         """Check if all edges in the group have data to send."""
         return all(self._buffer[edge.source_id] for edge in self._edges)
 
+    @property
     @override
     def source_executors(self) -> list[Executor]:
         """Get the source executors of the edges in the group."""
         return [edge.source for edge in self._edges]
 
+    @property
     @override
     def target_executors(self) -> list[Executor]:
         """Get the target executor of the edges in the group."""
         return [self._edges[0].target]
 
+    @property
     @override
     def edges(self) -> list[Edge]:
         """Get the edges in the group."""
@@ -358,7 +373,7 @@ class ConditionalEdgeGroup(SourceEdgeGroup):
             raise ValueError("Number of targets must be one more than the number of conditions.")
 
         self._edges = [
-            Edge(source, target, condition) for target, condition in zip(targets, [*conditions, None], strict=False)
+            Edge(source, target, condition) for target, condition in zip(targets, [*conditions, None], strict=True)
         ]
 
     @override

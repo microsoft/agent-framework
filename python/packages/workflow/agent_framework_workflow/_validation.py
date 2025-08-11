@@ -104,7 +104,7 @@ class WorkflowGraphValidator:
             WorkflowValidationError: If any validation fails
         """
         self._executors = self._build_executor_map(edge_groups)
-        self._edges = [edge for group in edge_groups for edge in group.edges()]
+        self._edges = [edge for group in edge_groups for edge in group.edges]
         self._edge_groups = edge_groups
 
         # Validate that start_executor exists in the graph
@@ -127,7 +127,7 @@ class WorkflowGraphValidator:
         """Build a map of executor IDs to executor instances."""
         executors: dict[str, Executor] = {}
         for group in edge_groups:
-            for executor in group.source_executors() + group.target_executors():
+            for executor in group.source_executors + group.target_executors:
                 executors[executor.id] = executor
 
         return executors
@@ -159,7 +159,7 @@ class WorkflowGraphValidator:
             TypeCompatibilityError: If type incompatibility is detected
         """
         for edge_group in self._edge_groups:
-            for edge in edge_group.edges():
+            for edge in edge_group.edges:
                 self._validate_edge_type_compatibility(edge, edge_group)
 
     def _validate_edge_type_compatibility(self, edge: Edge, edge_group: EdgeGroup) -> None:

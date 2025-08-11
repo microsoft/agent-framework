@@ -104,7 +104,7 @@ class Runner:
         """
         parsed: defaultdict[str, list[EdgeGroup]] = defaultdict(list)
         for group in edge_groups:
-            for source_executor in group.source_executors():
+            for source_executor in group.source_executors:
                 parsed[source_executor.id].append(group)
 
         return parsed

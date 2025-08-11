@@ -218,7 +218,7 @@ class Workflow:
         """
         executors: dict[str, Executor] = {}
         for group in edge_groups:
-            for executor in group.source_executors() + group.target_executors():
+            for executor in group.source_executors + group.target_executors:
                 executors[executor.id] = executor
 
         return executors
