@@ -180,3 +180,19 @@ cython_debug/
 .vs/
 
 **/.user/**
+
+# Temporary files
+*.~tmp
+*.~bak
+*.~swp
+*.~swo
+
+# Temporary directories
+*tmp/
+*temp/
+*.tmp/
+*.temp/
+tmp*/
+temp*/
+.tmp/
+.temp/

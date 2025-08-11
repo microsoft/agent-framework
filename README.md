@@ -1,4 +1,4 @@
-# Get Started with Microsoft Agent Framework
+# Microsoft Agent Framework
 
 Highlights
 - Flexible Agent Framework: build, orchestrate, and deploy AI agents and multi-agent systems
@@ -11,150 +11,21 @@ Highlights
 
 Below are the basics for each language implementation. For more details on python see [here](./python/README.md) and for .NET see [here](./dotnet/README.md).
 
-## Python - Quick Install
-
-```bash
-pip install agent-framework
-# Optional: Add Azure integration
-pip install agent-framework[azure]
-# Optional: Add Foundry integration
-pip install agent-framework[foundry]
-# Optional: Both
-pip install agent-framework[azure,foundry]
-```
-
-Supported Platforms:
-- Python: 3.10+
-- OS: Windows, macOS, Linux
-
-## Python - 1. Setup API Keys
-
-Set as environment variables, or create a .env file at your project root:
-
-```bash
-OPENAI_API_KEY=sk-...
-OPENAI_CHAT_MODEL_ID=...
-OPENAI_RESPONSES_MODEL_ID=...
-...
-AZURE_OPENAI_API_KEY=...
-AZURE_OPENAI_ENDPOINT=...
-AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=...
-...
-FOUNDRY_PROJECT_ENDPOINT=...
-FOUNDRY_MODEL_DEPLOYMENT_NAME=...
-```
-
-You can also override environment variables by explicitly passing configuration parameters to the chat client constructor:
-
-```python
-from agent_framework.azure import AzureChatClient
-
-chat_client = AzureChatClient(
-    api_key=...,
-    endpoint=...,
-    deployment_name=...,
-    api_version=...,
-)
-```
-
-See the following [setup guide](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started) for more information.
-
-## Python - 2. Create a Simple Agent
-
-Create agents and invoke them directly:
-
-```python
-import asyncio
-from agent_framework import ChatClientAgent
-from agent_framework.foundry import FoundryChatClient
-
-async def main():
-    async with ChatClientAgent(
-        chat_client=FoundryChatClient(),
-        instructions="""These are the Three Laws of Robotics:
-        1) A robot may not injure a human being...
-        2) A robot must obey orders given it by human beings...
-        3) A robot must protect its own existence...
-
-        Respond concisely to the user's request.
-        """
-    ):
-        result = await agent.run("Summarize the Three Laws of Robotics")
-        print(result.text)
-        """
-        Output:
-        Protect humans, obey, self-preserve, prioritized.
-        """
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-## Python - 3. Build an Agent with Tools
-
-Enhance your agent with custom tools and function calling:
-
-```python
-import asyncio
-from typing import Annotated
-from random import randint
-from pydantic import Field
-from agent_framework import ChatClientAgent
-from agent_framework.openai import OpenAIResponsesClient
-
-
-def get_weather(
-    location: Annotated[str, Field(description="The location to get the weather for.")],
-) -> str:
-    """Get the weather for a given location."""
-    conditions = ["sunny", "cloudy", "rainy", "stormy"]
-    return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
-
-
-def get_menu_specials() -> str:
-    """Get today's menu specials."""
-    return """
-    Special Soup: Clam Chowder
-    Special Salad: Cobb Salad
-    Special Drink: Chai Tea
-    """
-
-
-async def main():
-    agent = ChatClientAgent(
-        chat_client=OpenAIResponsesClient(),
-        instructions="You are a helpful assistant that can provide weather and restaurant information.",
-        tools=[get_weather, get_menu_specials]
-    )
-
-    response = await agent.run("What's the weather in Amsterdam and what are today's specials?")
-    print(response.text)
-
-    """
-    Output:
-    The weather in Amsterdam is sunny with a high of 22°C. Today's specials include
-    Clam Chowder soup, Cobb Salad, and Chai Tea as the special drink.
-    """
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-You can explore additional agent samples [here](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/agents).
-
-**Note**: Advanced orchestration patterns like GroupChat, Sequential, and Concurrent orchestrations are coming soon.
-
 ## More Examples & Samples
 
-- [Getting Started with Agents](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/agents): Basic agent creation and tool usage
-- [Chat Client Examples](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/chat_client): Direct chat client usage patterns
-- [Azure Integration](https://github.com/microsoft/agent-framework/tree/main/python/packages/azure): Azure OpenAI and AI Foundry integration
-- [.NET Orchestration Samples](https://github.com/microsoft/agent-framework/tree/main/dotnet/samples/GettingStarted/Orchestration): Advanced multi-agent patterns (.NET)
+### Python
+- [Getting Started with Agents](./python/samples/getting_started/agents): Basic agent creation and tool usage
+- [Chat Client Examples](./python/samples/getting_started/chat_client): Direct chat client usage patterns
+- [Azure Integration](./python/packages/azure): Azure OpenAI and AI Foundry integration
+
+### .Net
+- [Getting Started with Agents](./dotnet/samples/GettingStarted/Steps): Basic agent creation and tool usage
+- [Agent Provider Samples](./dotnet/samples/GettingStarted/Providers): Samples showing different agent providers
+- [Orchestration Samples](./dotnet/samples/GettingStarted/Orchestration): Advanced multi-agent patterns
 
 ## Agent Framework Documentation
 
 - [Agent Framework Repository](https://github.com/microsoft/agent-framework)
-- [Python Package Documentation](https://github.com/microsoft/agent-framework/tree/main/python)
-- [.NET Package Documentation](https://github.com/microsoft/agent-framework/tree/main/dotnet)
-- [Design Documents](https://github.com/microsoft/agent-framework/tree/main/docs/design)
+- [Design Documents](./docs/design)
+- [Architectural Decision Records](./docs/decisions)
 - Learn docs are coming soon.

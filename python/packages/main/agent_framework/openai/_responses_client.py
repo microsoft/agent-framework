@@ -52,68 +52,7 @@ __all__ = ["OpenAIResponsesClient"]
 # region ResponsesClient
 
 
-@use_telemetry
-@use_tool_calling
-class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
-    """OpenAI Responses client class."""
-
-    MODEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
-
-    def __init__(
-        self,
-        ai_model_id: str | None = None,
-        api_key: str | None = None,
-        org_id: str | None = None,
-        default_headers: Mapping[str, str] | None = None,
-        async_client: AsyncOpenAI | None = None,
-        instruction_role: str | None = None,
-        env_file_path: str | None = None,
-        env_file_encoding: str | None = None,
-    ) -> None:
-        """Initialize an OpenAIChatCompletion service.
-
-        Args:
-            ai_model_id: OpenAI model name, see
-                https://platform.openai.com/docs/models
-            api_key: The optional API key to use. If provided will override,
-                the env vars or .env file value.
-            org_id: The optional org ID to use. If provided will override,
-                the env vars or .env file value.
-            default_headers: The default headers mapping of string keys to
-                string values for HTTP requests. (Optional)
-            async_client: An existing client to use. (Optional)
-            instruction_role: The role to use for 'instruction' messages, for example,
-                "system" or "developer". If not provided, the default is "system".
-            env_file_path: Use the environment settings file as a fallback
-                to environment variables. (Optional)
-            env_file_encoding: The encoding of the environment settings file. (Optional)
-        """
-        try:
-            openai_settings = OpenAISettings(
-                api_key=SecretStr(api_key) if api_key else None,
-                org_id=org_id,
-                responses_model_id=ai_model_id,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create OpenAI settings.", ex) from ex
-
-        if not async_client and not openai_settings.api_key:
-            raise ServiceInitializationError("The OpenAI API key is required.")
-        if not openai_settings.responses_model_id:
-            raise ServiceInitializationError("The OpenAI model ID is required.")
-
-        super().__init__(
-            ai_model_id=openai_settings.responses_model_id,
-            api_key=openai_settings.api_key.get_secret_value() if openai_settings.api_key else None,
-            org_id=openai_settings.org_id,
-            ai_model_type=OpenAIModelTypes.RESPONSE,
-            default_headers=default_headers,
-            client=async_client,
-            instruction_role=instruction_role,
-        )
-
+class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
     def _filter_options(self, **kwargs: Any) -> dict[str, Any]:
         """Filter options for the responses call."""
         # The responses call does not support all the options that the chat completion call does.
@@ -543,6 +482,69 @@ class OpenAIResponsesClient(OpenAIConfigBase, ChatClientBase, OpenAIHandler):
         return {
             "logprobs": getattr(output, "logprobs", None),
         }
+
+
+@use_telemetry
+@use_tool_calling
+class OpenAIResponsesClient(OpenAIConfigBase, OpenAIResponsesClientBase):
+    """OpenAI Responses client class."""
+
+    MODEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
+
+    def __init__(
+        self,
+        ai_model_id: str | None = None,
+        api_key: str | None = None,
+        org_id: str | None = None,
+        default_headers: Mapping[str, str] | None = None,
+        async_client: AsyncOpenAI | None = None,
+        instruction_role: str | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        """Initialize an OpenAIChatCompletion service.
+
+        Args:
+            ai_model_id: OpenAI model name, see
+                https://platform.openai.com/docs/models
+            api_key: The optional API key to use. If provided will override,
+                the env vars or .env file value.
+            org_id: The optional org ID to use. If provided will override,
+                the env vars or .env file value.
+            default_headers: The default headers mapping of string keys to
+                string values for HTTP requests. (Optional)
+            async_client: An existing client to use. (Optional)
+            instruction_role: The role to use for 'instruction' messages, for example,
+                "system" or "developer". If not provided, the default is "system".
+            env_file_path: Use the environment settings file as a fallback
+                to environment variables. (Optional)
+            env_file_encoding: The encoding of the environment settings file. (Optional)
+        """
+        try:
+            openai_settings = OpenAISettings(
+                api_key=SecretStr(api_key) if api_key else None,
+                org_id=org_id,
+                responses_model_id=ai_model_id,
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
+            )
+        except ValidationError as ex:
+            raise ServiceInitializationError("Failed to create OpenAI settings.", ex) from ex
+
+        if not async_client and not openai_settings.api_key:
+            raise ServiceInitializationError("The OpenAI API key is required.")
+        if not openai_settings.responses_model_id:
+            raise ServiceInitializationError("The OpenAI model ID is required.")
+
+        super().__init__(
+            ai_model_id=openai_settings.responses_model_id,
+            api_key=openai_settings.api_key.get_secret_value() if openai_settings.api_key else None,
+            org_id=openai_settings.org_id,
+            ai_model_type=OpenAIModelTypes.RESPONSE,
+            default_headers=default_headers,
+            client=async_client,
+            instruction_role=instruction_role,
+        )
 
     @classmethod
     def from_dict(cls, settings: dict[str, Any]) -> "OpenAIResponsesClient":

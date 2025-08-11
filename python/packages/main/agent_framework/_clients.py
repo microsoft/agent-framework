@@ -4,7 +4,7 @@ import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, MutableSequence, Sequence
 from functools import wraps
-from typing import Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -23,6 +23,9 @@ from ._types import (
     GeneratedEmbeddings,
 )
 
+if TYPE_CHECKING:
+    from ._agents import ChatClientAgent
+
 TInput = TypeVar("TInput", contravariant=True)
 TEmbedding = TypeVar("TEmbedding")
 TChatClientBase = TypeVar("TChatClientBase", bound="ChatClientBase")
@@ -36,7 +39,7 @@ __all__ = [
     "use_tool_calling",
 ]
 
-# region: Tool Calling Functions and Decorators
+# region Tool Calling Functions and Decorators
 
 
 async def _auto_invoke_function(
@@ -250,7 +253,7 @@ def use_tool_calling(cls: type[TChatClientBase]) -> type[TChatClientBase]:
     return cls
 
 
-# region: ChatClient Protocol
+# region ChatClient Protocol
 
 
 @runtime_checkable
@@ -641,8 +644,38 @@ class ChatClientBase(AFBaseModel, ABC):
         """
         return None
 
+    def create_agent(
+        self,
+        *,
+        name: str,
+        instructions: str,
+        tools: AITool
+        | list[AITool]
+        | Callable[..., Any]
+        | list[Callable[..., Any]]
+        | MutableMapping[str, Any]
+        | list[MutableMapping[str, Any]]
+        | None = None,
+        **kwargs: Any,
+    ) -> "ChatClientAgent":
+        """Create an agent with the given name and instructions.
 
-# region: Embedding Client
+        Args:
+            name: The name of the agent.
+            instructions: The instructions for the agent.
+            tools: Optional list of tools to associate with the agent.
+            **kwargs: Additional keyword arguments to pass to the agent.
+                See ChatClientAgent for all the available options.
+
+        Returns:
+            An instance of ChatClientAgent.
+        """
+        from ._agents import ChatClientAgent
+
+        return ChatClientAgent(chat_client=self, name=name, instructions=instructions, tools=tools, **kwargs)
+
+
+# region Embedding Client
 
 
 @runtime_checkable

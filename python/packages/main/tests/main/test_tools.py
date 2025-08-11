@@ -5,7 +5,8 @@ from unittest.mock import Mock, patch
 import pytest
 from pydantic import BaseModel
 
-from agent_framework import AIFunction, AITool, ai_function
+from agent_framework import AIFunction, AITool, HostedCodeInterpreterTool, ai_function
+from agent_framework._tools import _parse_inputs
 from agent_framework.telemetry import GenAIAttributes
 
 
@@ -288,3 +289,231 @@ async def test_ai_function_invoke_invalid_pydantic_args():
     # Call invoke with wrong model type
     with pytest.raises(TypeError, match="Expected invalid_args_test_input, got WrongModel"):
         await invalid_args_test.invoke(arguments=wrong_args)
+
+
+# Tests for HostedCodeInterpreterTool and _parse_inputs
+
+
+def test_hosted_code_interpreter_tool_default():
+    """Test HostedCodeInterpreterTool with default parameters."""
+    tool = HostedCodeInterpreterTool()
+
+    assert tool.name == "code_interpreter"
+    assert tool.inputs == []
+    assert tool.description is None
+    assert tool.additional_properties is None
+    assert str(tool) == "HostedCodeInterpreterTool(name=code_interpreter)"
+
+
+def test_hosted_code_interpreter_tool_custom_name():
+    """Test HostedCodeInterpreterTool with custom name."""
+    tool = HostedCodeInterpreterTool(name="custom_interpreter")
+
+    assert tool.name == "custom_interpreter"
+    assert tool.inputs == []
+    assert str(tool) == "HostedCodeInterpreterTool(name=custom_interpreter)"
+
+
+def test_hosted_code_interpreter_tool_with_description():
+    """Test HostedCodeInterpreterTool with description and additional properties."""
+    tool = HostedCodeInterpreterTool(
+        name="test_interpreter",
+        description="A test code interpreter",
+        additional_properties={"version": "1.0", "language": "python"},
+    )
+
+    assert tool.name == "test_interpreter"
+    assert tool.description == "A test code interpreter"
+    assert tool.additional_properties == {"version": "1.0", "language": "python"}
+
+
+def test_parse_inputs_none():
+    """Test _parse_inputs with None input."""
+    result = _parse_inputs(None)
+    assert result == []
+
+
+def test_parse_inputs_string():
+    """Test _parse_inputs with string input."""
+    from agent_framework import UriContent
+
+    result = _parse_inputs("http://example.com")
+    assert len(result) == 1
+    assert isinstance(result[0], UriContent)
+    assert result[0].uri == "http://example.com"
+    assert result[0].media_type == "text/plain"
+
+
+def test_parse_inputs_list_of_strings():
+    """Test _parse_inputs with list of strings."""
+    from agent_framework import UriContent
+
+    inputs = ["http://example.com", "https://test.org"]
+    result = _parse_inputs(inputs)
+
+    assert len(result) == 2
+    assert all(isinstance(item, UriContent) for item in result)
+    assert result[0].uri == "http://example.com"
+    assert result[1].uri == "https://test.org"
+    assert all(item.media_type == "text/plain" for item in result)
+
+
+def test_parse_inputs_uri_dict():
+    """Test _parse_inputs with URI dictionary."""
+    from agent_framework import UriContent
+
+    input_dict = {"uri": "http://example.com", "media_type": "application/json"}
+    result = _parse_inputs(input_dict)
+
+    assert len(result) == 1
+    assert isinstance(result[0], UriContent)
+    assert result[0].uri == "http://example.com"
+    assert result[0].media_type == "application/json"
+
+
+def test_parse_inputs_hosted_file_dict():
+    """Test _parse_inputs with hosted file dictionary."""
+    from agent_framework import HostedFileContent
+
+    input_dict = {"file_id": "file-123"}
+    result = _parse_inputs(input_dict)
+
+    assert len(result) == 1
+    assert isinstance(result[0], HostedFileContent)
+    assert result[0].file_id == "file-123"
+
+
+def test_parse_inputs_hosted_vector_store_dict():
+    """Test _parse_inputs with hosted vector store dictionary."""
+    from agent_framework import HostedVectorStoreContent
+
+    input_dict = {"vector_store_id": "vs-789"}
+    result = _parse_inputs(input_dict)
+
+    assert len(result) == 1
+    assert isinstance(result[0], HostedVectorStoreContent)
+    assert result[0].vector_store_id == "vs-789"
+
+
+def test_parse_inputs_data_dict():
+    """Test _parse_inputs with data dictionary."""
+    from agent_framework import DataContent
+
+    input_dict = {"data": b"test data", "media_type": "application/octet-stream"}
+    result = _parse_inputs(input_dict)
+
+    assert len(result) == 1
+    assert isinstance(result[0], DataContent)
+    assert result[0].uri == "data:application/octet-stream;base64,dGVzdCBkYXRh"
+    assert result[0].media_type == "application/octet-stream"
+
+
+def test_parse_inputs_ai_contents_instance():
+    """Test _parse_inputs with AIContents instance."""
+    from agent_framework import TextContent
+
+    text_content = TextContent(text="Hello, world!")
+    result = _parse_inputs(text_content)
+
+    assert len(result) == 1
+    assert isinstance(result[0], TextContent)
+    assert result[0].text == "Hello, world!"
+
+
+def test_parse_inputs_mixed_list():
+    """Test _parse_inputs with mixed input types."""
+    from agent_framework import HostedFileContent, TextContent, UriContent
+
+    inputs = [
+        "http://example.com",  # string
+        {"uri": "https://test.org", "media_type": "text/html"},  # URI dict
+        {"file_id": "file-456"},  # hosted file dict
+        TextContent(text="Hello"),  # AIContents instance
+    ]
+
+    result = _parse_inputs(inputs)
+
+    assert len(result) == 4
+    assert isinstance(result[0], UriContent)
+    assert result[0].uri == "http://example.com"
+    assert isinstance(result[1], UriContent)
+    assert result[1].uri == "https://test.org"
+    assert result[1].media_type == "text/html"
+    assert isinstance(result[2], HostedFileContent)
+    assert result[2].file_id == "file-456"
+    assert isinstance(result[3], TextContent)
+    assert result[3].text == "Hello"
+
+
+def test_parse_inputs_unsupported_dict():
+    """Test _parse_inputs with unsupported dictionary format."""
+    input_dict = {"unsupported_key": "value"}
+
+    with pytest.raises(ValueError, match="Unsupported input type"):
+        _parse_inputs(input_dict)
+
+
+def test_parse_inputs_unsupported_type():
+    """Test _parse_inputs with unsupported input type."""
+    with pytest.raises(TypeError, match="Unsupported input type: int"):
+        _parse_inputs(123)
+
+
+def test_hosted_code_interpreter_tool_with_string_input():
+    """Test HostedCodeInterpreterTool with string input."""
+    from agent_framework import UriContent
+
+    tool = HostedCodeInterpreterTool(inputs="http://example.com")
+
+    assert len(tool.inputs) == 1
+    assert isinstance(tool.inputs[0], UriContent)
+    assert tool.inputs[0].uri == "http://example.com"
+
+
+def test_hosted_code_interpreter_tool_with_dict_inputs():
+    """Test HostedCodeInterpreterTool with dictionary inputs."""
+    from agent_framework import HostedFileContent, UriContent
+
+    inputs = [{"uri": "http://example.com", "media_type": "text/html"}, {"file_id": "file-123"}]
+
+    tool = HostedCodeInterpreterTool(inputs=inputs)
+
+    assert len(tool.inputs) == 2
+    assert isinstance(tool.inputs[0], UriContent)
+    assert tool.inputs[0].uri == "http://example.com"
+    assert tool.inputs[0].media_type == "text/html"
+    assert isinstance(tool.inputs[1], HostedFileContent)
+    assert tool.inputs[1].file_id == "file-123"
+
+
+def test_hosted_code_interpreter_tool_with_ai_contents():
+    """Test HostedCodeInterpreterTool with AIContents instances."""
+    from agent_framework import DataContent, TextContent
+
+    inputs = [TextContent(text="Hello, world!"), DataContent(data=b"test", media_type="text/plain")]
+
+    tool = HostedCodeInterpreterTool(inputs=inputs)
+
+    assert len(tool.inputs) == 2
+    assert isinstance(tool.inputs[0], TextContent)
+    assert tool.inputs[0].text == "Hello, world!"
+    assert isinstance(tool.inputs[1], DataContent)
+    assert tool.inputs[1].media_type == "text/plain"
+
+
+def test_hosted_code_interpreter_tool_with_single_input():
+    """Test HostedCodeInterpreterTool with single input (not in list)."""
+    from agent_framework import HostedFileContent
+
+    input_dict = {"file_id": "file-single"}
+    tool = HostedCodeInterpreterTool(inputs=input_dict)
+
+    assert len(tool.inputs) == 1
+    assert isinstance(tool.inputs[0], HostedFileContent)
+    assert tool.inputs[0].file_id == "file-single"
+
+
+def test_hosted_code_interpreter_tool_with_unknown_input():
+    """Test HostedCodeInterpreterTool with single unknown input."""
+    with pytest.raises(ValueError, match="Unsupported input type"):
+        HostedCodeInterpreterTool(inputs={"hosted_file": "file-single"})
