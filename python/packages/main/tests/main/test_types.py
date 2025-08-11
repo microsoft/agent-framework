@@ -197,7 +197,7 @@ def test_hosted_file_content():
     content = HostedFileContent(file_id="file-123", additional_properties={"version": 1})
 
     # Check the type and content
-    assert content.type == "file"
+    assert content.type == "hosted_file"
     assert content.file_id == "file-123"
     assert content.additional_properties["version"] == 1
 
@@ -210,7 +210,7 @@ def test_hosted_file_content_minimal():
     content = HostedFileContent(file_id="file-456")
 
     # Check the type and content
-    assert content.type == "file"
+    assert content.type == "hosted_file"
     assert content.file_id == "file-456"
     assert content.additional_properties is None
     assert content.raw_representation is None

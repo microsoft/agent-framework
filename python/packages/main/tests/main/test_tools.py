@@ -516,4 +516,4 @@ def test_hosted_code_interpreter_tool_with_single_input():
 def test_hosted_code_interpreter_tool_with_unknown_input():
     """Test HostedCodeInterpreterTool with single unknown input."""
     with pytest.raises(ValueError, match="Unsupported input type"):
-        HostedCodeInterpreterTool(inputs={"file": "file-single"})
+        HostedCodeInterpreterTool(inputs={"hosted_file": "file-single"})
