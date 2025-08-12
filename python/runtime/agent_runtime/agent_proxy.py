@@ -252,7 +252,14 @@ class AgentProxy(AIAgent):
         """Core method to send a run request to the actor."""
         # Create the run request
         run_request = {
-            "messages": [msg.model_dump() for msg in messages]
+            "messages": [
+                {
+                    "role": msg.role.value,
+                    "text": msg.text,
+                    "message_id": msg.message_id
+                }
+                for msg in messages
+            ]
         }
 
         # Get message ID from last message or generate new one

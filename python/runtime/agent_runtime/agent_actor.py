@@ -116,10 +116,10 @@ class AgentActor(IActor):
             try:
                 role_value = msg_data.get("role", "user")
                 role = getattr(ChatRole, str(role_value).upper(), ChatRole.USER)
-                content = msg_data.get("content", "")
+                text = msg_data.get("text", "")
                 framework_msg = ChatMessage(
                     role=role,
-                    text=content  # Framework uses 'text'
+                    text=text
                 )
                 messages.append(framework_msg)
             except Exception as e:
@@ -135,7 +135,7 @@ class AgentActor(IActor):
             for framework_msg in framework_response.messages:
                 msg_data = {
                     "role": self._extract_role(framework_msg),
-                    "content": self._extract_content(framework_msg),
+                    "text": self._extract_content(framework_msg),
                     "message_id": getattr(framework_msg, 'message_id', None)
                 }
                 
@@ -160,7 +160,7 @@ class AgentActor(IActor):
         except Exception as e:
             logger.error(f"Error converting framework response: {e}")
             return {
-                "messages": [{"role": "assistant", "content": f"Response conversion error: {e}"}],
+                "messages": [{"role": "assistant", "text": f"Response conversion error: {e}"}],
                 "status": "failed"
             }
     
@@ -202,7 +202,7 @@ class AgentActor(IActor):
                         try:
                             serialized_messages.append({
                                 "role": self._extract_role(m),
-                                "content": self._extract_content(m)
+                                "text": self._extract_content(m)
                             })
                         except Exception as e:
                             logger.debug(f"Failed to serialize message for state: {e}")

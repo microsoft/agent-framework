@@ -1,12 +1,20 @@
 """
 Web Chat Sample for Python Agent Framework Runtime
 
-This sample mirrors the .NET AgentWebChat sample: a minimal web chat UI talking to the agent runtime HTTP API.
-It shows:
- 1. Listing available agents (discovery) from /agents
- 2. Starting / continuing a conversation with an agent
- 3. Maintaining per-user (session) conversation ids
- 4. Simple frontend (HTMX + minimal JS) with streaming placeholder (future)
+This sample mirrors the .NET AgentWebChat sample: a minimal web chat UI using AgentProxy
+to communicate with agents running in the actor runtime via HTTP.
+
+It demonstrates:
+ 1. Using AgentProxy pattern to treat remote actors as local AIAgent instances
+ 2. HttpActorClient for HTTP-based actor communication (like .NET HttpActorClient)
+ 3. Sample-specific agent host (agent_host.py) that configures agents for this sample
+ 4. Listing available agents (discovery) from /agents endpoint
+ 5. Starting / continuing conversations with thread management
+ 6. Maintaining per-user (session) conversation IDs
+ 7. Simple frontend (HTMX + minimal JS)
+
+Architecture:
+  Web App -> AgentProxy -> HttpActorClient -> Agent Host HTTP API -> Actor Runtime -> AIAgent
 
 Prerequisites:
   pip install fastapi uvicorn jinja2 httpx
@@ -14,16 +22,17 @@ Prerequisites:
 
 Run:
   python app.py
-Then open: http://localhost:5173
+Then open: http://localhost:5174
 
 Expected flow:
  - Landing page lists agents discovered from runtime
  - User picks an agent (defaults to 'helpful')
- - User sends messages; responses appear in chat window
+ - User sends messages via AgentProxy; responses appear in chat window
  - Conversation id is kept in a cookie so page reload retains history
 
-NOTE: For simplicity this sample spawns the runtime HTTP API (agent_runtime.http_api) in-process
-on a different port (8000) so we keep concerns separated like the .NET sample does with an app host.
+NOTE: This sample spawns a sample-specific agent host (agent_host.py) that configures 
+the agents needed by this web chat sample, similar to .NET's AgentWebChat.AgentHost project.
+The AgentProxy provides a clean abstraction over the HTTP actor communication.
 """
 from __future__ import annotations
 import asyncio
@@ -38,6 +47,16 @@ from fastapi import FastAPI, Request, Depends, Cookie
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+
+# Import AgentProxy and related runtime components
+import sys
+runtime_path = str(Path(__file__).resolve().parents[2] / "runtime")
+if runtime_path not in sys.path:
+    sys.path.append(runtime_path)
+
+from agent_runtime.agent_proxy import AgentProxy, AgentProxyThread
+from agent_runtime.http_actor_client import HttpActorClient
+from agent_runtime.runtime_abstractions import ActorId
 
 DEFAULT_RUNTIME_PORT = int(os.environ.get("AGENT_RUNTIME_PORT", "8000"))
 DEFAULT_APP_PORT = int(os.environ.get("WEB_CHAT_PORT", "5174"))
@@ -77,7 +96,7 @@ def resolve_app_port() -> int:
 APP_PORT = resolve_app_port()
 
 # ----------------------------------------------------------------------------
-# Runtime bootstrap (start separate uvicorn like .NET app host)
+# Agent Host bootstrap (start sample-specific agent host like .NET AgentWebChat.AgentHost)
 # ----------------------------------------------------------------------------
 _runtime_process = None
 
@@ -85,10 +104,8 @@ def ensure_runtime() -> None:
     global _runtime_process
     if _runtime_process and _runtime_process.poll() is None:
         return
-    # Launch the runtime API (if not already started externally)
-    # The runtime package (agent_runtime) lives under python/runtime/agent_runtime
-    # We need the cwd to be the directory that contains the agent_runtime package so the module import works.
-    # Determine runtime root (python/runtime)
+    # Launch the sample-specific agent host (like .NET AgentWebChat.AgentHost)
+    # The agent host configures agents needed by this sample
     runtime_root = Path(__file__).resolve().parents[2] / "runtime"
     if not (runtime_root / "agent_runtime").is_dir():
         raise RuntimeError(f"agent_runtime package not found at {runtime_root}")
@@ -97,9 +114,11 @@ def ensure_runtime() -> None:
     # Ensure runtime_root is on PYTHONPATH so 'agent_runtime' imports resolve in subprocess
     existing_path = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = str(runtime_root) + (os.pathsep + existing_path if existing_path else "")
+    # Start the sample-specific agent host (like .NET AgentWebChat.AgentHost)
+    # Use the same Python executable as the current process
     _runtime_process = subprocess.Popen([
-        "python", "-m", "uvicorn", "agent_runtime.http_api:app", "--host", "127.0.0.1", "--port", str(RUNTIME_PORT)
-    ], cwd=str(runtime_root), env=env)
+        sys.executable, "-m", "uvicorn", "agent_host:app", "--host", "127.0.0.1", "--port", str(RUNTIME_PORT)
+    ], cwd=str(Path(__file__).parent), env=env)
 
 # ----------------------------------------------------------------------------
 # Web application
@@ -114,6 +133,10 @@ async def get_http_client() -> AsyncIterator[httpx.AsyncClient]:
     async with httpx.AsyncClient(base_url=RUNTIME_URL, timeout=30.0) as client:
         yield client
 
+def get_actor_client() -> HttpActorClient:
+    """Get an HTTP actor client for communicating with the runtime."""
+    return HttpActorClient(RUNTIME_URL)
+
 # ----------------------------------------------------------------------------
 # Helper functions
 # ----------------------------------------------------------------------------
@@ -122,15 +145,28 @@ async def discover_agents(client: httpx.AsyncClient) -> List[Dict[str, Any]]:
     r.raise_for_status()
     return r.json()
 
-async def send_agent_message(client: httpx.AsyncClient, agent: str, conversation_id: str, user_text: str) -> Dict[str, Any]:
-    payload = {
-        "agent_name": agent,
-        "conversation_id": conversation_id,
-        "messages": [{"role": "user", "content": user_text}]
+async def send_agent_message_via_proxy(actor_client: HttpActorClient, agent: str, conversation_id: str, user_text: str) -> Dict[str, Any]:
+    """Send a message to an agent using the AgentProxy pattern."""
+    # Create agent proxy
+    agent_proxy = AgentProxy(agent, actor_client)
+    
+    # Create or get thread
+    thread = AgentProxyThread(conversation_id)
+    
+    # Send message via proxy
+    response = await agent_proxy.run(user_text, thread=thread)
+    
+    # Convert response to expected format
+    return {
+        "messages": [
+            {
+                "role": msg.role.value if hasattr(msg.role, 'value') else str(msg.role),
+                "content": msg.text
+            } for msg in response.messages
+        ],
+        "status": "completed",
+        "conversation_id": conversation_id
     }
-    r = await client.post(f"/agents/{agent}/run", json=payload)
-    r.raise_for_status()
-    return r.json()
 
 # ----------------------------------------------------------------------------
 # Routes
@@ -164,7 +200,11 @@ async def index(request: Request, conversation_id: str | None = Cookie(default=N
     return response
 
 @app.post("/chat/send", response_class=HTMLResponse)
-async def chat_send(request: Request, client: httpx.AsyncClient = Depends(get_http_client), conversation_id: str | None = Cookie(default=None)):
+async def chat_send(
+    request: Request, 
+    client: httpx.AsyncClient = Depends(get_http_client), 
+    conversation_id: str | None = Cookie(default=None)
+):
     form = await request.form()
     agent = form.get("agent") or "helpful"
     message = form.get("message") or ""
@@ -172,12 +212,15 @@ async def chat_send(request: Request, client: httpx.AsyncClient = Depends(get_ht
         return HTMLResponse("<div class='error'>Empty message.</div>")
     if not conversation_id:
         conversation_id = str(uuid.uuid4())
-    # Send to runtime
+    
+    # Send to runtime using AgentProxy
     try:
-        runtime_response = await send_agent_message(client, agent, conversation_id, message)
+        actor_client = get_actor_client()
+        runtime_response = await send_agent_message_via_proxy(actor_client, agent, conversation_id, message)
         assistant_msg = runtime_response.get("messages", [{}])[0].get("content", "(no response)")
     except Exception as e:
-        assistant_msg = f"Error contacting runtime: {e}"  # minimal error surfacing
+        assistant_msg = f"Error contacting runtime via proxy: {e}"  # minimal error surfacing
+    
     # Return partial HTML snippet (HTMX swap)
     return templates.TemplateResponse("_messages_fragment.html", {
         "request": request,
@@ -204,5 +247,5 @@ if __name__ == "__main__":
     import uvicorn
     ensure_runtime()
     print(f"Python Agent Web Chat running on http://127.0.0.1:{APP_PORT}")
-    print(f"Runtime API at http://127.0.0.1:{RUNTIME_PORT} (auto-started)")
+    print(f"Agent Host API at http://127.0.0.1:{RUNTIME_PORT} (auto-started)")
     uvicorn.run(app, host="127.0.0.1", port=APP_PORT)
