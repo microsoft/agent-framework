@@ -19,7 +19,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     ChatRole,
-    InMemoryChatMessageStore,
+    ListChatMessageStore,
     TextContent,
 )
 from agent_framework.exceptions import AgentExecutionException
@@ -191,7 +191,7 @@ async def test_chat_client_agent_get_new_thread(chat_client: ChatClient) -> None
 async def test_chat_client_agent_prepare_thread_and_messages(chat_client: ChatClient) -> None:
     agent = ChatClientAgent(chat_client=chat_client)
     message = ChatMessage(role=ChatRole.USER, text="Hello")
-    thread = AgentThread(message_store=InMemoryChatMessageStore(messages=[message]))
+    thread = AgentThread(message_store=ListChatMessageStore(messages=[message]))
 
     _, result_messages = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
         thread=thread,

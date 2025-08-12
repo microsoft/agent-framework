@@ -6,7 +6,7 @@ from typing import Any, Protocol
 from ._pydantic import AFBaseModel
 from ._types import ChatMessage
 
-__all__ = ["AgentThread", "ChatMessageStore", "InMemoryChatMessageStore"]
+__all__ = ["AgentThread", "ChatMessageStore", "ListChatMessageStore"]
 
 
 class ChatMessageStore(Protocol):
@@ -118,7 +118,7 @@ class AgentThread(AFBaseModel):
             service_thread_id=self._service_thread_id, chat_message_store_state=chat_message_store_state
         )
 
-        return state.__dict__
+        return state.model_dump()
 
 
 async def thread_on_new_messages(thread: AgentThread, new_messages: ChatMessage | Sequence[ChatMessage]) -> None:
@@ -131,7 +131,7 @@ async def thread_on_new_messages(thread: AgentThread, new_messages: ChatMessage 
     if thread.message_store is None:
         # If there is no conversation id, and no store we can
         # create a default in memory store.
-        thread.message_store = InMemoryChatMessageStore()
+        thread.message_store = ListChatMessageStore()
 
     # If a store has been provided, we need to add the messages to the store.
     if isinstance(new_messages, ChatMessage):
@@ -155,7 +155,7 @@ async def deserialize_thread_state(thread: AgentThread, serialized_thread: Any, 
 
     if thread.message_store is None:
         # If we don't have a chat message store yet, create an in-memory one.
-        thread.message_store = InMemoryChatMessageStore()
+        thread.message_store = ListChatMessageStore()
 
     await thread.message_store.deserialize_state(state.chat_message_store_state, **kwargs)
 
@@ -169,7 +169,7 @@ class StoreState(AFBaseModel):
     messages: list[ChatMessage]
 
 
-class InMemoryChatMessageStore(ChatMessageStore):
+class ListChatMessageStore:
     def __init__(self, messages: Collection[ChatMessage] | None = None) -> None:
         self._messages: list[ChatMessage] = []
         if messages:
@@ -189,7 +189,7 @@ class InMemoryChatMessageStore(ChatMessageStore):
 
     async def serialize_state(self, **kwargs: Any) -> Any:
         state = StoreState(messages=self._messages)
-        return state.__dict__
+        return state.model_dump()
 
     def __len__(self) -> int:
         return len(self._messages)

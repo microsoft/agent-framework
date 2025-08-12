@@ -38,7 +38,7 @@ class CustomChatMessageStore(ChatMessageStore):
 
     async def serialize_state(self, **kwargs: Any) -> Any:
         state = CustomStoreState(messages=self._messages)
-        return state.__dict__
+        return state.model_dump()
 
 
 async def main() -> None:
