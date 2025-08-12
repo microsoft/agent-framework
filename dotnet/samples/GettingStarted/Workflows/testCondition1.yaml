@@ -31,17 +31,15 @@ beginDialog:
     - kind: ConditionGroup
       id: conditionGroup_mVIecC
       conditions:
-        - id: conditionItem_fj432c
-          condition: =Topic.Count < 5
-          displayName: Just started
+        - id: conditionItem_p1
+          condition: =Topic.Count < 3
           actions:
             - kind: SendActivity
               id: sendActivity_Pkkmpq
               activity: Just started (x{Topic.Count})
 
-        - id: conditionItem_yiqund
-          condition: =Topic.Count > 5 && Topic.Count < 10
-          displayName: Making progress
+        - id: conditionItem_p2
+          condition: =Topic.Count >= 3 && Topic.Count < 6
           actions:
             - kind: SendActivity
               id: sendActivity_aLM1o3
@@ -51,13 +49,27 @@ beginDialog:
               id: goto_LzfJ8u
               actionId: setVariable_a9f4o2
 
-      elseActions:
-        - kind: SendActivity
-          id: sendActivity_rOk31p
-          activity: All done (x{Topic.Count})
+        - id: conditionItem_p3
+          condition: =Topic.Count >= 6
+          actions:
+            - kind: SendActivity
+              id: sendActivity_rOk31p
+              activity: All done (x{Topic.Count})
 
-        - kind: EndConversation
-          id: end_SVoNSV
+            - kind: EndConversation
+              id: end_SVoNSV
+
+            # - kind: GotoAction
+            #   id: goto_HAX
+            #   actionId: sendActivity_ohn03s
+
+      # elseActions:
+      #   - kind: SendActivity
+      #     id: sendActivity_rOk31p
+      #     activity: All done (x{Topic.Count})
+
+      #   - kind: EndConversation
+      #     id: end_SVoNSV
              
     - kind: SendActivity
       id: sendActivity_fJsbRz

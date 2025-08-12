@@ -1,0 +1,70 @@
+kind: AdaptiveDialog
+beginDialog:
+  
+  kind: OnActivity
+  id: activity_xyz123
+  type: Message
+  actions:
+  
+    - kind: SetVariable
+      id: setVariable_start
+      displayName: Invocation count
+      variable: Topic.Count
+      value: =0
+
+    - kind: SetVariable
+      id: setVariable_loop
+      displayName: Invocation count
+      variable: Topic.Count
+      value: =Topic.Count + 11
+
+    - kind: SendActivity
+      id: sendActivity_loop
+      activity: Looping (x{Topic.Count})
+
+    - kind: ConditionGroup
+      id: conditionGroup_test
+      conditions:
+        - id: conditionItem_p1
+          condition: =Topic.Count < 3
+
+        - id: conditionItem_p2
+          condition: =Topic.Count >= 3 && Topic.Count < 6
+          actions:
+            - kind: SendActivity
+              id: sendActivity_p2
+              activity: 3 <= ({Topic.Count}) < 6
+
+            - kind: GotoAction
+              id: goto_p2
+              actionId: sendActivity_done
+
+        - id: conditionItem_p3
+          condition: =Topic.Count >= 6 && Topic.Count < 9
+          actions:
+            - kind: SendActivity
+              id: sendActivity_p3
+              activity: 6 <= ({Topic.Count}) < 9
+
+        - id: conditionItem_p4
+          condition: =Topic.Count >= 9
+          actions:
+            - kind: SendActivity
+              id: sendActivity_p4
+              activity: ({Topic.Count}) >= 9
+
+      # elseActions:
+      #   - kind: SendActivity
+      #     id: sendActivity_rOk31p
+      #     activity: All done (x{Topic.Count})
+
+      #   - kind: EndConversation
+      #     id: end_SVoNSV
+             
+    - kind: SendActivity
+      id: sendActivity_extra
+      activity: Fall-through...
+             
+    - kind: SendActivity
+      id: sendActivity_done
+      activity: Complete!

@@ -44,15 +44,15 @@ internal abstract class WorkflowActionExecutor(DialogAction model) :
     /// <inheritdoc/>
     public async ValueTask HandleAsync(string message, IWorkflowContext context)
     {
-        if (this.Model.Disabled) // %%% VALIDATE
+        if (this.Model.Disabled)
         {
-            Console.WriteLine($"!!! DISABLED {this.GetType().Name} [{this.Id}]"); // %%% REMOVE
+            Console.WriteLine($"!!! DISABLED {this.GetType().Name} [{this.Id}]"); // %%% LOGGER
             return;
         }
 
         try
         {
-            await this.ExecuteAsync(cancellationToken: default).ConfigureAwait(false); // %%% CONTEXT
+            await this.ExecuteAsync(cancellationToken: default).ConfigureAwait(false);
 
             await context.SendMessageAsync($"{this.Id}: {DateTime.UtcNow.ToShortTimeString()}").ConfigureAwait(false);
         }

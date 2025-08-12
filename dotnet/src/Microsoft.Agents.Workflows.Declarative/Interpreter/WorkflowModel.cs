@@ -86,7 +86,12 @@ internal sealed class WorkflowModel
     {
         foreach (ModelNode node in this.Nodes.Values.ToImmutableArray())
         {
-            node.CompletionHandler?.Invoke();
+            if (node.CompletionHandler is not null)
+            {
+                Console.WriteLine($"> CLOSE: {node.Id} (x{node.Children.Count})"); // %%% LOGGER
+
+                node.CompletionHandler.Invoke();
+            }
         }
 
         foreach (ModelLink link in this.Links)
@@ -96,7 +101,7 @@ internal sealed class WorkflowModel
                 throw new WorkflowBuilderException($"Unresolved target for {link.Source.Id}: {link.TargetId}.");
             }
 
-            Console.WriteLine($"> CONNECT: {link.Source.Id} => {link.TargetId}"); // %%% LOGGER
+            Console.WriteLine($"> CONNECT: {link.Source.Id} => {link.TargetId}{(link.Condition is null ? string.Empty : " (?)")}"); // %%% LOGGER
 
             workflowBuilder.AddEdge(link.Source.Executor, targetNode.Executor, link.Condition);
         }
