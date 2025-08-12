@@ -3,7 +3,7 @@
 import json
 import sys
 from collections.abc import AsyncIterable, Mapping, MutableMapping, MutableSequence
-from typing import Any, ClassVar
+from typing import Any
 
 from openai import AsyncOpenAI
 from openai.types.beta.threads import (
@@ -54,7 +54,6 @@ __all__ = ["OpenAIAssistantsClient"]
 class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
     """OpenAI Assistants client."""
 
-    MODEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
     assistant_id: str | None = Field(default=None)
     assistant_name: str | None = Field(default=None)
     thread_id: str | None = Field(default=None)
@@ -362,7 +361,7 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
                 if chat_options.tool_choice != "none" and chat_options.tools is not None:
                     for tool in chat_options.tools:
                         if isinstance(tool, AIFunction):
-                            tool_definitions.append(tool.to_json_tool())  # type: ignore[reportUnknownArgumentType]
+                            tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
                         elif isinstance(tool, HostedCodeInterpreterTool):
                             tool_definitions.append({"type": "code_interpreter"})
                         elif isinstance(tool, MutableMapping):
@@ -467,3 +466,14 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
                 tool_outputs.append(ToolOutput(tool_call_id=call_id, output=str(function_result_content.result)))
 
         return run_id, tool_outputs
+
+    def _update_agent_name(self, agent_name: str | None) -> None:
+        """Update the agent name in the chat client.
+
+        Args:
+            agent_name: The new name for the agent.
+        """
+        # This is a no-op in the base class, but can be overridden by subclasses
+        # to update the agent name in the client.
+        if agent_name and not self.assistant_name:
+            self.assistant_name = agent_name
