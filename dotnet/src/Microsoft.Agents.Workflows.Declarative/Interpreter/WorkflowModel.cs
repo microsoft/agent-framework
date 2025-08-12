@@ -3,14 +3,10 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Diagnostics;
 using Microsoft.Agents.Workflows.Core;
 
 namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
-
-/// <summary>
-/// %%% COMMENT
-/// </summary>
-internal delegate void Action();
 
 /// <summary>
 /// Provides dynamic model for constructing a declarative workflow.
@@ -88,7 +84,7 @@ internal sealed class WorkflowModel
         {
             if (node.CompletionHandler is not null)
             {
-                Console.WriteLine($"> CLOSE: {node.Id} (x{node.Children.Count})"); // %%% LOGGER
+                Debug.WriteLine($"> CLOSE: {node.Id} (x{node.Children.Count})");
 
                 node.CompletionHandler.Invoke();
             }
@@ -101,7 +97,7 @@ internal sealed class WorkflowModel
                 throw new WorkflowModelException($"Unresolved target for {link.Source.Id}: {link.TargetId}.");
             }
 
-            Console.WriteLine($"> CONNECT: {link.Source.Id} => {link.TargetId}{(link.Condition is null ? string.Empty : " (?)")}"); // %%% LOGGER
+            Debug.WriteLine($"> CONNECT: {link.Source.Id} => {link.TargetId}{(link.Condition is null ? string.Empty : " (?)")}");
 
             workflowBuilder.AddEdge(link.Source.Executor, targetNode.Executor, link.Condition);
         }

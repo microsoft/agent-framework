@@ -16,21 +16,13 @@ internal sealed class SendActivityExecutor(SendActivity model, TextWriter activi
     {
         if (this.Model.Activity is MessageActivityTemplate messageActivity)
         {
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            try
+            if (!string.IsNullOrEmpty(messageActivity.Summary))
             {
-                if (!string.IsNullOrEmpty(messageActivity.Summary))
-                {
-                    activityWriter.WriteLine($"\t{messageActivity.Summary}");
-                }
+                activityWriter.WriteLine($"\t{messageActivity.Summary}");
+            }
 
-                string? activityText = this.Context.Engine.Format(messageActivity.Text)?.Trim();
-                activityWriter.WriteLine(activityText + Environment.NewLine);
-            }
-            finally
-            {
-                Console.ResetColor();
-            }
+            string? activityText = this.Context.Engine.Format(messageActivity.Text)?.Trim();
+            activityWriter.WriteLine(activityText + Environment.NewLine);
         }
 
         return new ValueTask();

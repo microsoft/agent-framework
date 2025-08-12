@@ -11,9 +11,9 @@ namespace Microsoft.Agents.Workflows.Declarative.Execution;
 /// <summary>
 /// The root executor for a declarative workflow.
 /// </summary>
-/// <param name="scopes">// %%% COMMENT / DESIGN</param>
 /// <param name="workflowId">The unique identifier for the workflow.</param>
-internal sealed class DeclarativeWorkflowExecutor(WorkflowScopes scopes, string workflowId) :
+/// <param name="scopes">Scoped variable state for workflow execution.</param>
+internal sealed class DeclarativeWorkflowExecutor(string workflowId,WorkflowScopes scopes) :
     Executor<DeclarativeWorkflowExecutor>(workflowId),
     IMessageHandler<string>
 {

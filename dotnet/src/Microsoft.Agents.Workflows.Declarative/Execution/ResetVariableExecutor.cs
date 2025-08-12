@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
@@ -18,7 +18,7 @@ internal sealed class ResetVariableExecutor(ResetVariable model) :
         PropertyPath variablePath = Throw.IfNull(this.Model.Variable, $"{nameof(this.Model)}.{nameof(model.Variable)}");
 
         this.Context.Engine.ClearScopedVariable(this.Context.Scopes, this.Model.Variable);
-        Console.WriteLine( // %%% LOGGER
+        Debug.WriteLine(
             $"""
             !!! CLEAR {this.GetType().Name} [{this.Id}]
                 NAME: {this.Model.Variable!.Format()}

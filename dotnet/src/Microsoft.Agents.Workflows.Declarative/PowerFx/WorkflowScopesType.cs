@@ -8,7 +8,7 @@ namespace Microsoft.Agents.Workflows.Declarative.PowerFx;
 /// <summary>
 /// Describes the type of action scope.
 /// </summary>
-internal sealed class WorkflowScopeType // %%% NEEDED
+internal sealed class WorkflowScopeType
 {
     // https://msazure.visualstudio.com/CCI/_git/ObjectModel?path=/src/ObjectModel/Nodes/VariableScopeNames.cs&_a=contents&version=GBmain
     public static readonly WorkflowScopeType Env = new(VariableScopeNames.Environment);

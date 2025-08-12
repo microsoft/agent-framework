@@ -12,7 +12,7 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : Workf
 {
     protected override ValueTask ExecuteAsync(CancellationToken cancellationToken)
     {
-        EvaluationResult<VariablesToClearWrapper> result = this.Context.ExpressionEngine.GetValue<VariablesToClearWrapper>(this.Model.Variables, this.Context.Scopes); // %%% FAILURE CASE (CATCH)
+        EvaluationResult<VariablesToClearWrapper> result = this.Context.ExpressionEngine.GetValue<VariablesToClearWrapper>(this.Model.Variables, this.Context.Scopes);
 
         result.Value.Handle(new ScopeHandler(this.Context));
 

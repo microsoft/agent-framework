@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Core;
@@ -74,7 +75,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
         if (item.Condition is not null)
         {
-            // %%% VERIFY IF ONLY ONE CONDITION IS EXPECTED / ALLOWED
+            // %%% BUG: ONLY ONE (FIRST) CONDITION
             condition =
                 new((_) =>
                 {
@@ -227,7 +228,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this.ContinueWith(new ResetVariableExecutor(item));
     }
 
-    protected override void Visit(EditTable item) // %%% TODO
+    protected override void Visit(EditTable item) // %%% SUPPORT: EditTable
     {
         this.Trace(item);
     }
@@ -478,13 +479,13 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     private void NotSupported(DialogAction item)
     {
-        Console.WriteLine($"> UNKNOWN: {new string('\t', this._workflowModel.GetDepth(item.GetParentId()))}{FormatItem(item)} => {FormatParent(item)}"); // %%% LOGGER
+        Debug.WriteLine($"> UNKNOWN: {new string('\t', this._workflowModel.GetDepth(item.GetParentId()))}{FormatItem(item)} => {FormatParent(item)}");
         this.HasUnsupportedActions = true;
     }
 
     private void Trace(BotElement item)
     {
-        Console.WriteLine($"> VISIT: {new string('\t', this._workflowModel.GetDepth(item.GetParentId()))}{FormatItem(item)} => {FormatParent(item)}"); // %%% LOGGER
+        Debug.WriteLine($"> VISIT: {new string('\t', this._workflowModel.GetDepth(item.GetParentId()))}{FormatItem(item)} => {FormatParent(item)}");
     }
 
     private void Trace(DialogAction item)
@@ -494,7 +495,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         {
             parentId = $"root_{parentId}";
         }
-        Console.WriteLine($"> VISIT: {new string('\t', this._workflowModel.GetDepth(parentId))}{FormatItem(item)} => {FormatParent(item)}"); // %%% LOGGER
+        Debug.WriteLine($"> VISIT: {new string('\t', this._workflowModel.GetDepth(parentId))}{FormatItem(item)} => {FormatParent(item)}");
     }
 
     private static string FormatItem(BotElement element) => $"{element.GetType().Name} ({element.GetId()})";

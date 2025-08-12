@@ -25,7 +25,7 @@ internal sealed class EditTableV2Executor(EditTableV2 model) : WorkflowActionExe
         if (changeType is AddItemOperation addItemOperation)
         {
             ValueExpression addItemValue = Throw.IfNull(addItemOperation.Value, $"{nameof(this.Model)}.{nameof(this.Model.ChangeType)}");
-            EvaluationResult<DataValue> result = this.Context.ExpressionEngine.GetValue(addItemValue, this.Context.Scopes); // %%% FAILURE CASE (CATCH)
+            EvaluationResult<DataValue> result = this.Context.ExpressionEngine.GetValue(addItemValue, this.Context.Scopes);
             RecordValue newRecord = BuildRecord(tableValue.Type.ToRecord(), result.Value.ToFormulaValue());
             await tableValue.AppendAsync(newRecord, cancellationToken).ConfigureAwait(false);
             this.AssignTarget(this.Context, variablePath, tableValue);

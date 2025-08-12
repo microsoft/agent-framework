@@ -2,6 +2,7 @@
 
 #if NET
 
+using System.Diagnostics;
 using System.Text.Json;
 using Azure.Identity;
 using Microsoft.Agents.Orchestration;
@@ -44,7 +45,7 @@ public class Workflows_Declarative(ITestOutputHelper output) : OrchestrationSamp
                 customClient = new(new InterceptHandler(), disposeHandler: true);
             }
 
-            Console.WriteLine("WORKFLOW INIT\n");
+            Debug.WriteLine("WORKFLOW INIT\n");
 
             //////////////////////////////////////////////////////
             //
@@ -78,14 +79,14 @@ public class Workflows_Declarative(ITestOutputHelper output) : OrchestrationSamp
             {
                 if (evt is ExecutorInvokeEvent executorInvoked)
                 {
-                    Console.WriteLine($"!!! ENTER #{executorInvoked.ExecutorId}");
+                    Debug.WriteLine($"!!! ENTER #{executorInvoked.ExecutorId}");
                 }
                 else if (evt is ExecutorCompleteEvent executorComplete)
                 {
-                    Console.WriteLine($"!!! EXIT #{executorComplete.ExecutorId}");
+                    Debug.WriteLine($"!!! EXIT #{executorComplete.ExecutorId}");
                 }
             }
-            Console.WriteLine("\nWORKFLOW DONE");
+            Debug.WriteLine("\nWORKFLOW DONE");
         }
         finally
         {
@@ -104,7 +105,7 @@ internal sealed class InterceptHandler : HttpClientHandler
         HttpResponseMessage response = await base.SendAsync(request, cancellationToken);
 
         // Intercept and modify the response
-        Console.WriteLine($"{request.Method} {request.RequestUri}");
+        Debug.WriteLine($"{request.Method} {request.RequestUri}");
         if (response.Content != null)
         {
             string responseContent;
@@ -123,7 +124,7 @@ internal sealed class InterceptHandler : HttpClientHandler
             }
             response.Content = new StringContent(responseContent);
 
-            Console.WriteLine($"API:{Environment.NewLine}" + responseContent); // %%% RAISE EVENT
+            Debug.WriteLine($"API:{Environment.NewLine}" + responseContent);
         }
 
         return response;

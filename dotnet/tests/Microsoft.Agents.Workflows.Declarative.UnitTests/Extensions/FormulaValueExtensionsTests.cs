@@ -83,27 +83,29 @@ public class FormulaValueExtensionsTests
     [Fact]
     public void DateValues()
     {
-        DateValue formulaValue = FormulaValue.NewDateOnly(DateTime.UtcNow.Date);
+        DateTime timestamp = DateTime.UtcNow.Date;
+        DateValue formulaValue = FormulaValue.NewDateOnly(timestamp);
         DateDataValue dataValue = formulaValue.ToDataValue();
         Assert.Equal(formulaValue.GetConvertedValue(TimeZoneInfo.Utc), dataValue.Value);
 
         DateValue formulaCopy = Assert.IsType<DateValue>(dataValue.ToFormulaValue());
         Assert.Equal(dataValue.Value, formulaCopy.GetConvertedValue(TimeZoneInfo.Utc));
 
-        //Assert.Equal("45.3", formulaValue.Format()); // %%% TEST ASSERT ???
+        Assert.Equal($"{timestamp}", formulaValue.Format());
     }
 
     [Fact]
     public void DateTimeValues()
     {
-        DateTimeValue formulaValue = FormulaValue.New(DateTime.UtcNow);
+        DateTime timestamp = DateTime.UtcNow;
+        DateTimeValue formulaValue = FormulaValue.New(timestamp);
         DateTimeDataValue dataValue = formulaValue.ToDataValue();
         Assert.Equal(formulaValue.GetConvertedValue(TimeZoneInfo.Utc), dataValue.Value);
 
         DateTimeValue formulaCopy = Assert.IsType<DateTimeValue>(dataValue.ToFormulaValue());
         Assert.Equal(dataValue.Value, formulaCopy.GetConvertedValue(TimeZoneInfo.Utc));
 
-        //Assert.Equal("45.3", formulaValue.Format()); // %%% TEST ASSERT ???
+        Assert.Equal($"{timestamp}", formulaValue.Format());
     }
 
     [Fact]
@@ -126,7 +128,6 @@ public class FormulaValueExtensionsTests
             new NamedValue("FieldA", FormulaValue.New("Value1")),
             new NamedValue("FieldB", FormulaValue.New("Value2")),
             new NamedValue("FieldC", FormulaValue.New("Value3")));
-
         RecordDataValue dataValue = formulaValue.ToDataValue();
         Assert.Equal(formulaValue.Fields.Count(), dataValue.Properties.Count);
         foreach (KeyValuePair<string, DataValue> property in dataValue.Properties)
@@ -141,6 +142,14 @@ public class FormulaValueExtensionsTests
             Assert.Contains(field.Name, dataValue.Properties.Keys);
         }
 
-        //Assert.Equal("45.3", formulaValue.Format()); // %%% TEST ASSERT ???
+        Assert.Equal(
+            """
+            {
+                "FieldA": "Value1",
+                "FieldB": "Value2",
+                "FieldC": "Value3"
+            }
+            """,
+            formulaValue.Format());
     }
 }

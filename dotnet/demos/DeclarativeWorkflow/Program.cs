@@ -49,9 +49,9 @@ internal static class Program
         //
         //////////////////////////////////////////////////////
 
-        Notify($"\nPROCESS DEFINED: {timer.Elapsed}\n");
+        Notify($"PROCESS DEFINED: {timer.Elapsed}\n");
 
-        Notify("\nPROCESS INVOKE\n");
+        Notify("PROCESS INVOKE\n");
 
         //////////////////////////////////////////////
         // Run the workflow, just like any other workflow
@@ -70,7 +70,7 @@ internal static class Program
         }
         //////////////////////////////////////////////
 
-        Notify("\nPROCESS DONE");
+        Notify("PROCESS DONE");
     }
 
     // Load configuration from user-secrets

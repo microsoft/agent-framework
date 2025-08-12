@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
+using System.Diagnostics;
 using System.IO;
 using Microsoft.Agents.Workflows.Core;
 using Microsoft.Agents.Workflows.Declarative.Execution;
@@ -24,16 +24,16 @@ public static class DeclarativeWorkflowBuilder
     /// <returns>The <see cref="Workflow"/> that corresponds with the YAML object model.</returns>
     public static Workflow<string> Build(TextReader yamlReader, DeclarativeWorkflowContext? context = null)
     {
-        Console.WriteLine("@ PARSING YAML");
+        Debug.WriteLine("@ PARSING YAML");
         BotElement rootElement = YamlSerializer.Deserialize<BotElement>(yamlReader) ?? throw new UnknownActionException("Unable to parse workflow.");
         string rootId = $"root_{GetRootId(rootElement)}";
 
-        Console.WriteLine("@ INITIALIZING BUILDER");
+        Debug.WriteLine("@ INITIALIZING BUILDER");
         context ??= DeclarativeWorkflowContext.Default;
         WorkflowScopes scopes = new();
-        DeclarativeWorkflowExecutor rootExecutor = new(scopes, rootId);
+        DeclarativeWorkflowExecutor rootExecutor = new(rootId, scopes);
 
-        Console.WriteLine("@ INTERPRETING WORKFLOW");
+        Debug.WriteLine("@ INTERPRETING WORKFLOW");
         WorkflowActionVisitor visitor = new(rootExecutor, context, scopes);
         WorkflowElementWalker walker = new(rootElement, visitor);
 

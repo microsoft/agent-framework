@@ -21,7 +21,7 @@ internal static class BotElementExtensions
             DateTimeDataValue dateTimeValue => FormulaValue.New(dateTimeValue.Value.DateTime),
             DateDataValue dateValue => FormulaValue.NewDateOnly(dateValue.Value),
             TimeDataValue timeValue => FormulaValue.New(timeValue.Value),
-            TableDataValue tableValue => FormulaValue.NewTable(ParseRecordType(tableValue.Values.First()), tableValue.Values.Select(value => value.ToRecordValue())), // %%% TODO: RecordType
+            TableDataValue tableValue => FormulaValue.NewTable(ParseRecordType(tableValue.Values.First()), tableValue.Values.Select(value => value.ToRecordValue())),
             RecordDataValue recordValue => recordValue.ToRecordValue(),
             //FileDataValue // %%% SUPPORT ???
             //OptionDataValue // %%% SUPPORT - Enum ???
@@ -43,8 +43,7 @@ internal static class BotElementExtensions
             RecordDataType => RecordType.Empty(),
             //FileDataType // %%% SUPPORT ???
             //OptionDataType // %%% SUPPORT - Enum ???
-            DataType dataType => FormulaType.Blank, // %%% HANDLE ??? (FALLTHROUGH???)            
-            //_ => FormulaType.Unknown,
+            DataType dataType => FormulaType.Blank,
         };
 
     public static RecordValue ToRecordValue(this RecordDataValue recordDataValue) =>

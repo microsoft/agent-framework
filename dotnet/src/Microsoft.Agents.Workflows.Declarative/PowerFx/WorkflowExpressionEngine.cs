@@ -121,7 +121,7 @@ internal class WorkflowExpressionEngine : IExpressionEngine
 
         if (expressionResult.Value is RecordValue recordValue)
         {
-            JsonSerializerContext context = null!; // %%% HACK
+            JsonSerializerContext context = null!; // %%% HAXX - AOT
             //context.Options = s_options;
             return new EvaluationResult<string>(JsonSerializer.Serialize(recordValue, typeof(RecordValue), context), expressionResult.Sensitivity);
         }
@@ -203,7 +203,6 @@ internal class WorkflowExpressionEngine : IExpressionEngine
             StringValue s when s.Value is not null => new EvaluationResult<TValue>(EnumWrapper.Create<TValue>(s.Value), expressionResult.Sensitivity),
             StringValue => new EvaluationResult<TValue>(EnumWrapper.Create<TValue>(0), expressionResult.Sensitivity),
             NumberValue number => new EvaluationResult<TValue>(EnumWrapper.Create<TValue>((int)number.Value), expressionResult.Sensitivity),
-            //OptionDataValue option => new EvaluationResult<TValue>(EnumWrapper.Create<TValue>(option.Value.Value), expressionResult.Sensitivity), // %%% SUPPORT
             _ => throw new InvalidExpressionOutputTypeException(expressionResult.Value.GetDataType(), DataType.String),
         };
     }

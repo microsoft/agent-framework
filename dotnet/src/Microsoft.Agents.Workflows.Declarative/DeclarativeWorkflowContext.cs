@@ -54,7 +54,7 @@ public sealed class DeclarativeWorkflowContext
     /// <summary>
     /// Gets the <see cref="TextWriter"/> used for activity output and diagnostics.
     /// </summary>
-    public TextWriter ActivityChannel { get; init; } = Console.Out; // %%% REMOVE: For POC only
+    public TextWriter ActivityChannel { get; init; } = TextWriter.Null;
 
     internal WorkflowExecutionContext CreateActionContext(string rootId, WorkflowScopes scopes) =>
         new(RecalcEngineFactory.Create(scopes, this.MaximumExpressionLength),
@@ -69,7 +69,7 @@ public sealed class DeclarativeWorkflowContext
         if (this.HttpClient is not null)
         {
             clientOptions.Transport = new HttpClientTransport(this.HttpClient);
-            //clientOptions.RetryPolicy = new RetryPolicy(maxRetries: 0);
+            // %%% CONSIDER: clientOptions.RetryPolicy = new RetryPolicy(maxRetries: 0);
         }
 
         return new PersistentAgentsClient(this.ProjectEndpoint, this.ProjectCredentials, clientOptions);

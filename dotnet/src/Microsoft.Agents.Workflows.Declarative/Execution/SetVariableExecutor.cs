@@ -22,7 +22,7 @@ internal sealed class SetVariableExecutor(SetVariable model) : WorkflowActionExe
         }
         else
         {
-            EvaluationResult<DataValue> result = this.Context.ExpressionEngine.GetValue(this.Model.Value, this.Context.Scopes); // %%% FAILURE CASE (CATCH)
+            EvaluationResult<DataValue> result = this.Context.ExpressionEngine.GetValue(this.Model.Value, this.Context.Scopes);
 
             this.AssignTarget(this.Context, variablePath, result.Value.ToFormulaValue());
         }

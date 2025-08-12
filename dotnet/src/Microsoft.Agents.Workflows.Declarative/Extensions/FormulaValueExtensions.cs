@@ -30,8 +30,8 @@ internal static class FormulaValueExtensions
             VoidValue voidValue => voidValue.ToDataValue(),
             TableValue tableValue => tableValue.ToDataValue(),
             RecordValue recordValue => recordValue.ToDataValue(),
-            //BlobValue // %%% DataValue ???
-            //ErrorValue // %%% DataValue ???
+            //BlobValue // %%% SUPPORT: DataValue ???
+            //ErrorValue // %%% SUPPORT: DataValue ???
             _ => throw new NotSupportedException($"Unsupported FormulaValue type: {value.GetType().Name}"),
         };
 
@@ -49,8 +49,8 @@ internal static class FormulaValueExtensions
             GuidType => DataType.String,
             BlankType => DataType.String,
             RecordType => DataType.EmptyRecord,
-            //BlobValue // %%% DataType ???
-            //ErrorValue // %%% DataType ???
+            //BlobValue // %%% SUPPORT: DataType ???
+            //ErrorValue // %%% SUPPORT: DataType ???
             UnknownType => DataType.Unspecified,
             _ => DataType.Unspecified,
         };
@@ -68,10 +68,10 @@ internal static class FormulaValueExtensions
             GuidValue guidValue => $"{guidValue.Value}",
             BlankValue blankValue => string.Empty,
             VoidValue voidValue => string.Empty,
-            TableValue tableValue => tableValue.ToString(), // %%% WORK ???
-            RecordValue recordValue => recordValue.ToString(),
-            //BlobValue // %%% DataValue ???
-            //ErrorValue // %%% DataValue ???
+            TableValue tableValue => tableValue.ToString(), // %%% TODO: JSON
+            RecordValue recordValue => recordValue.ToString(), // %%% TODO: JSON
+            //BlobValue // %%% SUPPORT: DataValue ???
+            //ErrorValue // %%% SUPPORT: DataValue ???
             _ => throw new NotSupportedException($"Unsupported FormulaValue type: {value.GetType().Name}"),
         };
 

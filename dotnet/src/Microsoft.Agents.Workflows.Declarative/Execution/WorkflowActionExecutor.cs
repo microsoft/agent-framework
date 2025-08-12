@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Core;
@@ -46,7 +47,7 @@ internal abstract class WorkflowActionExecutor(DialogAction model) :
     {
         if (this.Model.Disabled)
         {
-            Console.WriteLine($"!!! DISABLED {this.GetType().Name} [{this.Id}]"); // %%% LOGGER
+            Debug.WriteLine($"!!! DISABLED {this.GetType().Name} [{this.Id}]");
             return;
         }
 
@@ -58,12 +59,12 @@ internal abstract class WorkflowActionExecutor(DialogAction model) :
         }
         catch (WorkflowExecutionException)
         {
-            Console.WriteLine($"*** STEP [{this.Id}] ERROR - Action failure"); // %%% LOGGER
+            Debug.WriteLine($"*** STEP [{this.Id}] ERROR - Action failure");
             throw;
         }
         catch (Exception exception)
         {
-            Console.WriteLine($"*** STEP [{this.Id}] ERROR - {exception.GetType().Name}\n{exception.Message}"); // %%% LOGGER
+            Debug.WriteLine($"*** STEP [{this.Id}] ERROR - {exception.GetType().Name}\n{exception.Message}");
             throw new WorkflowExecutionException($"Unhandled workflow failure - #{this.Id} ({this.Model.GetType().Name})", exception);
         }
     }
@@ -75,17 +76,11 @@ internal abstract class WorkflowActionExecutor(DialogAction model) :
         context.Engine.SetScopedVariable(context.Scopes, targetPath, result);
         string? resultValue = result.Format();
         string valuePosition = (resultValue?.IndexOf('\n') ?? -1) >= 0 ? Environment.NewLine : " ";
-        context.Logger.LogDebug(
-            """
-            !!! ASSIGN {ActionName} [{ActionId}]
-                NAME: {TargetName}
-                VALUE:{ValuePosition}{Result} ({ResultType})
-            """,
-            this.GetType().Name,
-            this.Id,
-            targetPath.Format(),
-            valuePosition,
-            result.Format(),
-            result.GetType().Name);
+        Debug.WriteLine(
+            $"""
+            !!! ASSIGN {this.GetType().Name} [{this.Id}]
+                NAME: {targetPath.Format()}
+                VALUE:{valuePosition}{result.Format()} ({result.GetType().Name})
+            """);
     }
 }
