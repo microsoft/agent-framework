@@ -26,37 +26,25 @@ public static class DeclarativeWorkflowBuilder
     public static Workflow<string> Build(TextReader yamlReader, string messageId, DeclarativeWorkflowContext? context = null)
     {
         Console.WriteLine("@ PARSING YAML");
-        BotElement rootElement = YamlSerializer.Deserialize<BotElement>(yamlReader) ?? throw new InvalidOperationException("Unable to parse YAML content."); // %%% EXCEPTION TYPE
+        BotElement rootElement = YamlSerializer.Deserialize<BotElement>(yamlReader) ?? throw new UnknownActionException("Unable to parse workflow.");
         string rootId = $"root_{GetRootId(rootElement)}";
 
         Console.WriteLine("@ INITIALIZING BUILDER");
         context ??= DeclarativeWorkflowContext.Default;
         WorkflowScopes scopes = new();
-        DeclarativeWorkflowExecutor rootExecutor = new(scopes, rootId); // %%% DISPOSE
+        DeclarativeWorkflowExecutor rootExecutor = new(scopes, rootId);
 
         Console.WriteLine("@ INTERPRETING WORKFLOW");
         WorkflowActionVisitor visitor = new(rootExecutor, context, scopes);
         WorkflowElementWalker walker = new(rootElement, visitor);
 
-        //Console.WriteLine("@ FINALIZING WORKFLOW");
-        //ProcessStepBuilder errorHandler = // %%% DYNAMIC/CONTEXT ???
-        //    processBuilder.AddStepFromFunction(
-        //        $"{processBuilder.Name}_unhandled_error",
-        //        (kernel, context) =>
-        //        {
-        //            // Handle unhandled errors here
-        //            Console.WriteLine("*** PROCESS ERROR - Unhandled error"); // %%% EXTERNAL
-        //            return Task.CompletedTask;
-        //        });
-        //processBuilder.OnError().SendEventTo(new ProcessFunctionTargetBuilder(errorHandler));
-
         return walker.Workflow;
     }
 
-    private static string GetRootId(BotElement element) =>
+    private static string GetRootId(BotElement element) => // %%% WORKFLOW TYPE
         element switch
         {
-            AdaptiveDialog adaptiveDialog => adaptiveDialog.BeginDialog?.Id.Value ?? throw new InvalidOperationException("Undefined dialog"), // %%% EXCEPTION TYPE / WORKFLOW TYPE
-            _ => throw new InvalidOperationException($"Unsupported root element: {element.GetType().Name}."), // %%% EXCEPTION TYPE
+            AdaptiveDialog adaptiveDialog => adaptiveDialog.BeginDialog?.Id.Value ?? throw new UnknownActionException("Undefined dialog"),
+            _ => throw new UnknownActionException($"Unsupported root element: {element.GetType().Name}."),
         };
 }

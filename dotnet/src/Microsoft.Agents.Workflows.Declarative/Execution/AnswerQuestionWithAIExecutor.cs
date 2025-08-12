@@ -19,6 +19,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model) :
     protected override async ValueTask ExecuteAsync(CancellationToken cancellationToken)
     {
         PropertyPath variablePath = Throw.IfNull(this.Model.Variable?.Path, $"{nameof(this.Model)}.{nameof(this.Model.Variable)}");
+        StringExpression userInputExpression = Throw.IfNull(this.Model.UserInput, $"{nameof(this.Model)}.{nameof(this.Model.UserInput)}");
 
         PersistentAgentsClient client = this.Context.ClientFactory.Invoke();
         using NewPersistentAgentsChatClient chatClient = new(client, "asst_ueIjfGxAjsnZ4A61LlbjG9vJ");
@@ -27,7 +28,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model) :
         string? userInput = null;
         if (this.Model.UserInput is not null)
         {
-            EvaluationResult<string> result = this.Context.ExpressionEngine.GetValue(this.Model.UserInput!, this.Context.Scopes); // %%% FAILURE CASE (CATCH) & NULL OVERRIDE
+            EvaluationResult<string> result = this.Context.ExpressionEngine.GetValue(userInputExpression, this.Context.Scopes); // %%% FAILURE CASE (CATCH)
             userInput = result.Value;
         }
 

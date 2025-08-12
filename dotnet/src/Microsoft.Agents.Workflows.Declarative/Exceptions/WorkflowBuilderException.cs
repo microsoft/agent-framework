@@ -7,7 +7,7 @@ namespace Microsoft.Agents.Workflows.Declarative;
 /// <summary>
 /// Represents an exception that occurs when building the process workflow.
 /// </summary>
-public class WorkflowBuilderException : ProcessWorkflowException
+public class WorkflowBuilderException : DeclarativeWorkflowException
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="WorkflowBuilderException"/> class.

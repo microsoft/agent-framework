@@ -7,7 +7,7 @@ namespace Microsoft.Agents.Workflows.Declarative;
 /// <summary>
 /// Represents an exception that occurs when an unknown data type is encountered.
 /// </summary>
-public sealed class UnknownDataTypeException : ProcessWorkflowException
+public sealed class UnknownDataTypeException : DeclarativeWorkflowException
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="UnknownDataTypeException"/> class.

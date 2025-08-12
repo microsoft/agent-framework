@@ -18,8 +18,9 @@ internal sealed class ParseValueExecutor(ParseValue model) :
     protected override ValueTask ExecuteAsync(CancellationToken cancellationToken)
     {
         PropertyPath variablePath = Throw.IfNull(this.Model.Variable?.Path, $"{nameof(this.Model)}.{nameof(model.Variable)}");
+        ValueExpression valueExpression = Throw.IfNull(this.Model.Value, $"{nameof(this.Model)}.{nameof(this.Model.Value)}");
 
-        EvaluationResult<DataValue> result = this.Context.ExpressionEngine.GetValue(this.Model.Value!, this.Context.Scopes); // %%% FAILURE CASE (CATCH) & NULL OVERRIDE
+        EvaluationResult<DataValue> result = this.Context.ExpressionEngine.GetValue(valueExpression, this.Context.Scopes); // %%% FAILURE CASE (CATCH)
 
         FormulaValue? parsedResult = null;
 

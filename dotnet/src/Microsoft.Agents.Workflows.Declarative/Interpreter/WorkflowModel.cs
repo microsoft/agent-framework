@@ -10,7 +10,7 @@ namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 /// <summary>
 /// %%% COMMENT
 /// </summary>
-internal delegate void ScopeCompletionHandler(); // %%% ACTION ???
+internal delegate void Action();
 
 /// <summary>
 /// Provides dynamic model for constructing a declarative workflow.
@@ -43,7 +43,7 @@ internal sealed class WorkflowModel
         return sourceNode.Depth;
     }
 
-    public void AddNode(ExecutorBase executor, string parentId, ScopeCompletionHandler? completionHandler = null)
+    public void AddNode(ExecutorBase executor, string parentId, Action? completionHandler = null)
     {
         if (!this.Nodes.TryGetValue(parentId, out ModelNode? parentNode))
         {
@@ -107,7 +107,7 @@ internal sealed class WorkflowModel
         }
     }
 
-    private ModelNode DefineNode(ExecutorIsh executor, ModelNode? parentNode = null, Type? executorType = null, ScopeCompletionHandler? completionHandler = null)
+    private ModelNode DefineNode(ExecutorIsh executor, ModelNode? parentNode = null, Type? executorType = null, Action? completionHandler = null)
     {
         ModelNode stepNode = new(executor, parentNode, executorType, completionHandler);
 
@@ -141,7 +141,7 @@ internal sealed class WorkflowModel
         return null;
     }
 
-    private sealed class ModelNode(ExecutorIsh executor, ModelNode? parent = null, Type? executorType = null, ScopeCompletionHandler? completionHandler = null)
+    private sealed class ModelNode(ExecutorIsh executor, ModelNode? parent = null, Type? executorType = null, Action? completionHandler = null)
     {
         public string Id => executor.Id;
 
@@ -155,7 +155,7 @@ internal sealed class WorkflowModel
 
         public int Depth => this.Parent?.Depth + 1 ?? 0;
 
-        public ScopeCompletionHandler? CompletionHandler => completionHandler;
+        public Action? CompletionHandler => completionHandler;
     }
 
     private sealed record class ModelLink(ModelNode Source, string TargetId, Func<object?, bool>? Condition = null);

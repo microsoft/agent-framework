@@ -7,7 +7,7 @@ namespace Microsoft.Agents.Workflows.Declarative;
 /// <summary>
 /// Represents an exception that occurs when the specific scope is invalid.
 /// </summary>
-public sealed class InvalidScopeException : ProcessWorkflowException
+public sealed class InvalidScopeException : DeclarativeWorkflowException
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="InvalidScopeException"/> class.

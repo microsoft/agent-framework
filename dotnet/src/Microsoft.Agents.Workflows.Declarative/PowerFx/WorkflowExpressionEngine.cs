@@ -145,7 +145,7 @@ internal class WorkflowExpressionEngine : IExpressionEngine
 
         EvaluationResult<FormulaValue> expressionResult = evaluator.Invoke(expression, state);
 
-        if (expressionResult.Value is not PrimitiveValue<int> formulaValue) // %%% CORRECT ???
+        if (expressionResult.Value is not PrimitiveValue<long> formulaValue)
         {
             throw new InvalidExpressionOutputTypeException(expressionResult.Value.GetDataType(), DataType.Number);
         }

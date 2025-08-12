@@ -34,7 +34,7 @@ internal abstract class WorkflowActionExecutor(DialogAction model) :
 
     protected WorkflowExecutionContext Context =>
         this._context ??
-        throw new InvalidOperationException("Context not assigned"); // %%% EXCEPTION TYPE
+        throw new ActionExecutionException("Context not assigned");
 
     internal void Attach(WorkflowExecutionContext executionContext)
     {

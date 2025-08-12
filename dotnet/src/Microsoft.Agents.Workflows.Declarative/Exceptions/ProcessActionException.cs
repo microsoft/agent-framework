@@ -7,7 +7,7 @@ namespace Microsoft.Agents.Workflows.Declarative;
 /// <summary>
 /// Represents an exception that occurs during the execution of a process action.
 /// </summary>
-public class ProcessActionException : ProcessWorkflowException
+public class ProcessActionException : DeclarativeWorkflowException
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="ProcessActionException"/> class.

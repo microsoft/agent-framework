@@ -435,7 +435,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     private void ContinueWith(
         WorkflowActionExecutor executor,
         Func<object?, bool>? condition = null,
-        ScopeCompletionHandler? completionHandler = null)
+        Action? completionHandler = null)
     {
         executor.Attach(this._executionContext);
         this.ContinueWith(executor, executor.ParentId, condition, completionHandler);
@@ -445,7 +445,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         ExecutorBase executor,
         string parentId,
         Func<object?, bool>? condition = null,
-        ScopeCompletionHandler? completionHandler = null)
+        Action? completionHandler = null)
     {
         this._workflowModel.AddNode(executor, parentId, completionHandler);
         this._workflowModel.AddLinkFromPeer(parentId, executor.Id, condition);

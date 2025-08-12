@@ -7,7 +7,7 @@ namespace Microsoft.Agents.Workflows.Declarative;
 /// <summary>
 /// Represents an exception that occurs when an action is invalid or cannot be processed.
 /// </summary>
-public sealed class InvalidSegmentException : ProcessWorkflowException
+public sealed class InvalidSegmentException : DeclarativeWorkflowException
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="InvalidSegmentException"/> class.
