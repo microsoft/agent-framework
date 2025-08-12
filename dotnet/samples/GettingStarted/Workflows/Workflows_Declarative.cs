@@ -46,17 +46,29 @@ public class Workflows_Declarative(ITestOutputHelper output) : OrchestrationSamp
 
             Console.WriteLine("WORKFLOW INIT\n");
 
+            //////////////////////////////////////////////////////
+            //
+            // HOW TO: Create a workflow from a YAML file.
+            //
             using StreamReader yamlReader = File.OpenText(@$"{nameof(Workflows)}\{fileName}.yaml");
+            //
+            // DeclarativeWorkflowContext provides the components for workflow execution.
+            //
             DeclarativeWorkflowContext workflowContext =
                 new()
                 {
                     HttpClient = customClient,
                     LoggerFactory = this.LoggerFactory,
-                    ActivityChannel = this.Console,
+                    ActivityChannel = System.Console.Out,
                     ProjectEndpoint = Throw.IfNull(TestConfiguration.AzureAI.Endpoint),
                     ProjectCredentials = new AzureCliCredential(),
                 };
-            Workflow<string> workflow = DeclarativeWorkflowBuilder.Build(yamlReader, "input", workflowContext);
+            //
+            // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
+            //
+            Workflow<string> workflow = DeclarativeWorkflowBuilder.Build(yamlReader, workflowContext);
+            //
+            //////////////////////////////////////////////////////
 
             Console.WriteLine("\nWORKFLOW INVOKE\n");
 
