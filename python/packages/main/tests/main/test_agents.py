@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable, MutableSequence, Sequence
+from collections.abc import AsyncIterable, MutableSequence
 from typing import Any
 from uuid import uuid4
 
@@ -27,8 +27,7 @@ from agent_framework.exceptions import AgentExecutionException
 
 # Mock AgentThread implementation for testing
 class MockAgentThread(AgentThread):
-    async def _on_new_messages(self, new_messages: ChatMessage | Sequence[ChatMessage]) -> None:
-        pass
+    pass
 
 
 # Mock Agent implementation for testing
@@ -229,11 +228,9 @@ async def test_chat_client_agent_update_thread_messages(chat_client: ChatClient)
 
     assert thread.conversation_id is None
 
-    chat_messages: list[ChatMessage] = []
+    chat_messages: list[ChatMessage] | None = await thread.list_messages()
 
-    async for message in thread.get_messages():
-        chat_messages.append(message)
-
+    assert chat_messages is not None
     assert len(chat_messages) == 2
     assert chat_messages[0].text == "Hello"
     assert chat_messages[1].text == "test response"

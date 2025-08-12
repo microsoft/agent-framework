@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from ._clients import ChatClient
 from ._pydantic import AFBaseModel
-from ._threads import AgentThread, ChatMessageStore
+from ._threads import AgentThread, ChatMessageStore, deserialize_thread_state, thread_on_new_messages
 from ._tools import AITool
 from ._types import (
     AgentRunResponse,
@@ -144,7 +144,7 @@ class AgentBase(AFBaseModel):
     ) -> None:
         """Notify the thread of new messages."""
         if isinstance(new_messages, ChatMessage) or len(new_messages) > 0:
-            await thread._on_new_messages(new_messages)
+            await thread_on_new_messages(thread, new_messages)
 
     @property
     def display_name(self) -> str:
@@ -161,7 +161,7 @@ class AgentBase(AFBaseModel):
     async def deserialize_thread(self, serialized_thread: Any, **kwargs: Any) -> AgentThread:
         """Deserializes the thread."""
         thread: AgentThread = self.get_new_thread()
-        await thread._deserialize(serialized_thread)
+        await deserialize_thread_state(thread, serialized_thread, **kwargs)
         return thread
 
 
@@ -593,8 +593,7 @@ class ChatClientAgent(AgentBase):
         messages: list[ChatMessage] = []
         if self.instructions:
             messages.append(ChatMessage(role=ChatRole.SYSTEM, text=self.instructions))
-        async for message in thread.get_messages():
-            messages.append(message)
+        messages.extend(await thread.list_messages() or [])
         messages.extend(input_messages or [])
         return thread, messages
 

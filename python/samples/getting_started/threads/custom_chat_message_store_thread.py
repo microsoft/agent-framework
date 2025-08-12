@@ -27,7 +27,7 @@ class CustomChatMessageStore(ChatMessageStore):
     async def add_messages(self, messages: Collection[ChatMessage]) -> None:
         self._messages.extend(messages)
 
-    async def get_messages(self) -> list[ChatMessage]:
+    async def list_messages(self) -> list[ChatMessage]:
         return self._messages
 
     async def deserialize_state(self, serialized_store_state: Any, **kwargs: Any) -> None:

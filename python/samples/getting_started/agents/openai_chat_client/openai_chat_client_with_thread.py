@@ -4,7 +4,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import AgentThread, ChatClientAgent, ChatMessage, InMemoryChatMessageStore
+from agent_framework import AgentThread, ChatClientAgent, InMemoryChatMessageStore
 from agent_framework.openai import OpenAIChatClient
 from pydantic import Field
 
@@ -94,9 +94,7 @@ async def example_with_existing_thread_messages() -> None:
     print(f"Agent: {result1.text}")
 
     # The thread now contains the conversation history in memory
-    messages: list[ChatMessage] = []
-    async for message in thread.get_messages():
-        messages.append(message)
+    messages = await thread.list_messages()
 
     message_count = len(messages or [])
     print(f"Thread contains {message_count} messages")
@@ -120,9 +118,7 @@ async def example_with_existing_thread_messages() -> None:
     print("\n--- Alternative: Creating a new thread from existing messages ---")
 
     # You can also create a new thread from existing messages
-    messages = []
-    async for message in thread.get_messages():
-        messages.append(message)
+    messages = await thread.list_messages()
 
     new_thread = AgentThread(message_store=InMemoryChatMessageStore(messages))
 

@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable, Collection, Iterable, Sequence
+from collections.abc import Collection, Sequence
 from typing import Any, Protocol
 
 from ._pydantic import AFBaseModel
@@ -16,7 +16,7 @@ class ChatMessageStore(Protocol):
     including handling large volumes of data by truncating or summarizing messages as necessary.
     """
 
-    async def get_messages(self) -> Iterable[ChatMessage]:
+    async def list_messages(self) -> list[ChatMessage]:
         """Gets all the messages from the store that should be used for the next agent invocation.
 
         Messages are returned in ascending chronological order, with the oldest message first.
@@ -96,50 +96,8 @@ class AgentThread(AFBaseModel):
 
         self._message_store = message_store
 
-    async def get_messages(self) -> AsyncIterable[ChatMessage]:
-        if self._message_store is not None:
-            messages = await self._message_store.get_messages()
-            for message in messages:
-                yield message
-
-    async def _on_new_messages(
-        self,
-        new_messages: ChatMessage | Sequence[ChatMessage],
-    ) -> None:
-        """Invoked when a new message has been contributed to the chat by any participant."""
-        if self._conversation_id is not None:
-            # If the thread messages are stored in the service there is nothing to do here,
-            # since invoking the service should already update the thread.
-            return
-
-        if self._message_store is None:
-            # If there is no conversation id, and no store we can
-            # create a default in memory store.
-            self._message_store = InMemoryChatMessageStore()
-
-        # If a store has been provided, we need to add the messages to the store.
-        if isinstance(new_messages, ChatMessage):
-            new_messages = [new_messages]
-        await self._message_store.add_messages(new_messages)
-
-    async def _deserialize(self, serialized_thread: Any, **kwargs: Any) -> None:
-        """Deserializes the state from a dictionary into the thread properties."""
-        state = ThreadState(**serialized_thread)
-
-        if state.conversation_id:
-            self._conversation_id = state.conversation_id
-            # Since we have an ID, we should not have a chat message store and we can return here.
-            return
-
-        # If we don't have any ChatMessageStore state return here.
-        if state.store_state is None:
-            return
-
-        if self._message_store is None:
-            # If we don't have a chat message store yet, create an in-memory one.
-            self._message_store = InMemoryChatMessageStore()
-
-        await self._message_store.deserialize_state(state.store_state, **kwargs)
+    async def list_messages(self) -> list[ChatMessage] | None:
+        return await self._message_store.list_messages() if self._message_store is not None else None
 
     async def serialize(self, **kwargs: Any) -> Any:
         store_state = None
@@ -149,6 +107,45 @@ class AgentThread(AFBaseModel):
         state = ThreadState(conversation_id=self._conversation_id, store_state=store_state)
 
         return state.__dict__
+
+
+async def thread_on_new_messages(thread: AgentThread, new_messages: ChatMessage | Sequence[ChatMessage]) -> None:
+    """Invoked when a new message has been contributed to the chat by any participant."""
+    if thread.conversation_id is not None:
+        # If the thread messages are stored in the service there is nothing to do here,
+        # since invoking the service should already update the thread.
+        return
+
+    if thread.message_store is None:
+        # If there is no conversation id, and no store we can
+        # create a default in memory store.
+        thread.message_store = InMemoryChatMessageStore()
+
+    # If a store has been provided, we need to add the messages to the store.
+    if isinstance(new_messages, ChatMessage):
+        new_messages = [new_messages]
+
+    await thread.message_store.add_messages(new_messages)
+
+
+async def deserialize_thread_state(thread: AgentThread, serialized_thread: Any, **kwargs: Any) -> None:
+    """Deserializes the state from a dictionary into the thread properties."""
+    state = ThreadState(**serialized_thread)
+
+    if state.conversation_id:
+        thread.conversation_id = state.conversation_id
+        # Since we have an ID, we should not have a chat message store and we can return here.
+        return
+
+    # If we don't have any ChatMessageStore state return here.
+    if state.store_state is None:
+        return
+
+    if thread.message_store is None:
+        # If we don't have a chat message store yet, create an in-memory one.
+        thread.message_store = InMemoryChatMessageStore()
+
+    await thread.message_store.deserialize_state(state.store_state, **kwargs)
 
 
 class ThreadState(AFBaseModel):
@@ -169,7 +166,7 @@ class InMemoryChatMessageStore(ChatMessageStore):
     async def add_messages(self, messages: Collection[ChatMessage]) -> None:
         self._messages.extend(messages)
 
-    async def get_messages(self) -> list[ChatMessage]:
+    async def list_messages(self) -> list[ChatMessage]:
         return self._messages
 
     async def deserialize_state(self, serialized_store_state: Any, **kwargs: Any) -> None:
