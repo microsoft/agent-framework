@@ -61,6 +61,7 @@ public abstract class BaseSample : TextWriter
         this.LoggerFactory = new XunitLogger(output);
 
         IConfigurationRoot configRoot = new ConfigurationBuilder()
+            .AddJsonFile("appsettings.json", true)
             .AddJsonFile("appsettings.Development.json", true)
             .AddEnvironmentVariables()
             .AddUserSecrets(Assembly.GetExecutingAssembly())

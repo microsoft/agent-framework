@@ -2,13 +2,14 @@
 
   <PropertyGroup>
     <RootNamespace>GettingStarted</RootNamespace>
-    <OutputType>Library</OutputType>
+    <OutputType>Exe</OutputType>
     <UserSecretsId>5ee045b0-aea3-4f08-8d31-32d1a6f8fed0</UserSecretsId>
     <NoWarn>$(NoWarn);CA1707;CA1716;IDE0009;IDE1006; OPENAI001;</NoWarn>
     <ImplicitUsings>enable</ImplicitUsings>
     <InjectSharedSamples>true</InjectSharedSamples>
     <InjectSharedThrow>true</InjectSharedThrow>
     <IsTestProject>true</IsTestProject>
+    <GenerateProgramFile>false</GenerateProgramFile>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -38,6 +39,10 @@
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="System.Linq.Async" />
+    <!-- Console UI Dependencies -->
+    <PackageReference Include="CommandLineParser" />
+    <PackageReference Include="Spectre.Console" />
+    <PackageReference Include="xunit.runner.utility" />
   </ItemGroup>
 
   <ItemGroup>
