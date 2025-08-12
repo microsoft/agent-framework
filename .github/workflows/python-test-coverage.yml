@@ -7,9 +7,7 @@ on:
       - "python/packages/**"
       - "python/tests/unit/**"
 env:
-  # Configure a constant location for the uv cache
   UV_SEMVER: "0.8.x"
-  UV_CACHE_DIR: /tmp/.uv-cache
 
 jobs:
   python-tests-coverage:
