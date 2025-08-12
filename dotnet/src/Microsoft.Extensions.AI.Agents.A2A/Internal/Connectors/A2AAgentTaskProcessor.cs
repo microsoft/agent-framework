@@ -14,18 +14,15 @@ internal sealed class A2AAgentTaskProcessor : A2AAgentCardProvider, IA2AAgentTas
 {
     private readonly TaskManager _taskManager;
 
-    public A2AAgentTaskProcessor(
-        ILogger<A2AAgentTaskProcessor> logger,
-        AIAgent agent,
-        TaskManager taskManager)
-        : base(logger, agent, taskManager)
+    public A2AAgentTaskProcessor(AIAgent agent, TaskManager taskManager, ILoggerFactory? loggerFactory)
+        : base(agent, taskManager, loggerFactory)
     {
         this._taskManager = taskManager;
     }
 
     public Task CreateTaskAsync(AgentTask task, CancellationToken token)
     {
-        this._logger.LogInformation("Creating task {TaskId} for agent {AgentName}", task.Id, this._a2aAgent.Name);
+        this._logger.LogInformation("Creating task {TaskId} for agent {AgentName}", task.Id, this._a2aAgent.InnerAgent.Name);
 
         // options are essential to keep track of the A2A task.
         var options = A2AAgentRunOptions.CreateA2AAgentTaskOptions(task);
@@ -44,7 +41,7 @@ internal sealed class A2AAgentTaskProcessor : A2AAgentCardProvider, IA2AAgentTas
         }
         catch (Exception ex)
         {
-            this._logger.LogError(ex, "Failed to create task {TaskId} for agent {AgentName}", task.Id, this._a2aAgent.Name);
+            this._logger.LogError(ex, "Failed to create task {TaskId} for agent {AgentName}", task.Id, this._a2aAgent.InnerAgent.Name);
             throw;
         }
     }

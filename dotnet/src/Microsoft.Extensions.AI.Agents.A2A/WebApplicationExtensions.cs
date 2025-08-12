@@ -12,14 +12,14 @@ namespace Microsoft.Extensions.AI.Agents.A2A;
 /// <summary>
 /// Provides extension methods for configuring A2A (Agent-to-Agent) communication in a host application builder.
 /// </summary>
-public static class A2AHostingApplicationBuilderExtensions
+public static class WebApplicationExtensions
 {
     /// <summary>
-    /// Attaches A2A communication via AgentTasks
+    /// Attaches A2A (Agent-to-Agent) communication capabilities via Agent-Task processing to the specified web application.
     /// </summary>
-    /// <param name="app"></param>
-    /// <param name="path"></param>
-    /// <param name="agentName"></param>
+    /// <param name="app">The web application used to configure the pipeline and routes.</param>
+    /// <param name="path">The route group to use for A2A endpoints.</param>
+    /// <param name="agentName">The name of the agent to use for A2A protocol integration.</param>
     public static void AttachA2ATasks(this WebApplication app, string path, string agentName)
     {
         // user provided taskStore
@@ -31,8 +31,8 @@ public static class A2AHostingApplicationBuilderExtensions
         if (a2aConnector is null)
         {
             var agent = app.Services.GetRequiredKeyedService<AIAgent>(agentName);
-            var logger = app.Services.GetRequiredService<ILogger<A2AAgentTaskProcessor>>();
-            a2aConnector = new A2AAgentTaskProcessor(logger, agent, taskManager);
+            var loggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
+            a2aConnector = new A2AAgentTaskProcessor(agent, taskManager, loggerFactory);
         }
 
         // attach A2A.SDK calls of TaskManager to the A2A connector
@@ -42,11 +42,11 @@ public static class A2AHostingApplicationBuilderExtensions
     }
 
     /// <summary>
-    /// Attaches A2A (Agent-to-Agent) communication capabilities to the specified host application builder.
+    /// Attaches A2A (Agent-to-Agent) communication capabilities via Message processing to the specified web application.
     /// </summary>
-    /// <param name="app"></param>
-    /// <param name="path"></param>
-    /// <param name="agentName"></param>
+    /// <param name="app">The web application used to configure the pipeline and routes.</param>
+    /// <param name="path">The route group to use for A2A endpoints.</param>
+    /// <param name="agentName">The name of the agent to use for A2A protocol integration.</param>
     public static void AttachA2AMessaging(this WebApplication app, string path, string agentName)
     {
         var taskManager = new TaskManager();
@@ -55,8 +55,8 @@ public static class A2AHostingApplicationBuilderExtensions
         if (a2aConnector is null)
         {
             var agent = app.Services.GetRequiredKeyedService<AIAgent>(agentName);
-            var logger = app.Services.GetRequiredService<ILogger<A2AMessageProcessor>>();
-            a2aConnector = new A2AMessageProcessor(logger, agent, taskManager);
+            var loggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
+            a2aConnector = new A2AMessageProcessor(agent, taskManager, loggerFactory);
         }
 
         // attach A2A.SDK calls of TaskManager to the A2A connector
@@ -69,9 +69,9 @@ public static class A2AHostingApplicationBuilderExtensions
     /// Maps HTTP A2A communication endpoints to the specified path using the provided TaskManager.
     /// TaskManager should be preconfigured before calling this method.
     /// </summary>
-    /// <param name="app"></param>
-    /// <param name="taskManager"></param>
-    /// <param name="path"></param>
+    /// <param name="app">The web application used to configure the pipeline and routes.</param>
+    /// <param name="taskManager">Pre-configured A2A TaskManager to use for A2A endpoints handling.</param>
+    /// <param name="path">The route group to use for A2A endpoints.</param>
     public static void AttachA2A(this WebApplication app, TaskManager taskManager, string path)
     {
         app.MapA2A(taskManager, path);

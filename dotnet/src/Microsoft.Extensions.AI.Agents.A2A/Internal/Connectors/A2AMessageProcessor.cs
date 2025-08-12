@@ -12,8 +12,8 @@ namespace Microsoft.Extensions.AI.Agents.A2A.Internal.Connectors;
 
 internal sealed class A2AMessageProcessor : A2AAgentCardProvider, IA2AMessageProcessor
 {
-    public A2AMessageProcessor(ILogger<A2AMessageProcessor> logger, AIAgent agent, TaskManager taskManager)
-        : base(logger, agent, taskManager)
+    public A2AMessageProcessor(AIAgent agent, TaskManager taskManager, ILoggerFactory? loggerFactory)
+        : base(agent, taskManager, loggerFactory)
     {
     }
 
@@ -21,7 +21,7 @@ internal sealed class A2AMessageProcessor : A2AAgentCardProvider, IA2AMessagePro
     {
         // this is the simplest scenario for A2A agent processing - a single message conversation.
 
-        this._logger.LogInformation("Processing message in DefaultA2AAgent for agent: {AgentKey}", this._a2aAgent.Name);
+        this._logger.LogInformation("Processing message in DefaultA2AAgent for agent: {AgentKey}", this._a2aAgent.InnerAgent.Name);
 
         try
         {
@@ -40,12 +40,12 @@ internal sealed class A2AMessageProcessor : A2AAgentCardProvider, IA2AMessagePro
                 }
             };
 
-            this._logger.LogInformation("Agent {AgentKey} returning response: {Response}", this._a2aAgent.Name, result.Text);
+            this._logger.LogInformation("Agent {AgentKey} returning response: {Response}", this._a2aAgent.InnerAgent.Name, result.Text);
             return responseMessage;
         }
         catch (Exception ex)
         {
-            this._logger.LogError(ex, "Error processing message in DefaultA2AAgent for agent: {AgentKey}", this._a2aAgent.Name);
+            this._logger.LogError(ex, "Error processing message in DefaultA2AAgent for agent: {AgentKey}", this._a2aAgent.InnerAgent.Name);
 
             // A2A SDK handles the exception under the hood, so we can just throw the exception
             throw;

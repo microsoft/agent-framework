@@ -12,10 +12,10 @@ internal abstract class A2AAgentCardProvider : IA2AAgentCardProvider
     protected readonly ILogger _logger;
     protected readonly A2AAgent _a2aAgent;
 
-    public A2AAgentCardProvider(ILogger logger, AIAgent agent, TaskManager taskManager)
+    public A2AAgentCardProvider(AIAgent agent, TaskManager taskManager, ILoggerFactory? loggerFactory)
     {
         this._logger = logger;
-        this._a2aAgent = new A2AAgent(logger, agent, taskManager);
+        this._a2aAgent = new A2AAgent(agent, taskManager, loggerFactory);
     }
 
     public Task<AgentCard> GetAgentCardAsync(string agentPath, CancellationToken cancellationToken)
@@ -33,7 +33,7 @@ internal abstract class A2AAgentCardProvider : IA2AAgentCardProvider
 
         return Task.FromResult(new AgentCard()
         {
-            Name = this._a2aAgent.Name ?? string.Empty,
+            Name = this._a2aAgent.InnerAgent.Name ?? string.Empty,
             Description = this._a2aAgent.InnerAgent.Description ?? string.Empty,
             Url = agentPath,
             Version = this._a2aAgent.InnerAgent.Id,

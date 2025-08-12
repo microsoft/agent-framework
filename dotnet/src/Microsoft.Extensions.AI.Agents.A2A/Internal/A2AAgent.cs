@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using A2A;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Microsoft.Extensions.AI.Agents.A2A.Internal;
 
@@ -18,11 +19,10 @@ internal sealed class A2AAgent
     private readonly TaskManager _taskManager;
 
     public AIAgent InnerAgent { get; }
-    public string? Name => this.InnerAgent.Name;
 
-    public A2AAgent(ILogger logger, AIAgent innerAgent, TaskManager taskManager)
+    public A2AAgent(AIAgent innerAgent, TaskManager taskManager, ILoggerFactory? loggerFactory)
     {
-        this._logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<A2AAgent>();
         this._taskManager = taskManager ?? throw new ArgumentNullException(nameof(taskManager));
 
         this.InnerAgent = innerAgent ?? throw new ArgumentNullException(nameof(innerAgent));
