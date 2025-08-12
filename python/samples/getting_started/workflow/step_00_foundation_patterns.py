@@ -99,7 +99,8 @@ async def single_edge_with_condition():
 
     Three executors are connected: AddOneExecutor -> AddOneExecutor, AggregateResultExecutor.
     The AddOneExecutor will loop back to itself until the number reaches 10, then it will start
-    sending the result to AggregateResultExecutor when the number is greater than 8.
+    sending the result to AggregateResultExecutor when the number is greater than 8. The workflow
+    stops when the number reaches 11.
 
     Expected output:
         Adding one to the number: 1 Result: 2
