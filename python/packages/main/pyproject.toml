@@ -61,6 +61,11 @@ asyncio_default_fixture_loop_scope = "function"
 filterwarnings = []
 timeout = 120
 
+[tool.coverage.run]
+omit = [
+    "**/__init__.py"
+]
+
 [tool.ruff]
 extend = "../../pyproject.toml"
 
@@ -92,6 +97,7 @@ executor.type = "uv"
 include = "../../shared_tasks.toml"
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework"
+test = "pytest --cov=agent_framework --cov-report=term-missing:skip-covered tests"
 
 [tool.uv.build-backend]
 module-name = "agent_framework"
