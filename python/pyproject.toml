@@ -191,6 +191,7 @@ build = "python run_tasks_in_packages_if_exists.py build"
 # combined checks
 check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint", "samples-code-check"]
 pre-commit-check = ["fmt", "lint", "pyright", "markdown-code-lint", "samples-code-check"]
+web-chat = "python samples/web_chat/app.py"
 
 [tool.poe.tasks.venv]
 cmd = "uv venv --clear --python $python"

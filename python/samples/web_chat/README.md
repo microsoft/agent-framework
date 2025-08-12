@@ -23,12 +23,12 @@ web_chat/
 ## Prerequisites
 Install dependencies (in addition to repository base requirements):
 ```
-pip install fastapi uvicorn jinja2 httpx
+uv pip install fastapi uvicorn jinja2 httpx
 ```
 
 ## Run
 ```
-python app.py
+uv run poe web-chat
 ```
 Then open http://127.0.0.1:5173
 

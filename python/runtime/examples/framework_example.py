@@ -59,7 +59,7 @@ async def main():
                     response_msg = ChatMessage(role="assistant", text=f"Framework response to: {user_text}")
                     return AgentRunResponse(messages=[response_msg])
             
-            # Create framework agents (exactly like .NET would)
+            # Create framework agents
             framework_agent_1 = ChatClientAgent(
                 chat_client=MockChatClient(),
                 name="Direct Framework Agent",
@@ -144,7 +144,7 @@ async def main():
             # Test second framework agent concurrently
             fw_id_2 = ActorId(type_name="framework-2", instance_id="test3")
             
-            # Run both agents concurrently (like .NET would)
+            # Run both agents concurrently
             print("\n🔄 Testing concurrent framework agents...")
             
             tasks = []

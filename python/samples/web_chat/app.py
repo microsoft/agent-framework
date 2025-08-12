@@ -43,7 +43,7 @@ import subprocess
 import socket
 from pathlib import Path
 from typing import Dict, Any, List, AsyncIterator
-from fastapi import FastAPI, Request, Depends, Cookie
+from fastapi import FastAPI, Request, Depends, Cookie, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -99,6 +99,19 @@ APP_PORT = resolve_app_port()
 # Agent Host bootstrap (start sample-specific agent host like .NET AgentWebChat.AgentHost)
 # ----------------------------------------------------------------------------
 _runtime_process = None
+
+async def wait_for_runtime_ready(max_attempts: int = 30) -> bool:
+    """Wait for the runtime to be ready by checking its health endpoint."""
+    for attempt in range(max_attempts):
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                response = await client.get(f"{RUNTIME_URL}/health")
+                if response.status_code == 200:
+                    return True
+        except (httpx.ConnectError, httpx.TimeoutException):
+            pass
+        await asyncio.sleep(0.5)
+    return False
 
 def ensure_runtime() -> None:
     global _runtime_process
@@ -175,6 +188,9 @@ async def send_agent_message_via_proxy(actor_client: HttpActorClient, agent: str
 async def runtime_middleware(request: Request, call_next):
     # Start runtime lazily on first request
     ensure_runtime()
+    # Wait for runtime to be ready before proceeding
+    if not await wait_for_runtime_ready():
+        raise HTTPException(status_code=503, detail="Agent runtime failed to start")
     return await call_next(request)
 
 @app.get("/", response_class=HTMLResponse)

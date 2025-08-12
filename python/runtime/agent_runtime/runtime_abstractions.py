@@ -30,7 +30,7 @@ class RequestStatus(Enum):
     PENDING = "pending"
     COMPLETED = "completed" 
     FAILED = "failed"
-    NOT_FOUND = "not_found"  # Parity with .NET runtime
+    NOT_FOUND = "not_found"
 
 
 @dataclass

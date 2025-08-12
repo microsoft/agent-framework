@@ -10,7 +10,7 @@ from .runtime_abstractions import (
     RequestStatus, ActorMessageType
 )
 
-# Framework agent types (use directly like .NET)
+# Framework agent types
 import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '../../packages/main'))
@@ -21,12 +21,12 @@ logger = logging.getLogger(__name__)
 
 
 class AgentActor(IActor):
-    """Runtime actor that wraps framework AI agents (direct integration like .NET)"""
+    """Runtime actor that wraps framework AI agents"""
     
     THREAD_STATE_KEY = "agent_thread"
     
     def __init__(self, agent: AIAgent):
-        """Initialize with framework agent (direct usage, no adapter)"""
+        """Initialize with framework agent"""
         self._agent = agent
         self._thread: Optional[AgentThread] = None
     
@@ -78,8 +78,8 @@ class AgentActor(IActor):
                 self._thread = self._agent.get_new_thread()
 
             # Don't manually append incoming messages; allow agent implementation to manage thread.
-            
-            # Call framework agent directly (like .NET does)
+
+            # Call framework agent directly
             response = await self._agent.run(framework_messages, thread=self._thread)
             
             # Save updated thread state
@@ -224,9 +224,9 @@ class AgentActor(IActor):
         context.complete_request(request.message_id, error_response)
 
 
-# Mock agent implementations for testing (like .NET has MockAgent)
+# Mock agent implementations for testing - TODO move this and echo somewhere more appropriate.
 class MockAIAgent(AgentBase):
-    """Mock AI agent that simulates different responses (for testing like .NET MockAgent)"""
+    """Mock AI agent that simulates different responses"""
     
     def __init__(self, name: str = "mock", responses: Optional[List[str]] = None, **kwargs):
         super().__init__(name=name, **kwargs)
@@ -282,7 +282,7 @@ class MockAIAgent(AgentBase):
 
 
 class EchoAgent(AgentBase):
-    """Echo agent for testing (like .NET test agents)"""
+    """Echo agent for testing"""
     
     def __init__(self, name: str = "echo", **kwargs):
         super().__init__(name=name, **kwargs)
