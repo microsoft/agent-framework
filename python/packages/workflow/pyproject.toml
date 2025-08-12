@@ -47,6 +47,11 @@ timeout = 120
 [tool.ruff]
 extend = "../../pyproject.toml"
 
+[tool.coverage.run]
+omit = [
+    "**/__init__.py"
+]
+
 [tool.pyright]
 extend = "../../pyproject.toml"
 exclude = ['tests']
@@ -73,6 +78,8 @@ exclude_dirs = ["tests"]
 [tool.poe]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
+[tool.poe.tasks]
+test = "pytest --cov=agent_framework_workflow --cov-report=term-missing:skip-covered tests"
 
 [tool.uv.build-backend]
 module-name = "agent_framework_workflow"
