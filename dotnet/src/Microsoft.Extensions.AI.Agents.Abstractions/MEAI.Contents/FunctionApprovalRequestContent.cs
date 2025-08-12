@@ -15,8 +15,8 @@ public class FunctionApprovalRequestContent : UserInputRequestContent
     /// <param name="approvalId">The ID to uniquely identify the user input request/response pair.</param>
     /// <param name="functionCall">The function call that requires user approval.</param>
     public FunctionApprovalRequestContent(string approvalId, FunctionCallContent functionCall)
+        : base(approvalId)
     {
-        this.ApprovalId = Throw.IfNullOrWhitespace(approvalId);
         this.FunctionCall = Throw.IfNull(functionCall);
     }
 
@@ -31,7 +31,7 @@ public class FunctionApprovalRequestContent : UserInputRequestContent
     /// <returns>The <see cref="ChatMessage"/> representing the approval response.</returns>
     public ChatMessage Approve()
     {
-        return new ChatMessage(ChatRole.User, [new FunctionApprovalResponseContent(this.ApprovalId, true, this.FunctionCall)]);
+        return new ChatMessage(ChatRole.User, [new FunctionApprovalResponseContent(this.Id, true, this.FunctionCall)]);
     }
 
     /// <summary>
@@ -40,6 +40,6 @@ public class FunctionApprovalRequestContent : UserInputRequestContent
     /// <returns>The <see cref="ChatMessage"/> representing the rejection response.</returns>
     public ChatMessage Reject()
     {
-        return new ChatMessage(ChatRole.User, [new FunctionApprovalResponseContent(this.ApprovalId, false, this.FunctionCall)]);
+        return new ChatMessage(ChatRole.User, [new FunctionApprovalResponseContent(this.Id, false, this.FunctionCall)]);
     }
 }

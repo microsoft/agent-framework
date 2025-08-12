@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Microsoft.Shared.Diagnostics;
+
 namespace Microsoft.Extensions.AI;
 
 /// <summary>
@@ -8,7 +10,16 @@ namespace Microsoft.Extensions.AI;
 public abstract class UserInputRequestContent : AIContent
 {
     /// <summary>
-    /// Gets or sets the ID to uniquely identify the user input request/response pair.
+    /// Initializes a new instance of the <see cref="UserInputRequestContent"/> class.
     /// </summary>
-    public string ApprovalId { get; set; } = default!;
+    /// <param name="id">The ID to uniquely identify the user input request/response pair.</param>
+    protected UserInputRequestContent(string id)
+    {
+        Id = Throw.IfNullOrWhitespace(id);
+    }
+
+    /// <summary>
+    /// Gets the ID to uniquely identify the user input request/response pair.
+    /// </summary>
+    public string Id { get; }
 }

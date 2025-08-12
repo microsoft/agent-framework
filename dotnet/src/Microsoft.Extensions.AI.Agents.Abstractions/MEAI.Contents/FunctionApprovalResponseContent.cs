@@ -16,6 +16,7 @@ public class FunctionApprovalResponseContent : UserInputResponseContent
     /// <param name="approved">Indicates whether the request was approved.</param>
     /// <param name="functionCall">The function call that requires user approval.</param>
     public FunctionApprovalResponseContent(string approvalId, bool approved, FunctionCallContent functionCall)
+        : base(approvalId)
     {
         this.Approved = approved;
         this.FunctionCall = Throw.IfNull(functionCall);

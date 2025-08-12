@@ -74,7 +74,7 @@ public class PreFICCApprovalGeneratingChatClient : DelegatingChatClient
     private static void RemoveExecutedApprovedApprovalRequests(IList<ChatMessage> messages)
     {
         var functionResultCallIds = messages.SelectMany(x => x.Contents).OfType<FunctionResultContent>().Select(x => x.CallId).ToHashSet();
-        var approvalResponsetIds = messages.SelectMany(x => x.Contents).OfType<FunctionApprovalResponseContent>().Select(x => x.ApprovalId).ToHashSet();
+        var approvalResponsetIds = messages.SelectMany(x => x.Contents).OfType<FunctionApprovalResponseContent>().Select(x => x.Id).ToHashSet();
 
         int messageCount = messages.Count;
         for (int i = 0; i < messageCount; i++)
@@ -82,7 +82,7 @@ public class PreFICCApprovalGeneratingChatClient : DelegatingChatClient
             // Get any content that is not a FunctionApprovalRequestContent/FunctionApprovalResponseContent or is a FunctionApprovalRequestContent/FunctionApprovalResponseContent that has not been executed.
             var content = messages[i].Contents.Where(x =>
                 (x is not FunctionApprovalRequestContent && x is not FunctionApprovalResponseContent) ||
-                (x is FunctionApprovalRequestContent request && !approvalResponsetIds.Contains(request.ApprovalId) && !functionResultCallIds.Contains(request.FunctionCall.CallId)) ||
+                (x is FunctionApprovalRequestContent request && !approvalResponsetIds.Contains(request.Id) && !functionResultCallIds.Contains(request.FunctionCall.CallId)) ||
                 (x is FunctionApprovalResponseContent approval && !functionResultCallIds.Contains(approval.FunctionCall.CallId))).ToList();
 
             // Remove the entire message if there is no content left after filtering.
