@@ -6,8 +6,6 @@ on:
     paths:
       - "python/packages/**"
       - "python/tests/unit/**"
-env:
-  UV_SEMVER: "0.8.x"
 
 jobs:
   python-tests-coverage:
@@ -28,7 +26,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
-          version: ${{ env.UV_SEMVER }}
+          version-file: "python/pyproject.toml"
           enable-cache: true
           cache-suffix: ${{ runner.os }}-${{ env.UV_PYTHON }}
           cache-dependency-glob: "**/uv.lock"
