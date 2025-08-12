@@ -86,11 +86,15 @@ class AgentThread(AFBaseModel):
 
     @property
     def message_store(self) -> ChatMessageStore | None:
-        """Gets the ChatMessageStore used by this thread, for cases where messages should be stored in a custom location."""
+        """Gets the ChatMessageStore used by this thread, when messages should be stored in a custom location."""
         return self._message_store
 
     @message_store.setter
     def message_store(self, message_store: ChatMessageStore | None) -> None:
+        """Sets the ChatMessageStore used by this thread, when messages should be stored in a custom location.
+
+        Note that either service_thread_id or message_store may be set, but not both.
+        """
         if self._message_store is None and message_store is None:
             return
 
@@ -106,11 +110,13 @@ class AgentThread(AFBaseModel):
         return await self._message_store.list_messages() if self._message_store is not None else None
 
     async def serialize(self, **kwargs: Any) -> Any:
-        store_state = None
+        chat_message_store_state = None
         if self._message_store is not None:
-            store_state = await self._message_store.serialize_state(**kwargs)
+            chat_message_store_state = await self._message_store.serialize_state(**kwargs)
 
-        state = ThreadState(service_thread_id=self._service_thread_id, store_state=store_state)
+        state = ThreadState(
+            service_thread_id=self._service_thread_id, chat_message_store_state=chat_message_store_state
+        )
 
         return state.__dict__
 
@@ -144,19 +150,19 @@ async def deserialize_thread_state(thread: AgentThread, serialized_thread: Any, 
         return
 
     # If we don't have any ChatMessageStore state return here.
-    if state.store_state is None:
+    if state.chat_message_store_state is None:
         return
 
     if thread.message_store is None:
         # If we don't have a chat message store yet, create an in-memory one.
         thread.message_store = InMemoryChatMessageStore()
 
-    await thread.message_store.deserialize_state(state.store_state, **kwargs)
+    await thread.message_store.deserialize_state(state.chat_message_store_state, **kwargs)
 
 
 class ThreadState(AFBaseModel):
     service_thread_id: str | None = None
-    store_state: Any | None = None
+    chat_message_store_state: Any | None = None
 
 
 class StoreState(AFBaseModel):

@@ -471,27 +471,27 @@ class TestThreadState:
         state = ThreadState(service_thread_id="test-conv-123")
 
         assert state.service_thread_id == "test-conv-123"
-        assert state.store_state is None
+        assert state.chat_message_store_state is None
 
-    def test_init_with_store_state(self) -> None:
-        """Test ThreadState initialization with store_state."""
+    def test_init_with_chat_message_store_state(self) -> None:
+        """Test ThreadState initialization with chat_message_store_state."""
         store_data: dict[str, Any] = {"messages": []}
-        state = ThreadState(store_state=store_data)
+        state = ThreadState(chat_message_store_state=store_data)
 
         assert state.service_thread_id is None
-        assert state.store_state == store_data
+        assert state.chat_message_store_state == store_data
 
     def test_init_with_both(self) -> None:
         """Test ThreadState initialization with both parameters."""
         store_data: dict[str, Any] = {"messages": []}
-        state = ThreadState(service_thread_id="test-conv-456", store_state=store_data)
+        state = ThreadState(service_thread_id="test-conv-456", chat_message_store_state=store_data)
 
         assert state.service_thread_id == "test-conv-456"
-        assert state.store_state == store_data
+        assert state.chat_message_store_state == store_data
 
     def test_init_defaults(self) -> None:
         """Test ThreadState initialization with defaults."""
         state = ThreadState()
 
         assert state.service_thread_id is None
-        assert state.store_state is None
+        assert state.chat_message_store_state is None
