@@ -7,9 +7,10 @@ from time import perf_counter
 from typing import TYPE_CHECKING, Annotated, Any, Generic, Protocol, TypeVar, get_args, get_origin, runtime_checkable
 
 from opentelemetry import metrics, trace
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, Field, PrivateAttr, create_model
 
 from ._logging import get_logger
+from ._pydantic import AFBaseModel
 from .telemetry import GenAIAttributes, start_as_current_span
 
 if TYPE_CHECKING:
@@ -20,6 +21,48 @@ meter: metrics.Meter = metrics.get_meter_provider().get_meter("agent_framework")
 logger = get_logger()
 
 __all__ = ["AIFunction", "AITool", "HostedCodeInterpreterTool", "ai_function"]
+
+
+def _parse_inputs(
+    inputs: "AIContents | dict[str, Any] | str | list[AIContents | dict[str, Any] | str] | None",
+) -> list["AIContents"]:
+    """Parse the inputs for a tool, ensuring they are of type AIContents."""
+    if inputs is None:
+        return []
+
+    from ._types import AIContent, DataContent, HostedFileContent, HostedVectorStoreContent, UriContent
+
+    parsed_inputs: list["AIContents"] = []
+    if not isinstance(inputs, list):
+        inputs = [inputs]
+    for input_item in inputs:
+        if isinstance(input_item, str):
+            # If it's a string, we assume it's a URI or similar identifier.
+            # Convert it to a UriContent or similar type as needed.
+            parsed_inputs.append(UriContent(uri=input_item, media_type="text/plain"))
+        elif isinstance(input_item, dict):
+            # If it's a dict, we assume it contains properties for a specific content type.
+            # we check if the required keys are present to determine the type.
+            # for instance, if it has "uri" and "media_type", we treat it as UriContent.
+            # if is only has uri, then we treat it as DataContent.
+            # etc.
+            if "uri" in input_item:
+                parsed_inputs.append(
+                    UriContent(**input_item) if "media_type" in input_item else DataContent(**input_item)
+                )
+            elif "file_id" in input_item:
+                parsed_inputs.append(HostedFileContent(**input_item))
+            elif "vector_store_id" in input_item:
+                parsed_inputs.append(HostedVectorStoreContent(**input_item))
+            elif "data" in input_item:
+                parsed_inputs.append(DataContent(**input_item))
+            else:
+                raise ValueError(f"Unsupported input type: {input_item}")
+        elif isinstance(input_item, AIContent):
+            parsed_inputs.append(input_item)
+        else:
+            raise TypeError(f"Unsupported input type: {type(input_item).__name__}. Expected AIContents or dict.")
+    return parsed_inputs
 
 
 @runtime_checkable
@@ -37,9 +80,9 @@ class AITool(Protocol):
 
     name: str
     """The name of the tool."""
-    description: str | None = None
+    description: str
     """A description of the tool, suitable for use in describing the purpose to a model."""
-    additional_properties: dict[str, Any] | None = None
+    additional_properties: dict[str, Any] | None
     """Additional properties associated with the tool."""
 
     def __str__(self) -> str:
@@ -51,48 +94,96 @@ ArgsT = TypeVar("ArgsT", bound=BaseModel)
 ReturnT = TypeVar("ReturnT")
 
 
-class AIFunction(AITool, Generic[ArgsT, ReturnT]):
-    """A AITool that is callable as code."""
+class AIToolBase(AFBaseModel):
+    """Base class for AI tools, providing common attributes and methods.
+
+    Args:
+        name: The name of the tool.
+        description: A description of the tool.
+        additional_properties: Additional properties associated with the tool.
+    """
+
+    name: str = Field(..., kw_only=False)
+    description: str = ""
+    additional_properties: dict[str, Any] | None = None
+
+    def __str__(self) -> str:
+        """Return a string representation of the tool."""
+        if self.description:
+            return f"{self.__class__.__name__}(name={self.name}, description={self.description})"
+        return f"{self.__class__.__name__}(name={self.name})"
+
+
+class HostedCodeInterpreterTool(AIToolBase):
+    """Represents a hosted tool that can be specified to an AI service to enable it to execute generated code.
+
+    This tool does not implement code interpretation itself. It serves as a marker to inform a service
+    that it is allowed to execute generated code if the service is capable of doing so.
+    """
+
+    inputs: list[Any] = Field(default_factory=list)
 
     def __init__(
         self,
-        func: Callable[..., Awaitable[ReturnT] | ReturnT],
-        name: str,
-        description: str,
-        input_model: type[ArgsT],
+        *,
+        inputs: "AIContents | dict[str, Any] | str | list[AIContents | dict[str, Any] | str] | None" = None,
+        description: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
-    ):
-        """Initialize a FunctionTool.
+    ) -> None:
+        """Initialize the HostedCodeInterpreterTool.
 
         Args:
-            func: The function to wrap.
-            name: The name of the tool.
+            inputs: A list of contents that the tool can accept as input. Defaults to None.
+                This should mostly be HostedFileContent or HostedVectorStoreContent.
+                Can also be DataContent, depending on the service used.
+                When supplying a list, it can contain:
+                - AIContents instances
+                - dicts with properties for AIContents (e.g., {"uri": "http://example.com", "media_type": "text/html"})
+                - strings (which will be converted to UriContent with media_type "text/plain").
+                If None, defaults to an empty list.
             description: A description of the tool.
-            input_model: A Pydantic model that defines the input parameters for the function.
-            **kwargs: Additional properties to set on the tool.
-                stored in additional_properties.
+            additional_properties: Additional properties associated with the tool.
+            **kwargs: Additional keyword arguments to pass to the base class.
         """
-        self.name = name
-        self.description = description
-        self.input_model = input_model
-        self.additional_properties: dict[str, Any] | None = kwargs
-        self._func = func
-        self.invocation_duration_histogram = meter.create_histogram(
-            "agent_framework.function.invocation.duration",
+        args: dict[str, Any] = {
+            "name": "code_interpreter",
+        }
+        if inputs:
+            args["inputs"] = _parse_inputs(inputs)
+        if description is not None:
+            args["description"] = description
+        if additional_properties is not None:
+            args["additional_properties"] = additional_properties
+        if "name" in kwargs:
+            raise ValueError("The 'name' argument is reserved for the HostedCodeInterpreterTool and cannot be set.")
+        super().__init__(**args, **kwargs)
+
+
+class AIFunction(AIToolBase, Generic[ArgsT, ReturnT]):
+    """A AITool that is callable as code.
+
+    Args:
+        name: The name of the function.
+        description: A description of the function.
+        additional_properties: Additional properties to set on the function.
+        func: The function to wrap. If None, returns a decorator.
+        input_model: The Pydantic model that defines the input parameters for the function.
+    """
+
+    func: Callable[..., Awaitable[ReturnT] | ReturnT]
+    input_model: type[ArgsT]
+    _invocation_duration_histogram: metrics.Histogram = PrivateAttr(
+        default_factory=lambda: meter.create_histogram(
+            GenAIAttributes.MEASUREMENT_FUNCTION_INVOCATION_DURATION.value,
             unit="s",
             description="Measures the duration of a function's execution",
         )
-
-    def parameters(self) -> dict[str, Any]:
-        """Return the parameter json schemas of the input model."""
-        return self.input_model.model_json_schema()
+    )
 
     def __call__(self, *args: Any, **kwargs: Any) -> ReturnT | Awaitable[ReturnT]:
         """Call the wrapped function with the provided arguments."""
-        return self._func(*args, **kwargs)
-
-    def __str__(self) -> str:
-        return f"AIFunction(name={self.name}, description={self.description})"
+        return self.func(*args, **kwargs)
 
     async def invoke(
         self,
@@ -136,8 +227,23 @@ class AIFunction(AITool, Generic[ArgsT, ReturnT]):
                 raise
             finally:
                 duration = perf_counter() - starting_time_stamp
-                self.invocation_duration_histogram.record(duration, attributes=attributes)
+                self._invocation_duration_histogram.record(duration, attributes=attributes)
                 logger.info("Function completed. Duration: %fs", duration)
+
+    def parameters(self) -> dict[str, Any]:
+        """Create the json schema of the parameters."""
+        return self.input_model.model_json_schema()
+
+    def to_json_schema_spec(self) -> dict[str, Any]:
+        """Convert a AIFunction to the JSON Schema function specification format."""
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.parameters(),
+            },
+        }
 
 
 def _parse_annotation(annotation: Any) -> Any:
@@ -207,91 +313,13 @@ def ai_function(
                 raise TypeError(f"Input model for {tool_name} must be a subclass of BaseModel, got {input_model}")
 
             return AIFunction[Any, ReturnT](
-                func=f,
                 name=tool_name,
                 description=tool_desc,
+                additional_properties=additional_properties or {},
+                func=f,
                 input_model=input_model,
-                **(additional_properties if additional_properties is not None else {}),
             )
 
         return wrapper(func)
 
     return decorator(func) if func else decorator  # type: ignore[reportReturnType, return-value]
-
-
-def _parse_inputs(
-    inputs: "AIContents | dict[str, Any] | str | list[AIContents | dict[str, Any] | str] | None",
-) -> list["AIContents"]:
-    """Parse the inputs for a tool, ensuring they are of type AIContents."""
-    if inputs is None:
-        return []
-
-    from ._types import AIContent, DataContent, HostedFileContent, HostedVectorStoreContent, UriContent
-
-    parsed_inputs: list["AIContents"] = []
-    if not isinstance(inputs, list):
-        inputs = [inputs]
-    for input_item in inputs:
-        if isinstance(input_item, str):
-            # If it's a string, we assume it's a URI or similar identifier.
-            # Convert it to a UriContent or similar type as needed.
-            parsed_inputs.append(UriContent(uri=input_item, media_type="text/plain"))
-        elif isinstance(input_item, dict):
-            # If it's a dict, we assume it contains properties for a specific content type.
-            # we check if the required keys are present to determine the type.
-            if "uri" in input_item:
-                parsed_inputs.append(
-                    UriContent(**input_item) if "media_type" in input_item else DataContent(**input_item)
-                )
-            elif "file_id" in input_item:
-                parsed_inputs.append(HostedFileContent(**input_item))
-            elif "vector_store_id" in input_item:
-                parsed_inputs.append(HostedVectorStoreContent(**input_item))
-            elif "data" in input_item:
-                parsed_inputs.append(DataContent(**input_item))
-            else:
-                raise ValueError(f"Unsupported input type: {input_item}")
-        elif isinstance(input_item, AIContent):
-            parsed_inputs.append(input_item)
-        else:
-            raise TypeError(f"Unsupported input type: {type(input_item).__name__}. Expected AIContents or dict.")
-    return parsed_inputs
-
-
-class HostedCodeInterpreterTool(AITool):
-    """Represents a hosted tool that can be specified to an AI service to enable it to execute generated code.
-
-    This tool does not implement code interpretation itself. It serves as a marker to inform a service
-    that it is allowed to execute generated code if the service is capable of doing so.
-    """
-
-    def __init__(
-        self,
-        name: str = "code_interpreter",
-        inputs: "AIContents | dict[str, Any] | str | list[AIContents | dict[str, Any] | str] | None" = None,
-        description: str | None = None,
-        additional_properties: dict[str, Any] | None = None,
-    ):
-        """Initialize a HostedCodeInterpreterTool.
-
-        Args:
-            name: The name of the tool. Defaults to "code_interpreter".
-            inputs: A list of contents that the tool can accept as input. Defaults to None.
-                This should mostly be HostedFileContent or HostedVectorStoreContent.
-                Can also be DataContent, depending on the service used.
-                When supplying a list, it can contain:
-                - AIContents instances
-                - dicts with properties for AIContents (e.g., {"uri": "http://example.com", "media_type": "text/html"})
-                - strings (which will be converted to UriContent with media_type "text/plain").
-                If None, defaults to an empty list.
-            description: A description of the tool.
-            additional_properties: Additional properties associated with the tool, specific to the service used.
-        """
-        self.name = name
-        self.inputs = _parse_inputs(inputs)
-        self.description = description
-        self.additional_properties = additional_properties
-
-    def __str__(self) -> str:
-        """Return a string representation of the tool."""
-        return f"HostedCodeInterpreterTool(name={self.name})"

@@ -7,7 +7,7 @@ import pytest
 from pydantic import BaseModel
 
 from agent_framework import ChatClient, ChatMessage, ChatResponse, ChatResponseUpdate, TextContent, ai_function
-from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
+from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai import OpenAIResponsesClient
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
@@ -247,23 +247,21 @@ async def test_openai_responses_client_streaming() -> None:
     messages.append(ChatMessage(role="user", text="The weather in Seattle is sunny"))
     messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
 
-    # This is currently broken. See https://github.com/openai/openai-python/issues/2305
-    with pytest.raises(ServiceResponseException):
-        response = openai_responses_client.get_streaming_response(
-            messages=messages,
-            response_format=OutputStruct,
-        )
-        full_message = ""
-        async for chunk in response:
-            assert chunk is not None
-            assert isinstance(chunk, ChatResponseUpdate)
-            for content in chunk.contents:
-                if isinstance(content, TextContent) and content.text:
-                    full_message += content.text
+    response = openai_responses_client.get_streaming_response(
+        messages=messages,
+        response_format=OutputStruct,
+    )
+    full_message = ""
+    async for chunk in response:
+        assert chunk is not None
+        assert isinstance(chunk, ChatResponseUpdate)
+        for content in chunk.contents:
+            if isinstance(content, TextContent) and content.text:
+                full_message += content.text
 
-        output = OutputStruct.model_validate_json(full_message)
-        assert "Seattle" in output.location
-        assert "sunny" in output.weather
+    output = OutputStruct.model_validate_json(full_message)
+    assert "Seattle" in output.location
+    assert "sunny" in output.weather
 
 
 @skip_if_openai_integration_tests_disabled
@@ -294,22 +292,20 @@ async def test_openai_responses_client_streaming_tools() -> None:
     messages.clear()
     messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
 
-    # This is currently broken. See https://github.com/openai/openai-python/issues/2305
-    with pytest.raises(ServiceResponseException):
-        response = openai_responses_client.get_streaming_response(
-            messages=messages,
-            tools=[get_weather],
-            tool_choice="auto",
-            response_format=OutputStruct,
-        )
-        full_message = ""
-        async for chunk in response:
-            assert chunk is not None
-            assert isinstance(chunk, ChatResponseUpdate)
-            for content in chunk.contents:
-                if isinstance(content, TextContent) and content.text:
-                    full_message += content.text
+    response = openai_responses_client.get_streaming_response(
+        messages=messages,
+        tools=[get_weather],
+        tool_choice="auto",
+        response_format=OutputStruct,
+    )
+    full_message = ""
+    async for chunk in response:
+        assert chunk is not None
+        assert isinstance(chunk, ChatResponseUpdate)
+        for content in chunk.contents:
+            if isinstance(content, TextContent) and content.text:
+                full_message += content.text
 
-        output = OutputStruct.model_validate_json(full_message)
-        assert "Seattle" in output.location
-        assert "sunny" in output.weather
+    output = OutputStruct.model_validate_json(full_message)
+    assert "Seattle" in output.location
+    assert "sunny" in output.weather
