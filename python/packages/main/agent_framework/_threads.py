@@ -183,7 +183,7 @@ class ListChatMessageStore:
 
     async def deserialize_state(self, serialized_store_state: Any, **kwargs: Any) -> None:
         if serialized_store_state:
-            state = StoreState(**serialized_store_state)
+            state = StoreState.model_validate(serialized_store_state)
             if state.messages:
                 self._messages.extend(state.messages)
 
