@@ -14,8 +14,6 @@ namespace Microsoft.Extensions.AI.Agents.A2A.Internal;
 /// </summary>
 internal sealed class A2AAgent
 {
-    // Does this supply the inverse somewhere? The ability to use an A2A agent via the AIAgent abstraction?
-
     private readonly ILogger _logger;
     private readonly TaskManager _taskManager;
 
