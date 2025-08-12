@@ -11,6 +11,7 @@ from azure.ai.agents.models import (
     RunStepDeltaCodeInterpreterToolCall,
     RunStepDeltaToolCallObject,
 )
+from azure.identity.aio import DefaultAzureCredential
 
 
 def get_code_interpreter_chunk(chunk: AgentRunResponseUpdate) -> str | None:
@@ -37,7 +38,7 @@ async def main() -> None:
     print("=== Foundry Agent with Code Interpreter Example ===")
 
     async with ChatClientAgent(
-        chat_client=FoundryChatClient(),
+        chat_client=FoundryChatClient(async_ad_credential=DefaultAzureCredential()),
         instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
         tools=HostedCodeInterpreterTool(),
     ) as agent:

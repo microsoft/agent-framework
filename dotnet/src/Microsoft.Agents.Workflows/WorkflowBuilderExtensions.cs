@@ -77,6 +77,28 @@ public static class WorkflowBuilderExtensions
     }
 
     /// <summary>
+    /// Adds a switch step to the workflow, allowing conditional branching based on the specified source executor.
+    /// </summary>
+    /// <remarks>Use this method to introduce conditional logic into a workflow, enabling execution to follow
+    /// different paths based on the outcome of the source executor. The switch configuration defines the available
+    /// branches and their associated conditions.</remarks>
+    /// <param name="builder">The workflow builder to which the switch step will be added. Cannot be null.</param>
+    /// <param name="source">The source executor that determines the branching condition for the switch. Cannot be null.</param>
+    /// <param name="configureSwitch">An action used to configure the switch builder, specifying the branches and their conditions. Cannot be null.</param>
+    /// <returns>The workflow builder instance with the configured switch step added.</returns>
+    public static WorkflowBuilder AddSwitch(this WorkflowBuilder builder, ExecutorIsh source, Action<SwitchBuilder> configureSwitch)
+    {
+        Throw.IfNull(builder);
+        Throw.IfNull(source);
+        Throw.IfNull(configureSwitch);
+
+        SwitchBuilder switchBuilder = new();
+        configureSwitch(switchBuilder);
+
+        return switchBuilder.ReduceToFanOut(builder, source);
+    }
+
+    /// <summary>
     /// Builds a workflow that collects output from the specified executor, aggregates results using the provided
     /// streaming aggregator, and optionally completes based on a custom condition.
     /// </summary>

@@ -1,19 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import json
 import logging
-from abc import ABC
 from collections.abc import Mapping
 from copy import copy
-from enum import Enum
 from typing import Annotated, Any, ClassVar, Union
 
 from openai import (
     AsyncOpenAI,
     AsyncStream,
-    BadRequestError,
     _legacy_response,  # type: ignore
 )
-from openai.lib._parsing._completions import type_to_response_format_param
 from openai.types import Completion
 from openai.types.audio import Transcription
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
@@ -25,10 +22,9 @@ from pydantic.types import StringConstraints
 
 from .._logging import get_logger
 from .._pydantic import AFBaseModel, AFBaseSettings
-from .._types import ChatOptions, SpeechToTextOptions, TextToSpeechOptions
-from ..exceptions import ServiceInitializationError, ServiceInvalidRequestError, ServiceResponseException
+from .._types import AIContents, ChatOptions, SpeechToTextOptions, TextToSpeechOptions
+from ..exceptions import ServiceInitializationError
 from ..telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
-from ._exceptions import OpenAIContentFilterException
 
 logger: logging.Logger = get_logger("agent_framework.openai")
 
@@ -46,16 +42,29 @@ RESPONSE_TYPE = Union[
     _legacy_response.HttpxBinaryResponseContent,
 ]
 
-OPTION_TYPE = Union[
-    ChatOptions,
-    SpeechToTextOptions,
-    TextToSpeechOptions,
-]
+OPTION_TYPE = Union[ChatOptions, SpeechToTextOptions, TextToSpeechOptions, dict[str, Any]]
 
 
 __all__ = [
     "OpenAISettings",
 ]
+
+
+def prepare_function_call_results(content: AIContents | Any | list[AIContents | Any]) -> str | list[str]:
+    """Prepare the values of the function call results."""
+    if isinstance(content, list):
+        results: list[str] = []
+        for item in content:
+            res = prepare_function_call_results(item)
+            if isinstance(res, list):
+                results.extend(res)
+            else:
+                results.append(res)
+        return results[0] if len(results) == 1 else results
+    if isinstance(content, BaseModel):
+        return content.model_dump_json(exclude_none=True, exclude={"raw_representation", "additional_properties"})
+    # fallback
+    return json.dumps(content)
 
 
 class OpenAISettings(AFBaseSettings):
@@ -108,177 +117,23 @@ class OpenAISettings(AFBaseSettings):
     realtime_model_id: str | None = None
 
 
-class OpenAIModelTypes(Enum):
-    """OpenAI model types, can be text, chat or embedding."""
-
-    CHAT = "chat"
-    EMBEDDING = "embedding"
-    TEXT_TO_IMAGE = "text-to-image"
-    SPEECH_TO_TEXT = "speech-to-text"
-    TEXT_TO_SPEECH = "text-to-speech"
-    REALTIME = "realtime"
-    RESPONSE = "response"
-
-
-class OpenAIHandler(AFBaseModel, ABC):
-    """Internal class for calls to OpenAI API's."""
+class OpenAIHandler(AFBaseModel):
+    """Base class for OpenAI Clients."""
 
     client: AsyncOpenAI
     ai_model_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-    ai_model_type: OpenAIModelTypes = OpenAIModelTypes.CHAT
-
-    async def _send_request(self, options: OPTION_TYPE, messages: list[dict[str, Any]] | None = None) -> RESPONSE_TYPE:
-        """Send a request to the OpenAI API."""
-        if self.ai_model_type == OpenAIModelTypes.CHAT:
-            assert isinstance(options, ChatOptions)  # nosec # noqa: S101
-            return await self._send_completion_request(options, messages)
-        # TODO(evmattso): move other PromptExecutionSettings to a common options class
-        if self.ai_model_type == OpenAIModelTypes.EMBEDDING:
-            raise NotImplementedError("Embedding generation is not yet implemented in OpenAIHandler")
-        if self.ai_model_type == OpenAIModelTypes.TEXT_TO_IMAGE:
-            raise NotImplementedError("Text to image generation is not yet implemented in OpenAIHandler")
-        if self.ai_model_type == OpenAIModelTypes.SPEECH_TO_TEXT:
-            assert isinstance(options, SpeechToTextOptions)  # nosec # noqa: S101
-            return await self._send_audio_to_text_request(options)
-        if self.ai_model_type == OpenAIModelTypes.TEXT_TO_SPEECH:
-            assert isinstance(options, TextToSpeechOptions)  # nosec # noqa: S101
-            return await self._send_text_to_audio_request(options)
-        if self.ai_model_type == OpenAIModelTypes.RESPONSE:
-            assert isinstance(options, ChatOptions)  # nosec # noqa: S101
-            return await self._send_response_request(options, messages)
-
-        raise NotImplementedError(f"Model type {self.ai_model_type} is not supported")
-
-    async def _send_completion_request(
-        self,
-        chat_options: "ChatOptions",
-        messages: list[dict[str, Any]] | None = None,
-    ) -> ChatCompletion | AsyncStream[ChatCompletionChunk]:
-        """Execute the appropriate call to OpenAI models."""
-        try:
-            options_dict = chat_options.to_provider_settings()
-            if messages and "messages" not in options_dict:
-                options_dict["messages"] = messages
-            if "messages" not in options_dict:
-                raise ServiceInvalidRequestError("Messages are required for chat completions")
-            self._handle_structured_outputs(chat_options, options_dict)
-            if chat_options.tools is None:
-                options_dict.pop("parallel_tool_calls", None)
-            return await self.client.chat.completions.create(**options_dict)  # type: ignore
-        except BadRequestError as ex:
-            if ex.code == "content_filter":
-                raise OpenAIContentFilterException(
-                    f"{type(self)} service encountered a content error",
-                    ex,
-                ) from ex
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt",
-                ex,
-            ) from ex
-        except Exception as ex:
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt",
-                ex,
-            ) from ex
-
-    async def _send_audio_to_text_request(self, options: SpeechToTextOptions) -> Transcription:
-        """Send a request to the OpenAI audio to text endpoint."""
-        if not options.additional_properties["filename"]:
-            raise ServiceInvalidRequestError("Audio file is required for audio to text service")
-
-        try:
-            # TODO(peterychang): open isn't async safe
-            with open(options.additional_properties["filename"], "rb") as audio_file:  # noqa: ASYNC230
-                return await self.client.audio.transcriptions.create(  # type: ignore
-                    file=audio_file,
-                    **options.to_provider_settings(exclude={"filename"}),
-                )
-        except Exception as ex:
-            raise ServiceResponseException(
-                f"{type(self)} service failed to transcribe audio",
-                ex,
-            ) from ex
-
-    async def _send_text_to_audio_request(
-        self, options: TextToSpeechOptions
-    ) -> _legacy_response.HttpxBinaryResponseContent:
-        """Send a request to the OpenAI text to audio endpoint.
-
-        The OpenAI API returns the content of the generated audio file.
-        """
-        try:
-            return await self.client.audio.speech.create(
-                **options.to_provider_settings(),
-            )
-        except Exception as ex:
-            raise ServiceResponseException(
-                f"{type(self)} service failed to generate audio",
-                ex,
-            ) from ex
-
-    async def _send_response_request(
-        self,
-        chat_options: "ChatOptions",
-        messages: list[dict[str, Any]] | None = None,
-    ) -> Response | AsyncStream[ResponseStreamEvent]:
-        try:
-            options_dict = chat_options.to_provider_settings()
-            if messages and "input" not in options_dict:
-                options_dict["input"] = messages
-            if "input" not in options_dict:
-                raise ServiceInvalidRequestError("Messages are required for chat completions")
-            if chat_options.tools is None:
-                options_dict.pop("parallel_tool_calls", None)
-            else:
-                options_dict["tools"] = options_dict["response_tools"]
-                options_dict.pop("response_tools", None)
-            if chat_options.response_format:
-                # create call does not support response_format, so we need to handle it via parse call
-                resp_format = options_dict.pop("response_format", None)
-                return await self.client.responses.parse(
-                    **options_dict,
-                    text_format=resp_format,
-                )
-            if "store" not in options_dict:
-                options_dict["store"] = False
-            if "conversation_id" in options_dict:
-                options_dict["previous_response_id"] = options_dict["conversation_id"]
-                options_dict.pop("conversation_id")
-            return await self.client.responses.create(**options_dict)  # type: ignore
-        except BadRequestError as ex:
-            if ex.code == "content_filter":
-                raise OpenAIContentFilterException(
-                    f"{type(self)} service encountered a content error",
-                    ex,
-                ) from ex
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt",
-                ex,
-            ) from ex
-        except Exception as ex:
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt",
-                ex,
-            ) from ex
-
-    def _handle_structured_outputs(self, chat_options: "ChatOptions", options_dict: dict[str, Any]) -> None:
-        if (
-            chat_options.response_format
-            and isinstance(chat_options.response_format, type)
-            and issubclass(chat_options.response_format, BaseModel)
-        ):
-            options_dict["response_format"] = type_to_response_format_param(chat_options.response_format)
 
 
 class OpenAIConfigBase(OpenAIHandler):
     """Internal class for configuring a connection to an OpenAI service."""
+
+    MODEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def __init__(
         self,
         ai_model_id: str = Field(min_length=1),
         api_key: str | None = Field(min_length=1),
-        ai_model_type: OpenAIModelTypes | None = OpenAIModelTypes.CHAT,
         org_id: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         client: AsyncOpenAI | None = None,
@@ -295,8 +150,6 @@ class OpenAIConfigBase(OpenAIHandler):
                 Default to a preset value.
             api_key (str): OpenAI API key for authentication.
                 Must be non-empty. (Optional)
-            ai_model_type (OpenAIModelTypes): The type of OpenAI
-                model to interact with. Defaults to CHAT.
             org_id (str): OpenAI organization ID. This is optional
                 unless the account belongs to multiple organizations.
             default_headers (Mapping[str, str]): Default headers
@@ -324,7 +177,6 @@ class OpenAIConfigBase(OpenAIHandler):
         args = {
             "ai_model_id": ai_model_id,
             "client": client,
-            "ai_model_type": ai_model_type,
         }
         if instruction_role:
             args["instruction_role"] = instruction_role
@@ -344,7 +196,6 @@ class OpenAIConfigBase(OpenAIHandler):
                 "completion_tokens",
                 "total_tokens",
                 "api_type",
-                "ai_model_type",
                 "client",
             },
             by_alias=True,

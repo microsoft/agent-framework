@@ -13,14 +13,12 @@ namespace Microsoft.Agents.Workflows.Core;
 /// A component that processes messages in a <see cref="Workflow"/>.
 /// </summary>
 [DebuggerDisplay("{GetType().Name}{Id}")]
-public abstract class ExecutorBase : IIdentified, IAsyncDisposable
+public abstract class ExecutorBase : IIdentified
 {
     /// <summary>
     /// A unique identifier for the executor.
     /// </summary>
     public string Id { get; }
-
-    private Dictionary<string, object> State { get; } = new();
 
     /// <summary>
     /// Initialize the executor with a unique identifier
@@ -63,17 +61,22 @@ public abstract class ExecutorBase : IIdentified, IAsyncDisposable
     /// <exception cref="TargetInvocationException">An exception is generated while handling the message.</exception>
     public async ValueTask<object?> ExecuteAsync(object message, IWorkflowContext context)
     {
-        await context.AddEventAsync(new ExecutorInvokeEvent(this.Id)).ConfigureAwait(false);
+        await context.AddEventAsync(new ExecutorInvokeEvent(this.Id, message)).ConfigureAwait(false);
 
         CallResult? result = await this.Router.RouteMessageAsync(message, context, requireRoute: true)
                                               .ConfigureAwait(false);
 
-        ExecutorCompleteEvent completeEvent = new(this.Id)
+        ExecutorEvent executionResult;
+        if (result == null || result.IsSuccess)
         {
-            Data = result == null ? null : result.IsSuccess ? result.Result : result.Exception
-        };
+            executionResult = new ExecutorCompleteEvent(this.Id, result?.Result);
+        }
+        else
+        {
+            executionResult = new ExecutorFailureEvent(this.Id, result.Exception);
+        }
 
-        await context.AddEventAsync(completeEvent).ConfigureAwait(false);
+        await context.AddEventAsync(executionResult).ConfigureAwait(false);
 
         if (result == null)
         {
@@ -94,23 +97,6 @@ public abstract class ExecutorBase : IIdentified, IAsyncDisposable
         return result.Result;
     }
 
-    private bool _initialized = false;
-
-    /// <summary>
-    /// Ensures that the executor has been initialized before performing operations.
-    /// </summary>
-    /// <remarks>This method checks the internal state of the executor and throws an exception if it has not
-    /// been initialized. Call <c>InitializeAsync</c> before invoking any operations that require
-    /// initialization.</remarks>
-    /// <exception cref="InvalidOperationException">Thrown if the executor has not been initialized by calling <c>InitializeAsync</c>.</exception>
-    protected void CheckInitialized()
-    {
-        if (!this._initialized)
-        {
-            throw new InvalidOperationException($"Executor {this.GetType().Name} is not initialized. Call InitializeAsync first.");
-        }
-    }
-
     /// <summary>
     /// A set of <see cref="Type"/>s, representing the messages this executor can handle.
     /// </summary>
@@ -119,7 +105,7 @@ public abstract class ExecutorBase : IIdentified, IAsyncDisposable
     /// <summary>
     /// A set of <see cref="Type"/>s, representing the messages this executor can produce as output.
     /// </summary>
-    public virtual ISet<Type> OutputTypes => new HashSet<Type>([typeof(object)]);
+    public virtual ISet<Type> OutputTypes { get; } = new HashSet<Type>([typeof(object)]);
 
     /// <summary>
     /// Checks if the executor can handle a specific message type.
@@ -127,21 +113,6 @@ public abstract class ExecutorBase : IIdentified, IAsyncDisposable
     /// <param name="messageType"></param>
     /// <returns></returns>
     public bool CanHandle(Type messageType) => this.Router.CanHandle(messageType);
-
-    /// <inheritdoc cref="IAsyncDisposable.DisposeAsync"/>
-    protected virtual async ValueTask DisposeAsync()
-    {
-        this._initialized = false;
-    }
-
-    /// <inheritdoc cref="IAsyncDisposable.DisposeAsync"/>
-    ValueTask IAsyncDisposable.DisposeAsync()
-    {
-        GC.SuppressFinalize(this); // Should we be suppressing the finalizer here? CodeAnalysis seems to want it (CA1816)
-
-        // Chain to the virtual call to DisposeAsync.
-        return this.DisposeAsync();
-    }
 }
 
 /// <summary>

@@ -138,8 +138,9 @@ public class WorkflowBuilder
                 "You cannot add another edge without a condition for the same source and target.");
         }
 
-        this.EnsureEdgesFor(source.Id)
-            .Add(new DirectEdgeData(this.Track(source).Id, this.Track(target).Id, condition));
+        DirectEdgeData directEdge = new(this.Track(source).Id, this.Track(target).Id, condition);
+
+        this.EnsureEdgesFor(source.Id).Add(new(directEdge));
 
         return this;
     }
@@ -160,11 +161,12 @@ public class WorkflowBuilder
         Throw.IfNull(source);
         Throw.IfNullOrEmpty(targets);
 
-        this.EnsureEdgesFor(source.Id)
-            .Add(new FanOutEdgeData(
+        FanOutEdgeData fanOutEdge = new(
                 this.Track(source).Id,
                 targets.Select(target => this.Track(target).Id).ToList(),
-                partitioner));
+                partitioner);
+
+        this.EnsureEdgesFor(source.Id).Add(new(fanOutEdge));
 
         return this;
     }
@@ -177,23 +179,20 @@ public class WorkflowBuilder
     /// based on the completion or state of multiple sources. The trigger parameter can be used to customize activation
     /// behavior.</remarks>
     /// <param name="target">The target executor that receives input from the specified source executors. Cannot be null.</param>
-    /// <param name="trigger">An optional trigger condition that determines when the fan-in edge activates. Defaults to
-    /// <see cref="FanInTrigger.WhenAll"/>.</param>
     /// <param name="sources">One or more source executors that provide input to the target. Cannot be null or empty.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
-    public WorkflowBuilder AddFanInEdge(ExecutorIsh target, FanInTrigger trigger = FanInTrigger.WhenAll, params ExecutorIsh[] sources)
+    public WorkflowBuilder AddFanInEdge(ExecutorIsh target, params ExecutorIsh[] sources)
     {
         Throw.IfNull(target);
         Throw.IfNullOrEmpty(sources);
 
         FanInEdgeData edgeData = new(
             sources.Select(source => this.Track(source).Id).ToList(),
-                this.Track(target).Id,
-                trigger);
+                this.Track(target).Id);
 
         foreach (string sourceId in edgeData.SourceIds)
         {
-            this.EnsureEdgesFor(sourceId).Add(edgeData);
+            this.EnsureEdgesFor(sourceId).Add(new(edgeData));
         }
 
         return this;

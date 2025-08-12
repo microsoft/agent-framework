@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatClientAgent, ChatMessage, ChatRole
+from agent_framework import ChatMessage, ChatRole
 from agent_framework.azure import AzureChatClient
 from agent_framework.workflow import (
     AgentExecutor,
@@ -17,6 +17,7 @@ from agent_framework.workflow import (
     WorkflowContext,
     handler,
 )
+from azure.identity import DefaultAzureCredential
 
 """
 The following sample demonstrates a basic workflow that simulates
@@ -135,9 +136,9 @@ class CriticGroupChatManager(Executor):
 async def main():
     """Main function to run the group chat workflow."""
     # Step 1: Create the executors.
+    chat_client = AzureChatClient(ad_credential=DefaultAzureCredential())
     writer = AgentExecutor(
-        ChatClientAgent(
-            AzureChatClient(),
+        chat_client.create_agent(
             instructions=(
                 "You are an excellent content writer. You create new content and edit contents based on the feedback."
             ),
@@ -146,8 +147,7 @@ async def main():
         ),
     )
     reviewer = AgentExecutor(
-        ChatClientAgent(
-            AzureChatClient(),
+        chat_client.create_agent(
             instructions=(
                 "You are an excellent content reviewer. You review the content and provide feedback to the writer. "
                 "You do not address user requests. Only provide feedback to the writer."

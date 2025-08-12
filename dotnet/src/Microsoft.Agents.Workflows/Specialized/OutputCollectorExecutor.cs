@@ -35,7 +35,7 @@ internal class OutputCollectorExecutor<TInput, TResult> :
         if (this._completionCondition is not null &&
             this._completionCondition!(message, this.Result))
         {
-            return context.AddEventAsync(new WorkflowCompletedEvent() { Data = this.Result });
+            return context.AddEventAsync(new WorkflowCompletedEvent(this.Result));
         }
 
         return default;
