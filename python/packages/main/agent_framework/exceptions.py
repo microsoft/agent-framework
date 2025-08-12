@@ -1,10 +1,24 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import logging
+from typing import Any
+
+logger = logging.getLogger("agent_framework")
+
 
 class AgentFrameworkException(Exception):
-    """Base class for exceptions in the Agent Framework."""
+    """Base exceptions for the Agent Framework.
 
-    pass
+    Automatically logs the message as debug.
+    """
+
+    def __init__(self, message: str, inner_exception: Exception | None = None, *args: Any, **kwargs: Any):
+        """Create an AgentFrameworkException.
+
+        This emits a debug log, with the inner_exception if provided.
+        """
+        logger.debug(message, exc_info=inner_exception)
+        super().__init__(message, *args, **kwargs)  # type: ignore
 
 
 class AgentException(AgentFrameworkException):
@@ -66,5 +80,17 @@ class ServiceInvalidRequestError(ServiceResponseException):
 
 class ServiceInvalidResponseError(ServiceResponseException):
     """An error occurred while validating the response from the service."""
+
+    pass
+
+
+class ToolException(AgentFrameworkException):
+    """An error occurred while executing a tool."""
+
+    pass
+
+
+class ToolExecutionException(ToolException):
+    """An error occurred while executing a tool."""
 
     pass

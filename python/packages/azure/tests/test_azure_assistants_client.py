@@ -13,6 +13,7 @@ from agent_framework import (
     TextContent,
 )
 from agent_framework.exceptions import ServiceInitializationError
+from azure.identity import DefaultAzureCredential
 from pydantic import Field
 
 from agent_framework_azure import AzureAssistantsClient
@@ -259,7 +260,7 @@ def get_weather(
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_get_response() -> None:
     """Test Azure Assistants Client response."""
-    async with AzureAssistantsClient() as azure_assistants_client:
+    async with AzureAssistantsClient(ad_credential=DefaultAzureCredential()) as azure_assistants_client:
         assert isinstance(azure_assistants_client, ChatClient)
 
         messages: list[ChatMessage] = []
@@ -283,7 +284,7 @@ async def test_azure_assistants_client_get_response() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_get_response_tools() -> None:
     """Test Azure Assistants Client response with tools."""
-    async with AzureAssistantsClient() as azure_assistants_client:
+    async with AzureAssistantsClient(ad_credential=DefaultAzureCredential()) as azure_assistants_client:
         assert isinstance(azure_assistants_client, ChatClient)
 
         messages: list[ChatMessage] = []
@@ -304,7 +305,7 @@ async def test_azure_assistants_client_get_response_tools() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_streaming() -> None:
     """Test Azure Assistants Client streaming response."""
-    async with AzureAssistantsClient() as azure_assistants_client:
+    async with AzureAssistantsClient(ad_credential=DefaultAzureCredential()) as azure_assistants_client:
         assert isinstance(azure_assistants_client, ChatClient)
 
         messages: list[ChatMessage] = []
@@ -334,7 +335,7 @@ async def test_azure_assistants_client_streaming() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_streaming_tools() -> None:
     """Test Azure Assistants Client streaming response with tools."""
-    async with AzureAssistantsClient() as azure_assistants_client:
+    async with AzureAssistantsClient(ad_credential=DefaultAzureCredential()) as azure_assistants_client:
         assert isinstance(azure_assistants_client, ChatClient)
 
         messages: list[ChatMessage] = []
@@ -361,14 +362,16 @@ async def test_azure_assistants_client_streaming_tools() -> None:
 async def test_azure_assistants_client_with_existing_assistant() -> None:
     """Test Azure Assistants Client with existing assistant ID."""
     # First create an assistant to use in the test
-    async with AzureAssistantsClient() as temp_client:
+    async with AzureAssistantsClient(ad_credential=DefaultAzureCredential()) as temp_client:
         # Get the assistant ID by triggering assistant creation
         messages = [ChatMessage(role="user", text="Hello")]
         await temp_client.get_response(messages=messages)
         assistant_id = temp_client.assistant_id
 
         # Now test using the existing assistant
-        async with AzureAssistantsClient(assistant_id=assistant_id) as azure_assistants_client:
+        async with AzureAssistantsClient(
+            assistant_id=assistant_id, ad_credential=DefaultAzureCredential()
+        ) as azure_assistants_client:
             assert isinstance(azure_assistants_client, ChatClient)
             assert azure_assistants_client.assistant_id == assistant_id
 

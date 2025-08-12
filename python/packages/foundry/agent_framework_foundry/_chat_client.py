@@ -4,7 +4,7 @@ import contextlib
 import json
 import sys
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypeVar
 
 from agent_framework import (
     AIContents,
@@ -26,7 +26,6 @@ from agent_framework import (
     UsageDetails,
     use_tool_calling,
 )
-from agent_framework._clients import ai_function_to_json_schema_spec
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.telemetry import use_telemetry
@@ -93,6 +92,9 @@ class FoundrySettings(AFBaseSettings):
     agent_name: str | None = "UnnamedAgent"
 
 
+TFoundryChatClient = TypeVar("TFoundryChatClient", bound="FoundryChatClient")
+
+
 @use_telemetry
 @use_tool_calling
 class FoundryChatClient(ChatClientBase):
@@ -102,21 +104,22 @@ class FoundryChatClient(ChatClientBase):
     client: AIProjectClient = Field(...)
     credential: AsyncTokenCredential | None = Field(...)
     agent_id: str | None = Field(default=None)
+    agent_name: str | None = Field(default=None)
+    ai_model_deployment_name: str | None = Field(default=None)
     thread_id: str | None = Field(default=None)
     _should_delete_agent: bool = PrivateAttr(default=False)  # Track whether we should delete the agent
     _should_close_client: bool = PrivateAttr(default=False)  # Track whether we should close client connection
-    _should_close_credential: bool = PrivateAttr(default=False)  # Track whether we should close credential
-    _foundry_settings: FoundrySettings = PrivateAttr()
 
     def __init__(
         self,
+        *,
         client: AIProjectClient | None = None,
         agent_id: str | None = None,
         agent_name: str | None = None,
         thread_id: str | None = None,
         project_endpoint: str | None = None,
         model_deployment_name: str | None = None,
-        credential: AsyncTokenCredential | None = None,
+        async_ad_credential: AsyncTokenCredential | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         **kwargs: Any,
@@ -133,8 +136,7 @@ class FoundryChatClient(ChatClientBase):
                 conversation_id property, when making a request.
             project_endpoint: The Azure AI Foundry project endpoint URL. Used if client is not provided.
             model_deployment_name: The model deployment name to use for agent creation.
-            credential: Azure async credential to use for authentication. If not provided,
-                DefaultAzureCredential will be used.
+            async_ad_credential: Azure async credential to use for authentication.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
             **kwargs: Additional keyword arguments passed to the parent class.
@@ -152,7 +154,6 @@ class FoundryChatClient(ChatClientBase):
 
         # If no client is provided, create one
         should_close_client = False
-        should_close_credential = False
         if client is None:
             if not foundry_settings.project_endpoint:
                 raise ServiceInitializationError("Project endpoint is required when client is not provided.")
@@ -161,27 +162,20 @@ class FoundryChatClient(ChatClientBase):
                 raise ServiceInitializationError("Model deployment name is required for agent creation.")
 
             # Use provided credential or fallback to DefaultAzureCredential
-            if credential is None:
-                from azure.identity.aio import DefaultAzureCredential
-
-                credential = DefaultAzureCredential()
-                should_close_credential = True
-
-            client = AIProjectClient(endpoint=foundry_settings.project_endpoint, credential=credential)
-            should_close_client = True
+            if not async_ad_credential:
+                raise ServiceInitializationError("Azure AD credential is required when client is not provided.")
+            client = AIProjectClient(endpoint=foundry_settings.project_endpoint, credential=async_ad_credential)
 
         super().__init__(
             client=client,  # type: ignore[reportCallIssue]
-            credential=credential,  # type: ignore[reportCallIssue]
+            credential=async_ad_credential,  # type: ignore[reportCallIssue]
             agent_id=agent_id,  # type: ignore[reportCallIssue]
             thread_id=thread_id,  # type: ignore[reportCallIssue]
+            agent_name=foundry_settings.agent_name,  # type: ignore[reportCallIssue]
+            ai_model_deployment_name=foundry_settings.model_deployment_name,  # type: ignore[reportCallIssue]
             **kwargs,
         )
-
-        self._should_delete_agent = False
         self._should_close_client = should_close_client
-        self._should_close_credential = should_close_credential
-        self._foundry_settings = foundry_settings
 
     async def __aenter__(self) -> "Self":
         """Async context manager entry."""
@@ -195,10 +189,9 @@ class FoundryChatClient(ChatClientBase):
         """Close the client and clean up any agents we created."""
         await self._cleanup_agent_if_needed()
         await self._close_client_if_needed()
-        await self._close_credential_if_needed()
 
     @classmethod
-    def from_dict(cls, settings: dict[str, Any]) -> "FoundryChatClient":
+    def from_dict(cls: type[TFoundryChatClient], settings: dict[str, Any]) -> TFoundryChatClient:
         """Initialize a FoundryChatClient from a dictionary of settings.
 
         Args:
@@ -262,11 +255,11 @@ class FoundryChatClient(ChatClientBase):
         """
         # If no agent_id is provided, create a temporary agent
         if self.agent_id is None:
-            if not self._foundry_settings.model_deployment_name:
+            if not self.ai_model_deployment_name:
                 raise ServiceInitializationError("Model deployment name is required for agent creation.")
 
-            agent_name = self._foundry_settings.agent_name
-            args = {"model": self._foundry_settings.model_deployment_name, "name": agent_name}
+            agent_name = self.agent_name
+            args = {"model": self.ai_model_deployment_name, "name": agent_name}
             if run_options:
                 if "tools" in run_options:
                     args["tools"] = run_options["tools"]
@@ -459,11 +452,6 @@ class FoundryChatClient(ChatClientBase):
 
         return contents
 
-    async def _close_credential_if_needed(self) -> None:
-        """Close credential if we created it."""
-        if self._should_close_credential and self.credential is not None:
-            await self.credential.close()
-
     async def _close_client_if_needed(self) -> None:
         """Close client session if we created it."""
         if self._should_close_client:
@@ -496,7 +484,7 @@ class FoundryChatClient(ChatClientBase):
                 if chat_options.tool_choice != "none" and chat_options.tools is not None:
                     for tool in chat_options.tools:
                         if isinstance(tool, AIFunction):
-                            tool_definitions.append(ai_function_to_json_schema_spec(tool))  # type: ignore[reportUnknownArgumentType]
+                            tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
                         elif isinstance(tool, HostedCodeInterpreterTool):
                             tool_definitions.append(CodeInterpreterToolDefinition())
                         elif isinstance(tool, MutableMapping):
@@ -605,3 +593,14 @@ class FoundryChatClient(ChatClientBase):
                 tool_outputs.append(ToolOutput(tool_call_id=call_id, output=str(function_result_content.result)))
 
         return run_id, tool_outputs
+
+    def _update_agent_name(self, agent_name: str | None) -> None:
+        """Update the agent name in the chat client.
+
+        Args:
+            agent_name: The new name for the agent.
+        """
+        # This is a no-op in the base class, but can be overridden by subclasses
+        # to update the agent name in the client.
+        if agent_name and not self.agent_name:
+            self.agent_name = agent_name

@@ -73,18 +73,6 @@ async def _auto_invoke_function(
     )
 
 
-def ai_function_to_json_schema_spec(function: AIFunction[BaseModel, Any]) -> dict[str, Any]:
-    """Convert a AIFunction to the JSON Schema function specification format."""
-    return {
-        "type": "function",
-        "function": {
-            "name": function.name,
-            "description": function.description,
-            "parameters": function.parameters(),
-        },
-    }
-
-
 def _tool_call_non_streaming(
     func: Callable[..., Awaitable["ChatResponse"]],
 ) -> Callable[..., Awaitable["ChatResponse"]]:
@@ -117,14 +105,15 @@ def _tool_call_non_streaming(
                     _auto_invoke_function(
                         function_call,
                         custom_args=kwargs,
-                        tool_map={t.name: t for t in chat_options._ai_tools or [] if isinstance(t, AIFunction)},  # type: ignore[reportPrivateUsage]
+                        tool_map={t.name: t for t in chat_options.tools or [] if isinstance(t, AIFunction)},  # type: ignore[reportPrivateUsage]
                         sequence_index=seq_idx,
                         request_index=attempt_idx,
                     )
                     for seq_idx, function_call in enumerate(function_calls)
                 ])
                 # add a single ChatMessage to the response with the results
-                response.messages.append(ChatMessage(role="tool", contents=results))
+                result_message = ChatMessage(role="tool", contents=results)
+                response.messages.append(result_message)
                 # response should contain 2 messages after this,
                 # one with function call contents
                 # and one with function result contents
@@ -133,7 +122,11 @@ def _tool_call_non_streaming(
                 # we need to keep track of all function call messages
                 fcc_messages.extend(response.messages)
                 # and add them as additional context to the messages
-                messages.extend(response.messages)
+                if chat_options.store:
+                    messages.clear()
+                    messages.append(result_message)
+                else:
+                    messages.extend(response.messages)
                 continue
             # If we reach this point, it means there were no function calls to handle,
             # we'll add the previous function call and responses
@@ -146,7 +139,7 @@ def _tool_call_non_streaming(
 
         # Failsafe: give up on tools, ask model for plain answer
         chat_options.tool_choice = "none"
-        self._prepare_tools_and_tool_choice(chat_options=chat_options)  # type: ignore[reportPrivateUsage]
+        self._prepare_tool_choice(chat_options=chat_options)  # type: ignore[reportPrivateUsage]
         response = await func(self, messages=messages, chat_options=chat_options)
         if fcc_messages:
             for msg in reversed(fcc_messages):
@@ -202,7 +195,7 @@ def _tool_call_streaming(
                     _auto_invoke_function(
                         function_call,
                         custom_args=kwargs,
-                        tool_map={t.name: t for t in chat_options._ai_tools or [] if isinstance(t, AIFunction)},  # type: ignore[reportPrivateUsage]
+                        tool_map={t.name: t for t in chat_options.tools or [] if isinstance(t, AIFunction)},  # type: ignore[reportPrivateUsage]
                         sequence_index=seq_idx,
                         request_index=attempt_idx,
                     )
@@ -216,7 +209,7 @@ def _tool_call_streaming(
 
         # Failsafe: give up on tools, ask model for plain answer
         chat_options.tool_choice = "none"
-        self._prepare_tools_and_tool_choice(chat_options=chat_options)  # type: ignore[reportPrivateUsage]
+        self._prepare_tool_choice(chat_options=chat_options)  # type: ignore[reportPrivateUsage]
         async for update in func(self, messages=messages, chat_options=chat_options, **kwargs):
             yield update
 
@@ -529,7 +522,7 @@ class ChatClientBase(AFBaseModel, ABC):
                 additional_properties=additional_properties or {},
             )
         prepped_messages = self._prepare_messages(messages)
-        self._prepare_tools_and_tool_choice(chat_options=chat_options)
+        self._prepare_tool_choice(chat_options=chat_options)
         return await self._inner_get_response(messages=prepped_messages, chat_options=chat_options, **kwargs)
 
     async def get_streaming_response(
@@ -610,13 +603,13 @@ class ChatClientBase(AFBaseModel, ABC):
                 **kwargs,
             )
         prepped_messages = self._prepare_messages(messages)
-        self._prepare_tools_and_tool_choice(chat_options=chat_options)
+        self._prepare_tool_choice(chat_options=chat_options)
         async for update in self._inner_get_streaming_response(
             messages=prepped_messages, chat_options=chat_options, **kwargs
         ):
             yield update
 
-    def _prepare_tools_and_tool_choice(self, chat_options: ChatOptions) -> None:
+    def _prepare_tool_choice(self, chat_options: ChatOptions) -> None:
         """Prepare the tools and tool choice for the chat options.
 
         This function should be overridden by subclasses to customize tool handling.
@@ -627,10 +620,6 @@ class ChatClientBase(AFBaseModel, ABC):
             chat_options.tools = None
             chat_options.tool_choice = ChatToolMode.NONE.mode
             return
-        chat_options.tools = [
-            (ai_function_to_json_schema_spec(t) if isinstance(t, AIFunction) else t)  # type: ignore[reportUnknownArgumentType]
-            for t in chat_options._ai_tools or []  # type: ignore[reportPrivateUsage]
-        ]
         if not chat_options.tools:
             chat_options.tool_choice = ChatToolMode.NONE.mode
         else:
@@ -647,8 +636,8 @@ class ChatClientBase(AFBaseModel, ABC):
     def create_agent(
         self,
         *,
-        name: str,
-        instructions: str,
+        name: str | None = None,
+        instructions: str | None = None,
         tools: AITool
         | list[AITool]
         | Callable[..., Any]
