@@ -3,7 +3,7 @@
 import asyncio
 from typing import Any
 
-from agent_framework.workflow import Executor, WorkflowBuilder, WorkflowContext, handler
+from agent_framework.workflow import Case, Default, Executor, WorkflowBuilder, WorkflowContext, handler
 
 """
 The following sample demonstrates the foundation patterns that the workflow framework supports.
@@ -195,13 +195,16 @@ async def conditional_fan_out_edges():
     workflow = (
         WorkflowBuilder()
         .set_start_executor(add_one_executor)
-        .add_conditional_fan_out_edges(
+        .add_conditional_edge_group(
             add_one_executor,
-            [add_one_executor, divide_by_two_executor, multiply_by_two_executor],
-            # Loop back to the add_one_executor if the number is less than 11
-            # and to the multiply_by_two_executor when the number is larger than or equal to 11 and even.
-            # Otherwise, send to the divide_by_two_executor.
-            conditions=[lambda x: x < 11, lambda x: x % 2 == 0],
+            [
+                # Loop back to the add_one_executor if the number is less than 11
+                Case(condition=lambda x: x < 11, target=add_one_executor),
+                # multiply_by_two_executor when the number is larger than or equal to 11 and even.
+                Case(condition=lambda x: x % 2 == 0, target=multiply_by_two_executor),
+                # Otherwise, send to the divide_by_two_executor.
+                Default(target=divide_by_two_executor),
+            ],
         )
         .add_fan_in_edges([multiply_by_two_executor, divide_by_two_executor], aggregate_result_executor)
         .build()

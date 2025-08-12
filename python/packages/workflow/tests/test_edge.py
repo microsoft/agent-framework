@@ -8,7 +8,9 @@ import pytest
 from agent_framework.workflow import Executor, WorkflowContext, handler
 
 from agent_framework_workflow._edge import (
+    Case,
     ConditionalEdgeGroup,
+    Default,
     Edge,
     PartitioningEdgeGroup,
     SingleEdgeGroup,
@@ -467,8 +469,10 @@ def test_conditional_edge_group():
 
     edge_group = ConditionalEdgeGroup(
         source=source,
-        targets=[target1, target2],
-        conditions=[lambda x: x.data < 0],
+        cases=[
+            Case(condition=lambda x: x.data < 0, target=target1),
+            Default(target=target2),
+        ],
     )
 
     assert edge_group.source_executors == [source]
@@ -482,30 +486,45 @@ def test_conditional_edge_group():
     assert edge_group.edges[1]._condition is None  # type: ignore
 
 
-def test_conditional_edge_group_invalid_number_of_targets():
-    """Test creating a conditional edge group with an invalid number of targets."""
+def test_conditional_edge_group_invalid_number_of_cases():
+    """Test creating a conditional edge group with an invalid number of cases."""
     source = MockExecutor(id="source_executor")
     target = MockExecutor(id="target_executor")
 
-    with pytest.raises(ValueError, match="ConditionalEdgeGroup must contain at least two targets"):
+    with pytest.raises(
+        ValueError, match=r"ConditionalEdgeGroup must contain at least two cases \(including the default case\)."
+    ):
         ConditionalEdgeGroup(
             source=source,
-            targets=[target],
-            conditions=[lambda x: x.data < 0],
+            cases=[
+                Case(condition=lambda x: x.data < 0, target=target),
+            ],
+        )
+
+    with pytest.raises(ValueError, match="ConditionalEdgeGroup must contain exactly one default case."):
+        ConditionalEdgeGroup(
+            source=source,
+            cases=[
+                Case(condition=lambda x: x.data < 0, target=target),
+                Case(condition=lambda x: x.data >= 0, target=target),
+            ],
         )
 
 
-def test_conditional_edge_group_invalid_number_of_conditions():
+def test_conditional_edge_group_invalid_number_of_default_cases():
     """Test creating a conditional edge group with an invalid number of conditions."""
     source = MockExecutor(id="source_executor")
     target1 = MockExecutor(id="target_executor_1")
     target2 = MockExecutor(id="target_executor_2")
 
-    with pytest.raises(ValueError, match="Number of targets must be one more than the number of conditions."):
+    with pytest.raises(ValueError, match="ConditionalEdgeGroup must contain exactly one default case."):
         ConditionalEdgeGroup(
             source=source,
-            targets=[target1, target2],
-            conditions=[lambda x: x.data < 0, lambda x: x.data > 0],
+            cases=[
+                Case(condition=lambda x: x.data < 0, target=target1),
+                Default(target=target2),
+                Default(target=target2),
+            ],
         )
 
 
@@ -517,8 +536,10 @@ async def test_conditional_edge_group_send_message():
 
     edge_group = ConditionalEdgeGroup(
         source=source,
-        targets=[target1, target2],
-        conditions=[lambda x: x.data < 0],
+        cases=[
+            Case(condition=lambda x: x.data < 0, target=target1),
+            Default(target=target2),
+        ],
     )
 
     from agent_framework_workflow._runner_context import InProcRunnerContext, Message
@@ -554,8 +575,10 @@ async def test_conditional_edge_group_send_message_with_invalid_target():
 
     edge_group = ConditionalEdgeGroup(
         source=source,
-        targets=[target1, target2],
-        conditions=[lambda x: x.data < 0],
+        cases=[
+            Case(condition=lambda x: x.data < 0, target=target1),
+            Default(target=target2),
+        ],
     )
 
     from agent_framework_workflow._runner_context import InProcRunnerContext, Message
@@ -579,8 +602,10 @@ async def test_conditional_edge_group_send_message_with_valid_target():
 
     edge_group = ConditionalEdgeGroup(
         source=source,
-        targets=[target1, target2],
-        conditions=[lambda x: x.data < 0],
+        cases=[
+            Case(condition=lambda x: x.data < 0, target=target1),
+            Default(target=target2),
+        ],
     )
 
     from agent_framework_workflow._runner_context import InProcRunnerContext, Message
@@ -609,8 +634,10 @@ async def test_conditional_edge_group_send_message_with_invalid_data():
 
     edge_group = ConditionalEdgeGroup(
         source=source,
-        targets=[target1, target2],
-        conditions=[lambda x: x.data < 0],
+        cases=[
+            Case(condition=lambda x: x.data < 0, target=target1),
+            Default(target=target2),
+        ],
     )
 
     from agent_framework_workflow._runner_context import InProcRunnerContext, Message

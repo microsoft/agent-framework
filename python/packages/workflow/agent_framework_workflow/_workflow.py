@@ -10,7 +10,9 @@ from typing import Any
 from ._checkpoint import CheckpointStorage
 from ._const import DEFAULT_MAX_ITERATIONS
 from ._edge import (
+    Case,
     ConditionalEdgeGroup,
+    Default,
     EdgeGroup,
     PartitioningEdgeGroup,
     SingleEdgeGroup,
@@ -468,9 +470,7 @@ class WorkflowBuilder:
 
         return self
 
-    def add_conditional_fan_out_edges(
-        self, source: Executor, targets: Sequence[Executor], conditions: Sequence[Callable[[Any], bool]]
-    ) -> "Self":
+    def add_conditional_edge_group(self, source: Executor, cases: Sequence[Case | Default]) -> "Self":
         """Add a conditional fan out group of edges to the workflow.
 
         The output types of the source and the input types of the targets must be compatible.
@@ -486,10 +486,9 @@ class WorkflowBuilder:
 
         Args:
             source: The source executor of the edges.
-            targets: A list of target executors for the edges.
-            conditions: A list of condition functions that determine whether each edge should be traversed.
+            cases: A list of case objects that determine the target executor for each message.
         """
-        self._edge_groups.append(ConditionalEdgeGroup(source, targets, conditions))
+        self._edge_groups.append(ConditionalEdgeGroup(source, cases))
 
         return self
 

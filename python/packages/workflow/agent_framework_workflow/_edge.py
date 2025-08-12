@@ -2,22 +2,16 @@
 
 import asyncio
 import logging
-import sys
 import uuid
-from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from ._executor import Executor
 from ._runner_context import Message, RunnerContext
 from ._shared_state import SharedState
 from ._workflow_context import WorkflowContext
-
-if sys.version_info >= (3, 12):
-    from typing import override  # pragma: no cover
-else:
-    from typing_extensions import override  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
@@ -97,14 +91,13 @@ class Edge:
             )
 
 
-class EdgeGroup(ABC):
+class EdgeGroup:
     """Represents a group of edges that share some common properties and can be triggered together."""
 
     def __init__(self) -> None:
         """Initialize the edge group."""
         self._id = f"{self.__class__.__name__}/{uuid.uuid4()}"
 
-    @abstractmethod
     async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
         """Send a message through the edge group.
 
@@ -114,10 +107,15 @@ class EdgeGroup(ABC):
             ctx (RunnerContext): The context for the runner.
 
         Returns:
-            bool: True if the message was sent successfully, False otherwise. If a message can be delivered
-                  but rejected due to a condition, it will still return True.
+            bool: True if the message was sent successfully, False if the target executor cannot handle the message.
+                  If a message can be delivered but rejected due to a condition, it will still return True.
+
+        Note:
+            Exception will not be raised if the target executor cannot handle the message. This is because
+            a source executor can be connected to multiple target executors, and not every target executor may
+            be able to handle all the messages sent by the source executor.
         """
-        ...
+        raise NotImplementedError
 
     @property
     def id(self) -> str:
@@ -125,22 +123,19 @@ class EdgeGroup(ABC):
         return self._id
 
     @property
-    @abstractmethod
     def source_executors(self) -> list[Executor]:
         """Get the source executor IDs of the edges in the group."""
-        ...
+        raise NotImplementedError
 
     @property
-    @abstractmethod
     def target_executors(self) -> list[Executor]:
         """Get the target executor IDs of the edges in the group."""
-        ...
+        raise NotImplementedError
 
     @property
-    @abstractmethod
     def edges(self) -> list[Edge]:
         """Get the edges in the group."""
-        ...
+        raise NotImplementedError
 
 
 class SingleEdgeGroup(EdgeGroup):
@@ -161,7 +156,6 @@ class SingleEdgeGroup(EdgeGroup):
         """
         self._edge = Edge(source=source, target=target, condition=condition)
 
-    @override
     async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
         """Send a message through the single edge."""
         if message.target_id and message.target_id != self._edge.target_id:
@@ -174,19 +168,16 @@ class SingleEdgeGroup(EdgeGroup):
         return False
 
     @property
-    @override
     def source_executors(self) -> list[Executor]:
         """Get the source executor of the edge."""
         return [self._edge.source]
 
     @property
-    @override
     def target_executors(self) -> list[Executor]:
         """Get the target executor of the edge."""
         return [self._edge.target]
 
     @property
-    @override
     def edges(self) -> list[Edge]:
         """Get the edges in the group."""
         return [self._edge]
@@ -210,7 +201,6 @@ class SourceEdgeGroup(EdgeGroup):
             raise ValueError("SourceEdgeGroup must contain at least two targets.")
         self._edges = [Edge(source=source, target=target) for target in targets]
 
-    @override
     async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
         """Send a message through all edges in the source edge group."""
         if message.target_id:
@@ -239,19 +229,16 @@ class SourceEdgeGroup(EdgeGroup):
         return True
 
     @property
-    @override
     def source_executors(self) -> list[Executor]:
         """Get the source executor of the edges in the group."""
         return [self._edges[0].source]
 
     @property
-    @override
     def target_executors(self) -> list[Executor]:
         """Get the target executors of the edges in the group."""
         return [edge.target for edge in self._edges]
 
     @property
-    @override
     def edges(self) -> list[Edge]:
         """Get the edges in the group."""
         return self._edges
@@ -278,7 +265,6 @@ class TargetEdgeGroup(EdgeGroup):
         # Key is the source executor ID, value is a list of messages
         self._buffer: dict[str, list[Message]] = defaultdict(list)
 
-    @override
     async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
         """Send a message through all edges in the target edge group."""
         if message.target_id and message.target_id != self._edges[0].target_id:
@@ -309,22 +295,43 @@ class TargetEdgeGroup(EdgeGroup):
         return all(self._buffer[edge.source_id] for edge in self._edges)
 
     @property
-    @override
     def source_executors(self) -> list[Executor]:
         """Get the source executors of the edges in the group."""
         return [edge.source for edge in self._edges]
 
     @property
-    @override
     def target_executors(self) -> list[Executor]:
         """Get the target executor of the edges in the group."""
         return [self._edges[0].target]
 
     @property
-    @override
     def edges(self) -> list[Edge]:
         """Get the edges in the group."""
         return self._edges
+
+
+@dataclass
+class Case:
+    """Represents a single case in the conditional edge group.
+
+    Args:
+        condition (Callable[[Any], bool]): The condition function for the case.
+        target (Executor): The target executor for the case.
+    """
+
+    condition: Callable[[Any], bool]
+    target: Executor
+
+
+@dataclass
+class Default:
+    """Represents the default case in the conditional edge group.
+
+    Args:
+        target (Executor): The target executor for the default case.
+    """
+
+    target: Executor
 
 
 class ConditionalEdgeGroup(SourceEdgeGroup):
@@ -353,30 +360,33 @@ class ConditionalEdgeGroup(SourceEdgeGroup):
     def __init__(
         self,
         source: Executor,
-        targets: Sequence[Executor],
-        conditions: Sequence[Callable[[Any], bool]],
+        cases: Sequence[Case | Default],
     ) -> None:
         """Initialize the conditional edge group with a list of edges.
 
         Args:
             source (Executor): The source executor.
-            targets (Sequence[Executor]): A list of target executors that the source executor can send messages to.
-            conditions (Sequence[Callable[[Any], bool]]): A list of condition functions that determine
-                which target executor to route the message to based on the data. The number of conditions
-                must be one less than the number of targets, as the last target is the default case. The
-                index of the condition corresponds to the index of the target executor.
+            cases (Sequence[Case | Default]): A list of cases for the conditional edge group.
+                There should be exactly one default case.
         """
-        if len(targets) <= 1:
-            raise ValueError("ConditionalEdgeGroup must contain at least two targets.")
+        if len(cases) < 2:
+            raise ValueError("ConditionalEdgeGroup must contain at least two cases (including the default case).")
 
-        if len(targets) != len(conditions) + 1:
-            raise ValueError("Number of targets must be one more than the number of conditions.")
+        default_case = [isinstance(case, Default) for case in cases]
+        if sum(default_case) != 1:
+            raise ValueError("ConditionalEdgeGroup must contain exactly one default case.")
+
+        if isinstance(cases[-1], Default):
+            logger.warning(
+                "Default case in the conditional edge group is not the last case. "
+                "This will result in unexpected behavior."
+            )
 
         self._edges = [
-            Edge(source, target, condition) for target, condition in zip(targets, [*conditions, None], strict=True)
+            Edge(source, case.target, case.condition) if isinstance(case, Case) else Edge(source, case.target, None)
+            for case in cases
         ]
 
-    @override
     async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
         """Send a message through the conditional edge group."""
         if message.target_id:
@@ -420,7 +430,6 @@ class PartitioningEdgeGroup(SourceEdgeGroup):
         self._edges = [Edge(source=source, target=target) for target in targets]
         self._partition_func = partition_func
 
-    @override
     async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
         """Send a message through the partitioning edge group."""
         partition_result = self._partition_func(message.data, len(self._edges))

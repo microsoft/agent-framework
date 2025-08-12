@@ -3,7 +3,15 @@
 import asyncio
 from dataclasses import dataclass
 
-from agent_framework.workflow import Executor, WorkflowBuilder, WorkflowCompletedEvent, WorkflowContext, handler
+from agent_framework.workflow import (
+    Case,
+    Default,
+    Executor,
+    WorkflowBuilder,
+    WorkflowCompletedEvent,
+    WorkflowContext,
+    handler,
+)
 
 """
 The following sample demonstrates a basic workflow with two executors
@@ -91,10 +99,12 @@ async def main():
     workflow = (
         WorkflowBuilder()
         .set_start_executor(spam_detector)
-        .add_conditional_fan_out_edges(
+        .add_conditional_edge_group(
             spam_detector,
-            [send_response, remove_spam],
-            conditions=[lambda x: not x.is_spam],
+            [
+                Case(condition=lambda x: x.is_spam, target=remove_spam),
+                Default(target=send_response),
+            ],
         )
         .build()
     )
