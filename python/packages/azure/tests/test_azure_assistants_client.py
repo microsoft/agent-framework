@@ -369,7 +369,9 @@ async def test_azure_assistants_client_with_existing_assistant() -> None:
         assistant_id = temp_client.assistant_id
 
         # Now test using the existing assistant
-        async with AzureAssistantsClient(assistant_id=assistant_id) as azure_assistants_client:
+        async with AzureAssistantsClient(
+            assistant_id=assistant_id, ad_credential=DefaultAzureCredential()
+        ) as azure_assistants_client:
             assert isinstance(azure_assistants_client, ChatClient)
             assert azure_assistants_client.assistant_id == assistant_id
 
