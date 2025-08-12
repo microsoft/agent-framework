@@ -89,3 +89,18 @@ class WorkflowContext:
     def shared_state(self) -> SharedState:
         """Get the shared state."""
         return self._shared_state
+
+    async def set_state(self, state: dict[str, Any]) -> None:
+        """Persist this executor's state into the checkpointable context.
+
+        Executors call this with a JSON-serializable dict capturing the minimal
+        state needed to resume. It replaces any previously stored state.
+        """
+        if hasattr(self._runner_context, "set_state"):
+            await self._runner_context.set_state(self._executor_id, state)  # type: ignore[arg-type]
+
+    async def get_state(self) -> dict[str, Any] | None:
+        """Retrieve previously persisted state for this executor, if any."""
+        if hasattr(self._runner_context, "get_state"):
+            return await self._runner_context.get_state(self._executor_id)  # type: ignore[return-value]
+        return None

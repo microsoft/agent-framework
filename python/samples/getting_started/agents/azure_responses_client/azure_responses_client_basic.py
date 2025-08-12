@@ -4,7 +4,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework.azure import AzureAssistantsClient
+from agent_framework.azure import AzureResponsesClient
 from azure.identity import DefaultAzureCredential
 from pydantic import Field
 
@@ -21,39 +21,37 @@ async def non_streaming_example() -> None:
     """Example of non-streaming response (get the complete result at once)."""
     print("=== Non-streaming Response Example ===")
 
-    # Since no assistant ID is provided, the assistant will be automatically created
-    # and deleted after getting a response
-    async with AzureAssistantsClient(ad_credential=DefaultAzureCredential()).create_agent(
+    agent = AzureResponsesClient(ad_credential=DefaultAzureCredential()).create_agent(
         instructions="You are a helpful weather agent.",
         tools=get_weather,
-    ) as agent:
-        query = "What's the weather like in Seattle?"
-        print(f"User: {query}")
-        result = await agent.run(query)
-        print(f"Agent: {result}\n")
+    )
+
+    query = "What's the weather like in Seattle?"
+    print(f"User: {query}")
+    result = await agent.run(query)
+    print(f"Result: {result}\n")
 
 
 async def streaming_example() -> None:
     """Example of streaming response (get results as they are generated)."""
     print("=== Streaming Response Example ===")
 
-    # Since no assistant ID is provided, the assistant will be automatically created
-    # and deleted after getting a response
-    async with AzureAssistantsClient(ad_credential=DefaultAzureCredential()).create_agent(
+    agent = AzureResponsesClient(ad_credential=DefaultAzureCredential()).create_agent(
         instructions="You are a helpful weather agent.",
         tools=get_weather,
-    ) as agent:
-        query = "What's the weather like in Portland?"
-        print(f"User: {query}")
-        print("Agent: ", end="", flush=True)
-        async for chunk in agent.run_streaming(query):
-            if chunk.text:
-                print(chunk.text, end="", flush=True)
-        print("\n")
+    )
+
+    query = "What's the weather like in Portland?"
+    print(f"User: {query}")
+    print("Agent: ", end="", flush=True)
+    async for chunk in agent.run_streaming(query):
+        if chunk.text:
+            print(chunk.text, end="", flush=True)
+    print("\n")
 
 
 async def main() -> None:
-    print("=== Basic Azure OpenAI Assistants Chat Client Agent Example ===")
+    print("=== Basic Azure OpenAI Responses Client Agent Example ===")
 
     await non_streaming_example()
     await streaming_example()
