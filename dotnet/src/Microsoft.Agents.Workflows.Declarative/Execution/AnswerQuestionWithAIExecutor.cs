@@ -22,7 +22,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model) :
         StringExpression userInputExpression = Throw.IfNull(this.Model.UserInput, $"{nameof(this.Model)}.{nameof(this.Model.UserInput)}");
 
         PersistentAgentsClient client = this.Context.ClientFactory.Invoke();
-        using NewPersistentAgentsChatClient chatClient = new(client, "asst_ueIjfGxAjsnZ4A61LlbjG9vJ");
+        using NewPersistentAgentsChatClient chatClient = new(client, "asst_ueIjfGxAjsnZ4A61LlbjG9vJ"); // %%% HACK - AGENT ID
         ChatClientAgent agent = new(chatClient);
 
         string? userInput = null;

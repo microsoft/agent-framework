@@ -87,7 +87,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         string stepId = item.Id ?? $"{nameof(ConditionItem)}_{Guid.NewGuid():N}";
         string parentId = Throw.IfNull(item.GetParentId(), nameof(BotElement.Parent));
 
-        DeclarativeActionExecutor executor = this.CreateStep(stepId, nameof(ConditionItem));
+        WorkflowDelegateExecutor executor = this.CreateStep(stepId, nameof(ConditionItem));
         this._workflowModel.AddNode(executor, parentId, CompletionHandler);
         this._workflowModel.AddLink(parentId, stepId, condition);
 
@@ -463,9 +463,9 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         return restartId;
     }
 
-    private DeclarativeActionExecutor CreateStep(string actionId, string name, Action<WorkflowExecutionContext>? stepAction = null)
+    private WorkflowDelegateExecutor CreateStep(string actionId, string name, Action<WorkflowExecutionContext>? stepAction = null)
     {
-        DeclarativeActionExecutor stepExecutor =
+        WorkflowDelegateExecutor stepExecutor =
             new(actionId,
                 () =>
                 {
