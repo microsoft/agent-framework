@@ -377,7 +377,7 @@ class ChatClientAgent(AgentBase):
             chat_options=self.chat_options
             & ChatOptions(
                 ai_model_id=model,
-                conversation_id=thread.conversation_id,
+                conversation_id=thread.service_thread_id,
                 frequency_penalty=frequency_penalty,
                 logit_bias=logit_bias,
                 max_tokens=max_tokens,
@@ -487,7 +487,7 @@ class ChatClientAgent(AgentBase):
             messages=thread_messages,
             chat_options=self.chat_options
             & ChatOptions(
-                conversation_id=thread.conversation_id,
+                conversation_id=thread.service_thread_id,
                 frequency_penalty=frequency_penalty,
                 logit_bias=logit_bias,
                 max_tokens=max_tokens,
@@ -552,7 +552,7 @@ class ChatClientAgent(AgentBase):
         Raises:
             AgentExecutionException: If conversation ID is missing for service-managed thread.
         """
-        if response_conversation_id is None and thread.conversation_id is not None:
+        if response_conversation_id is None and thread.service_thread_id is not None:
             # We were passed a thread that is service managed, but we got no conversation id back from the chat client,
             # meaning the service doesn't support service managed threads,
             # so the thread cannot be used with this service.
@@ -563,7 +563,7 @@ class ChatClientAgent(AgentBase):
         if response_conversation_id is not None:
             # If we got a conversation id back from the chat client, it means that the service
             # supports server side thread storage so we should update the thread with the new id.
-            thread.conversation_id = response_conversation_id
+            thread.service_thread_id = response_conversation_id
         elif thread.message_store is None and self.chat_message_store_factory is not None:
             # If the service doesn't use service side thread storage (i.e. we got no id back from invocation), and
             # the thread has no message_store yet, and we have a custom messages store, we should update the thread

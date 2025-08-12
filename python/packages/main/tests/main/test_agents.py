@@ -216,7 +216,7 @@ async def test_chat_client_agent_update_thread_id() -> None:
     result = await agent.run("Hello", thread=thread)
     assert result.text == "test response"
 
-    assert thread.conversation_id == "123"
+    assert thread.service_thread_id == "123"
 
 
 async def test_chat_client_agent_update_thread_messages(chat_client: ChatClient) -> None:
@@ -226,7 +226,7 @@ async def test_chat_client_agent_update_thread_messages(chat_client: ChatClient)
     result = await agent.run("Hello", thread=thread)
     assert result.text == "test response"
 
-    assert thread.conversation_id is None
+    assert thread.service_thread_id is None
 
     chat_messages: list[ChatMessage] | None = await thread.list_messages()
 
@@ -238,7 +238,7 @@ async def test_chat_client_agent_update_thread_messages(chat_client: ChatClient)
 
 async def test_chat_client_agent_update_thread_conversation_id_missing(chat_client: ChatClient) -> None:
     agent = ChatClientAgent(chat_client=chat_client)
-    thread = AgentThread(conversation_id="123")
+    thread = AgentThread(service_thread_id="123")
 
     with raises(AgentExecutionException, match="Service did not return a valid conversation id"):
         agent._update_thread_with_type_and_conversation_id(thread, None)  # type: ignore[reportPrivateUsage]

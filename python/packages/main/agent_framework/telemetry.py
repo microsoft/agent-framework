@@ -651,8 +651,8 @@ def _get_agent_run_span(
         span.set_attribute(GenAIAttributes.AGENT_NAME.value, agent.name)
     if agent.description:
         span.set_attribute(GenAIAttributes.AGENT_DESCRIPTION.value, agent.description)
-    if thread and thread.conversation_id:
-        span.set_attribute(GenAIAttributes.CONVERSATION_ID.value, thread.conversation_id)
+    if thread and thread.service_thread_id:
+        span.set_attribute(GenAIAttributes.CONVERSATION_ID.value, thread.service_thread_id)
     if "model" in kwargs:
         span.set_attribute(GenAIAttributes.MODEL.value, kwargs["model"])
     if "seed" in kwargs:

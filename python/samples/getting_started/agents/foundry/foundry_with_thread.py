@@ -95,7 +95,7 @@ async def example_with_existing_thread_id() -> None:
         print(f"Agent: {result1.text}")
 
         # The thread ID is set after the first response
-        existing_thread_id = thread.conversation_id
+        existing_thread_id = thread.service_thread_id
         print(f"Thread ID: {existing_thread_id}")
 
     if existing_thread_id:
@@ -108,7 +108,7 @@ async def example_with_existing_thread_id() -> None:
             tools=get_weather,
         ) as agent:
             # Create a thread with the existing ID
-            thread = AgentThread(conversation_id=existing_thread_id)
+            thread = AgentThread(service_thread_id=existing_thread_id)
 
             query2 = "What was the last city I asked about?"
             print(f"User: {query2}")

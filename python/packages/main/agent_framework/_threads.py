@@ -53,34 +53,40 @@ class ChatMessageStore(Protocol):
 class AgentThread(AFBaseModel):
     """Base class for agent threads."""
 
-    _conversation_id: str | None = None
+    _service_thread_id: str | None = None
     _message_store: ChatMessageStore | None = None
 
-    def __init__(self, conversation_id: str | None = None, message_store: ChatMessageStore | None = None) -> None:
+    def __init__(self, service_thread_id: str | None = None, message_store: ChatMessageStore | None = None) -> None:
         super().__init__()
 
-        self.conversation_id = conversation_id
+        self._service_thread_id = service_thread_id
         self.message_store = message_store
 
     @property
-    def conversation_id(self) -> str | None:
-        return self._conversation_id
+    def service_thread_id(self) -> str | None:
+        """Gets the ID of the current thread to support cases where the thread is owned by the agent service."""
+        return self._service_thread_id
 
-    @conversation_id.setter
-    def conversation_id(self, conversation_id: str | None) -> None:
-        if not self._conversation_id and not conversation_id:
+    @service_thread_id.setter
+    def service_thread_id(self, service_thread_id: str | None) -> None:
+        """Sets the ID of the current thread to support cases where the thread is owned by the agent service.
+
+        Note that either service_thread_id or message_store may be set, but not both.
+        """
+        if not self._service_thread_id and not service_thread_id:
             return
 
         if self._message_store is not None:
             raise ValueError(
-                "Only the conversation_id or message_store may be set, "
+                "Only the service_thread_id or message_store may be set, "
                 "but not both and switching from one to another is not supported."
             )
 
-        self._conversation_id = conversation_id
+        self._service_thread_id = service_thread_id
 
     @property
     def message_store(self) -> ChatMessageStore | None:
+        """Gets the ChatMessageStore used by this thread, for cases where messages should be stored in a custom location."""
         return self._message_store
 
     @message_store.setter
@@ -88,9 +94,9 @@ class AgentThread(AFBaseModel):
         if self._message_store is None and message_store is None:
             return
 
-        if self._conversation_id:
+        if self._service_thread_id:
             raise ValueError(
-                "Only the conversation_id or message_store may be set, "
+                "Only the service_thread_id or message_store may be set, "
                 "but not both and switching from one to another is not supported."
             )
 
@@ -104,14 +110,14 @@ class AgentThread(AFBaseModel):
         if self._message_store is not None:
             store_state = await self._message_store.serialize_state(**kwargs)
 
-        state = ThreadState(conversation_id=self._conversation_id, store_state=store_state)
+        state = ThreadState(service_thread_id=self._service_thread_id, store_state=store_state)
 
         return state.__dict__
 
 
 async def thread_on_new_messages(thread: AgentThread, new_messages: ChatMessage | Sequence[ChatMessage]) -> None:
     """Invoked when a new message has been contributed to the chat by any participant."""
-    if thread.conversation_id is not None:
+    if thread.service_thread_id is not None:
         # If the thread messages are stored in the service there is nothing to do here,
         # since invoking the service should already update the thread.
         return
@@ -132,8 +138,8 @@ async def deserialize_thread_state(thread: AgentThread, serialized_thread: Any, 
     """Deserializes the state from a dictionary into the thread properties."""
     state = ThreadState(**serialized_thread)
 
-    if state.conversation_id:
-        thread.conversation_id = state.conversation_id
+    if state.service_thread_id:
+        thread.service_thread_id = state.service_thread_id
         # Since we have an ID, we should not have a chat message store and we can return here.
         return
 
@@ -149,7 +155,7 @@ async def deserialize_thread_state(thread: AgentThread, serialized_thread: Any, 
 
 
 class ThreadState(AFBaseModel):
-    conversation_id: str | None = None
+    service_thread_id: str | None = None
     store_state: Any | None = None
 
 

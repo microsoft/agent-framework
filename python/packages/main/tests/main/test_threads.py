@@ -62,52 +62,52 @@ class TestAgentThread:
     def test_init_with_no_parameters(self) -> None:
         """Test AgentThread initialization with no parameters."""
         thread = AgentThread()
-        assert thread.conversation_id is None
+        assert thread.service_thread_id is None
         assert thread.message_store is None
 
-    def test_init_with_conversation_id(self) -> None:
-        """Test AgentThread initialization with conversation_id."""
-        conv_id = "test-conversation-123"
-        thread = AgentThread(conversation_id=conv_id)
-        assert thread.conversation_id == conv_id
+    def test_init_with_service_thread_id(self) -> None:
+        """Test AgentThread initialization with service_thread_id."""
+        service_thread_id = "test-conversation-123"
+        thread = AgentThread(service_thread_id=service_thread_id)
+        assert thread.service_thread_id == service_thread_id
         assert thread.message_store is None
 
     def test_init_with_message_store(self) -> None:
         """Test AgentThread initialization with message_store."""
         store = InMemoryChatMessageStore()
         thread = AgentThread(message_store=store)
-        assert thread.conversation_id is None
+        assert thread.service_thread_id is None
         assert thread.message_store is store
 
     def test_init_with_both_parameters_raises_error(self) -> None:
-        """Test that initializing with both conversation_id and message_store raises ValueError."""
+        """Test that initializing with both service_thread_id and message_store raises ValueError."""
         store = InMemoryChatMessageStore()
-        conv_id = "test-conversation-123"
+        service_thread_id = "test-conversation-123"
 
-        with pytest.raises(ValueError, match="Only the conversation_id or message_store may be set"):
-            AgentThread(conversation_id=conv_id, message_store=store)
+        with pytest.raises(ValueError, match="Only the service_thread_id or message_store may be set"):
+            AgentThread(service_thread_id=service_thread_id, message_store=store)
 
-    def test_conversation_id_property_setter(self) -> None:
-        """Test conversation_id property setter."""
+    def test_service_thread_id_property_setter(self) -> None:
+        """Test service_thread_id property setter."""
         thread = AgentThread()
-        conv_id = "test-conversation-456"
+        service_thread_id = "test-conversation-456"
 
-        thread.conversation_id = conv_id
-        assert thread.conversation_id == conv_id
+        thread.service_thread_id = service_thread_id
+        assert thread.service_thread_id == service_thread_id
 
-    def test_conversation_id_setter_with_existing_message_store_raises_error(self) -> None:
-        """Test that setting conversation_id when message_store exists raises ValueError."""
+    def test_service_thread_id_setter_with_existing_message_store_raises_error(self) -> None:
+        """Test that setting service_thread_id when message_store exists raises ValueError."""
         store = InMemoryChatMessageStore()
         thread = AgentThread(message_store=store)
 
-        with pytest.raises(ValueError, match="Only the conversation_id or message_store may be set"):
-            thread.conversation_id = "test-conversation-789"
+        with pytest.raises(ValueError, match="Only the service_thread_id or message_store may be set"):
+            thread.service_thread_id = "test-conversation-789"
 
-    def test_conversation_id_setter_with_none_values(self) -> None:
-        """Test conversation_id setter with None values does nothing."""
+    def test_service_thread_id_setter_with_none_values(self) -> None:
+        """Test service_thread_id setter with None values does nothing."""
         thread = AgentThread()
-        thread.conversation_id = None  # Should not raise error
-        assert thread.conversation_id is None
+        thread.service_thread_id = None  # Should not raise error
+        assert thread.service_thread_id is None
 
     def test_message_store_property_setter(self) -> None:
         """Test message_store property setter."""
@@ -117,13 +117,13 @@ class TestAgentThread:
         thread.message_store = store
         assert thread.message_store is store
 
-    def test_message_store_setter_with_existing_conversation_id_raises_error(self) -> None:
-        """Test that setting message_store when conversation_id exists raises ValueError."""
-        conv_id = "test-conversation-999"
-        thread = AgentThread(conversation_id=conv_id)
+    def test_message_store_setter_with_existing_service_thread_id_raises_error(self) -> None:
+        """Test that setting message_store when service_thread_id exists raises ValueError."""
+        service_thread_id = "test-conversation-999"
+        thread = AgentThread(service_thread_id=service_thread_id)
         store = InMemoryChatMessageStore()
 
-        with pytest.raises(ValueError, match="Only the conversation_id or message_store may be set"):
+        with pytest.raises(ValueError, match="Only the service_thread_id or message_store may be set"):
             thread.message_store = store
 
     def test_message_store_setter_with_none_values(self) -> None:
@@ -151,12 +151,11 @@ class TestAgentThread:
 
         messages: list[ChatMessage] | None = await thread.list_messages()
 
-        assert messages is not None
-        assert len(messages) == 0
+        assert messages is None
 
-    async def test_on_new_messages_with_conversation_id(self, sample_message: ChatMessage) -> None:
-        """Test _on_new_messages when conversation_id is set (should do nothing)."""
-        thread = AgentThread(conversation_id="test-conv")
+    async def test_on_new_messages_with_service_thread_id(self, sample_message: ChatMessage) -> None:
+        """Test _on_new_messages when service_thread_id is set (should do nothing)."""
+        thread = AgentThread(service_thread_id="test-conv")
 
         await thread_on_new_messages(thread, sample_message)
 
@@ -199,55 +198,55 @@ class TestAgentThread:
         assert messages[0].text == "Initial"
         assert messages[1].text == "Test message"
 
-    async def test_deserialize_with_conversation_id(self) -> None:
-        """Test _deserialize with conversation_id."""
+    async def test_deserialize_with_service_thread_id(self) -> None:
+        """Test _deserialize with service_thread_id."""
         thread = AgentThread()
-        serialized_data = {"conversation_id": "test-conv-123", "store_state": None}
+        serialized_data = {"service_thread_id": "test-conv-123", "store_state": None}
 
         await deserialize_thread_state(thread, serialized_data)
 
-        assert thread.conversation_id == "test-conv-123"
+        assert thread.service_thread_id == "test-conv-123"
         assert thread.message_store is None
 
     async def test_deserialize_with_store_state(self, sample_messages: list[ChatMessage]) -> None:
         """Test _deserialize with store_state."""
         thread = AgentThread()
         store_state = {"messages": sample_messages}
-        serialized_data = {"conversation_id": None, "store_state": store_state}
+        serialized_data = {"service_thread_id": None, "store_state": store_state}
 
         await deserialize_thread_state(thread, serialized_data)
 
-        assert thread.conversation_id is None
+        assert thread.service_thread_id is None
         assert thread.message_store is not None
         assert isinstance(thread.message_store, InMemoryChatMessageStore)
 
     async def test_deserialize_with_no_state(self) -> None:
         """Test _deserialize with no state."""
         thread = AgentThread()
-        serialized_data = {"conversation_id": None, "store_state": None}
+        serialized_data = {"service_thread_id": None, "store_state": None}
 
         await deserialize_thread_state(thread, serialized_data)
 
-        assert thread.conversation_id is None
+        assert thread.service_thread_id is None
         assert thread.message_store is None
 
     async def test_deserialize_with_existing_store(self) -> None:
         """Test _deserialize with existing message store."""
         store = MockChatMessageStore()
         thread = AgentThread(message_store=store)
-        serialized_data: dict[str, Any] = {"conversation_id": None, "store_state": {"messages": []}}
+        serialized_data: dict[str, Any] = {"service_thread_id": None, "store_state": {"messages": []}}
 
         await deserialize_thread_state(thread, serialized_data)
 
         assert store._deserialize_calls == 1  # pyright: ignore[reportPrivateUsage]
 
-    async def test_serialize_with_conversation_id(self) -> None:
-        """Test serialize with conversation_id."""
-        thread = AgentThread(conversation_id="test-conv-456")
+    async def test_serialize_with_service_thread_id(self) -> None:
+        """Test serialize with service_thread_id."""
+        thread = AgentThread(service_thread_id="test-conv-456")
 
         result = await thread.serialize()
 
-        assert result["conversation_id"] == "test-conv-456"
+        assert result["service_thread_id"] == "test-conv-456"
         assert result["store_state"] is None
 
     async def test_serialize_with_message_store(self) -> None:
@@ -257,7 +256,7 @@ class TestAgentThread:
 
         result = await thread.serialize()
 
-        assert result["conversation_id"] is None
+        assert result["service_thread_id"] is None
         assert result["store_state"] is not None
         assert store._serialize_calls == 1  # pyright: ignore[reportPrivateUsage]
 
@@ -267,7 +266,7 @@ class TestAgentThread:
 
         result = await thread.serialize()
 
-        assert result["conversation_id"] is None
+        assert result["service_thread_id"] is None
         assert result["store_state"] is None
 
     async def test_serialize_with_kwargs(self) -> None:
@@ -467,11 +466,11 @@ class TestStoreState:
 class TestThreadState:
     """Test cases for ThreadState class."""
 
-    def test_init_with_conversation_id(self) -> None:
-        """Test ThreadState initialization with conversation_id."""
-        state = ThreadState(conversation_id="test-conv-123")
+    def test_init_with_service_thread_id(self) -> None:
+        """Test ThreadState initialization with service_thread_id."""
+        state = ThreadState(service_thread_id="test-conv-123")
 
-        assert state.conversation_id == "test-conv-123"
+        assert state.service_thread_id == "test-conv-123"
         assert state.store_state is None
 
     def test_init_with_store_state(self) -> None:
@@ -479,20 +478,20 @@ class TestThreadState:
         store_data: dict[str, Any] = {"messages": []}
         state = ThreadState(store_state=store_data)
 
-        assert state.conversation_id is None
+        assert state.service_thread_id is None
         assert state.store_state == store_data
 
     def test_init_with_both(self) -> None:
         """Test ThreadState initialization with both parameters."""
         store_data: dict[str, Any] = {"messages": []}
-        state = ThreadState(conversation_id="test-conv-456", store_state=store_data)
+        state = ThreadState(service_thread_id="test-conv-456", store_state=store_data)
 
-        assert state.conversation_id == "test-conv-456"
+        assert state.service_thread_id == "test-conv-456"
         assert state.store_state == store_data
 
     def test_init_defaults(self) -> None:
         """Test ThreadState initialization with defaults."""
         state = ThreadState()
 
-        assert state.conversation_id is None
+        assert state.service_thread_id is None
         assert state.store_state is None
