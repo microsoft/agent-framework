@@ -24,27 +24,15 @@ public class ConfigurationManager
     public async Task<bool> ValidateConfigurationAsync()
     {
         var missingConfigs = new List<string>();
+        var allConfigKeys = ConfigurationKeyExtractor.GetConfigurationKeys();
 
-        // Check OpenAI configuration
-        if (string.IsNullOrEmpty(_configuration["OpenAI:ApiKey"]))
+        // Check all required configuration keys dynamically
+        foreach (var key in allConfigKeys)
         {
-            missingConfigs.Add("OpenAI:ApiKey");
-        }
-
-        if (string.IsNullOrEmpty(_configuration["OpenAI:ChatModelId"]))
-        {
-            missingConfigs.Add("OpenAI:ChatModelId");
-        }
-
-        // Check Azure OpenAI configuration
-        if (string.IsNullOrEmpty(_configuration["AzureOpenAI:Endpoint"]))
-        {
-            missingConfigs.Add("AzureOpenAI:Endpoint");
-        }
-
-        if (string.IsNullOrEmpty(_configuration["AzureOpenAI:DeploymentName"]))
-        {
-            missingConfigs.Add("AzureOpenAI:DeploymentName");
+            if (ConfigurationKeyExtractor.IsRequiredKey(key) && string.IsNullOrEmpty(_configuration[key]))
+            {
+                missingConfigs.Add(key);
+            }
         }
 
         if (missingConfigs.Count == 0)
@@ -57,7 +45,8 @@ public class ConfigurationManager
 
         foreach (var config in missingConfigs)
         {
-            AnsiConsole.MarkupLine($"[red]✗ Missing: {config}[/]");
+            var friendlyName = ConfigurationKeyExtractor.GetFriendlyDescription(config);
+            AnsiConsole.MarkupLine($"[red]✗ Missing: {friendlyName} ({config})[/]");
         }
 
         var setupConfig = AnsiConsole.Confirm("Would you like to set up the missing configuration now?");
@@ -75,7 +64,7 @@ public class ConfigurationManager
     /// </summary>
     private async Task<bool> SetupConfigurationAsync(List<string> missingConfigs)
     {
-        AnsiConsole.MarkupLine("[blue]Setting up configuration using user secrets...[/]");
+        AnsiConsole.MarkupLine(NavigationConstants.ConfigurationMessages.SettingUpConfiguration);
 
         var configValues = new Dictionary<string, string>();
 
@@ -90,7 +79,7 @@ public class ConfigurationManager
 
         if (configValues.Count == 0)
         {
-            AnsiConsole.MarkupLine("[red]No configuration values provided[/]");
+            AnsiConsole.MarkupLine(NavigationConstants.ConfigurationMessages.NoValuesProvided);
             return false;
         }
 
@@ -105,8 +94,8 @@ public class ConfigurationManager
             }
         }
 
-        AnsiConsole.MarkupLine("[green]✓ Configuration saved successfully![/]");
-        AnsiConsole.MarkupLine("[yellow]Note: You may need to restart the application for changes to take effect.[/]");
+        AnsiConsole.MarkupLine(NavigationConstants.ConfigurationMessages.SavedSuccessfully);
+        AnsiConsole.MarkupLine(NavigationConstants.ConfigurationMessages.RestartNote);
 
         return true;
     }
@@ -118,40 +107,48 @@ public class ConfigurationManager
     {
         while (true)
         {
-            var status = GetConfigurationStatus();
-
-            AnsiConsole.MarkupLine("[blue]Configuration Management[/]");
+            AnsiConsole.MarkupLine(NavigationConstants.ConfigurationMenu.Title);
             AnsiConsole.WriteLine();
 
-            var allConfigKeys = new[]
-            {
-                "OpenAI:ApiKey",
-                "OpenAI:ChatModelId",
-                "AzureOpenAI:Endpoint",
-                "AzureOpenAI:DeploymentName",
-                "AzureOpenAI:ApiKey"
-            };
+            var allConfigKeys = ConfigurationKeyExtractor.GetConfigurationKeys();
 
             var choices = new List<string>();
 
             foreach (var key in allConfigKeys)
             {
-                var hasValue = HasConfigurationValue(key);
-                var statusIcon = hasValue ? "✓" : "✗";
-                var currentValue = GetMaskedConfigValue(key);
-                var displayValue = hasValue ? $" (Current: {currentValue})" : " (Not set)";
+                var hasValue = HasCurrentConfigurationValue(key);
+                var isRequired = ConfigurationKeyExtractor.IsRequiredKey(key);
+
+                string statusIcon;
+                if (hasValue)
+                {
+                    statusIcon = NavigationConstants.ConfigurationDisplay.SetStatusIcon;
+                }
+                else if (isRequired)
+                {
+                    statusIcon = NavigationConstants.ConfigurationDisplay.NotSetStatusIcon;
+                }
+                else
+                {
+                    statusIcon = "[dim]○[/]"; // Optional field indicator
+                }
+
+                var currentValue = GetCurrentConfigurationValue(key);
+                var displayValue = hasValue
+                    ? $"{NavigationConstants.ConfigurationDisplay.CurrentValuePrefix}{currentValue}{NavigationConstants.ConfigurationDisplay.ClosingParenthesis}"
+                    : (isRequired ? NavigationConstants.ConfigurationDisplay.NotSetSuffix : " (Optional)");
 
                 choices.Add($"{statusIcon} {key}{displayValue}");
             }
 
-            choices.Add("Back to Main Menu");
+            choices.Add(NavigationConstants.ConfigurationMenu.BackToMainMenu);
 
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
-                    .Title("[green]Select a configuration to update:[/]")
+                    .Title(NavigationConstants.ConfigurationMenu.SelectPrompt)
                     .AddChoices(choices));
 
-            if (choice == "Back to Main Menu")
+            if (choice == NavigationConstants.ConfigurationMenu.BackToMainMenu)
             {
                 return true;
             }
@@ -183,50 +180,51 @@ public class ConfigurationManager
         }
         else
         {
-            AnsiConsole.MarkupLine("[dim]No current value set[/]");
+            AnsiConsole.MarkupLine(NavigationConstants.ConfigurationMessages.NoCurrentValue);
         }
 
-        var actions = new List<string> { "Set new value" };
+        var actions = new List<string> { NavigationConstants.ConfigurationActions.SetNewValue };
 
         if (hasCurrentValue)
         {
-            actions.Add("Remove current value");
+            actions.Add(NavigationConstants.ConfigurationActions.RemoveCurrentValue);
         }
 
-        actions.Add("Cancel");
+        actions.Add(NavigationConstants.ConfigurationActions.Cancel);
 
         var action = AnsiConsole.Prompt(
             new SelectionPrompt<string>()
-                .Title("[green]What would you like to do?[/]")
+                .Title(NavigationConstants.ConfigurationActions.ActionPrompt)
                 .AddChoices(actions));
 
         switch (action)
         {
-            case "Set new value":
-                var newValue = PromptForConfigValue(configKey);
+            case var _ when action == NavigationConstants.ConfigurationActions.SetNewValue:
+                var existingValue = _configuration[configKey];
+                var newValue = PromptForConfigValue(configKey, existingValue);
                 if (!string.IsNullOrEmpty(newValue))
                 {
                     var success = await SetUserSecretAsync(configKey, newValue);
                     if (success)
                     {
                         RefreshConfiguration();
-                        AnsiConsole.MarkupLine("[green]✓ Configuration updated successfully![/]");
+                        AnsiConsole.MarkupLine(NavigationConstants.ConfigurationMessages.UpdatedSuccessfully);
                         return true;
                     }
                 }
                 return false;
 
-            case "Remove current value":
+            case var _ when action == NavigationConstants.ConfigurationActions.RemoveCurrentValue:
                 var removed = await RemoveUserSecretAsync(configKey);
                 if (removed)
                 {
                     RefreshConfiguration();
-                    AnsiConsole.MarkupLine("[green]✓ Configuration removed successfully![/]");
+                    AnsiConsole.MarkupLine(NavigationConstants.ConfigurationMessages.RemovedSuccessfully);
                     return true;
                 }
                 return false;
 
-            case "Cancel":
+            case var _ when action == NavigationConstants.ConfigurationActions.Cancel:
                 return true;
 
             default:
@@ -239,34 +237,76 @@ public class ConfigurationManager
     /// </summary>
     private string PromptForConfigValue(string configKey)
     {
-        return configKey switch
+        return PromptForConfigValue(configKey, null);
+    }
+
+    /// <summary>
+    /// Prompts the user for a configuration value with an optional current value as default.
+    /// </summary>
+    private string PromptForConfigValue(string configKey, string? currentValue)
+    {
+        var friendlyName = ConfigurationKeyExtractor.GetFriendlyDescription(configKey);
+        var isSecret = ConfigurationKeyExtractor.IsSecretKey(configKey);
+        var isOptional = !ConfigurationKeyExtractor.IsRequiredKey(configKey);
+
+        var prompt = new TextPrompt<string?>($"[blue]Enter {friendlyName}:[/]");
+
+        // Configure prompt based on attributes
+        if (isSecret)
         {
-            "OpenAI:ApiKey" => AnsiConsole.Prompt(
-                new TextPrompt<string>("[blue]Enter your OpenAI API Key:[/]")
-                    .PromptStyle("red")
-                    .Secret()),
+            prompt.PromptStyle("red").Secret();
+        }
 
-            "OpenAI:ChatModelId" => AnsiConsole.Prompt(
-                new TextPrompt<string>("[blue]Enter OpenAI Chat Model ID:[/]")
-                    .DefaultValue("gpt-4o-mini")),
+        if (isOptional)
+        {
+            prompt.AllowEmpty();
+        }
 
-            "AzureOpenAI:Endpoint" => AnsiConsole.Prompt(
-                new TextPrompt<string>("[blue]Enter your Azure OpenAI Endpoint (e.g., https://your-resource.openai.azure.com/):[/]")
-                    .ValidationErrorMessage("[red]Please enter a valid HTTPS URL[/]")
-                    .Validate(url => Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == "https")),
+        // Set default value if provided
+        if (!string.IsNullOrEmpty(currentValue))
+        {
+            if (isSecret)
+            {
+                // For secrets, show a hint about the current value but don't set as default
+                prompt.DefaultValue(string.Empty);
+                AnsiConsole.MarkupLine($"[dim]Current value: {MaskSecret(currentValue) ?? "***"}[/]");
+                AnsiConsole.MarkupLine("[dim]Press Enter to keep current value, or enter a new value[/]");
+            }
+            else
+            {
+                // For non-secrets, use the current value as default
+                prompt.DefaultValue(currentValue);
+            }
+        }
+        else
+        {
+            // Set sensible defaults for new configurations
+            switch (configKey)
+            {
+                case "OpenAI:ChatModelId":
+                case "AzureOpenAI:DeploymentName":
+                case "AzureAI:DeploymentName":
+                    prompt.DefaultValue("gpt-4o-mini");
+                    break;
+            }
+        }
 
-            "AzureOpenAI:DeploymentName" => AnsiConsole.Prompt(
-                new TextPrompt<string>("[blue]Enter your Azure OpenAI Deployment Name:[/]")
-                    .DefaultValue("gpt-4o-mini")),
+        // Add validation for specific types
+        if (configKey.EndsWith(":Endpoint", StringComparison.OrdinalIgnoreCase))
+        {
+            prompt.ValidationErrorMessage("[red]Please enter a valid HTTPS URL[/]")
+                  .Validate(url => string.IsNullOrEmpty(url) || (Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == "https"));
+        }
 
-            "AzureOpenAI:ApiKey" => AnsiConsole.Prompt(
-                new TextPrompt<string>("[blue]Enter your Azure OpenAI API Key (leave empty to use Azure CLI authentication):[/]")
-                    .PromptStyle("red")
-                    .Secret()
-                    .AllowEmpty()),
+        var result = AnsiConsole.Prompt(prompt);
 
-            _ => AnsiConsole.Prompt(new TextPrompt<string>($"[blue]Enter value for {configKey}:[/]"))
-        };
+        // If user pressed Enter for a secret with current value, return the current value
+        if (isSecret && string.IsNullOrEmpty(result) && !string.IsNullOrEmpty(currentValue))
+        {
+            return currentValue!;
+        }
+
+        return result ?? string.Empty;
     }
 
     /// <summary>
@@ -383,21 +423,13 @@ public class ConfigurationManager
         }
 
         // Only mask actual secrets (API keys), show other values as-is
-        if (IsSecretKey(key))
+        if (ConfigurationKeyExtractor.IsSecretKey(key))
         {
             var masked = MaskSecret(value);
-            return masked ?? "[dim]Not set[/]";
+            return masked ?? NavigationConstants.ConfigurationMessages.NotSet;
         }
 
-        return value ?? "[dim]Not set[/]";
-    }
-
-    /// <summary>
-    /// Determines if a configuration key represents a secret that should be masked.
-    /// </summary>
-    private static bool IsSecretKey(string key)
-    {
-        return key.EndsWith(":ApiKey", StringComparison.OrdinalIgnoreCase);
+        return value ?? NavigationConstants.ConfigurationMessages.NotSet;
     }
 
     /// <summary>
@@ -414,27 +446,41 @@ public class ConfigurationManager
     }
 
     /// <summary>
-    /// Gets the current configuration status.
+    /// Gets the current configuration value for display, with secrets masked.
+    /// Always reads the latest configuration without caching.
     /// </summary>
-    public ConfigurationStatus GetConfigurationStatus()
+    public string GetCurrentConfigurationValue(string key)
     {
-        var status = new ConfigurationStatus();
+        // Always refresh configuration to get the latest values
+        RefreshConfiguration();
 
-        // Check OpenAI
-        status.OpenAI.HasApiKey = !string.IsNullOrEmpty(_configuration["OpenAI:ApiKey"]);
-        status.OpenAI.HasChatModelId = !string.IsNullOrEmpty(_configuration["OpenAI:ChatModelId"]);
-        status.OpenAI.ApiKey = MaskSecret(_configuration["OpenAI:ApiKey"]);
-        status.OpenAI.ChatModelId = _configuration["OpenAI:ChatModelId"];
+        var value = _configuration[key];
 
-        // Check Azure OpenAI
-        status.AzureOpenAI.HasEndpoint = !string.IsNullOrEmpty(_configuration["AzureOpenAI:Endpoint"]);
-        status.AzureOpenAI.HasDeploymentName = !string.IsNullOrEmpty(_configuration["AzureOpenAI:DeploymentName"]);
-        status.AzureOpenAI.HasApiKey = !string.IsNullOrEmpty(_configuration["AzureOpenAI:ApiKey"]);
-        status.AzureOpenAI.Endpoint = _configuration["AzureOpenAI:Endpoint"];
-        status.AzureOpenAI.DeploymentName = _configuration["AzureOpenAI:DeploymentName"];
-        status.AzureOpenAI.ApiKey = MaskSecret(_configuration["AzureOpenAI:ApiKey"]);
+        if (string.IsNullOrEmpty(value))
+        {
+            return NavigationConstants.ConfigurationMessages.NotSet;
+        }
 
-        return status;
+        // Only mask actual secrets (API keys), show other values as-is
+        if (ConfigurationKeyExtractor.IsSecretKey(key))
+        {
+            var masked = MaskSecret(value);
+            return masked ?? NavigationConstants.ConfigurationMessages.NotSet;
+        }
+
+        return value ?? NavigationConstants.ConfigurationMessages.NotSet;
+    }
+
+    /// <summary>
+    /// Checks if a configuration key has a value.
+    /// Always reads the latest configuration without caching.
+    /// </summary>
+    public bool HasCurrentConfigurationValue(string key)
+    {
+        // Always refresh configuration to get the latest values
+        RefreshConfiguration();
+
+        return !string.IsNullOrEmpty(_configuration[key]);
     }
 
     /// <summary>
@@ -458,31 +504,4 @@ public class ConfigurationManager
         return secret.Substring(0, 4) + "***" + secret.Substring(secret.Length - 4);
 #endif
     }
-}
-
-/// <summary>
-/// Represents the current configuration status.
-/// </summary>
-public class ConfigurationStatus
-{
-    public OpenAIStatus OpenAI { get; set; } = new();
-    public AzureOpenAIStatus AzureOpenAI { get; set; } = new();
-}
-
-public class OpenAIStatus
-{
-    public bool HasApiKey { get; set; }
-    public bool HasChatModelId { get; set; }
-    public string? ApiKey { get; set; }
-    public string? ChatModelId { get; set; }
-}
-
-public class AzureOpenAIStatus
-{
-    public bool HasEndpoint { get; set; }
-    public bool HasDeploymentName { get; set; }
-    public bool HasApiKey { get; set; }
-    public string? Endpoint { get; set; }
-    public string? DeploymentName { get; set; }
-    public string? ApiKey { get; set; }
 }

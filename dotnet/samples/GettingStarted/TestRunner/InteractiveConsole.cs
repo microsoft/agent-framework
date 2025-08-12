@@ -9,8 +9,8 @@ namespace GettingStarted.TestRunner;
 /// </summary>
 public class InteractiveConsole
 {
-    private static readonly string[] BackToMainMenuOptions = { "Back to Main Menu" };
-    private static readonly string[] BackOptions = { "Back" };
+    private static readonly string[] BackToMainMenuOptions = { NavigationConstants.TestNavigation.BackToMainMenu };
+    private static readonly string[] BackOptions = { NavigationConstants.TestNavigation.Back };
 
     private readonly TestDiscoveryService _discoveryService;
     private readonly ConfigurationManager _configurationManager;
@@ -47,16 +47,16 @@ public class InteractiveConsole
 
             switch (choice)
             {
-                case "Run Tests":
+                case var _ when choice == NavigationConstants.MainMenu.RunTests:
                     await RunTestsMenuAsync();
                     break;
-                case "View Configuration":
+                case var _ when choice == NavigationConstants.MainMenu.ViewConfiguration:
                     ShowConfiguration();
                     break;
-                case "Manage Secrets":
+                case var _ when choice == NavigationConstants.MainMenu.ManageSecrets:
                     await ConfigureSecretsAsync();
                     break;
-                case "Exit":
+                case var _ when choice == NavigationConstants.MainMenu.Exit:
                     return 0;
             }
         }
@@ -115,7 +115,11 @@ public class InteractiveConsole
         return AnsiConsole.Prompt(
             new SelectionPrompt<string>()
                 .Title("[green]What would you like to do?[/]")
-                .AddChoices("Run Tests", "View Configuration", "Manage Secrets", "Exit"));
+                .AddChoices(
+                    NavigationConstants.MainMenu.RunTests,
+                    NavigationConstants.MainMenu.ViewConfiguration,
+                    NavigationConstants.MainMenu.ManageSecrets,
+                    NavigationConstants.MainMenu.Exit));
     }
 
     /// <summary>
@@ -138,7 +142,7 @@ public class InteractiveConsole
                     .Title("[green]Select a test folder:[/]")
                     .AddChoices(folders.Select(f => f.Name).Concat(BackToMainMenuOptions)));
 
-            if (folderChoice == "Back to Main Menu")
+            if (folderChoice == NavigationConstants.TestNavigation.BackToMainMenu)
             {
                 return;
             }
@@ -158,22 +162,22 @@ public class InteractiveConsole
             var choices = new List<string>
             {
                 $"Run All Tests in {folder.Name}",
-                "Select Specific Test Class"
+                NavigationConstants.TestNavigation.SelectSpecificTestClass
             };
             choices.AddRange(folder.Classes.Select(c => $"Class: {c.Name}"));
-            choices.Add("Back to Folder Selection");
+            choices.Add(NavigationConstants.TestNavigation.BackToFolderSelection);
 
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
                     .Title($"[green]Tests in {folder.Name}:[/]")
                     .AddChoices(choices));
 
-            if (choice == "Back to Folder Selection")
+            if (choice == NavigationConstants.TestNavigation.BackToFolderSelection)
             {
                 return;
             }
 
-            if (choice == "Select Specific Test Class")
+            if (choice == NavigationConstants.TestNavigation.SelectSpecificTestClass)
             {
                 await ShowClassSelectionMenuAsync(folder);
             }
@@ -312,12 +316,12 @@ public class InteractiveConsole
             // Escape markup characters to prevent parsing errors with file paths
             var escapedOutput = result.Output.EscapeMarkup();
             var panel = new Panel(escapedOutput)
-                .Header("Test Output")
+                .Header(NavigationConstants.CommonUI.TestOutput)
                 .Border(BoxBorder.Rounded);
             AnsiConsole.Write(panel);
         }
 
-        AnsiConsole.MarkupLine("[dim]Press any key to continue...[/]");
+        AnsiConsole.MarkupLine(NavigationConstants.CommonUI.PressAnyKeyToContinue);
         Console.ReadKey();
     }
 
@@ -326,36 +330,53 @@ public class InteractiveConsole
     /// </summary>
     private void ShowConfiguration()
     {
-        var status = _configurationManager.GetConfigurationStatus();
-
         var table = new Table();
         table.AddColumn("Configuration");
         table.AddColumn("Status");
         table.AddColumn("Value");
 
-        // OpenAI configuration
-        table.AddRow("OpenAI API Key",
-            status.OpenAI.HasApiKey ? "[green]✓[/]" : "[red]✗[/]",
-            status.OpenAI.ApiKey ?? "[dim]Not set[/]");
-        table.AddRow("OpenAI Chat Model",
-            status.OpenAI.HasChatModelId ? "[green]✓[/]" : "[red]✗[/]",
-            status.OpenAI.ChatModelId ?? "[dim]Not set[/]");
+        // Get all configuration keys dynamically from TestConfiguration
+        var allConfigKeys = ConfigurationKeyExtractor.GetConfigurationKeys();
 
-        // Azure OpenAI configuration
-        table.AddRow("Azure OpenAI Endpoint",
-            status.AzureOpenAI.HasEndpoint ? "[green]✓[/]" : "[red]✗[/]",
-            status.AzureOpenAI.Endpoint ?? "[dim]Not set[/]");
-        table.AddRow("Azure OpenAI Deployment",
-            status.AzureOpenAI.HasDeploymentName ? "[green]✓[/]" : "[red]✗[/]",
-            status.AzureOpenAI.DeploymentName ?? "[dim]Not set[/]");
-        table.AddRow("Azure OpenAI API Key",
-            status.AzureOpenAI.HasApiKey ? "[green]✓[/]" : "[yellow]⚠ (Using Azure CLI)[/]",
-            status.AzureOpenAI.ApiKey ?? "[dim]Using Azure CLI[/]");
+        foreach (var key in allConfigKeys)
+        {
+            var hasValue = _configurationManager.HasCurrentConfigurationValue(key);
+            var isRequired = ConfigurationKeyExtractor.IsRequiredKey(key);
+
+            string statusIcon;
+            if (hasValue)
+            {
+                statusIcon = "[green]✓[/]";
+            }
+            else if (isRequired)
+            {
+                statusIcon = "[red]✗[/]";
+            }
+            else
+            {
+                statusIcon = "[dim]○[/]"; // Optional field indicator
+            }
+
+            var currentValue = _configurationManager.GetCurrentConfigurationValue(key);
+
+            // Create a friendly display name from the key
+            var displayName = GetFriendlyConfigurationName(key);
+
+            table.AddRow(displayName, statusIcon, currentValue);
+        }
 
         AnsiConsole.Write(table);
 
-        AnsiConsole.MarkupLine("[dim]Press any key to continue...[/]");
+        AnsiConsole.MarkupLine(NavigationConstants.CommonUI.PressAnyKeyToContinue);
         Console.ReadKey();
+    }
+
+    /// <summary>
+    /// Converts a configuration key to a friendly display name.
+    /// </summary>
+    private static string GetFriendlyConfigurationName(string key)
+    {
+        return ConfigurationKeyExtractor.GetFriendlyDescription(key);
     }
 
     /// <summary>

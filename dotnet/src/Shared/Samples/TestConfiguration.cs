@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Configuration;
 
@@ -22,9 +24,13 @@ public sealed class TestConfiguration
     public class OpenAIConfig
     {
         /// <summary>Gets or sets the identifier for the chat completion model used in the application.</summary>
+        [Description("OpenAI Chat Model")]
+        [Required]
         public string ChatModelId { get; set; }
 
         /// <summary>Gets or sets the API key used for authentication with the OpenAI service.</summary>
+        [Description("OpenAI API Key")]
+        [Required, Sensitive]
         public string ApiKey { get; set; }
     }
 
@@ -34,12 +40,18 @@ public sealed class TestConfiguration
     public class AzureOpenAIConfig
     {
         /// <summary>Gets the URI endpoint used to connect to the service.</summary>
+        [Description("Azure OpenAI Endpoint")]
+        [Required, Sensitive]
         public Uri Endpoint { get; set; }
 
         /// <summary>Gets or sets the name of the deployment.</summary>
+        [Description("Azure OpenAI Deployment")]
+        [Required]
         public string DeploymentName { get; set; }
 
         /// <summary>Gets or sets the API key used for authentication with the OpenAI service.</summary>
+        [Description("Azure OpenAI API Key")]
+        [Optional, Sensitive]
         public string? ApiKey { get; set; }
     }
 
@@ -47,10 +59,14 @@ public sealed class TestConfiguration
     public sealed class AzureAIConfig
     {
         /// <summary>Gets or sets the endpoint of Azure AI Foundry project.</summary>
-        public string? Endpoint { get; set; }
+        [Description("Azure AI Endpoint")]
+        [Required, Sensitive]
+        public string Endpoint { get; set; }
 
         /// <summary>Gets or sets the name of the model deployment.</summary>
-        public string? DeploymentName { get; set; }
+        [Description("Azure AI Deployment")]
+        [Required]
+        public string DeploymentName { get; set; }
     }
 
     /// <summary>
@@ -95,4 +111,16 @@ public sealed class TestConfiguration
     }
 
     #endregion
+
+    /// <summary>
+    /// Marks a configuration property as containing sensitive data that should be masked in the UI.
+    /// </summary>
+    [AttributeUsage(AttributeTargets.Property)]
+    public sealed class SensitiveAttribute : Attribute;
+
+    /// <summary>
+    /// Marks a configuration property as optional (not required for the application to function).
+    /// </summary>
+    [AttributeUsage(AttributeTargets.Property)]
+    public sealed class OptionalAttribute : Attribute;
 }
