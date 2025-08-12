@@ -64,7 +64,7 @@ internal sealed class WorkflowModel
 
         if (parentNode.Children.Count == 0)
         {
-            throw new WorkflowBuilderException($"Cannot add a link from a node with no children: {parentId}.");
+            throw new WorkflowModelException($"Cannot add a link from a node with no children: {parentId}.");
         }
 
         ModelNode sourceNode = parentNode.Children.Count == 1 ? parentNode : parentNode.Children[parentNode.Children.Count - 2];
@@ -98,7 +98,7 @@ internal sealed class WorkflowModel
         {
             if (!this.Nodes.TryGetValue(link.TargetId, out ModelNode? targetNode))
             {
-                throw new WorkflowBuilderException($"Unresolved target for {link.Source.Id}: {link.TargetId}.");
+                throw new WorkflowModelException($"Unresolved target for {link.Source.Id}: {link.TargetId}.");
             }
 
             Console.WriteLine($"> CONNECT: {link.Source.Id} => {link.TargetId}{(link.Condition is null ? string.Empty : " (?)")}"); // %%% LOGGER

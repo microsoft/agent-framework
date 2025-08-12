@@ -34,7 +34,7 @@ internal abstract class WorkflowActionExecutor(DialogAction model) :
 
     protected WorkflowExecutionContext Context =>
         this._context ??
-        throw new ActionExecutionException("Context not assigned");
+        throw new WorkflowExecutionException("Context not assigned");
 
     internal void Attach(WorkflowExecutionContext executionContext)
     {
@@ -56,7 +56,7 @@ internal abstract class WorkflowActionExecutor(DialogAction model) :
 
             await context.SendMessageAsync($"{this.Id}: {DateTime.UtcNow.ToShortTimeString()}").ConfigureAwait(false);
         }
-        catch (ProcessActionException)
+        catch (WorkflowExecutionException)
         {
             Console.WriteLine($"*** STEP [{this.Id}] ERROR - Action failure"); // %%% LOGGER
             throw;
@@ -64,7 +64,7 @@ internal abstract class WorkflowActionExecutor(DialogAction model) :
         catch (Exception exception)
         {
             Console.WriteLine($"*** STEP [{this.Id}] ERROR - {exception.GetType().Name}\n{exception.Message}"); // %%% LOGGER
-            throw;
+            throw new WorkflowExecutionException($"Unhandled workflow failure - #{this.Id} ({this.Model.GetType().Name})", exception);
         }
     }
 

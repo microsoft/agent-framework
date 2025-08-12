@@ -227,9 +227,9 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this.ContinueWith(new ResetVariableExecutor(item));
     }
 
-    protected override void Visit(EditTable item)
+    protected override void Visit(EditTable item) // %%% TODO
     {
-        this.Trace(item); // %%% TODO
+        this.Trace(item);
     }
 
     protected override void Visit(EditTableV2 item)
@@ -501,6 +501,6 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     private static string FormatParent(BotElement element) =>
         element.Parent is null ?
-        throw new InvalidActionException($"Undefined parent for {element.GetType().Name} that is member of {element.GetId()}.") :
+        throw new WorkflowModelException($"Undefined parent for {element.GetType().Name} that is member of {element.GetId()}.") :
         $"{element.Parent.GetType().Name} ({element.GetParentId()})";
 }

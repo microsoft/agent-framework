@@ -46,7 +46,7 @@ internal sealed class ParseValueExecutor(ParseValue model) :
 
         if (parsedResult is null)
         {
-            throw new ProcessActionException($"Unable to parse {result.Value.GetType().Name}");
+            throw new WorkflowExecutionException($"Unable to parse {result.Value.GetType().Name}");
         }
 
         this.AssignTarget(this.Context, variablePath, parsedResult);

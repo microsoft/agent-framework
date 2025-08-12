@@ -13,9 +13,9 @@ internal static class DataValueExtensions
         return element switch
         {
             DialogAction action => action.Id.Value,
-            ConditionItem conditionItem => conditionItem.Id ?? throw new InvalidActionException($"Undefined identifier for {nameof(ConditionItem)} that is member of {conditionItem.GetParentId() ?? "(root)"}."),
+            ConditionItem conditionItem => conditionItem.Id ?? throw new WorkflowModelException($"Undefined identifier for {nameof(ConditionItem)} that is member of {conditionItem.GetParentId() ?? "(root)"}."),
             OnActivity activity => activity.Id.Value,
-            _ => throw new InvalidActionException($"Unknown element type: {element.GetType().Name}"),
+            _ => throw new UnknownActionException($"Unknown element type: {element.GetType().Name}"),
         };
     }
 }
