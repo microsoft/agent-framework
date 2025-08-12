@@ -123,6 +123,19 @@ convention = "google"
 notice-rgx = "^# Copyright \\(c\\) Microsoft\\. All rights reserved\\."
 min-file-size = 1
 
+[tool.pytest.ini_options]
+testpaths = 'tests'
+addopts = "-ra -q -r fEX"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = []
+timeout = 120
+
+[tool.coverage.run]
+omit = [
+    "**/__init__.py"
+]
+
 [tool.pyright]
 include = ["agent_framework", "samples"]
 exclude = ["**/tests/**", "docs", "**/.venv/**"]
@@ -172,6 +185,7 @@ build = "python run_tasks_in_packages_if_exists.py build"
 # combined checks
 check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint", "samples-code-check"]
 pre-commit-check = ["fmt", "lint", "pyright", "markdown-code-lint", "samples-code-check"]
+all-tests = "pytest --cov=agent_framework --cov=agent_framework_azure --cov=agent_framework_foundry --cov=agent_framework_workflow --cov-report=term-missing:skip-covered packages/**/tests"
 
 [tool.poe.tasks.venv]
 cmd = "uv venv --clear --python $python"
@@ -184,24 +198,7 @@ sequence = [
 ]
 args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
 
-
 [tool.setuptools.packages.find]
 where = ["packages"]
 include = ["agent_framework**"]
 namespaces = true
-
-[tool.tox]
-requires = ["tox>=4", "tox-uv>=1"]
-env_list = [ "3.13"] #, "3.12", "3.11", "3.10" ]
-
-[tool.tox.env_run_base]
-no_package = true
-description = "run tests"
-dependency_groups = [
-  "dev",
-]
-deps = [
-    "-e packages/azure",
-    "-e packages/main"
-]
-commands = [["pytest", { replace = "posargs", default = ["packages/main/tests"], extend = true }]]
