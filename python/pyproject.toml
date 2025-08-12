@@ -185,7 +185,7 @@ build = "python run_tasks_in_packages_if_exists.py build"
 # combined checks
 check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint", "samples-code-check"]
 pre-commit-check = ["fmt", "lint", "pyright", "markdown-code-lint", "samples-code-check"]
-all-tests = "pytest --cov=agent_framework --cov=agent_framework_azure --cov=agent_framework_foundry --cov=agent_framework_workflow  --cov-report=term-missing:skip-covered packages/**/tests"
+all-tests = "pytest --cov=agent_framework --cov=agent_framework_azure --cov=agent_framework_foundry --cov=agent_framework_workflow --cov-report=term-missing:skip-covered packages/**/tests"
 
 [tool.poe.tasks.venv]
 cmd = "uv venv --clear --python $python"
