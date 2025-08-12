@@ -13,6 +13,7 @@
     <Project Path="tests/OpenAIResponse.IntegrationTests/OpenAIResponse.IntegrationTests.csproj" />
   </Folder>
   <Folder Name="/Demos/">
+    <Project Path="demos/DeclarativeWorkflow/DeclarativeWorkflow.csproj" />
     <Project Path="demos/MinimalConsole/MinimalConsole.csproj" />
   </Folder>
   <Folder Name="/Samples/">
