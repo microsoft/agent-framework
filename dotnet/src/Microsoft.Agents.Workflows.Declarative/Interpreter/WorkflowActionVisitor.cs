@@ -80,7 +80,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
                 new((_) =>
                 {
                     bool result = this._executionContext.Engine.Eval(item.Condition.ExpressionText ?? "true").AsBoolean();
-                    Console.WriteLine($"!!! CONDITION: {item.Condition.ExpressionText ?? "true"}={result}");
+                    Debug.WriteLine($"!!! CONDITION: {item.Condition.ExpressionText ?? "true"}={result}");
                     return result;
                 });
         }
