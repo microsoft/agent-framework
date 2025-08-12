@@ -82,11 +82,7 @@ internal sealed class RespondToMessageExecutor : Executor<RespondToMessageExecut
 
         await Task.Delay(1000).ConfigureAwait(false); // Simulate some processing delay
 
-<<<<<<< HEAD
-        await context.AddEventAsync(new WorkflowCompletedEvent { Data = RespondToMessageExecutor.ActionResult })
-=======
         await context.AddEventAsync(new WorkflowCompletedEvent(RespondToMessageExecutor.ActionResult))
->>>>>>> dev/dotnet_workflow
                      .ConfigureAwait(false);
     }
 }
@@ -105,11 +101,7 @@ internal sealed class RemoveSpamExecutor : Executor<RemoveSpamExecutor>, IMessag
 
         await Task.Delay(1000).ConfigureAwait(false); // Simulate some processing delay
 
-<<<<<<< HEAD
-        await context.AddEventAsync(new WorkflowCompletedEvent { Data = RemoveSpamExecutor.ActionResult })
-=======
         await context.AddEventAsync(new WorkflowCompletedEvent(RemoveSpamExecutor.ActionResult))
->>>>>>> dev/dotnet_workflow
                      .ConfigureAwait(false);
     }
 }

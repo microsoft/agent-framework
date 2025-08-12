@@ -93,11 +93,6 @@ public class RoutingReflectionTests
         Assert.NotNull(result);
         Assert.True(result.IsSuccess);
         Assert.True(result.IsVoid);
-<<<<<<< HEAD
-
-        await ((IAsyncDisposable)executor).DisposeAsync();
-=======
->>>>>>> dev/dotnet_workflow
     }
 
     [Fact]
@@ -110,11 +105,6 @@ public class RoutingReflectionTests
         Assert.NotNull(result);
         Assert.True(result.IsSuccess);
         Assert.True(result.IsVoid);
-<<<<<<< HEAD
-
-        await ((IAsyncDisposable)executor).DisposeAsync();
-=======
->>>>>>> dev/dotnet_workflow
     }
 
     [Fact]
@@ -136,10 +126,5 @@ public class RoutingReflectionTests
         Assert.False(result.IsVoid);
 
         Assert.Equal(Expected, result.Result);
-<<<<<<< HEAD
-
-        await ((IAsyncDisposable)executor).DisposeAsync();
-=======
->>>>>>> dev/dotnet_workflow
     }
 }
