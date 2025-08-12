@@ -71,7 +71,7 @@ public class Workflows_Declarative(ITestOutputHelper output) : OrchestrationSamp
             //
             //////////////////////////////////////////////////////
 
-            Console.WriteLine("\nWORKFLOW INVOKE\n");
+            Debug.WriteLine("\nWORKFLOW INVOKE\n");
 
             LocalRunner<string> runner = new(workflow);
             StreamingRun handle = await runner.StreamAsync("<placeholder>");

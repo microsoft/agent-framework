@@ -3,18 +3,19 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
-using System.Drawing;
 using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
 using BlankType = Microsoft.PowerFx.Types.BlankType;
 
 namespace Microsoft.Agents.Workflows.Declarative.Extensions;
 
-internal delegate object? GetFormulaValue(FormulaValue value);
-
 internal static class FormulaValueExtensions
 {
+    private static readonly JsonSerializerOptions s_options = new() { WriteIndented = true };
+
     public static DataValue GetDataValue(this FormulaValue value) =>
         value switch
         {
@@ -25,13 +26,13 @@ internal static class FormulaValueExtensions
             DateTimeValue datetimeValue => datetimeValue.ToDataValue(),
             TimeValue timeValue => timeValue.ToDataValue(),
             StringValue stringValue => stringValue.ToDataValue(),
-            GuidValue guidValue => guidValue.ToDataValue(),  // %%% CORRECT ???
             BlankValue blankValue => blankValue.ToDataValue(),
             VoidValue voidValue => voidValue.ToDataValue(),
             TableValue tableValue => tableValue.ToDataValue(),
             RecordValue recordValue => recordValue.ToDataValue(),
-            //BlobValue // %%% SUPPORT: DataValue ???
-            //ErrorValue // %%% SUPPORT: DataValue ???
+            //GuidValue guidValue => guidValue.ToDataValue(),  // %%% SUPPORT: DataValue ???
+            //BlobValue => // %%% SUPPORT: DataValue ???
+            //ErrorValue => // %%% SUPPORT: DataValue ???
             _ => throw new NotSupportedException($"Unsupported FormulaValue type: {value.GetType().Name}"),
         };
 
@@ -46,16 +47,16 @@ internal static class FormulaValueExtensions
             DateTimeType => DataType.DateTime,
             TimeType => DataType.Time,
             StringType => DataType.String,
-            GuidType => DataType.String,
             BlankType => DataType.String,
             RecordType => DataType.EmptyRecord,
-            //BlobValue // %%% SUPPORT: DataType ???
-            //ErrorValue // %%% SUPPORT: DataType ???
+            //GuidType => DataType.String, // %%% SUPPORT: DataType ???
+            //BlobValue => // %%% SUPPORT: DataType ???
+            //ErrorValue => // %%% SUPPORT: DataType ???
             UnknownType => DataType.Unspecified,
             _ => DataType.Unspecified,
         };
 
-    public static string? Format(this FormulaValue value) =>
+    public static string Format(this FormulaValue value) =>
         value switch
         {
             BooleanValue booleanValue => $"{booleanValue.Value}",
@@ -68,14 +69,12 @@ internal static class FormulaValueExtensions
             GuidValue guidValue => $"{guidValue.Value}",
             BlankValue blankValue => string.Empty,
             VoidValue voidValue => string.Empty,
-            TableValue tableValue => tableValue.ToString(), // %%% TODO: JSON
-            RecordValue recordValue => recordValue.ToString(), // %%% TODO: JSON
-            //BlobValue // %%% SUPPORT: DataValue ???
-            //ErrorValue // %%% SUPPORT: DataValue ???
-            _ => throw new NotSupportedException($"Unsupported FormulaValue type: {value.GetType().Name}"),
+            TableValue tableValue => tableValue.ToJson().ToJsonString(s_options),
+            RecordValue recordValue => recordValue.ToJson().ToJsonString(s_options),
+            ErrorValue errorValue => $"Error:{Environment.NewLine}{string.Join(Environment.NewLine, errorValue.Errors.Select(error => $"{error.MessageKey}: {error.Message}"))}",
+            //BlobValue blobValue => NO SPECIAL FORMATTING
+            _ => $"[{value.GetType().Name}]",
         };
-
-    // %%% TODO: Type conversion
 
     public static BooleanDataValue ToDataValue(this BooleanValue value) => BooleanDataValue.Create(value.Value);
     public static NumberDataValue ToDataValue(this DecimalValue value) => NumberDataValue.Create(value.Value);
@@ -83,11 +82,11 @@ internal static class FormulaValueExtensions
     public static DateTimeDataValue ToDataValue(this DateTimeValue value) => DateTimeDataValue.Create(value.GetConvertedValue(TimeZoneInfo.Utc));
     public static DateDataValue ToDataValue(this DateValue value) => DateDataValue.Create(value.GetConvertedValue(TimeZoneInfo.Utc));
     public static TimeDataValue ToDataValue(this TimeValue value) => TimeDataValue.Create(value.Value);
-    public static StringDataValue ToDataValue(this StringValue value) => StringDataValue.Create(value.Value);
-    public static StringDataValue ToDataValue(this GuidValue value) => StringDataValue.Create(value.Value.ToString("N")); // %%% FORMAT ???
     public static DataValue ToDataValue(this BlankValue _) => BlankDataValue.Blank();
-    public static DataValue ToDataValue(this VoidValue _) => BlankDataValue.Blank(); // %%% CORRECT ???
-    public static StringDataValue ToDataValue(this ColorValue value) => StringDataValue.Create(Enum.GetName(typeof(Color), value.Value)!); // %%% CORRECT ???
+    public static DataValue ToDataValue(this VoidValue _) => BlankDataValue.Blank();
+    public static StringDataValue ToDataValue(this StringValue value) => StringDataValue.Create(value.Value);
+    //public static StringDataValue ToDataValue(this GuidValue value) => StringDataValue.Create(value.Value.ToString("N")); // %%% SUPPORT: DataValue ???
+    //public static StringDataValue ToDataValue(this ColorValue value) => StringDataValue.Create(Enum.GetName(typeof(Color), value.Value)!); // %%% SUPPORT: DataValue ???
 
     public static TableDataValue ToDataValue(this TableValue value) =>
         TableDataValue.TableFromRecords(value.Rows.Select(row => row.Value.ToDataValue()).ToImmutableArray());
@@ -96,4 +95,48 @@ internal static class FormulaValueExtensions
         RecordDataValue.RecordFromFields(value.OriginalFields.Select(field => field.GetKeyValuePair()).ToImmutableArray());
 
     private static KeyValuePair<string, DataValue> GetKeyValuePair(this NamedValue value) => new(value.Name, value.Value.GetDataValue());
+
+    public static JsonNode ToJson(this FormulaValue value) =>
+        value switch
+        {
+            BooleanValue booleanValue => JsonValue.Create(booleanValue.Value),
+            DecimalValue decimalValue => JsonValue.Create(decimalValue.Value),
+            NumberValue numberValue => JsonValue.Create(numberValue.Value),
+            DateValue dateValue => JsonValue.Create(dateValue.GetConvertedValue(TimeZoneInfo.Utc)),
+            DateTimeValue datetimeValue => JsonValue.Create(datetimeValue.GetConvertedValue(TimeZoneInfo.Utc)),
+            TimeValue timeValue => JsonValue.Create($"{timeValue.Value}"),
+            StringValue stringValue => JsonValue.Create(stringValue.Value),
+            GuidValue guidValue => JsonValue.Create(guidValue.Value),
+            RecordValue recordValue => recordValue.ToJson(),
+            TableValue tableValue => tableValue.ToJson(),
+            BlankValue blankValue => JsonValue.Create(string.Empty),
+            //VoidValue voidValue => JsonValue.Create(),
+            //ErrorValue errorValue => $"Error:{Environment.NewLine}{string.Join(Environment.NewLine, errorValue.Errors.Select(error => $"{error.MessageKey}: {error.Message}"))}",
+            //BlobValue blobValue => NO SPECIAL FORMATTING
+            _ => $"[{value.GetType().Name}]",
+        };
+
+    public static JsonArray ToJson(this TableValue value)
+    {
+        return new([.. GetJsonElements()]);
+
+        IEnumerable<JsonNode> GetJsonElements()
+        {
+            foreach (DValue<RecordValue> row in value.Rows)
+            {
+                RecordValue recordValue = row.Value;
+                yield return recordValue.ToJson();
+            }
+        }
+    }
+
+    public static JsonObject ToJson(this RecordValue value)
+    {
+        JsonObject jsonObject = [];
+        foreach (NamedValue field in value.OriginalFields)
+        {
+            jsonObject.Add(field.Name, field.Value.ToJson());
+        }
+        return jsonObject;
+    }
 }

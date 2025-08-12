@@ -145,11 +145,38 @@ public class FormulaValueExtensionsTests
         Assert.Equal(
             """
             {
+              "FieldA": "Value1",
+              "FieldB": "Value2",
+              "FieldC": "Value3"
+            }
+            """,
+            formulaValue.Format().Replace(Environment.NewLine, "\n"));
+    }
+
+    [Fact]
+    public void TableValues()
+    {
+        RecordValue recordValue = FormulaValue.NewRecordFromFields(
+            new NamedValue("FieldA", FormulaValue.New("Value1")),
+            new NamedValue("FieldB", FormulaValue.New("Value2")),
+            new NamedValue("FieldC", FormulaValue.New("Value3")));
+        TableValue formulaValue = TableValue.NewTable(recordValue.Type, [recordValue]);
+        TableDataValue dataValue = formulaValue.ToDataValue();
+        Assert.Equal(formulaValue.Rows.Count(), dataValue.Values.Length);
+
+        TableValue formulaCopy = Assert.IsType<TableValue>(dataValue.ToFormulaValue(), exactMatch: false);
+        Assert.Equal(formulaCopy.Rows.Count(), dataValue.Values.Length);
+
+        Assert.Equal(
+            """
+            [
+              {
                 "FieldA": "Value1",
                 "FieldB": "Value2",
                 "FieldC": "Value3"
-            }
+              }
+            ]
             """,
-            formulaValue.Format());
+            formulaValue.Format().Replace(Environment.NewLine, "\n"));
     }
 }
