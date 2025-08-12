@@ -15,6 +15,7 @@ from agent_framework import (
     TextContent,
 )
 from agent_framework.exceptions import ServiceInitializationError
+from azure.identity.aio import DefaultAzureCredential
 from pydantic import Field
 
 from agent_framework_foundry import FoundryChatClient, FoundrySettings
@@ -305,7 +306,7 @@ def get_weather(
 @skip_if_foundry_integration_tests_disabled
 async def test_foundry_chat_client_get_response() -> None:
     """Test Foundry Chat Client response."""
-    async with FoundryChatClient() as foundry_chat_client:
+    async with FoundryChatClient(async_ad_credential=DefaultAzureCredential()) as foundry_chat_client:
         assert isinstance(foundry_chat_client, ChatClient)
 
         messages: list[ChatMessage] = []
@@ -329,7 +330,7 @@ async def test_foundry_chat_client_get_response() -> None:
 @skip_if_foundry_integration_tests_disabled
 async def test_foundry_chat_client_get_response_tools() -> None:
     """Test Foundry Chat Client response with tools."""
-    async with FoundryChatClient() as foundry_chat_client:
+    async with FoundryChatClient(async_ad_credential=DefaultAzureCredential()) as foundry_chat_client:
         assert isinstance(foundry_chat_client, ChatClient)
 
         messages: list[ChatMessage] = []
@@ -350,7 +351,7 @@ async def test_foundry_chat_client_get_response_tools() -> None:
 @skip_if_foundry_integration_tests_disabled
 async def test_foundry_chat_client_streaming() -> None:
     """Test Foundry Chat Client streaming response."""
-    async with FoundryChatClient() as foundry_chat_client:
+    async with FoundryChatClient(async_ad_credential=DefaultAzureCredential()) as foundry_chat_client:
         assert isinstance(foundry_chat_client, ChatClient)
 
         messages: list[ChatMessage] = []
@@ -380,7 +381,7 @@ async def test_foundry_chat_client_streaming() -> None:
 @skip_if_foundry_integration_tests_disabled
 async def test_foundry_chat_client_streaming_tools() -> None:
     """Test Foundry Chat Client streaming response with tools."""
-    async with FoundryChatClient() as foundry_chat_client:
+    async with FoundryChatClient(async_ad_credential=DefaultAzureCredential()) as foundry_chat_client:
         assert isinstance(foundry_chat_client, ChatClient)
 
         messages: list[ChatMessage] = []

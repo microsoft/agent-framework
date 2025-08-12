@@ -6,7 +6,8 @@ from typing import Annotated
 import pytest
 from agent_framework import ChatClient, ChatMessage, ChatResponse, ChatResponseUpdate, TextContent, ai_function
 from agent_framework.azure import AzureResponsesClient
-from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
+from agent_framework.exceptions import ServiceInitializationError
+from azure.identity import DefaultAzureCredential
 from pydantic import BaseModel
 
 skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
@@ -104,7 +105,7 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_response() -> None:
     """Test azure responses client responses."""
-    azure_responses_client = AzureResponsesClient()
+    azure_responses_client = AzureResponsesClient(ad_credential=DefaultAzureCredential())
 
     assert isinstance(azure_responses_client, ChatClient)
 
@@ -147,7 +148,7 @@ async def test_azure_responses_client_response() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_response_tools() -> None:
     """Test azure responses client tools."""
-    azure_responses_client = AzureResponsesClient()
+    azure_responses_client = AzureResponsesClient(ad_credential=DefaultAzureCredential())
 
     assert isinstance(azure_responses_client, ChatClient)
 
@@ -186,7 +187,7 @@ async def test_azure_responses_client_response_tools() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_streaming() -> None:
     """Test Azure azure responses client streaming responses."""
-    azure_responses_client = AzureResponsesClient()
+    azure_responses_client = AzureResponsesClient(ad_credential=DefaultAzureCredential())
 
     assert isinstance(azure_responses_client, ChatClient)
 
@@ -219,29 +220,27 @@ async def test_azure_responses_client_streaming() -> None:
     messages.append(ChatMessage(role="user", text="The weather in Seattle is sunny"))
     messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
 
-    # This is currently broken. See https://github.com/azure/azure-python/issues/2305
-    with pytest.raises(ServiceResponseException):
-        response = azure_responses_client.get_streaming_response(
-            messages=messages,
-            response_format=OutputStruct,
-        )
-        full_message = ""
-        async for chunk in response:
-            assert chunk is not None
-            assert isinstance(chunk, ChatResponseUpdate)
-            for content in chunk.contents:
-                if isinstance(content, TextContent) and content.text:
-                    full_message += content.text
+    response = azure_responses_client.get_streaming_response(
+        messages=messages,
+        response_format=OutputStruct,
+    )
+    full_message = ""
+    async for chunk in response:
+        assert chunk is not None
+        assert isinstance(chunk, ChatResponseUpdate)
+        for content in chunk.contents:
+            if isinstance(content, TextContent) and content.text:
+                full_message += content.text
 
-        output = OutputStruct.model_validate_json(full_message)
-        assert "Seattle" in output.location
-        assert "sunny" in output.weather.lower()
+    output = OutputStruct.model_validate_json(full_message)
+    assert "Seattle" in output.location
+    assert "sunny" in output.weather.lower()
 
 
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_streaming_tools() -> None:
     """Test azure responses client streaming tools."""
-    azure_responses_client = AzureResponsesClient()
+    azure_responses_client = AzureResponsesClient(ad_credential=DefaultAzureCredential())
 
     assert isinstance(azure_responses_client, ChatClient)
 
@@ -266,22 +265,20 @@ async def test_azure_responses_client_streaming_tools() -> None:
     messages.clear()
     messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
 
-    # This is currently broken. See https://github.com/azure/azure-python/issues/2305
-    with pytest.raises(ServiceResponseException):
-        response = azure_responses_client.get_streaming_response(
-            messages=messages,
-            tools=[get_weather],
-            tool_choice="auto",
-            response_format=OutputStruct,
-        )
-        full_message = ""
-        async for chunk in response:
-            assert chunk is not None
-            assert isinstance(chunk, ChatResponseUpdate)
-            for content in chunk.contents:
-                if isinstance(content, TextContent) and content.text:
-                    full_message += content.text
+    response = azure_responses_client.get_streaming_response(
+        messages=messages,
+        tools=[get_weather],
+        tool_choice="auto",
+        response_format=OutputStruct,
+    )
+    full_message = ""
+    async for chunk in response:
+        assert chunk is not None
+        assert isinstance(chunk, ChatResponseUpdate)
+        for content in chunk.contents:
+            if isinstance(content, TextContent) and content.text:
+                full_message += content.text
 
-        output = OutputStruct.model_validate_json(full_message)
-        assert "Seattle" in output.location
-        assert "sunny" in output.weather.lower()
+    output = OutputStruct.model_validate_json(full_message)
+    assert "Seattle" in output.location
+    assert "sunny" in output.weather.lower()
