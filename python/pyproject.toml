@@ -7,6 +7,7 @@ dependencies = [
     "agent-framework",
     "agent-framework-azure",
     "agent-framework-foundry",
+    "agent_framework-workflow",
 ]
 
 [dependency-groups]
@@ -42,6 +43,7 @@ dev = [
     "diskcache",
     "redis",
     "sphinx-autobuild",
+    "aiofiles>=24.1.0",
 ]
 
 [tool.uv]
@@ -61,6 +63,7 @@ exclude = [ "packages/agent_framework_project.egg-info" ]
 agent-framework = { workspace = true }
 agent-framework-azure = { workspace = true }
 agent-framework-foundry = { workspace = true }
+agent-framework-workflow = { workspace = true }
 
 [tool.ruff]
 line-length = 120

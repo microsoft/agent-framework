@@ -28,7 +28,7 @@ async def main() -> None:
         chat_client=FoundryChatClient(
             project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
             model_deployment_name=os.environ["FOUNDRY_MODEL_DEPLOYMENT_NAME"],
-            credential=AzureCliCredential(),
+            async_ad_credential=AzureCliCredential(),
             agent_name="WeatherAgent",
         ),
         instructions="You are a helpful weather agent.",
