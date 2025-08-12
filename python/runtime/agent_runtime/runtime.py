@@ -1,10 +1,11 @@
 """In-process actor runtime implementation"""
 
 import asyncio
-from typing import Dict, Optional, Callable, Any, AsyncIterator, List
-from concurrent.futures import Future
 import logging
+import uuid
+from concurrent.futures import Future
 from dataclasses import dataclass
+from typing import Dict, Optional, Callable, Any, AsyncIterator, List
 
 from .runtime_abstractions import (
     IActor, IActorRuntimeContext, IActorClient, IActorStateStorage,
@@ -267,8 +268,6 @@ class InProcessActorClient(IActorClient):
         message_id: Optional[str] = None
     ) -> ActorResponseHandle:
         """Send a request to an actor"""
-        import uuid
-        
         if not message_id:
             message_id = str(uuid.uuid4())
         

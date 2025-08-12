@@ -2,6 +2,7 @@
 
 """HTTP Actor Client implementation for communicating with remote actor runtime over HTTP."""
 
+import asyncio
 import json
 import uuid
 from typing import AsyncIterator, Dict, Any, Optional
@@ -34,8 +35,6 @@ class HttpActorResponseHandle(ActorResponseHandle):
         
         # Poll for the response (simplified implementation)
         # In a real implementation, this would use WebSockets or Server-Sent Events
-        import asyncio
-        
         max_retries = 30  # 30 seconds timeout
         for _ in range(max_retries):
             try:
@@ -222,7 +221,6 @@ class SimpleHttpActorResponseHandle(ActorResponseHandle):
                             )
                             
                             # Small delay to simulate streaming
-                            import asyncio
                             await asyncio.sleep(0.05)
                         
                         # Yield completion

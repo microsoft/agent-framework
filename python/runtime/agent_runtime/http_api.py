@@ -37,18 +37,9 @@ class AgentRunRequest(BaseModel):
 # Note: We'll use the framework's AgentRunResponse instead of defining our own
 
 
-class AgentInfo(BaseModel):
-    name: str
-    type: str
-    description: str
-
-
 # Global runtime instance
 runtime: InProcessActorRuntime = None
 client: InProcessActorClient = None
-
-
-# Agents will be registered by applications via the registration endpoint
 
 
 @asynccontextmanager
@@ -92,55 +83,6 @@ async def root():
         "status": "running"
     }
 
-
-@app.post("/agents/register")
-async def register_agent(registration: AgentRegistration):
-    """Register a new agent type with the runtime."""
-    if not runtime:
-        raise HTTPException(status_code=503, detail="Runtime not available")
-    
-    # Create the appropriate agent factory based on type
-    if registration.factory_type == "mock":
-        factory = lambda actor_id: AgentActor(MockAIAgent(registration.description))
-    elif registration.factory_type == "helpful":
-        responses = [
-            "I'm here to help! What would you like to know?",
-            "That's a great question. Let me think about it.",
-            "I'd be happy to assist you with that.",
-            "Here's what I think about your request.",
-            "Is there anything else I can help you with?"
-        ]
-        factory = lambda actor_id: AgentActor(MockAIAgent(registration.description, responses))
-    elif registration.factory_type == "echo":
-        factory = lambda actor_id: AgentActor(EchoAgent(registration.description))
-    else:
-        raise HTTPException(status_code=400, detail=f"Unknown factory type: {registration.factory_type}")
-    
-    # Register with runtime
-    runtime.register_actor_type(registration.name, factory)
-    
-    # Track registration
-    registered_agents[registration.name] = {
-        "type": registration.type,
-        "description": registration.description,
-        "factory_type": registration.factory_type
-    }
-    
-    logger.info(f"Registered agent: {registration.name} ({registration.type})")
-    return {"status": "registered", "name": registration.name}
-
-
-@app.get("/agents", response_model=List[AgentInfo])
-async def list_agents():
-    """List available registered agent types."""
-    return [
-        AgentInfo(
-            name=name,
-            type=info.get("type", "unknown"),
-            description=info.get("description", f"Agent: {name}")
-        )
-        for name, info in registered_agents.items()
-    ]
 
 
 @app.post("/agents/{agent_name}/run")

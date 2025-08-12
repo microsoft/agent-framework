@@ -1,7 +1,10 @@
 """AgentActor - bridges AI agents with the actor runtime"""
 
+import asyncio
 import json
 import logging
+import os
+import sys
 from typing import Optional, List
 
 # Runtime infrastructure types
@@ -11,8 +14,6 @@ from .runtime_abstractions import (
 )
 
 # Framework agent types
-import sys
-import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '../../packages/main'))
 
 from agent_framework import AIAgent, ChatMessage, AgentRunResponse, AgentThread, ChatRole, AgentBase
@@ -253,8 +254,6 @@ class MockAIAgent(AgentBase):
         **kwargs
     ) -> AgentRunResponse:
         """Provide mock responses"""
-        import asyncio
-        
         if thread is None:
             thread = self.get_new_thread()
         

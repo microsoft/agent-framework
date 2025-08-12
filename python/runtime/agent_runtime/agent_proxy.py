@@ -9,6 +9,7 @@ delegates all agent method calls to the actor runtime using send_request.
 
 import json
 import os
+import re
 import sys
 import uuid
 from typing import Any, AsyncIterable, List, Optional, Union
@@ -52,8 +53,6 @@ class AgentProxyThread(AgentThread):
 
         Thread IDs must be alphanumeric and can contain hyphens, underscores, dots, and tildes.
         """
-        import re
-
         pattern = r"^[a-zA-Z0-9_.\-~]+$"
         if not re.match(pattern, thread_id):
             raise ValueError(
