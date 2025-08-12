@@ -17,7 +17,6 @@ env:
   # Configure a constant location for the uv cache
   UV_CACHE_DIR: /tmp/.uv-cache
   RUN_INTEGRATION_TESTS: "true"
-  UV_SEMVER: "0.8.x"
 
 jobs:
   paths-filter:
@@ -68,7 +67,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
-          version: ${{ env.UV_SEMVER }}
+          version-file: "python/pyproject.toml"
           enable-cache: true
           cache-suffix: ${{ runner.os }}-${{ matrix.python-version }}
           cache-dependency-glob: "**/uv.lock"
@@ -123,7 +122,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
-          version: ${{ env.UV_SEMVER }}
+          version-file: "python/pyproject.toml"
           enable-cache: true
           cache-suffix: ${{ runner.os }}-${{ matrix.python-version }}
           cache-dependency-glob: "**/uv.lock"
@@ -184,7 +183,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
-          version: ${{ env.UV_SEMVER }}
+          version-file: "python/pyproject.toml"
           enable-cache: true
           cache-suffix: ${{ runner.os }}-${{ matrix.python-version }}
           cache-dependency-glob: "**/uv.lock"

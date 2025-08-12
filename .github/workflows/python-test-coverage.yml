@@ -6,6 +6,9 @@ on:
     paths:
       - "python/packages/**"
       - "python/tests/unit/**"
+env:
+  # Configure a constant location for the uv cache
+  UV_CACHE_DIR: /tmp/.uv-cache
 
 jobs:
   python-tests-coverage:
