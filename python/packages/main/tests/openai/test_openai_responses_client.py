@@ -11,9 +11,8 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
+    HostedWebSearchTool,
     TextContent,
-    WebSearchLocation,
-    WebSearchTool,
     ai_function,
 )
 from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
@@ -338,7 +337,7 @@ async def test_openai_responses_client_web_search() -> None:
                 text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
             )
         ],
-        tools=[WebSearchTool()],
+        tools=[HostedWebSearchTool()],
         tool_choice="auto",
     )
 
@@ -349,9 +348,16 @@ async def test_openai_responses_client_web_search() -> None:
     assert "Zoey" in response.text
 
     # Test that the client will use the web search tool with location
+    additional_properties = {
+        "user_location": {
+            "type": "approximate",
+            "country": "US",
+            "city": "Seattle",
+        }
+    }
     response = await openai_responses_client.get_response(
         messages=[ChatMessage(role="user", text="What is the current weather? Do not ask for my current location.")],
-        tools=[WebSearchTool(location=WebSearchLocation(city="Seattle", country="US"))],
+        tools=[HostedWebSearchTool(additional_properties=additional_properties)],
         tool_choice="auto",
     )
     assert "Seattle" in response.text
@@ -371,7 +377,7 @@ async def test_openai_responses_client_web_search_streaming() -> None:
                 text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
             )
         ],
-        tools=[WebSearchTool()],
+        tools=[HostedWebSearchTool()],
         tool_choice="auto",
     )
 
@@ -388,9 +394,16 @@ async def test_openai_responses_client_web_search_streaming() -> None:
     assert "Zoey" in full_message
 
     # Test that the client will use the web search tool with location
+    additional_properties = {
+        "user_location": {
+            "type": "approximate",
+            "country": "US",
+            "city": "Seattle",
+        }
+    }
     response = openai_responses_client.get_streaming_response(
         messages=[ChatMessage(role="user", text="What is the current weather? Do not ask for my current location.")],
-        tools=[WebSearchTool(location=WebSearchLocation(city="Seattle", country="US"))],
+        tools=[HostedWebSearchTool(additional_properties=additional_properties)],
         tool_choice="auto",
     )
     assert response is not None

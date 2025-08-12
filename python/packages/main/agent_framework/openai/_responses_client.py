@@ -23,7 +23,7 @@ from openai.types.responses.response_usage import ResponseUsage
 from pydantic import BaseModel, SecretStr, ValidationError
 
 from .._clients import ChatClientBase, use_tool_calling
-from .._tools import AIFunction, AITool
+from .._tools import AIFunction, AITool, HostedCodeInterpreterTool, HostedFileSearchTool, HostedWebSearchTool
 from .._types import (
     AIContents,
     ChatMessage,
@@ -49,6 +49,38 @@ else:
 __all__ = ["OpenAIResponsesClient"]
 
 # region ResponsesClient
+
+
+def tool_to_json(tool: AITool) -> dict[str, Any]:
+    """Convert an AITool to a JSON Schema representation."""
+    if isinstance(tool, AIFunction):
+        parameters = tool.parameters() or {}
+        parameters.update({"additionalProperties": False})
+        return {
+            "type": "function",
+            "name": tool.name,
+            "strict": True,
+            "description": tool.description,
+            "parameters": parameters,
+        }
+    if isinstance(tool, HostedCodeInterpreterTool):
+        # TODO(peterychang): Hook in container
+        return {"type": "code_interpreter", "container": {"type": "auto"}}
+    if isinstance(tool, HostedFileSearchTool):
+        if not tool.inputs:
+            raise ValueError("HostedFileSearchTool requires inputs to be specified.")
+        # TODO(peterychang): only pass in HostedVectorStoreContents
+        json = {"type": "file_search", "vector_store_ids": tool.inputs}
+
+        if tool.max_results is not None:
+            json["max_num_results"] = tool.max_results
+        return json
+    if isinstance(tool, HostedWebSearchTool):
+        json = {"type": "web_search_preview"}
+        if tool.additional_properties and "user_location" in tool.additional_properties:
+            json["user_location"] = tool.additional_properties["user_location"]
+        return json
+    raise ValueError(f"Unsupported tool type: {type(tool)}.")
 
 
 class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
@@ -255,18 +287,8 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
 
         tools = []
         for t in chat_options._ai_tools or []:
-            if isinstance(t, AIFunction):
-                parameters = t.parameters() or {}
-                parameters.update({"additionalProperties": False})
-                tools.append({
-                    "type": "function",
-                    "name": t.name,
-                    "strict": True,
-                    "description": t.description,
-                    "parameters": parameters,
-                })
-            elif isinstance(t, AITool):
-                tools.append(t.to_json_tool())
+            if isinstance(t, AITool):
+                tools.append(tool_to_json(t))
             else:
                 tools.append(t)
         chat_options.tools = tools

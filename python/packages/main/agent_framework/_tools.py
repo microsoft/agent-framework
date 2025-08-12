@@ -9,7 +9,6 @@ from typing import (
     Annotated,
     Any,
     Generic,
-    Literal,
     Protocol,
     TypeVar,
     get_args,
@@ -21,7 +20,6 @@ from opentelemetry import metrics, trace
 from pydantic import BaseModel, Field, create_model
 
 from ._logging import get_logger
-from ._pydantic import AFBaseModel
 from .telemetry import GenAIAttributes, start_as_current_span
 
 if TYPE_CHECKING:
@@ -34,15 +32,13 @@ logger = get_logger()
 __all__ = [
     "AIFunction",
     "AITool",
-    "FileSearchTool",
     "HostedCodeInterpreterTool",
-    "WebSearchLocation",
-    "WebSearchTool",
+    "HostedFileSearchTool",
+    "HostedWebSearchTool",
     "ai_function",
 ]
 
 
-# TODO(peterychang): We can probably convert several of the to_json_tool methods to a common piece of code
 @runtime_checkable
 class AITool(Protocol):
     """Represents a generic tool that can be specified to an AI service.
@@ -65,10 +61,6 @@ class AITool(Protocol):
 
     def __str__(self) -> str:
         """Return a string representation of the tool."""
-        ...
-
-    def to_json_tool(self) -> dict[str, Any]:
-        """Convert the tool to a JSON Schema representation."""
         ...
 
 
@@ -331,26 +323,13 @@ class HostedCodeInterpreterTool(AITool):
         """Return a string representation of the tool."""
         return f"HostedCodeInterpreterTool(name={self.name})"
 
-    def to_json_tool(self) -> dict[str, Any]:
-        """Convert the tool to a JSON Schema representation."""
-        return {"type": "code_interpreter", "container": {"type": "auto"}}
 
-
-class WebSearchLocation(AFBaseModel):
-    type: Literal["approximate"] = "approximate"
-    country: str | None = None
-    city: str | None = None
-    region: str | None = None
-
-
-class WebSearchTool(AITool):
+class HostedWebSearchTool(AITool):
     """Represents a web search tool that can be specified to an AI service to enable it to perform web searches."""
 
     def __init__(
         self,
         name: str = "web_search",
-        # TODO(peterychang): Should we make this configurable on a per-request basis?
-        location: WebSearchLocation | None = None,
         description: str | None = None,
         additional_properties: dict[str, Any] | None = None,
     ):
@@ -358,12 +337,10 @@ class WebSearchTool(AITool):
 
         Args:
             name: The name of the tool. Defaults to "web_search".
-            location: A WebSearchLocation instance specifying the user's location for the search.
             description: A description of the tool.
             additional_properties: Additional properties associated with the tool, specific to the service used.
         """
         self.name = name
-        self.location = location
         self.description = description
         self.additional_properties = additional_properties
 
@@ -371,45 +348,35 @@ class WebSearchTool(AITool):
         """Return a string representation of the tool."""
         return f"HostedWebSearchTool(name={self.name})"
 
-    def to_json_tool(self) -> dict[str, Any]:
-        """Convert the tool to a JSON Schema representation."""
-        json = {
-            "type": "web_search_preview",
-        }
-        if self.location:
-            json["user_location"] = self.location.model_dump(exclude_none=True)  # type: ignore
-        return json
-
 
 # TODO(peterychang): Test once the vector store is merged in.
-class FileSearchTool(AITool):
+class HostedFileSearchTool(AITool):
     """Represents a file search tool that can be specified to an AI service to enable it to perform file searches."""
 
     def __init__(
         self,
-        # TODO(peterychang): Change this to a list[str | HostedVectorStoreContent]
-        vector_store_ids: list[str],
         name: str = "file_search",
+        inputs: list["AIContents"] | None = None,
+        max_results: int | None = None,
         description: str | None = None,
         additional_properties: dict[str, Any] | None = None,
     ):
         """Initialize a FileSearchTool.
 
         Args:
-            vector_store_ids: A list of vector store IDs to search in.
             name: The name of the tool. Defaults to "file_search".
+            inputs: A list of inputs for use by the tool.
+            max_results: The maximum number of results to return from the search.
+                If None, defaults to no limit.
             description: A description of the tool.
             additional_properties: Additional properties associated with the tool, specific to the service used.
         """
         self.name = name
-        self.vector_store_ids = vector_store_ids
+        self.inputs = inputs
+        self.max_results = max_results
         self.description = description
         self.additional_properties = additional_properties
 
     def __str__(self) -> str:
         """Return a string representation of the tool."""
         return f"HostedFileSearchTool(name={self.name})"
-
-    def to_json_tool(self) -> dict[str, Any]:
-        """Convert the tool to a JSON Schema representation."""
-        return {"type": "file_search", "vector_store_ids": self.vector_store_ids}
