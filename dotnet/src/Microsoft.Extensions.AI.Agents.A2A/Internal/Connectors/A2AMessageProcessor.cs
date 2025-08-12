@@ -10,7 +10,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Extensions.AI.Agents.A2A.Internal.Connectors;
 
-internal sealed class A2AMessageProcessor : A2AAgentCardProvider, IA2AMessageProcessor
+internal sealed class A2AMessageProcessor : A2AProviderBase, IA2AMessageProcessor
 {
     public A2AMessageProcessor(AIAgent agent, TaskManager taskManager, ILoggerFactory? loggerFactory)
         : base(agent, taskManager, loggerFactory)

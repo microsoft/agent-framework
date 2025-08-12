@@ -10,7 +10,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Extensions.AI.Agents.A2A.Internal.Connectors;
 
-internal sealed class A2AAgentTaskProcessor : A2AAgentCardProvider, IA2AAgentTaskProcessor
+internal sealed class A2AAgentTaskProcessor : A2AProviderBase, IA2AAgentTaskProcessor
 {
     private readonly TaskManager _taskManager;
 
@@ -20,7 +20,7 @@ internal sealed class A2AAgentTaskProcessor : A2AAgentCardProvider, IA2AAgentTas
         this._taskManager = taskManager;
     }
 
-    public Task CreateTaskAsync(AgentTask task, CancellationToken token)
+    public Task CreateTaskAsync(AgentTask task, CancellationToken token = default)
     {
         this._logger.LogInformation("Creating task {TaskId} for agent {AgentName}", task.Id, this._a2aAgent.InnerAgent.Name);
 
@@ -46,13 +46,13 @@ internal sealed class A2AAgentTaskProcessor : A2AAgentCardProvider, IA2AAgentTas
         }
     }
 
-    public Task UpdateTaskAsync(AgentTask task, CancellationToken token)
+    public Task UpdateTaskAsync(AgentTask task, CancellationToken token = default)
     {
         var final = task.Status.IsCompleted();
         return this._taskManager.UpdateStatusAsync(task.Id, task.Status.State, final: final, cancellationToken: token);
     }
 
-    public Task CancelTaskAsync(AgentTask task, CancellationToken token)
+    public Task CancelTaskAsync(AgentTask task, CancellationToken token = default)
     {
         // cancellation is just updating a status, so that all subscribers are notified.
         return this._taskManager.UpdateStatusAsync(task.Id, task.Status.State, final: true, cancellationToken: token);
