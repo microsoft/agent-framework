@@ -1,8 +1,8 @@
-name: Python Test Coverage Report
+name: Python - Test Coverage Report
 
 on:
   workflow_run:
-    workflows: ["Python Test Coverage"]
+    workflows: ["Python - Test Coverage"]
     types:
       - completed
 
