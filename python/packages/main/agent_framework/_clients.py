@@ -285,13 +285,13 @@ class ChatClient(Protocol):
 
         Args:
             messages: The sequence of input messages to send.
+            response_format: the format of the response.
             frequency_penalty: the frequency penalty to use.
             logit_bias: the logit bias to use.
             max_tokens: The maximum number of tokens to generate.
             metadata: additional metadata to include in the request.
             model: The model to use for the agent.
             presence_penalty: the presence penalty to use.
-            response_format: the format of the response.
             seed: the random seed to use.
             stop: the stop sequence(s) for the request.
             store: whether to store the response.

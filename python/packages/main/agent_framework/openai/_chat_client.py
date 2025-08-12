@@ -61,7 +61,9 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
     ) -> ChatResponse:
         options_dict = self._prepare_options(messages, chat_options)
         try:
-            return self._create_chat_response(await self.client.chat.completions.create(stream=False, **options_dict))
+            return self._create_chat_response(
+                await self.client.chat.completions.create(stream=False, **options_dict), chat_options
+            )
         except BadRequestError as ex:
             if ex.code == "content_filter":
                 raise OpenAIContentFilterException(
@@ -143,7 +145,7 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
             options_dict["response_format"] = type_to_response_format_param(chat_options.response_format)
         return options_dict
 
-    def _create_chat_response(self, response: ChatCompletion) -> "ChatResponse":
+    def _create_chat_response(self, response: ChatCompletion, chat_options: ChatOptions) -> "ChatResponse":
         """Create a chat message content object from a choice."""
         response_metadata = self._get_metadata_from_chat_response(response)
         messages: list[ChatMessage] = []
@@ -166,6 +168,7 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
             model_id=response.model,
             additional_properties=response_metadata,
             finish_reason=finish_reason,
+            response_format=chat_options.response_format,
         )
 
     def _create_chat_response_update(

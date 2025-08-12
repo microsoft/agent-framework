@@ -342,8 +342,6 @@ class ChatClientAgent(AgentBase):
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
         tools: AITool
         | list[AITool]
-        | LocalMcpServer
-        | list[LocalMcpServer]
         | Callable[..., Any]
         | list[Callable[..., Any]]
         | MutableMapping[str, Any]
@@ -389,18 +387,11 @@ class ChatClientAgent(AgentBase):
         """
         kwargs.update(additional_properties or {})
 
-        local_mcp_tools: list[LocalMcpServer] = []
-        if isinstance(tools, LocalMcpServer):
-            local_mcp_tools = [tools]
-            tools = None
-        elif isinstance(tools, list):
-            new_tools: list[Any] = []
-            for tool in tools:  # type: ignore[assignment]
-                if isinstance(tool, LocalMcpServer):
-                    local_mcp_tools.append(tool)
-                else:
-                    new_tools.append(tool)
-            tools = new_tools
+        # We ignore the MCP Servers here and store them separately,
+        # we add their functions to the tools list at runtime
+        normalized_tools = [] if tools is None else tools if isinstance(tools, list) else [tools]
+        local_mcp_tools = [tool for tool in normalized_tools if isinstance(tool, LocalMcpServer)]
+        final_tools = [tool for tool in normalized_tools if not isinstance(tool, LocalMcpServer)]
         args: dict[str, Any] = {
             "chat_client": chat_client,
             "chat_options": ChatOptions(
@@ -416,7 +407,7 @@ class ChatClientAgent(AgentBase):
                 store=store,
                 temperature=temperature,
                 tool_choice=tool_choice,
-                tools=tools,  # type: ignore
+                tools=final_tools,  # type: ignore[reportArgumentType]
                 top_p=top_p,
                 user=user,
                 additional_properties=kwargs,
@@ -433,7 +424,7 @@ class ChatClientAgent(AgentBase):
 
         super().__init__(**args)
         self._update_agent_name()
-        self._local_mcp_tools = local_mcp_tools
+        self._local_mcp_tools = local_mcp_tools  # type: ignore[assignment]
 
     async def __aenter__(self) -> "Self":
         """Async context manager entry.
@@ -528,13 +519,18 @@ class ChatClientAgent(AgentBase):
         thread, thread_messages = await self._prepare_thread_and_messages(thread=thread, input_messages=input_messages)
         agent_name = self._get_agent_name()
 
-        if self._local_mcp_tools:
-            if tools is None:
-                tools = []
-            if not isinstance(tools, list):
-                tools = [tools]  # type: ignore
-            for mcp_server in self._local_mcp_tools:
-                tools.extend(mcp_server.functions)  # type: ignore
+        # Resolve final tool list (runtime provided tools + local MCP server tools)
+        final_tools: list[AITool | dict[str, Any] | Callable[..., Any]] = []
+        # Normalize tools argument to a list without mutating the original parameter
+        normalized_tools = [] if tools is None else tools if isinstance(tools, list) else [tools]
+        for tool in normalized_tools:
+            if isinstance(tool, LocalMcpServer):
+                final_tools.extend(tool.functions)  # type: ignore
+            else:
+                final_tools.append(tool)  # type: ignore
+
+        for mcp_server in self._local_mcp_tools:
+            final_tools.extend(mcp_server.functions)
 
         response = await self.chat_client.get_response(
             messages=thread_messages,
@@ -553,7 +549,7 @@ class ChatClientAgent(AgentBase):
                 store=store,
                 temperature=temperature,
                 tool_choice=tool_choice,
-                tools=tools,  # type: ignore
+                tools=final_tools,  # type: ignore[reportArgumentType]
                 top_p=top_p,
                 user=user,
                 additional_properties=additional_properties or {},
@@ -647,13 +643,18 @@ class ChatClientAgent(AgentBase):
         agent_name = self._get_agent_name()
         response_updates: list[ChatResponseUpdate] = []
 
-        if self._local_mcp_tools:
-            if tools is None:
-                tools = []
-            if not isinstance(tools, list):
-                tools = [tools]  # type: ignore
-            for mcp_server in self._local_mcp_tools:
-                tools.extend(mcp_server.functions)  # type: ignore
+        # Resolve final tool list (runtime provided tools + local MCP server tools)
+        final_tools: list[AITool | MutableMapping[str, Any] | Callable[..., Any]] = []
+        # Normalize tools argument to a list without mutating the original parameter
+        normalized_tools = [] if tools is None else tools if isinstance(tools, list) else [tools]
+        for tool in normalized_tools:
+            if isinstance(tool, LocalMcpServer):
+                final_tools.extend(tool.functions)  # type: ignore
+            else:
+                final_tools.append(tool)
+
+        for mcp_server in self._local_mcp_tools:
+            final_tools.extend(mcp_server.functions)
 
         async for update in self.chat_client.get_streaming_response(
             messages=thread_messages,
@@ -672,7 +673,7 @@ class ChatClientAgent(AgentBase):
                 store=store,
                 temperature=temperature,
                 tool_choice=tool_choice,
-                tools=tools,  # type: ignore
+                tools=final_tools,  # type: ignore[reportArgumentType]
                 top_p=top_p,
                 user=user,
                 additional_properties=additional_properties or {},

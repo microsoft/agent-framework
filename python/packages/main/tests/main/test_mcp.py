@@ -12,6 +12,7 @@ from mcp.shared.exceptions import McpError
 from pydantic import AnyUrl, ValidationError
 
 from agent_framework import (
+    AITool,
     ChatMessage,
     ChatRole,
     DataContent,
@@ -278,6 +279,7 @@ def test_get_input_model_from_mcp_prompt():
 async def test_local_mcp_server_initialization():
     """Test LocalMcpServer initialization."""
     server = LocalMcpServer(name="test_server")
+    assert isinstance(server, AITool)
     assert server.name == "test_server"
     assert server.session is None
     assert server.functions == []
@@ -328,6 +330,7 @@ async def test_local_mcp_server_load_functions():
             return None
 
     server = TestServer(name="test_server")
+    assert isinstance(server, AITool)
     async with server:
         await server.load_tools()
         assert len(server.functions) == 1
@@ -530,7 +533,7 @@ async def test_streamable_http_integration():
         assert isinstance(tool.functions, list)
 
         # If there are functions available, try to get information about one
-        assert tool.functions, "The MCP server shoulds have at least one function."
+        assert tool.functions, "The MCP server should have at least one function."
 
         func = tool.functions[0]
 

@@ -8,7 +8,7 @@ from abc import abstractmethod
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
 from datetime import timedelta
 from functools import partial
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mcp import types
 from mcp.client.session import ClientSession
@@ -21,7 +21,6 @@ from mcp.shared.exceptions import McpError
 from mcp.shared.session import RequestResponder
 from pydantic import BaseModel, create_model
 
-from ._clients import ChatClient
 from ._tools import AIFunction
 from ._types import AIContents, ChatMessage, ChatRole, DataContent, TextContent, UriContent
 from .exceptions import ToolException, ToolExecutionException
@@ -31,6 +30,8 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self  # pragma: no cover
 
+if TYPE_CHECKING:
+    from ._clients import ChatClient
 
 logger = logging.getLogger(__name__)
 
@@ -92,14 +93,14 @@ def _mcp_type_to_ai_content(
                     return TextContent(
                         text=mcp_type.resource.text,
                         raw_representation=mcp_type,
-                        additional_properties=mcp_type.annotations.model_dump() if mcp_type.annotations else {},
+                        additional_properties=mcp_type.annotations.model_dump() if mcp_type.annotations else None,
                     )
                 case types.BlobResourceContents():
                     return DataContent(
                         uri=mcp_type.resource.blob,
                         media_type=mcp_type.resource.mimeType,
                         raw_representation=mcp_type,
-                        additional_properties=mcp_type.annotations.model_dump() if mcp_type.annotations else {},
+                        additional_properties=mcp_type.annotations.model_dump() if mcp_type.annotations else None,
                     )
 
 
@@ -229,15 +230,17 @@ class LocalMcpServer:
         self,
         name: str,
         description: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
         load_tools: bool = True,
         load_prompts: bool = True,
         session: ClientSession | None = None,
         request_timeout: int | None = None,
-        chat_client: ChatClient | None = None,
+        chat_client: "ChatClient | None" = None,
     ) -> None:
         """Initialize the MCP Plugin Base."""
         self.name = name
-        self.description = description
+        self.description = description or ""
+        self.additional_properties = additional_properties
         self.load_tools_flag = load_tools
         self.load_prompts_flag = load_prompts
         self._exit_stack = AsyncExitStack()
@@ -245,6 +248,9 @@ class LocalMcpServer:
         self.request_timeout = request_timeout
         self.chat_client = chat_client
         self.functions: list[AIFunction[Any, Any]] = []
+
+    def __str__(self) -> str:
+        return f"LocalMcpServer(name={self.name}, description={self.description})"
 
     async def connect(self) -> None:
         """Connect to the MCP server."""
@@ -501,10 +507,11 @@ class LocalMcpStdioTool(LocalMcpServer):
         request_timeout: int | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
         encoding: str | None = None,
-        chat_client: ChatClient | None = None,
+        chat_client: "ChatClient | None" = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP stdio plugin.
@@ -522,6 +529,7 @@ class LocalMcpStdioTool(LocalMcpServer):
             request_timeout: The default timeout used for all requests.
             session: The session to use for the MCP connection.
             description: The description of the plugin.
+            additional_properties: Additional properties.
             args: The arguments to pass to the command.
             env: The environment variables to set for the command.
             encoding: The encoding to use for the command output.
@@ -532,6 +540,7 @@ class LocalMcpStdioTool(LocalMcpServer):
         super().__init__(
             name=name,
             description=description,
+            additional_properties=additional_properties,
             session=session,
             chat_client=chat_client,
             load_tools=load_tools,
@@ -571,10 +580,11 @@ class LocalMCPSseTools(LocalMcpServer):
         request_timeout: int | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
         headers: dict[str, Any] | None = None,
         timeout: float | None = None,
         sse_read_timeout: float | None = None,
-        chat_client: ChatClient | None = None,
+        chat_client: "ChatClient | None" = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP sse plugin.
@@ -593,6 +603,7 @@ class LocalMCPSseTools(LocalMcpServer):
             request_timeout: The default timeout used for all requests.
             session: The session to use for the MCP connection.
             description: The description of the plugin.
+            additional_properties: Additional properties.
             headers: The headers to send with the request.
             timeout: The timeout for the request.
             sse_read_timeout: The timeout for reading from the SSE stream.
@@ -603,6 +614,7 @@ class LocalMCPSseTools(LocalMcpServer):
         super().__init__(
             name=name,
             description=description,
+            additional_properties=additional_properties,
             session=session,
             chat_client=chat_client,
             load_tools=load_tools,
@@ -644,11 +656,12 @@ class LocalMcpStreamableHttpTool(LocalMcpServer):
         request_timeout: int | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
         headers: dict[str, Any] | None = None,
         timeout: float | None = None,
         sse_read_timeout: float | None = None,
         terminate_on_close: bool | None = None,
-        chat_client: ChatClient | None = None,
+        chat_client: "ChatClient | None" = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP streamable http plugin.
@@ -667,6 +680,7 @@ class LocalMcpStreamableHttpTool(LocalMcpServer):
             request_timeout: The default timeout used for all requests.
             session: The session to use for the MCP connection.
             description: The description of the plugin.
+            additional_properties: Additional properties.
             headers: The headers to send with the request.
             timeout: The timeout for the request.
             sse_read_timeout: The timeout for reading from the SSE stream.
@@ -677,6 +691,7 @@ class LocalMcpStreamableHttpTool(LocalMcpServer):
         super().__init__(
             name=name,
             description=description,
+            additional_properties=additional_properties,
             session=session,
             chat_client=chat_client,
             load_tools=load_tools,
@@ -697,9 +712,9 @@ class LocalMcpStreamableHttpTool(LocalMcpServer):
         }
         if self.headers:
             args["headers"] = self.headers
-        if self.timeout:
+        if self.timeout is not None:
             args["timeout"] = self.timeout
-        if self.sse_read_timeout:
+        if self.sse_read_timeout is not None:
             args["sse_read_timeout"] = self.sse_read_timeout
         if self.terminate_on_close is not None:
             args["terminate_on_close"] = self.terminate_on_close
@@ -721,7 +736,8 @@ class LocalMcpWebsocketTool(LocalMcpServer):
         request_timeout: int | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
-        chat_client: ChatClient | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        chat_client: "ChatClient | None" = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP websocket plugin.
@@ -740,6 +756,7 @@ class LocalMcpWebsocketTool(LocalMcpServer):
             request_timeout: The default timeout used for all requests.
             session: The session to use for the MCP connection.
             description: The description of the plugin.
+            additional_properties: Additional properties.
             chat_client: The chat client to use for sampling.
             kwargs: Any extra arguments to pass to the websocket client.
 
@@ -747,6 +764,7 @@ class LocalMcpWebsocketTool(LocalMcpServer):
         super().__init__(
             name=name,
             description=description,
+            additional_properties=additional_properties,
             session=session,
             chat_client=chat_client,
             load_tools=load_tools,
