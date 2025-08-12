@@ -14,17 +14,16 @@ from collections.abc import (
     MutableSequence,
     Sequence,
 )
+from copy import deepcopy
 from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, overload
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    PrivateAttr,
     ValidationError,
     field_validator,
     model_serializer,
-    model_validator,
 )
 
 from ._pydantic import AFBaseModel
@@ -36,7 +35,7 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self  # pragma: no cover
 
-# region: Constants and types
+# region Constants and types
 _T = TypeVar("_T")
 TValue = TypeVar("TValue")
 TEmbedding = TypeVar("TEmbedding")
@@ -76,11 +75,14 @@ KNOWN_MEDIA_TYPES = [
 
 
 __all__ = [
+    "AIAnnotation",
+    "AIAnnotations",
     "AIContent",
     "AIContents",
-    "AITool",
     "AgentRunResponse",
     "AgentRunResponseUpdate",
+    "AnnotatedRegion",
+    "AnnotatedRegions",
     "AsyncMessageContent",
     "ChatFinishReason",
     "ChatMessage",
@@ -89,15 +91,19 @@ __all__ = [
     "ChatResponseUpdate",
     "ChatRole",
     "ChatToolMode",
+    "CitationAnnotation",
     "DataContent",
     "ErrorContent",
     "FunctionCallContent",
     "FunctionResultContent",
     "GeneratedEmbeddings",
+    "HostedFileContent",
+    "HostedVectorStoreContent",
     "SpeechToTextOptions",
     "StructuredResponse",
     "TextContent",
     "TextReasoningContent",
+    "TextSpanRegion",
     "TextToSpeechOptions",
     "UriContent",
     "UsageContent",
@@ -151,6 +157,10 @@ class UsageDetails(AFBaseModel):
             **kwargs,
         )
 
+    def __str__(self) -> str:
+        """Returns a string representation of the usage details."""
+        return self.model_dump_json(indent=4, exclude_none=True)
+
     @property
     def additional_counts(self) -> dict[str, int]:
         """Represents well-known additional counts for usage. This is not an exhaustive list.
@@ -164,6 +174,14 @@ class UsageDetails(AFBaseModel):
             Over time additional counts may be added to the base class.
         """
         return self.model_extra or {}
+
+    def __setitem__(self, key: str, value: int) -> None:
+        """Sets an additional count for the usage details."""
+        if not isinstance(value, int):
+            raise ValueError("Additional counts must be integers.")
+        if self.model_extra is None:
+            self.model_extra = {}  # type: ignore[reportAttributeAccessIssue, misc]
+        self.model_extra[key] = value
 
     def __add__(self, other: "UsageDetails | None") -> "UsageDetails":
         """Combines two `UsageDetails` instances."""
@@ -266,27 +284,24 @@ def _coalesce_text_content(
     if not contents:
         return
     coalesced_contents: list["AIContents"] = []
-    current_texts: list[str] = []
-    first_new_content = None
-    for i, content in enumerate(contents):
+    first_new_content: Any | None = None
+    for content in contents:
         if isinstance(content, type_):
-            current_texts.append(content.text)  # type: ignore[union-attr]
             if first_new_content is None:
-                first_new_content = i
+                first_new_content = deepcopy(content)
+            else:
+                first_new_content += content
         else:
-            if first_new_content is not None:
-                new_content = type_(text="".join(current_texts))
-                new_content.raw_representation = contents[first_new_content].raw_representation
-                new_content.additional_properties = contents[first_new_content].additional_properties
-                # Store the replacement node. We inherit the properties of the first text node. We don't
-                # currently propagate additional properties from the subsequent nodes. If we ever need to,
-                # we can add that here.
-                coalesced_contents.append(new_content)
-                current_texts = []
-                first_new_content = None
+            # skip this content, it is not of the right type
+            # so write the existing one to the list and start a new one,
+            # once the right type is found again
+            if first_new_content:
+                coalesced_contents.append(first_new_content)
+            first_new_content = None
+            # but keep the other content in the new list
             coalesced_contents.append(content)
-    if current_texts:
-        coalesced_contents.append(type_(text="".join(current_texts)))
+    if first_new_content:
+        coalesced_contents.append(first_new_content)
     contents.clear()
     contents.extend(coalesced_contents)
 
@@ -298,7 +313,81 @@ def _finalize_response(response: "ChatResponse | AgentRunResponse") -> None:
         _coalesce_text_content(msg.contents, TextReasoningContent)
 
 
-# region: AIContent
+# region AIAnnotation
+
+
+class AnnotatedRegion(AFBaseModel):
+    """Represents a collection of annotated regions.
+
+    Attributes:
+        regions: A list of regions that have been annotated.
+        additional_properties: Optional additional properties associated with the content.
+        raw_representation: Optional raw representation of the content from an underlying implementation.
+    """
+
+    type: Literal["annotated_regions"] = "annotated_regions"  # type: ignore[assignment]
+
+
+class TextSpanRegion(AnnotatedRegion):
+    """Represents a region of text that has been annotated."""
+
+    type: Literal["text_span"] = "text_span"  # type: ignore[assignment]
+    start_index: int | None = None
+    end_index: int | None = None
+
+
+AnnotatedRegions = Annotated[
+    TextSpanRegion | AnnotatedRegion,
+    Field(discriminator="type"),
+]
+
+
+class AIAnnotation(AFBaseModel):
+    """Base class for all AI Annotation types.
+
+    Args:
+        type: The type of content, which is always "ai_annotation" for this class.
+        additional_properties: Optional additional properties associated with the content.
+        raw_representation: Optional raw representation of the content from an underlying implementation.
+
+    """
+
+    type: Literal["ai_annotation"] = "ai_annotation"
+    annotated_regions: list[AnnotatedRegions] | None = None
+    additional_properties: dict[str, Any] | None = None
+    raw_representation: Any | None = Field(default=None, repr=False)
+
+
+class CitationAnnotation(AIAnnotation):
+    """Represents a citation annotation.
+
+    Attributes:
+        type: The type of content, which is always "citation" for this class.
+        title: The title of the cited content.
+        url: The URL of the cited content.
+        file_id: The file identifier of the cited content, if applicable.
+        tool_name: The name of the tool that generated the citation, if applicable.
+        snippet: A snippet of the cited content, if applicable.
+        annotated_regions: A list of regions that have been annotated with this citation.
+        additional_properties: Optional additional properties associated with the content.
+        raw_representation: Optional raw representation of the content from an underlying implementation.
+    """
+
+    type: Literal["citation"] = "citation"  # type: ignore[assignment]
+    title: str | None = None
+    url: str | None = None
+    file_id: str | None = None
+    tool_name: str | None = None
+    snippet: str | None = None
+
+
+AIAnnotations = Annotated[
+    CitationAnnotation | AIAnnotation,
+    Field(discriminator="type"),
+]
+
+
+# region AIContent
 
 
 class AIContent(AFBaseModel):
@@ -306,14 +395,16 @@ class AIContent(AFBaseModel):
 
     Attributes:
         type: The type of content, which is always "ai" for this class.
+        annotations: Optional annotations associated with the content.
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content from an underlying implementation.
 
     """
 
     type: Literal["ai"] = "ai"
+    annotations: list[AIAnnotations] | None = None
     additional_properties: dict[str, Any] | None = None
-    raw_representation: Any | None = Field(default=None, repr=False)
+    raw_representation: Any | None = Field(default=None, repr=False, exclude=True)
 
 
 class TextContent(AIContent):
@@ -322,6 +413,7 @@ class TextContent(AIContent):
     Attributes:
         text: The text content represented by this instance.
         type: The type of content, which is always "text" for this class.
+        annotations: Optional annotations associated with the content.
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content.
     """
@@ -352,6 +444,69 @@ class TextContent(AIContent):
             **kwargs,
         )
 
+    def __add__(self, other: "TextContent") -> "TextContent":
+        """Concatenate two TextContent instances.
+
+        The following things happen:
+        The text is concatenated.
+        The annotations are combined.
+        The additional properties are merged, with the values of shared keys of the first instance taking precedence.
+        The raw_representations are combined into a list of them, if they both have one.
+        """
+        if not isinstance(other, TextContent):
+            raise TypeError("Incompatible type")
+        if self.raw_representation is None:
+            raw_representation = other.raw_representation
+        elif other.raw_representation is None:
+            raw_representation = self.raw_representation
+        else:
+            raw_representation = (
+                self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
+            ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
+        if self.annotations is None:
+            annotations = other.annotations
+        elif other.annotations is None:
+            annotations = self.annotations
+        else:
+            annotations = self.annotations + other.annotations
+        return TextContent(
+            text=self.text + other.text,
+            annotations=annotations,
+            additional_properties={
+                **(other.additional_properties or {}),
+                **(self.additional_properties or {}),
+            },
+            raw_representation=raw_representation,
+        )
+
+    def __iadd__(self, other: "TextContent") -> Self:
+        """In-place concatenation of two TextContent instances.
+
+        The following things happen:
+        The text is concatenated.
+        The annotations are combined.
+        The additional properties are merged, with the values of shared keys of the first instance taking precedence.
+        The raw_representations are combined into a list of them, if they both have one.
+        """
+        if not isinstance(other, TextContent):
+            raise TypeError("Incompatible type")
+        self.text += other.text
+        if self.additional_properties is None:
+            self.additional_properties = {}
+        if other.additional_properties:
+            self.additional_properties = {**other.additional_properties, **self.additional_properties}
+        if self.raw_representation is None:
+            self.raw_representation = other.raw_representation
+        elif other.raw_representation is not None:
+            self.raw_representation = (
+                self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
+            ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
+        if other.annotations:
+            if self.annotations is None:
+                self.annotations = []
+            self.annotations.extend(other.annotations)
+        return self
+
 
 class TextReasoningContent(AIContent):
     """Represents text reasoning content in a chat.
@@ -362,13 +517,10 @@ class TextReasoningContent(AIContent):
     Attributes:
         text: The text content represented by this instance.
         type: The type of content, which is always "text_reasoning" for this class.
+        annotations: Optional annotations associated with the content.
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content.
-
-
     """
-
-    # TODO(eavanvalkenburg): Should we merge these two classes, and use a property to distinguish them?
 
     text: str
     type: Literal["text_reasoning"] = "text_reasoning"  # type: ignore[assignment]
@@ -396,6 +548,66 @@ class TextReasoningContent(AIContent):
             **kwargs,
         )
 
+    def __add__(self, other: "TextReasoningContent") -> "TextReasoningContent":
+        """Concatenate two TextReasoningContent instances.
+
+        The following things happen:
+        The text is concatenated.
+        The annotations are combined.
+        The additional properties are merged, with the values of shared keys of the first instance taking precedence.
+        The raw_representations are combined into a list of them, if they both have one.
+        """
+        if not isinstance(other, TextReasoningContent):
+            raise TypeError("Incompatible type")
+        if self.raw_representation is None:
+            raw_representation = other.raw_representation
+        elif other.raw_representation is None:
+            raw_representation = self.raw_representation
+        else:
+            raw_representation = (
+                self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
+            ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
+        if self.annotations is None:
+            annotations = other.annotations
+        elif other.annotations is None:
+            annotations = self.annotations
+        else:
+            annotations = self.annotations + other.annotations
+        return TextReasoningContent(
+            text=self.text + other.text,
+            annotations=annotations,
+            additional_properties={**(self.additional_properties or {}), **(other.additional_properties or {})},
+            raw_representation=raw_representation,
+        )
+
+    def __iadd__(self, other: "TextReasoningContent") -> Self:
+        """In-place concatenation of two TextReasoningContent instances.
+
+        The following things happen:
+        The text is concatenated.
+        The annotations are combined.
+        The additional properties are merged, with the values of shared keys of the first instance taking precedence.
+        The raw_representations are combined into a list of them, if they both have one.
+        """
+        if not isinstance(other, TextReasoningContent):
+            raise TypeError("Incompatible type")
+        self.text += other.text
+        if self.additional_properties is None:
+            self.additional_properties = {}
+        if other.additional_properties:
+            self.additional_properties.update(other.additional_properties)
+        if self.raw_representation is None:
+            self.raw_representation = other.raw_representation
+        elif other.raw_representation is not None:
+            self.raw_representation = (
+                self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
+            ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
+        if other.annotations:
+            if self.annotations is None:
+                self.annotations = []
+            self.annotations.extend(other.annotations)
+        return self
+
 
 class DataContent(AIContent):
     """Represents binary data content with an associated media type (also known as a MIME type).
@@ -403,8 +615,9 @@ class DataContent(AIContent):
     Attributes:
         uri: The URI of the data represented by this instance, typically in the form of a data URI.
             Should be in the form: "data:{media_type};base64,{base64_data}".
-        type: The type of content, which is always "data" for this class.
         media_type: The media type of the data.
+        type: The type of content, which is always "data" for this class.
+        annotations: Optional annotations associated with the content.
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content.
 
@@ -419,6 +632,7 @@ class DataContent(AIContent):
         self,
         *,
         uri: str,
+        annotations: list[AIAnnotations] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -432,6 +646,7 @@ class DataContent(AIContent):
         Args:
             uri: The URI of the data represented by this instance.
                 Should be in the form: "data:{media_type};base64,{base64_data}".
+            annotations: Optional annotations associated with the content.
             additional_properties: Optional additional properties associated with the content.
             raw_representation: Optional raw representation of the content.
             **kwargs: Any additional keyword arguments.
@@ -443,6 +658,7 @@ class DataContent(AIContent):
         *,
         data: bytes,
         media_type: str,
+        annotations: list[AIAnnotations] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -457,6 +673,7 @@ class DataContent(AIContent):
             data: The binary data represented by this instance.
                 The data is transformed into a base64-encoded data URI.
             media_type: The media type of the data.
+            annotations: Optional annotations associated with the content.
             additional_properties: Optional additional properties associated with the content.
             raw_representation: Optional raw representation of the content.
             **kwargs: Any additional keyword arguments.
@@ -468,6 +685,7 @@ class DataContent(AIContent):
         uri: str | None = None,
         data: bytes | None = None,
         media_type: str | None = None,
+        annotations: list[AIAnnotations] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -484,6 +702,7 @@ class DataContent(AIContent):
             data: The binary data represented by this instance.
                 The data is transformed into a base64-encoded data URI.
             media_type: The media type of the data.
+            annotations: Optional annotations associated with the content.
             additional_properties: Optional additional properties associated with the content.
             raw_representation: Optional raw representation of the content.
             **kwargs: Any additional keyword arguments.
@@ -495,6 +714,7 @@ class DataContent(AIContent):
         super().__init__(
             uri=uri,  # type: ignore[reportCallIssue]
             media_type=media_type,  # type: ignore[reportCallIssue]
+            annotations=annotations,
             raw_representation=raw_representation,
             additional_properties=additional_properties,
             **kwargs,
@@ -530,6 +750,7 @@ class UriContent(AIContent):
         uri: The URI of the content, e.g., 'https://example.com/image.png'.
         media_type: The media type of the content, e.g., 'image/png', 'application/json', etc.
         type: The type of content, which is always "uri" for this class.
+        annotations: Optional annotations associated with the content.
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content.
 
@@ -544,6 +765,7 @@ class UriContent(AIContent):
         uri: str,
         media_type: str,
         *,
+        annotations: list[AIAnnotations] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -557,6 +779,7 @@ class UriContent(AIContent):
         Args:
             uri: The URI of the content.
             media_type: The media type of the content.
+            annotations: Optional annotations associated with the content.
             additional_properties: Optional additional properties associated with the content.
             raw_representation: Optional raw representation of the content.
             **kwargs: Any additional keyword arguments.
@@ -564,6 +787,7 @@ class UriContent(AIContent):
         super().__init__(
             uri=uri,  # type: ignore[reportCallIssue]
             media_type=media_type,  # type: ignore[reportCallIssue]
+            annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
             **kwargs,
@@ -591,10 +815,11 @@ class ErrorContent(AIContent):
         but the operation was still able to continue.
 
     Attributes:
-        type: The type of content, which is always "error" for this class.
         error_code: The error code associated with the error.
         details: Additional details about the error.
         message: The error message.
+        type: The type of content, which is always "error" for this class.
+        annotations: Optional annotations associated with the content.
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content.
 
@@ -612,6 +837,7 @@ class ErrorContent(AIContent):
         message: str | None = None,
         error_code: str | None = None,
         details: str | None = None,
+        annotations: list[AIAnnotations] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -622,6 +848,7 @@ class ErrorContent(AIContent):
             message: The error message.
             error_code: The error code associated with the error.
             details: Additional details about the error.
+            annotations: Optional annotations associated with the content.
             additional_properties: Optional additional properties associated with the content.
             raw_representation: Optional raw representation of the content.
             **kwargs: Any additional keyword arguments.
@@ -630,6 +857,7 @@ class ErrorContent(AIContent):
             message=message,  # type: ignore[reportCallIssue]
             error_code=error_code,  # type: ignore[reportCallIssue]
             details=details,  # type: ignore[reportCallIssue]
+            annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
             **kwargs,
@@ -644,11 +872,12 @@ class FunctionCallContent(AIContent):
     """Represents a function call request.
 
     Attributes:
-        type: The type of content, which is always "function_call" for this class.
         call_id: The function call identifier.
         name: The name of the function requested.
         arguments: The arguments requested to be provided to the function.
         exception: Any exception that occurred while mapping the original function call data to this representation.
+        type: The type of content, which is always "function_call" for this class.
+        annotations: Optional annotations associated with the content.
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content.
 
@@ -667,6 +896,7 @@ class FunctionCallContent(AIContent):
         name: str,
         arguments: str | dict[str, Any | None] | None = None,
         exception: Exception | None = None,
+        annotations: list[AIAnnotations] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -679,6 +909,7 @@ class FunctionCallContent(AIContent):
             arguments: The arguments requested to be provided to the function,
                 can be a string to allow gradual completion of the args.
             exception: Any exception that occurred while mapping the original function call data to this representation.
+            annotations: Optional annotations associated with the content.
             additional_properties: Optional additional properties associated with the content.
             raw_representation: Optional raw representation of the content.
             **kwargs: Any additional keyword arguments.
@@ -688,6 +919,7 @@ class FunctionCallContent(AIContent):
             name=name,  # type: ignore[reportCallIssue]
             arguments=arguments,  # type: ignore[reportCallIssue]
             exception=exception,  # type: ignore[reportCallIssue]
+            annotations=annotations,
             raw_representation=raw_representation,
             additional_properties=additional_properties,
             **kwargs,
@@ -734,10 +966,11 @@ class FunctionResultContent(AIContent):
     """Represents the result of a function call.
 
     Attributes:
-        type: The type of content, which is always "function_result" for this class.
         call_id: The identifier of the function call for which this is the result.
         result: The result of the function call, or a generic error message if the function call failed.
         exception: An exception that occurred if the function call failed.
+        type: The type of content, which is always "function_result" for this class.
+        annotations: Optional annotations associated with the content.
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content.
 
@@ -754,6 +987,7 @@ class FunctionResultContent(AIContent):
         call_id: str,
         result: Any | None = None,
         exception: Exception | None = None,
+        annotations: list[AIAnnotations] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -764,6 +998,7 @@ class FunctionResultContent(AIContent):
             call_id: The identifier of the function call for which this is the result.
             result: The result of the function call, or a generic error message if the function call failed.
             exception: An exception that occurred if the function call failed.
+            annotations: Optional annotations associated with the content.
             additional_properties: Optional additional properties associated with the content.
             raw_representation: Optional raw representation of the content.
             **kwargs: Any additional keyword arguments.
@@ -772,8 +1007,9 @@ class FunctionResultContent(AIContent):
             call_id=call_id,  # type: ignore[reportCallIssue]
             result=result,  # type: ignore[reportCallIssue]
             exception=exception,  # type: ignore[reportCallIssue]
-            raw_representation=raw_representation,
+            annotations=annotations,
             additional_properties=additional_properties,
+            raw_representation=raw_representation,
             **kwargs,
         )
 
@@ -782,8 +1018,9 @@ class UsageContent(AIContent):
     """Represents usage information associated with a chat request and response.
 
     Attributes:
-        type: The type of content, which is always "usage" for this class.
         details: The usage information, including input and output token counts, and any additional counts.
+        type: The type of content, which is always "usage" for this class.
+        annotations: Optional annotations associated with the content.
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content.
 
@@ -796,6 +1033,7 @@ class UsageContent(AIContent):
         self,
         details: UsageDetails,
         *,
+        annotations: list[AIAnnotations] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -803,8 +1041,71 @@ class UsageContent(AIContent):
         """Initializes a UsageContent instance."""
         super().__init__(
             details=details,  # type: ignore[reportCallIssue]
-            raw_representation=raw_representation,
+            annotations=annotations,
             additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
+        )
+
+
+class HostedFileContent(AIContent):
+    """Represents a hosted file content.
+
+    Attributes:
+        file_id: The identifier of the hosted file.
+        type: The type of content, which is always "hosted_file" for this class.
+        additional_properties: Optional additional properties associated with the content.
+        raw_representation: Optional raw representation of the content.
+
+    """
+
+    type: Literal["hosted_file"] = "hosted_file"  # type: ignore[assignment]
+    file_id: str
+
+    def __init__(
+        self,
+        file_id: str,
+        *,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initializes a HostedFileContent instance."""
+        super().__init__(
+            file_id=file_id,  # type: ignore[reportCallIssue]
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
+        )
+
+
+class HostedVectorStoreContent(AIContent):
+    """Represents a hosted vector store content.
+
+    Attributes:
+        vector_store_id: The identifier of the hosted vector store.
+        type: The type of content, which is always "hosted_vector_store" for this class.
+        additional_properties: Optional additional properties associated with the content.
+        raw_representation: Optional raw representation of the content.
+
+    """
+
+    type: Literal["hosted_vector_store"] = "hosted_vector_store"  # type: ignore[assignment]
+    vector_store_id: str
+
+    def __init__(
+        self,
+        vector_store_id: str,
+        *,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initializes a HostedVectorStoreContent instance."""
+        super().__init__(
+            vector_store_id=vector_store_id,  # type: ignore[reportCallIssue]
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
             **kwargs,
         )
 
@@ -852,11 +1153,13 @@ AIContents = Annotated[
     | FunctionResultContent
     | ErrorContent
     | UsageContent
+    | HostedFileContent
+    | HostedVectorStoreContent
     | AsyncMessageContent,
     Field(discriminator="type"),
 ]
 
-# region: Chat Response constants
+# region Chat Response constants
 
 
 class ChatRole(AFBaseModel):
@@ -872,7 +1175,7 @@ class ChatRole(AFBaseModel):
         TOOL: The role that provides additional information and references in response to tool use requests.
     """
 
-    value: str
+    value: str = Field(..., kw_only=False)
 
     SYSTEM: ClassVar[Self]  # type: ignore[assignment]
     """The role that instructs or sets the behaviour of the AI system."""
@@ -927,7 +1230,7 @@ ChatFinishReason.LENGTH = ChatFinishReason(value="length")  # type: ignore[assig
 ChatFinishReason.STOP = ChatFinishReason(value="stop")  # type: ignore[assignment]
 ChatFinishReason.TOOL_CALLS = ChatFinishReason(value="tool_calls")  # type: ignore[assignment]
 
-# region: ChatMessage
+# region ChatMessage
 
 
 class ChatMessage(AFBaseModel):
@@ -953,7 +1256,7 @@ class ChatMessage(AFBaseModel):
     """The ID of the chat message."""
     additional_properties: dict[str, Any] | None = None
     """Any additional properties associated with the chat message."""
-    raw_representation: Any | None = None
+    raw_representation: Any | None = Field(default=None, exclude=True)
     """The raw representation of the chat message from an underlying implementation."""
 
     @overload
@@ -1036,7 +1339,7 @@ class ChatMessage(AFBaseModel):
         return " ".join(content.text for content in self.contents if isinstance(content, TextContent))
 
 
-# region: ChatResponse
+# region ChatResponse
 
 
 class ChatResponse(AFBaseModel):
@@ -1297,7 +1600,7 @@ class StructuredResponse(ChatResponse, Generic[TValue]):
         )
 
 
-# region: ChatResponseUpdate
+# region ChatResponseUpdate
 
 
 class ChatResponseUpdate(AFBaseModel):
@@ -1440,7 +1743,7 @@ class ChatResponseUpdate(AFBaseModel):
         )
 
 
-# region: ChatOptions
+# region ChatOptions
 
 
 class ChatToolMode(AFBaseModel):
@@ -1502,13 +1805,6 @@ class ChatOptions(AFBaseModel):
     tools: list[AITool | MutableMapping[str, Any]] | None = None
     top_p: Annotated[float | None, Field(ge=0.0, le=1.0)] = None
     user: str | None = None
-    _ai_tools: list[AITool | MutableMapping[str, Any]] | None = PrivateAttr(default=None)
-
-    @model_validator(mode="after")
-    def _copy_to_ai_tools(self) -> Self:
-        if self.tools and not self._ai_tools:
-            self._ai_tools = self.tools
-        return self
 
     @field_validator("tools", mode="before")
     @classmethod
@@ -1524,10 +1820,7 @@ class ChatOptions(AFBaseModel):
             | None
         ),
     ) -> list[AITool | MutableMapping[str, Any]] | None:
-        """Parse the tools field.
-
-        All tools are stored in both tools and _ai_tools.
-        """
+        """Parse the tools field."""
         if not tools:
             return None
         if not isinstance(tools, list):
@@ -1591,26 +1884,26 @@ class ChatOptions(AFBaseModel):
         """
         if not isinstance(other, ChatOptions):
             return self
-        ai_tools = other._ai_tools
-        updated_values = other.model_dump(exclude_none=True)
-        updated_values.pop("tools", [])
+        other_tools = other.tools
+        updated_values = other.model_dump(exclude_none=True, exclude={"tools"})
         logit_bias = updated_values.pop("logit_bias", {})
         metadata = updated_values.pop("metadata", {})
         additional_properties = updated_values.pop("additional_properties", {})
         combined = self.model_copy(update=updated_values)
-        if ai_tools:
-            if not combined._ai_tools:
-                combined._ai_tools = []
-            for tool in ai_tools:
-                if tool not in combined._ai_tools:
-                    combined._ai_tools.append(tool)
         combined.logit_bias = {**(combined.logit_bias or {}), **logit_bias}
         combined.metadata = {**(combined.metadata or {}), **metadata}
         combined.additional_properties = {**(combined.additional_properties or {}), **additional_properties}
+        if other_tools:
+            if not combined.tools:
+                combined.tools = other_tools
+            else:
+                for tool in other_tools:
+                    if tool not in combined.tools:
+                        combined.tools.append(tool)
         return combined
 
 
-# region: GeneratedEmbeddings
+# region GeneratedEmbeddings
 
 
 class GeneratedEmbeddings(AFBaseModel, MutableSequence[TEmbedding], Generic[TEmbedding]):
@@ -1827,7 +2120,7 @@ class AgentRunResponseUpdate(AFBaseModel):
         return self.text
 
 
-# region: SpeechToTextOptions
+# region SpeechToTextOptions
 
 
 class SpeechToTextOptions(AFBaseModel):
@@ -1862,7 +2155,7 @@ class SpeechToTextOptions(AFBaseModel):
         return settings
 
 
-# region: TextToSpeechOptions
+# region TextToSpeechOptions
 
 
 class TextToSpeechOptions(AFBaseModel):

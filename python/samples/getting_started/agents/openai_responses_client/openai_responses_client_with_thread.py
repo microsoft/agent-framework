@@ -129,7 +129,7 @@ async def example_with_existing_thread_id() -> None:
         result2 = await agent.run(query2, thread=thread, store=True)
         print(f"Agent: {result2.text}")
         print(f"Thread contains {len(thread.chat_messages or [])} messages in-memory.")
-        print("Note: The agent continues the conversation from the previous thread.\n")
+        print("Note: The agent continues the conversation from the previous thread by using thread ID.\n")
 
 
 async def main() -> None:

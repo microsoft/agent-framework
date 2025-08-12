@@ -8,8 +8,9 @@ from typing import Any, ClassVar, Final
 
 from agent_framework._pydantic import AFBaseSettings, HttpsUrl
 from agent_framework.exceptions import ServiceInitializationError
-from agent_framework.openai._shared import OpenAIHandler, OpenAIModelTypes
+from agent_framework.openai._shared import OpenAIHandler
 from agent_framework.telemetry import USER_AGENT_KEY
+from azure.identity import ChainedTokenCredential
 from openai.lib.azure import AsyncAzureOpenAI
 from pydantic import ConfigDict, SecretStr, model_validator, validate_call
 
@@ -19,6 +20,7 @@ if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
 else:
     from typing_extensions import Self  # pragma: no cover
+
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -132,7 +134,9 @@ class AzureOpenAISettings(AFBaseSettings):
     default_api_version: str = DEFAULT_AZURE_API_VERSION
     default_token_endpoint: str = DEFAULT_AZURE_TOKEN_ENDPOINT
 
-    def get_azure_openai_auth_token(self, token_endpoint: str | None = None) -> str | None:
+    def get_azure_auth_token(
+        self, credential: "ChainedTokenCredential", token_endpoint: str | None = None, **kwargs: Any
+    ) -> str | None:
         """Retrieve a Microsoft Entra Auth Token for a given token endpoint for the use with Azure OpenAI.
 
         The required role for the token is `Cognitive Services OpenAI Contributor`.
@@ -141,7 +145,9 @@ class AzureOpenAISettings(AFBaseSettings):
         The `token_endpoint` argument takes precedence over the `token_endpoint` attribute.
 
         Args:
+            credential: The Azure AD credential to use.
             token_endpoint: The token endpoint to use. Defaults to `https://cognitiveservices.azure.com/.default`.
+            **kwargs: Additional keyword arguments to pass to the token retrieval method.
 
         Returns:
             The Azure token or None if the token could not be retrieved.
@@ -149,10 +155,8 @@ class AzureOpenAISettings(AFBaseSettings):
         Raises:
             ServiceInitializationError: If the token endpoint is not provided.
         """
-        endpoint_to_use = token_endpoint or self.token_endpoint
-        if endpoint_to_use is None:  # type: ignore
-            raise ServiceInitializationError("Please provide a token endpoint to retrieve the authentication token.")
-        return get_entra_auth_token(endpoint_to_use)
+        endpoint_to_use = token_endpoint or self.token_endpoint or self.default_token_endpoint
+        return get_entra_auth_token(credential, endpoint_to_use, **kwargs)
 
     @model_validator(mode="after")
     def _validate_fields(self) -> Self:
@@ -164,11 +168,12 @@ class AzureOpenAISettings(AFBaseSettings):
 class AzureOpenAIConfigBase(OpenAIHandler):
     """Internal class for configuring a connection to an Azure OpenAI service."""
 
+    MODEL_PROVIDER_NAME: ClassVar[str] = "azure_openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
+
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def __init__(
         self,
         deployment_name: str,
-        ai_model_type: OpenAIModelTypes,
         endpoint: HttpsUrl | None = None,
         base_url: HttpsUrl | None = None,
         api_version: str = DEFAULT_AZURE_API_VERSION,
@@ -176,6 +181,7 @@ class AzureOpenAIConfigBase(OpenAIHandler):
         ad_token: str | None = None,
         ad_token_provider: Callable[[], str | Awaitable[str]] | None = None,
         token_endpoint: str | None = None,
+        ad_credential: ChainedTokenCredential | None = None,
         default_headers: Mapping[str, str] | None = None,
         client: AsyncAzureOpenAI | None = None,
         instruction_role: str | None = None,
@@ -187,20 +193,20 @@ class AzureOpenAIConfigBase(OpenAIHandler):
         This is necessary for types like `HttpsUrl` and `OpenAIModelTypes`.
 
         Args:
-            deployment_name (str): Name of the deployment.
-            ai_model_type (OpenAIModelTypes): The type of OpenAI model to deploy.
-            endpoint (HttpsUrl): The specific endpoint URL for the deployment. (Optional)
-            base_url (Url): The base URL for Azure services. (Optional)
-            api_version (str): Azure API version. Defaults to the defined DEFAULT_AZURE_API_VERSION.
-            api_key (str): API key for Azure services. (Optional)
-            ad_token (str): Azure AD token for authentication. (Optional)
-            ad_token_provider (Callable[[], Union[str, Awaitable[str]]]): A callable
-                or coroutine function providing Azure AD tokens. (Optional)
-            token_endpoint (str): Azure AD token endpoint use to get the token. (Optional)
-            default_headers (Union[Mapping[str, str], None]): Default headers for HTTP requests. (Optional)
-            client (AsyncAzureOpenAI): An existing client to use. (Optional)
-            instruction_role (str | None): The role to use for 'instruction' messages, for example, summarization
-                prompts could use `developer` or `system`. (Optional)
+            deployment_name: Name of the deployment.
+            ai_model_type: The type of OpenAI model to deploy.
+            endpoint: The specific endpoint URL for the deployment.
+            base_url: The base URL for Azure services.
+            api_version: Azure API version. Defaults to the defined DEFAULT_AZURE_API_VERSION.
+            api_key: API key for Azure services.
+            ad_token: Azure AD token for authentication.
+            ad_token_provider: A callable or coroutine function providing Azure AD tokens.
+            token_endpoint: Azure AD token endpoint use to get the token.
+            ad_credential: Azure AD credential for authentication.
+            default_headers: Default headers for HTTP requests.
+            client: An existing client to use.
+            instruction_role: The role to use for 'instruction' messages, for example, summarization
+                prompts could use `developer` or `system`.
             kwargs: Additional keyword arguments.
 
         """
@@ -211,8 +217,8 @@ class AzureOpenAIConfigBase(OpenAIHandler):
             # If the client is None, the api_key is none, the ad_token is none, and the ad_token_provider is none,
             # then we will attempt to get the ad_token using the default endpoint specified in the Azure OpenAI
             # settings.
-            if not api_key and not ad_token_provider and not ad_token and token_endpoint:
-                ad_token = get_entra_auth_token(token_endpoint)
+            if not api_key and not ad_token_provider and not ad_token and token_endpoint and ad_credential:
+                ad_token = get_entra_auth_token(ad_credential, token_endpoint)
 
             if not api_key and not ad_token and not ad_token_provider:
                 raise ServiceInitializationError(
@@ -237,10 +243,8 @@ class AzureOpenAIConfigBase(OpenAIHandler):
                 args["base_url"] = str(base_url)
             if endpoint and not base_url:
                 args["azure_endpoint"] = str(endpoint)
-            # TODO (eavanvalkenburg): Remove the check on model type when the package fixes: https://github.com/openai/openai-python/issues/2120
-            if deployment_name and ai_model_type != OpenAIModelTypes.REALTIME:
+            if deployment_name:
                 args["azure_deployment"] = deployment_name
-
             if "websocket_base_url" in kwargs:
                 args["websocket_base_url"] = kwargs.pop("websocket_base_url")
 
@@ -248,7 +252,6 @@ class AzureOpenAIConfigBase(OpenAIHandler):
         args = {
             "ai_model_id": deployment_name,
             "client": client,
-            "ai_model_type": ai_model_type,
         }
         if instruction_role:
             args["instruction_role"] = instruction_role
@@ -271,7 +274,6 @@ class AzureOpenAIConfigBase(OpenAIHandler):
                 "total_tokens",
                 "api_type",
                 "org_id",
-                "ai_model_type",
                 "service_id",
                 "client",
             },

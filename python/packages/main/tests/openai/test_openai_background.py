@@ -44,7 +44,7 @@ async def test_openai_responses_client_response() -> None:
     messages.append(ChatMessage(role="user", text="What is the weather in New York?"))
 
     start = datetime.datetime.now()
-    print("Starting test at:", start)
+    print("Starting test at:", start)  # noqa
     # Test that the client can be used to get a response
     response = await openai_responses_client.get_response(
         background=True,
@@ -53,7 +53,7 @@ async def test_openai_responses_client_response() -> None:
         response_format=OutputStruct,
     )
     response_time = datetime.datetime.now()
-    print("Response received at:", response_time)
+    print("Response received at:", response_time)  # noqa
 
     assert response is not None
     assert isinstance(response, ChatResponse)
@@ -68,9 +68,9 @@ async def test_openai_responses_client_response() -> None:
             output_messages = future.result()
 
     end = datetime.datetime.now()
-    print("response received at: ", end)
-    print("Time taken for response:", response_time - start)
-    print("Time taken for processing:", end - response_time)
+    print("response received at: ", end)  # noqa
+    print("Time taken for response:", response_time - start)  # noqa
+    print("Time taken for processing:", end - response_time)  # noqa
     assert output_messages is not None
     output = OutputStruct.model_validate_json(output_messages[0].text)
     assert output.location == "New York"
