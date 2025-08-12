@@ -59,6 +59,7 @@
     <PackageVersion Include="Microsoft.Extensions.Logging" Version="9.0.7" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.7" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Testing" Version="9.0.7" />
+    <PackageVersion Include="Microsoft.Extensions.Options" Version="9.0.7" />
     <!-- Vector Stores -->
     <PackageVersion Include="Microsoft.SemanticKernel.Connectors.InMemory" Version="1.61.0-preview" />
     <!-- Agent SDKs -->
