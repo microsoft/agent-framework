@@ -154,7 +154,7 @@ public class TestDiscoveryService
         var paramStrings = parameters.Zip(values, (param, value) =>
             $"{param.Name}: {value}").ToArray();
 
-        return $"{method.DeclaringType?.Name}.{method.Name}({string.Join(", ", paramStrings)})";
+        return $"{string.Join(", ", paramStrings)}";
     }
 
     /// <summary>

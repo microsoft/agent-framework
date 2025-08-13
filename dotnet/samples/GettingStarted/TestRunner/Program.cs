@@ -19,6 +19,7 @@ public static class Program
             // Initialize TestConfiguration using the existing pattern
             var configRoot = new ConfigurationBuilder()
                 .AddJsonFile("appsettings.json", optional: true)
+                .AddJsonFile("appsettings.Development.json", optional: true)
                 .AddEnvironmentVariables()
                 .AddUserSecrets<TestDiscoveryService>()
                 .Build();

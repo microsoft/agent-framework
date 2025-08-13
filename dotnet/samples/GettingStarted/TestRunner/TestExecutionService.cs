@@ -28,7 +28,7 @@ public class TestExecutionService
                 var result = await RunDotnetTestAsync(arguments);
 
                 ctx.Status = result.Success ? "Test completed successfully" : "Test failed";
-                ctx.Spinner(result.Success ? Spinner.Known.Star : Spinner.Known.Dots);
+                ctx.Spinner(Spinner.Known.Dots);
 
                 return result;
             });
@@ -192,7 +192,7 @@ public class TestExecutionService
             var outputTask = process.StandardOutput.ReadToEndAsync();
             var errorTask = process.StandardError.ReadToEndAsync();
 
-#if NET472
+#if !NET8_0_OR_GREATER
             process.WaitForExit();
 #else
             await process.WaitForExitAsync();

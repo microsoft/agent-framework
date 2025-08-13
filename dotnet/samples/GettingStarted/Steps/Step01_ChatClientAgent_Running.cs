@@ -39,7 +39,9 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
         AIAgent agent = new ChatClientAgent(chatClient, ParrotInstructions);
 
         // Invoke the agent and output the text result.
-        Console.WriteLine(await agent.RunAsync("Fortune favors the bold."));
+        var prompt = "Fortune favors the bold.";
+        Console.WriteLine($"# user: {prompt}");
+        Console.WriteLine($"# assistant: {await agent.RunAsync(prompt)}");
     }
 
     /// <summary>
