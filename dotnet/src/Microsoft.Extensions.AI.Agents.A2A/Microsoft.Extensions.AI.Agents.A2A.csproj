@@ -12,10 +12,6 @@
 
     <PackageReference Include="System.Net.ServerSentEvents" VersionOverride="10.0.0-preview.5.25277.114" />
     <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" VersionOverride="10.0.0-preview.5.25277.114" />
-
-    <PackageReference Include="Microsoft.Extensions.Hosting" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
   </ItemGroup>
 
   <ItemGroup>
