@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Reflection;
+using System.Xml;
 
 namespace GettingStarted.TestRunner;
 
@@ -75,6 +76,7 @@ public class TestDiscoveryService
         {
             Name = type.Name,
             FullName = type.FullName ?? type.Name,
+            Description = ExtractTypeDescription(type),
             Type = type,
             Methods = GetTestMethods(type)
         };
@@ -99,6 +101,7 @@ public class TestDiscoveryService
             var testMethod = new TestMethod
             {
                 Name = method.Name,
+                Description = ExtractMethodDescription(method),
                 MethodInfo = method,
                 IsTheory = method.GetCustomAttributes<TheoryAttribute>().Any(),
                 TheoryData = GetTheoryData(method)
@@ -193,5 +196,119 @@ public class TestDiscoveryService
             "Custom" => "Custom",
             _ => string.Empty // Exclude other namespaces (like GettingStarted, TestRunner, etc.)
         };
+    }
+
+    /// <summary>
+    /// Extracts the XML documentation summary for a type.
+    /// </summary>
+    private static string ExtractTypeDescription(Type type)
+    {
+        try
+        {
+            var xmlDocPath = GetXmlDocumentationPath(type.Assembly);
+            if (string.IsNullOrEmpty(xmlDocPath) || !File.Exists(xmlDocPath))
+            {
+                return string.Empty;
+            }
+
+            var doc = new XmlDocument();
+            doc.Load(xmlDocPath);
+
+            var memberName = $"T:{type.FullName}";
+            var memberNode = doc.SelectSingleNode($"//member[@name='{memberName}']");
+            var summaryNode = memberNode?.SelectSingleNode("summary");
+
+            if (summaryNode?.InnerText != null)
+            {
+                return CleanXmlDocumentation(summaryNode.InnerText);
+            }
+        }
+        catch (Exception)
+        {
+            // Ignore XML documentation extraction errors
+            return string.Empty;
+        }
+
+        return string.Empty;
+    }
+
+    /// <summary>
+    /// Extracts the XML documentation summary for a method.
+    /// </summary>
+    private static string ExtractMethodDescription(MethodInfo method)
+    {
+        try
+        {
+            var xmlDocPath = GetXmlDocumentationPath(method.DeclaringType?.Assembly);
+            if (string.IsNullOrEmpty(xmlDocPath) || !File.Exists(xmlDocPath))
+            {
+                return string.Empty;
+            }
+
+            var doc = new XmlDocument();
+            doc.Load(xmlDocPath);
+
+            var parameters = method.GetParameters();
+            var parameterTypes = string.Join(",", parameters.Select(p => p.ParameterType.FullName));
+            var memberName = $"M:{method.DeclaringType?.FullName}.{method.Name}";
+            if (parameters.Length > 0)
+            {
+                memberName += $"({parameterTypes})";
+            }
+
+            var memberNode = doc.SelectSingleNode($"//member[@name='{memberName}']");
+            var summaryNode = memberNode?.SelectSingleNode("summary");
+
+            if (summaryNode?.InnerText != null)
+            {
+                return CleanXmlDocumentation(summaryNode.InnerText);
+            }
+        }
+        catch (Exception)
+        {
+            // Ignore XML documentation extraction errors
+            return string.Empty;
+        }
+
+        return string.Empty;
+    }
+
+    /// <summary>
+    /// Gets the path to the XML documentation file for an assembly.
+    /// </summary>
+    private static string GetXmlDocumentationPath(Assembly? assembly)
+    {
+        if (assembly?.Location == null)
+        {
+            return string.Empty;
+        }
+
+        var assemblyPath = assembly.Location;
+        var xmlPath = Path.ChangeExtension(assemblyPath, ".xml");
+        return xmlPath;
+    }
+
+    /// <summary>
+    /// Cleans XML documentation text by removing extra whitespace and formatting.
+    /// </summary>
+    private static string CleanXmlDocumentation(string xmlText)
+    {
+        if (string.IsNullOrEmpty(xmlText))
+        {
+            return string.Empty;
+        }
+
+        // Remove XML tags like <see cref="..."/> and replace with just the referenced name
+        var cleaned = System.Text.RegularExpressions.Regex.Replace(xmlText, "<see cref=\"[^\"]*\\.([^\"\\.]+)\"\\s*/>", "$1");
+        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, "<see cref=\"([^\"]+)\"\\s*/>", "$1");
+
+        // Remove other XML tags
+        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, "<[^>]+>", "");
+
+        // Clean up whitespace
+        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, "\\s+", " ");
+        cleaned = cleaned.Trim();
+
+        return cleaned;
     }
 }

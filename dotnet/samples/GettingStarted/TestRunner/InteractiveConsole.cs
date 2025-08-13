@@ -83,7 +83,7 @@ public class InteractiveConsole
         AnsiConsole.MarkupLine("[red]✗ Test failed[/]");
         if (!string.IsNullOrEmpty(result.Error))
         {
-            AnsiConsole.MarkupLine($"[red]Error: {result.Error}[/]");
+            AnsiConsole.MarkupLine($"[red]Error: {result.Error.EscapeMarkup()}[/]");
         }
         if (!string.IsNullOrEmpty(result.Output))
         {
@@ -158,16 +158,12 @@ public class InteractiveConsole
     {
         while (true)
         {
-            var choices = new List<string>
-            {
-                NavigationConstants.TestNavigation.BackToFolderSelection
-            };
-            choices.AddRange(folder.Classes.Select(c => $"Class: {c.Name}"));
-
-            var choice = AnsiConsole.Prompt(
-                new SelectionPrompt<string>()
-                    .Title($"[green]Tests in {folder.Name}:[/]")
-                    .AddChoices(choices));
+            var choice = ShowInteractiveMenuWithDescriptions(
+                $"Tests in {folder.Name}:",
+                folder.Classes,
+                c => $"Class: {c.Name}",
+                c => string.IsNullOrEmpty(c.Description) ? "No description available" : c.Description,
+                NavigationConstants.TestNavigation.BackToFolderSelection);
 
             if (choice == NavigationConstants.TestNavigation.BackToFolderSelection)
             {
@@ -190,10 +186,8 @@ public class InteractiveConsole
     {
         while (true)
         {
-            var choices = new List<string>
-            {
-                "Back"
-            };
+            // Create a list of menu items with their descriptions
+            var menuItems = new List<(string Display, string Description)>();
 
             // Add all test methods (Facts and individual Theory cases) at the same level
             foreach (var method in testClass.Methods)
@@ -201,22 +195,30 @@ public class InteractiveConsole
                 if (!method.IsTheory || method.TheoryData.Count == 0)
                 {
                     // Simple fact test or theory without data - add as single method
-                    choices.Add(method.Name);
+                    var description = string.IsNullOrEmpty(method.Description)
+                        ? "No description available"
+                        : method.Description;
+                    menuItems.Add((method.Name, description));
                 }
                 else
                 {
                     // Theory with data - add each theory case as individual test
                     foreach (var theoryCase in method.TheoryData)
                     {
-                        choices.Add($"{method.Name} ({theoryCase.DisplayName})");
+                        var description = string.IsNullOrEmpty(method.Description)
+                            ? "No description available"
+                            : method.Description;
+                        menuItems.Add(($"{method.Name} ({theoryCase.DisplayName})", description));
                     }
                 }
             }
 
-            var choice = AnsiConsole.Prompt(
-                new SelectionPrompt<string>()
-                    .Title($"[green]Test methods in {testClass.Name}:[/]")
-                    .AddChoices(choices));
+            var choice = ShowInteractiveMenuWithDescriptions(
+                $"Test methods in {testClass.Name}:",
+                menuItems,
+                item => item.Display,
+                item => item.Description,
+                "Back");
 
             if (choice == "Back")
             {
@@ -271,7 +273,7 @@ public class InteractiveConsole
             AnsiConsole.MarkupLine("[red]✗ Test failed[/]");
             if (!string.IsNullOrEmpty(result.Error))
             {
-                AnsiConsole.MarkupLine($"[red]Error: {result.Error}[/]");
+                AnsiConsole.MarkupLine($"[red]Error: {result.Error.EscapeMarkup()}[/]");
             }
         }
 
@@ -349,5 +351,88 @@ public class InteractiveConsole
     private async Task ConfigureSecretsAsync()
     {
         await _configurationManager.ManageConfigurationAsync();
+    }
+
+    /// <summary>
+    /// Shows an interactive menu with dynamic descriptions that update based on the currently highlighted item.
+    /// </summary>
+    private static string ShowInteractiveMenuWithDescriptions<T>(
+        string title,
+        IEnumerable<T> items,
+        Func<T, string> displaySelector,
+        Func<T, string> descriptionSelector,
+        string? backOption = null)
+    {
+        var itemList = items.ToList();
+        var choices = new List<string>();
+
+        if (!string.IsNullOrEmpty(backOption))
+        {
+            choices.Add(backOption);
+        }
+
+        choices.AddRange(itemList.Select(displaySelector));
+
+        var currentIndex = 0;
+        var maxIndex = choices.Count - 1;
+
+        while (true)
+        {
+            Console.Clear();
+
+            // Show title
+            AnsiConsole.MarkupLine($"[green]{title}[/]");
+            AnsiConsole.WriteLine();
+
+            // Show description for current selection
+            string description = string.Empty;
+            if (currentIndex == 0 && !string.IsNullOrEmpty(backOption))
+            {
+                description = "Return to the previous menu";
+            }
+            else
+            {
+                var itemIndex = !string.IsNullOrEmpty(backOption) ? currentIndex - 1 : currentIndex;
+                if (itemIndex >= 0 && itemIndex < itemList.Count)
+                {
+                    description = descriptionSelector(itemList[itemIndex]);
+                }
+            }
+
+            if (!string.IsNullOrEmpty(description))
+            {
+                var panel = new Panel(description)
+                    .Header("[bold]Description[/]")
+                    .Border(BoxBorder.Rounded)
+                    .BorderColor(Color.Blue);
+                AnsiConsole.Write(panel);
+                AnsiConsole.WriteLine();
+            }
+
+            // Show menu choices
+            for (int i = 0; i < choices.Count; i++)
+            {
+                var prefix = i == currentIndex ? "> " : "  ";
+                var style = i == currentIndex ? "[bold yellow]" : "";
+                var endStyle = i == currentIndex ? "[/]" : "";
+                AnsiConsole.MarkupLine($"{prefix}{style}{choices[i]}{endStyle}");
+            }
+
+            // Handle input
+            var key = Console.ReadKey(true);
+            switch (key.Key)
+            {
+                case ConsoleKey.UpArrow:
+                    currentIndex = currentIndex > 0 ? currentIndex - 1 : maxIndex;
+                    break;
+                case ConsoleKey.DownArrow:
+                    currentIndex = currentIndex < maxIndex ? currentIndex + 1 : 0;
+                    break;
+                case ConsoleKey.Enter:
+                    return choices[currentIndex];
+                case ConsoleKey.Escape:
+                    return !string.IsNullOrEmpty(backOption) ? backOption : choices[0];
+            }
+        }
     }
 }
