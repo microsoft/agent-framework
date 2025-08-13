@@ -2,7 +2,7 @@
 
 Highlights
 - Flexible Agent Framework: build, orchestrate, and deploy AI agents and workflows
-- Multi-Agent Orchestration: Group chat, sequential, concurrent, and handoff patterns
+- Multi-Agent Orchestration: group chat, sequential, concurrent, and handoff patterns
 - Graph-based Workflows: connect agents and deterministic functions using data flows with streaming, checkpointing, time-travel, and Human-in-the-loop.
 - Plugin Ecosystem: extend with native functions, OpenAPI, Model Context Protocol (MCP), and more
 - LLM Support: OpenAI, Azure OpenAI, Azure AI Foundry, and more
