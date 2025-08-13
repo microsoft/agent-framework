@@ -1,8 +1,9 @@
 # Microsoft Agent Framework
 
 Highlights
-- Flexible Agent Framework: build, orchestrate, and deploy AI agents and multi-agent systems
+- Flexible Agent Framework: Build, orchestrate, and deploy AI agents and workflows
 - Multi-Agent Orchestration: Group chat, sequential, concurrent, and handoff patterns
+- Graph-based Workflows: Connect agents and deterministic functions using data flows with streaming, checkpointing, time-travel, and Human-in-the-loop.
 - Plugin Ecosystem: Extend with native functions, OpenAPI, Model Context Protocol (MCP), and more
 - LLM Support: OpenAI, Azure OpenAI, Azure AI Foundry, and more
 - Runtime Support: In-process and distributed agent execution
@@ -17,11 +18,13 @@ Below are the basics for each language implementation. For more details on pytho
 - [Getting Started with Agents](./python/samples/getting_started/agents): Basic agent creation and tool usage
 - [Chat Client Examples](./python/samples/getting_started/chat_client): Direct chat client usage patterns
 - [Azure Integration](./python/packages/azure): Azure OpenAI and AI Foundry integration
+- [Getting Started with Workflows](./python/samples/getting_started/workflows): Basic workflow creation and integration with agents
 
 ### .Net
 - [Getting Started with Agents](./dotnet/samples/GettingStarted/Steps): Basic agent creation and tool usage
 - [Agent Provider Samples](./dotnet/samples/GettingStarted/Providers): Samples showing different agent providers
 - [Orchestration Samples](./dotnet/samples/GettingStarted/Orchestration): Advanced multi-agent patterns
+- [Getting Started with Workflows](./dotnet/samples/GettingStarted/Workflows): (Coming soon) Basic workflow creation and integration with agents
 
 ## Agent Framework Documentation
 
