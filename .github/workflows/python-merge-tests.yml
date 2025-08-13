@@ -58,6 +58,7 @@ jobs:
       UV_PYTHON: ${{ matrix.python-version }}
       OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
       OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
+      LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
       PACKAGE_NAME: "main"
     defaults:
       run:
