@@ -2,6 +2,7 @@
 
 using System.Diagnostics;
 using System.Reflection;
+using System.Text;
 using Spectre.Console;
 
 namespace GettingStarted.TestRunner;
@@ -25,31 +26,12 @@ public class TestExecutionService
             .Spinner(Spinner.Known.Dots)
             .StartAsync("Running test...", async ctx =>
             {
-                var result = await RunDotnetTestAsync(arguments);
+                var result = await RunDotnetTestWithStreamingAsync(arguments, ctx);
 
                 ctx.Status = result.Success ? "Test completed successfully" : "Test failed";
-                ctx.Spinner(Spinner.Known.Dots);
 
                 return result;
             });
-    }
-
-    /// <summary>
-    /// Lists all tests matching the specified filter.
-    /// </summary>
-    public async Task<List<string>> ListTestsAsync(string? filter = null)
-    {
-        var arguments = BuildListTestsArguments(filter);
-
-        var result = await RunDotnetTestAsync(arguments);
-
-        if (!result.Success)
-        {
-            AnsiConsole.MarkupLine("[red]Failed to list tests[/]");
-            return new List<string>();
-        }
-
-        return ParseTestList(result.Output);
     }
 
     /// <summary>
@@ -61,6 +43,7 @@ public class TestExecutionService
         {
             "test",
             "--no-build",
+            "--no-restore",
             "--verbosity", "minimal", // Always use detailed to capture console output
             "--framework", GetCurrentTargetFramework()
         };
@@ -74,27 +57,6 @@ public class TestExecutionService
         // Always include console logger to show test output
         args.Add("--logger");
         args.Add("\"console;verbosity=detailed\""); // Always use detailed to capture console output
-
-        return string.Join(" ", args);
-    }
-
-    /// <summary>
-    /// Builds the arguments for listing tests.
-    /// </summary>
-    private static string BuildListTestsArguments(string? filter)
-    {
-        var args = new List<string>
-        {
-            "test",
-            "--list-tests",
-            "--verbosity", "quiet"
-        };
-
-        if (!string.IsNullOrEmpty(filter))
-        {
-            args.Add("--filter");
-            args.Add($"\"{filter}\"");
-        }
 
         return string.Join(" ", args);
     }
@@ -207,6 +169,98 @@ public class TestExecutionService
                 ExitCode = process.ExitCode,
                 Output = output,
                 Error = error
+            };
+        }
+        catch (Exception ex)
+        {
+            return new TestResult
+            {
+                Success = false,
+                Output = string.Empty,
+                Error = ex.Message
+            };
+        }
+    }
+
+    /// <summary>
+    /// Runs the dotnet test command with live streaming output and status updates.
+    /// </summary>
+    private static async Task<TestResult> RunDotnetTestWithStreamingAsync(string arguments, StatusContext ctx)
+    {
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "dotnet",
+                Arguments = arguments,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+                WorkingDirectory = GetProjectDirectory()
+            };
+
+            using var process = Process.Start(startInfo);
+            if (process == null)
+            {
+                return new TestResult
+                {
+                    Success = false,
+                    Output = "Failed to start dotnet process",
+                    Error = "Process creation failed"
+                };
+            }
+
+            var outputBuilder = new StringBuilder();
+            var errorBuilder = new StringBuilder();
+
+            // Create tasks to read output and error streams line by line
+            var outputTask = Task.Run(async () =>
+            {
+                using var reader = process.StandardOutput;
+                string? line;
+                while ((line = await reader.ReadLineAsync()) != null)
+                {
+                    outputBuilder.AppendLine(line);
+
+                    // Display the line immediately with some basic formatting
+                    if (!string.IsNullOrWhiteSpace(line))
+                    {
+                        AnsiConsole.WriteLine(line);
+                    }
+                }
+            });
+
+            var errorTask = Task.Run(async () =>
+            {
+                using var reader = process.StandardError;
+                string? line;
+                while ((line = await reader.ReadLineAsync()) != null)
+                {
+                    errorBuilder.AppendLine(line);
+
+                    // Display error lines in red
+                    if (!string.IsNullOrWhiteSpace(line))
+                    {
+                        AnsiConsole.MarkupLine($"[red]{line.EscapeMarkup()}[/]");
+                    }
+                }
+            });
+
+            // Wait for process and both reading tasks to complete
+#if !NET8_0_OR_GREATER
+            process.WaitForExit();
+#else
+            await process.WaitForExitAsync();
+#endif
+            await Task.WhenAll(outputTask, errorTask);
+
+            return new TestResult
+            {
+                Success = process.ExitCode == 0,
+                ExitCode = process.ExitCode,
+                Output = outputBuilder.ToString(),
+                Error = errorBuilder.ToString()
             };
         }
         catch (Exception ex)

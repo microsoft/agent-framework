@@ -12,9 +12,8 @@ public static class NavigationConstants
     /// </summary>
     public static class MainMenu
     {
-        public const string RunTests = "Run Tests";
-        public const string ViewConfiguration = "View Configuration";
-        public const string ManageSecrets = "Manage Secrets";
+        public const string RunSamples = "Run Samples";
+        public const string Configuration = "Configuration";
         public const string Exit = "Exit";
     }
 

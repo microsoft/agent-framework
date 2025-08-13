@@ -46,13 +46,10 @@ public class InteractiveConsole
 
             switch (choice)
             {
-                case var _ when choice == NavigationConstants.MainMenu.RunTests:
+                case var _ when choice == NavigationConstants.MainMenu.RunSamples:
                     await this.RunTestsMenuAsync();
                     break;
-                case var _ when choice == NavigationConstants.MainMenu.ViewConfiguration:
-                    this.ShowConfiguration();
-                    break;
-                case var _ when choice == NavigationConstants.MainMenu.ManageSecrets:
+                case var _ when choice == NavigationConstants.MainMenu.Configuration:
                     await this.ConfigureSecretsAsync();
                     break;
                 case var _ when choice == NavigationConstants.MainMenu.Exit:
@@ -116,9 +113,8 @@ public class InteractiveConsole
                 .Title("[green]What would you like to do?[/]")
                 .AddChoices(
                     NavigationConstants.MainMenu.Exit,
-                    NavigationConstants.MainMenu.RunTests,
-                    NavigationConstants.MainMenu.ViewConfiguration,
-                    NavigationConstants.MainMenu.ManageSecrets));
+                    NavigationConstants.MainMenu.RunSamples,
+                    NavigationConstants.MainMenu.Configuration));
     }
 
     /// <summary>
@@ -144,7 +140,8 @@ public class InteractiveConsole
                 folders,
                 f => f.Name,
                 f => BuildHierarchicalDescription(f),
-                NavigationConstants.CommonUI.Back);
+                NavigationConstants.CommonUI.Back,
+                minDescriptionHeight: 6);
 
             if (folderChoice == NavigationConstants.CommonUI.Back)
             {
@@ -168,7 +165,8 @@ public class InteractiveConsole
                 folder.Classes,
                 c => c.Name,
                 c => BuildHierarchicalDescription(folder, c),
-                NavigationConstants.CommonUI.Back);
+                NavigationConstants.CommonUI.Back,
+                minDescriptionHeight: 9);
 
             if (choice == NavigationConstants.CommonUI.Back)
             {
@@ -211,11 +209,12 @@ public class InteractiveConsole
             }
 
             var choice = ShowInteractiveMenuWithDescriptions(
-                $"Options in {testClass.Name}:",
+                $"Samples in {testClass.Name}:",
                 menuItems,
                 item => item.Display,
                 item => item.Description,
-                "Back");
+                "Back",
+                minDescriptionHeight: 12);
 
             if (choice == "Back")
             {
@@ -289,60 +288,6 @@ public class InteractiveConsole
     }
 
     /// <summary>
-    /// Shows the current configuration.
-    /// </summary>
-    private void ShowConfiguration()
-    {
-        var table = new Table();
-        table.AddColumn("Configuration");
-        table.AddColumn("Status");
-        table.AddColumn("Value");
-
-        // Get all configuration keys dynamically from TestConfiguration
-        var allConfigKeys = ConfigurationKeyExtractor.GetConfigurationKeys();
-
-        foreach (var key in allConfigKeys)
-        {
-            var hasValue = this._configurationManager.HasCurrentConfigurationValue(key);
-            var isRequired = ConfigurationKeyExtractor.IsRequiredKey(key);
-
-            string statusIcon;
-            if (hasValue)
-            {
-                statusIcon = "[green]✓[/]";
-            }
-            else if (isRequired)
-            {
-                statusIcon = "[red]✗[/]";
-            }
-            else
-            {
-                statusIcon = "[dim]○[/]"; // Optional field indicator
-            }
-
-            var currentValue = this._configurationManager.GetCurrentConfigurationValue(key);
-
-            // Create a friendly display name from the key
-            var displayName = GetFriendlyConfigurationName(key);
-
-            table.AddRow(displayName, statusIcon, currentValue);
-        }
-
-        AnsiConsole.Write(table);
-
-        AnsiConsole.MarkupLine(NavigationConstants.CommonUI.PressAnyKeyToContinue);
-        Console.ReadKey();
-    }
-
-    /// <summary>
-    /// Converts a configuration key to a friendly display name.
-    /// </summary>
-    private static string GetFriendlyConfigurationName(string key)
-    {
-        return ConfigurationKeyExtractor.GetFriendlyDescription(key);
-    }
-
-    /// <summary>
     /// Handles configuration setup.
     /// </summary>
     private async Task ConfigureSecretsAsync()
@@ -354,11 +299,12 @@ public class InteractiveConsole
     /// Shows an interactive menu with dynamic descriptions that update based on the currently highlighted item.
     /// </summary>
     private static string ShowInteractiveMenuWithDescriptions<T>(
-        string title,
+        string? title,
         IEnumerable<T> items,
         Func<T, string> displaySelector,
         Func<T, string> descriptionSelector,
-        string? backOption = null)
+        string? backOption = null,
+        int minDescriptionHeight = 6)
     {
         var itemList = items.ToList();
         var choices = new List<string>();
@@ -377,9 +323,12 @@ public class InteractiveConsole
         {
             Console.Clear();
 
-            // Show title
-            AnsiConsole.MarkupLine($"[green]{title}[/]");
-            AnsiConsole.WriteLine();
+            if (!string.IsNullOrEmpty(title))
+            {
+                // Show title
+                AnsiConsole.MarkupLine($"[green]{title}[/]");
+                AnsiConsole.WriteLine();
+            }
 
             // Show description for current selection
             string description = string.Empty;
@@ -396,15 +345,18 @@ public class InteractiveConsole
                 }
             }
 
-            if (!string.IsNullOrEmpty(description))
+            // Always show a panel with fixed content height, regardless of original content
+            var panel = new Panel(description ?? NavigationConstants.CommonUI.NoDescriptionAvailable)
             {
-                var panel = new Panel(description)
-                    .Header("[bold]Description[/]")
-                    .Border(BoxBorder.Rounded)
-                    .BorderColor(Color.Blue);
-                AnsiConsole.Write(panel);
-                AnsiConsole.WriteLine();
+                Height = minDescriptionHeight,
+                Expand = true
             }
+            .Header("[bold]Description[/]")
+            .Border(BoxBorder.Rounded)
+            .BorderColor(Color.Blue);
+
+            AnsiConsole.Write(panel);
+            AnsiConsole.WriteLine();
 
             // Show menu choices
             for (int i = 0; i < choices.Count; i++)

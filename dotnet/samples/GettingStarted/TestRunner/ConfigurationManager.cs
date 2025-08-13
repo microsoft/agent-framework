@@ -148,7 +148,7 @@ public class ConfigurationManager
             }
 
             // Extract the config key from the choice
-            var configKey = choice.Split(' ')[1]; // Skip the status icon
+            var configKey = ExtractConfigKeyFromChoice(choice, allConfigKeys);
 
             // Update the configuration and continue the loop regardless of result
             await this.UpdateSingleConfigurationAsync(configKey);
@@ -466,5 +466,25 @@ public class ConfigurationManager
 #else
         return secret.Substring(0, 4) + "***" + secret.Substring(secret.Length - 4);
 #endif
+    }
+
+    /// <summary>
+    /// Extracts the configuration key from the formatted choice string.
+    /// </summary>
+    private static string ExtractConfigKeyFromChoice(string choice, string[] allConfigKeys)
+    {
+        // Find the key that matches the choice by checking if the choice contains the key
+        foreach (var key in allConfigKeys)
+        {
+            // Check if the choice starts with a status icon followed by space and then the key
+            if (choice.Contains($" {key}"))
+            {
+                return key;
+            }
+        }
+
+        // Fallback: try the original split method if no match found
+        var parts = choice.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length > 1 ? parts[1] : choice;
     }
 }

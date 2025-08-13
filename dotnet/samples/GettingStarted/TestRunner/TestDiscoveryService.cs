@@ -27,16 +27,20 @@ public class TestDiscoveryService
 
         // Group by physical directory structure
         var folderGroups = testClasses
-            .GroupBy(t => GetPhysicalFolderName(t))
+            .GroupBy(t => GetPhysicalFolderPath(t))
             .Where(g => !string.IsNullOrEmpty(g.Key)) // Exclude classes without clear folder structure
             .OrderBy(g => g.Key);
 
         foreach (var folderGroup in folderGroups)
         {
+            var physicalPath = folderGroup.Key;
+            var displayName = ExtractReadmeTitle(physicalPath);
+
             var folder = new TestFolder
             {
-                Name = folderGroup.Key,
-                Description = ExtractFolderDescription(folderGroup.Key),
+                Name = !string.IsNullOrEmpty(displayName) ? displayName : physicalPath,
+                PhysicalPath = physicalPath,
+                Description = ExtractFolderDescription(physicalPath),
                 Classes = folderGroup.Select(this.CreateTestClass).ToList()
             };
             testFolders.Add(folder);
@@ -176,10 +180,10 @@ public class TestDiscoveryService
     }
 
     /// <summary>
-    /// Gets the physical folder name based on the type's location and namespace.
-    /// Maps to the actual directory structure: Steps, Providers, Orchestration, Custom.
+    /// Gets the physical folder path based on the type's namespace.
+    /// Returns the actual directory name for file system operations.
     /// </summary>
-    private static string GetPhysicalFolderName(Type type)
+    private static string GetPhysicalFolderPath(Type type)
     {
         var namespaceName = type.Namespace;
 
@@ -654,5 +658,81 @@ public class TestDiscoveryService
         description = System.Text.RegularExpressions.Regex.Replace(description, @"\[(.*?)\]\(.*?\)", "$1"); // Links
 
         return description.Trim();
+    }
+
+    /// <summary>
+    /// Extracts the main title from the README.md file in the specified folder.
+    /// </summary>
+    private static string ExtractReadmeTitle(string folderName)
+    {
+        try
+        {
+            // Get the base directory of the assembly (where the test project is located)
+            var assemblyLocation = Assembly.GetExecutingAssembly().Location;
+            var projectDirectory = Path.GetDirectoryName(assemblyLocation);
+
+            // Navigate up to find the project root (where .csproj file is located)
+            while (projectDirectory != null && Directory.GetFiles(projectDirectory, "*.csproj").Length == 0)
+            {
+                projectDirectory = Directory.GetParent(projectDirectory)?.FullName;
+            }
+
+            if (projectDirectory == null)
+            {
+                return string.Empty;
+            }
+
+            // Construct the path to the README.md file in the specified folder
+            var readmePath = Path.Combine(projectDirectory, folderName, "README.md");
+
+            if (!File.Exists(readmePath))
+            {
+                return string.Empty;
+            }
+
+            // Read and parse the README.md content to extract the title
+            var content = File.ReadAllText(readmePath);
+            return ParseReadmeTitle(content);
+        }
+        catch (Exception)
+        {
+            // If anything goes wrong, return empty string to fallback to namespace
+            return string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// Parses markdown content and extracts the main title (first # header).
+    /// </summary>
+    private static string ParseReadmeTitle(string markdownContent)
+    {
+        if (string.IsNullOrWhiteSpace(markdownContent))
+        {
+            return string.Empty;
+        }
+
+        var lines = markdownContent.Split('\n');
+
+        foreach (var line in lines)
+        {
+            var trimmedLine = line.Trim();
+
+            // Look for the first # header (main title)
+            if (trimmedLine.Length > 0 && trimmedLine[0] == '#')
+            {
+                // Extract the title text after the # and any spaces
+                var titleText = trimmedLine.TrimStart('#').Trim();
+
+                // Remove any markdown formatting from the title
+                titleText = System.Text.RegularExpressions.Regex.Replace(titleText, @"\*\*(.*?)\*\*", "$1"); // Bold
+                titleText = System.Text.RegularExpressions.Regex.Replace(titleText, @"\*(.*?)\*", "$1");     // Italic
+                titleText = System.Text.RegularExpressions.Regex.Replace(titleText, "`(.*?)`", "$1");       // Code
+                titleText = System.Text.RegularExpressions.Regex.Replace(titleText, @"\[(.*?)\]\(.*?\)", "$1"); // Links
+
+                return titleText.Trim();
+            }
+        }
+
+        return string.Empty;
     }
 }
