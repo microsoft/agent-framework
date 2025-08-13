@@ -18,9 +18,9 @@ public class InteractiveConsole
         ConfigurationManager configurationManager,
         TestExecutionService executionService)
     {
-        _discoveryService = discoveryService;
-        _configurationManager = configurationManager;
-        _executionService = executionService;
+        this._discoveryService = discoveryService;
+        this._configurationManager = configurationManager;
+        this._executionService = executionService;
     }
 
     /// <summary>
@@ -29,7 +29,7 @@ public class InteractiveConsole
     public async Task<int> RunInteractiveAsync()
     {
         // Validate configuration first
-        var configValid = await _configurationManager.ValidateConfigurationAsync();
+        var configValid = await this._configurationManager.ValidateConfigurationAsync();
         if (!configValid)
         {
             AnsiConsole.MarkupLine("[red]Configuration validation failed. Please set up your configuration first.[/]");
@@ -47,13 +47,13 @@ public class InteractiveConsole
             switch (choice)
             {
                 case var _ when choice == NavigationConstants.MainMenu.RunTests:
-                    await RunTestsMenuAsync();
+                    await this.RunTestsMenuAsync();
                     break;
                 case var _ when choice == NavigationConstants.MainMenu.ViewConfiguration:
-                    ShowConfiguration();
+                    this.ShowConfiguration();
                     break;
                 case var _ when choice == NavigationConstants.MainMenu.ManageSecrets:
-                    await ConfigureSecretsAsync();
+                    await this.ConfigureSecretsAsync();
                     break;
                 case var _ when choice == NavigationConstants.MainMenu.Exit:
                     return 0;
@@ -68,7 +68,7 @@ public class InteractiveConsole
     {
         AnsiConsole.MarkupLine($"[blue]Running test with filter: {filter}[/]");
 
-        var result = await _executionService.ExecuteTestAsync(filter);
+        var result = await this._executionService.ExecuteTestAsync(filter);
 
         if (result.Success)
         {
@@ -131,7 +131,7 @@ public class InteractiveConsole
             // Clear the screen to ensure clean display when returning from submenus
             Console.Clear();
 
-            var folders = _discoveryService.DiscoverTestFolders();
+            var folders = this._discoveryService.DiscoverTestFolders();
 
             if (folders.Count == 0)
             {
@@ -143,7 +143,7 @@ public class InteractiveConsole
                 "Select Sample Category:",
                 folders,
                 f => f.Name,
-                f => string.IsNullOrEmpty(f.Description) ? NavigationConstants.CommonUI.NoDescriptionAvailable : f.Description,
+                f => BuildHierarchicalDescription(f),
                 NavigationConstants.CommonUI.Back);
 
             if (folderChoice == NavigationConstants.CommonUI.Back)
@@ -152,7 +152,7 @@ public class InteractiveConsole
             }
 
             var selectedFolder = folders.First(f => f.Name == folderChoice);
-            await ShowFolderMenuAsync(selectedFolder);
+            await this.ShowFolderMenuAsync(selectedFolder);
         }
     }
 
@@ -167,7 +167,7 @@ public class InteractiveConsole
                 $"Samples in {folder.Name}:",
                 folder.Classes,
                 c => c.Name,
-                c => string.IsNullOrEmpty(c.Description) ? NavigationConstants.CommonUI.NoDescriptionAvailable : c.Description,
+                c => BuildHierarchicalDescription(folder, c),
                 NavigationConstants.CommonUI.Back);
 
             if (choice == NavigationConstants.CommonUI.Back)
@@ -176,7 +176,7 @@ public class InteractiveConsole
             }
 
             var testClass = folder.Classes.First(c => c.Name == choice);
-            await ShowClassMenuAsync(testClass, folder);
+            await this.ShowClassMenuAsync(testClass, folder);
         }
     }
 
@@ -223,7 +223,7 @@ public class InteractiveConsole
             }
 
             // Execute the selected test
-            await ExecuteSelectedTestAsync(testClass, choice);
+            await this.ExecuteSelectedTestAsync(testClass, choice);
         }
     }
 
@@ -243,14 +243,14 @@ public class InteractiveConsole
             var method = testClass.Methods.First(m => m.Name == methodName);
             var theoryCase = method.TheoryData.First(t => t.DisplayName == theoryDisplayName);
             var filter = TestExecutionService.GenerateTheoryFilter(method, theoryCase);
-            await ExecuteTestWithResultAsync(filter);
+            await this.ExecuteTestWithResultAsync(filter);
         }
         else
         {
             // Simple fact test or theory without data
             var method = testClass.Methods.First(m => m.Name == choice);
             var filter = TestExecutionService.GenerateMethodFilter(method);
-            await ExecuteTestWithResultAsync(filter);
+            await this.ExecuteTestWithResultAsync(filter);
         }
     }
 
@@ -259,7 +259,7 @@ public class InteractiveConsole
     /// </summary>
     private async Task ExecuteTestWithResultAsync(string filter)
     {
-        var result = await _executionService.ExecuteTestAsync(filter);
+        var result = await this._executionService.ExecuteTestAsync(filter);
 
         if (result.Success)
         {
@@ -303,7 +303,7 @@ public class InteractiveConsole
 
         foreach (var key in allConfigKeys)
         {
-            var hasValue = _configurationManager.HasCurrentConfigurationValue(key);
+            var hasValue = this._configurationManager.HasCurrentConfigurationValue(key);
             var isRequired = ConfigurationKeyExtractor.IsRequiredKey(key);
 
             string statusIcon;
@@ -320,7 +320,7 @@ public class InteractiveConsole
                 statusIcon = "[dim]○[/]"; // Optional field indicator
             }
 
-            var currentValue = _configurationManager.GetCurrentConfigurationValue(key);
+            var currentValue = this._configurationManager.GetCurrentConfigurationValue(key);
 
             // Create a friendly display name from the key
             var displayName = GetFriendlyConfigurationName(key);
@@ -347,7 +347,7 @@ public class InteractiveConsole
     /// </summary>
     private async Task ConfigureSecretsAsync()
     {
-        await _configurationManager.ManageConfigurationAsync();
+        await this._configurationManager.ManageConfigurationAsync();
     }
 
     /// <summary>
@@ -436,7 +436,7 @@ public class InteractiveConsole
     /// <summary>
     /// Builds a hierarchical description showing folder, class, and method context.
     /// </summary>
-    private static string BuildHierarchicalDescription(TestFolder folder, TestClass testClass, TestMethod method)
+    private static string BuildHierarchicalDescription(TestFolder folder, TestClass? testClass = null, TestMethod? method = null)
     {
         var parts = new List<string>();
 
@@ -447,42 +447,15 @@ public class InteractiveConsole
         }
 
         // Add class description (second level)
-        if (!string.IsNullOrEmpty(testClass.Description))
+        if (!string.IsNullOrEmpty(testClass?.Description))
         {
             parts.Add($"[dim]{testClass.Name}:[/] {testClass.Description}");
         }
 
         // Add method description (bottom level)
-        if (!string.IsNullOrEmpty(method.Description))
+        if (!string.IsNullOrEmpty(method?.Description))
         {
             parts.Add($"[dim]{method.Name}:[/] {method.Description}");
-        }
-
-        if (parts.Count == 0)
-        {
-            return NavigationConstants.CommonUI.NoDescriptionAvailable;
-        }
-
-        return string.Join("\n\n", parts);
-    }
-
-    /// <summary>
-    /// Builds a hierarchical description showing folder and class context.
-    /// </summary>
-    private static string BuildHierarchicalDescriptionForClass(TestFolder folder, TestClass testClass)
-    {
-        var parts = new List<string>();
-
-        // Add folder description (top level)
-        if (!string.IsNullOrEmpty(folder.Description))
-        {
-            parts.Add($"[dim]{folder.Name}:[/] {folder.Description}");
-        }
-
-        // Add class description (second level)
-        if (!string.IsNullOrEmpty(testClass.Description))
-        {
-            parts.Add($"[dim]{testClass.Name}:[/] {testClass.Description}");
         }
 
         if (parts.Count == 0)

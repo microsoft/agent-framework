@@ -53,7 +53,7 @@ public class ConfigurationManager
 
         if (setupConfig)
         {
-            return await SetupConfigurationAsync(missingConfigs);
+            return await this.SetupConfigurationAsync(missingConfigs);
         }
 
         return false;
@@ -70,7 +70,7 @@ public class ConfigurationManager
 
         foreach (var configKey in missingConfigs)
         {
-            var value = PromptForConfigValue(configKey);
+            var value = this.PromptForConfigValue(configKey);
             if (!string.IsNullOrEmpty(value))
             {
                 configValues[configKey] = value;
@@ -86,7 +86,7 @@ public class ConfigurationManager
         // Save to user secrets
         foreach (var kvp in configValues)
         {
-            var success = await SetUserSecretAsync(kvp.Key, kvp.Value);
+            var success = await this.SetUserSecretAsync(kvp.Key, kvp.Value);
             if (!success)
             {
                 AnsiConsole.MarkupLine($"[red]Failed to set {kvp.Key}[/]");
@@ -116,7 +116,7 @@ public class ConfigurationManager
 
             foreach (var key in allConfigKeys)
             {
-                var hasValue = HasCurrentConfigurationValue(key);
+                var hasValue = this.HasCurrentConfigurationValue(key);
                 var isRequired = ConfigurationKeyExtractor.IsRequiredKey(key);
 
                 // Converted to switch expression
@@ -127,7 +127,7 @@ public class ConfigurationManager
                     _ => NavigationConstants.ConfigurationDisplay.OptionalFieldIndicator
                 };
 
-                var currentValue = GetCurrentConfigurationValue(key);
+                var currentValue = this.GetCurrentConfigurationValue(key);
                 var displayValue = hasValue
                     ? $"{NavigationConstants.ConfigurationDisplay.CurrentValuePrefix}{currentValue}{NavigationConstants.ConfigurationDisplay.ClosingParenthesis}"
                     : (isRequired ? NavigationConstants.ConfigurationDisplay.NotSetSuffix : NavigationConstants.ConfigurationDisplay.OptionalSuffix);
@@ -151,7 +151,7 @@ public class ConfigurationManager
             var configKey = choice.Split(' ')[1]; // Skip the status icon
 
             // Update the configuration and continue the loop regardless of result
-            await UpdateSingleConfigurationAsync(configKey);
+            await this.UpdateSingleConfigurationAsync(configKey);
 
             // Clear the screen for the next iteration
             AnsiConsole.Clear();
@@ -163,8 +163,8 @@ public class ConfigurationManager
     /// </summary>
     private async Task<bool> UpdateSingleConfigurationAsync(string configKey)
     {
-        var currentValue = GetMaskedConfigValue(configKey);
-        var hasCurrentValue = HasConfigurationValue(configKey);
+        var currentValue = this.GetMaskedConfigValue(configKey);
+        var hasCurrentValue = this.HasConfigurationValue(configKey);
 
         AnsiConsole.MarkupLine($"[blue]Updating: {configKey}[/]");
 
@@ -195,13 +195,13 @@ public class ConfigurationManager
         {
             case var _ when action == NavigationConstants.ConfigurationActions.SetNewValue:
                 var existingValue = this._configuration[configKey];
-                var newValue = PromptForConfigValue(configKey, existingValue);
+                var newValue = this.PromptForConfigValue(configKey, existingValue);
                 if (!string.IsNullOrEmpty(newValue))
                 {
-                    var success = await SetUserSecretAsync(configKey, newValue);
+                    var success = await this.SetUserSecretAsync(configKey, newValue);
                     if (success)
                     {
-                        RefreshConfiguration();
+                        this.RefreshConfiguration();
                         AnsiConsole.MarkupLine(NavigationConstants.ConfigurationMessages.UpdatedSuccessfully);
                         return true;
                     }
@@ -209,10 +209,10 @@ public class ConfigurationManager
                 return false;
 
             case var _ when action == NavigationConstants.ConfigurationActions.RemoveCurrentValue:
-                var removed = await RemoveUserSecretAsync(configKey);
+                var removed = await this.RemoveUserSecretAsync(configKey);
                 if (removed)
                 {
-                    RefreshConfiguration();
+                    this.RefreshConfiguration();
                     AnsiConsole.MarkupLine(NavigationConstants.ConfigurationMessages.RemovedSuccessfully);
                     return true;
                 }
@@ -415,7 +415,7 @@ public class ConfigurationManager
     public string GetCurrentConfigurationValue(string key)
     {
         // Always refresh configuration to get the latest values
-        RefreshConfiguration();
+        this.RefreshConfiguration();
 
         var value = this._configuration[key];
 
@@ -441,7 +441,7 @@ public class ConfigurationManager
     public bool HasCurrentConfigurationValue(string key)
     {
         // Always refresh configuration to get the latest values
-        RefreshConfiguration();
+        this.RefreshConfiguration();
 
         return !string.IsNullOrEmpty(this._configuration[key]);
     }

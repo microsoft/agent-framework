@@ -14,7 +14,7 @@ public class TestDiscoveryService
 
     public TestDiscoveryService()
     {
-        _assembly = Assembly.GetExecutingAssembly();
+        this._assembly = Assembly.GetExecutingAssembly();
     }
 
     /// <summary>
@@ -23,7 +23,7 @@ public class TestDiscoveryService
     public List<TestFolder> DiscoverTestFolders()
     {
         var testFolders = new List<TestFolder>();
-        var testClasses = GetTestClasses();
+        var testClasses = this.GetTestClasses();
 
         // Group by physical directory structure
         var folderGroups = testClasses
@@ -37,7 +37,7 @@ public class TestDiscoveryService
             {
                 Name = folderGroup.Key,
                 Description = ExtractFolderDescription(folderGroup.Key),
-                Classes = folderGroup.Select(CreateTestClass).ToList()
+                Classes = folderGroup.Select(this.CreateTestClass).ToList()
             };
             testFolders.Add(folder);
         }
@@ -50,7 +50,7 @@ public class TestDiscoveryService
     /// </summary>
     private List<Type> GetTestClasses()
     {
-        return _assembly.GetTypes()
+        return this._assembly.GetTypes()
             .Where(t => t.IsClass && !t.IsAbstract)
             .Where(t => HasTestMethods(t))
             .Where(t => !t.Namespace?.Contains("TestRunner") == true) // Exclude our own classes
@@ -79,7 +79,7 @@ public class TestDiscoveryService
             FullName = type.FullName ?? type.Name,
             Description = ExtractTypeDescription(type),
             Type = type,
-            Methods = GetTestMethods(type)
+            Methods = this.GetTestMethods(type)
         };
 
         return testClass;
@@ -105,7 +105,7 @@ public class TestDiscoveryService
                 Description = ExtractMethodDescription(method),
                 MethodInfo = method,
                 IsTheory = method.GetCustomAttributes<TheoryAttribute>().Any(),
-                TheoryData = GetTheoryData(method)
+                TheoryData = this.GetTheoryData(method)
             };
 
             methods.Add(testMethod);
