@@ -1300,7 +1300,7 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
                     AdditionalProperties = message.AdditionalProperties,
                     RawRepresentation = message.RawRepresentation,
                     MessageId = message.MessageId,
-               };
+                };
             }
         }
 

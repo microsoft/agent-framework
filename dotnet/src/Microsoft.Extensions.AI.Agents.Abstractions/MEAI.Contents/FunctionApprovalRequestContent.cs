@@ -26,20 +26,20 @@ public class FunctionApprovalRequestContent : UserInputRequestContent
     public FunctionCallContent FunctionCall { get; }
 
     /// <summary>
-    /// Creates a <see cref="ChatMessage"/> representing an approval response.
+    /// Creates a <see cref="FunctionApprovalResponseContent"/> representing an approval response.
     /// </summary>
-    /// <returns>The <see cref="ChatMessage"/> representing the approval response.</returns>
-    public ChatMessage Approve()
+    /// <returns>The <see cref="FunctionApprovalResponseContent"/> representing the approval response.</returns>
+    public FunctionApprovalResponseContent CreateApproval()
     {
-        return new ChatMessage(ChatRole.User, [new FunctionApprovalResponseContent(this.Id, true, this.FunctionCall) { OriginalMessageMetadata = this.OriginalMessageMetadata }]);
+        return new FunctionApprovalResponseContent(this.Id, true, this.FunctionCall) { OriginalMessageMetadata = this.OriginalMessageMetadata };
     }
 
     /// <summary>
-    /// Creates a <see cref="ChatMessage"/> representing a rejection response.
+    /// Creates a <see cref="FunctionApprovalResponseContent"/> representing a rejection response.
     /// </summary>
-    /// <returns>The <see cref="ChatMessage"/> representing the rejection response.</returns>
-    public ChatMessage Reject()
+    /// <returns>The <see cref="FunctionApprovalResponseContent"/> representing the rejection response.</returns>
+    public FunctionApprovalResponseContent CreateRejection()
     {
-        return new ChatMessage(ChatRole.User, [new FunctionApprovalResponseContent(this.Id, false, this.FunctionCall) { OriginalMessageMetadata = this.OriginalMessageMetadata }]);
+        return new FunctionApprovalResponseContent(this.Id, false, this.FunctionCall) { OriginalMessageMetadata = this.OriginalMessageMetadata };
     }
 }
