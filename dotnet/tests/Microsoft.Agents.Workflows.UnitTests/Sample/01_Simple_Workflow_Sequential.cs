@@ -37,8 +37,6 @@ internal sealed class UppercaseExecutor() : Executor<UppercaseExecutor>("Upperca
     public async ValueTask<string> HandleAsync(string message, IWorkflowContext context)
     {
         string result = message.ToUpperInvariant();
-
-        await context.SendMessageAsync(result).ConfigureAwait(false);
         return result;
     }
 }
@@ -51,7 +49,6 @@ internal sealed class ReverseTextExecutor() : Executor<ReverseTextExecutor>("Rev
         System.Array.Reverse(charArray);
         string result = new(charArray);
 
-        await context.SendMessageAsync(result).ConfigureAwait(false);
         await context.AddEventAsync(new WorkflowCompletedEvent(result)).ConfigureAwait(false);
         return result;
     }
