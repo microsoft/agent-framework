@@ -1226,31 +1226,17 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
             {
                 var content = message.Contents[j];
 
-                // Capture each call id for each approval request.
+                // Validation: Capture each call id for each approval request so that we can ensure that we have a matching response later.
                 if (content is FunctionApprovalRequestContent request_)
                 {
                     requestCallIds ??= [];
                     requestCallIds.Add(request_.FunctionCall.CallId);
                 }
 
-                // Remove the call id for each approval response.
-                if (content is FunctionApprovalResponseContent response_)
+                // Validation: Remove the call id for each approval response, to check it off the list of requests we need responses for.
+                if (content is FunctionApprovalResponseContent response_ && requestCallIds is not null)
                 {
-                    // TODO: We cannot check for a matching request here, since the request is not availble for service managed threads, so consider if this still makes sense.
-                    //if (requestCallIds is null)
-                    //{
-                    //    Throw.InvalidOperationException("FunctionApprovalResponseContent found without a matching FunctionApprovalRequestContent.");
-                    //}
-
-                    //if (!requestCallIds.Contains(response_.FunctionCall.CallId))
-                    //{
-                    //    Throw.InvalidOperationException($"FunctionApprovalResponseContent found with a FunctionCall.CallId '{response_.FunctionCall.CallId}' that does not match any FunctionApprovalRequestContent.");
-                    //}
-
-                    if (requestCallIds is not null)
-                    {
-                        requestCallIds.Remove(response_.FunctionCall.CallId);
-                    }
+                    requestCallIds.Remove(response_.FunctionCall.CallId);
                 }
 
                 // Requests/responses that are already executed.
@@ -1260,7 +1246,7 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
                     continue;
                 }
 
-                // Build a list of response that are not yet executed, so that we can execute them before we invoke the LLM.
+                // Build a list of responses that are not yet executed, so that we can execute them before we invoke the LLM.
                 // We can also remove them from the list of messages, since they will be turned back into FunctionCallContent and FunctionResultContent.
                 if (content is FunctionApprovalResponseContent response && !functionResultCallIds.Contains(response.FunctionCall.CallId))
                 {
