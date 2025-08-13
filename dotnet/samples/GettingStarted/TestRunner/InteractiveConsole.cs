@@ -28,8 +28,6 @@ public class InteractiveConsole
     /// </summary>
     public async Task<int> RunInteractiveAsync()
     {
-        ShowWelcome();
-
         // Validate configuration first
         var configValid = await _configurationManager.ValidateConfigurationAsync();
         if (!configValid)
@@ -40,6 +38,10 @@ public class InteractiveConsole
 
         while (true)
         {
+            // Clear the screen to ensure clean display when returning from submenus
+            Console.Clear();
+            ShowWelcome();
+
             var choice = ShowMainMenu();
 
             switch (choice)
@@ -133,15 +135,15 @@ public class InteractiveConsole
 
             if (folders.Count == 0)
             {
-                AnsiConsole.MarkupLine("[red]No test folders found[/]");
+                AnsiConsole.MarkupLine("[red]No sample category found[/]");
                 return;
             }
 
             var folderChoice = ShowInteractiveMenuWithDescriptions(
-                "Select a test folder:",
+                "Select Sample Category:",
                 folders,
                 f => f.Name,
-                f => string.IsNullOrEmpty(f.Description) ? "No description available" : f.Description,
+                f => string.IsNullOrEmpty(f.Description) ? NavigationConstants.CommonUI.NoDescriptionAvailable : f.Description,
                 NavigationConstants.CommonUI.Back);
 
             if (folderChoice == NavigationConstants.CommonUI.Back)
@@ -162,23 +164,19 @@ public class InteractiveConsole
         while (true)
         {
             var choice = ShowInteractiveMenuWithDescriptions(
-                $"Tests in {folder.Name}:",
+                $"Samples in {folder.Name}:",
                 folder.Classes,
-                c => $"Class: {c.Name}",
-                c => string.IsNullOrEmpty(c.Description) ? "No description available" : c.Description,
-                NavigationConstants.TestNavigation.BackToFolderSelection);
+                c => c.Name,
+                c => string.IsNullOrEmpty(c.Description) ? NavigationConstants.CommonUI.NoDescriptionAvailable : c.Description,
+                NavigationConstants.CommonUI.Back);
 
-            if (choice == NavigationConstants.TestNavigation.BackToFolderSelection)
+            if (choice == NavigationConstants.CommonUI.Back)
             {
                 return;
             }
 
-            if (choice.StartsWith("Class: ", StringComparison.Ordinal))
-            {
-                var className = choice.Substring("Class: ".Length);
-                var testClass = folder.Classes.First(c => c.Name == className);
-                await ShowClassMenuAsync(testClass, folder);
-            }
+            var testClass = folder.Classes.First(c => c.Name == choice);
+            await ShowClassMenuAsync(testClass, folder);
         }
     }
 
@@ -213,7 +211,7 @@ public class InteractiveConsole
             }
 
             var choice = ShowInteractiveMenuWithDescriptions(
-                $"Test methods in {testClass.Name}:",
+                $"Options in {testClass.Name}:",
                 menuItems,
                 item => item.Display,
                 item => item.Description,
@@ -387,7 +385,7 @@ public class InteractiveConsole
             string description = string.Empty;
             if (currentIndex == 0 && !string.IsNullOrEmpty(backOption))
             {
-                description = "Return to the previous menu";
+                description = NavigationConstants.CommonUI.BackDescription;
             }
             else
             {
@@ -462,7 +460,34 @@ public class InteractiveConsole
 
         if (parts.Count == 0)
         {
-            return "No description available";
+            return NavigationConstants.CommonUI.NoDescriptionAvailable;
+        }
+
+        return string.Join("\n\n", parts);
+    }
+
+    /// <summary>
+    /// Builds a hierarchical description showing folder and class context.
+    /// </summary>
+    private static string BuildHierarchicalDescriptionForClass(TestFolder folder, TestClass testClass)
+    {
+        var parts = new List<string>();
+
+        // Add folder description (top level)
+        if (!string.IsNullOrEmpty(folder.Description))
+        {
+            parts.Add($"[dim]{folder.Name}:[/] {folder.Description}");
+        }
+
+        // Add class description (second level)
+        if (!string.IsNullOrEmpty(testClass.Description))
+        {
+            parts.Add($"[dim]{testClass.Name}:[/] {testClass.Description}");
+        }
+
+        if (parts.Count == 0)
+        {
+            return NavigationConstants.CommonUI.NoDescriptionAvailable;
         }
 
         return string.Join("\n\n", parts);

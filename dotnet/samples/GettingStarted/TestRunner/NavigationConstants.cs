@@ -68,14 +68,6 @@ public static class NavigationConstants
     }
 
     /// <summary>
-    /// Test execution and folder navigation.
-    /// </summary>
-    public static class TestNavigation
-    {
-        public const string BackToFolderSelection = "Back to Folder Selection";
-    }
-
-    /// <summary>
     /// Common UI elements.
     /// </summary>
     public static class CommonUI
@@ -83,5 +75,7 @@ public static class NavigationConstants
         public const string PressAnyKeyToContinue = "[dim]Press any key to continue...[/]";
         public const string TestOutput = "Test Output";
         public const string Back = "Back";
+        public const string BackDescription = "[dim]Go back to the previous menu[/]";
+        public const string NoDescriptionAvailable = "No description available";
     }
 }

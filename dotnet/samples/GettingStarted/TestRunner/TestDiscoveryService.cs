@@ -608,7 +608,7 @@ public class TestDiscoveryService
             return "No description available";
         }
 
-        var lines = markdownContent.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var lines = markdownContent.Split('\n');
         var descriptionLines = new List<string>();
         var foundFirstHeader = false;
 
