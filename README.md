@@ -1,7 +1,7 @@
 # Microsoft Agent Framework
 
 Highlights
-- Flexible Agent Framework: Build, orchestrate, and deploy AI agents and workflows
+- Flexible Agent Framework: build, orchestrate, and deploy AI agents and workflows
 - Multi-Agent Orchestration: Group chat, sequential, concurrent, and handoff patterns
 - Graph-based Workflows: Connect agents and deterministic functions using data flows with streaming, checkpointing, time-travel, and Human-in-the-loop.
 - Plugin Ecosystem: Extend with native functions, OpenAPI, Model Context Protocol (MCP), and more
