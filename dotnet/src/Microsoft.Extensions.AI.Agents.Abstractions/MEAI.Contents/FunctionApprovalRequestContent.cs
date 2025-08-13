@@ -12,10 +12,10 @@ public class FunctionApprovalRequestContent : UserInputRequestContent
     /// <summary>
     /// Initializes a new instance of the <see cref="FunctionApprovalRequestContent"/> class.
     /// </summary>
-    /// <param name="approvalId">The ID to uniquely identify the user input request/response pair.</param>
+    /// <param name="id">The ID to uniquely identify the function approval request/response pair.</param>
     /// <param name="functionCall">The function call that requires user approval.</param>
-    public FunctionApprovalRequestContent(string approvalId, FunctionCallContent functionCall)
-        : base(approvalId)
+    public FunctionApprovalRequestContent(string id, FunctionCallContent functionCall)
+        : base(id)
     {
         this.FunctionCall = Throw.IfNull(functionCall);
     }
