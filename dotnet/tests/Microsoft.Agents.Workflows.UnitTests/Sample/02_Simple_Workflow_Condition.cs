@@ -63,7 +63,6 @@ internal sealed class DetectSpamExecutor : Executor<DetectSpamExecutor>, IMessag
         bool isSpam = this.SpamKeywords.Any(keyword => message.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0);
 #endif
 
-        await context.SendMessageAsync(isSpam).ConfigureAwait(false);
         return isSpam;
     }
 }

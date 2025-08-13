@@ -11,12 +11,12 @@ namespace Microsoft.Agents.Workflows;
 /// Provides a builder for constructing a switch-like control flow that maps predicates to one or more executors.
 /// Enables the configuration of case-based and default execution logic for dynamic input handling.
 /// </summary>
-public class SwitchBuilder
+public sealed class SwitchBuilder
 {
     private readonly List<ExecutorIsh> _executors = [];
     private readonly Dictionary<string, int> _executorIndicies = [];
     private readonly List<(Func<object?, bool> Predicate, HashSet<int> OutgoingIndicies)> _caseMap = [];
-    private readonly List<int> _defaultIndicies = [];
+    private readonly HashSet<int> _defaultIndicies = [];
 
     /// <summary>
     /// Adds a case to the switch builder that associates a predicate with one or more executors.
@@ -45,11 +45,6 @@ public class SwitchBuilder
                 this._executors.Add(executor);
                 this._executorIndicies[executor.Id] = index;
             }
-            else if (indicies.Contains(index))
-            {
-                // If this executor is already in the case list, skip it.
-                continue;
-            }
 
             indicies.Add(index);
         }
@@ -76,12 +71,6 @@ public class SwitchBuilder
                 this._executors.Add(executor);
                 this._executorIndicies[executor.Id] = index;
             }
-            else if (this._defaultIndicies.Contains(index))
-            {
-                // If this executor is already in the default list, skip it.
-                // TODO: Throw?
-                continue;
-            }
 
             this._defaultIndicies.Add(index);
         }
@@ -92,7 +81,7 @@ public class SwitchBuilder
     internal WorkflowBuilder ReduceToFanOut(WorkflowBuilder builder, ExecutorIsh source)
     {
         List<(Func<object?, bool> Predicate, HashSet<int> OutgoingIndicies)> caseMap = this._caseMap;
-        List<int> defaultIndicies = this._defaultIndicies;
+        HashSet<int> defaultIndicies = this._defaultIndicies;
 
         return builder.AddFanOutEdge(source, CasePartitioner, this._executors.ToArray());
 

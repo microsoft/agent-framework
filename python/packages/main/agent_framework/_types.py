@@ -26,6 +26,7 @@ from pydantic import (
     model_serializer,
 )
 
+from ._logging import get_logger
 from ._pydantic import AFBaseModel
 from ._tools import AITool, ai_function
 from .exceptions import AgentFrameworkException
@@ -35,9 +36,10 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self  # pragma: no cover
 
+logger = get_logger("agent_framework")
+
 # region Constants and types
 _T = TypeVar("_T")
-TValue = TypeVar("TValue")
 TEmbedding = TypeVar("TEmbedding")
 TChatResponse = TypeVar("TChatResponse", bound="ChatResponse")
 TChatToolMode = TypeVar("TChatToolMode", bound="ChatToolMode")
@@ -99,7 +101,6 @@ __all__ = [
     "HostedFileContent",
     "HostedVectorStoreContent",
     "SpeechToTextOptions",
-    "StructuredResponse",
     "TextContent",
     "TextReasoningContent",
     "TextSpanRegion",
@@ -1317,10 +1318,9 @@ class ChatResponse(AFBaseModel):
         created_at: A timestamp for the chat response.
         finish_reason: The reason for the chat response.
         usage_details: The usage details for the chat response.
+        structured_output: The structured output of the chat response, if applicable.
         additional_properties: Any additional properties associated with the chat response.
         raw_representation: The raw representation of the chat response from an underlying implementation.
-
-
     """
 
     messages: list[ChatMessage]
@@ -1338,6 +1338,8 @@ class ChatResponse(AFBaseModel):
     """The reason for the chat response."""
     usage_details: UsageDetails | None = None
     """The usage details for the chat response."""
+    value: Any | None = None
+    """The structured output of the chat response, if applicable."""
     additional_properties: dict[str, Any] | None = None
     """Any additional properties associated with the chat response."""
     raw_representation: Any | None = None
@@ -1354,6 +1356,8 @@ class ChatResponse(AFBaseModel):
         created_at: CreatedAtT | None = None,
         finish_reason: ChatFinishReason | None = None,
         usage_details: UsageDetails | None = None,
+        value: Any | None = None,
+        response_format: type[BaseModel] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1368,6 +1372,8 @@ class ChatResponse(AFBaseModel):
             created_at: Optional timestamp for the chat response.
             finish_reason: Optional reason for the chat response.
             usage_details: Optional usage details for the chat response.
+            value: Optional value of the structured output.
+            response_format: Optional response format for the chat response.
             messages: List of ChatMessage objects to include in the response.
             additional_properties: Optional additional properties associated with the chat response.
             raw_representation: Optional raw representation of the chat response from an underlying implementation.
@@ -1385,6 +1391,8 @@ class ChatResponse(AFBaseModel):
         created_at: CreatedAtT | None = None,
         finish_reason: ChatFinishReason | None = None,
         usage_details: UsageDetails | None = None,
+        value: Any | None = None,
+        response_format: type[BaseModel] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1399,6 +1407,8 @@ class ChatResponse(AFBaseModel):
             created_at: Optional timestamp for the chat response.
             finish_reason: Optional reason for the chat response.
             usage_details: Optional usage details for the chat response.
+            value: Optional value of the structured output.
+            response_format: Optional response format for the chat response.
             additional_properties: Optional additional properties associated with the chat response.
             raw_representation: Optional raw representation of the chat response from an underlying implementation.
             **kwargs: Any additional keyword arguments.
@@ -1416,6 +1426,8 @@ class ChatResponse(AFBaseModel):
         created_at: CreatedAtT | None = None,
         finish_reason: ChatFinishReason | None = None,
         usage_details: UsageDetails | None = None,
+        value: Any | None = None,
+        response_format: type[BaseModel] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1438,29 +1450,44 @@ class ChatResponse(AFBaseModel):
             created_at=created_at,  # type: ignore[reportCallIssue]
             finish_reason=finish_reason,  # type: ignore[reportCallIssue]
             usage_details=usage_details,  # type: ignore[reportCallIssue]
+            value=value,  # type: ignore[reportCallIssue]
             additional_properties=additional_properties,  # type: ignore[reportCallIssue]
             raw_representation=raw_representation,  # type: ignore[reportCallIssue]
             **kwargs,
         )
+        if response_format:
+            self.try_parse_value(output_format_type=response_format)
 
     @classmethod
-    def from_chat_response_updates(cls: type[TChatResponse], updates: Sequence["ChatResponseUpdate"]) -> TChatResponse:
+    def from_chat_response_updates(
+        cls: type[TChatResponse],
+        updates: Sequence["ChatResponseUpdate"],
+        *,
+        output_format_type: type[BaseModel] | None = None,
+    ) -> TChatResponse:
         """Joins multiple updates into a single ChatResponse."""
         msg = cls(messages=[])
         for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
+        if output_format_type:
+            msg.try_parse_value(output_format_type)
         return msg
 
     @classmethod
     async def from_chat_response_generator(
-        cls: type[TChatResponse], updates: AsyncIterable["ChatResponseUpdate"]
+        cls: type[TChatResponse],
+        updates: AsyncIterable["ChatResponseUpdate"],
+        *,
+        output_format_type: type[BaseModel] | None = None,
     ) -> TChatResponse:
         """Joins multiple updates into a single ChatResponse."""
         msg = cls(messages=[])
         async for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
+        if output_format_type:
+            msg.try_parse_value(output_format_type)
         return msg
 
     @property
@@ -1471,97 +1498,13 @@ class ChatResponse(AFBaseModel):
     def __str__(self) -> str:
         return self.text
 
-
-class StructuredResponse(ChatResponse, Generic[TValue]):
-    """Represents a structured response to a chat request.
-
-    Type Parameters:
-        TValue: The type of the value contained in the structured response.
-    """
-
-    value: TValue
-    """The result value of the chat response as an instance of `TValue`."""
-
-    @property
-    def text(self) -> str:
-        """Returns the concatenated text of all messages in the response."""
-        return "\n".join(message.text for message in self.messages)
-
-    @overload
-    def __init__(
-        self,
-        value: TValue,
-        *,
-        messages: ChatMessage | MutableSequence[ChatMessage],
-        response_id: str | None = None,
-        conversation_id: str | None = None,
-        model_id: str | None = None,
-        created_at: CreatedAtT | None = None,
-        finish_reason: ChatFinishReason | None = None,
-        usage_details: UsageDetails | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes a StructuredResponse with the provided parameters."""
-
-    @overload
-    def __init__(
-        self,
-        value: TValue,
-        *,
-        text: TextContent | str,
-        response_id: str | None = None,
-        conversation_id: str | None = None,
-        model_id: str | None = None,
-        created_at: CreatedAtT | None = None,
-        finish_reason: ChatFinishReason | None = None,
-        usage_details: UsageDetails | None = None,
-        raw_representation: Any | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes a StructuredResponse with the provided parameters."""
-
-    def __init__(
-        self,
-        value: TValue,
-        *,
-        messages: ChatMessage | MutableSequence[ChatMessage] | None = None,
-        text: TextContent | str | None = None,
-        response_id: str | None = None,
-        conversation_id: str | None = None,
-        model_id: str | None = None,
-        created_at: CreatedAtT | None = None,
-        finish_reason: ChatFinishReason | None = None,
-        usage_details: UsageDetails | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes a StructuredResponse with the provided parameters."""
-        if messages is None:
-            messages = []
-        elif isinstance(messages, ChatMessage):
-            messages = [messages]
-        if text is not None:
-            if isinstance(text, str):
-                text = TextContent(text=text)
-            messages.append(ChatMessage(role=ChatRole.ASSISTANT, contents=[text]))
-
-        super().__init__(
-            value=value,
-            messages=messages,
-            conversation_id=conversation_id,
-            created_at=created_at,
-            finish_reason=finish_reason,
-            model_id=model_id,
-            response_id=response_id,
-            usage_details=usage_details,
-            additional_properties=additional_properties,
-            raw_representation=raw_representation,
-            **kwargs,
-        )
+    def try_parse_value(self, output_format_type: type[BaseModel]) -> None:
+        """If there is a value, does nothing, otherwise tries to parse the text into the value."""
+        if self.value is None:
+            try:
+                self.value = output_format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
+            except ValidationError as ex:
+                logger.debug("Failed to parse value from chat response text: %s", ex)
 
 
 # region ChatResponseUpdate

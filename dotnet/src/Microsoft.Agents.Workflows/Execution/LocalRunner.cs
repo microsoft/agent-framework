@@ -160,7 +160,8 @@ public class LocalRunner<TInput> : ISuperStepRunner where TInput : notnull
         // that we would need to avoid firing the tasks when we call InvokeEdgeAsync, or RouteExternalMessageAsync.
         IEnumerable<object?> results = (await Task.WhenAll(edgeTasks).ConfigureAwait(false)).SelectMany(r => r);
 
-        // TODO: Commit the state updates (so they are visible to the next step)
+        // Commit the state updates (so they are visible to the next step)
+        await this.RunContext.StateManager.PublishUpdatesAsync().ConfigureAwait(false);
 
         // After the message handler invocations, we may have some events to deliver
         foreach (WorkflowEvent @event in this.RunContext.QueuedEvents)

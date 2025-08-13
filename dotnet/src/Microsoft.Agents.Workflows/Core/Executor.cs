@@ -94,6 +94,12 @@ public abstract class ExecutorBase : IIdentified
             return null; // Void result.
         }
 
+        // If we had a real return type, raise it as a SendMessage; TODO: Should we have a way to disable this behaviour?
+        if (result.Result != null && ExecutionConfiguration.AutoSendMessageHandlerResultObject)
+        {
+            await context.SendMessageAsync(result.Result).ConfigureAwait(false);
+        }
+
         return result.Result;
     }
 

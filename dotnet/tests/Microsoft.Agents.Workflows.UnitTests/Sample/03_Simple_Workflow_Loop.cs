@@ -82,7 +82,6 @@ internal sealed class GuessNumberExecutor : Executor<GuessNumberExecutor>, IMess
         }
 
         this._currGuess = this.NextGuess;
-        await context.SendMessageAsync(this._currGuess).ConfigureAwait(false);
         return this._currGuess;
     }
 }
@@ -112,7 +111,6 @@ internal sealed class JudgeExecutor : Executor<JudgeExecutor>, IMessageHandler<i
             result = NumberSignal.Above;
         }
 
-        await context.SendMessageAsync(result).ConfigureAwait(false);
         return result;
     }
 }
