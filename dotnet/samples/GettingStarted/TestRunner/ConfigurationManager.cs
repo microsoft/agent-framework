@@ -15,7 +15,7 @@ public class ConfigurationManager
 
     public ConfigurationManager(IConfiguration configuration)
     {
-        _configuration = configuration;
+        this._configuration = configuration;
     }
 
     /// <summary>
@@ -29,7 +29,7 @@ public class ConfigurationManager
         // Check all required configuration keys dynamically
         foreach (var key in allConfigKeys)
         {
-            if (ConfigurationKeyExtractor.IsRequiredKey(key) && string.IsNullOrEmpty(_configuration[key]))
+            if (ConfigurationKeyExtractor.IsRequiredKey(key) && string.IsNullOrEmpty(this._configuration[key]))
             {
                 missingConfigs.Add(key);
             }
@@ -119,24 +119,18 @@ public class ConfigurationManager
                 var hasValue = HasCurrentConfigurationValue(key);
                 var isRequired = ConfigurationKeyExtractor.IsRequiredKey(key);
 
-                string statusIcon;
-                if (hasValue)
+                // Converted to switch expression
+                string statusIcon = (hasValue, isRequired) switch
                 {
-                    statusIcon = NavigationConstants.ConfigurationDisplay.SetStatusIcon;
-                }
-                else if (isRequired)
-                {
-                    statusIcon = NavigationConstants.ConfigurationDisplay.NotSetStatusIcon;
-                }
-                else
-                {
-                    statusIcon = "[dim]○[/]"; // Optional field indicator
-                }
+                    (true, _) => NavigationConstants.ConfigurationDisplay.SetStatusIcon,
+                    (false, true) => NavigationConstants.ConfigurationDisplay.NotSetStatusIcon,
+                    _ => NavigationConstants.ConfigurationDisplay.OptionalFieldIndicator
+                };
 
                 var currentValue = GetCurrentConfigurationValue(key);
                 var displayValue = hasValue
                     ? $"{NavigationConstants.ConfigurationDisplay.CurrentValuePrefix}{currentValue}{NavigationConstants.ConfigurationDisplay.ClosingParenthesis}"
-                    : (isRequired ? NavigationConstants.ConfigurationDisplay.NotSetSuffix : " (Optional)");
+                    : (isRequired ? NavigationConstants.ConfigurationDisplay.NotSetSuffix : NavigationConstants.ConfigurationDisplay.OptionalSuffix);
 
                 choices.Add($"{statusIcon} {key}{displayValue}");
             }
@@ -200,7 +194,7 @@ public class ConfigurationManager
         switch (action)
         {
             case var _ when action == NavigationConstants.ConfigurationActions.SetNewValue:
-                var existingValue = _configuration[configKey];
+                var existingValue = this._configuration[configKey];
                 var newValue = PromptForConfigValue(configKey, existingValue);
                 if (!string.IsNullOrEmpty(newValue))
                 {
@@ -233,23 +227,20 @@ public class ConfigurationManager
     }
 
     /// <summary>
-    /// Prompts the user for a configuration value.
-    /// </summary>
-    private string PromptForConfigValue(string configKey)
-    {
-        return PromptForConfigValue(configKey, null);
-    }
-
-    /// <summary>
     /// Prompts the user for a configuration value with an optional current value as default.
     /// </summary>
-    private string PromptForConfigValue(string configKey, string? currentValue)
+    private string PromptForConfigValue(string configKey, string? currentValue = null)
     {
         var friendlyName = ConfigurationKeyExtractor.GetFriendlyDescription(configKey);
         var isSecret = ConfigurationKeyExtractor.IsSecretKey(configKey);
         var isOptional = !ConfigurationKeyExtractor.IsRequiredKey(configKey);
 
-        var prompt = new TextPrompt<string?>($"[blue]Enter {friendlyName}:[/]");
+        // Build prompt text with current value display
+        string promptText;
+        string? formatedValue = (isSecret) ? MaskSecret(currentValue) : currentValue;
+
+        promptText = $"[blue]Enter {friendlyName}:[/]";
+        var prompt = new TextPrompt<string?>(promptText);
 
         // Configure prompt based on attributes
         if (isSecret)
@@ -263,50 +254,22 @@ public class ConfigurationManager
         }
 
         // Set default value if provided
-        if (!string.IsNullOrEmpty(currentValue))
+        if (!string.IsNullOrEmpty(formatedValue))
         {
-            if (isSecret)
-            {
-                // For secrets, show a hint about the current value but don't set as default
-                prompt.DefaultValue(string.Empty);
-                AnsiConsole.MarkupLine($"[dim]Current value: {MaskSecret(currentValue) ?? "***"}[/]");
-                AnsiConsole.MarkupLine("[dim]Press Enter to keep current value, or enter a new value[/]");
-            }
-            else
-            {
-                // For non-secrets, use the current value as default
-                prompt.DefaultValue(currentValue);
-            }
-        }
-        else
-        {
-            // Set sensible defaults for new configurations
-            switch (configKey)
-            {
-                case "OpenAI:ChatModelId":
-                case "AzureOpenAI:DeploymentName":
-                case "AzureAI:DeploymentName":
-                    prompt.DefaultValue("gpt-4o-mini");
-                    break;
-            }
+            // For secrets, allow empty input to keep current value
+            prompt.DefaultValue(formatedValue);
+            AnsiConsole.MarkupLine("[dim]Press Enter to keep current value, or enter a new value[/]");
         }
 
-        // Add validation for specific types
-        if (configKey.EndsWith(":Endpoint", StringComparison.OrdinalIgnoreCase))
-        {
-            prompt.ValidationErrorMessage("[red]Please enter a valid HTTPS URL[/]")
-                  .Validate(url => string.IsNullOrEmpty(url) || (Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == "https"));
-        }
-
-        var result = AnsiConsole.Prompt(prompt);
+        var userInput = AnsiConsole.Prompt(prompt);
 
         // If user pressed Enter for a secret with current value, return the current value
-        if (isSecret && string.IsNullOrEmpty(result) && !string.IsNullOrEmpty(currentValue))
+        if (isSecret && string.IsNullOrWhiteSpace(userInput) && !string.IsNullOrEmpty(currentValue))
         {
             return currentValue!;
         }
 
-        return result ?? string.Empty;
+        return userInput ?? string.Empty;
     }
 
     /// <summary>
@@ -333,7 +296,7 @@ public class ConfigurationManager
                 return false;
             }
 
-#if NET472
+#if !NET8_0_OR_GREATER
             process.WaitForExit();
 #else
             await process.WaitForExitAsync();
@@ -380,7 +343,7 @@ public class ConfigurationManager
                 return false;
             }
 
-#if NET472
+#if !NET8_0_OR_GREATER
             process.WaitForExit();
 #else
             await process.WaitForExitAsync();
@@ -408,7 +371,7 @@ public class ConfigurationManager
     /// </summary>
     private bool HasConfigurationValue(string key)
     {
-        return !string.IsNullOrEmpty(_configuration[key]);
+        return !string.IsNullOrEmpty(this._configuration[key]);
     }
 
     /// <summary>
@@ -416,10 +379,10 @@ public class ConfigurationManager
     /// </summary>
     private string GetMaskedConfigValue(string key)
     {
-        var value = _configuration[key];
+        var value = this._configuration[key];
         if (string.IsNullOrEmpty(value))
         {
-            return "[dim]Not set[/]";
+            return NavigationConstants.ConfigurationMessages.NotSet;
         }
 
         // Only mask actual secrets (API keys), show other values as-is
@@ -442,7 +405,7 @@ public class ConfigurationManager
             .AddUserSecrets(typeof(Program).Assembly)
             .AddEnvironmentVariables();
 
-        _configuration = builder.Build();
+        this._configuration = builder.Build();
     }
 
     /// <summary>
@@ -454,7 +417,7 @@ public class ConfigurationManager
         // Always refresh configuration to get the latest values
         RefreshConfiguration();
 
-        var value = _configuration[key];
+        var value = this._configuration[key];
 
         if (string.IsNullOrEmpty(value))
         {
@@ -480,7 +443,7 @@ public class ConfigurationManager
         // Always refresh configuration to get the latest values
         RefreshConfiguration();
 
-        return !string.IsNullOrEmpty(_configuration[key]);
+        return !string.IsNullOrEmpty(this._configuration[key]);
     }
 
     /// <summary>
@@ -498,7 +461,7 @@ public class ConfigurationManager
             return "***";
         }
 
-#if NET9_0_OR_GREATER
+#if NET8_0_OR_GREATER
         return string.Concat(secret.AsSpan(0, 4), "***", secret.AsSpan(secret.Length - 4));
 #else
         return secret.Substring(0, 4) + "***" + secret.Substring(secret.Length - 4);

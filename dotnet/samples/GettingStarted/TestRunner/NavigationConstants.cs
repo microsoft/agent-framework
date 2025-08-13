@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 namespace GettingStarted.TestRunner;
 
@@ -64,6 +64,8 @@ public static class NavigationConstants
         public const string CurrentValuePrefix = " (Current: ";
         public const string NotSetSuffix = " (Not set)";
         public const string ClosingParenthesis = ")";
+        public const string OptionalFieldIndicator = "[dim]○[/]";
+        public const string OptionalSuffix = " (Optional)";
     }
 
     /// <summary>
@@ -74,7 +76,6 @@ public static class NavigationConstants
         public const string BackToFolderSelection = "Back to Folder Selection";
         public const string BackToMainMenu = "Back to Main Menu";
         public const string Back = "Back";
-        public const string SelectSpecificTestClass = "Select Specific Test Class";
     }
 
     /// <summary>

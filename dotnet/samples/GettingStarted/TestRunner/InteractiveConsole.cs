@@ -10,7 +10,6 @@ namespace GettingStarted.TestRunner;
 public class InteractiveConsole
 {
     private static readonly string[] BackToMainMenuOptions = { NavigationConstants.TestNavigation.BackToMainMenu };
-    private static readonly string[] BackOptions = { NavigationConstants.TestNavigation.Back };
 
     private readonly TestDiscoveryService _discoveryService;
     private readonly ConfigurationManager _configurationManager;
@@ -69,7 +68,7 @@ public class InteractiveConsole
     {
         AnsiConsole.MarkupLine($"[blue]Running test with filter: {filter}[/]");
 
-        var result = await _executionService.ExecuteTestAsync(filter, verbose: true);
+        var result = await _executionService.ExecuteTestAsync(filter);
 
         if (result.Success)
         {
@@ -116,10 +115,10 @@ public class InteractiveConsole
             new SelectionPrompt<string>()
                 .Title("[green]What would you like to do?[/]")
                 .AddChoices(
+                    NavigationConstants.MainMenu.Exit,
                     NavigationConstants.MainMenu.RunTests,
                     NavigationConstants.MainMenu.ViewConfiguration,
-                    NavigationConstants.MainMenu.ManageSecrets,
-                    NavigationConstants.MainMenu.Exit));
+                    NavigationConstants.MainMenu.ManageSecrets));
     }
 
     /// <summary>
@@ -140,7 +139,7 @@ public class InteractiveConsole
             var folderChoice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
                     .Title("[green]Select a test folder:[/]")
-                    .AddChoices(folders.Select(f => f.Name).Concat(BackToMainMenuOptions)));
+                    .AddChoices(BackToMainMenuOptions.Concat(folders.Select(f => f.Name))));
 
             if (folderChoice == NavigationConstants.TestNavigation.BackToMainMenu)
             {
@@ -161,11 +160,9 @@ public class InteractiveConsole
         {
             var choices = new List<string>
             {
-                $"Run All Tests in {folder.Name}",
-                NavigationConstants.TestNavigation.SelectSpecificTestClass
+                NavigationConstants.TestNavigation.BackToFolderSelection
             };
             choices.AddRange(folder.Classes.Select(c => $"Class: {c.Name}"));
-            choices.Add(NavigationConstants.TestNavigation.BackToFolderSelection);
 
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
@@ -177,11 +174,7 @@ public class InteractiveConsole
                 return;
             }
 
-            if (choice == NavigationConstants.TestNavigation.SelectSpecificTestClass)
-            {
-                await ShowClassSelectionMenuAsync(folder);
-            }
-            else if (choice.StartsWith("Class: ", StringComparison.Ordinal))
+            if (choice.StartsWith("Class: ", StringComparison.Ordinal))
             {
                 var className = choice.Substring("Class: ".Length);
                 var testClass = folder.Classes.First(c => c.Name == className);
@@ -191,26 +184,7 @@ public class InteractiveConsole
     }
 
     /// <summary>
-    /// Shows the class selection menu.
-    /// </summary>
-    private async Task ShowClassSelectionMenuAsync(TestFolder folder)
-    {
-        var classChoice = AnsiConsole.Prompt(
-            new SelectionPrompt<string>()
-                .Title("[green]Select a test class:[/]")
-                .AddChoices(folder.Classes.Select(c => c.Name).Concat(BackOptions)));
-
-        if (classChoice == "Back")
-        {
-            return;
-        }
-
-        var selectedClass = folder.Classes.First(c => c.Name == classChoice);
-        await ShowClassMenuAsync(selectedClass);
-    }
-
-    /// <summary>
-    /// Shows the menu for a specific test class.
+    /// Shows the menu for a specific test class with flattened test method selection.
     /// </summary>
     private async Task ShowClassMenuAsync(TestClass testClass)
     {
@@ -218,14 +192,30 @@ public class InteractiveConsole
         {
             var choices = new List<string>
             {
-                $"Run All Methods in {testClass.Name}"
+                "Back"
             };
-            choices.AddRange(testClass.Methods.Select(m => $"Method: {m.Name}"));
-            choices.Add("Back");
+
+            // Add all test methods (Facts and individual Theory cases) at the same level
+            foreach (var method in testClass.Methods)
+            {
+                if (!method.IsTheory || method.TheoryData.Count == 0)
+                {
+                    // Simple fact test or theory without data - add as single method
+                    choices.Add(method.Name);
+                }
+                else
+                {
+                    // Theory with data - add each theory case as individual test
+                    foreach (var theoryCase in method.TheoryData)
+                    {
+                        choices.Add($"{method.Name} ({theoryCase.DisplayName})");
+                    }
+                }
+            }
 
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
-                    .Title($"[green]Methods in {testClass.Name}:[/]")
+                    .Title($"[green]Test methods in {testClass.Name}:[/]")
                     .AddChoices(choices));
 
             if (choice == "Back")
@@ -233,60 +223,34 @@ public class InteractiveConsole
                 return;
             }
 
-            if (choice == $"Run All Methods in {testClass.Name}")
-            {
-                var filter = TestExecutionService.GenerateClassFilter(testClass);
-                await ExecuteTestWithResultAsync(filter);
-            }
-            else if (choice.StartsWith("Method: ", StringComparison.Ordinal))
-            {
-                var methodName = choice.Substring("Method: ".Length);
-                var method = testClass.Methods.First(m => m.Name == methodName);
-                await ShowMethodMenuAsync(method);
-            }
+            // Execute the selected test
+            await ExecuteSelectedTestAsync(testClass, choice);
         }
     }
 
     /// <summary>
-    /// Shows the menu for a specific test method.
+    /// Executes the selected test based on the user's choice.
     /// </summary>
-    private async Task ShowMethodMenuAsync(TestMethod method)
+    private async Task ExecuteSelectedTestAsync(TestClass testClass, string choice)
     {
-        if (!method.IsTheory || method.TheoryData.Count == 0)
+        // Check if it's a theory case (contains parentheses)
+        if (choice.Contains('(') && choice.Contains(')'))
         {
-            // Simple fact test or theory without data
-            var filter = TestExecutionService.GenerateMethodFilter(method);
-            await ExecuteTestWithResultAsync(filter);
-            return;
-        }
+            // Extract method name and theory case display name
+            var openParen = choice.IndexOf('(');
+            var methodName = choice.Substring(0, openParen).Trim();
+            var theoryDisplayName = choice.Substring(openParen + 1, choice.Length - openParen - 2);
 
-        var choices = new List<string>
-        {
-            $"Run All Theory Cases for {method.Name}"
-        };
-        choices.AddRange(method.TheoryData.Select(t => $"Theory: {t.DisplayName}"));
-        choices.Add("Back");
-
-        var choice = AnsiConsole.Prompt(
-            new SelectionPrompt<string>()
-                .Title($"[green]Theory cases for {method.Name}:[/]")
-                .AddChoices(choices));
-
-        if (choice == "Back")
-        {
-            return;
-        }
-
-        if (choice == $"Run All Theory Cases for {method.Name}")
-        {
-            var filter = TestExecutionService.GenerateMethodFilter(method);
-            await ExecuteTestWithResultAsync(filter);
-        }
-        else if (choice.StartsWith("Theory: ", StringComparison.Ordinal))
-        {
-            var theoryDisplayName = choice.Substring("Theory: ".Length);
+            var method = testClass.Methods.First(m => m.Name == methodName);
             var theoryCase = method.TheoryData.First(t => t.DisplayName == theoryDisplayName);
             var filter = TestExecutionService.GenerateTheoryFilter(method, theoryCase);
+            await ExecuteTestWithResultAsync(filter);
+        }
+        else
+        {
+            // Simple fact test or theory without data
+            var method = testClass.Methods.First(m => m.Name == choice);
+            var filter = TestExecutionService.GenerateMethodFilter(method);
             await ExecuteTestWithResultAsync(filter);
         }
     }
@@ -296,7 +260,7 @@ public class InteractiveConsole
     /// </summary>
     private async Task ExecuteTestWithResultAsync(string filter)
     {
-        var result = await _executionService.ExecuteTestAsync(filter, verbose: true);
+        var result = await _executionService.ExecuteTestAsync(filter);
 
         if (result.Success)
         {

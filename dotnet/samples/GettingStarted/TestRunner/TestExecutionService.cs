@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics;
+using System.Reflection;
 using Spectre.Console;
 
 namespace GettingStarted.TestRunner;
@@ -14,11 +15,11 @@ public class TestExecutionService
     /// <summary>
     /// Executes a test using the specified filter.
     /// </summary>
-    public async Task<TestResult> ExecuteTestAsync(string filter, bool verbose = false)
+    public async Task<TestResult> ExecuteTestAsync(string filter)
     {
         AnsiConsole.MarkupLine($"[blue]Executing test with filter: {filter}[/]");
 
-        var arguments = BuildTestArguments(filter, verbose);
+        var arguments = BuildTestArguments(filter);
 
         return await AnsiConsole.Status()
             .Spinner(Spinner.Known.Dots)
@@ -54,13 +55,14 @@ public class TestExecutionService
     /// <summary>
     /// Builds the dotnet test arguments.
     /// </summary>
-    private static string BuildTestArguments(string filter, bool verbose)
+    private static string BuildTestArguments(string filter)
     {
         var args = new List<string>
         {
             "test",
             "--no-build",
-            "--verbosity", verbose ? "detailed" : "normal"
+            "--verbosity", "minimal", // Always use detailed to capture console output
+            "--framework", GetCurrentTargetFramework()
         };
 
         if (!string.IsNullOrEmpty(filter))
@@ -69,11 +71,9 @@ public class TestExecutionService
             args.Add($"\"{filter}\"");
         }
 
-        if (verbose)
-        {
-            args.Add("--logger");
-            args.Add("\"console;verbosity=detailed\"");
-        }
+        // Always include console logger to show test output
+        args.Add("--logger");
+        args.Add("\"console;verbosity=detailed\""); // Always use detailed to capture console output
 
         return string.Join(" ", args);
     }
@@ -100,6 +100,67 @@ public class TestExecutionService
     }
 
     /// <summary>
+    /// Gets the current target framework for the running application.
+    /// </summary>
+    private static string GetCurrentTargetFramework()
+    {
+        // Get the target framework from the current assembly's target framework attribute
+        var assembly = Assembly.GetExecutingAssembly();
+        var targetFrameworkAttribute = assembly.GetCustomAttribute<System.Runtime.Versioning.TargetFrameworkAttribute>();
+
+        if (targetFrameworkAttribute != null)
+        {
+            var frameworkName = targetFrameworkAttribute.FrameworkName;
+
+            // Convert framework name to dotnet test format
+            if (frameworkName.StartsWith(".NETCoreApp,Version=v", StringComparison.Ordinal))
+            {
+                var version = frameworkName.Substring(".NETCoreApp,Version=v".Length);
+                return $"net{version}";
+            }
+            else if (frameworkName.StartsWith(".NETFramework,Version=v", StringComparison.Ordinal))
+            {
+                var version = frameworkName.Substring(".NETFramework,Version=v".Length);
+                return $"net{version.Replace(".", "")}";
+            }
+        }
+
+        // Fallback: try to detect from runtime information
+        var runtimeVersion = Environment.Version;
+        if (runtimeVersion.Major >= 5)
+        {
+            return $"net{runtimeVersion.Major}.{runtimeVersion.Minor}";
+        }
+
+        // Default fallback for .NET Framework
+        return "net472";
+    }
+
+    /// <summary>
+    /// Gets the project directory for test execution.
+    /// </summary>
+    private static string GetProjectDirectory()
+    {
+        // Get the directory where the current assembly is located
+        var assemblyLocation = Assembly.GetExecutingAssembly().Location;
+        var assemblyDirectory = Path.GetDirectoryName(assemblyLocation);
+
+        // Navigate up to find the project directory (where .csproj file is located)
+        var currentDirectory = assemblyDirectory;
+        while (currentDirectory != null)
+        {
+            if (Directory.GetFiles(currentDirectory, "*.csproj").Length > 0)
+            {
+                return currentDirectory;
+            }
+            currentDirectory = Directory.GetParent(currentDirectory)?.FullName;
+        }
+
+        // Fallback to current directory if project file not found
+        return Directory.GetCurrentDirectory();
+    }
+
+    /// <summary>
     /// Runs the dotnet test command.
     /// </summary>
     private static async Task<TestResult> RunDotnetTestAsync(string arguments)
@@ -113,7 +174,8 @@ public class TestExecutionService
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
-                CreateNoWindow = true
+                CreateNoWindow = true,
+                WorkingDirectory = GetProjectDirectory()
             };
 
             using var process = Process.Start(startInfo);
@@ -200,7 +262,12 @@ public class TestExecutionService
         if (providerParam?.Value != null)
         {
             var providerValue = providerParam.Value.ToString();
-            return $"DisplayName={className}.{methodName}(provider: {providerValue})";
+
+            // Use precise filter combination for specific theory case targeting
+            var fullyQualifiedName = $"{className}.{methodName}";
+            var displayNamePattern = $"\\(provider: {providerValue}\\)";
+
+            return $"FullyQualifiedName~{fullyQualifiedName}&DisplayName~{displayNamePattern}";
         }
 
         // Fallback to method filter if we can't construct theory filter
