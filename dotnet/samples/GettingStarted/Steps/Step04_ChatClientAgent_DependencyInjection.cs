@@ -7,11 +7,17 @@ using Microsoft.Extensions.Logging;
 
 namespace Steps;
 
+/// <summary>
+/// Demonstrates how to use ChatClientAgent with dependency injection and service collection configuration.
+/// </summary>
 public sealed class Step04_ChatClientAgent_DependencyInjection(ITestOutputHelper output) : AgentSample(output)
 {
     private const string JokerName = "Joker";
     private const string JokerInstructions = "You are good at telling jokes.";
 
+    /// <summary>
+    /// Demonstrates how to configure and use a ChatClientAgent through dependency injection with a service collection.
+    /// </summary>
     [Theory]
     [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
     [InlineData(ChatClientProviders.AzureOpenAI)]

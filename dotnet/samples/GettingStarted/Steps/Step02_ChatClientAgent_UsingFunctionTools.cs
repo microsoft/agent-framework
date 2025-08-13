@@ -12,6 +12,9 @@ namespace Steps;
 /// </summary>
 public sealed class Step02_ChatClientAgent_UsingFunctionTools(ITestOutputHelper output) : AgentSample(output)
 {
+    /// <summary>
+    /// Demonstrates how to use a ChatClientAgent with function tools to answer questions about a restaurant menu.
+    /// </summary>
     [Theory]
     [InlineData(ChatClientProviders.AzureOpenAI)]
     [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
@@ -62,6 +65,9 @@ public sealed class Step02_ChatClientAgent_UsingFunctionTools(ITestOutputHelper 
         await base.AgentCleanUpAsync(provider, agent, thread);
     }
 
+    /// <summary>
+    /// Demonstrates how to use a ChatClientAgent with function tools in streaming mode to answer questions about a restaurant menu.
+    /// </summary>
     [Theory]
     [InlineData(ChatClientProviders.AzureOpenAI)]
     [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]

@@ -135,14 +135,14 @@ public class ConfigurationManager
                 choices.Add($"{statusIcon} {key}{displayValue}");
             }
 
-            choices.Add(NavigationConstants.ConfigurationMenu.BackToMainMenu);
+            choices.Add(NavigationConstants.CommonUI.Back);
 
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
                     .Title(NavigationConstants.ConfigurationMenu.SelectPrompt)
                     .AddChoices(choices));
 
-            if (choice == NavigationConstants.ConfigurationMenu.BackToMainMenu)
+            if (choice == NavigationConstants.CommonUI.Back)
             {
                 return true;
             }

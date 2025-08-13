@@ -9,8 +9,6 @@ namespace GettingStarted.TestRunner;
 /// </summary>
 public class InteractiveConsole
 {
-    private static readonly string[] BackToMainMenuOptions = { NavigationConstants.TestNavigation.BackToMainMenu };
-
     private readonly TestDiscoveryService _discoveryService;
     private readonly ConfigurationManager _configurationManager;
     private readonly TestExecutionService _executionService;
@@ -128,6 +126,9 @@ public class InteractiveConsole
     {
         while (true)
         {
+            // Clear the screen to ensure clean display when returning from submenus
+            Console.Clear();
+
             var folders = _discoveryService.DiscoverTestFolders();
 
             if (folders.Count == 0)
@@ -136,12 +137,14 @@ public class InteractiveConsole
                 return;
             }
 
-            var folderChoice = AnsiConsole.Prompt(
-                new SelectionPrompt<string>()
-                    .Title("[green]Select a test folder:[/]")
-                    .AddChoices(BackToMainMenuOptions.Concat(folders.Select(f => f.Name))));
+            var folderChoice = ShowInteractiveMenuWithDescriptions(
+                "Select a test folder:",
+                folders,
+                f => f.Name,
+                f => string.IsNullOrEmpty(f.Description) ? "No description available" : f.Description,
+                NavigationConstants.CommonUI.Back);
 
-            if (folderChoice == NavigationConstants.TestNavigation.BackToMainMenu)
+            if (folderChoice == NavigationConstants.CommonUI.Back)
             {
                 return;
             }
@@ -174,15 +177,15 @@ public class InteractiveConsole
             {
                 var className = choice.Substring("Class: ".Length);
                 var testClass = folder.Classes.First(c => c.Name == className);
-                await ShowClassMenuAsync(testClass);
+                await ShowClassMenuAsync(testClass, folder);
             }
         }
     }
 
     /// <summary>
-    /// Shows the menu for a specific test class with flattened test method selection.
+    /// Shows the menu for a specific test class with flattened test method selection and hierarchical context.
     /// </summary>
-    private async Task ShowClassMenuAsync(TestClass testClass)
+    private async Task ShowClassMenuAsync(TestClass testClass, TestFolder folder)
     {
         while (true)
         {
@@ -195,9 +198,7 @@ public class InteractiveConsole
                 if (!method.IsTheory || method.TheoryData.Count == 0)
                 {
                     // Simple fact test or theory without data - add as single method
-                    var description = string.IsNullOrEmpty(method.Description)
-                        ? "No description available"
-                        : method.Description;
+                    var description = BuildHierarchicalDescription(folder, testClass, method);
                     menuItems.Add((method.Name, description));
                 }
                 else
@@ -205,9 +206,7 @@ public class InteractiveConsole
                     // Theory with data - add each theory case as individual test
                     foreach (var theoryCase in method.TheoryData)
                     {
-                        var description = string.IsNullOrEmpty(method.Description)
-                            ? "No description available"
-                            : method.Description;
+                        var description = BuildHierarchicalDescription(folder, testClass, method);
                         menuItems.Add(($"{method.Name} ({theoryCase.DisplayName})", description));
                     }
                 }
@@ -431,8 +430,41 @@ public class InteractiveConsole
                 case ConsoleKey.Enter:
                     return choices[currentIndex];
                 case ConsoleKey.Escape:
-                    return !string.IsNullOrEmpty(backOption) ? backOption : choices[0];
+                    return backOption ?? choices[0];
             }
         }
+    }
+
+    /// <summary>
+    /// Builds a hierarchical description showing folder, class, and method context.
+    /// </summary>
+    private static string BuildHierarchicalDescription(TestFolder folder, TestClass testClass, TestMethod method)
+    {
+        var parts = new List<string>();
+
+        // Add folder description (top level)
+        if (!string.IsNullOrEmpty(folder.Description))
+        {
+            parts.Add($"[dim]{folder.Name}:[/] {folder.Description}");
+        }
+
+        // Add class description (second level)
+        if (!string.IsNullOrEmpty(testClass.Description))
+        {
+            parts.Add($"[dim]{testClass.Name}:[/] {testClass.Description}");
+        }
+
+        // Add method description (bottom level)
+        if (!string.IsNullOrEmpty(method.Description))
+        {
+            parts.Add($"[dim]{method.Name}:[/] {method.Description}");
+        }
+
+        if (parts.Count == 0)
+        {
+            return "No description available";
+        }
+
+        return string.Join("\n\n", parts);
     }
 }

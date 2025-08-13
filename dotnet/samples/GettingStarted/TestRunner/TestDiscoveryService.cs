@@ -36,6 +36,7 @@ public class TestDiscoveryService
             var folder = new TestFolder
             {
                 Name = folderGroup.Key,
+                Description = ExtractFolderDescription(folderGroup.Key),
                 Classes = folderGroup.Select(CreateTestClass).ToList()
             };
             testFolders.Add(folder);
@@ -212,15 +213,20 @@ public class TestDiscoveryService
             }
 
             var doc = new XmlDocument();
-            doc.Load(xmlDocPath);
+            using var reader = XmlReader.Create(xmlDocPath, new XmlReaderSettings
+            {
+                DtdProcessing = DtdProcessing.Prohibit,
+                XmlResolver = null
+            });
+            doc.Load(reader);
 
             var memberName = $"T:{type.FullName}";
             var memberNode = doc.SelectSingleNode($"//member[@name='{memberName}']");
             var summaryNode = memberNode?.SelectSingleNode("summary");
 
-            if (summaryNode?.InnerText != null)
+            if (summaryNode?.InnerXml != null)
             {
-                return CleanXmlDocumentation(summaryNode.InnerText);
+                return CleanXmlDocumentation(summaryNode.InnerXml);
             }
         }
         catch (Exception)
@@ -246,22 +252,20 @@ public class TestDiscoveryService
             }
 
             var doc = new XmlDocument();
-            doc.Load(xmlDocPath);
-
-            var parameters = method.GetParameters();
-            var parameterTypes = string.Join(",", parameters.Select(p => p.ParameterType.FullName));
-            var memberName = $"M:{method.DeclaringType?.FullName}.{method.Name}";
-            if (parameters.Length > 0)
+            using var reader = XmlReader.Create(xmlDocPath, new XmlReaderSettings
             {
-                memberName += $"({parameterTypes})";
-            }
+                DtdProcessing = DtdProcessing.Prohibit,
+                XmlResolver = null
+            });
+            doc.Load(reader);
 
-            var memberNode = doc.SelectSingleNode($"//member[@name='{memberName}']");
+            // Try multiple approaches to find the method documentation
+            var memberNode = TryFindMethodNode(doc, method);
             var summaryNode = memberNode?.SelectSingleNode("summary");
 
-            if (summaryNode?.InnerText != null)
+            if (summaryNode?.InnerXml != null)
             {
-                return CleanXmlDocumentation(summaryNode.InnerText);
+                return CleanXmlDocumentation(summaryNode.InnerXml);
             }
         }
         catch (Exception)
@@ -271,6 +275,75 @@ public class TestDiscoveryService
         }
 
         return string.Empty;
+    }
+
+    /// <summary>
+    /// Attempts to find the XML documentation node for a method using multiple strategies.
+    /// </summary>
+    private static XmlNode? TryFindMethodNode(XmlDocument doc, MethodInfo method)
+    {
+        var declaringType = method.DeclaringType;
+        if (declaringType == null)
+        {
+            return null;
+        }
+
+        var parameters = method.GetParameters();
+
+        // Strategy 1: Try with exact parameter type names as they appear in XML
+        var parameterTypes = parameters.Select(p => GetXmlTypeName(p.ParameterType)).ToArray();
+        var memberName = $"M:{declaringType.FullName}.{method.Name}";
+        if (parameters.Length > 0)
+        {
+            memberName += $"({string.Join(",", parameterTypes)})";
+        }
+
+        var memberNode = doc.SelectSingleNode($"//member[@name='{memberName}']");
+        if (memberNode != null)
+        {
+            return memberNode;
+        }
+
+        // Strategy 2: Try without parameters (for overloaded methods, sometimes XML docs don't include params)
+        memberName = $"M:{declaringType.FullName}.{method.Name}";
+        memberNode = doc.SelectSingleNode($"//member[@name='{memberName}']");
+        if (memberNode != null)
+        {
+            return memberNode;
+        }
+
+        // Strategy 3: Try with a broader search pattern
+        var escapedMethodName = method.Name.Replace(".", "\\.");
+        var pattern = $"//member[contains(@name, 'M:{declaringType.FullName}.{escapedMethodName}')]";
+        memberNode = doc.SelectSingleNode(pattern);
+
+        return memberNode;
+    }
+
+    /// <summary>
+    /// Converts a .NET type to its XML documentation representation.
+    /// </summary>
+    private static string GetXmlTypeName(Type type)
+    {
+        if (type.IsGenericType)
+        {
+            var genericTypeName = type.GetGenericTypeDefinition().FullName;
+            if (genericTypeName != null)
+            {
+                // Remove the generic arity suffix (e.g., `1, `2)
+                var backtickIndex = genericTypeName.IndexOf('`');
+                if (backtickIndex > 0)
+                {
+                    genericTypeName = genericTypeName.Substring(0, backtickIndex);
+                }
+
+                var genericArgs = type.GetGenericArguments().Select(GetXmlTypeName);
+                return $"{genericTypeName}{{{string.Join(",", genericArgs)}}}";
+            }
+        }
+
+        // Handle specific type mappings for XML documentation
+        return type.FullName ?? type.Name;
     }
 
     /// <summary>
@@ -289,7 +362,8 @@ public class TestDiscoveryService
     }
 
     /// <summary>
-    /// Cleans XML documentation text by removing extra whitespace and formatting.
+    /// Converts XML documentation text to rich Spectre.Console markup by transforming XML documentation tags
+    /// into appropriate console formatting with comprehensive support for all standard XML documentation elements.
     /// </summary>
     private static string CleanXmlDocumentation(string xmlText)
     {
@@ -298,17 +372,287 @@ public class TestDiscoveryService
             return string.Empty;
         }
 
-        // Remove XML tags like <see cref="..."/> and replace with just the referenced name
-        var cleaned = System.Text.RegularExpressions.Regex.Replace(xmlText, "<see cref=\"[^\"]*\\.([^\"\\.]+)\"\\s*/>", "$1");
-        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, "<see cref=\"([^\"]+)\"\\s*/>", "$1");
+        var cleaned = xmlText;
 
-        // Remove other XML tags
+        // Convert <see cref="..."/> tags to blue highlighted references
+        // Handle fully qualified type names (extract just the class name)
+        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+            @"<see cref=""[^""]*\.([^""\.\s]+)""\s*/>",
+            "[blue]$1[/]");
+
+        // Handle simple type references
+        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+            @"<see cref=""([^""]+)""\s*/>",
+            "[blue]$1[/]");
+
+        // Convert <seealso cref="..."/> tags to dimmed cross-references
+        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+            @"<seealso cref=""[^""]*\.([^""\.\s]+)""\s*/>",
+            "[dim]See also: [blue]$1[/][/]");
+
+        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+            @"<seealso cref=""([^""]+)""\s*/>",
+            "[dim]See also: [blue]$1[/][/]");
+
+        // Convert <paramref name="..."/> tags to yellow highlighted parameters
+        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+            @"<paramref name=""([^""]+)""\s*/>",
+            "[yellow]$1[/]");
+
+        // Handle <see langword="..."/> tags (like null, true, false)
+        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+            @"<see langword=""([^""]+)""\s*/>",
+            "[italic]$1[/]");
+
+        // Convert <param name="...">...</param> tags to parameter documentation
+        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+            @"<param name=""([^""]+)"">([^<]*)</param>",
+            "\n[yellow]$1[/]: $2");
+
+        // Convert <typeparam name="...">...</typeparam> tags to type parameter documentation
+        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+            @"<typeparam name=""([^""]+)"">([^<]*)</typeparam>",
+            "\n[cyan]$1[/]: $2");
+
+        // Convert <returns>...</returns> tags to return value descriptions
+        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+            "<returns>([^<]*)</returns>",
+            "\n[green]Returns:[/] $1");
+
+        // Convert <exception cref="...">...</exception> tags to exception documentation
+        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+            @"<exception cref=""[^""]*\.([^""\.\s]+)"">([^<]*)</exception>",
+            "\n[red]Throws $1:[/] $2");
+
+        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+            @"<exception cref=""([^""]+)"">([^<]*)</exception>",
+            "\n[red]Throws $1:[/] $2");
+
+        // Convert <value>...</value> tags to property value descriptions
+        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+            "<value>([^<]*)</value>",
+            "\n[blue]Value:[/] $1");
+
+        // Convert <remarks>...</remarks> tags to additional notes
+        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+            "<remarks>([^<]*)</remarks>",
+            "\n[dim]Note:[/] $1");
+
+        // Convert <c>...</c> tags to grey inline code
+        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+            "<c>([^<]*)</c>",
+            "[grey]$1[/]");
+
+        // Convert <code>...</code> tags to grey code blocks
+        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+            "<code[^>]*>([^<]*)</code>",
+            "[grey]$1[/]");
+
+        // Convert <para>...</para> tags to paragraph breaks
+        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+            "<para>([^<]*)</para>",
+            "\n\n$1");
+
+        // Convert <example>...</example> tags to dimmed examples
+        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+            "<example>([^<]*)</example>",
+            "\n[dim]Example:[/] $1");
+
+        // Handle list processing - this needs to be done before removing other tags
+        cleaned = ProcessXmlLists(cleaned);
+
+        // Remove any remaining XML tags that we haven't handled
         cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, "<[^>]+>", "");
 
-        // Clean up whitespace
-        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, "\\s+", " ");
+        // Clean up whitespace while preserving intentional line breaks
+        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, "[ \\t]+", " ");
+        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, "\\n\\s*\\n", "\n\n");
         cleaned = cleaned.Trim();
 
         return cleaned;
+    }
+
+    /// <summary>
+    /// Processes XML list elements and converts them to formatted text with appropriate bullet points or numbering.
+    /// </summary>
+    private static string ProcessXmlLists(string xmlText)
+    {
+        if (string.IsNullOrEmpty(xmlText))
+        {
+            return string.Empty;
+        }
+
+        var result = xmlText;
+
+        // Process bullet lists
+        result = System.Text.RegularExpressions.Regex.Replace(result,
+            @"<list type=""bullet"">(.*?)</list>",
+            match => ProcessListItems(match.Groups[1].Value, "• "),
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+
+        // Process numbered lists
+        result = System.Text.RegularExpressions.Regex.Replace(result,
+            @"<list type=""number"">(.*?)</list>",
+            match => ProcessListItems(match.Groups[1].Value, string.Empty),
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+
+        // Process table lists (treat as bullet lists for simplicity)
+        result = System.Text.RegularExpressions.Regex.Replace(result,
+            @"<list type=""table"">(.*?)</list>",
+            match => ProcessListItems(match.Groups[1].Value, "• "),
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+
+        return result;
+    }
+
+    /// <summary>
+    /// Processes individual list items and formats them with appropriate prefixes.
+    /// </summary>
+    private static string ProcessListItems(string listContent, string bulletPrefix)
+    {
+        if (string.IsNullOrEmpty(listContent))
+        {
+            return string.Empty;
+        }
+
+        var items = new List<string>();
+        var itemNumber = 1;
+
+        // Handle <item><description>...</description></item> format
+        var descriptionMatches = System.Text.RegularExpressions.Regex.Matches(listContent,
+            "<item><description>([^<]*)</description></item>",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+
+        foreach (System.Text.RegularExpressions.Match match in descriptionMatches)
+        {
+            var description = match.Groups[1].Value.Trim();
+            if (!string.IsNullOrEmpty(description))
+            {
+                var prefix = !string.IsNullOrEmpty(bulletPrefix) ? bulletPrefix : $"{itemNumber}. ";
+                items.Add($"\n{prefix}{description}");
+                itemNumber++;
+            }
+        }
+
+        // Handle <item><term>...</term><description>...</description></item> format
+        var termMatches = System.Text.RegularExpressions.Regex.Matches(listContent,
+            "<item><term>([^<]*)</term><description>([^<]*)</description></item>",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+
+        foreach (System.Text.RegularExpressions.Match match in termMatches)
+        {
+            var term = match.Groups[1].Value.Trim();
+            var description = match.Groups[2].Value.Trim();
+            if (!string.IsNullOrEmpty(term) || !string.IsNullOrEmpty(description))
+            {
+                var prefix = !string.IsNullOrEmpty(bulletPrefix) ? bulletPrefix : $"{itemNumber}. ";
+                var formattedItem = !string.IsNullOrEmpty(term)
+                    ? $"{prefix}[bold]{term}[/]: {description}"
+                    : $"{prefix}{description}";
+                items.Add($"\n{formattedItem}");
+                itemNumber++;
+            }
+        }
+
+        return items.Count > 0 ? string.Concat(items) : string.Empty;
+    }
+
+    /// <summary>
+    /// Extracts the folder description from the README.md file in the specified folder.
+    /// </summary>
+    private static string ExtractFolderDescription(string folderName)
+    {
+        try
+        {
+            // Get the base directory of the assembly (where the test project is located)
+            var assemblyLocation = Assembly.GetExecutingAssembly().Location;
+            var projectDirectory = Path.GetDirectoryName(assemblyLocation);
+
+            // Navigate up to find the project root (where .csproj file is located)
+            while (projectDirectory != null && Directory.GetFiles(projectDirectory, "*.csproj").Length == 0)
+            {
+                projectDirectory = Directory.GetParent(projectDirectory)?.FullName;
+            }
+
+            if (projectDirectory == null)
+            {
+                return "No description available";
+            }
+
+            // Construct the path to the README.md file in the specified folder
+            var readmePath = Path.Combine(projectDirectory, folderName, "README.md");
+
+            if (!File.Exists(readmePath))
+            {
+                return "No description available";
+            }
+
+            // Read and parse the README.md content
+            var content = File.ReadAllText(readmePath);
+            return ParseMarkdownDescription(content);
+        }
+        catch (Exception)
+        {
+            // If anything goes wrong, return a default message
+            return "No description available";
+        }
+    }
+
+    /// <summary>
+    /// Parses markdown content and extracts a clean description for display.
+    /// </summary>
+    private static string ParseMarkdownDescription(string markdownContent)
+    {
+        if (string.IsNullOrWhiteSpace(markdownContent))
+        {
+            return "No description available";
+        }
+
+        var lines = markdownContent.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var descriptionLines = new List<string>();
+        var foundFirstHeader = false;
+
+        foreach (var line in lines)
+        {
+            var trimmedLine = line.Trim();
+
+            // Skip the first header line (# Title)
+            if (trimmedLine.Length > 0 && trimmedLine[0] == '#' && !foundFirstHeader)
+            {
+                foundFirstHeader = true;
+                continue;
+            }
+
+            // Stop at subsequent headers
+            if (trimmedLine.Length > 0 && trimmedLine[0] == '#' && foundFirstHeader)
+            {
+                break;
+            }
+
+            // Skip empty lines at the beginning
+            if (!foundFirstHeader || string.IsNullOrWhiteSpace(trimmedLine))
+            {
+                continue;
+            }
+
+            // Add content lines
+            descriptionLines.Add(trimmedLine);
+        }
+
+        if (descriptionLines.Count == 0)
+        {
+            return "No description available";
+        }
+
+        // Join the description lines and clean up any remaining markdown
+        var description = string.Join(" ", descriptionLines);
+
+        // Remove common markdown formatting
+        description = System.Text.RegularExpressions.Regex.Replace(description, @"\*\*(.*?)\*\*", "$1"); // Bold
+        description = System.Text.RegularExpressions.Regex.Replace(description, @"\*(.*?)\*", "$1");     // Italic
+        description = System.Text.RegularExpressions.Regex.Replace(description, "`(.*?)`", "$1");       // Code
+        description = System.Text.RegularExpressions.Regex.Replace(description, @"\[(.*?)\]\(.*?\)", "$1"); // Links
+
+        return description.Trim();
     }
 }

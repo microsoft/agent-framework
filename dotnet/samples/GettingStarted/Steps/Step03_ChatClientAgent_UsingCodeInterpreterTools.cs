@@ -16,6 +16,9 @@ namespace Steps;
 /// </summary>
 public sealed class Step03_ChatClientAgent_UsingCodeInterpreterTools(ITestOutputHelper output) : AgentSample(output)
 {
+    /// <summary>
+    /// Demonstrates how to use a ChatClientAgent with code interpreter tools to analyze data from an uploaded file.
+    /// </summary>
     [Theory]
     [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
     [InlineData(ChatClientProviders.OpenAIAssistant)]

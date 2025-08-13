@@ -8,5 +8,6 @@ namespace GettingStarted.TestRunner;
 public class TestFolder
 {
     public string Name { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
     public List<TestClass> Classes { get; set; } = new();
 }

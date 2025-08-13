@@ -17,6 +17,9 @@ namespace Steps;
 /// </summary>
 public sealed class Step07_ChatClientAgent_UsingFileSearchTools(ITestOutputHelper output) : AgentSample(output)
 {
+    /// <summary>
+    /// Demonstrates how to use a ChatClientAgent with file search tools to query information from uploaded documents.
+    /// </summary>
     [Theory]
     [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
     [InlineData(ChatClientProviders.OpenAIAssistant)]

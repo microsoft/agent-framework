@@ -25,7 +25,6 @@ public static class NavigationConstants
     {
         public const string Title = "[blue]Configuration Management[/]";
         public const string SelectPrompt = "[green]Select a configuration to update:[/]";
-        public const string BackToMainMenu = "Back to Main Menu";
     }
 
     /// <summary>
@@ -74,8 +73,6 @@ public static class NavigationConstants
     public static class TestNavigation
     {
         public const string BackToFolderSelection = "Back to Folder Selection";
-        public const string BackToMainMenu = "Back to Main Menu";
-        public const string Back = "Back";
     }
 
     /// <summary>
@@ -85,5 +82,6 @@ public static class NavigationConstants
     {
         public const string PressAnyKeyToContinue = "[dim]Press any key to continue...[/]";
         public const string TestOutput = "Test Output";
+        public const string Back = "Back";
     }
 }
