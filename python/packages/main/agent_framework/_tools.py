@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
-
 import inspect
+import sys
 from collections.abc import Awaitable, Callable
 from functools import wraps
 from time import perf_counter
@@ -8,20 +8,28 @@ from typing import (
     TYPE_CHECKING,
     Annotated,
     Any,
+    ClassVar,
     Generic,
+    Literal,
     Protocol,
     TypeVar,
     get_args,
     get_origin,
+    overload,
     runtime_checkable,
 )
 
 from opentelemetry import metrics, trace
-from pydantic import BaseModel, Field, PrivateAttr, create_model
+from pydantic import AnyUrl, BaseModel, Field, PrivateAttr, create_model
 
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
 from .telemetry import GenAIAttributes, start_as_current_span
+
+if sys.version_info >= (3, 11):
+    from typing import Self  # pragma: no cover
+else:
+    from typing_extensions import Self  # pragma: no cover
 
 if TYPE_CHECKING:
     from ._types import Contents
@@ -34,6 +42,8 @@ __all__ = [
     "AIFunction",
     "HostedCodeInterpreterTool",
     "HostedFileSearchTool",
+    "HostedMcpApprovalMode",
+    "HostedMcpTool",
     "HostedWebSearchTool",
     "ToolProtocol",
     "ai_function",
@@ -197,6 +207,280 @@ class HostedWebSearchTool(BaseTool):
         args: dict[str, Any] = {
             "name": "web_search",
         }
+        super().__init__(**args, **kwargs)
+
+
+class HostedMcpApprovalMode(AFBaseModel):
+    value: Literal["always_require", "never_require", "specific"] = "always_require"
+    always_require_approval: set[str] | None = None
+    never_require_approval: set[str] | None = None
+
+    ALWAYS_REQUIRE: ClassVar[Self]  # type: ignore[assignment]
+    NEVER_REQUIRE: ClassVar[Self]  # type: ignore[assignment]
+    SPECIFIC: ClassVar[Self]  # type: ignore[assignment]
+
+    @overload
+    def __init__(self, value: Literal["always_require"], **kwargs: Any) -> None:
+        """Always require approval for all tools."""
+        ...
+
+    @overload
+    def __init__(self, value: Literal["never_require"], **kwargs: Any) -> None:
+        """Never require approval for all tools."""
+        ...
+
+    @overload
+    def __init__(
+        self,
+        value: Literal["specific"],
+        *,
+        always_require_approval: set[str] | None = None,
+        never_require_approval: set[str] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Require approval for some tools.
+
+        Determined by the `always_require_approval` and `never_require_approval` lists.
+        """
+        ...
+
+    def __init__(
+        self,
+        value: Literal["always_require", "never_require", "specific"] = "always_require",
+        *,
+        always_require_approval: set[str] | None = None,
+        never_require_approval: set[str] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Create a approval mode for a hosted MCP tool.
+
+        Args:
+            value: The approval mode value, can be 'always', 'never', or 'specific'.
+                if 'specific' is used, you need to specify one of the following:
+            always_require_approval: A list of strings representing the names of tools that always require approval.
+            never_require_approval: A list of strings representing the names of tools that never require approval.
+            **kwargs: Additional keyword arguments to pass to the base class.
+
+        """
+        args: dict[str, Any] = {"value": value}
+        if value == "specific":
+            if always_require_approval is not None and never_require_approval is not None:
+                raise ValueError(
+                    "If approval mode is 'specific', at least one of "
+                    "'always_require_approval' or 'never_require_approval' must be provided."
+                )
+            if always_require_approval is not None:
+                args["always_require_approval"] = always_require_approval
+            if never_require_approval is not None:
+                args["never_require_approval"] = never_require_approval
+        super().__init__(**args, **kwargs)
+
+
+HostedMcpApprovalMode.ALWAYS_REQUIRE = HostedMcpApprovalMode(value="always_require")
+HostedMcpApprovalMode.NEVER_REQUIRE = HostedMcpApprovalMode(value="never_require")
+HostedMcpApprovalMode.SPECIFIC = HostedMcpApprovalMode(value="specific", always_require_approval=set())
+
+
+class HostedMcpTool(AIToolBase):
+    """Represents a MCP tool that is managed and executed by the service."""
+
+    url: AnyUrl
+    approval_mode: HostedMcpApprovalMode | None = None
+    allowed_tools: set[str] | None = None
+    headers: dict[str, str] | None = None
+
+    @overload
+    def __init__(
+        self,
+        *,
+        name: str,
+        description: str | None = None,
+        url: AnyUrl | str,
+        approval_mode: HostedMcpApprovalMode,
+        allowed_tools: set[str] | None = None,
+        headers: dict[str, str] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Create a hosted MCP tool.
+
+        Args:
+            name: The name of the tool.
+            description: A description of the tool.
+            url: The URL of the tool.
+            approval_mode: The approval mode for the tool.
+            allowed_tools: A list of tools that are allowed to use this tool.
+            headers: Headers to include in requests to the tool.
+            additional_properties: Additional properties to include in the tool definition.
+            **kwargs: Additional keyword arguments to pass to the base class.
+        """
+        ...
+
+    @overload
+    def __init__(
+        self,
+        *,
+        name: str,
+        description: str | None = None,
+        url: AnyUrl | str,
+        approval_mode: Literal["always_require"] = "always_require",
+        allowed_tools: set[str] | None = None,
+        headers: dict[str, str] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Create a hosted MCP tool.
+
+        Args:
+            name: The name of the tool.
+            description: A description of the tool.
+            url: The URL of the tool.
+            approval_mode: The approval mode for the tool, always_require asks for approval.
+            allowed_tools: A list of tools that are allowed to use this tool.
+            headers: Headers to include in requests to the tool.
+            additional_properties: Additional properties to include in the tool definition.
+            **kwargs: Additional keyword arguments to pass to the base class.
+        """
+        ...
+
+    @overload
+    def __init__(
+        self,
+        *,
+        name: str,
+        description: str | None = None,
+        url: AnyUrl | str,
+        approval_mode: Literal["never_require"] = "never_require",
+        allowed_tools: set[str] | None = None,
+        headers: dict[str, str] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Create a hosted MCP tool.
+
+        Args:
+            name: The name of the tool.
+            description: A description of the tool.
+            url: The URL of the tool.
+            allowed_tools: A list of tools that are allowed to use this tool.
+            approval_mode: The approval mode for the tool.
+            headers: Headers to include in requests to the tool.
+            additional_properties: Additional properties to include in the tool definition.
+            **kwargs: Additional keyword arguments to pass to the base class.
+        """
+        ...
+
+    @overload
+    def __init__(
+        self,
+        *,
+        name: str,
+        description: str | None = None,
+        url: AnyUrl | str,
+        approval_mode: Literal["specific"] = "specific",
+        allowed_tools: set[str] | None = None,
+        always_require_approval: set[str] | None = None,
+        never_require_approval: set[str] | None = None,
+        headers: dict[str, str] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Create a hosted MCP tool.
+
+        Args:
+            name: The name of the tool.
+            description: A description of the tool.
+            url: The URL of the tool.
+            allowed_tools: A list of tools that are allowed to use this tool.
+            approval_mode: The approval mode for the tool.
+            headers: Headers to include in requests to the tool.
+            additional_properties: Additional properties to include in the tool definition.
+            always_require_approval: A list of tool names that always require approval.
+            never_require_approval: A list of tool names that never require approval.
+            **kwargs: Additional keyword arguments to pass to the base class.
+        """
+        ...
+
+    @overload
+    def __init__(
+        self,
+        *,
+        name: str,
+        description: str | None = None,
+        url: AnyUrl | str,
+        allowed_tools: set[str] | None = None,
+        headers: dict[str, str] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Create a hosted MCP tool.
+
+        Args:
+            name: The name of the tool.
+            description: A description of the tool.
+            url: The URL of the tool.
+            allowed_tools: A list of tools that are allowed to use this tool.
+            headers: Headers to include in requests to the tool.
+            additional_properties: Additional properties to include in the tool definition.
+            always_require_approval: If using 'specific' approval mode,
+                a list of tool names that always require approval.
+            never_require_approval: If using 'specific' approval mode,
+                a list of tool names that never require approval.
+            **kwargs: Additional keyword arguments to pass to the base class.
+        """
+        ...
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        description: str | None = None,
+        url: AnyUrl | str,
+        approval_mode: Literal["always_require", "never_require", "specific"] | HostedMcpApprovalMode | None = None,
+        allowed_tools: set[str] | None = None,
+        always_require_approval: set[str] | None = None,
+        never_require_approval: set[str] | None = None,
+        headers: dict[str, str] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Create a hosted MCP tool.
+
+        Args:
+            name: The name of the tool.
+            description: A description of the tool.
+            url: The URL of the tool.
+            approval_mode: The approval mode for the tool.
+            allowed_tools: A list of tools that are allowed to use this tool.
+            always_require_approval: If using 'specific' approval mode,
+                a list of tool names that always require approval.
+            never_require_approval: If using 'specific' approval mode,
+                a list of tool names that never require approval.
+            headers: Headers to include in requests to the tool.
+            additional_properties: Additional properties to include in the tool definition.
+            **kwargs: Additional keyword arguments to pass to the base class.
+        """
+        args: dict[str, Any] = {
+            "name": name,
+            "url": url,
+        }
+        if allowed_tools is not None:
+            args["allowed_tools"] = allowed_tools
+        if approval_mode is not None:
+            if isinstance(approval_mode, str):
+                if approval_mode == "specific":
+                    always_require_approval = kwargs.pop("always_require_approval", None)
+                    never_require_approval = kwargs.pop("never_require_approval", None)
+                    approval_mode = HostedMcpApprovalMode(
+                        value="specific",
+                        always_require_approval=always_require_approval,
+                        never_require_approval=never_require_approval,
+                    )
+                else:
+                    approval_mode = HostedMcpApprovalMode(approval_mode)
+            args["approval_mode"] = approval_mode
+        if headers is not None:
+            args["headers"] = headers
         if description is not None:
             args["description"] = description
         if additional_properties is not None:

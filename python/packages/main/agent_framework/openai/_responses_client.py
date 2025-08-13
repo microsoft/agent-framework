@@ -25,6 +25,7 @@ from openai.types.responses.response_usage import ResponseUsage
 from openai.types.responses.tool_param import (
     CodeInterpreter,
     CodeInterpreterContainerCodeInterpreterToolAuto,
+    Mcp,
     ToolParam,
 )
 from openai.types.responses.web_search_tool_param import UserLocation as WebSearchUserLocation
@@ -33,7 +34,15 @@ from pydantic import BaseModel, SecretStr, ValidationError
 
 from .._clients import BaseChatClient, use_tool_calling
 from .._logging import get_logger
-from .._tools import AIFunction, HostedCodeInterpreterTool, HostedFileSearchTool, HostedWebSearchTool, ToolProtocol
+from .._tools import (
+    AIFunction,
+    HostedCodeInterpreterTool,
+    HostedFileSearchTool,
+    HostedMcpApprovalMode,
+    HostedMcpTool,
+    HostedWebSearchTool,
+    ToolProtocol,
+)
 from .._types import (
     ChatMessage,
     ChatOptions,
@@ -42,6 +51,8 @@ from .._types import (
     CitationAnnotation,
     Contents,
     DataContent,
+    FunctionApprovalRequestContent,
+    FunctionApprovalResponseContent,
     FunctionCallContent,
     FunctionResultContent,
     HostedFileContent,
@@ -364,15 +375,40 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
 
     # region Prep methods
 
-    def _chat_to_response_tool_spec(
+    def _tools_to_response_tools(
         self, tools: list[ToolProtocol | MutableMapping[str, Any]]
     ) -> list[ToolParam | dict[str, Any]]:
         response_tools: list[ToolParam | dict[str, Any]] = []
         for tool in tools:
             if isinstance(tool, ToolProtocol):
                 match tool:
+                    case HostedMcpTool():
+                        mcp: Mcp = {
+                            "type": "mcp",
+                            "server_label": tool.name.replace(" ", "_"),
+                            "server_url": str(tool.url),
+                            "server_description": tool.description,
+                            "headers": tool.headers,
+                        }
+                        if tool.allowed_tools:
+                            mcp["allowed_tools"] = list(tool.allowed_tools)
+                        if tool.approval_mode:
+                            if tool.approval_mode == HostedMcpApprovalMode.ALWAYS_REQUIRE:
+                                mcp["require_approval"] = "always"
+                            elif tool.approval_mode == HostedMcpApprovalMode.NEVER_REQUIRE:
+                                mcp["require_approval"] = "never"
+                            elif tool.approval_mode == HostedMcpApprovalMode.SPECIFIC:
+                                if tool.approval_mode.always_require_approval:
+                                    mcp["require_approval"] = {
+                                        "always": {"tool_names": list(tool.approval_mode.always_require_approval)}
+                                    }
+                                if tool.approval_mode.never_require_approval:
+                                    mcp["require_approval"] = {
+                                        "never": {"tool_names": list(tool.approval_mode.never_require_approval)}
+                                    }
+                        response_tools.append(mcp)
                     case HostedCodeInterpreterTool():
-                        tool_args: dict[str, Any] = {"type": "auto"}
+                        tool_args: CodeInterpreterContainerCodeInterpreterToolAuto = {"type": "auto"}
                         if tool.inputs:
                             tool_args["file_ids"] = []
                             for tool_input in tool.inputs:
@@ -383,7 +419,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         response_tools.append(
                             CodeInterpreter(
                                 type="code_interpreter",
-                                container=CodeInterpreterContainerCodeInterpreterToolAuto(**tool_args),  # type: ignore[typeddict-item]
+                                container=tool_args,
                             )
                         )
                     case AIFunction():
@@ -455,7 +491,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         if chat_options.tools is None:
             options_dict.pop("parallel_tool_calls", None)
         else:
-            options_dict["tools"] = self._chat_to_response_tool_spec(chat_options.tools)
+            options_dict["tools"] = self._tools_to_response_tools(chat_options.tools)
         # other settings
         if "store" not in options_dict:
             options_dict["store"] = False
@@ -496,6 +532,88 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         # Flatten the list of lists into a single list
         return list(chain.from_iterable(list_of_list))
 
+    def _openai_chat_message_parser(
+        self,
+        message: ChatMessage,
+        call_id_to_id: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        """Parse a chat message into the openai format."""
+        all_messages: list[dict[str, Any]] = []
+        args: dict[str, Any] = {
+            "role": message.role.value if isinstance(message.role, ChatRole) else message.role,
+        }
+        if message.additional_properties:
+            args["metadata"] = message.additional_properties
+        for content in message.contents:
+            match content:
+                case FunctionResultContent():
+                    new_args: dict[str, Any] = {}
+                    new_args.update(self._openai_content_parser(message.role, content, call_id_to_id))
+                    all_messages.append(new_args)
+                case FunctionCallContent():
+                    function_call = self._openai_content_parser(message.role, content, call_id_to_id)
+                    all_messages.append(function_call)  # type: ignore
+                case FunctionApprovalResponseContent() | FunctionApprovalRequestContent():
+                    all_messages.append(self._openai_content_parser(message.role, content, call_id_to_id))  # type: ignore
+                case _:
+                    if "content" not in args:
+                        args["content"] = []
+                    args["content"].append(self._openai_content_parser(message.role, content, call_id_to_id))  # type: ignore
+        if "content" in args or "tool_calls" in args:
+            all_messages.append(args)
+        return all_messages
+
+    def _openai_content_parser(
+        self,
+        role: Role,
+        content: Contents,
+        call_id_to_id: dict[str, str],
+    ) -> dict[str, Any]:
+        """Parse contents into the openai format."""
+        match content:
+            case FunctionCallContent():
+                return {
+                    "call_id": content.call_id,
+                    "id": call_id_to_id[content.call_id],
+                    "type": "function_call",
+                    "name": content.name,
+                    "arguments": content.arguments,
+                }
+            case FunctionResultContent():
+                # call_id for the result needs to be the same as the call_id for the function call
+                args: dict[str, Any] = {
+                    "call_id": content.call_id,
+                    "id": call_id_to_id.get(content.call_id),
+                    "type": "function_call_output",
+                }
+                if content.result:
+                    args["output"] = prepare_function_call_results(content.result)
+                return args
+            case FunctionApprovalRequestContent():
+                return {
+                    "type": "mcp_approval_request",
+                    "id": content.id,
+                    "arguments": content.function_call.arguments,
+                    "name": content.function_call.name,
+                    "server_label": content.function_call.additional_properties.get("server_label")
+                    if content.function_call.additional_properties
+                    else None,
+                }
+            case FunctionApprovalResponseContent():
+                return {
+                    "type": "mcp_approval_response",
+                    "approval_request_id": content.id,
+                    "approve": content.approved,
+                }
+            case TextContent():
+                return {
+                    "type": "output_text" if role == ChatRole.ASSISTANT else "input_text",
+                    "text": content.text,
+                }
+            # TODO(peterychang): We'll probably need to specialize the other content types as well
+            case _:
+                return content.model_dump(exclude_none=True)
+
     # region Response creation methods
 
     def _create_response_content(
@@ -533,7 +651,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         match message_content.type:
                             case "output_text":
                                 text_content = TextContent(
-                                    text=message_content.text, raw_representation=message_content
+                                    text=message_content.text,
+                                    raw_representation=message_content,
                                 )
                                 metadata.update(self._get_metadata_from_response(message_content))
                                 if message_content.annotations:
@@ -639,6 +758,21 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                             raw_representation=item,
                         )
                     )
+                case "mcp_list_tools":  # ResponseOutputMcpListTools
+                    logger.debug("MCP List Tools not supported in Responses API: %s", item.tools)
+                case "mcp_approval_request":  # ResponseOutputMcpApprovalRequest
+                    contents.append(
+                        FunctionApprovalRequestContent(
+                            id=item.id,
+                            function_call=FunctionCallContent(
+                                call_id=item.id,
+                                name=item.name,
+                                arguments=item.arguments,
+                                additional_properties={"server_label": item.server_label},
+                                raw_representation=item,
+                            ),
+                        )
+                    )
                 case "image_generation_call":  # ResponseOutputImageGenerationCall
                     if item.result:
                         contents.append(
@@ -737,69 +871,6 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         if usage.output_tokens_details and usage.output_tokens_details.reasoning_tokens:
             details["openai.reasoning_tokens"] = usage.output_tokens_details.reasoning_tokens
         return details
-
-    def _openai_chat_message_parser(
-        self,
-        message: ChatMessage,
-        call_id_to_id: dict[str, str],
-    ) -> list[dict[str, Any]]:
-        """Parse a chat message into the openai format."""
-        all_messages: list[dict[str, Any]] = []
-        args: dict[str, Any] = {
-            "role": message.role.value if isinstance(message.role, Role) else message.role,
-        }
-        if message.additional_properties:
-            args["metadata"] = message.additional_properties
-        for content in message.contents:
-            match content:
-                case FunctionResultContent():
-                    new_args: dict[str, Any] = {}
-                    new_args.update(self._openai_content_parser(message.role, content, call_id_to_id))
-                    all_messages.append(new_args)
-                case FunctionCallContent():
-                    function_call = self._openai_content_parser(message.role, content, call_id_to_id)
-                    all_messages.append(function_call)  # type: ignore
-                case _:
-                    if "content" not in args:
-                        args["content"] = []
-                    args["content"].append(self._openai_content_parser(message.role, content, call_id_to_id))  # type: ignore
-        if "content" in args or "tool_calls" in args:
-            all_messages.append(args)
-        return all_messages
-
-    def _openai_content_parser(
-        self,
-        role: Role,
-        content: Contents,
-        call_id_to_id: dict[str, str],
-    ) -> dict[str, Any]:
-        """Parse contents into the openai format."""
-        match content:
-            case FunctionCallContent():
-                return {
-                    "call_id": content.call_id,
-                    "id": call_id_to_id[content.call_id],
-                    "type": "function_call",
-                    "name": content.name,
-                    "arguments": content.arguments,
-                }
-            case FunctionResultContent():
-                # call_id for the result needs to be the same as the call_id for the function call
-                args: dict[str, Any] = {
-                    "call_id": content.call_id,
-                    "type": "function_call_output",
-                }
-                if content.result:
-                    args["output"] = prepare_function_call_results(content.result)
-                return args
-            case TextContent():
-                return {
-                    "type": "output_text" if role == Role.ASSISTANT else "input_text",
-                    "text": content.text,
-                }
-            # TODO(peterychang): We'll probably need to specialize the other content types as well
-            case _:
-                return content.model_dump(exclude_none=True)
 
     def _get_metadata_from_response(self, output: Any) -> dict[str, Any]:
         """Get metadata from a chat choice."""

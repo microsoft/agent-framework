@@ -93,6 +93,8 @@ __all__ = [
     "DataContent",
     "ErrorContent",
     "FinishReason",
+    "FunctionApprovalRequestContent",
+    "FunctionApprovalResponseContent",
     "FunctionCallContent",
     "FunctionResultContent",
     "GeneratedEmbeddings",
@@ -1093,6 +1095,122 @@ class HostedVectorStoreContent(BaseContent):
         )
 
 
+class UserInputRequestContent(BaseContent):
+    """Base class for all user requests."""
+
+    id: Annotated[str, Field(..., min_length=1)]
+
+
+class UserInputResponseContent(BaseContent):
+    """Base class for all user responses."""
+
+    id: Annotated[str, Field(..., min_length=1)]
+
+
+class FunctionApprovalResponseContent(UserInputResponseContent):
+    """Represents a response for user approval of a function call."""
+
+    type: Literal["function_approval_response"] = "function_approval_response"  # type: ignore[assignment]
+    approved: bool
+    function_call: FunctionCallContent
+
+    def __init__(
+        self,
+        approved: bool,
+        *,
+        id: str,
+        function_call: FunctionCallContent,
+        annotations: list[Annotations] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initializes a FunctionApprovalResponseContent instance.
+
+        Args:
+            approved: Whether the function call was approved.
+            id: The unique identifier for the request.
+            function_call: The function call content to be approved.
+            annotations: Optional list of annotations for the request.
+            additional_properties: Optional additional properties for the request.
+            raw_representation: Optional raw representation of the request.
+            **kwargs: Additional keyword arguments.
+        """
+        super().__init__(
+            approved=approved,  # type: ignore[reportCallIssue]
+            id=id,  # type: ignore[reportCallIssue]
+            function_call=function_call,  # type: ignore[reportCallIssue]
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
+        )
+
+
+class FunctionApprovalRequestContent(UserInputRequestContent):
+    """Represents a request for user approval of a function call."""
+
+    type: Literal["function_approval_request"] = "function_approval_request"  # type: ignore[assignment]
+    function_call: FunctionCallContent
+
+    def __init__(
+        self,
+        *,
+        id: str,
+        function_call: FunctionCallContent,
+        annotations: list[Annotations] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initializes a FunctionApprovalRequestContent instance.
+
+        Args:
+            id: The unique identifier for the request.
+            function_call: The function call content to be approved.
+            annotations: Optional list of annotations for the request.
+            additional_properties: Optional additional properties for the request.
+            raw_representation: Optional raw representation of the request.
+            **kwargs: Additional keyword arguments.
+        """
+        super().__init__(
+            id=id,  # type: ignore[reportCallIssue]
+            function_call=function_call,  # type: ignore[reportCallIssue]
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
+        )
+
+    def approve(self) -> "ChatMessage":
+        """Approve the function call."""
+        return ChatMessage(
+            role=Role.USER,
+            contents=[
+                FunctionApprovalResponseContent(
+                    True,
+                    id=self.id,
+                    function_call=self.function_call,
+                    additional_properties=self.additional_properties,
+                )
+            ],
+        )
+
+    def reject(self) -> "ChatMessage":
+        """Reject the function call."""
+        return ChatMessage(
+            role=Role.USER,
+            contents=[
+                FunctionApprovalResponseContent(
+                    False,
+                    id=self.id,
+                    function_call=self.function_call,
+                    additional_properties=self.additional_properties,
+                )
+            ],
+        )
+
+
 Contents = Annotated[
     TextContent
     | DataContent
@@ -1103,7 +1221,9 @@ Contents = Annotated[
     | ErrorContent
     | UsageContent
     | HostedFileContent
-    | HostedVectorStoreContent,
+    | HostedVectorStoreContent
+    | FunctionApprovalRequestContent
+    | FunctionApprovalResponseContent,
     Field(discriminator="type"),
 ]
 
@@ -1957,6 +2077,13 @@ class AgentRunResponse(AFBaseModel):
         """Get the concatenated text of all messages."""
         return "".join(msg.text for msg in self.messages) if self.messages else ""
 
+    @property
+    def user_input_requests(self) -> list[UserInputRequestContent]:
+        """Get all UserInputRequestContent messages from the response."""
+        return [
+            content for msg in self.messages for content in msg.contents if isinstance(content, UserInputRequestContent)
+        ]
+
     @classmethod
     def from_agent_run_response_updates(
         cls: type[TAgentRunResponse], updates: Sequence["AgentRunResponseUpdate"]
@@ -2006,6 +2133,11 @@ class AgentRunResponseUpdate(AFBaseModel):
             if self.contents
             else ""
         )
+
+    @property
+    def user_input_requests(self) -> list[UserInputRequestContent]:
+        """Get all UserInputRequestContent messages from the response."""
+        return [content for content in self.contents if isinstance(content, UserInputRequestContent)]
 
     def __str__(self) -> str:
         return self.text
@@ -2082,9 +2214,3 @@ class TextToSpeechOptions(AFBaseModel):
         for key in merged_exclude:
             settings.pop(key, None)
         return settings
-
-
-# endregion
-
-
-# endregion
