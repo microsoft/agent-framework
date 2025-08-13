@@ -2,13 +2,12 @@
 
 using System;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Core;
 using Microsoft.Agents.Workflows.Execution;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Specialized;
 
-internal class RequestInputExecutor : Executor<RequestInputExecutor>, IMessageHandler<object, ExternalRequest>, IMessageHandler<ExternalResponse, ExternalResponse>
+internal class RequestInputExecutor : Executor
 {
     private InputPort Port { get; }
     private IExternalRequestSink? RequestSink { get; set; }

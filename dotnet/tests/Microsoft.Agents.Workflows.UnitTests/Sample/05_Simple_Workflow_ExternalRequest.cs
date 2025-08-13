@@ -3,8 +3,6 @@
 using System;
 using System.IO;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Core;
-using Microsoft.Agents.Workflows.Execution;
 
 namespace Microsoft.Agents.Workflows.Sample;
 
@@ -20,8 +18,7 @@ internal static class Step5EntryPoint
             .AddEdge(judge, guessNumber, (message) => message is NumberSignal signal && signal != NumberSignal.Matched)
             .BuildWithOutput<NumberSignal, string>(judge, ComputeStreamingOutput, (NumberSignal s, string? _) => s == NumberSignal.Matched);
 
-        LocalRunner<NumberSignal, string> runner = new(workflow);
-        StreamingRun<string> handle = await runner.StreamAsync(NumberSignal.Init).ConfigureAwait(false);
+        StreamingRun<string> handle = await InProcessExecution.StreamAsync(workflow, NumberSignal.Init).ConfigureAwait(false);
 
         await foreach (WorkflowEvent evt in handle.WatchStreamAsync().ConfigureAwait(false))
         {
@@ -60,6 +57,19 @@ internal static class Step5EntryPoint
         return request.CreateResponse(result);
     }
 
+    /// <summary>
+    /// This converts the incoming <see cref="NumberSignal"/> from the judge to a status text that can be displayed
+    /// to the user.
+    /// </summary>
+    /// <remarks>
+    /// This works correctly timing-wise because both the <see cref="StreamingAggregator{TInput, TOutput}"/> and the
+    /// <see cref="InputPort"/> are one edge from the <see cref="JudgeExecutor"/> (see the workflow definition in the
+    /// <see cref="RunAsync"/> method). That means they will get the <see cref="NumberSignal"/> at the same time (one
+    /// SuperStep after the Judge has generated it.)
+    /// </remarks>
+    /// <param name="signal"></param>
+    /// <param name="runningResult"></param>
+    /// <returns></returns>
     private static string ComputeStreamingOutput(NumberSignal signal, string? runningResult)
     {
         return signal switch

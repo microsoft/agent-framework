@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Core;
 
 namespace Microsoft.Agents.Workflows.Execution;
 
@@ -14,5 +13,5 @@ internal interface IRunnerContext : IExternalRequestSink
 
     StepContext Advance();
     IWorkflowContext Bind(string executorId);
-    ValueTask<ExecutorBase> EnsureExecutorAsync(string executorId);
+    ValueTask<Executor> EnsureExecutorAsync(string executorId);
 }

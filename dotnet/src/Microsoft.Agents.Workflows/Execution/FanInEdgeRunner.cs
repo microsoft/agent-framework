@@ -2,7 +2,6 @@
 
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Core;
 
 namespace Microsoft.Agents.Workflows.Execution;
 
@@ -22,7 +21,7 @@ internal class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData edgeData
             return null;
         }
 
-        ExecutorBase target = await this.RunContext.EnsureExecutorAsync(this.EdgeData.SinkId)
+        Executor target = await this.RunContext.EnsureExecutorAsync(this.EdgeData.SinkId)
                                                    .ConfigureAwait(false);
 
         if (target.CanHandle(message.GetType()))

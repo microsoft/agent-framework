@@ -2,8 +2,6 @@
 
 using System.IO;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Core;
-using Microsoft.Agents.Workflows.Execution;
 
 namespace Microsoft.Agents.Workflows.Sample;
 
@@ -18,11 +16,8 @@ internal static class Step1aEntryPoint
         builder.AddEdge(uppercase, reverse);
 
         Workflow<string> workflow = builder.Build<string>();
-        LocalRunner<string> runner = new(workflow);
 
-        //var handle = await runner.StreamAsync("Hello, World!").ConfigureAwait(false);
-
-        Run run = await runner.RunAsync("Hello, World!").ConfigureAwait(false);
+        Run run = await InProcessExecution.RunAsync(workflow, "Hello, World!").ConfigureAwait(false);
 
         Assert.Equal(RunStatus.Completed, run.Status);
 

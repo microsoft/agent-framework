@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Core;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Execution;
@@ -19,14 +18,14 @@ internal class InputEdgeRunner(IRunnerContext runContext, string sinkId)
         return new InputEdgeRunner(runContext, port.Id);
     }
 
-    private async ValueTask<ExecutorBase> FindExecutorAsync()
+    private async ValueTask<Executor> FindExecutorAsync()
     {
         return await this.RunContext.EnsureExecutorAsync(this.EdgeData).ConfigureAwait(false);
     }
 
     public async ValueTask<object?> ChaseAsync(object message)
     {
-        ExecutorBase target = await this.FindExecutorAsync().ConfigureAwait(false);
+        Executor target = await this.FindExecutorAsync().ConfigureAwait(false);
         if (target.CanHandle(message.GetType()))
         {
             return await target.ExecuteAsync(message, this.WorkflowContext)

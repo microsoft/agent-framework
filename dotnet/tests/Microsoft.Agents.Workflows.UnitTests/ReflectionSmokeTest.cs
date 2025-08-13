@@ -2,12 +2,13 @@
 
 using System;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Core;
+using Microsoft.Agents.Workflows.Execution;
+using Microsoft.Agents.Workflows.Reflection;
 using Moq;
 
 namespace Microsoft.Agents.Workflows.UnitTests;
 
-public class BaseTestExecutor<TActual> : Executor<TActual> where TActual : Executor<TActual>
+public class BaseTestExecutor<TActual> : ReflectingExecutor<TActual> where TActual : ReflectingExecutor<TActual>
 {
     protected void OnInvokedHandler()
     {
@@ -67,7 +68,7 @@ public class TypedHandlerWithOutput<TInput, TResult> : BaseTestExecutor<TypedHan
 
 public class RoutingReflectionTests
 {
-    private async ValueTask<CallResult?> RunTestReflectAndRouteMessageAsync<TInput, TE>(BaseTestExecutor<TE> executor, TInput? input = default) where TInput : new() where TE : Executor<TE>
+    private async ValueTask<CallResult?> RunTestReflectAndRouteMessageAsync<TInput, TE>(BaseTestExecutor<TE> executor, TInput? input = default) where TInput : new() where TE : ReflectingExecutor<TE>
     {
         MessageRouter router = executor.Router;
 
