@@ -24,7 +24,7 @@ internal static class Step5EntryPoint
         {
             switch (evt)
             {
-                case RequestInputEvent requestInputEvt:
+                case RequestInfoEvent requestInputEvt:
                     ExternalResponse response = ExecuteExternalRequest(requestInputEvt.Request, userGuessCallback, workflow.RunningOutput);
                     await handle.SendResponseAsync(response).ConfigureAwait(false);
                     break;

@@ -5,7 +5,7 @@ namespace Microsoft.Agents.Workflows;
 /// <summary>
 /// Event triggered when a workflow executor request external information.
 /// </summary>
-public sealed class RequestInputEvent(ExternalRequest request) : WorkflowEvent(request)
+public sealed class RequestInfoEvent(ExternalRequest request) : WorkflowEvent(request)
 {
     /// <summary>
     /// The request to be serviced and data payload associated with it.

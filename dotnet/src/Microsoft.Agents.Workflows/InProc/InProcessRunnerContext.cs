@@ -80,7 +80,7 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
     public ValueTask PostAsync(ExternalRequest request)
     {
         this._externalRequests.Add(request.RequestId, request);
-        return this.AddEventAsync(new RequestInputEvent(request));
+        return this.AddEventAsync(new RequestInfoEvent(request));
     }
 
     public bool CompleteRequest(string requestId) => this._externalRequests.Remove(requestId);

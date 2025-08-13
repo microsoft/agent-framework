@@ -35,7 +35,7 @@ public enum RunStatus
 
 /// <summary>
 /// Represents a workflow run that tracks execution status and emitted workflow events, supporting resumption
-/// with responses to <see cref="RequestInputEvent"/>.
+/// with responses to <see cref="RequestInfoEvent"/>.
 /// </summary>
 public class Run
 {
@@ -131,7 +131,7 @@ public class Run
 
 /// <summary>
 /// Represents a workflow run that tracks execution status and emitted workflow events, supporting resumption
-/// with responses to <see cref="RequestInputEvent"/>, and retrieval of the running output of the workflow.
+/// with responses to <see cref="RequestInfoEvent"/>, and retrieval of the running output of the workflow.
 /// </summary>
 /// <typeparam name="TResult">The type of the workflow output.</typeparam>
 public sealed class Run<TResult> : Run
