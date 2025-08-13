@@ -43,6 +43,7 @@ import subprocess
 import socket
 from pathlib import Path
 from typing import Dict, Any, List, AsyncIterator
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Depends, Cookie, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -63,15 +64,15 @@ DEFAULT_APP_PORT = int(os.environ.get("WEB_CHAT_PORT", "5174"))
 
 def _is_port_free(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(0.25)
+        s.settimeout(0.1)  # Reduced timeout for faster scanning
         return s.connect_ex(("127.0.0.1", port)) != 0
 
 def resolve_runtime_port() -> int:
-    # Try requested/default port, then a small range
+    # Try requested/default port, then a smaller range for faster startup
     candidate = DEFAULT_RUNTIME_PORT
     if _is_port_free(candidate):
         return candidate
-    for p in range(candidate + 1, candidate + 11):  # probe next 10 ports
+    for p in range(candidate + 1, candidate + 4):  # probe only next 3 ports
         if _is_port_free(p):
             return p
     # Fallback: let OS choose ephemeral port
@@ -86,7 +87,7 @@ def resolve_app_port() -> int:
     candidate = DEFAULT_APP_PORT
     if _is_port_free(candidate):
         return candidate
-    for p in range(candidate + 1, candidate + 11):
+    for p in range(candidate + 1, candidate + 4):  # probe only next 3 ports
         if _is_port_free(p):
             return p
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -100,17 +101,17 @@ APP_PORT = resolve_app_port()
 # ----------------------------------------------------------------------------
 _runtime_process = None
 
-async def wait_for_runtime_ready(max_attempts: int = 30) -> bool:
+async def wait_for_runtime_ready(max_attempts: int = 20) -> bool:
     """Wait for the runtime to be ready by checking its health endpoint."""
     for attempt in range(max_attempts):
         try:
-            async with httpx.AsyncClient(timeout=2.0) as client:
+            async with httpx.AsyncClient(timeout=1.0) as client:
                 response = await client.get(f"{RUNTIME_URL}/health")
                 if response.status_code == 200:
                     return True
         except (httpx.ConnectError, httpx.TimeoutException):
             pass
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.3)  # Reduced sleep time for faster checks
     return False
 
 def ensure_runtime() -> None:
@@ -136,7 +137,32 @@ def ensure_runtime() -> None:
 # ----------------------------------------------------------------------------
 # Web application
 # ----------------------------------------------------------------------------
-app = FastAPI(title="Python Agent Web Chat")
+
+# Global flag to track runtime initialization
+_runtime_initialized = False
+_runtime_init_lock = asyncio.Lock()
+
+async def initialize_runtime():
+    """Initialize runtime once during app startup"""
+    global _runtime_initialized
+    async with _runtime_init_lock:
+        if not _runtime_initialized:
+            ensure_runtime()
+            if not await wait_for_runtime_ready():
+                raise RuntimeError("Agent runtime failed to start")
+            _runtime_initialized = True
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Initialize runtime before accepting requests
+    await initialize_runtime()
+    yield
+    # Shutdown: Clean up runtime
+    global _runtime_process
+    if _runtime_process and _runtime_process.poll() is None:
+        _runtime_process.terminate()
+
+app = FastAPI(title="Python Agent Web Chat", lifespan=lifespan)
 
 BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR))
@@ -184,14 +210,7 @@ async def send_agent_message_via_proxy(actor_client: HttpActorClient, agent: str
 # ----------------------------------------------------------------------------
 # Routes
 # ----------------------------------------------------------------------------
-@app.middleware("http")
-async def runtime_middleware(request: Request, call_next):
-    # Start runtime lazily on first request
-    ensure_runtime()
-    # Wait for runtime to be ready before proceeding
-    if not await wait_for_runtime_ready():
-        raise HTTPException(status_code=503, detail="Agent runtime failed to start")
-    return await call_next(request)
+# Runtime middleware removed - initialization moved to lifespan
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request, conversation_id: str | None = Cookie(default=None), client: httpx.AsyncClient = Depends(get_http_client)):
@@ -249,12 +268,8 @@ async def health():
     return {"status": "ok"}
 
 # ----------------------------------------------------------------------------
-# Shutdown
+# Shutdown handled in lifespan
 # ----------------------------------------------------------------------------
-@app.on_event("shutdown")
-def shutdown_event():
-    if _runtime_process and _runtime_process.poll() is None:
-        _runtime_process.terminate()
 
 # ----------------------------------------------------------------------------
 # Entry point
