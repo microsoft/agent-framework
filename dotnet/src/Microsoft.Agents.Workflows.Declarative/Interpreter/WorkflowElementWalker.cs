@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Agents.Workflows.Core;
 using Microsoft.Bot.ObjectModel;
 
 namespace Microsoft.Agents.Workflows.Declarative.Interpreter;

@@ -2,7 +2,6 @@
 
 using System.Diagnostics;
 using System.IO;
-using Microsoft.Agents.Workflows.Core;
 using Microsoft.Agents.Workflows.Declarative.Execution;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;

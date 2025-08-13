@@ -6,9 +6,8 @@ using System.Diagnostics;
 using System.Text.Json;
 using Azure.Identity;
 using Microsoft.Agents.Orchestration;
-using Microsoft.Agents.Workflows.Core;
+using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Declarative;
-using Microsoft.Agents.Workflows.Execution;
 using Microsoft.Shared.Diagnostics;
 using Microsoft.Shared.Samples;
 
@@ -73,9 +72,8 @@ public class Workflows_Declarative(ITestOutputHelper output) : OrchestrationSamp
 
             Debug.WriteLine("\nWORKFLOW INVOKE\n");
 
-            LocalRunner<string> runner = new(workflow);
-            StreamingRun handle = await runner.StreamAsync("<placeholder>");
-            await foreach (WorkflowEvent evt in handle.WatchStreamAsync().ConfigureAwait(false))
+            StreamingRun run = await InProcessExecution.StreamAsync(workflow, "<placeholder>");
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
             {
                 if (evt is ExecutorInvokeEvent executorInvoked)
                 {

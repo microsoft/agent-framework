@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics;
-using Microsoft.Agents.Workflows.Core;
 
 namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
@@ -39,7 +38,7 @@ internal sealed class WorkflowModel
         return sourceNode.Depth;
     }
 
-    public void AddNode(ExecutorBase executor, string parentId, Action? completionHandler = null)
+    public void AddNode(Executor executor, string parentId, Action? completionHandler = null)
     {
         if (!this.Nodes.TryGetValue(parentId, out ModelNode? parentNode))
         {

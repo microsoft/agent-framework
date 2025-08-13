@@ -3,10 +3,8 @@
 using System;
 using System.Linq;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Core;
 using Microsoft.Agents.Workflows.Declarative.Execution;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
-using Microsoft.Agents.Workflows.Execution;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.PowerFx.Types;
@@ -30,9 +28,8 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
         WorkflowExecutionContext context = new(RecalcEngineFactory.Create(this.Scopes), this.Scopes, () => null!, NullLogger.Instance);
         executor.Attach(context);
         WorkflowBuilder workflowBuilder = new(executor);
-        LocalRunner<string> runner = new(workflowBuilder.Build<string>());
-        StreamingRun handle = await runner.StreamAsync("<placeholder>");
-        WorkflowEvent[] events = await handle.WatchStreamAsync().ToArrayAsync();
+        StreamingRun run = await InProcessExecution.StreamAsync(workflowBuilder.Build<string>(), "<placeholder>");
+        WorkflowEvent[] events = await run.WatchStreamAsync().ToArrayAsync();
     }
 
     internal void VerifyModel(DialogAction model, WorkflowActionExecutor action)

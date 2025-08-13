@@ -4,7 +4,6 @@ using System;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Core;
 using Microsoft.Agents.Workflows.Declarative.Execution;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
@@ -443,7 +442,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     }
 
     private void ContinueWith(
-        ExecutorBase executor,
+        Executor executor,
         string parentId,
         Func<object?, bool>? condition = null,
         Action? completionHandler = null)

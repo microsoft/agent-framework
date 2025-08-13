@@ -4,9 +4,9 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Core;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
+using Microsoft.Agents.Workflows.Reflection;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.Logging;
 using Microsoft.PowerFx.Types;
@@ -21,7 +21,7 @@ internal abstract class WorkflowActionExecutor<TAction>(TAction model) :
 }
 
 internal abstract class WorkflowActionExecutor :
-    Executor<WorkflowActionExecutor>,
+    ReflectingExecutor<WorkflowActionExecutor>,
     IMessageHandler<string>
 {
     public const string RootActionId = "(root)";
@@ -29,7 +29,7 @@ internal abstract class WorkflowActionExecutor :
     private string? _parentId;
     private WorkflowExecutionContext? _context;
 
-    public WorkflowActionExecutor(DialogAction model)
+    protected WorkflowActionExecutor(DialogAction model)
         : base(model.Id.Value)
     {
         if (!model.HasRequiredProperties)
