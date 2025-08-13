@@ -13,16 +13,16 @@ namespace Microsoft.Extensions.AI.Agents.A2A.Internal;
 /// <summary>
 /// A2A agent that wraps an existing AIAgent and provides A2A-specific thread wrapping.
 /// </summary>
-internal sealed class A2AAgent
+internal sealed class A2AAgentWrapper
 {
     private readonly ILogger _logger;
     private readonly TaskManager _taskManager;
 
     public AIAgent InnerAgent { get; }
 
-    public A2AAgent(AIAgent innerAgent, TaskManager taskManager, ILoggerFactory? loggerFactory)
+    public A2AAgentWrapper(AIAgent innerAgent, TaskManager taskManager, ILoggerFactory? loggerFactory)
     {
-        this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<A2AAgent>();
+        this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<A2AAgentWrapper>();
         this._taskManager = taskManager ?? throw new ArgumentNullException(nameof(taskManager));
 
         this.InnerAgent = innerAgent ?? throw new ArgumentNullException(nameof(innerAgent));

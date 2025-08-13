@@ -116,6 +116,7 @@
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/Microsoft.Agents.Orchestration/Microsoft.Agents.Orchestration.csproj" />
+    <Project Path="src/Microsoft.Extensions.AI.Agents.A2A.AspNetCore/Microsoft.Extensions.AI.Agents.A2A.AspNetCore.csproj" Id="56eb3b1f-b7a4-4b53-9fb4-0faac788aa85" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.A2A/Microsoft.Extensions.AI.Agents.A2A.csproj" Id="37ed7e06-22a0-48a7-8037-68eb6792a061" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.Abstractions/Microsoft.Extensions.AI.Agents.Abstractions.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.AzureAI/Microsoft.Extensions.AI.Agents.AzureAI.csproj" />

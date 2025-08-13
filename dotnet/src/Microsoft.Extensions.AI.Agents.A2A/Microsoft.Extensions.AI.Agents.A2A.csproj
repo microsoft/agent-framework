@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="A2A.AspNetCore" />
+    <PackageReference Include="A2A" />
 
     <PackageReference Include="System.Net.ServerSentEvents" VersionOverride="10.0.0-preview.5.25277.114" />
     <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" VersionOverride="10.0.0-preview.5.25277.114" />
@@ -20,6 +20,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Microsoft.Extensions.AI.Agents.Abstractions\Microsoft.Extensions.AI.Agents.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Extensions.AI.Agents.A2A.AspNetCore"/>
   </ItemGroup>
 
 </Project>

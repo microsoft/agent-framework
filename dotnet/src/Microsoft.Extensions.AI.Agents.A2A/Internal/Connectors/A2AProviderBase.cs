@@ -11,12 +11,12 @@ namespace Microsoft.Extensions.AI.Agents.A2A.Internal.Connectors;
 internal abstract class A2AProviderBase
 {
     protected readonly ILogger _logger;
-    protected readonly A2AAgent _a2aAgent;
+    protected readonly A2AAgentWrapper _a2aAgent;
 
     public A2AProviderBase(AIAgent agent, TaskManager taskManager, ILoggerFactory? loggerFactory)
     {
         this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<A2AProviderBase>();
-        this._a2aAgent = new A2AAgent(agent, taskManager, loggerFactory);
+        this._a2aAgent = new A2AAgentWrapper(agent, taskManager, loggerFactory);
     }
 
     public Task<AgentCard> GetAgentCardAsync(string agentPath, CancellationToken cancellationToken = default)
