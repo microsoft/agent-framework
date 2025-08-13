@@ -323,7 +323,7 @@ public sealed class ChatClientAgent : AIAgent
         CancellationToken cancellationToken)
     {
         ChatOptions? chatOptions = this.CreateConfiguredChatOptions(runOptions);
-        thread ??= runOptions?.GetAgentThread?.Invoke() ?? this.GetNewThread();
+        thread ??= this.GetNewThread();
 
         // Add any existing messages from the thread to the messages to be sent to the chat client.
         List<ChatMessage> threadMessages = [];

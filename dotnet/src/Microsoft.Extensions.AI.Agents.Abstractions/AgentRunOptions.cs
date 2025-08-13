@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI.Agents;
@@ -25,10 +24,4 @@ public class AgentRunOptions
     {
         Throw.IfNull(options);
     }
-
-    /// <summary>
-    /// Gets a function that creates a new <see cref="AgentThread"/> instance.
-    /// Can be used if a specific AgentThread implementation is needed for the same agent run.
-    /// </summary>
-    public virtual Func<AgentThread>? GetAgentThread { get; set; }
 }

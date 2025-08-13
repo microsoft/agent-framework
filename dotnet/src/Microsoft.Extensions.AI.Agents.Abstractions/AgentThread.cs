@@ -28,16 +28,6 @@ public class AgentThread
     }
 
     /// <summary>
-    /// Initializes the AgentThread with a copy of another AgentThread.
-    /// </summary>
-    /// <param name="agentThread"></param>
-    public AgentThread(AgentThread agentThread)
-    {
-        this._conversationId = agentThread._conversationId;
-        this._messageStore = agentThread._messageStore;
-    }
-
-    /// <summary>
     /// Gets or sets the id of the current thread to support cases where the thread is owned by the agent service.
     /// </summary>
     /// <remarks>
