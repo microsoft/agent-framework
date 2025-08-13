@@ -90,7 +90,9 @@ async def run_hosted_mcp_wo_approval() -> None:
         tools=HostedMcpTool(
             name="Microsoft Learn MCP",
             url="https://learn.microsoft.com/api/mcp",
-            # we require approval for all function calls
+            # we don't require approval for any function calls
+            # this means we will not see the approval messages,
+            # it is fully handled by the service and a final response is returned.
             approval_mode="never_require",
         ),
     ) as agent:
