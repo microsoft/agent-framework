@@ -400,21 +400,17 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                             )
                         )
                     case HostedWebSearchTool():
-                        location = (
+                        location: dict[str, str] | None = (
                             tool.additional_properties.get("user_location", None)
                             if tool.additional_properties
                             else None
                         )
+                        if location:
+                            location.pop("type", None)  # remove type if present
                         response_tools.append(
                             WebSearchToolParam(
                                 type="web_search_preview",
-                                user_location=WebSearchUserLocation(
-                                    type="approximate",
-                                    city=location.get("city", None),
-                                    country=location.get("country", None),
-                                    region=location.get("region", None),
-                                    timezone=location.get("timezone", None),
-                                )
+                                user_location=WebSearchUserLocation(type="approximate", **location)
                                 if location
                                 else None,
                             )

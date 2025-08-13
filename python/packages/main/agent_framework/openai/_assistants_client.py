@@ -21,7 +21,7 @@ from openai.types.beta.threads.runs import RunStep
 from pydantic import Field, PrivateAttr, SecretStr, ValidationError
 
 from .._clients import ChatClientBase, use_tool_calling
-from .._tools import AIFunction, HostedCodeInterpreterTool
+from .._tools import AIFunction, HostedCodeInterpreterTool, HostedFileSearchTool
 from .._types import (
     AIContents,
     ChatMessage,
@@ -364,6 +364,15 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
                             tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
                         elif isinstance(tool, HostedCodeInterpreterTool):
                             tool_definitions.append({"type": "code_interpreter"})
+                        elif isinstance(tool, HostedFileSearchTool):
+                            if not tool.inputs:
+                                raise ValueError("HostedFileSearchTool requires inputs to be specified.")
+                            params: dict[str, Any] = {
+                                "type": "file_search",
+                            }
+                            if tool.max_results is not None:
+                                params["max_num_results"] = tool.max_results
+                            tool_definitions.append(params)
                         elif isinstance(tool, MutableMapping):
                             tool_definitions.append(tool)
 

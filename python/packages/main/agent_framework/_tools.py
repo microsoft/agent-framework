@@ -209,7 +209,7 @@ class HostedWebSearchTool(AIToolBase):
 class HostedFileSearchTool(AIToolBase):
     """Represents a file search tool that can be specified to an AI service to enable it to perform file searches."""
 
-    inputs: list[Any] = Field(default_factory=list)
+    inputs: list[Any] | None = None
     max_results: int | None = None
 
     def __init__(
