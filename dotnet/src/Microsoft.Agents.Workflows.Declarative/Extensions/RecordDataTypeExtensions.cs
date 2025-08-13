@@ -24,11 +24,11 @@ internal static class RecordDataTypeExtensions
                         StringDataType => StringValue.New(propertyElement.GetString()),
                         NumberDataType => NumberValue.New(propertyElement.GetDecimal()),
                         BooleanDataType => BooleanValue.New(propertyElement.GetBoolean()),
-                        DateTimeDataType dateTimeType => DateTimeValue.New(propertyElement.GetDateTime()),
-                        DateDataType dateType => DateValue.New(propertyElement.GetDateTime()),
-                        TimeDataType timeType => TimeValue.New(propertyElement.GetDateTimeOffset().TimeOfDay),
+                        DateTimeDataType => DateTimeValue.New(propertyElement.GetDateTime()),
+                        DateDataType => DateValue.New(propertyElement.GetDateTime()),
+                        TimeDataType => TimeValue.New(propertyElement.GetDateTimeOffset().TimeOfDay),
                         RecordDataType recordType => recordType.ParseRecord(propertyElement),
-                        //TableDataValue tableValue => // %%% SUPPORT
+                        //TableDataType tableType => FormulaValue.NewSingleColumnTable(propertyElement.EnumerateArray().Select(item => // %%% SUPPORT: Table )))
                         _ => throw new UnknownDataTypeException($"Unsupported data type '{property.Value.Type}' for property '{property.Key}'")
                     };
                 yield return new NamedValue(property.Key, parsedValue);

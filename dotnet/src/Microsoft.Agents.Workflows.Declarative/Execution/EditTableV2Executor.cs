@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
@@ -19,7 +20,10 @@ internal sealed class EditTableV2Executor(EditTableV2 model) : WorkflowActionExe
         PropertyPath variablePath = Throw.IfNull(this.Model.ItemsVariable?.Path, $"{nameof(this.Model)}.{nameof(this.Model.ItemsVariable)}");
 
         FormulaValue table = this.Context.Scopes.Get(variablePath.VariableName!, WorkflowScopeType.Parse(variablePath.VariableScopeName));
-        TableValue tableValue = (TableValue)table;
+        if (table is not TableValue tableValue)
+        {
+            throw new WorkflowExecutionException($"Require '{variablePath.Format()}' to be a table, not: '{table.GetType().Name}'.");
+        }
 
         EditTableOperation? changeType = this.Model.ChangeType;
         if (changeType is AddItemOperation addItemOperation)
@@ -33,12 +37,20 @@ internal sealed class EditTableV2Executor(EditTableV2 model) : WorkflowActionExe
         else if (changeType is ClearItemsOperation)
         {
             await tableValue.ClearAsync(cancellationToken).ConfigureAwait(false);
+            this.AssignTarget(this.Context, variablePath, tableValue);
         }
-        else if (changeType is RemoveItemOperation) // %%% SUPPORT
+        else if (changeType is RemoveItemOperation removeItemOperation)
         {
+            ValueExpression removeItemValue = Throw.IfNull(removeItemOperation.Value, $"{nameof(this.Model)}.{nameof(this.Model.ChangeType)}");
+            EvaluationResult<DataValue> result = this.Context.ExpressionEngine.GetValue(removeItemValue, this.Context.Scopes);
+            if (result.Value.ToFormulaValue() is TableValue removeItemTable)
+            {
+                await tableValue.RemoveAsync(removeItemTable?.Rows.Select(row => row.Value), all: true, cancellationToken).ConfigureAwait(false);
+            }
         }
-        else if (changeType is TakeFirstItemOperation) // %%% SUPPORT
+        else if (changeType is TakeFirstItemOperation)
         {
+            this.AssignTarget(this.Context, variablePath, tableValue.Rows.First().Value); // %%% TABLE OR RECORD ???
         }
 
         static RecordValue BuildRecord(RecordType recordType, FormulaValue value)
@@ -47,7 +59,6 @@ internal sealed class EditTableV2Executor(EditTableV2 model) : WorkflowActionExe
 
             IEnumerable<NamedValue> GetValues()
             {
-                // %%% TODO: expression.StructuredRecordExpression.Properties ???
                 foreach (NamedFormulaType fieldType in recordType.GetFieldTypes())
                 {
                     if (value is RecordValue recordValue)

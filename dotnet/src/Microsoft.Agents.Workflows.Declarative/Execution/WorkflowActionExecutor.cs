@@ -20,8 +20,8 @@ internal abstract class WorkflowActionExecutor<TAction>(TAction model) :
     public new TAction Model => (TAction)base.Model;
 }
 
-internal abstract class WorkflowActionExecutor(DialogAction model) :
-    Executor<WorkflowActionExecutor>(model.Id.Value),
+internal abstract class WorkflowActionExecutor :
+    Executor<WorkflowActionExecutor>,
     IMessageHandler<string>
 {
     public const string RootActionId = "(root)";
@@ -29,9 +29,20 @@ internal abstract class WorkflowActionExecutor(DialogAction model) :
     private string? _parentId;
     private WorkflowExecutionContext? _context;
 
+    public WorkflowActionExecutor(DialogAction model)
+        : base(model.Id.Value)
+    {
+        if (!model.HasRequiredProperties)
+        {
+            throw new WorkflowModelException($"Missing required properties for element: {model.GetId()} ({model.GetType().Name}).");
+        }
+
+        this.Model = model;
+    }
+
     public string ParentId => this._parentId ??= this.Model.GetParentId() ?? RootActionId;
 
-    public DialogAction Model { get; } = model;
+    public DialogAction Model { get; }
 
     protected WorkflowExecutionContext Context =>
         this._context ??
