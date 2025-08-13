@@ -11,6 +11,7 @@ namespace GettingStarted.TestRunner;
 /// </summary>
 public class ConfigurationManager
 {
+    private static readonly char[] SpaceSeparator = { ' ' };
     private IConfiguration _configuration;
 
     public ConfigurationManager(IConfiguration configuration)
@@ -484,7 +485,7 @@ public class ConfigurationManager
         }
 
         // Fallback: try the original split method if no match found
-        var parts = choice.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var parts = choice.Split(SpaceSeparator, StringSplitOptions.RemoveEmptyEntries);
         return parts.Length > 1 ? parts[1] : choice;
     }
 }

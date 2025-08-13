@@ -141,7 +141,8 @@ public class InteractiveConsole
                 f => f.Name,
                 f => BuildHierarchicalDescription(f),
                 NavigationConstants.CommonUI.Back,
-                minDescriptionHeight: 6);
+                minDescriptionHeight: 9,
+                backDescription: "Getting Started with Agent Framework: Step-by-step tutorial examples that demonstrate the core functionality of the Microsoft Agent Framework. Each sample builds upon previous concepts, providing a progressive learning path from basic agent creation to advanced features like function tools, file handling, and telemetry. These examples serve as the foundation for understanding how to create, configure, and interact with AI agents using various providers and capabilities.");
 
             if (folderChoice == NavigationConstants.CommonUI.Back)
             {
@@ -166,7 +167,8 @@ public class InteractiveConsole
                 c => c.Name,
                 c => BuildHierarchicalDescription(folder, c),
                 NavigationConstants.CommonUI.Back,
-                minDescriptionHeight: 9);
+                minDescriptionHeight: 12,
+                backDescription: BuildHierarchicalDescription(folder));
 
             if (choice == NavigationConstants.CommonUI.Back)
             {
@@ -214,7 +216,8 @@ public class InteractiveConsole
                 item => item.Display,
                 item => item.Description,
                 "Back",
-                minDescriptionHeight: 12);
+                minDescriptionHeight: 12,
+                backDescription: BuildHierarchicalDescription(folder, testClass));
 
             if (choice == "Back")
             {
@@ -304,7 +307,8 @@ public class InteractiveConsole
         Func<T, string> displaySelector,
         Func<T, string> descriptionSelector,
         string? backOption = null,
-        int minDescriptionHeight = 6)
+        int minDescriptionHeight = 6,
+        string? backDescription = null)
     {
         var itemList = items.ToList();
         var choices = new List<string>();
@@ -334,7 +338,7 @@ public class InteractiveConsole
             string description = string.Empty;
             if (currentIndex == 0 && !string.IsNullOrEmpty(backOption))
             {
-                description = NavigationConstants.CommonUI.BackDescription;
+                description = backDescription ?? NavigationConstants.CommonUI.BackDescription;
             }
             else
             {
