@@ -197,8 +197,8 @@ async def switch_case_edge_group():
         WorkflowBuilder()
         .set_start_executor(add_one_executor)
         .add_switch_case_edge_group(
-            add_one_executor,
-            [
+            source=add_one_executor,
+            cases=[
                 # Loop back to the add_one_executor if the number is less than 11
                 Case(condition=lambda x: x < 11, target=add_one_executor),
                 # multiply_by_two_executor when the number is larger than or equal to 11 and even.
