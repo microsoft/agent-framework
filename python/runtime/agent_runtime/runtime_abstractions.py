@@ -1,7 +1,7 @@
 """Runtime infrastructure abstractions (actor system only)"""
 
 from abc import ABC, abstractmethod
-from typing import AsyncIterator, Dict, Any, Optional
+from typing import AsyncIterator, Dict, Any
 from dataclasses import dataclass, field
 from enum import Enum
 import uuid
@@ -49,7 +49,7 @@ class ActorMessage:
 class ActorRequestMessage(ActorMessage):
     """Request message sent to an actor"""
     method: str = ""
-    params: Optional[Dict[str, Any]] = None
+    params: Dict[str, Any] | None = None
     
     def __post_init__(self):
         self.message_type = ActorMessageType.REQUEST
@@ -58,7 +58,7 @@ class ActorRequestMessage(ActorMessage):
 @dataclass
 class ActorResponseMessage(ActorMessage):
     """Response message from an actor"""
-    sender_id: Optional[ActorId] = None
+    sender_id: ActorId | None = None
     status: RequestStatus = RequestStatus.PENDING
     data: Any = None
     
@@ -87,7 +87,7 @@ class IActorRuntimeContext(ABC):
         pass
     
     @abstractmethod
-    async def read_state(self, key: str) -> Optional[Any]:
+    async def read_state(self, key: str) -> Any | None:
         """Read state value by key"""
         pass
     
@@ -133,8 +133,8 @@ class IActorClient(ABC):
         self, 
         actor_id: ActorId, 
         method: str, 
-        params: Optional[Dict[str, Any]] = None,
-        message_id: Optional[str] = None
+        params: Dict[str, Any] | None = None,
+        message_id: str | None = None
     ) -> "ActorResponseHandle":
         """Send a request to an actor"""
         pass

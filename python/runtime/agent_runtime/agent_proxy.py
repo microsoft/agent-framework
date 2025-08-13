@@ -12,7 +12,7 @@ import os
 import re
 import sys
 import uuid
-from typing import Any, AsyncIterable, List, Optional, Union
+from typing import Any, AsyncIterable, List, Union
 
 # Add framework to path (same approach as agent_actor.py)
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../packages/main"))
@@ -30,7 +30,7 @@ from .runtime_abstractions import (
 class AgentProxyThread(AgentThread):
     """Represents an agent thread for an AgentProxy."""
 
-    def __init__(self, conversation_id: Optional[str] = None) -> None:
+    def __init__(self, conversation_id: str | None = None) -> None:
         """Initialize a new AgentProxyThread.
 
         Args:
@@ -126,7 +126,7 @@ class AgentProxy(AIAgent):
         self,
         messages: Union[str, ChatMessage, List[str], List[ChatMessage], None] = None,
         *,
-        thread: Optional[AgentThread] = None,
+        thread: AgentThread | None = None,
         **kwargs: Any,
     ) -> AgentRunResponse:
         """Get a response from the agent.
@@ -183,7 +183,7 @@ class AgentProxy(AIAgent):
         self,
         messages: Union[str, ChatMessage, List[str], List[ChatMessage], None] = None,
         *,
-        thread: Optional[AgentThread] = None,
+        thread: AgentThread | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentRunResponseUpdate]:
         """Run the agent as a stream.
@@ -232,7 +232,7 @@ class AgentProxy(AIAgent):
             return normalized
         raise ValueError(f"Unexpected messages type: {type(messages)}")
 
-    def _get_agent_thread_id(self, thread: Optional[AgentThread]) -> str:
+    def _get_agent_thread_id(self, thread: AgentThread | None) -> str:
         """Get the thread ID for the request."""
         if thread is None:
             return AgentProxyThread._create_id()

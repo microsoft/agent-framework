@@ -1,6 +1,6 @@
 """HTTP API layer for the agent runtime"""
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 import asyncio
 import logging
 from contextlib import asynccontextmanager
@@ -23,14 +23,14 @@ logger = logging.getLogger(__name__)
 # Request/Response models
 class ChatMessageModel(BaseModel):
     role: str
-    text: Optional[str] = None
-    content: Optional[str] = None
-    message_id: Optional[str] = None
+    text: str | None = None
+    content: str | None = None
+    message_id: str | None = None
 
 
 class AgentRunRequest(BaseModel):
     agent_name: str
-    conversation_id: Optional[str] = None
+    conversation_id: str | None = None
     messages: List[ChatMessageModel]
 
 

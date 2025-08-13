@@ -5,7 +5,7 @@
 import asyncio
 import json
 import uuid
-from typing import AsyncIterator, Dict, Any, Optional
+from typing import AsyncIterator, Dict, Any
 
 import httpx
 
@@ -26,7 +26,7 @@ class HttpActorResponseHandle(ActorResponseHandle):
         self._client = client
         self._actor_id = actor_id
         self._message_id = message_id
-        self._response: Optional[ActorResponseMessage] = None
+        self._response: ActorResponseMessage | None = None
 
     async def get_response(self) -> ActorResponseMessage:
         """Get the final response from the HTTP actor."""
@@ -120,8 +120,8 @@ class HttpActorClient(IActorClient):
         self, 
         actor_id: ActorId, 
         method: str, 
-        params: Optional[Dict[str, Any]] = None,
-        message_id: Optional[str] = None
+        params: Dict[str, Any] | None = None,
+        message_id: str | None = None
     ) -> ActorResponseHandle:
         """Send a request to an actor via HTTP.
         

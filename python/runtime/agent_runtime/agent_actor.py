@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import sys
-from typing import Optional, List
+from typing import List
 
 # Runtime infrastructure types
 from .runtime_abstractions import (
@@ -29,7 +29,7 @@ class AgentActor(IActor):
     def __init__(self, agent: AIAgent):
         """Initialize with framework agent"""
         self._agent = agent
-        self._thread: Optional[AgentThread] = None
+        self._thread: AgentThread | None = None
     
     async def run(self, context: IActorRuntimeContext) -> None:
         """Main actor execution loop"""
@@ -38,7 +38,7 @@ class AgentActor(IActor):
         
         # Restore thread state
         await self._restore_thread_state(context)
-        
+
         # Process messages
         async for message in context.watch_messages():
             if isinstance(message, ActorRequestMessage):
@@ -229,7 +229,7 @@ class AgentActor(IActor):
 class MockAIAgent(AgentBase):
     """Mock AI agent that simulates different responses"""
     
-    def __init__(self, name: str = "mock", responses: Optional[List[str]] = None, **kwargs):
+    def __init__(self, name: str = "mock", responses: List[str] | None = None, **kwargs):
         super().__init__(name=name, **kwargs)
         self._responses = responses or [
             "Hello! How can I help you today?",
@@ -250,7 +250,7 @@ class MockAIAgent(AgentBase):
         self, 
         messages: List[ChatMessage] = None, 
         *, 
-        thread: Optional[AgentThread] = None, 
+        thread: AgentThread | None = None, 
         **kwargs
     ) -> AgentRunResponse:
         """Provide mock responses"""
@@ -294,7 +294,7 @@ class EchoAgent(AgentBase):
         self, 
         messages: List[ChatMessage] = None, 
         *, 
-        thread: Optional[AgentThread] = None, 
+        thread: AgentThread | None = None, 
         **kwargs
     ) -> AgentRunResponse:
         """Echo back the user's messages"""

@@ -5,7 +5,7 @@ import logging
 import uuid
 from concurrent.futures import Future
 from dataclasses import dataclass
-from typing import Dict, Optional, Callable, Any, AsyncIterator, List
+from typing import Dict, Callable, Any, AsyncIterator, List
 
 from .runtime_abstractions import (
     IActor, IActorRuntimeContext, IActorClient, IActorStateStorage,
@@ -134,7 +134,7 @@ class InProcessActorContext(IActorRuntimeContext):
             except asyncio.CancelledError:
                 break
 
-    async def read_state(self, key: str) -> Optional[Any]:
+    async def read_state(self, key: str) -> Any | None:
         state = await self._storage.read_state(self._actor_id)
         return state.get(key)
 
@@ -176,7 +176,7 @@ class InProcessActorContext(IActorRuntimeContext):
 class InProcessActorRuntime:
     """In-process actor runtime"""
     
-    def __init__(self, storage: Optional[IActorStateStorage] = None):
+    def __init__(self, storage: IActorStateStorage | None = None):
         self._storage = storage or InMemoryStateStorage()
         self._actors: Dict[ActorId, InProcessActorContext] = {}
         self._actor_tasks: Dict[ActorId, asyncio.Task] = {}
@@ -264,8 +264,8 @@ class InProcessActorClient(IActorClient):
         self, 
         actor_id: ActorId, 
         method: str,
-        params: Optional[Dict[str, Any]] = None,
-        message_id: Optional[str] = None
+        params: Dict[str, Any] | None = None,
+        message_id: str | None = None
     ) -> ActorResponseHandle:
         """Send a request to an actor"""
         if not message_id:
