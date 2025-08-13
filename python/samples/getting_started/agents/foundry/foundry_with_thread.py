@@ -22,11 +22,14 @@ async def example_with_automatic_thread_creation() -> None:
     """Example showing automatic thread creation (service-managed thread)."""
     print("=== Automatic Thread Creation Example ===")
 
-    async with ChatClientAgent(
-        chat_client=FoundryChatClient(async_ad_credential=DefaultAzureCredential()),
-        instructions="You are a helpful weather agent.",
-        tools=get_weather,
-    ) as agent:
+    async with (
+        DefaultAzureCredential() as credential,
+        ChatClientAgent(
+            chat_client=FoundryChatClient(async_ad_credential=credential),
+            instructions="You are a helpful weather agent.",
+            tools=get_weather,
+        ) as agent,
+    ):
         # First conversation - no thread provided, will be created automatically
         query1 = "What's the weather like in Seattle?"
         print(f"User: {query1}")
@@ -46,11 +49,14 @@ async def example_with_thread_persistence() -> None:
     print("=== Thread Persistence Example ===")
     print("Using the same thread across multiple conversations to maintain context.\n")
 
-    async with ChatClientAgent(
-        chat_client=FoundryChatClient(async_ad_credential=DefaultAzureCredential()),
-        instructions="You are a helpful weather agent.",
-        tools=get_weather,
-    ) as agent:
+    async with (
+        DefaultAzureCredential() as credential,
+        ChatClientAgent(
+            chat_client=FoundryChatClient(async_ad_credential=credential),
+            instructions="You are a helpful weather agent.",
+            tools=get_weather,
+        ) as agent,
+    ):
         # Create a new thread that will be reused
         thread = agent.get_new_thread()
 
@@ -82,11 +88,14 @@ async def example_with_existing_thread_id() -> None:
     # First, create a conversation and capture the thread ID
     existing_thread_id = None
 
-    async with ChatClientAgent(
-        chat_client=FoundryChatClient(async_ad_credential=DefaultAzureCredential()),
-        instructions="You are a helpful weather agent.",
-        tools=get_weather,
-    ) as agent:
+    async with (
+        DefaultAzureCredential() as credential,
+        ChatClientAgent(
+            chat_client=FoundryChatClient(async_ad_credential=credential),
+            instructions="You are a helpful weather agent.",
+            tools=get_weather,
+        ) as agent,
+    ):
         # Start a conversation and get the thread ID
         thread = agent.get_new_thread()
         query1 = "What's the weather in Paris?"
@@ -102,11 +111,14 @@ async def example_with_existing_thread_id() -> None:
         print("\n--- Continuing with the same thread ID in a new agent instance ---")
 
         # Create a new agent instance but use the existing thread ID
-        async with ChatClientAgent(
-            chat_client=FoundryChatClient(thread_id=existing_thread_id, async_ad_credential=DefaultAzureCredential()),
-            instructions="You are a helpful weather agent.",
-            tools=get_weather,
-        ) as agent:
+        async with (
+            DefaultAzureCredential() as credential,
+            ChatClientAgent(
+                chat_client=FoundryChatClient(thread_id=existing_thread_id, async_ad_credential=credential),
+                instructions="You are a helpful weather agent.",
+                tools=get_weather,
+            ) as agent,
+        ):
             # Create a thread with the existing ID
             thread = ChatClientAgentThread(id=existing_thread_id)
 

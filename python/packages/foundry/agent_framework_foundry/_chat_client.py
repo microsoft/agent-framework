@@ -165,6 +165,7 @@ class FoundryChatClient(ChatClientBase):
             if not async_ad_credential:
                 raise ServiceInitializationError("Azure AD credential is required when client is not provided.")
             client = AIProjectClient(endpoint=foundry_settings.project_endpoint, credential=async_ad_credential)
+            should_close_client = True
 
         super().__init__(
             client=client,  # type: ignore[reportCallIssue]
