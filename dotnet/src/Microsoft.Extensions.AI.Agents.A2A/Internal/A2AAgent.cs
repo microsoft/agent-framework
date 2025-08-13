@@ -86,6 +86,11 @@ internal sealed class A2AAgent
 
     private Task CompleteAgentTask(string taskId, TaskState state, CancellationToken cancellationToken)
     {
+        if (state == TaskState.Canceled)
+        {
+            return this._taskManager.CancelTaskAsync(new() { Id = taskId }, cancellationToken);
+        }
+
         return this._taskManager.UpdateStatusAsync(taskId, state, final: true, cancellationToken: cancellationToken);
     }
 

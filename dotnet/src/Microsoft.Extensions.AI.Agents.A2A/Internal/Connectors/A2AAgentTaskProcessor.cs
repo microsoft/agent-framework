@@ -33,7 +33,7 @@ internal sealed class A2AAgentTaskProcessor : A2AProviderBase, IA2AAgentTaskProc
             if (chatMessages.Count > 0)
             {
                 this._logger.LogInformation("Creating task {TaskId} with initial messages", task.Id);
-                return this._a2aAgent.RunAsync(options, chatMessages, cancellationToken: token);
+                return this._a2aAgent.RunAsync(chatMessages, options: options, cancellationToken: token);
             }
 
             this._logger.LogInformation("Creating task {TaskId} without initial messages", task.Id);
@@ -54,7 +54,21 @@ internal sealed class A2AAgentTaskProcessor : A2AProviderBase, IA2AAgentTaskProc
 
     public Task CancelTaskAsync(AgentTask task, CancellationToken token = default)
     {
-        // cancellation is just updating a status, so that all subscribers are notified.
-        return this._taskManager.UpdateStatusAsync(task.Id, task.Status.State, final: true, cancellationToken: token);
+        try
+        {
+            return this._taskManager.CancelTaskAsync(new() { Id = task.Id }, token);
+        }
+        catch (A2AException ex) when (ex.ErrorCode is A2AErrorCode.TaskNotCancelable or A2AErrorCode.TaskNotFound)
+        {
+            // if this task was already tried to be cancelled via TaskManager,
+            // then SDK will not be able to cancel it again and we are OK with this scenario
+            this._logger.LogDebug(ex, "Task {TaskId} is not cancelable.", task.Id);
+            return Task.CompletedTask;
+        }
+        catch
+        {
+            // an unexpected error
+            throw;
+        }
     }
 }
