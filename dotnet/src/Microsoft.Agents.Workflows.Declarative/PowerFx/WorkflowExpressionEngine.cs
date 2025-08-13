@@ -121,9 +121,7 @@ internal class WorkflowExpressionEngine : IExpressionEngine
 
         if (expressionResult.Value is RecordValue recordValue)
         {
-            JsonSerializerContext context = null!; // %%% HAXX - AOT
-            //context.Options = s_options;
-            return new EvaluationResult<string>(JsonSerializer.Serialize(recordValue, typeof(RecordValue), context), expressionResult.Sensitivity);
+            return new EvaluationResult<string>(recordValue.Format(), expressionResult.Sensitivity);
         }
 
         if (expressionResult.Value is not StringValue formulaValue)

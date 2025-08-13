@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
+    <NoWarn>$(NoWarn);IDE1006</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

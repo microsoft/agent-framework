@@ -6,7 +6,7 @@ using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.Workflows.Declarative.UnitTests;
 
-public class ProcessActionScopesTests
+public class WorkflowScopesTests
 {
     [Fact]
     public void ConstructorInitializesAllScopes()

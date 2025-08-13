@@ -21,7 +21,7 @@ internal static class BotElementExtensions
             DateTimeDataValue dateTimeValue => FormulaValue.New(dateTimeValue.Value.DateTime),
             DateDataValue dateValue => FormulaValue.NewDateOnly(dateValue.Value),
             TimeDataValue timeValue => FormulaValue.New(timeValue.Value),
-            TableDataValue tableValue => FormulaValue.NewTable(ParseRecordType(tableValue.Values.First()), tableValue.Values.Select(value => value.ToRecordValue())),
+            TableDataValue tableValue => FormulaValue.NewTable(tableValue.Values.First().ParseRecordType(), tableValue.Values.Select(value => value.ToRecordValue())),
             RecordDataValue recordValue => recordValue.ToRecordValue(),
             //FileDataValue // %%% SUPPORT ???
             //OptionDataValue // %%% SUPPORT - Enum ???
@@ -51,7 +51,7 @@ internal static class BotElementExtensions
             recordDataValue.Properties.Select(
                 property => new NamedValue(property.Key, property.Value.ToFormulaValue())));
 
-    private static RecordType ParseRecordType(RecordDataValue record)
+    public static RecordType ParseRecordType(this RecordDataValue record)
     {
         RecordType recordType = RecordType.Empty();
         foreach (KeyValuePair<string, DataValue> property in record.Properties)
