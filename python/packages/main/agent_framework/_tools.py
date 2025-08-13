@@ -214,7 +214,7 @@ class HostedFileSearchTool(AIToolBase):
 
     def __init__(
         self,
-        inputs: "AIContents | dict[str, Any] | str | list[AIContents | dict[str, Any] | str] | None",
+        inputs: "AIContents | dict[str, Any] | str | list[AIContents | dict[str, Any] | str] | None" = None,
         max_results: int | None = None,
         description: str | None = None,
         additional_properties: dict[str, Any] | None = None,

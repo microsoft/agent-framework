@@ -366,8 +366,6 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
                         elif isinstance(tool, HostedCodeInterpreterTool):
                             tool_definitions.append({"type": "code_interpreter"})
                         elif isinstance(tool, HostedFileSearchTool):
-                            if not tool.inputs:
-                                raise ValueError("HostedFileSearchTool requires inputs to be specified.")
                             params: dict[str, Any] = {
                                 "type": "file_search",
                             }
