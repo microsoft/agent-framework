@@ -404,12 +404,16 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                             if tool.additional_properties
                             else None
                         )
-                        if location:
-                            location.pop("type", None)  # remove type if present
                         response_tools.append(
                             WebSearchToolParam(
                                 type="web_search_preview",
-                                user_location=WebSearchUserLocation(type="approximate", **location)
+                                user_location=WebSearchUserLocation(
+                                    type="approximate",
+                                    city=location.get("city", None),
+                                    country=location.get("country", None),
+                                    region=location.get("region", None),
+                                    timezone=location.get("timezone", None),
+                                )
                                 if location
                                 else None,
                             )

@@ -13,9 +13,6 @@ from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
-from openai.types.chat.completion_create_params import (
-    WebSearchOptions,
-)
 from pydantic import BaseModel, SecretStr, ValidationError
 
 from agent_framework import AIFunction, AITool, UsageContent
@@ -129,11 +126,11 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
                 chat_tools.append(tool if isinstance(tool, dict) else dict(tool))
         return chat_tools
 
-    def _process_web_search_tool(self, tools: list[AITool | MutableMapping[str, Any]]) -> WebSearchOptions | None:
+    def _process_web_search_tool(self, tools: list[AITool | MutableMapping[str, Any]]) -> dict[str, Any] | None:
         for tool in tools:
             if isinstance(tool, HostedWebSearchTool):
                 # Web search tool requires special handling
-                location: dict[str, Any] = (
+                return (
                     {
                         "user_location": {
                             "approximate": tool.additional_properties.get("user_location", None),
@@ -144,7 +141,6 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
                     else {}
                 )
 
-                return WebSearchOptions(**location)
         return None
 
     def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
