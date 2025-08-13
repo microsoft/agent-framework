@@ -2,8 +2,7 @@
 
 using System.IO;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Core;
-using Microsoft.Agents.Workflows.Execution;
+using Microsoft.Agents.Workflows.Reflection;
 
 namespace Microsoft.Agents.Workflows.Sample;
 
@@ -18,11 +17,9 @@ internal static class Step1EntryPoint
         builder.AddEdge(uppercase, reverse);
 
         Workflow<string> workflow = builder.Build<string>();
-        LocalRunner<string> runner = new(workflow);
+        StreamingRun run = await InProcessExecution.StreamAsync(workflow, "Hello, World!").ConfigureAwait(false);
 
-        var handle = await runner.StreamAsync("Hello, World!").ConfigureAwait(false);
-
-        await foreach (WorkflowEvent evt in handle.WatchStreamAsync().ConfigureAwait(false))
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
             if (evt is ExecutorCompleteEvent executorComplete)
             {
@@ -32,7 +29,7 @@ internal static class Step1EntryPoint
     }
 }
 
-internal sealed class UppercaseExecutor() : Executor<UppercaseExecutor>("UppercaseExecutor"), IMessageHandler<string, string>
+internal sealed class UppercaseExecutor() : ReflectingExecutor<UppercaseExecutor>("UppercaseExecutor"), IMessageHandler<string, string>
 {
     public async ValueTask<string> HandleAsync(string message, IWorkflowContext context)
     {
@@ -41,7 +38,7 @@ internal sealed class UppercaseExecutor() : Executor<UppercaseExecutor>("Upperca
     }
 }
 
-internal sealed class ReverseTextExecutor() : Executor<ReverseTextExecutor>("ReverseTextExecutor"), IMessageHandler<string, string>
+internal sealed class ReverseTextExecutor() : ReflectingExecutor<ReverseTextExecutor>("ReverseTextExecutor"), IMessageHandler<string, string>
 {
     public async ValueTask<string> HandleAsync(string message, IWorkflowContext context)
     {

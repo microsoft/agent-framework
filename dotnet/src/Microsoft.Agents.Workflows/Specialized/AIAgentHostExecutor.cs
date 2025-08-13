@@ -3,13 +3,13 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Core;
+using Microsoft.Agents.Workflows.Reflection;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 
 namespace Microsoft.Agents.Workflows.Specialized;
 
-internal class AIAgentHostExecutor : Executor<AIAgentHostExecutor>, IMessageHandler<IList<ChatMessage>>
+internal class AIAgentHostExecutor : ReflectingExecutor<AIAgentHostExecutor>, IMessageHandler<IList<ChatMessage>>
 {
     private AIAgent Agent { get; set; }
 

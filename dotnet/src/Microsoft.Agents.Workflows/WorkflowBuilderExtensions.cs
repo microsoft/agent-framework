@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using Microsoft.Agents.Workflows.Core;
 using Microsoft.Agents.Workflows.Specialized;
 using Microsoft.Shared.Diagnostics;
 

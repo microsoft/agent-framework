@@ -3,7 +3,6 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Core;
 
 namespace Microsoft.Agents.Workflows.Execution;
 
@@ -27,7 +26,7 @@ internal class FanOutEdgeRunner(IRunnerContext runContext, FanOutEdgeData edgeDa
 
         async Task<object?> ProcessTargetAsync(string targetId)
         {
-            ExecutorBase executor = await this.RunContext.EnsureExecutorAsync(targetId)
+            Executor executor = await this.RunContext.EnsureExecutorAsync(targetId)
                                                          .ConfigureAwait(false);
 
             if (executor.CanHandle(message.GetType()))

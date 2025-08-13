@@ -2,20 +2,11 @@
 
 using System;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Core;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Specialized;
 
-internal interface IOutputSink<TResult>
-{
-    TResult? Result { get; }
-}
-
-internal class OutputCollectorExecutor<TInput, TResult> :
-    Executor<OutputCollectorExecutor<TInput, TResult>>,
-    IMessageHandler<TInput>,
-    IOutputSink<TResult>
+internal class OutputCollectorExecutor<TInput, TResult> : Executor, IOutputSink<TResult>
 {
     private readonly StreamingAggregator<TInput, TResult> _aggregator;
     private readonly Func<TInput, TResult?, bool>? _completionCondition;
@@ -26,6 +17,11 @@ internal class OutputCollectorExecutor<TInput, TResult> :
     {
         this._aggregator = Throw.IfNull(aggregator);
         this._completionCondition = completionCondition;
+    }
+
+    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    {
+        return routeBuilder.AddHandler<TInput>(this.HandleAsync);
     }
 
     public ValueTask HandleAsync(TInput message, IWorkflowContext context)

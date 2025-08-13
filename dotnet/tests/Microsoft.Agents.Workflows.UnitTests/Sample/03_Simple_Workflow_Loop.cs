@@ -3,8 +3,7 @@
 using System;
 using System.IO;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Core;
-using Microsoft.Agents.Workflows.Execution;
+using Microsoft.Agents.Workflows.Reflection;
 
 namespace Microsoft.Agents.Workflows.Sample;
 
@@ -20,10 +19,9 @@ internal static class Step3EntryPoint
             .AddEdge(judge, guessNumber)
             .Build<NumberSignal>();
 
-        LocalRunner<NumberSignal> runner = new(workflow);
-        StreamingRun handle = await runner.StreamAsync(NumberSignal.Init).ConfigureAwait(false);
+        StreamingRun run = await InProcessExecution.StreamAsync(workflow, NumberSignal.Init).ConfigureAwait(false);
 
-        await foreach (WorkflowEvent evt in handle.WatchStreamAsync().ConfigureAwait(false))
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
             switch (evt)
             {
@@ -50,7 +48,7 @@ internal enum NumberSignal
     Matched
 }
 
-internal sealed class GuessNumberExecutor : Executor<GuessNumberExecutor>, IMessageHandler<NumberSignal, int>
+internal sealed class GuessNumberExecutor : ReflectingExecutor<GuessNumberExecutor>, IMessageHandler<NumberSignal, int>
 {
     public int LowerBound { get; private set; }
     public int UpperBound { get; private set; }
@@ -86,7 +84,7 @@ internal sealed class GuessNumberExecutor : Executor<GuessNumberExecutor>, IMess
     }
 }
 
-internal sealed class JudgeExecutor : Executor<JudgeExecutor>, IMessageHandler<int, NumberSignal>
+internal sealed class JudgeExecutor : ReflectingExecutor<JudgeExecutor>, IMessageHandler<int, NumberSignal>
 {
     private readonly int _targetNumber;
 

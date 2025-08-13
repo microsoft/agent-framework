@@ -4,8 +4,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Core;
-using Microsoft.Agents.Workflows.Execution;
+using Microsoft.Agents.Workflows.Reflection;
 
 namespace Microsoft.Agents.Workflows.Sample;
 
@@ -24,9 +23,7 @@ internal static class Step2EntryPoint
             .AddEdge(detectSpam, removeSpam, isSpam => isSpam is true) // If spam, remove
             .Build<string>();
 
-        LocalRunner<string> runner = new(workflow);
-
-        StreamingRun handle = await runner.StreamAsync(input).ConfigureAwait(false);
+        StreamingRun handle = await InProcessExecution.StreamAsync(workflow, input).ConfigureAwait(false);
         await foreach (WorkflowEvent evt in handle.WatchStreamAsync().ConfigureAwait(false))
         {
             switch (evt)
@@ -46,7 +43,7 @@ internal static class Step2EntryPoint
     }
 }
 
-internal sealed class DetectSpamExecutor : Executor<DetectSpamExecutor>, IMessageHandler<string, bool>
+internal sealed class DetectSpamExecutor : ReflectingExecutor<DetectSpamExecutor>, IMessageHandler<string, bool>
 {
     public string[] SpamKeywords { get; }
 
@@ -67,7 +64,7 @@ internal sealed class DetectSpamExecutor : Executor<DetectSpamExecutor>, IMessag
     }
 }
 
-internal sealed class RespondToMessageExecutor : Executor<RespondToMessageExecutor>, IMessageHandler<bool>
+internal sealed class RespondToMessageExecutor : ReflectingExecutor<RespondToMessageExecutor>, IMessageHandler<bool>
 {
     public const string ActionResult = "Message processed successfully.";
 
@@ -86,7 +83,7 @@ internal sealed class RespondToMessageExecutor : Executor<RespondToMessageExecut
     }
 }
 
-internal sealed class RemoveSpamExecutor : Executor<RemoveSpamExecutor>, IMessageHandler<bool>
+internal sealed class RemoveSpamExecutor : ReflectingExecutor<RemoveSpamExecutor>, IMessageHandler<bool>
 {
     public const string ActionResult = "Spam message removed.";
 
