@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using A2A;
+using Microsoft.Extensions.AI.Agents.A2A.Converters;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -17,89 +18,65 @@ internal sealed class A2AAgentWrapper
 {
     private readonly ILogger _logger;
     private readonly TaskManager _taskManager;
+    private readonly AIAgent _innerAgent;
 
-    public AIAgent InnerAgent { get; }
-
-    public A2AAgentWrapper(AIAgent innerAgent, TaskManager taskManager, ILoggerFactory? loggerFactory)
+    public A2AAgentWrapper(AIAgent innerAgent, TaskManager taskManager, ILoggerFactory? loggerFactory = null)
     {
         this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<A2AAgentWrapper>();
+
         this._taskManager = taskManager ?? throw new ArgumentNullException(nameof(taskManager));
-
-        this.InnerAgent = innerAgent ?? throw new ArgumentNullException(nameof(innerAgent));
+        this._innerAgent = innerAgent ?? throw new ArgumentNullException(nameof(innerAgent));
     }
 
-    public Task<AgentRunResponse> RunAsync(
-        IReadOnlyCollection<ChatMessage>? messages = null,
-        AgentThread? thread = null,
-        A2AAgentRunOptions? options = null,
-        CancellationToken cancellationToken = default)
+    public async Task<Message> ProcessMessageAsync(MessageSendParams messageSendParams, CancellationToken cancellationToken)
     {
-        messages ??= [];
+        // this is the simplest scenario for A2A agent processing - a single message conversation.
+        this._logger.LogInformation("Processing message {ContextId}::{MessageId} for {AgentName} agent", messageSendParams.Message.ContextId, messageSendParams.Message.MessageId, this._innerAgent.Name);
 
-        return (options?.TaskId is null)
-            ? this.MessageProcessingRunAsync(messages, thread, options, cancellationToken)
-            : this.AgentTaskRunAsync(messages, options, thread, cancellationToken);
-    }
-
-    private async Task<AgentRunResponse> AgentTaskRunAsync(
-        IReadOnlyCollection<ChatMessage> messages,
-        A2AAgentRunOptions options,
-        AgentThread? thread = null,
-        CancellationToken cancellationToken = default)
-    {
-        if (options.TaskId is null)
-        {
-            throw new ArgumentException("TaskId must be provided in A2AAgentRunOptions.", nameof(options));
-        }
-
-        thread ??= this.InnerAgent.GetNewThread();
-        thread = new A2AAgentThreadWrapper(thread, this._taskManager, options.TaskId);
-        options.GetAgentThread = () => thread;
-
-        // TODO: workaround. Some agent implementations expect a MessageStore to be set.
-        if (thread.MessageStore is null)
-        {
-            thread.MessageStore = new InMemoryChatMessageStore();
-        }
-
-        AgentRunResponse response;
         try
         {
-            response = await this.InnerAgent.RunAsync(messages, thread, options, cancellationToken).ConfigureAwait(false);
-            await this.CompleteAgentTask(options.TaskId, TaskState.Completed, cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException ex)
-        {
-            this._logger.LogError(ex, "Cancelled A2A agent {AgentName} task ID {TaskId} run.", this.InnerAgent.Name, options.TaskId);
-            await this.CompleteAgentTask(options.TaskId, TaskState.Canceled, cancellationToken).ConfigureAwait(false);
-            throw;
+            var chatMessages = messageSendParams.ToChatMessages();
+            var result = await this._innerAgent.RunAsync(messages: chatMessages, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            var responseMessage = new Message
+            {
+                Role = MessageRole.Agent,
+                ContextId = messageSendParams.Message.ContextId,
+                MessageId = Guid.NewGuid().ToString(),
+                Parts = [new TextPart { Text = result.Text }]
+            };
+
+            this._logger.LogInformation("Agent {AgentKey} returning response: {Response}", this._innerAgent.Name, result.Text);
+            return responseMessage;
         }
         catch (Exception ex)
         {
-            this._logger.LogError(ex, "Error running A2A agent {AgentName} with task ID {TaskId}", this.InnerAgent.Name, options.TaskId);
-            await this.CompleteAgentTask(options.TaskId, TaskState.Failed, cancellationToken).ConfigureAwait(false);
-            throw;
+            this._logger.LogError(ex, "Error processing message {ContextId}::{MessageId} for {AgentName} agent", messageSendParams.Message.ContextId, messageSendParams.Message.MessageId, this._innerAgent.Name);
+            throw; // A2A SDK handles the exception under the hood, so we can just throw the exception
         }
-
-        return response;
     }
 
-    private Task CompleteAgentTask(string taskId, TaskState state, CancellationToken cancellationToken)
+    public Task<AgentCard> GetAgentCardAsync(string agentPath, CancellationToken cancellationToken = default)
     {
-        if (state == TaskState.Canceled)
+        if (cancellationToken.IsCancellationRequested)
         {
-            return this._taskManager.CancelTaskAsync(new() { Id = taskId }, cancellationToken);
+            return Task.FromCanceled<AgentCard>(cancellationToken);
         }
 
-        return this._taskManager.UpdateStatusAsync(taskId, state, final: true, cancellationToken: cancellationToken);
-    }
-
-    private Task<AgentRunResponse> MessageProcessingRunAsync(
-        IReadOnlyCollection<ChatMessage> messages,
-        AgentThread? thread = null,
-        A2AAgentRunOptions? options = null,
-        CancellationToken cancellationToken = default)
-    {
-        return this.InnerAgent.RunAsync(messages, thread, options, cancellationToken);
+        return Task.FromResult(new AgentCard()
+        {
+            Name = this._innerAgent.Name ?? string.Empty,
+            Description = this._innerAgent.Description ?? string.Empty,
+            Url = agentPath,
+            Version = this._innerAgent.Id,
+            DefaultInputModes = ["text"],
+            DefaultOutputModes = ["text"],
+            Capabilities = new()
+            {
+                Streaming = true,
+                PushNotifications = false,
+            },
+            Skills = [],
+        });
     }
 }

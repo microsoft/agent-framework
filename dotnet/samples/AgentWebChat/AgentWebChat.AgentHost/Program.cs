@@ -94,10 +94,8 @@ app.UseExceptionHandler();
 app.MapActors();
 
 // attach a2a with simple message communication
-app.AttachA2AMessaging("/a2a/pirate", agentName: "pirate");
-
-// attach a2a with more complex AgentTask-Based communication
-app.AttachA2ATasks("/a2a/knights-and-knaves", agentName: "knights-and-knaves");
+app.AttachA2AMessaging(agentName: "pirate", path: "/a2a/pirate");
+app.AttachA2AMessaging(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves");
 
 // Map the agents HTTP endpoints
 app.MapAgentDiscovery("/agents");
