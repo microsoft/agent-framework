@@ -3,8 +3,6 @@
 using System.ComponentModel;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
-using Microsoft.Extensions.AI.ModelContextProtocol;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace Steps;
 
@@ -109,96 +107,6 @@ public sealed class Step02_ChatClientAgent_UsingFunctionTools(ITestOutputHelper 
             await foreach (var update in agent.RunStreamingAsync(input, thread))
             {
                 this.WriteAgentOutput(update);
-            }
-        }
-
-        // Clean up the server-side agent after use when applicable (depending on the provider).
-        await base.AgentCleanUpAsync(provider, agent, thread);
-    }
-
-    [Theory]
-    [InlineData(ChatClientProviders.AzureOpenAI)]
-    [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
-    [InlineData(ChatClientProviders.OpenAIAssistant)]
-    [InlineData(ChatClientProviders.OpenAIChatCompletion)]
-    [InlineData(ChatClientProviders.OpenAIResponses)]
-    public async Task ApprovalsWithTools(ChatClientProviders provider)
-    {
-        // Creating a MenuTools instance to be used by the agent.
-        var menuTools = new MenuTools();
-
-        // Define the options for the chat client agent.
-        var agentOptions = new ChatClientAgentOptions(
-            name: "Host",
-            instructions: "Answer questions about the menu",
-            tools: [
-                AIFunctionFactory.Create(menuTools.GetMenu),
-                new ApprovalRequiredAIFunction(AIFunctionFactory.Create(menuTools.GetSpecials)),
-                AIFunctionFactory.Create(menuTools.GetItemPrice),
-                new HostedMcpServerTool("MyService", new Uri("https://mcp-server.example.com"))
-                {
-                    AllowedTools = ["add"],
-                    ApprovalMode = HostedMcpServerToolApprovalMode.AlwaysRequire,
-                }
-            ]);
-
-        // Create the server-side agent Id when applicable (depending on the provider).
-        agentOptions.Id = await base.AgentCreateAsync(provider, agentOptions);
-
-        // Get the chat client to use for the agent.
-        using var chatClient = base.GetChatClient(provider, agentOptions);
-
-        var chatBuilder = chatClient.AsBuilder();
-        if (chatClient.GetService<HostedMCPChatClient>() is null)
-        {
-            chatBuilder.Use((IChatClient innerClient, IServiceProvider services) =>
-            {
-                return new HostedMCPChatClient(innerClient);
-            });
-        }
-        if (chatClient.GetService<FunctionInvokingChatClientWithBuiltInApprovals>() is null)
-        {
-            chatBuilder.Use((IChatClient innerClient, IServiceProvider services) =>
-            {
-                return new FunctionInvokingChatClientWithBuiltInApprovals(innerClient, null, services);
-            });
-        }
-        using var chatClientWithMCPAndApprovals = chatBuilder.Build();
-
-        // Define the agent
-        var agent = new ChatClientAgent(chatClientWithMCPAndApprovals, agentOptions);
-
-        // Create the chat history thread to capture the agent interaction.
-        var thread = agent.GetNewThread();
-
-        // Respond to user input, invoking functions where appropriate.
-        await RunAgentAsync("What is the special soup and its price?");
-        await RunAgentAsync("What is the special drink?");
-        await RunAgentAsync("What is 2 + 2?");
-
-        async Task RunAgentAsync(string input)
-        {
-            this.WriteUserMessage(input);
-            var response = await agent.RunAsync(input, thread);
-            this.WriteResponseOutput(response);
-
-            var userInputRequests = response.UserInputRequests.ToList();
-
-            // Loop until all user input requests are handled.
-            while (userInputRequests.Count > 0)
-            {
-                List<ChatMessage> nextIterationMessages = userInputRequests?.Select((request) => request switch
-                {
-                    FunctionApprovalRequestContent functionApprovalRequest when functionApprovalRequest.FunctionCall.Name == "GetSpecials" || functionApprovalRequest.FunctionCall.Name == "add" => functionApprovalRequest.Approve(),
-                    FunctionApprovalRequestContent functionApprovalRequest => functionApprovalRequest.Reject(),
-                    _ => throw new NotSupportedException($"Unsupported request type: {request.GetType().Name}")
-                })?.ToList() ?? [];
-
-                nextIterationMessages.ForEach(x => Console.WriteLine($"Approval for the {(x.Contents[0] as FunctionApprovalResponseContent)?.FunctionCall.Name} function call is set to {(x.Contents[0] as FunctionApprovalResponseContent)?.Approved}."));
-
-                response = await agent.RunAsync(nextIterationMessages, thread);
-                this.WriteResponseOutput(response);
-                userInputRequests = response.UserInputRequests.ToList();
             }
         }
 

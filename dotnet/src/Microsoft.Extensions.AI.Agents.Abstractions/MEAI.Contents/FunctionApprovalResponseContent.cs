@@ -28,7 +28,7 @@ public class FunctionApprovalResponseContent : UserInputResponseContent
     public bool Approved { get; set; }
 
     /// <summary>
-    /// Gets or sets the function call that pre-invoke approval is required for.
+    /// Gets the function call that pre-invoke approval is required for.
     /// </summary>
     public FunctionCallContent FunctionCall { get; }
 }

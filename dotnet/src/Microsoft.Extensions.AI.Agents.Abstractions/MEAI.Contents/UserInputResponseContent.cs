@@ -22,4 +22,9 @@ public abstract class UserInputResponseContent : AIContent
     /// Gets the ID to uniquely identify the user input request/response pair.
     /// </summary>
     public string Id { get; }
+
+    /// <summary>
+    /// Gets or sets any metadata from the original message that this content is associated with.
+    /// </summary>
+    public UserInputOriginalMetadata? OriginalMessageMetadata { get; set; }
 }

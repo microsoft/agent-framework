@@ -21,7 +21,7 @@ public class FunctionApprovalRequestContent : UserInputRequestContent
     }
 
     /// <summary>
-    /// Gets or sets the function call that pre-invoke approval is required for.
+    /// Gets the function call that pre-invoke approval is required for.
     /// </summary>
     public FunctionCallContent FunctionCall { get; }
 
@@ -31,7 +31,7 @@ public class FunctionApprovalRequestContent : UserInputRequestContent
     /// <returns>The <see cref="ChatMessage"/> representing the approval response.</returns>
     public ChatMessage Approve()
     {
-        return new ChatMessage(ChatRole.User, [new FunctionApprovalResponseContent(this.Id, true, this.FunctionCall)]);
+        return new ChatMessage(ChatRole.User, [new FunctionApprovalResponseContent(this.Id, true, this.FunctionCall) { OriginalMessageMetadata = this.OriginalMessageMetadata }]);
     }
 
     /// <summary>
@@ -40,6 +40,6 @@ public class FunctionApprovalRequestContent : UserInputRequestContent
     /// <returns>The <see cref="ChatMessage"/> representing the rejection response.</returns>
     public ChatMessage Reject()
     {
-        return new ChatMessage(ChatRole.User, [new FunctionApprovalResponseContent(this.Id, false, this.FunctionCall)]);
+        return new ChatMessage(ChatRole.User, [new FunctionApprovalResponseContent(this.Id, false, this.FunctionCall) { OriginalMessageMetadata = this.OriginalMessageMetadata }]);
     }
 }
