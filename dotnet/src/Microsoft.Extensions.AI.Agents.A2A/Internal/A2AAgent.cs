@@ -28,23 +28,17 @@ internal sealed class A2AAgent
         this.InnerAgent = innerAgent ?? throw new ArgumentNullException(nameof(innerAgent));
     }
 
-    // Delegate the core methods to the inner agent
     public Task<AgentRunResponse> RunAsync(
-        A2AAgentRunOptions options,
         IReadOnlyCollection<ChatMessage>? messages = null,
         AgentThread? thread = null,
+        A2AAgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        if (options is not A2AAgentRunOptions a2aRunOptions)
-        {
-            throw new ArgumentException($"Options must be of type {typeof(A2AAgentRunOptions)}.", nameof(options));
-        }
-
         messages ??= [];
 
-        return (a2aRunOptions.TaskId is null)
-            ? this.MessageProcessingRunAsync(messages, a2aRunOptions, thread, cancellationToken)
-            : this.AgentTaskRunAsync(messages, a2aRunOptions, thread, cancellationToken);
+        return (options?.TaskId is null)
+            ? this.MessageProcessingRunAsync(messages, thread, options, cancellationToken)
+            : this.AgentTaskRunAsync(messages, options, thread, cancellationToken);
     }
 
     private async Task<AgentRunResponse> AgentTaskRunAsync(
@@ -97,8 +91,8 @@ internal sealed class A2AAgent
 
     private Task<AgentRunResponse> MessageProcessingRunAsync(
         IReadOnlyCollection<ChatMessage> messages,
-        AgentRunOptions? options = null,
         AgentThread? thread = null,
+        A2AAgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         return this.InnerAgent.RunAsync(messages, thread, options, cancellationToken);
