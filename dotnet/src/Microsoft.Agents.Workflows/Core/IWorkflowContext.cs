@@ -24,5 +24,29 @@ public interface IWorkflowContext
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
     ValueTask SendMessageAsync(object message);
 
-    // TODO: State management
+    /// <summary>
+    /// Reads a state value from the workflow's state store. If no scope is provided, the executor's private
+    /// scope is used.
+    /// </summary>
+    /// <typeparam name="T">The type of the state value.</typeparam>
+    /// <param name="key">The key of the state value.</param>
+    /// <param name="scopeName">The name of the scope.</param>
+    /// <returns>A <see cref="ValueTask{T}"/> representing the asynchronous operation.</returns>
+    ValueTask<T?> ReadStateAsync<T>(string key, string? scopeName = null);
+
+    /// <summary>
+    /// Asynchronously updates the state of a queue entry identified by the specified key and optional scope.
+    /// </summary>
+    /// <remarks>
+    /// Subsequent reads by this executor will result in the new value of the state. Other executors will only see
+    /// the new state starting from the next SuperStep.
+    /// </remarks>
+    /// <typeparam name="T">The type of the value to associate with the queue entry.</typeparam>
+    /// <param name="key">The unique identifier for the queue entry to update. Cannot be null or empty.</param>
+    /// <param name="value">The value to set for the queue entry. If null, the entry's state may be cleared or reset depending on
+    /// implementation.</param>
+    /// <param name="scopeName">An optional name that specifies the scope within which the queue entry resides. If null, the default scope is
+    /// used.</param>
+    /// <returns>A ValueTask that represents the asynchronous update operation.</returns>
+    ValueTask QueueStateUpdateAsync<T>(string key, T? value, string? scopeName = null);
 }

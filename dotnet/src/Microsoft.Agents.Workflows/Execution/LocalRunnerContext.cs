@@ -87,9 +87,17 @@ internal class LocalRunnerContext<TExternalInput> : IRunnerContext
 
     public readonly List<WorkflowEvent> QueuedEvents = new();
 
+    internal StateManager StateManager { get; } = new();
+
     private class BoundContext(LocalRunnerContext<TExternalInput> RunnerContext, string ExecutorId) : IWorkflowContext
     {
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent) => RunnerContext.AddEventAsync(workflowEvent);
         public ValueTask SendMessageAsync(object message) => RunnerContext.SendMessageAsync(ExecutorId, message);
+
+        public ValueTask QueueStateUpdateAsync<T>(string key, T? value, string? scopeName = null)
+            => RunnerContext.StateManager.WriteStateAsync(ExecutorId, scopeName, key, value);
+
+        public ValueTask<T?> ReadStateAsync<T>(string key, string? scopeName = null)
+            => RunnerContext.StateManager.ReadStateAsync<T>(ExecutorId, scopeName, key);
     }
 }
