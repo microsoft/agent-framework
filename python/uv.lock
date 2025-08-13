@@ -409,16 +409,16 @@ wheels = [
 
 [[package]]
 name = "azure-ai-agents"
-version = "1.2.0b1"
+version = "1.2.0b2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "azure-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "isodate", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ed/70/0aa275a7eecead1691bd86474514bc28787f815c37d1d79ac78be03a7612/azure_ai_agents-1.2.0b1.tar.gz", hash = "sha256:914e08e553ea4379d41ad60dbc8ea5468311d97f0ae1a362686229b8565ab8dd", size = 339933, upload-time = "2025-08-05T22:21:07.262Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6e/07/97eb5d1355abbd572c187789ae6c17d36dfcb3a9a1fae002e660d2663bf6/azure_ai_agents-1.2.0b2.tar.gz", hash = "sha256:4d9d220c12e2b7741f67bd7ef35e4faa60de7da32c0ab2526fa0ce1b978c2537", size = 353885, upload-time = "2025-08-12T21:35:46.264Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/40/c2/4824f3cd3980f976c4dace59cb25ab1891b22626be5c80c4a96f0b9c0ba5/azure_ai_agents-1.2.0b1-py3-none-any.whl", hash = "sha256:c6862f2e6655072ee3f1f1489be2dc2bf6c0ad636ec4e7f33a5fca9cb5c8eadb", size = 202032, upload-time = "2025-08-05T22:21:08.668Z" },
+    { url = "https://files.pythonhosted.org/packages/73/9d/59688d265026e84dfff39b26d24cdbce0b2a2466a5bed06e0874a2a58e90/azure_ai_agents-1.2.0b2-py3-none-any.whl", hash = "sha256:f82117029fcc1dbed24d6b6c94d7e60e6b75276c333329fcfd9238853c82020b", size = 204422, upload-time = "2025-08-12T21:35:48.057Z" },
 ]
 
 [[package]]
@@ -1923,7 +1923,7 @@ wheels = [
 
 [[package]]
 name = "opentelemetry-instrumentation-openai"
-version = "0.44.2"
+version = "0.45.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "opentelemetry-api", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -1931,9 +1931,9 @@ dependencies = [
     { name = "opentelemetry-semantic-conventions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "opentelemetry-semantic-conventions-ai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9f/87/475d73f87a7cb68ff25fd1ec35422a2bb2a793482716278903be16c3d6c7/opentelemetry_instrumentation_openai-0.44.2.tar.gz", hash = "sha256:6af607e2afa3267b3fe91dbe6f9d865d3cb742649cc394ecedafc13349f40cb6", size = 24274, upload-time = "2025-08-11T19:52:29.687Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fa/fc/98e6c4247b1ea5648bec0139dbe14b4fe5b5dcfc5a9437260ac175cf3440/opentelemetry_instrumentation_openai-0.45.0.tar.gz", hash = "sha256:f3ef05a21130054610cb374cdf4d87a9854ba57eb7bfe5e36cd0e2f863e330d3", size = 24576, upload-time = "2025-08-12T16:16:41.39Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5a/1d/884e47bbe6bfc3e1268fd2c76b44669b084ea249ed3babadb9e811875001/opentelemetry_instrumentation_openai-0.44.2-py3-none-any.whl", hash = "sha256:8ebd90c29ff64b170da6d35219172ba099e2eb6aad48140d99bbd1b22d1e1b07", size = 34086, upload-time = "2025-08-11T19:51:59.42Z" },
+    { url = "https://files.pythonhosted.org/packages/aa/7a/1556fe9e80462fc042ecb9dcaefdc039f70b2cb45237b1e909a6fe1b2e31/opentelemetry_instrumentation_openai-0.45.0-py3-none-any.whl", hash = "sha256:6818a407b1ee735ec083333af7e39bb017a3a6ffdc1123dbaf3b8aef40cdc6df", size = 34371, upload-time = "2025-08-12T16:16:14.248Z" },
 ]
 
 [[package]]

@@ -232,7 +232,7 @@ async def test_azure_responses_client_streaming() -> None:
             messages=messages,
             response_format=OutputStruct,
         ),
-        type_=OutputStruct,
+        output_format_type=OutputStruct,
     )
     assert structured_response is not None
     assert isinstance(structured_response, ChatResponse)
