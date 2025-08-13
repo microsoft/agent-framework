@@ -131,7 +131,7 @@ async def single_edge_with_condition():
     await workflow.run(1)
 
 
-async def fan_out_fan_in_edges():
+async def fan_out_fan_in_edge_group():
     """A sample to demonstrate a fan-out and fan-in connection between executors.
 
     Four executors are connected in a fan-out and fan-in pattern:
@@ -163,10 +163,10 @@ async def fan_out_fan_in_edges():
     await workflow.run(1)
 
 
-async def conditional_fan_out_edges():
-    """A sample to demonstrate a conditional fan-out connection.
+async def switch_case_edge_group():
+    """A sample to demonstrate a switch-case connection.
 
-    Four executors are connected in a conditional fan-out pattern:
+    Four executors are connected in a switch-case pattern:
     AddOneExecutor -> AddOneExecutor, MultiplyByTwoExecutor, DivideByTwoExecutor -> AggregateResultExecutor.
 
     The message from AddOneExecutor will be evaluated against the conditions one by one, and the first condition
@@ -196,7 +196,7 @@ async def conditional_fan_out_edges():
     workflow = (
         WorkflowBuilder()
         .set_start_executor(add_one_executor)
-        .add_conditional_edge_group(
+        .add_switch_case_edge_group(
             add_one_executor,
             [
                 # Loop back to the add_one_executor if the number is less than 11
@@ -214,10 +214,10 @@ async def conditional_fan_out_edges():
     await workflow.run(1)
 
 
-async def partitioning_fan_out_edges():
-    """A sample to demonstrate a partitioning fan-out connection.
+async def multi_selection_edge_group():
+    """A sample to demonstrate a multi-selection edge connection.
 
-    Four executors are connected in a partitioning fan-out pattern:
+    Four executors are connected in a multi-selection edge pattern:
     AddOneExecutor -> AddOneExecutor, MultiplyByTwoExecutor, DivideByTwoExecutor -> AggregateResultExecutor.
 
     The AddOneExecutor sends its output to one or more executors based on the partitioning function.
@@ -244,27 +244,27 @@ async def partitioning_fan_out_edges():
     divide_by_two_executor = DivideByTwoExecutor()
     aggregate_result_executor = AggregateResultExecutor()
 
-    def partition_func(number: int, total_targets: int) -> list[int]:
-        """Partition function to determine which executor to send the number to."""
+    def selection_func(number: int, target_ids: list[str]) -> list[str]:
+        """Selection function to determine which executor to send the number to."""
         if number < 12:
             # Loop back to the add_one_executor if the number is less than 12
-            return [0]
+            return [add_one_executor.id]
 
         if number % 2 == 0:
             # Send it to the add_one_executor to add one more time and the
             # divide_by_two_executor to divide the result by two.
-            return [0, 2]
+            return [add_one_executor.id, divide_by_two_executor.id]
 
         # Otherwise, send it to the multiply_by_two_executor to multiply the result by two.
-        return [1]
+        return [multiply_by_two_executor.id]
 
     workflow = (
         WorkflowBuilder()
         .set_start_executor(add_one_executor)
-        .add_partitioning_fan_out_edges(
+        .add_multi_selection_edge_group(
             add_one_executor,
             [add_one_executor, multiply_by_two_executor, divide_by_two_executor],
-            partition_func=partition_func,
+            selection_func=selection_func,
         )
         .add_fan_in_edges([multiply_by_two_executor, divide_by_two_executor], aggregate_result_executor)
         .build()
@@ -280,11 +280,11 @@ async def main():
     print("**Running single connection with condition workflow**")
     await single_edge_with_condition()
     print("**Running fan-out and fan-in connection workflow**")
-    await fan_out_fan_in_edges()
+    await fan_out_fan_in_edge_group()
     print("**Running conditional fan-out connection workflow**")
-    await conditional_fan_out_edges()
-    print("**Running partitioning fan-out connection workflow**")
-    await partitioning_fan_out_edges()
+    await switch_case_edge_group()
+    print("**Running multi-selection edge group workflow**")
+    await multi_selection_edge_group()
 
 
 if __name__ == "__main__":

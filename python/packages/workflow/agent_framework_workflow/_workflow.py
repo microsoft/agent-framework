@@ -11,12 +11,11 @@ from ._checkpoint import CheckpointStorage
 from ._const import DEFAULT_MAX_ITERATIONS
 from ._edge import (
     Case,
-    ConditionalEdgeGroup,
     Default,
     EdgeGroup,
-    PartitioningEdgeGroup,
     SingleEdgeGroup,
     SourceEdgeGroup,
+    SwitchCaseEdgeGroup,
     TargetEdgeGroup,
 )
 from ._events import RequestInfoEvent, WorkflowCompletedEvent, WorkflowEvent
@@ -457,10 +456,9 @@ class WorkflowBuilder:
         return self
 
     def add_fan_out_edges(self, source: Executor, targets: Sequence[Executor]) -> "Self":
-        """Add multiple edges to the workflow.
+        """Add multiple edges to the workflow where messages from the source will be sent to all target.
 
         The output types of the source and the input types of the targets must be compatible.
-        Messages from the source executor will be sent to all target executors.
 
         Args:
             source: The source executor of the edges.
@@ -470,8 +468,8 @@ class WorkflowBuilder:
 
         return self
 
-    def add_conditional_edge_group(self, source: Executor, cases: Sequence[Case | Default]) -> "Self":
-        """Add a conditional fan out group of edges to the workflow.
+    def add_switch_case_edge_group(self, source: Executor, cases: Sequence[Case | Default]) -> "Self":
+        """Add an edge group that represents a switch-case statement.
 
         The output types of the source and the input types of the targets must be compatible.
         Messages from the source executor will be sent to one of the target executors based on
@@ -481,38 +479,38 @@ class WorkflowBuilder:
         Each condition function will be evaluated in order, and the first one that returns True
         will determine which target executor receives the message.
 
-        The number of targets must be one greater than the number of conditions. The last target
-        executor will receive messages that fall through all conditions (i.e., no condition matched).
+        The last case (the default case) will receive messages that fall through all conditions
+        (i.e., no condition matched).
 
         Args:
             source: The source executor of the edges.
             cases: A list of case objects that determine the target executor for each message.
         """
-        self._edge_groups.append(ConditionalEdgeGroup(source, cases))
+        self._edge_groups.append(SwitchCaseEdgeGroup(source, cases))
 
         return self
 
-    def add_partitioning_fan_out_edges(
+    def add_multi_selection_edge_group(
         self,
         source: Executor,
         targets: Sequence[Executor],
-        partition_func: Callable[[Any, int], list[int]],
+        selection_func: Callable[[Any, list[str]], list[str]],
     ) -> "Self":
-        """Add a partitioning fan out group of edges to the workflow.
+        """Add an edge group that represents a multi-selection execution model.
 
         The output types of the source and the input types of the targets must be compatible.
         Messages from the source executor will be sent to multiple target executors based on
-        the provided partition function.
+        the provided selection function.
 
-        The partition function should take a message and the number of target executors,
+        The selection function should take a message and the name of the target executors,
         and return a list of indices indicating which target executors should receive the message.
 
         Args:
             source: The source executor of the edges.
             targets: A list of target executors for the edges.
-            partition_func: A function that partitions messages to target executors.
+            selection_func: A function that selects target executors for messages.
         """
-        self._edge_groups.append(PartitioningEdgeGroup(source, targets, partition_func))
+        self._edge_groups.append(SourceEdgeGroup(source, targets, selection_func))
 
         return self
 

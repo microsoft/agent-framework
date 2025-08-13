@@ -9,12 +9,11 @@ from agent_framework.workflow import Executor, WorkflowContext, handler
 
 from agent_framework_workflow._edge import (
     Case,
-    ConditionalEdgeGroup,
     Default,
     Edge,
-    PartitioningEdgeGroup,
     SingleEdgeGroup,
     SourceEdgeGroup,
+    SwitchCaseEdgeGroup,
     TargetEdgeGroup,
 )
 
@@ -344,6 +343,180 @@ async def test_source_edge_group_send_message_only_one_successful_send():
         assert mock_send.call_count == 1
 
 
+def test_source_edge_group_with_selection_func():
+    """Test creating a partitioning edge group."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    edge_group = SourceEdgeGroup(
+        source=source,
+        targets=[target1, target2],
+        selection_func=lambda data, target_ids: [target1.id],
+    )
+
+    assert edge_group.source_executors == [source]
+    assert edge_group.target_executors == [target1, target2]
+    assert len(edge_group.edges) == 2
+    assert edge_group.edges[0].source_id == "source_executor"
+    assert edge_group.edges[0].target_id == "target_executor_1"
+    assert edge_group.edges[1].source_id == "source_executor"
+    assert edge_group.edges[1].target_id == "target_executor_2"
+
+
+async def test_source_edge_group_with_selection_func_send_message():
+    """Test sending a message through a source edge group with a selection function."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    edge_group = SourceEdgeGroup(
+        source=source,
+        targets=[target1, target2],
+        selection_func=lambda data, target_ids: [target1.id, target2.id],
+    )
+
+    from agent_framework_workflow._runner_context import InProcRunnerContext, Message
+    from agent_framework_workflow._shared_state import SharedState
+
+    shared_state = SharedState()
+    ctx = InProcRunnerContext()
+
+    data = MockMessage(data="test")
+    message = Message(data=data, source_id=source.id)
+
+    with patch("agent_framework_workflow._edge.Edge.send_message") as mock_send:
+        success = await edge_group.send_message(message, shared_state, ctx)
+
+        assert success is True
+        assert mock_send.call_count == 2
+
+
+async def test_source_edge_group_with_selection_func_send_message_with_invalid_selection_result():
+    """Test sending a message through a source edge group with a selection func with an invalid selection result."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    edge_group = SourceEdgeGroup(
+        source=source,
+        targets=[target1, target2],
+        selection_func=lambda data, target_ids: [target1.id, "invalid_target"],
+    )
+
+    from agent_framework_workflow._runner_context import InProcRunnerContext, Message
+    from agent_framework_workflow._shared_state import SharedState
+
+    shared_state = SharedState()
+    ctx = InProcRunnerContext()
+
+    data = MockMessage(data="test")
+    message = Message(data=data, source_id=source.id)
+
+    with pytest.raises(RuntimeError):
+        await edge_group.send_message(message, shared_state, ctx)
+
+
+async def test_source_edge_group_with_selection_func_send_message_with_target():
+    """Test sending a message through a source edge group with a selection func with a target."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    edge_group = SourceEdgeGroup(
+        source=source,
+        targets=[target1, target2],
+        selection_func=lambda data, target_ids: [target1.id, target2.id],
+    )
+
+    from agent_framework_workflow._runner_context import InProcRunnerContext, Message
+    from agent_framework_workflow._shared_state import SharedState
+
+    shared_state = SharedState()
+    ctx = InProcRunnerContext()
+
+    data = MockMessage(data="test")
+    message = Message(data=data, source_id=source.id, target_id=target1.id)
+
+    with patch("agent_framework_workflow._edge.Edge.send_message") as mock_send:
+        success = await edge_group.send_message(message, shared_state, ctx)
+
+        assert success is True
+        assert mock_send.call_count == 1
+        assert mock_send.call_args[0][0].target_id == target1.id
+
+
+async def test_source_edge_group_with_selection_func_send_message_with_target_not_in_selection():
+    """Test sending a message through a source edge group with a selection func with a target not in the selection."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    edge_group = SourceEdgeGroup(
+        source=source,
+        targets=[target1, target2],
+        selection_func=lambda data, target_ids: [target1.id],  # Only target1 will receive the message
+    )
+
+    from agent_framework_workflow._runner_context import InProcRunnerContext, Message
+    from agent_framework_workflow._shared_state import SharedState
+
+    shared_state = SharedState()
+    ctx = InProcRunnerContext()
+
+    data = MockMessage(data="test")
+    message = Message(data=data, source_id=source.id, target_id=target2.id)
+
+    success = await edge_group.send_message(message, shared_state, ctx)
+    assert success is False
+
+
+async def test_source_edge_group_with_selection_func_send_message_with_invalid_data():
+    """Test sending a message through a source edge group with a selection func with invalid data."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    edge_group = SourceEdgeGroup(
+        source=source, targets=[target1, target2], selection_func=lambda data, target_ids: [target1.id, target2.id]
+    )
+
+    from agent_framework_workflow._runner_context import InProcRunnerContext, Message
+    from agent_framework_workflow._shared_state import SharedState
+
+    shared_state = SharedState()
+    ctx = InProcRunnerContext()
+
+    data = "invalid_data"
+    message = Message(data=data, source_id=source.id)
+
+    success = await edge_group.send_message(message, shared_state, ctx)
+    assert success is False
+
+
+async def test_source_edge_group_with_selection_func_send_message_with_target_invalid_data():
+    """Test sending a message through a source edge group with a selection func with a target and invalid data."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    edge_group = SourceEdgeGroup(
+        source=source, targets=[target1, target2], selection_func=lambda data, target_ids: [target1.id, target2.id]
+    )
+
+    from agent_framework_workflow._runner_context import InProcRunnerContext, Message
+    from agent_framework_workflow._shared_state import SharedState
+
+    shared_state = SharedState()
+    ctx = InProcRunnerContext()
+
+    data = "invalid_data"
+    message = Message(data=data, source_id=source.id, target_id=target1.id)
+
+    success = await edge_group.send_message(message, shared_state, ctx)
+    assert success is False
+
+
 # endregion SourceEdgeGroup
 
 # region TargetEdgeGroup
@@ -458,16 +631,16 @@ async def test_target_edge_group_send_message_with_invalid_data():
 
 # endregion TargetEdgeGroup
 
-# region ConditionalEdgeGroup
+# region SwitchCaseEdgeGroup
 
 
-def test_conditional_edge_group():
-    """Test creating a conditional edge group."""
+def test_switch_case_edge_group():
+    """Test creating a switch case edge group."""
     source = MockExecutor(id="source_executor")
     target1 = MockExecutor(id="target_executor_1")
     target2 = MockExecutor(id="target_executor_2")
 
-    edge_group = ConditionalEdgeGroup(
+    edge_group = SwitchCaseEdgeGroup(
         source=source,
         cases=[
             Case(condition=lambda x: x.data < 0, target=target1),
@@ -480,29 +653,31 @@ def test_conditional_edge_group():
     assert len(edge_group.edges) == 2
     assert edge_group.edges[0].source_id == "source_executor"
     assert edge_group.edges[0].target_id == "target_executor_1"
-    assert edge_group.edges[0]._condition is not None  # type: ignore
     assert edge_group.edges[1].source_id == "source_executor"
     assert edge_group.edges[1].target_id == "target_executor_2"
-    assert edge_group.edges[1]._condition is None  # type: ignore
+
+    assert edge_group._selection_func is not None  # type: ignore
+    assert edge_group._selection_func(MockMessage(data=-1), [target1.id, target2.id]) == [target1.id]  # type: ignore
+    assert edge_group._selection_func(MockMessage(data=1), [target1.id, target2.id]) == [target2.id]  # type: ignore
 
 
-def test_conditional_edge_group_invalid_number_of_cases():
-    """Test creating a conditional edge group with an invalid number of cases."""
+def test_switch_case_edge_group_invalid_number_of_cases():
+    """Test creating a switch case edge group with an invalid number of cases."""
     source = MockExecutor(id="source_executor")
     target = MockExecutor(id="target_executor")
 
     with pytest.raises(
-        ValueError, match=r"ConditionalEdgeGroup must contain at least two cases \(including the default case\)."
+        ValueError, match=r"SwitchCaseEdgeGroup must contain at least two cases \(including the default case\)."
     ):
-        ConditionalEdgeGroup(
+        SwitchCaseEdgeGroup(
             source=source,
             cases=[
                 Case(condition=lambda x: x.data < 0, target=target),
             ],
         )
 
-    with pytest.raises(ValueError, match="ConditionalEdgeGroup must contain exactly one default case."):
-        ConditionalEdgeGroup(
+    with pytest.raises(ValueError, match="SwitchCaseEdgeGroup must contain exactly one default case."):
+        SwitchCaseEdgeGroup(
             source=source,
             cases=[
                 Case(condition=lambda x: x.data < 0, target=target),
@@ -511,14 +686,14 @@ def test_conditional_edge_group_invalid_number_of_cases():
         )
 
 
-def test_conditional_edge_group_invalid_number_of_default_cases():
-    """Test creating a conditional edge group with an invalid number of conditions."""
+def test_switch_case_edge_group_invalid_number_of_default_cases():
+    """Test creating a switch case edge group with an invalid number of conditions."""
     source = MockExecutor(id="source_executor")
     target1 = MockExecutor(id="target_executor_1")
     target2 = MockExecutor(id="target_executor_2")
 
-    with pytest.raises(ValueError, match="ConditionalEdgeGroup must contain exactly one default case."):
-        ConditionalEdgeGroup(
+    with pytest.raises(ValueError, match="SwitchCaseEdgeGroup must contain exactly one default case."):
+        SwitchCaseEdgeGroup(
             source=source,
             cases=[
                 Case(condition=lambda x: x.data < 0, target=target1),
@@ -528,13 +703,13 @@ def test_conditional_edge_group_invalid_number_of_default_cases():
         )
 
 
-async def test_conditional_edge_group_send_message():
-    """Test sending a message through a conditional edge group."""
+async def test_switch_case_edge_group_send_message():
+    """Test sending a message through a switch case edge group."""
     source = MockExecutor(id="source_executor")
     target1 = MockExecutor(id="target_executor_1")
     target2 = MockExecutor(id="target_executor_2")
 
-    edge_group = ConditionalEdgeGroup(
+    edge_group = SwitchCaseEdgeGroup(
         source=source,
         cases=[
             Case(condition=lambda x: x.data < 0, target=target1),
@@ -567,13 +742,13 @@ async def test_conditional_edge_group_send_message():
         assert mock_send.call_count == 1
 
 
-async def test_conditional_edge_group_send_message_with_invalid_target():
-    """Test sending a message through a conditional edge group with an invalid target."""
+async def test_switch_case_edge_group_send_message_with_invalid_target():
+    """Test sending a message through a switch case edge group with an invalid target."""
     source = MockExecutor(id="source_executor")
     target1 = MockExecutor(id="target_executor_1")
     target2 = MockExecutor(id="target_executor_2")
 
-    edge_group = ConditionalEdgeGroup(
+    edge_group = SwitchCaseEdgeGroup(
         source=source,
         cases=[
             Case(condition=lambda x: x.data < 0, target=target1),
@@ -594,13 +769,13 @@ async def test_conditional_edge_group_send_message_with_invalid_target():
     assert success is False
 
 
-async def test_conditional_edge_group_send_message_with_valid_target():
-    """Test sending a message through a conditional edge group with a target."""
+async def test_switch_case_edge_group_send_message_with_valid_target():
+    """Test sending a message through a switch case edge group with a target."""
     source = MockExecutor(id="source_executor")
     target1 = MockExecutor(id="target_executor_1")
     target2 = MockExecutor(id="target_executor_2")
 
-    edge_group = ConditionalEdgeGroup(
+    edge_group = SwitchCaseEdgeGroup(
         source=source,
         cases=[
             Case(condition=lambda x: x.data < 0, target=target1),
@@ -626,13 +801,13 @@ async def test_conditional_edge_group_send_message_with_valid_target():
     assert success is True
 
 
-async def test_conditional_edge_group_send_message_with_invalid_data():
-    """Test sending a message through a conditional edge group with invalid data."""
+async def test_switch_case_edge_group_send_message_with_invalid_data():
+    """Test sending a message through a switch case edge group with invalid data."""
     source = MockExecutor(id="source_executor")
     target1 = MockExecutor(id="target_executor_1")
     target2 = MockExecutor(id="target_executor_2")
 
-    edge_group = ConditionalEdgeGroup(
+    edge_group = SwitchCaseEdgeGroup(
         source=source,
         cases=[
             Case(condition=lambda x: x.data < 0, target=target1),
@@ -653,201 +828,4 @@ async def test_conditional_edge_group_send_message_with_invalid_data():
     assert success is False
 
 
-# endregion ConditionalEdgeGroup
-
-
-# region PartitioningEdgeGroup
-
-
-def test_partitioning_edge_group():
-    """Test creating a partitioning edge group."""
-    source = MockExecutor(id="source_executor")
-    target1 = MockExecutor(id="target_executor_1")
-    target2 = MockExecutor(id="target_executor_2")
-
-    edge_group = PartitioningEdgeGroup(
-        source=source,
-        targets=[target1, target2],
-        partition_func=lambda data, num_edges: [0],
-    )
-
-    assert edge_group.source_executors == [source]
-    assert edge_group.target_executors == [target1, target2]
-    assert len(edge_group.edges) == 2
-    assert edge_group.edges[0].source_id == "source_executor"
-    assert edge_group.edges[0].target_id == "target_executor_1"
-    assert edge_group.edges[1].source_id == "source_executor"
-    assert edge_group.edges[1].target_id == "target_executor_2"
-
-
-def test_partitioning_edge_group_invalid_number_of_targets():
-    """Test creating a partitioning edge group with an invalid number of targets."""
-    source = MockExecutor(id="source_executor")
-    target = MockExecutor(id="target_executor")
-
-    with pytest.raises(ValueError, match="PartitioningEdgeGroup must contain at least two targets."):
-        PartitioningEdgeGroup(
-            source=source,
-            targets=[target],
-            partition_func=lambda data, num_edges: [0],
-        )
-
-
-async def test_partitioning_edge_group_send_message():
-    """Test sending a message through a partitioning edge group."""
-    source = MockExecutor(id="source_executor")
-    target1 = MockExecutor(id="target_executor_1")
-    target2 = MockExecutor(id="target_executor_2")
-
-    edge_group = PartitioningEdgeGroup(
-        source=source,
-        targets=[target1, target2],
-        partition_func=lambda data, num_edges: [0, 1],
-    )
-
-    from agent_framework_workflow._runner_context import InProcRunnerContext, Message
-    from agent_framework_workflow._shared_state import SharedState
-
-    shared_state = SharedState()
-    ctx = InProcRunnerContext()
-
-    data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id)
-
-    with patch("agent_framework_workflow._edge.Edge.send_message") as mock_send:
-        success = await edge_group.send_message(message, shared_state, ctx)
-
-        assert success is True
-        assert mock_send.call_count == 2
-
-
-async def test_partitioning_edge_group_send_message_with_invalid_partition_result():
-    """Test sending a message through a partitioning edge group with an invalid partition result."""
-    source = MockExecutor(id="source_executor")
-    target1 = MockExecutor(id="target_executor_1")
-    target2 = MockExecutor(id="target_executor_2")
-
-    edge_group = PartitioningEdgeGroup(
-        source=source,
-        targets=[target1, target2],
-        partition_func=lambda data, num_edges: [0, 2],  # Invalid index
-    )
-
-    from agent_framework_workflow._runner_context import InProcRunnerContext, Message
-    from agent_framework_workflow._shared_state import SharedState
-
-    shared_state = SharedState()
-    ctx = InProcRunnerContext()
-
-    data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id)
-
-    with pytest.raises(RuntimeError):
-        await edge_group.send_message(message, shared_state, ctx)
-
-
-async def test_partitioning_edge_group_send_message_with_target():
-    """Test sending a message through a partitioning edge group with a target."""
-    source = MockExecutor(id="source_executor")
-    target1 = MockExecutor(id="target_executor_1")
-    target2 = MockExecutor(id="target_executor_2")
-
-    edge_group = PartitioningEdgeGroup(
-        source=source,
-        targets=[target1, target2],
-        partition_func=lambda data, num_edges: [0, 1],
-    )
-
-    from agent_framework_workflow._runner_context import InProcRunnerContext, Message
-    from agent_framework_workflow._shared_state import SharedState
-
-    shared_state = SharedState()
-    ctx = InProcRunnerContext()
-
-    data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id, target_id=target1.id)
-
-    with patch("agent_framework_workflow._edge.Edge.send_message") as mock_send:
-        success = await edge_group.send_message(message, shared_state, ctx)
-
-        assert success is True
-        assert mock_send.call_count == 1
-        assert mock_send.call_args[0][0].target_id == target1.id
-
-
-async def test_partitioning_edge_group_send_message_with_target_not_in_partition():
-    """Test sending a message through a partitioning edge group with a target not in the partition."""
-    source = MockExecutor(id="source_executor")
-    target1 = MockExecutor(id="target_executor_1")
-    target2 = MockExecutor(id="target_executor_2")
-
-    edge_group = PartitioningEdgeGroup(
-        source=source,
-        targets=[target1, target2],
-        partition_func=lambda data, num_edges: [0],  # Only target1 will receive the message
-    )
-
-    from agent_framework_workflow._runner_context import InProcRunnerContext, Message
-    from agent_framework_workflow._shared_state import SharedState
-
-    shared_state = SharedState()
-    ctx = InProcRunnerContext()
-
-    data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id, target_id=target2.id)
-
-    success = await edge_group.send_message(message, shared_state, ctx)
-    assert success is False
-
-
-async def test_partitioning_edge_group_send_message_with_invalid_data():
-    """Test sending a message through a partitioning edge group with invalid data."""
-    source = MockExecutor(id="source_executor")
-    target1 = MockExecutor(id="target_executor_1")
-    target2 = MockExecutor(id="target_executor_2")
-
-    edge_group = PartitioningEdgeGroup(
-        source=source,
-        targets=[target1, target2],
-        partition_func=lambda data, num_edges: [0, 1],
-    )
-
-    from agent_framework_workflow._runner_context import InProcRunnerContext, Message
-    from agent_framework_workflow._shared_state import SharedState
-
-    shared_state = SharedState()
-    ctx = InProcRunnerContext()
-
-    data = "invalid_data"
-    message = Message(data=data, source_id=source.id)
-
-    success = await edge_group.send_message(message, shared_state, ctx)
-    assert success is False
-
-
-async def test_partitioning_edge_group_send_message_with_target_invalid_data():
-    """Test sending a message through a partitioning edge group with a target and invalid data."""
-    source = MockExecutor(id="source_executor")
-    target1 = MockExecutor(id="target_executor_1")
-    target2 = MockExecutor(id="target_executor_2")
-
-    edge_group = PartitioningEdgeGroup(
-        source=source,
-        targets=[target1, target2],
-        partition_func=lambda data, num_edges: [0, 1],
-    )
-
-    from agent_framework_workflow._runner_context import InProcRunnerContext, Message
-    from agent_framework_workflow._shared_state import SharedState
-
-    shared_state = SharedState()
-    ctx = InProcRunnerContext()
-
-    data = "invalid_data"
-    message = Message(data=data, source_id=source.id, target_id=target1.id)
-
-    success = await edge_group.send_message(message, shared_state, ctx)
-    assert success is False
-
-
-# endregion PartitioningEdgeGroup
+# endregion SwitchCaseEdgeGroup

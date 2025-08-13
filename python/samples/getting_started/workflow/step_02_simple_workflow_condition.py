@@ -99,7 +99,7 @@ async def main():
     workflow = (
         WorkflowBuilder()
         .set_start_executor(spam_detector)
-        .add_conditional_edge_group(
+        .add_switch_case_edge_group(
             spam_detector,
             [
                 Case(condition=lambda x: x.is_spam, target=remove_spam),

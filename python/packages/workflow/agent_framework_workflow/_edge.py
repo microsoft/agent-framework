@@ -190,43 +190,59 @@ class SourceEdgeGroup(EdgeGroup):
     and send messages to their respective target executors.
     """
 
-    def __init__(self, source: Executor, targets: Sequence[Executor]) -> None:
+    def __init__(
+        self,
+        source: Executor,
+        targets: Sequence[Executor],
+        selection_func: Callable[[Any, list[str]], list[str]] | None = None,
+    ) -> None:
         """Initialize the source edge group with a list of edges.
 
         Args:
             source (Executor): The source executor.
             targets (Sequence[Executor]): A list of target executors that the source executor can send messages to.
+            selection_func (Callable[[Any, list[str]], list[str]], optional): A function that selects which target
+                executors to send messages to. The function takes in the message data and a list of target executor
+                IDs, and returns a list of selected target executor IDs.
         """
         if len(targets) <= 1:
             raise ValueError("SourceEdgeGroup must contain at least two targets.")
         self._edges = [Edge(source=source, target=target) for target in targets]
+        self._target_ids = [edge.target_id for edge in self._edges]
+        self._target_map = {edge.target_id: edge for edge in self._edges}
+        self._selection_func = selection_func
 
     async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
         """Send a message through all edges in the source edge group."""
+        selection_results = (
+            self._selection_func(message.data, self._target_ids) if self._selection_func else self._target_ids
+        )
+        if not self._validate_selection_result(selection_results):
+            raise RuntimeError(
+                f"Invalid selection result: {selection_results}. "
+                f"Expected selections to be a subset of valid target executor IDs: {self._target_ids}."
+            )
+
         if message.target_id:
-            # If the message has a target ID, send it to the specific target executor
-            target_edge = next((edge for edge in self._edges if edge.target_id == message.target_id), None)
-            if target_edge and target_edge.can_handle(message.data):
-                await target_edge.send_message(message, shared_state, ctx)
+            # If the target ID is specified and the selection result contains it, send the message to that edge
+            if message.target_id in selection_results:
+                edge = next((edge for edge in self._edges if edge.target_id == message.target_id), None)
+                if edge and edge.can_handle(message.data):
+                    await edge.send_message(message, shared_state, ctx)
+                    return True
+            return False
+
+        # If no target ID, send the message to the selected targets
+        async def send_to_edge(edge: Edge) -> bool:
+            """Send the message to the edge at the specified index."""
+            if edge.can_handle(message.data):
+                await edge.send_message(message, shared_state, ctx)
                 return True
             return False
 
-        # If no target ID, send the message to all edges in the group
-        if all(not edge.can_handle(message.data) for edge in self._edges):
-            return False
-
-        await asyncio.gather(
-            *(
-                edge.send_message(
-                    message,
-                    shared_state,
-                    ctx,
-                )
-                for edge in self._edges
-                if edge.can_handle(message.data)
-            ),
-        )
-        return True
+        tasks = [send_to_edge(self._target_map[target_id]) for target_id in selection_results]
+        results = await asyncio.gather(*tasks)
+        return any(results)
 
     @property
     def source_executors(self) -> list[Executor]:
@@ -242,6 +258,10 @@ class SourceEdgeGroup(EdgeGroup):
     def edges(self) -> list[Edge]:
         """Get the edges in the group."""
         return self._edges
+
+    def _validate_selection_result(self, selection_results: list[str]) -> bool:
+        """Validate the selection results to ensure all IDs are valid target executor IDs."""
+        return all(result in self._target_ids for result in selection_results)
 
 
 class TargetEdgeGroup(EdgeGroup):
@@ -334,7 +354,7 @@ class Default:
     target: Executor
 
 
-class ConditionalEdgeGroup(SourceEdgeGroup):
+class SwitchCaseEdgeGroup(SourceEdgeGroup):
     """Represents a group of edges that assemble a conditional routing pattern.
 
     This is similar to a switch-case construct:
@@ -370,11 +390,11 @@ class ConditionalEdgeGroup(SourceEdgeGroup):
                 There should be exactly one default case.
         """
         if len(cases) < 2:
-            raise ValueError("ConditionalEdgeGroup must contain at least two cases (including the default case).")
+            raise ValueError("SwitchCaseEdgeGroup must contain at least two cases (including the default case).")
 
         default_case = [isinstance(case, Default) for case in cases]
         if sum(default_case) != 1:
-            raise ValueError("ConditionalEdgeGroup must contain exactly one default case.")
+            raise ValueError("SwitchCaseEdgeGroup must contain exactly one default case.")
 
         if isinstance(cases[-1], Default):
             logger.warning(
@@ -382,83 +402,18 @@ class ConditionalEdgeGroup(SourceEdgeGroup):
                 "This will result in unexpected behavior."
             )
 
-        self._edges = [
-            Edge(source, case.target, case.condition) if isinstance(case, Case) else Edge(source, case.target, None)
-            for case in cases
-        ]
+        def selection_func(data: Any, targets: list[str]) -> list[str]:
+            """Select the target executor based on the conditions."""
+            for index, case in enumerate(cases):
+                if isinstance(case, Default):
+                    return [case.target.id]
+                if isinstance(case, Case):
+                    try:
+                        if case.condition(data):
+                            return [case.target.id]
+                    except Exception as e:
+                        logger.warning(f"Error occurred while evaluating condition for case {index}: {e}")
 
-    async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
-        """Send a message through the conditional edge group."""
-        if message.target_id:
-            # Find the index of the target edge in the edges list if target_id is specified
-            index = next((i for i, edge in enumerate(self._edges) if edge.target_id == message.target_id), None)
-            if index is None:
-                return False
-            if self._edges[index].can_handle(message.data) and self._edges[index].should_route(message.data):
-                await self._edges[index].send_message(message, shared_state, ctx)
-                return True
-            return False
+            raise RuntimeError("No matching case found in SwitchCaseEdgeGroup.")
 
-        for edge in self._edges:
-            if edge.can_handle(message.data) and edge.should_route(message.data):
-                await edge.send_message(message, shared_state, ctx)
-                return True
-
-        return False
-
-
-class PartitioningEdgeGroup(SourceEdgeGroup):
-    """Represents a group of edges that can route messages based on a partitioning strategy.
-
-    Messages from the source executor are routed to multiple target executors based on a partitioning function.
-    """
-
-    def __init__(
-        self, source: Executor, targets: Sequence[Executor], partition_func: Callable[[Any, int], list[int]]
-    ) -> None:
-        """Initialize the partitioning edge group with a list of edges.
-
-        Args:
-            source (Executor): The source executor.
-            targets (Sequence[Executor]): A list of target executors that the source executor can send messages to.
-            partition_func (Callable[[Any, int], list[int]]): A partitioning function that determines which target
-                executors to route the message to based on the data. The function should take the message data and
-                the number of targets, and return a list of indices of the target executors to route the message to.
-        """
-        if len(targets) <= 1:
-            raise ValueError("PartitioningEdgeGroup must contain at least two targets.")
-        self._edges = [Edge(source=source, target=target) for target in targets]
-        self._partition_func = partition_func
-
-    async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
-        """Send a message through the partitioning edge group."""
-        partition_result = self._partition_func(message.data, len(self._edges))
-        if not self._validate_partition_result(partition_result):
-            raise RuntimeError(
-                f"Invalid partition result: {partition_result}. Expected indices in range: [0, {len(self._edges) - 1}]."
-            )
-
-        if message.target_id:
-            # If the target ID is specified and the partition result contains it, send the message to that edge
-            has_target = message.target_id in [self._edges[index].target_id for index in partition_result]
-            if has_target:
-                edge = next((edge for edge in self._edges if edge.target_id == message.target_id), None)
-                if edge and edge.can_handle(message.data):
-                    await edge.send_message(message, shared_state, ctx)
-                    return True
-            return False
-
-        async def send_to_edge(edge: Edge) -> bool:
-            """Send the message to the edge at the specified index."""
-            if edge.can_handle(message.data):
-                await edge.send_message(message, shared_state, ctx)
-                return True
-            return False
-
-        tasks = [send_to_edge(self._edges[index]) for index in partition_result]
-        results = await asyncio.gather(*tasks)
-        return any(results)
-
-    def _validate_partition_result(self, partition_result: list[int]) -> bool:
-        """Validate the partition result to ensure all indices are within bounds."""
-        return all(0 <= index < len(self._edges) for index in partition_result)
+        super().__init__(source, [case.target for case in cases], selection_func=selection_func)
