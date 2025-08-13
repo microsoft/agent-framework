@@ -2,11 +2,11 @@
 
 import asyncio
 
-from agent_framework import ChatClientAgent, LocalMcpStreamableHttpTool
+from agent_framework import ChatClientAgent, McpStreamableHttpTool
 from agent_framework.openai import OpenAIResponsesClient
 
 
-async def tools_on_agent_level_streaming(show_raw_stream: bool = False) -> None:
+async def streaming_with_mcp(show_raw_stream: bool = False) -> None:
     """Example showing tools defined when creating the agent.
 
     If you want to access the full stream of events that has come from the model, you can access it,
@@ -20,10 +20,10 @@ async def tools_on_agent_level_streaming(show_raw_stream: bool = False) -> None:
         chat_client=OpenAIResponsesClient(),
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
-        tools=LocalMcpStreamableHttpTool(  # Tools defined at agent creation
+        tools=McpStreamableHttpTool(  # Tools defined at agent creation
             name="Microsoft Learn MCP",
             url="https://learn.microsoft.com/api/mcp",
-        ),  # Tools defined at agent creation
+        ),
     ) as agent:
         # First query
         query1 = "How to create an Azure storage account using az cli?"
@@ -48,7 +48,7 @@ async def tools_on_agent_level_streaming(show_raw_stream: bool = False) -> None:
         print("\n\n")
 
 
-async def tools_on_agent_level() -> None:
+async def run_with_mcp() -> None:
     """Example showing tools defined when creating the agent."""
     print("=== Tools Defined on Agent Level ===")
 
@@ -58,10 +58,10 @@ async def tools_on_agent_level() -> None:
         chat_client=OpenAIResponsesClient(),
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
-        tools=LocalMcpStreamableHttpTool(  # Tools defined at agent creation
+        tools=McpStreamableHttpTool(  # Tools defined at agent creation
             name="Microsoft Learn MCP",
             url="https://learn.microsoft.com/api/mcp",
-        ),  # Tools defined at agent creation
+        ),
     ) as agent:
         # First query
         query1 = "How to create an Azure storage account using az cli?"
@@ -79,8 +79,8 @@ async def tools_on_agent_level() -> None:
 async def main() -> None:
     print("=== OpenAI Responses Client Agent with Function Tools Examples ===\n")
 
-    await tools_on_agent_level()
-    await tools_on_agent_level_streaming()
+    await run_with_mcp()
+    await streaming_with_mcp()
 
 
 if __name__ == "__main__":

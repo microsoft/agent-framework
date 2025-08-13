@@ -11,7 +11,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, PrivateAttr
 
 from ._clients import ChatClient
-from ._mcp import LocalMcpServer
+from ._mcp import McpTool
 from ._pydantic import AFBaseModel
 from ._tools import AITool
 from ._types import (
@@ -317,7 +317,7 @@ class ChatClientAgent(AgentBase):
     chat_client: ChatClient
     instructions: str | None = None
     chat_options: ChatOptions
-    _local_mcp_tools: list[LocalMcpServer] = PrivateAttr(default_factory=list)  # type: ignore[reportUnknownVariableType]
+    _local_mcp_tools: list[McpTool] = PrivateAttr(default_factory=list)  # type: ignore[reportUnknownVariableType]
     _async_exit_stack: AsyncExitStack = PrivateAttr(default_factory=AsyncExitStack)
 
     def __init__(
@@ -390,8 +390,8 @@ class ChatClientAgent(AgentBase):
         # We ignore the MCP Servers here and store them separately,
         # we add their functions to the tools list at runtime
         normalized_tools = [] if tools is None else tools if isinstance(tools, list) else [tools]
-        local_mcp_tools = [tool for tool in normalized_tools if isinstance(tool, LocalMcpServer)]
-        final_tools = [tool for tool in normalized_tools if not isinstance(tool, LocalMcpServer)]
+        local_mcp_tools = [tool for tool in normalized_tools if isinstance(tool, McpTool)]
+        final_tools = [tool for tool in normalized_tools if not isinstance(tool, McpTool)]
         args: dict[str, Any] = {
             "chat_client": chat_client,
             "chat_options": ChatOptions(
@@ -524,7 +524,7 @@ class ChatClientAgent(AgentBase):
         # Normalize tools argument to a list without mutating the original parameter
         normalized_tools = [] if tools is None else tools if isinstance(tools, list) else [tools]
         for tool in normalized_tools:
-            if isinstance(tool, LocalMcpServer):
+            if isinstance(tool, McpTool):
                 final_tools.extend(tool.functions)  # type: ignore
             else:
                 final_tools.append(tool)  # type: ignore
@@ -648,7 +648,7 @@ class ChatClientAgent(AgentBase):
         # Normalize tools argument to a list without mutating the original parameter
         normalized_tools = [] if tools is None else tools if isinstance(tools, list) else [tools]
         for tool in normalized_tools:
-            if isinstance(tool, LocalMcpServer):
+            if isinstance(tool, McpTool):
                 final_tools.extend(tool.functions)  # type: ignore
             else:
                 final_tools.append(tool)

@@ -49,10 +49,10 @@ LOG_LEVEL_MAPPING: dict[types.LoggingLevel, int] = {
 }
 
 __all__ = [
-    "LocalMCPSseTools",
-    "LocalMcpStdioTool",
-    "LocalMcpStreamableHttpTool",
-    "LocalMcpWebsocketTool",
+    "McpSseTools",
+    "McpStdioTool",
+    "McpStreamableHttpTool",
+    "McpWebsocketTool",
 ]
 
 
@@ -223,8 +223,8 @@ def _normalize_mcp_name(name: str) -> str:
 # region: MCP Plugin
 
 
-class LocalMcpServer:
-    """MCP Base."""
+class McpTool:
+    """Base class with the MCP logic."""
 
     def __init__(
         self,
@@ -250,7 +250,7 @@ class LocalMcpServer:
         self.functions: list[AIFunction[Any, Any]] = []
 
     def __str__(self) -> str:
-        return f"LocalMcpServer(name={self.name}, description={self.description})"
+        return f"McpTool(name={self.name}, description={self.description})"
 
     async def connect(self) -> None:
         """Connect to the MCP server."""
@@ -494,7 +494,7 @@ class LocalMcpServer:
 # region: MCP Plugin Implementations
 
 
-class LocalMcpStdioTool(LocalMcpServer):
+class McpStdioTool(McpTool):
     """MCP stdio server configuration."""
 
     def __init__(
@@ -567,7 +567,7 @@ class LocalMcpStdioTool(LocalMcpServer):
         return stdio_client(server=StdioServerParameters(**args))
 
 
-class LocalMCPSseTools(LocalMcpServer):
+class McpSseTools(McpTool):
     """MCP sse server configuration."""
 
     def __init__(
@@ -643,7 +643,7 @@ class LocalMCPSseTools(LocalMcpServer):
         return sse_client(**args)
 
 
-class LocalMcpStreamableHttpTool(LocalMcpServer):
+class McpStreamableHttpTool(McpTool):
     """MCP streamable http server configuration."""
 
     def __init__(
@@ -723,7 +723,7 @@ class LocalMcpStreamableHttpTool(LocalMcpServer):
         return streamablehttp_client(**args)
 
 
-class LocalMcpWebsocketTool(LocalMcpServer):
+class McpWebsocketTool(McpTool):
     """MCP websocket server configuration."""
 
     def __init__(

@@ -16,15 +16,15 @@ from agent_framework import (
     ChatMessage,
     ChatRole,
     DataContent,
-    LocalMCPSseTools,
-    LocalMcpStdioTool,
-    LocalMcpStreamableHttpTool,
-    LocalMcpWebsocketTool,
+    McpSseTools,
+    McpStdioTool,
+    McpStreamableHttpTool,
+    McpWebsocketTool,
     TextContent,
     UriContent,
 )
 from agent_framework._mcp import (
-    LocalMcpServer,
+    McpTool,
     _ai_content_to_mcp_types,
     _chat_message_to_mcp_types,
     _get_input_model_from_mcp_prompt,
@@ -275,10 +275,10 @@ def test_get_input_model_from_mcp_prompt():
         model(arg2="optional")
 
 
-# LocalMcpServer tests
+# McpTool tests
 async def test_local_mcp_server_initialization():
-    """Test LocalMcpServer initialization."""
-    server = LocalMcpServer(name="test_server")
+    """Test McpTool initialization."""
+    server = McpTool(name="test_server")
     assert isinstance(server, AITool)
     assert server.name == "test_server"
     assert server.session is None
@@ -286,9 +286,9 @@ async def test_local_mcp_server_initialization():
 
 
 async def test_local_mcp_server_context_manager():
-    """Test LocalMcpServer as context manager."""
+    """Test McpTool as context manager."""
 
-    class TestServer(LocalMcpServer):
+    class TestServer(McpTool):
         async def connect(self):
             # Mock connection
             self.session = Mock(spec=ClientSession)
@@ -306,7 +306,7 @@ async def test_local_mcp_server_context_manager():
 async def test_local_mcp_server_load_functions():
     """Test loading functions from MCP server."""
 
-    class TestServer(LocalMcpServer):
+    class TestServer(McpTool):
         async def connect(self):
             self.session = Mock(spec=ClientSession)
             # Mock tools list response
@@ -340,7 +340,7 @@ async def test_local_mcp_server_load_functions():
 async def test_local_mcp_server_load_prompts():
     """Test loading prompts from MCP server."""
 
-    class TestServer(LocalMcpServer):
+    class TestServer(McpTool):
         async def connect(self):
             self.session = Mock(spec=ClientSession)
             # Mock prompts list response
@@ -369,7 +369,7 @@ async def test_local_mcp_server_load_prompts():
 async def test_local_mcp_server_function_execution():
     """Test function execution through MCP server."""
 
-    class TestServer(LocalMcpServer):
+    class TestServer(McpTool):
         async def connect(self):
             self.session = Mock(spec=ClientSession)
             self.session.list_tools = AsyncMock(
@@ -410,7 +410,7 @@ async def test_local_mcp_server_function_execution():
 async def test_local_mcp_server_function_execution_error():
     """Test function execution error handling."""
 
-    class TestServer(LocalMcpServer):
+    class TestServer(McpTool):
         async def connect(self):
             self.session = Mock(spec=ClientSession)
             self.session.list_tools = AsyncMock(
@@ -448,7 +448,7 @@ async def test_local_mcp_server_function_execution_error():
 async def test_local_mcp_server_prompt_execution():
     """Test prompt execution through MCP server."""
 
-    class TestServer(LocalMcpServer):
+    class TestMcpTool(McpTool):
         async def connect(self):
             self.session = Mock(spec=ClientSession)
             self.session.list_prompts = AsyncMock(
@@ -474,7 +474,7 @@ async def test_local_mcp_server_prompt_execution():
         def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
             return None
 
-    server = TestServer(name="test_server")
+    server = TestMcpTool(name="test_server")
     async with server:
         await server.load_prompts()
         prompt = server.functions[0]
@@ -489,30 +489,30 @@ async def test_local_mcp_server_prompt_execution():
 
 # Server implementation tests
 def test_local_mcp_stdio_tool_init():
-    """Test LocalMcpStdioTool initialization."""
-    tool = LocalMcpStdioTool(name="test", command="echo", args=["hello"])
+    """Test McpStdioTool initialization."""
+    tool = McpStdioTool(name="test", command="echo", args=["hello"])
     assert tool.name == "test"
     assert tool.command == "echo"
     assert tool.args == ["hello"]
 
 
 def test_local_mcp_sse_tools_init():
-    """Test LocalMCPSseTools initialization."""
-    tool = LocalMCPSseTools(name="test", url="http://localhost:8080")
+    """Test McpSseTools initialization."""
+    tool = McpSseTools(name="test", url="http://localhost:8080")
     assert tool.name == "test"
     assert tool.url == "http://localhost:8080"
 
 
 def test_local_mcp_websocket_tool_init():
-    """Test LocalMcpWebsocketTool initialization."""
-    tool = LocalMcpWebsocketTool(name="test", url="ws://localhost:8080")
+    """Test McpWebsocketTool initialization."""
+    tool = McpWebsocketTool(name="test", url="ws://localhost:8080")
     assert tool.name == "test"
     assert tool.url == "ws://localhost:8080"
 
 
 def test_local_mcp_streamable_http_tool_init():
-    """Test LocalMcpStreamableHttpTool initialization."""
-    tool = LocalMcpStreamableHttpTool(name="test", url="http://localhost:8080")
+    """Test McpStreamableHttpTool initialization."""
+    tool = McpStreamableHttpTool(name="test", url="http://localhost:8080")
     assert tool.name == "test"
     assert tool.url == "http://localhost:8080"
 
@@ -525,7 +525,7 @@ async def test_streamable_http_integration():
     if not url.startswith("http"):
         pytest.skip("LOCAL_MCP_URL is not an HTTP URL")
 
-    tool = LocalMcpStreamableHttpTool(name="integration_test", url=url)
+    tool = McpStreamableHttpTool(name="integration_test", url=url)
 
     async with tool:
         # Test that we can connect and load tools
