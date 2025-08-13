@@ -577,7 +577,7 @@ class ChatClientAgent(AgentBase):
         if self.chat_message_store_factory:
             message_store = self.chat_message_store_factory()
 
-        return AgentThread(message_store=message_store)
+        return AgentThread() if message_store is None else AgentThread(message_store=message_store)
 
     def _update_thread_with_type_and_conversation_id(
         self, thread: AgentThread, response_conversation_id: str | None

@@ -32,13 +32,13 @@ class CustomChatMessageStore(ChatMessageStore):
 
     async def deserialize_state(self, serialized_store_state: Any, **kwargs: Any) -> None:
         if serialized_store_state:
-            state = CustomStoreState(**serialized_store_state)
+            state = CustomStoreState.model_validate(serialized_store_state, **kwargs)
             if state.messages:
                 self._messages.extend(state.messages)
 
     async def serialize_state(self, **kwargs: Any) -> Any:
         state = CustomStoreState(messages=self._messages)
-        return state.model_dump()
+        return state.model_dump(**kwargs)
 
 
 async def main() -> None:
@@ -52,7 +52,7 @@ async def main() -> None:
         instructions="You are good at telling jokes.",
         # Use custom chat message store.
         # If not provided, the default in-memory store will be used.
-        chat_message_store_factory=lambda: CustomChatMessageStore(),
+        chat_message_store_factory=CustomChatMessageStore,
     )
 
     # Start a new thread for the agent conversation.

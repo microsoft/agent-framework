@@ -4,7 +4,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import AgentThread, ChatClientAgent, ListChatMessageStore
+from agent_framework import AgentThread, ChatClientAgent, ChatMessageList
 from agent_framework.openai import OpenAIChatClient
 from pydantic import Field
 
@@ -120,7 +120,7 @@ async def example_with_existing_thread_messages() -> None:
     # You can also create a new thread from existing messages
     messages = await thread.list_messages()
 
-    new_thread = AgentThread(message_store=ListChatMessageStore(messages))
+    new_thread = AgentThread(message_store=ChatMessageList(messages))
 
     query3 = "How does the Paris weather compare to London?"
     print(f"User: {query3}")
