@@ -59,12 +59,12 @@ public sealed class TestConfiguration
     public sealed class AzureAIConfig
     {
         /// <summary>Gets or sets the endpoint of Azure AI Foundry project.</summary>
-        [Description("Azure AI Endpoint")]
+        [Description("Azure AI Foundry Project Endpoint")]
         [Required, Sensitive]
         public string Endpoint { get; set; }
 
         /// <summary>Gets or sets the name of the model deployment.</summary>
-        [Description("Azure AI Deployment")]
+        [Description("Azure AI Foundry Project Deployment Name")]
         [Required]
         public string DeploymentName { get; set; }
     }
