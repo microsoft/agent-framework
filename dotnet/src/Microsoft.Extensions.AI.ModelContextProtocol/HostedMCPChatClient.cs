@@ -1,11 +1,15 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Net.Http;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Shared.Diagnostics;
 using ModelContextProtocol.Client;
 
 namespace Microsoft.Extensions.AI.ModelContextProtocol;
@@ -15,18 +19,29 @@ namespace Microsoft.Extensions.AI.ModelContextProtocol;
 /// </summary>
 public class HostedMCPChatClient : DelegatingChatClient
 {
+    private readonly ILoggerFactory? _loggerFactory;
+
     /// <summary>The logger to use for logging information about function invocation.</summary>
     private readonly ILogger _logger;
+
+    /// <summary>The HTTP client to use when connecting to the remote MCP server.</summary>
+    private readonly HttpClient _httpClient;
+
+    /// <summary>A dictionary of cached mcp clients, keyed by the MCP server URL.</summary>
+    private ConcurrentDictionary<string, IMcpClient>? _mcpClients = null;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FunctionInvokingChatClientWithBuiltInApprovals"/> class.
     /// </summary>
     /// <param name="innerClient">The underlying <see cref="IChatClient"/>, or the next instance in a chain of clients.</param>
+    /// <param name="httpClient">The <see cref="HttpClient"/> to use when connecting to the remote MCP server.</param>
     /// <param name="loggerFactory">An <see cref="ILoggerFactory"/> to use for logging information about function invocation.</param>
-    public HostedMCPChatClient(IChatClient innerClient, ILoggerFactory? loggerFactory = null)
+    public HostedMCPChatClient(IChatClient innerClient, HttpClient httpClient, ILoggerFactory? loggerFactory = null)
         : base(innerClient)
     {
+        this._loggerFactory = loggerFactory;
         this._logger = (ILogger?)loggerFactory?.CreateLogger<FunctionInvokingChatClientWithBuiltInApprovals>() ?? NullLogger.Instance;
+        this._httpClient = Throw.IfNull(httpClient);
     }
 
     /// <inheritdoc/>
@@ -39,14 +54,47 @@ public class HostedMCPChatClient : DelegatingChatClient
             return await base.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
         }
 
-        List<AITool> downstreamTools = [];
-        foreach (var tool in options.Tools ?? [])
+        var downstreamTools = await this.BuildDownstreamAIToolsAsync(options.Tools, cancellationToken).ConfigureAwait(false);
+        options = options.Clone();
+        options.Tools = downstreamTools;
+
+        // Make the call to the inner client.
+        return await base.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public override async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        if (options?.Tools is not { Count: > 0 })
+        {
+            // If there are no tools, just call the inner client.
+            await foreach (var update in base.GetStreamingResponseAsync(messages, options, cancellationToken).ConfigureAwait(false))
+            {
+                yield return update;
+            }
+        }
+
+        var downstreamTools = await this.BuildDownstreamAIToolsAsync(options!.Tools, cancellationToken).ConfigureAwait(false);
+        options = options.Clone();
+        options.Tools = downstreamTools;
+
+        // Make the call to the inner client.
+        await foreach (var update in base.GetStreamingResponseAsync(messages, options, cancellationToken).ConfigureAwait(false))
+        {
+            yield return update;
+        }
+    }
+
+    private async Task<List<AITool>?> BuildDownstreamAIToolsAsync(IList<AITool>? inputTools, CancellationToken cancellationToken)
+    {
+        List<AITool>? downstreamTools = null;
+        foreach (var tool in inputTools ?? [])
         {
             if (tool is HostedMcpServerTool mcpTool)
             {
                 // List all MCP functions from the specified MCP server.
                 // This will need some caching in a real-world scenario to avoid repeated calls.
-                var mcpClient = await CreateMcpClientAsync(mcpTool.Url).ConfigureAwait(false);
+                var mcpClient = await this.CreateMcpClientAsync(mcpTool.Url, mcpTool.ServerName).ConfigureAwait(false);
                 var mcpFunctions = await mcpClient.ListToolsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
 
                 // Add the listed functions to our list of tools we'll pass to the inner client.
@@ -58,6 +106,7 @@ public class HostedMCPChatClient : DelegatingChatClient
                         continue;
                     }
 
+                    downstreamTools ??= new List<AITool>();
                     switch (mcpTool.ApprovalMode)
                     {
                         case HostedMcpServerToolAlwaysRequireApprovalMode alwaysRequireApproval:
@@ -84,26 +133,59 @@ public class HostedMCPChatClient : DelegatingChatClient
             }
 
             // For other tools, we want to keep them in the list of tools.
+            downstreamTools ??= new List<AITool>();
             downstreamTools.Add(tool);
         }
 
-        options = options.Clone();
-        options.Tools = downstreamTools;
-
-        // Make the call to the inner client.
-        return await base.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
+        return downstreamTools;
     }
 
-    private static async Task<IMcpClient> CreateMcpClientAsync(Uri mcpService)
+    /// <inheritdoc/>
+    protected override void Dispose(bool disposing)
     {
-        // Create mock MCP client for demonstration purposes.
-        var clientTransport = new StdioClientTransport(new StdioClientTransportOptions
+        if (disposing)
         {
-            Name = "Everything",
-            Command = "npx",
-            Arguments = ["-y", "@modelcontextprotocol/server-everything"],
-        });
+            // Dispose of the HTTP client if it was created by this client.
+            this._httpClient?.Dispose();
 
-        return await McpClientFactory.CreateAsync(clientTransport).ConfigureAwait(false);
+            if (this._mcpClients is not null)
+            {
+                // Dispose of all cached MCP clients.
+                foreach (var client in this._mcpClients.Values)
+                {
+#pragma warning disable CA2012 // Use ValueTasks correctly
+                    _ = client.DisposeAsync();
+#pragma warning restore CA2012 // Use ValueTasks correctly
+                }
+
+                this._mcpClients.Clear();
+            }
+        }
+
+        base.Dispose(disposing);
+    }
+
+    private async Task<IMcpClient> CreateMcpClientAsync(Uri mcpServiceUri, string serverName)
+    {
+        if (this._mcpClients is null)
+        {
+            this._mcpClients = new ConcurrentDictionary<string, IMcpClient>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        if (this._mcpClients.TryGetValue(mcpServiceUri.ToString(), out var cachedClient))
+        {
+            // Return the cached client if it exists.
+            return cachedClient;
+        }
+
+#pragma warning disable CA2000 // Dispose objects before losing scope - This should be disposed by the mcp client.
+        var transport = new SseClientTransport(new()
+        {
+            Endpoint = mcpServiceUri,
+            Name = serverName,
+        }, this._httpClient, this._loggerFactory);
+#pragma warning restore CA2000 // Dispose objects before losing scope
+
+        return await McpClientFactory.CreateAsync(transport).ConfigureAwait(false);
     }
 }

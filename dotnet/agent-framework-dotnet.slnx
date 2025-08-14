@@ -125,9 +125,7 @@
     <Project Path="src/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.Runtime/Microsoft.Extensions.AI.Agents.Runtime.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents/Microsoft.Extensions.AI.Agents.csproj" />
-    <Project Path="src/Microsoft.Extensions.AI.ModelContextProtocol/Microsoft.Extensions.AI.ModelContextProtocol.csproj" Id="4859a869-0c6b-417d-b6d8-6ccbcb60786c">
-      <BuildType Solution="Publish|*" Project="Release" />
-    </Project>
+    <Project Path="src/Microsoft.Extensions.AI.ModelContextProtocol/Microsoft.Extensions.AI.ModelContextProtocol.csproj" Id="4859a869-0c6b-417d-b6d8-6ccbcb60786c" />
   </Folder>
   <Folder Name="/UnitTests/">
     <Project Path="tests/Microsoft.Agents.Orchestration.UnitTests/Microsoft.Agents.Orchestration.UnitTests.csproj" />

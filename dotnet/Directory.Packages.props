@@ -31,6 +31,7 @@
     <PackageVersion Include="Swashbuckle.AspNetCore.SwaggerUI" Version="9.0.3" />
     <!-- System.* -->
     <PackageVersion Include="System.Linq.Async" Version="6.0.3" />
+    <PackageVersion Include="System.Net.Http" Version="4.3.4" />
     <PackageVersion Include="System.Net.ServerSentEvents" Version="10.0.0-preview.6.25358.103" />
     <PackageVersion Include="System.Text.Json" Version="9.0.7" />
     <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="9.0.7" />

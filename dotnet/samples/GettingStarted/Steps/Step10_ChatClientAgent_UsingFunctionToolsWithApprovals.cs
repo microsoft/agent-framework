@@ -1,6 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.ComponentModel;
+#if NETFRAMEWORK
+using System.Net.Http;
+#endif
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI.ModelContextProtocol;
@@ -29,9 +32,9 @@ public sealed class Step10_ChatClientAgent_UsingFunctionToolsWithApprovals(ITest
                 AIFunctionFactory.Create(menuTools.GetMenu),
                 new ApprovalRequiredAIFunction(AIFunctionFactory.Create(menuTools.GetSpecials)),
                 AIFunctionFactory.Create(menuTools.GetItemPrice),
-                new HostedMcpServerTool("MyService", new Uri("https://mcp-server.example.com"))
+                new HostedMcpServerTool("Tiktoken Documentation", new Uri("https://gitmcp.io/openai/tiktoken"))
                 {
-                    AllowedTools = ["add"],
+                    AllowedTools = ["search_tiktoken_documentation", "fetch_tiktoken_documentation"],
                     ApprovalMode = HostedMcpServerToolApprovalMode.AlwaysRequire,
                 }
             ]);
@@ -48,7 +51,7 @@ public sealed class Step10_ChatClientAgent_UsingFunctionToolsWithApprovals(ITest
         {
             chatBuilder.Use((IChatClient innerClient, IServiceProvider services) =>
             {
-                return new HostedMCPChatClient(innerClient);
+                return new HostedMCPChatClient(innerClient, new HttpClient());
             });
         }
         if (chatClient.GetService<FunctionInvokingChatClientWithBuiltInApprovals>() is null)
@@ -69,7 +72,7 @@ public sealed class Step10_ChatClientAgent_UsingFunctionToolsWithApprovals(ITest
         // Respond to user input, invoking functions where appropriate.
         await RunAgentAsync("What is the special soup and its price?");
         await RunAgentAsync("What is the special drink?");
-        await RunAgentAsync("What is 2 + 2?");
+        await RunAgentAsync("how does tiktoken work?");
 
         async Task RunAgentAsync(string input)
         {
@@ -84,7 +87,7 @@ public sealed class Step10_ChatClientAgent_UsingFunctionToolsWithApprovals(ITest
             {
                 List<ChatMessage> nextIterationMessages = userInputRequests?.Select((request) => request switch
                 {
-                    FunctionApprovalRequestContent functionApprovalRequest when functionApprovalRequest.FunctionCall.Name == "GetSpecials" || functionApprovalRequest.FunctionCall.Name == "add" =>
+                    FunctionApprovalRequestContent functionApprovalRequest when functionApprovalRequest.FunctionCall.Name == "GetSpecials" || functionApprovalRequest.FunctionCall.Name == "add" || functionApprovalRequest.FunctionCall.Name == "search_tiktoken_documentation" =>
                         new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateApproval()]),
                     FunctionApprovalRequestContent functionApprovalRequest =>
                         new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateRejection()]),
@@ -122,9 +125,9 @@ public sealed class Step10_ChatClientAgent_UsingFunctionToolsWithApprovals(ITest
                 AIFunctionFactory.Create(menuTools.GetMenu),
                 new ApprovalRequiredAIFunction(AIFunctionFactory.Create(menuTools.GetSpecials)),
                 AIFunctionFactory.Create(menuTools.GetItemPrice),
-                new HostedMcpServerTool("MyService", new Uri("https://mcp-server.example.com"))
+                new HostedMcpServerTool("Tiktoken Documentation", new Uri("https://gitmcp.io/openai/tiktoken"))
                 {
-                    AllowedTools = ["add"],
+                    AllowedTools = ["search_tiktoken_documentation", "fetch_tiktoken_documentation"],
                     ApprovalMode = HostedMcpServerToolApprovalMode.AlwaysRequire,
                 }
             ]);
@@ -141,7 +144,7 @@ public sealed class Step10_ChatClientAgent_UsingFunctionToolsWithApprovals(ITest
         {
             chatBuilder.Use((IChatClient innerClient, IServiceProvider services) =>
             {
-                return new HostedMCPChatClient(innerClient);
+                return new HostedMCPChatClient(innerClient, new HttpClient());
             });
         }
         if (chatClient.GetService<FunctionInvokingChatClientWithBuiltInApprovals>() is null)
@@ -162,7 +165,7 @@ public sealed class Step10_ChatClientAgent_UsingFunctionToolsWithApprovals(ITest
         // Respond to user input, invoking functions where appropriate.
         await RunAgentAsync("What is the special soup and its price?");
         await RunAgentAsync("What is the special drink?");
-        await RunAgentAsync("What is 2 + 2?");
+        await RunAgentAsync("how does tiktoken work?");
 
         async Task RunAgentAsync(string input)
         {
@@ -176,7 +179,7 @@ public sealed class Step10_ChatClientAgent_UsingFunctionToolsWithApprovals(ITest
             {
                 List<ChatMessage> nextIterationMessages = userInputRequests?.Select((request) => request switch
                 {
-                    FunctionApprovalRequestContent functionApprovalRequest when functionApprovalRequest.FunctionCall.Name == "GetSpecials" || functionApprovalRequest.FunctionCall.Name == "add" =>
+                    FunctionApprovalRequestContent functionApprovalRequest when functionApprovalRequest.FunctionCall.Name == "GetSpecials" || functionApprovalRequest.FunctionCall.Name == "add" || functionApprovalRequest.FunctionCall.Name == "search_tiktoken_documentation" =>
                         new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateApproval()]),
                     FunctionApprovalRequestContent functionApprovalRequest =>
                         new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateRejection()]),
