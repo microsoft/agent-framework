@@ -18,9 +18,9 @@ internal class FanOutEdgeRunner(IRunnerContext runContext, FanOutEdgeData edgeDa
     {
         object message = envelope.Message;
         List<string> targets =
-            this.EdgeData.PartitionAssigner == null
+            this.EdgeData.EdgeAssigner == null
                 ? this.EdgeData.SinkIds
-                : this.EdgeData.PartitionAssigner(message, this.BoundContexts.Count)
+                : this.EdgeData.EdgeAssigner(message, this.BoundContexts.Count)
                                .Select(i => this.EdgeData.SinkIds[i]).ToList();
 
         IEnumerable<string> filteredTargets = envelope.TargetId != null

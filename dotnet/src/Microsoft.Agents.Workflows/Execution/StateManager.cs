@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Shared.Diagnostics;
 
@@ -94,5 +95,45 @@ internal class StateManager
             StateScope stateScope = this.GetOrCreateScope(scope);
             await stateScope.WriteStateAsync(updatesByScope[scope]).ConfigureAwait(false);
         }
+    }
+
+    private static IEnumerable<KeyValuePair<ScopeKey, ExportedState>> ExportScope(StateScope scope)
+    {
+        foreach (KeyValuePair<string, ExportedState> state in scope.ExportStates())
+        {
+            yield return new(new ScopeKey(scope.ScopeId, state.Key), state.Value);
+        }
+    }
+
+    internal async ValueTask<Dictionary<ScopeKey, ExportedState>> ExportStateAsync()
+    {
+        if (this._queuedUpdates.Count != 0)
+        {
+            throw new InvalidOperationException("Cannot export state while there are queued updates. Call PublishUpdatesAsync() first.");
+        }
+
+        return this._scopes.Values.SelectMany(ExportScope).ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+    }
+
+    internal ValueTask ImportStateAsync(Checkpoint checkpoint)
+    {
+        // TODO: Should this be a warning instead?
+        if (this._queuedUpdates.Count != 0)
+        {
+            throw new InvalidOperationException("Cannot import state while there are queued updates. Call PublishUpdatesAsync() first.");
+        }
+
+        this._queuedUpdates.Clear();
+        this._scopes.Clear();
+
+        Dictionary<ScopeKey, ExportedState> importedState = checkpoint.State;
+
+        foreach (ScopeKey scopeKey in importedState.Keys)
+        {
+            StateScope scope = this.GetOrCreateScope(scopeKey.ScopeId);
+            scope.ImportState(scopeKey.Key, importedState[scopeKey]);
+        }
+
+        return default;
     }
 }

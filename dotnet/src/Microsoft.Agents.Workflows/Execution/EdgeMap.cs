@@ -9,8 +9,8 @@ namespace Microsoft.Agents.Workflows.Execution;
 
 internal class EdgeMap
 {
-    private readonly Dictionary<Edge, object> _edgeRunners = new();
-    private readonly Dictionary<Edge, FanInEdgeState> _fanInState = new();
+    private readonly Dictionary<EdgeConnection, object> _edgeRunners = new();
+    private readonly Dictionary<EdgeConnection, FanInEdgeState> _fanInState = new();
     private readonly Dictionary<string, InputEdgeRunner> _portEdgeRunners;
     private readonly InputEdgeRunner _inputRunner;
 
@@ -29,7 +29,7 @@ internal class EdgeMap
                 _ => throw new NotSupportedException($"Unsupported edge type: {edge.EdgeType}")
             };
 
-            this._edgeRunners[edge] = edgeRunner;
+            this._edgeRunners[edge.Data.Connection] = edgeRunner;
         }
 
         this._portEdgeRunners = workflowPorts.ToDictionary(
@@ -42,7 +42,8 @@ internal class EdgeMap
 
     public async ValueTask<IEnumerable<object?>> InvokeEdgeAsync(Edge edge, string sourceId, MessageEnvelope message)
     {
-        if (!this._edgeRunners.TryGetValue(edge, out object? edgeRunner))
+        EdgeConnection connection = edge.Data.Connection;
+        if (!this._edgeRunners.TryGetValue(connection, out object? edgeRunner))
         {
             throw new InvalidOperationException($"Edge {edge} not found in the edge map.");
         }
@@ -58,22 +59,22 @@ internal class EdgeMap
             // between the Runners, we can normalize it behind an IFace.
             case Edge.Type.Direct:
             {
-                DirectEdgeRunner runner = (DirectEdgeRunner)this._edgeRunners[edge];
+                DirectEdgeRunner runner = (DirectEdgeRunner)this._edgeRunners[connection];
                 edgeResults = await runner.ChaseAsync(message).ConfigureAwait(false);
                 break;
             }
 
             case Edge.Type.FanOut:
             {
-                FanOutEdgeRunner runner = (FanOutEdgeRunner)this._edgeRunners[edge];
+                FanOutEdgeRunner runner = (FanOutEdgeRunner)this._edgeRunners[connection];
                 edgeResults = await runner.ChaseAsync(message).ConfigureAwait(false);
                 break;
             }
 
             case Edge.Type.FanIn:
             {
-                FanInEdgeState state = this._fanInState[edge];
-                FanInEdgeRunner runner = (FanInEdgeRunner)this._edgeRunners[edge];
+                FanInEdgeState state = this._fanInState[connection];
+                FanInEdgeRunner runner = (FanInEdgeRunner)this._edgeRunners[connection];
                 edgeResults = [await runner.ChaseAsync(sourceId, message, state).ConfigureAwait(false)];
                 break;
             }
@@ -100,5 +101,40 @@ internal class EdgeMap
         }
 
         return [await portRunner.ChaseAsync(new MessageEnvelope(response)).ConfigureAwait(false)];
+    }
+
+    internal ValueTask<Dictionary<EdgeConnection, ExportedState>> ExportStateAsync()
+    {
+        Dictionary<EdgeConnection, ExportedState> exportedStates = new();
+
+        // Right now there is only fan-in state
+        foreach (EdgeConnection connection in this._fanInState.Keys)
+        {
+            FanInEdgeState state = this._fanInState[connection];
+            exportedStates[connection] = new ExportedState(state);
+        }
+
+        return new ValueTask<Dictionary<EdgeConnection, ExportedState>>(exportedStates);
+    }
+
+    internal ValueTask ImportStateAsync(Checkpoint checkpoint)
+    {
+        Dictionary<EdgeConnection, ExportedState> importedState = checkpoint.EdgeState;
+
+        this._fanInState.Clear();
+        foreach (EdgeConnection connection in importedState.Keys)
+        {
+            ExportedState exportedState = importedState[connection];
+            if (exportedState.Value is FanInEdgeState fanInState)
+            {
+                this._fanInState[connection] = fanInState;
+            }
+            else
+            {
+                throw new InvalidOperationException($"Unsupported exported state type: {exportedState.GetType()} for connection {connection}");
+            }
+        }
+
+        return default;
     }
 }
