@@ -3,22 +3,71 @@
 import asyncio
 import logging
 import uuid
+from abc import ABC, abstractmethod
 from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any, Callable
 from collections.abc import AsyncIterator
 
-from .runtime_abstractions import (
-    IActor, IActorRuntimeContext, IActorClient, IActorStateStorage,
+from .agent_actor import (
+    Actor, ActorRuntimeContext, 
     ActorId, ActorMessage, ActorRequestMessage, ActorResponseMessage,
-    ActorResponseHandle, RequestStatus, ActorMessageType
+    RequestStatus, ActorMessageType
 )
+
+
+class ActorResponseHandle(ABC):
+    """Handle for async actor responses (runtime infrastructure)"""
+    
+    @abstractmethod
+    async def get_response(self) -> ActorResponseMessage:
+        """Get the final response (blocking until complete)"""
+        pass
+    
+    @abstractmethod
+    async def watch_updates(self) -> AsyncIterator[ActorResponseMessage]:
+        """Watch for streaming updates"""
+        pass
+
+
+class ActorStateStorage(ABC):
+    """Interface for actor state persistence (runtime infrastructure)"""
+    
+    @abstractmethod
+    async def read_state(self, actor_id: ActorId) -> dict[str, Any]:
+        """Read all state for an actor"""
+        pass
+    
+    @abstractmethod
+    async def write_state(self, actor_id: ActorId, state: dict[str, Any]) -> bool:
+        """Write state for an actor"""
+        pass
+    
+    @abstractmethod
+    async def delete_state(self, actor_id: ActorId) -> bool:
+        """Delete all state for an actor"""
+        pass
+
+
+class ActorClient(ABC):
+    """Interface for sending requests to actors (runtime infrastructure)"""
+    
+    @abstractmethod
+    async def send_request(
+        self, 
+        actor_id: ActorId, 
+        method: str, 
+        params: dict[str, Any] | None = None,
+        message_id: str | None = None
+    ) -> ActorResponseHandle:
+        """Send a request to an actor"""
+        pass
 
 
 logger = logging.getLogger(__name__)
 
 
-class InMemoryStateStorage(IActorStateStorage):
+class InMemoryStateStorage(ActorStateStorage):
     """Simple in-memory state storage for development"""
     
     def __init__(self):
@@ -105,10 +154,10 @@ class InProcessResponseHandle(ActorResponseHandle):
                 continue
 
 
-class InProcessActorContext(IActorRuntimeContext):
+class InProcessActorContext(ActorRuntimeContext):
     """Runtime context for an in-process actor"""
 
-    def __init__(self, actor_id: ActorId, storage: IActorStateStorage, runtime: Any) -> None:
+    def __init__(self, actor_id: ActorId, storage: ActorStateStorage, runtime: Any) -> None:
         self._actor_id = actor_id
         self._storage = storage
         self._runtime = runtime
@@ -172,14 +221,14 @@ class InProcessActorContext(IActorRuntimeContext):
 class InProcessActorRuntime:
     """In-process actor runtime"""
     
-    def __init__(self, storage: IActorStateStorage | None = None):
+    def __init__(self, storage: ActorStateStorage | None = None):
             self._storage = storage or InMemoryStateStorage()
             self._actors = {}
             self._actor_tasks = {}
             self._actor_factories = {}
             self._running = False
     
-    def register_actor_type(self, type_name: str, factory: Callable[[IActorRuntimeContext], IActor]) -> None:
+    def register_actor_type(self, type_name: str, factory: Callable[[ActorRuntimeContext], Actor]) -> None:
         """Register a factory for creating actors of a given type"""
         self._actor_factories[type_name] = factory
         logger.info(f"Registered actor type: {type_name}")
@@ -234,7 +283,7 @@ class InProcessActorRuntime:
         logger.info(f"Created actor: {actor_id}")
         return context
     
-    async def _run_actor(self, actor: IActor, context: InProcessActorContext) -> None:
+    async def _run_actor(self, actor: Actor, context: InProcessActorContext) -> None:
         """Run an actor instance"""
         try:
             logger.debug(f"Starting actor: {context.actor_id}")
@@ -250,7 +299,7 @@ class InProcessActorRuntime:
             logger.debug(f"Actor disposed: {context.actor_id}")
 
 
-class InProcessActorClient(IActorClient):
+class InProcessActorClient(ActorClient):
     """Client for sending requests to in-process actors"""
     
     def __init__(self, runtime: InProcessActorRuntime):

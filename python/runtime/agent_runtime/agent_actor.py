@@ -5,22 +5,136 @@ import json
 import logging
 import os
 import sys
-
-# Runtime infrastructure types
-from .runtime_abstractions import (
-    IActor, IActorRuntimeContext, ActorMessage, ActorRequestMessage, ActorResponseMessage,
-    RequestStatus, ActorMessageType
-)
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any
+from datetime import datetime
+from collections.abc import AsyncIterator
 
 # Framework agent types
 sys.path.append(os.path.join(os.path.dirname(__file__), '../../packages/main'))
 
 from agent_framework import AIAgent, ChatMessage, AgentRunResponse, AgentThread, ChatRole, AgentBase  # type: ignore
 
+@dataclass(frozen=True)
+class ActorId:
+    """Unique identifier for an actor instance"""
+    type_name: str
+    instance_id: str
+    
+    def __str__(self) -> str:
+        return f"{self.type_name}/{self.instance_id}"
+
+
+class ActorMessageType(Enum):
+    """Types of messages that can be sent to actors"""
+    REQUEST = "request"
+    RESPONSE = "response"
+
+
+class RequestStatus(Enum):
+    """Status of a request being processed by an actor"""
+    PENDING = "pending"
+    COMPLETED = "completed" 
+    FAILED = "failed"
+    NOT_FOUND = "not_found"
+
+
+@dataclass
+class ActorMessage:
+    """Base class for all actor system messages.
+
+    NOTE: timestamp must use default_factory to avoid all instances sharing the
+    same datetime value at import time (bug fix for initial implementation).
+    """
+    message_id: str
+    message_type: ActorMessageType
+    timestamp: datetime = field(default_factory=datetime.utcnow)
+
+
+@dataclass
+class ActorRequestMessage(ActorMessage):
+    """Request message sent to an actor"""
+    method: str = ""
+    params: dict[str, Any] | None = None
+    
+    def __post_init__(self):
+        self.message_type = ActorMessageType.REQUEST
+
+
+@dataclass
+class ActorResponseMessage(ActorMessage):
+    """Response message from an actor"""
+    sender_id: ActorId | None = None
+    status: RequestStatus = RequestStatus.PENDING
+    data: Any = None
+    
+    def __post_init__(self):
+        self.message_type = ActorMessageType.RESPONSE
+
+
+class ActorRuntimeContext(ABC):
+    """Runtime context provided to actors (infrastructure services).
+
+    This closely mirrors the .NET runtime abstractions but is intentionally
+    slimmer for the initial Python foundation. Methods for batching state
+    operations and fine‑grained progress streaming can be added incrementally.
+    """
+    
+    @property
+    @abstractmethod
+    def actor_id(self) -> ActorId:
+        """Get the actor's unique identifier"""
+        pass
+    
+    @abstractmethod
+    async def watch_messages(self) -> AsyncIterator[ActorMessage]:
+        """Watch for incoming messages"""
+        pass
+    
+    @abstractmethod
+    async def read_state(self, key: str) -> Any | None:
+        """Read state value by key"""
+        pass
+    
+    @abstractmethod  
+    async def write_state(self, key: str, value: Any) -> bool:
+        """Write state value by key"""
+        pass
+    
+    @abstractmethod
+    def complete_request(self, message_id: str, response: ActorResponseMessage) -> None:
+        """Complete a request with a response"""
+        pass
+
+    def on_progress_update(self, message_id: str, sequence_number: int, data: Any) -> None:  # pragma: no cover - default no-op
+        """Report a progress / streaming update.
+
+        Provided as a non-abstract hook so existing simple runtimes do not need
+        to implement immediately. Future iterations can make this abstract once
+        a concrete progress model is finalized.
+        """
+        return
+
+
+class Actor(ABC):
+    """Interface for all actors in the system (runtime infrastructure)"""
+    
+    @abstractmethod
+    async def run(self, context: ActorRuntimeContext) -> None:
+        """Main actor execution loop"""
+        pass
+    
+    async def dispose(self) -> None:
+        """Cleanup resources when actor is shut down"""
+        pass
+
+
 logger = logging.getLogger(__name__)
 
 
-class AgentActor(IActor):
+class AgentActor(Actor):
     """Runtime actor that wraps framework AI agents"""
     
     THREAD_STATE_KEY = "agent_thread"
@@ -30,7 +144,7 @@ class AgentActor(IActor):
         self._agent = agent
         self._thread: AgentThread | None = None
     
-    async def run(self, context: IActorRuntimeContext) -> None:
+    async def run(self, context: ActorRuntimeContext) -> None:
         """Main actor execution loop"""
         agent_name = getattr(self._agent, 'name', None) or getattr(self._agent, 'id', 'unknown')
         logger.info(f"Agent actor started: {context.actor_id} (agent: {agent_name})")
@@ -43,7 +157,7 @@ class AgentActor(IActor):
             if isinstance(message, ActorRequestMessage):
                 await self._handle_agent_request(message, context)
     
-    async def _restore_thread_state(self, context: IActorRuntimeContext):
+    async def _restore_thread_state(self, context: ActorRuntimeContext):
         """Restore the agent thread state from storage"""
         thread_data = await context.read_state(self.THREAD_STATE_KEY)
         
@@ -59,7 +173,7 @@ class AgentActor(IActor):
             self._thread = self._agent.get_new_thread()
             logger.debug("Created new thread")
     
-    async def _handle_agent_request(self, request: ActorRequestMessage, context: IActorRuntimeContext):
+    async def _handle_agent_request(self, request: ActorRequestMessage, context: ActorRuntimeContext):
         """Handle agent run requests using framework types directly"""
         
         if request.method != "run":
@@ -183,7 +297,7 @@ class AgentActor(IActor):
             logger.error(f"Error extracting content: {e}")
             return "[Content extraction error]"
     
-    async def _save_thread_state(self, context: IActorRuntimeContext):
+    async def _save_thread_state(self, context: ActorRuntimeContext):
         """Save framework thread state to runtime storage"""
         try:
             if self._thread:
@@ -208,7 +322,7 @@ class AgentActor(IActor):
         except Exception as e:
             logger.error(f"Error saving thread state: {e}")
     
-    async def _send_error_response(self, request: ActorRequestMessage, context: IActorRuntimeContext, error_msg: str):
+    async def _send_error_response(self, request: ActorRequestMessage, context: ActorRuntimeContext, error_msg: str):
         """Send error response"""
         error_response = ActorResponseMessage(
             message_id=request.message_id,
@@ -220,102 +334,3 @@ class AgentActor(IActor):
         context.complete_request(request.message_id, error_response)
 
 
-# Mock agent implementations for testing - TODO move this and echo somewhere more appropriate.
-class MockAIAgent(AgentBase):
-    """Mock AI agent that simulates different responses"""
-    
-    def __init__(self, name: str = "mock", responses: list[str] | None = None, **kwargs):
-        super().__init__(name=name, **kwargs)
-        self._responses = responses or [
-            "Hello! How can I help you today?",
-            "That's an interesting question!",
-            "I understand what you're asking.",
-            "Let me think about that...",
-            "Here's what I think:"
-        ]
-        self._response_index = 0
-    
-    def get_new_thread(self) -> AgentThread:
-        """Create a new conversation thread"""
-        # This would normally be implemented by the framework
-        # For now, return a simple object
-        return type('AgentThread', (), {'messages': []})()
-    
-    async def run(
-        self, 
-        messages: list[ChatMessage] | None = None, 
-        *, 
-        thread: AgentThread | None = None, 
-        **kwargs
-    ) -> AgentRunResponse:
-        """Provide mock responses"""
-        if thread is None:
-            thread = self.get_new_thread()
-        
-        # Add incoming messages to thread
-        if messages:
-            for message in messages:
-                thread.messages.append(message)
-        
-        # Simulate some processing time
-        await asyncio.sleep(0.1)
-        
-        # Generate response
-        response_text = self._responses[self._response_index % len(self._responses)]
-        self._response_index += 1
-        
-        response_message = ChatMessage(
-            role=ChatRole.ASSISTANT,
-            text=response_text
-        )
-        thread.messages.append(response_message)
-        
-        return AgentRunResponse(
-            messages=[response_message]
-        )
-
-
-class EchoAgent(AgentBase):
-    """Echo agent for testing"""
-    
-    def __init__(self, name: str = "echo", **kwargs):
-        super().__init__(name=name, **kwargs)
-    
-    def get_new_thread(self) -> AgentThread:
-        """Create a new conversation thread"""
-        return type('AgentThread', (), {'messages': []})()
-    
-    async def run(
-        self, 
-        messages: list[ChatMessage] | None = None, 
-        *, 
-        thread: AgentThread | None = None, 
-        **kwargs
-    ) -> AgentRunResponse:
-        """Echo back the user's messages"""
-        if thread is None:
-            thread = self.get_new_thread()
-        
-        # Add incoming messages to thread
-        if messages:
-            for message in messages:
-                thread.messages.append(message)
-            
-            # Get the last user message
-            last_message = messages[-1]
-            echo_content = f"Echo: {last_message.text}"
-        else:
-            echo_content = "Echo: (no message)"
-        
-        # Create response message
-        response_message = ChatMessage(
-            role=ChatRole.ASSISTANT,
-            text=echo_content
-        )
-        
-        # Add to thread
-        thread.messages.append(response_message)
-        
-        return AgentRunResponse(
-            messages=[response_message]
-        )

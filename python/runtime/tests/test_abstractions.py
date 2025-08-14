@@ -2,7 +2,7 @@
 
 import pytest
 from datetime import datetime
-from agent_runtime.runtime_abstractions import (
+from agent_runtime.agent_actor import (
     ActorId, ActorMessage, ActorRequestMessage, ActorResponseMessage,
     ActorMessageType, RequestStatus
 )

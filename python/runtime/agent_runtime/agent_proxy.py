@@ -20,12 +20,8 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "../../packages/main"))
 
 from agent_framework import AgentRunResponse, AgentRunResponseUpdate, AgentThread, AIAgent, ChatMessage, ChatRole  # type: ignore
 
-from .runtime_abstractions import (
-    ActorId,
-    ActorResponseHandle,
-    IActorClient,
-    RequestStatus,
-)
+from .agent_actor import ActorId, RequestStatus
+from .runtime import ActorResponseHandle, ActorClient
 
 
 class AgentProxyThread(AgentThread):
@@ -70,7 +66,7 @@ class AgentProxy(AIAgent):
     serialization/deserialization of agent messages.
     """
 
-    def __init__(self, name: str, client: IActorClient) -> None:
+    def __init__(self, name: str, client: ActorClient) -> None:
         """Initialize a new AgentProxy.
 
         Args:

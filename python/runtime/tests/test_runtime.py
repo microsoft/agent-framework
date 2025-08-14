@@ -6,9 +6,9 @@ import asyncio
 from unittest.mock import AsyncMock, Mock
 
 from agent_runtime.runtime import InProcessActorRuntime, InProcessActorClient
-from agent_runtime.runtime_abstractions import (
+from agent_runtime.agent_actor import (
     ActorId, ActorRequestMessage, ActorResponseMessage,
-    ActorMessageType, RequestStatus, IActor
+    ActorMessageType, RequestStatus, Actor
 )
 
 

@@ -10,14 +10,13 @@ from collections.abc import AsyncIterator
 
 import httpx
 
-from .runtime_abstractions import (
+from .agent_actor import (
     ActorId,
-    ActorResponseHandle,
     ActorResponseMessage,
     ActorMessageType,
-    IActorClient,
     RequestStatus,
 )
+from .runtime import ActorResponseHandle, ActorClient
 
 
 class HttpActorResponseHandle(ActorResponseHandle):
@@ -106,7 +105,7 @@ class HttpActorResponseHandle(ActorResponseHandle):
         )
 
 
-class HttpActorClient(IActorClient):
+class HttpActorClient(ActorClient):
     """HTTP-based actor client for communicating with remote actor runtime."""
     
     def __init__(self, base_url: str):

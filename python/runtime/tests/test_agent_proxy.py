@@ -12,13 +12,15 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from agent_runtime.agent_proxy import AgentProxy, AgentProxyThread
-from agent_runtime.runtime_abstractions import (
+from agent_runtime.agent_actor import (
     ActorId,
     ActorMessageType,
-    ActorResponseHandle,
     ActorResponseMessage,
-    IActorClient,
     RequestStatus,
+)
+from agent_runtime.runtime import (
+    ActorResponseHandle,
+    ActorClient,
 )
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../packages/main"))
@@ -93,7 +95,7 @@ class TestAgentProxyConstructor:
 
     def test_constructor_with_valid_name_and_client(self):
         """Verifies that constructor works with valid name and client."""
-        mock_client = Mock(spec=IActorClient)
+        mock_client = Mock(spec=ActorClient)
         proxy = AgentProxy("test_agent", mock_client)
 
         assert proxy.name == "test_agent"
@@ -110,14 +112,14 @@ class TestAgentProxyConstructor:
     ])
     def test_constructor_accepts_various_valid_names(self, valid_name):
         """Verifies that constructor accepts various valid agent names."""
-        mock_client = Mock(spec=IActorClient)
+        mock_client = Mock(spec=ActorClient)
         proxy = AgentProxy(valid_name, mock_client)
 
         assert proxy.name == valid_name
 
     def test_constructor_rejects_empty_name(self):
         """Verifies that constructor rejects empty name."""
-        mock_client = Mock(spec=IActorClient)
+        mock_client = Mock(spec=ActorClient)
 
         with pytest.raises(ValueError, match="Agent name cannot be empty"):
             AgentProxy("", mock_client)
@@ -133,7 +135,7 @@ class TestAgentProxyThreadManagement:
 
     def setup_method(self):
         """Set up test fixtures."""
-        self.mock_client = Mock(spec=IActorClient)
+        self.mock_client = Mock(spec=ActorClient)
         self.proxy = AgentProxy("test_agent", self.mock_client)
 
     def test_get_new_thread_returns_agent_proxy_thread(self):
@@ -172,7 +174,7 @@ class TestAgentProxyMessageNormalization:
 
     def setup_method(self):
         """Set up test fixtures."""
-        self.mock_client = Mock(spec=IActorClient)
+        self.mock_client = Mock(spec=ActorClient)
         self.proxy = AgentProxy("test_agent", self.mock_client)
 
     def test_normalize_messages_string_input(self):
@@ -245,7 +247,7 @@ class TestAgentProxyRunAsync:
 
     def setup_method(self):
         """Set up test fixtures."""
-        self.mock_client = Mock(spec=IActorClient)
+        self.mock_client = Mock(spec=ActorClient)
         self.proxy = AgentProxy("test_agent", self.mock_client)
         self.thread = AgentProxyThread("thread123")
         self.messages = [ChatMessage(role=ChatRole.USER, text="Hello")]
@@ -396,7 +398,7 @@ class TestAgentProxyRunStreaming:
 
     def setup_method(self):
         """Set up test fixtures."""
-        self.mock_client = Mock(spec=IActorClient)
+        self.mock_client = Mock(spec=ActorClient)
         self.proxy = AgentProxy("test_agent", self.mock_client)
         self.thread = AgentProxyThread("thread123")
         self.messages = [ChatMessage(role=ChatRole.USER, text="Hello")]
@@ -493,7 +495,7 @@ class TestAgentProxyActorIntegration:
 
     def setup_method(self):
         """Set up test fixtures."""
-        self.mock_client = Mock(spec=IActorClient)
+        self.mock_client = Mock(spec=ActorClient)
         self.proxy = AgentProxy("test_agent", self.mock_client)
 
     @pytest.mark.asyncio

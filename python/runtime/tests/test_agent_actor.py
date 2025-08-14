@@ -3,11 +3,8 @@
 import pytest
 from unittest.mock import AsyncMock, Mock
 
-from agent_runtime.agent_actor import AgentActor, EchoAgent, MockAIAgent, ChatMessage, AgentRunResponse, ChatRole
-from agent_runtime.runtime_abstractions import (
-    ActorId, ActorRequestMessage, ActorResponseMessage,
-    ActorMessageType, RequestStatus, IActorRuntimeContext
-)
+from agent_runtime.agent_actor import AgentActor, ChatMessage, AgentRunResponse, ChatRole, ActorId, ActorRequestMessage, ActorResponseMessage, ActorMessageType, RequestStatus, ActorRuntimeContext
+from .mock_agents import EchoAgent, MockAIAgent
 
 
 class MockActorContext:
@@ -133,7 +130,7 @@ class TestAgentActorWrapper:
         assert "messages" in response.data
         assert len(response.data["messages"]) == 1
         assert response.data["messages"][0]["role"] == "assistant"
-        assert "Echo: Test message" in response.data["messages"][0]["content"]
+        assert "Echo: Test message" in response.data["messages"][0]["text"]
     
     @pytest.mark.asyncio
     async def test_agent_actor_invalid_method(self, echo_actor, mock_context):

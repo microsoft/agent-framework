@@ -2,8 +2,8 @@
 
 from .agent_proxy import AgentProxy, AgentProxyThread
 from .http_actor_client import HttpActorClient
-from .runtime import InProcessActorRuntime, InProcessActorClient
-from .runtime_abstractions import ActorId, IActorClient, RequestStatus
+from .runtime import InProcessActorRuntime, InProcessActorClient, ActorClient
+from .agent_actor import ActorId, RequestStatus
 
 __all__ = [
     "AgentProxy",
@@ -12,6 +12,6 @@ __all__ = [
     "InProcessActorRuntime",
     "InProcessActorClient",
     "ActorId",
-    "IActorClient",
+    "ActorClient",
     "RequestStatus",
 ]

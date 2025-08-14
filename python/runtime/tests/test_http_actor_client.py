@@ -7,7 +7,7 @@ from unittest.mock import Mock, AsyncMock, patch
 import httpx
 
 from agent_runtime.http_actor_client import HttpActorClient, SimpleHttpActorResponseHandle
-from agent_runtime.runtime_abstractions import ActorId, ActorMessageType, RequestStatus
+from agent_runtime.agent_actor import ActorId, ActorMessageType, RequestStatus
 
 
 class TestHttpActorClient:
@@ -127,7 +127,7 @@ class TestSimpleHttpActorResponseHandle:
     @pytest.mark.asyncio
     async def test_get_response_returns_stored_response(self):
         """Test that get_response returns the stored response."""
-        from agent_runtime.runtime_abstractions import ActorResponseMessage
+        from agent_runtime.agent_actor import ActorResponseMessage
         
         original_response = ActorResponseMessage(
             message_id="test_id",
@@ -146,7 +146,7 @@ class TestSimpleHttpActorResponseHandle:
     @pytest.mark.asyncio
     async def test_watch_updates_simulates_streaming(self):
         """Test that watch_updates simulates streaming for successful responses."""
-        from agent_runtime.runtime_abstractions import ActorResponseMessage
+        from agent_runtime.agent_actor import ActorResponseMessage
         
         response_data = {
             "messages": [{"role": "assistant", "content": "Hello world"}]
@@ -179,7 +179,7 @@ class TestSimpleHttpActorResponseHandle:
     @pytest.mark.asyncio
     async def test_watch_updates_handles_failed_response(self):
         """Test that watch_updates handles failed responses correctly."""
-        from agent_runtime.runtime_abstractions import ActorResponseMessage
+        from agent_runtime.agent_actor import ActorResponseMessage
         
         failed_response = ActorResponseMessage(
             message_id="test_id",
