@@ -1,13 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import debugpy
 import asyncio
 import json
 import os
 from pathlib import Path
+from dotenv import load_dotenv
 
 from agent_framework import __version__ as agent_framework_version
 from py2docfx.__main__ import main as py2docfx_main
 
+load_dotenv()
 
 async def generate_af_docs(root_path: Path):
     """Generate documentation for the Agent Framework using py2docfx.
@@ -21,15 +24,22 @@ async def generate_af_docs(root_path: Path):
                     "name": "agent-framework",
                     "version": agent_framework_version,
                     "install_type": "pypi",
-                    "extras": ["azure", "foundry"],
+                    "extras": ["azure", "foundry", "workflow"],
                 },
                 "sphinx_extensions": [
                     "sphinxcontrib.autodoc_pydantic",
+                    "sphinx-pydantic",
+                    "sphinx.ext.autosummary"
                 ],
                 "extension_config": {
+                    "autodoc_pydantic_field_doc_policy": "both",
                     "autodoc_pydantic_model_show_json": False,
-                    "autodoc_pydantic_model_show_config_summary": False,
+                    "autodoc_pydantic_model_show_config_summary": True,
+                    "autodoc_pydantic_model_show_field_summary": True,
+                    "autodoc_pydantic_model_hide_paramlist": False,
                     "autodoc_pydantic_model_show_json_error_strategy": "coerce",
+                    "autodoc_pydantic_settings_show_config_summary": True,
+                    "autodoc_pydantic_settings_show_field_summary": True,
                     "python_use_unqualified_type_names": True,
                     "autodoc_preserve_defaults": True,
                     "autodoc_default_options": {
@@ -38,6 +48,7 @@ async def generate_af_docs(root_path: Path):
                         "undoc-members": True,
                         "show-inheritance": True,
                         "imported-members": True,
+                        "inherited-members": 'AFBaseModel',
                     },
                 },
             }
@@ -48,6 +59,10 @@ async def generate_af_docs(root_path: Path):
                 "name": "autodoc_pydantic",
                 "version": ">=2.0.0",
             },
+            {
+                "install_type": "pypi",
+                "name": "sphinx-pydantic",
+            }
         ],
     }
 
@@ -65,6 +80,12 @@ async def generate_af_docs(root_path: Path):
 
 if __name__ == "__main__":
     # Ensure the script is run from the correct directory
+    debug = False
+    if debug:
+        debugpy.listen(("localhost", 5678))
+        debugpy.wait_for_client()
+        debugpy.breakpoint()
+
     current_path = Path(__file__).parent.parent.resolve()
     print(f"Current path: {current_path}")
     # ensure the dist folder exists

@@ -30,7 +30,7 @@ dev = [
     "tomli",
     "tomli-w",
     # Documentation
-    "py2docfx==0.1.20.dev2192492",
+    "py2docfx==0.1.20",
     "pip",
 ]
 
@@ -165,6 +165,7 @@ markdown-code-lint = """python check_md_code_blocks.py README.md ./packages/**/R
 samples-code-check = """pyright ./samples"""
 docs-clean = "rm -rf docs/build"
 docs-build = "uv run python ./docs/generate_docs.py"
+docs-debug = "uv run python -m debugpy --listen 5678 ./docs/generate_docs.py"
 pre-commit-install = "uv run pre-commit install --install-hooks --overwrite"
 install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit"
 test = "python run_tasks_in_packages_if_exists.py test"
@@ -194,6 +195,16 @@ sequence = [
     { ref = 'build' },
     { ref = "docs-clean" },
     { ref = "docs-build" }
+]
+[tool.poe.tasks.docs-rebuild]
+sequence = [
+    { ref = "docs-clean" },
+    { ref = "docs-build" }
+]
+[tool.poe.tasks.docs-clean-debug]
+sequence = [
+    { ref = "docs-clean" },
+    { ref = "docs-debug" }
 ]
 
 [tool.setuptools.packages.find]
