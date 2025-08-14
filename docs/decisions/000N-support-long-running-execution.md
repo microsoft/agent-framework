@@ -20,7 +20,8 @@ require significant processing time, such as:
 - Large document processing and summarization
 
 The current Agent Framework architecture needs to have native support for long-running execution patterns, as it 
-is essential for handling these scenarios effectively. Additionally, as MEAI chat clients may start supporting 
+The current Agent Framework architecture lacks native support for long-running execution patterns, which is 
+essential for handling these scenarios effectively. Additionally, as MEAI chat clients may start supporting 
 long-running execution capabilities in the future, the design should consider integration patterns and consistency 
 with the broader Microsoft.Extensions.AI ecosystem to provide a unified experience across both agent and chat client scenarios.
 
