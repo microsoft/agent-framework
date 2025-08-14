@@ -480,6 +480,17 @@ sequenceDiagram
 
 This is a discarded ChatClient Approval Stack option, but is included here for reference.
 
+It doesn't work for the scenario where we have multiple function calls for the same function in serial with different arguments.
+
+Flow:
+
+- AGCC turns AIFunctions into AIFunctionDefinitions (not invocable) and FICC ignores these.
+- We get back a FunctionCall for one of these and it gets approved.
+- We invoke the FICC again, this time with an AIFunction.
+- We call the service with the FCC and FRC.
+- We get back a new Function call for the same function again with different arguments.
+- Since we were passed an AIFunction instead of an AIFunctionDefinition, we now incorrectly execute this FC without approval.
+
 ```mermaid
 ---
 title: Multiple Functions with partial approval
