@@ -26,7 +26,7 @@ builder.Services.AddHttpClient<AgentDiscoveryClient>(client => client.BaseAddres
 builder.Services.AddHttpClient<IActorClient, HttpActorClient>(client => client.BaseAddress = baseAddress);
 builder.Services.AddSingleton<A2AActorClient>(sp =>
 {
-    return new A2AActorClient(sp.GetRequiredService<ILogger<A2AManualHandlerClient>>(), a2aAddress);
+    return new A2AActorClient(sp.GetRequiredService<ILogger<A2AActorClient>>(), a2aAddress);
 });
 
 var app = builder.Build();
