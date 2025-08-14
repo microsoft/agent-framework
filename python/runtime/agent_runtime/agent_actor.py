@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import sys
-from typing import List
 
 # Runtime infrastructure types
 from .runtime_abstractions import (
@@ -16,7 +15,7 @@ from .runtime_abstractions import (
 # Framework agent types
 sys.path.append(os.path.join(os.path.dirname(__file__), '../../packages/main'))
 
-from agent_framework import AIAgent, ChatMessage, AgentRunResponse, AgentThread, ChatRole, AgentBase
+from agent_framework import AIAgent, ChatMessage, AgentRunResponse, AgentThread, ChatRole, AgentBase  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -105,27 +104,23 @@ class AgentActor(IActor):
             logger.error(f"Agent request failed: {e}")
             await self._send_error_response(request, context, str(e))
     
-    def _parse_framework_messages(self, request: ActorRequestMessage) -> List[ChatMessage]:
+    def _parse_framework_messages(self, request: ActorRequestMessage) -> list[ChatMessage]:
         """Convert runtime request to framework ChatMessage objects"""
         if not request.params:
             return []
-        messages_data = request.params.get("messages", [])
-        if not isinstance(messages_data, list):
+        raw_messages = request.params.get("messages", [])
+        if not isinstance(raw_messages, list):
             raise ValueError("messages must be a list")
-        messages: List[ChatMessage] = []
-        for msg_data in messages_data:
+        result: list[ChatMessage] = []
+        for msg in raw_messages:
             try:
-                role_value = msg_data.get("role", "user")
+                role_value = msg.get("role", "user")
                 role = getattr(ChatRole, str(role_value).upper(), ChatRole.USER)
-                text = msg_data.get("text", "")
-                framework_msg = ChatMessage(
-                    role=role,
-                    text=text
-                )
-                messages.append(framework_msg)
-            except Exception as e:
-                logger.error(f"Skipping invalid message entry: {e}")
-        return messages
+                text = msg.get("text", "")
+                result.append(ChatMessage(role=role, text=text))
+            except Exception as ex:  # pragma: no cover - defensive
+                logger.error(f"Skipping invalid message entry: {ex}")
+        return result
     
     def _convert_framework_response(self, framework_response: AgentRunResponse) -> dict:
         """Convert framework AgentRunResponse to runtime data format"""
@@ -229,7 +224,7 @@ class AgentActor(IActor):
 class MockAIAgent(AgentBase):
     """Mock AI agent that simulates different responses"""
     
-    def __init__(self, name: str = "mock", responses: List[str] | None = None, **kwargs):
+    def __init__(self, name: str = "mock", responses: list[str] | None = None, **kwargs):
         super().__init__(name=name, **kwargs)
         self._responses = responses or [
             "Hello! How can I help you today?",
@@ -248,7 +243,7 @@ class MockAIAgent(AgentBase):
     
     async def run(
         self, 
-        messages: List[ChatMessage] = None, 
+        messages: list[ChatMessage] | None = None, 
         *, 
         thread: AgentThread | None = None, 
         **kwargs
@@ -292,7 +287,7 @@ class EchoAgent(AgentBase):
     
     async def run(
         self, 
-        messages: List[ChatMessage] = None, 
+        messages: list[ChatMessage] | None = None, 
         *, 
         thread: AgentThread | None = None, 
         **kwargs

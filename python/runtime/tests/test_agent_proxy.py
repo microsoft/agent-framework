@@ -7,7 +7,7 @@ import os
 # Import framework types for testing
 import sys
 import uuid
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -23,7 +23,7 @@ from agent_runtime.runtime_abstractions import (
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../packages/main"))
 
-from agent_framework import AgentRunResponse, AgentRunResponseUpdate, AgentThread, ChatMessage, ChatRole
+from agent_framework import AgentRunResponse, AgentRunResponseUpdate, AgentThread, ChatMessage, ChatRole  # type: ignore
 
 
 class TestAgentProxyThread:

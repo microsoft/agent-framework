@@ -12,12 +12,13 @@ import os
 import re
 import sys
 import uuid
-from typing import Any, AsyncIterable, List, Union
+from typing import Any
+from collections.abc import AsyncIterable
 
 # Add framework to path (same approach as agent_actor.py)
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../packages/main"))
 
-from agent_framework import AgentRunResponse, AgentRunResponseUpdate, AgentThread, AIAgent, ChatMessage, ChatRole
+from agent_framework import AgentRunResponse, AgentRunResponseUpdate, AgentThread, AIAgent, ChatMessage, ChatRole  # type: ignore
 
 from .runtime_abstractions import (
     ActorId,
@@ -124,7 +125,7 @@ class AgentProxy(AIAgent):
 
     async def run(
         self,
-        messages: Union[str, ChatMessage, List[str], List[ChatMessage], None] = None,
+        messages: str | ChatMessage | list[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -181,7 +182,7 @@ class AgentProxy(AIAgent):
 
     def run_streaming(
         self,
-        messages: Union[str, ChatMessage, List[str], List[ChatMessage], None] = None,
+        messages: str | ChatMessage | list[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -213,8 +214,8 @@ class AgentProxy(AIAgent):
         return self._run_streaming_core(normalized_messages, thread_id)
 
     def _normalize_messages(
-        self, messages: Union[str, ChatMessage, List[str], List[ChatMessage]]
-    ) -> List[ChatMessage]:
+        self, messages: str | ChatMessage | list[str | ChatMessage]
+    ) -> list[ChatMessage]:
         """Normalize messages to a list of ChatMessage objects."""
         if isinstance(messages, str):
             return [ChatMessage(role=ChatRole.USER, text=messages)]
@@ -246,7 +247,7 @@ class AgentProxy(AIAgent):
         return thread.id
 
     async def _run_core(
-        self, messages: List[ChatMessage], thread_id: str
+        self, messages: list[ChatMessage], thread_id: str
     ) -> ActorResponseHandle:
         """Core method to send a run request to the actor."""
         # Create the run request
@@ -278,7 +279,7 @@ class AgentProxy(AIAgent):
         )
 
     async def _run_streaming_core(
-        self, messages: List[ChatMessage], thread_id: str
+        self, messages: list[ChatMessage], thread_id: str
     ) -> AsyncIterable[AgentRunResponseUpdate]:
         """Core method to send a streaming run request to the actor."""
         handle = await self._run_core(messages, thread_id)

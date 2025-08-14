@@ -5,7 +5,8 @@ import logging
 import uuid
 from concurrent.futures import Future
 from dataclasses import dataclass
-from typing import Dict, Callable, Any, AsyncIterator, List
+from typing import Any, Callable
+from collections.abc import AsyncIterator
 
 from .runtime_abstractions import (
     IActor, IActorRuntimeContext, IActorClient, IActorStateStorage,
@@ -21,14 +22,14 @@ class InMemoryStateStorage(IActorStateStorage):
     """Simple in-memory state storage for development"""
     
     def __init__(self):
-        self._storage: Dict[str, Dict[str, Any]] = {}
+        self._storage: dict[str, dict[str, Any]] = {}
         self._lock = asyncio.Lock()
     
-    async def read_state(self, actor_id: ActorId) -> Dict[str, Any]:
+    async def read_state(self, actor_id: ActorId) -> dict[str, Any]:
         async with self._lock:
             return self._storage.get(str(actor_id), {})
     
-    async def write_state(self, actor_id: ActorId, state: Dict[str, Any]) -> bool:
+    async def write_state(self, actor_id: ActorId, state: dict[str, Any]) -> bool:
         async with self._lock:
             self._storage[str(actor_id)] = state
             return True
@@ -107,18 +108,13 @@ class InProcessResponseHandle(ActorResponseHandle):
 class InProcessActorContext(IActorRuntimeContext):
     """Runtime context for an in-process actor"""
 
-    def __init__(
-        self,
-        actor_id: ActorId,
-        storage: IActorStateStorage,
-        runtime: Any
-    ) -> None:
+    def __init__(self, actor_id: ActorId, storage: IActorStateStorage, runtime: Any) -> None:
         self._actor_id = actor_id
         self._storage = storage
         self._runtime = runtime
-        self._message_queue: asyncio.Queue[ActorMessage] = asyncio.Queue()
-        self._inbox: Dict[str, RequestEntry] = {}
-        self._completed_order: List[str] = []
+        self._message_queue = asyncio.Queue()  # type: ignore[var-annotated]
+        self._inbox = {}
+        self._completed_order = []
         self._max_completed_retention = 128
 
     @property
@@ -177,11 +173,11 @@ class InProcessActorRuntime:
     """In-process actor runtime"""
     
     def __init__(self, storage: IActorStateStorage | None = None):
-        self._storage = storage or InMemoryStateStorage()
-        self._actors: Dict[ActorId, InProcessActorContext] = {}
-        self._actor_tasks: Dict[ActorId, asyncio.Task] = {}
-        self._actor_factories: Dict[str, Callable[[], IActor]] = {}
-        self._running = False
+            self._storage = storage or InMemoryStateStorage()
+            self._actors = {}
+            self._actor_tasks = {}
+            self._actor_factories = {}
+            self._running = False
     
     def register_actor_type(self, type_name: str, factory: Callable[[IActorRuntimeContext], IActor]) -> None:
         """Register a factory for creating actors of a given type"""
@@ -264,7 +260,7 @@ class InProcessActorClient(IActorClient):
         self, 
         actor_id: ActorId, 
         method: str,
-        params: Dict[str, Any] | None = None,
+    params: dict[str, Any] | None = None,
         message_id: str | None = None
     ) -> ActorResponseHandle:
         """Send a request to an actor"""
