@@ -144,7 +144,8 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
         **kwargs: Any,
     ) -> ChatResponse:
         return await ChatResponse.from_chat_response_generator(
-            updates=self._inner_get_streaming_response(messages=messages, chat_options=chat_options, **kwargs)
+            updates=self._inner_get_streaming_response(messages=messages, chat_options=chat_options, **kwargs),
+            output_format_type=chat_options.response_format,
         )
 
     async def _inner_get_streaming_response(
