@@ -23,13 +23,14 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
 
     protected string FormatDisplayName(string name) => $"{this.GetType().Name}_{name}";
 
-    internal async Task Execute(WorkflowActionExecutor executor)
+    internal async Task<WorkflowEvent[]> Execute(WorkflowActionExecutor executor)
     {
         WorkflowExecutionContext context = new(RecalcEngineFactory.Create(this.Scopes), this.Scopes, () => null!, NullLogger.Instance);
         executor.Attach(context);
         WorkflowBuilder workflowBuilder = new(executor);
         StreamingRun run = await InProcessExecution.StreamAsync(workflowBuilder.Build<string>(), "<placeholder>");
         WorkflowEvent[] events = await run.WatchStreamAsync().ToArrayAsync();
+        return events;
     }
 
     internal void VerifyModel(DialogAction model, WorkflowActionExecutor action)

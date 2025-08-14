@@ -5,12 +5,12 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.Workflows;
 
 /// <summary>
-/// %%% COMMENT
+/// Event that represents a streamed message produced by a declarative workflow.
 /// </summary>
 public class DeclarativeWorkflowStreamEvent(ChatResponseUpdate update) : DeclarativeWorkflowEvent(update)
 {
     /// <summary>
-    /// %%% COMMENT
+    /// The streamed response data produced by the workflow, which is a <see cref="ChatResponseUpdate"/>.
     /// </summary>
     public new ChatResponseUpdate Data => update;
 }

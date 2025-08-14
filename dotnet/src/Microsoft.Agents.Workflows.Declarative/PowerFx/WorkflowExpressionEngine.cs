@@ -15,8 +15,6 @@ namespace Microsoft.Agents.Workflows.Declarative.PowerFx;
 
 internal class WorkflowExpressionEngine : IExpressionEngine
 {
-    //private static readonly JsonSerializerOptions s_options = new(); // %%% INVESTIGATE: ElementSerializer.CreateOptions();
-
     private readonly RecalcEngine _engine;
 
     public WorkflowExpressionEngine(RecalcEngine engine)

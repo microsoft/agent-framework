@@ -39,7 +39,7 @@ public static class DeclarativeWorkflowBuilder
         return walker.Workflow;
     }
 
-    private static string GetRootId(BotElement element) => // %%% WORKFLOW TYPE
+    private static string GetRootId(BotElement element) => // %%% CPS - WORKFLOW TYPE
         element switch
         {
             AdaptiveDialog adaptiveDialog => adaptiveDialog.BeginDialog?.Id.Value ?? throw new UnknownActionException("Undefined dialog"),

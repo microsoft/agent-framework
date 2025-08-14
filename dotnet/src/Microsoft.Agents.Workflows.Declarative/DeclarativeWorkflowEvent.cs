@@ -3,7 +3,7 @@
 namespace Microsoft.Agents.Workflows;
 
 /// <summary>
-/// %%% COMMENT
+/// Base class for events that occur during the execution of a declarative workflow.
 /// </summary>
 public class DeclarativeWorkflowEvent(object? data) : WorkflowEvent(data)
 {

@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Execution;
 using Microsoft.Bot.ObjectModel;
@@ -23,11 +24,11 @@ public sealed class SendActivityExecutorTest(ITestOutputHelper output) : Workflo
 
         // Act
         SendActivityExecutor action = new(model);
-        await this.Execute(action);
+        WorkflowEvent[] events = await this.Execute(action);
 
         // Assert
         this.VerifyModel(model, action);
-        // %%% VERIFY EVENT
+        Assert.Contains(events, e => e is DeclarativeWorkflowMessageEvent);
     }
 
     private SendActivity CreateModel(string displayName, string activityMessage, string? summary = null)

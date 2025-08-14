@@ -67,7 +67,7 @@ internal static class Program
             }
             else if (evt is DeclarativeWorkflowStreamEvent streamEvent)
             {
-                //Console.WriteLine($"#{messageEvent.Data.MessageId}:{Environment.NewLine}{messageEvent.Data}"); // %%% TODO
+                //Console.WriteLine($"#{messageEvent.Data.MessageId}:{Environment.NewLine}{messageEvent.Data}"); // %%% TODO: Streaming
             }
             else if (evt is DeclarativeWorkflowMessageEvent messageEvent)
             {
@@ -89,8 +89,8 @@ internal static class Program
                             Console.ForegroundColor = ConsoleColor.DarkGray;
                             Console.WriteLine($"[Tokens Total: {messageEvent.Usage.TotalTokenCount}, Input: {messageEvent.Usage.InputTokenCount}, Output: {messageEvent.Usage.OutputTokenCount}]");
                         }
+                        Console.WriteLine();
                     }
-                    Console.WriteLine();
                 }
                 finally
                 {
