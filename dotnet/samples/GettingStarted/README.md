@@ -30,11 +30,28 @@ You'll need access to at least one of the following AI services:
 - **Azure OpenAI**: Endpoint URL and API key or Azure CLI authentication
 - **Azure AI Agents**: Azure subscription with AI services enabled
 
-## 🔐 User Secrets Configuration
+## 🔐 Configuration Setup
 
 The samples use .NET User Secrets to securely store API keys and configuration. This prevents sensitive information from being committed to source control.
 
-### Option 1: Using Visual Studio
+### Option 1: Interactive Setup (Recommended)
+
+The **easiest way** to configure your API keys is using the built-in interactive setup:
+
+1. **Run** the application:
+   ```bash
+   cd dotnet/samples/GettingStarted
+   dotnet run --framework net9.0
+   ```
+
+2. **Follow the prompts**: The application will automatically detect missing configuration and guide you through setup with:
+   - Clear descriptions for each setting
+   - Contextual help and examples
+   - Secure input for API keys
+
+The interactive setup handles all the technical details and ensures your configuration is stored securely.
+
+### Option 2: Manual Setup - Visual Studio
 
 1. **Right-click** on the `GettingStarted` project in Solution Explorer
 2. **Select** "Manage User Secrets"
@@ -42,32 +59,17 @@ The samples use .NET User Secrets to securely store API keys and configuration. 
 
 ```json
 {
-  "OpenAI": {
-    "ApiKey": "sk-your-openai-api-key-here",
-    "ChatModelId": "gpt-4o-mini"
-  },
-  "AzureOpenAI": {
-    "Endpoint": "https://your-resource.openai.azure.com/",
-    "DeploymentName": "gpt-4o-mini",
-    "ApiKey": "your-azure-openai-api-key"
-  }
+  "OpenAI:ApiKey": "sk-your-openai-api-key-here",
+  "OpenAI:ChatModelId": "gpt-4o-mini",
+  "AzureOpenAI:Endpoint": "https://your-resource.openai.azure.com/",
+  "AzureOpenAI:DeploymentName": "gpt-4o-mini",
+  "AzureOpenAI:ApiKey": "your-azure-openai-api-key",
+  "AzureAI:Endpoint": "https://your-ai-foundry-project.cognitiveservices.azure.com/api/projects/your-project",
+  "AzureAI:DeploymentName": "gpt-4o-mini"
 }
 ```
 
-### Option 2: Using Visual Studio Code
-
-1. **Open** the integrated terminal (`Ctrl+`` ` or `View > Terminal`)
-2. **Navigate** to the samples directory:
-   ```bash
-   cd dotnet/samples/GettingStarted
-   ```
-3. **Initialize** user secrets:
-   ```bash
-   dotnet user-secrets init
-   ```
-4. **Set** your secrets using the commands below
-
-### Option 3: Using Command Line
+### Option 3: Manual Setup - Command Line
 
 Navigate to the GettingStarted directory and run these commands:
 
@@ -78,7 +80,7 @@ cd dotnet/samples/GettingStarted
 # Initialize user secrets (if not already done)
 dotnet user-secrets init
 
-# Configure OpenAI (choose one model)
+# Configure OpenAI
 dotnet user-secrets set "OpenAI:ApiKey" "sk-your-openai-api-key-here"
 dotnet user-secrets set "OpenAI:ChatModelId" "gpt-4o-mini"
 
@@ -87,12 +89,12 @@ dotnet user-secrets set "AzureOpenAI:Endpoint" "https://your-resource.openai.azu
 dotnet user-secrets set "AzureOpenAI:DeploymentName" "gpt-4o-mini"
 dotnet user-secrets set "AzureOpenAI:ApiKey" "your-azure-openai-api-key"
 
-# Optional: Configure Azure AI Agents
-dotnet user-secrets set "AzureAI:Endpoint" "https://your-ai-foundry-project.cognitiveservices.azure.com/"
+# Configure Azure AI Foundry (optional)
+dotnet user-secrets set "AzureAI:Endpoint" "https://your-ai-foundry-project.cognitiveservices.azure.com/api/projects/your-project"
 dotnet user-secrets set "AzureAI:DeploymentName" "gpt-4o-mini"
 ```
 
-### Environment Variables (Alternative)
+### Option 4: Environment Variables (Alternative)
 
 If you prefer environment variables over user secrets, use these names:
 
@@ -111,112 +113,109 @@ AzureAI__Endpoint=https://your-ai-foundry-project.cognitiveservices.azure.com/
 AzureAI__DeploymentName=gpt-4o-mini
 ```
 
-## 🚀 Setup and Execution Instructions
+## 🚀 Running the Application
 
-### 1. Clone the Repository
+### Console/Terminal
 
-```bash
-git clone https://github.com/microsoft/agent-framework.git
-cd agent-framework
-```
-
-### 2. Navigate to the Samples Directory
+Navigate to the project directory and run with framework specification:
 
 ```bash
 cd dotnet/samples/GettingStarted
-```
 
-### 3. Build the Project & Restore Dependencies
-
-```bash
+# Build the project
 dotnet build
+
+# Run the interactive test runner (recommended)
+dotnet run --framework net9.0    # Best experience with .NET 9.0
+dotnet run --framework net472     # Alternative with .NET Framework 4.7.2
 ```
 
-### 4. Run the Samples
+**Note**: Framework specification is required for multi-targeting projects. Use `net9.0` for the optimal console experience.
 
-#### Option A: Interactive Console Interface (Recommended)
+### Visual Studio Code
 
-The project includes an interactive console interface that makes it easy to discover and run specific tests:
+1. **Open** the project folder in VS Code
+2. **Use** the existing debug configuration:
+   - Press `F5` or go to `Run and Debug` panel
+   - Select **"C# GettingStarted"** configuration
+   - Click the play button to start debugging
 
-```bash
-# Run the interactive console (requires framework specification)
-dotnet run --framework net9.0    # Recommended - uses .NET 9.0
-dotnet run --framework net472     # Alternative - uses .NET Framework 4.7.2
-```
+The launch configuration is pre-configured to run the interactive test runner with proper framework targeting.
 
-**Note**: Since this is a multi-targeting project, you must specify the `--framework` parameter when using `dotnet run`. The `--framework net9.0` option is recommended for the best console experience.
+### Visual Studio
 
-The interactive console provides:
-- **Test Discovery**: Automatically finds all test classes, methods, and theory parameters
-- **Configuration Management**: View, add, update, and remove API keys and configuration settings
-- **Hierarchical Navigation**: Browse tests by folder → class → method → theory parameters
-- **Easy Execution**: Run individual tests or groups with simple menu selections
+1. **Open** the solution: `dotnet/agent-framework-dotnet.slnx`
+2. **Set** `GettingStarted` as the startup project (right-click → Set as Startup Project)
+3. **Press** `F5` or click **Debug > Start Debugging**
+4. **Alternative**: Use Test Explorer (`Test > Test Explorer`) to run individual tests
 
+## ✨ Key Features
 
+### Configuration Management
 
-#### Option B: Direct Test Execution
+The application provides an **interactive configuration system** that guides you through setting up your AI service credentials:
 
-You can also run tests directly using xUnit:
+- **Automatic Detection**: Identifies missing configuration and prompts for setup
+- **Secure Storage**: Uses .NET User Secrets to protect API keys and sensitive data
+- **Multiple Providers**: Supports OpenAI, Azure OpenAI, and Azure AI Foundry services
+- **User-Friendly Prompts**: Clear descriptions and contextual help for each setting
+- **Real-Time Validation**: Immediate feedback on configuration status
+
+### Sample Execution
+
+The **interactive test runner** provides a comprehensive interface for discovering and executing samples:
+
+- **Hierarchical Navigation**: Browse samples by category → class → method → parameters
+- **Smart Discovery**: Automatically finds all available tests and organizes them logically
+- **Rich Descriptions**: Each sample includes detailed explanations and context
+- **Flexible Execution**: Run individual tests, test groups, or entire categories
+- **Real-Time Output**: View test results and detailed execution logs
+- **Error Handling**: Clear error messages and troubleshooting guidance
+
+**Navigation Features:**
+- **Category Browsing**: Explore samples by Steps, Orchestration, and Providers
+- **Method Selection**: Choose specific test methods with parameter variations
+- **Theory Parameters**: Run tests with different provider configurations
+- **Back Navigation**: Easy return to previous menus and selections
+
+## 📁 Project Organization
+
+### Main Components
+
+- **`/Steps`**: Progressive learning samples (Step01 through Step09)
+- **`/Orchestration`**: Multi-agent coordination patterns
+- **`/Providers`**: Service-specific end-to-end code integration examples
+- **`/TestRunner`**: Interactive console application for sample execution
+
+### TestRunner
+
+The TestRunner is a convenience executable UI logic that provides an intuitive UI for exploring and running the framework samples. It handles configuration management, test discovery, and execution through an interactive console interface, making it easy to get started without complex command-line arguments.
+
+## 🧪 Alternative Execution Methods
+
+### Direct Test Execution
+
+For advanced users, you can run tests directly using xUnit:
 
 ```bash
 # Run all samples
 dotnet test
 
-# Run a specific sample category
+# Run specific categories
 dotnet test --filter "FullyQualifiedName~Steps"
 dotnet test --filter "FullyQualifiedName~Orchestration"
-dotnet test --filter "FullyQualifiedName~Providers"
 
-# Run a specific sample class
-dotnet test --filter "FullyQualifiedName~Step01_ChatClientAgent_Running"
-
-# Run a specific test method (all theory variations)
-dotnet test --filter "FullyQualifiedName~Step01_ChatClientAgent_Running.RunWithoutThread" --logger "console;verbosity=detailed"
-
-# Run only a specific theory case (e.g., just Azure OpenAI provider)
-dotnet test --filter "DisplayName=Steps.Step01_ChatClientAgent_Running.RunWithoutThread(provider: AzureOpenAI)" --logger "console;verbosity=detailed"
+# Run with detailed output
+dotnet test --filter "FullyQualifiedName~Step01" --logger "console;verbosity=detailed"
 ```
 
-#### Option C: Command Line Test Execution
+### Command Line Arguments
 
-You can also run specific tests via command line arguments:
+Run specific tests via command line:
 
 ```bash
-# Run a specific test using the console interface
-dotnet run --framework net9.0 -- --test "DisplayName=Steps.Step01_ChatClientAgent_Running.RunWithoutThread(provider: AzureOpenAI)"
+dotnet run --framework net9.0 -- --test "DisplayName=Steps.Step01_ChatClientAgent_Running.RunWithoutThread(provider: OpenAI)"
 ```
-
-### 5. Run Samples in Visual Studio
-
-1. **Open** the solution file: `dotnet/agent-framework-dotnet.slnx`
-2. **Set** the `GettingStarted` project as the startup project
-3. **Open** Test Explorer (`Test > Test Explorer`)
-4. **Run** individual tests or test categories
-
-## 📚 Sample Categories
-
-### 📖 Steps (Progressive Learning)
-- **Step01**: Basic chat agent creation and interaction
-- **Step02**: Adding function tools to agents
-- **Step03**: Using code interpreter tools
-- **Step04**: Dependency injection patterns
-- **Step05**: Telemetry and observability
-- **Step06**: Structured outputs
-- **Step07**: File search capabilities
-- **Step08**: Thread suspension and resumption
-- **Step09**: Third-party thread storage
-
-### 🔄 Orchestration (Multi-Agent Patterns)
-- **Sequential**: Chain agents in sequence
-- **Concurrent**: Run multiple agents simultaneously
-- **Group Chat**: Multi-agent conversations
-- **Handoff**: Transfer conversations between agents
-
-### 🔌 Providers (Service Integration)
-- **OpenAI**: Direct OpenAI API integration
-- **Azure OpenAI**: Azure-hosted OpenAI models
-- **Azure AI Agents**: Azure AI Foundry integration
-- **OpenAI Responses**: Advanced response handling
 
 ## 🔧 Troubleshooting
 

@@ -1,0 +1,19 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "C# GettingStarted",
+            "type": "coreclr",
+            "request": "launch",
+            "program": "${workspaceFolder}/dotnet/samples/GettingStarted/bin/Debug/net9.0/GettingStarted.exe",
+            "preLaunchTask": "dotnet: build",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "stopAtEntry": false,
+            "console": "externalTerminal"
+        },
+    ]
+}
