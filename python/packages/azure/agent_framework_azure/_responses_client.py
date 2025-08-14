@@ -4,10 +4,8 @@ from collections.abc import Mapping
 from typing import Any, TypeVar
 from urllib.parse import urljoin
 
-from agent_framework import use_tool_calling
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai._responses_client import OpenAIResponsesClientBase
-from agent_framework.telemetry import use_telemetry
 from azure.identity import ChainedTokenCredential
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from pydantic import SecretStr, ValidationError
@@ -21,8 +19,6 @@ from ._shared import (
 TAzureResponsesClient = TypeVar("TAzureResponsesClient", bound="AzureResponsesClient")
 
 
-@use_telemetry
-@use_tool_calling
 class AzureResponsesClient(AzureOpenAIConfigBase, OpenAIResponsesClientBase):
     """Azure Responses completion class."""
 

@@ -4,7 +4,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import ChatClientAgent, ChatClientAgentThread
+from agent_framework import Agent, AgentThread
 from agent_framework.openai import OpenAIResponsesClient
 from pydantic import Field
 
@@ -21,7 +21,7 @@ async def example_with_automatic_thread_creation() -> None:
     """Example showing automatic thread creation."""
     print("=== Automatic Thread Creation Example ===")
 
-    agent = ChatClientAgent(
+    agent = Agent(
         chat_client=OpenAIResponsesClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
@@ -48,7 +48,7 @@ async def example_with_thread_persistence_in_memory() -> None:
     """
     print("=== Thread Persistence Example (In-Memory) ===")
 
-    agent = ChatClientAgent(
+    agent = Agent(
         chat_client=OpenAIResponsesClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
@@ -56,7 +56,7 @@ async def example_with_thread_persistence_in_memory() -> None:
 
     # Create a new thread that will be reused
     thread = agent.get_new_thread()
-    assert isinstance(thread, ChatClientAgentThread)
+    assert isinstance(thread, AgentThread)
 
     # First conversation
     query1 = "What's the weather like in Tokyo?"
@@ -91,7 +91,7 @@ async def example_with_existing_thread_id() -> None:
     # First, create a conversation and capture the thread ID
     existing_thread_id = None
 
-    agent = ChatClientAgent(
+    agent = Agent(
         chat_client=OpenAIResponsesClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
@@ -99,7 +99,7 @@ async def example_with_existing_thread_id() -> None:
 
     # Start a conversation and get the thread ID
     thread = agent.get_new_thread()
-    assert isinstance(thread, ChatClientAgentThread)
+    assert isinstance(thread, AgentThread)
 
     query1 = "What's the weather in Paris?"
     print(f"User: {query1}")
@@ -115,14 +115,14 @@ async def example_with_existing_thread_id() -> None:
     if existing_thread_id:
         print("\n--- Continuing with the same thread ID in a new agent instance ---")
 
-        agent = ChatClientAgent(
+        agent = Agent(
             chat_client=OpenAIResponsesClient(),
             instructions="You are a helpful weather agent.",
             tools=get_weather,
         )
 
         # Create a thread with the existing ID
-        thread = ChatClientAgentThread(id=existing_thread_id)
+        thread = AgentThread(id=existing_thread_id)
 
         query2 = "What was the last city I asked about?"
         print(f"User: {query2}")

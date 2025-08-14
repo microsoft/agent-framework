@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import AgentRunResponseUpdate, ChatClientAgent, ChatResponseUpdate, HostedCodeInterpreterTool
+from agent_framework import Agent, AgentRunResponseUpdate, ChatResponseUpdate, HostedCodeInterpreterTool
 from agent_framework.foundry import FoundryChatClient
 from azure.ai.agents.models import (
     RunStepDelta,
@@ -37,7 +37,7 @@ async def main() -> None:
     """Example showing how to use the HostedCodeInterpreterTool with Foundry."""
     print("=== Foundry Agent with Code Interpreter Example ===")
 
-    async with ChatClientAgent(
+    async with Agent(
         chat_client=FoundryChatClient(async_ad_credential=DefaultAzureCredential()),
         instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
         tools=HostedCodeInterpreterTool(),

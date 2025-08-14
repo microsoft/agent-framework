@@ -30,7 +30,7 @@ from pydantic import BaseModel, SecretStr, ValidationError
 
 from agent_framework import DataContent, TextReasoningContent, UriContent, UsageContent
 
-from .._clients import ChatClientBase, use_tool_calling
+from .._clients import ChatClientBase
 from .._logging import get_logger
 from .._tools import AIFunction, AITool, HostedCodeInterpreterTool
 from .._types import (
@@ -53,7 +53,6 @@ from ..exceptions import (
     ServiceInvalidRequestError,
     ServiceResponseException,
 )
-from ..telemetry import use_telemetry
 from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIConfigBase, OpenAIHandler, OpenAISettings, prepare_function_call_results
 
@@ -753,8 +752,6 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
 TOpenAIResponsesClient = TypeVar("TOpenAIResponsesClient", bound="OpenAIResponsesClient")
 
 
-@use_telemetry
-@use_tool_calling
 class OpenAIResponsesClient(OpenAIConfigBase, OpenAIResponsesClientBase):
     """OpenAI Responses client class."""
 

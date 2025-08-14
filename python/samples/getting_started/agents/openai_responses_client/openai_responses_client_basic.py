@@ -4,7 +4,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import ChatClientAgent
+from agent_framework import Agent
 from agent_framework.openai import OpenAIResponsesClient
 from pydantic import Field
 
@@ -21,7 +21,7 @@ async def non_streaming_example() -> None:
     """Example of non-streaming response (get the complete result at once)."""
     print("=== Non-streaming Response Example ===")
 
-    agent = ChatClientAgent(
+    agent = Agent(
         chat_client=OpenAIResponsesClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
@@ -37,7 +37,7 @@ async def streaming_example() -> None:
     """Example of streaming response (get results as they are generated)."""
     print("=== Streaming Response Example ===")
 
-    agent = ChatClientAgent(
+    agent = Agent(
         chat_client=OpenAIResponsesClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,

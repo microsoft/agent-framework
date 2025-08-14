@@ -24,11 +24,9 @@ from agent_framework import (
     UriContent,
     UsageContent,
     UsageDetails,
-    use_tool_calling,
 )
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError
-from agent_framework.telemetry import use_telemetry
 from azure.ai.agents.models import (
     AgentsNamedToolChoice,
     AgentsNamedToolChoiceType,
@@ -95,8 +93,6 @@ class FoundrySettings(AFBaseSettings):
 TFoundryChatClient = TypeVar("TFoundryChatClient", bound="FoundryChatClient")
 
 
-@use_telemetry
-@use_tool_calling
 class FoundryChatClient(ChatClientBase):
     """Azure AI Foundry Chat client."""
 

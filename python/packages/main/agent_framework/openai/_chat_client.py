@@ -17,7 +17,7 @@ from pydantic import BaseModel, SecretStr, ValidationError
 
 from agent_framework import AIFunction, AITool, UsageContent
 
-from .._clients import ChatClientBase, use_tool_calling
+from .._clients import ChatClientBase
 from .._logging import get_logger
 from .._types import (
     AIContents,
@@ -37,7 +37,6 @@ from ..exceptions import (
     ServiceInvalidRequestError,
     ServiceResponseException,
 )
-from ..telemetry import use_telemetry
 from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIConfigBase, OpenAIHandler, OpenAISettings, prepare_function_call_results
 
@@ -47,8 +46,6 @@ logger = get_logger("agent_framework.openai")
 
 
 # region Base Client
-@use_telemetry
-@use_tool_calling
 class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
     """OpenAI Chat completion class."""
 

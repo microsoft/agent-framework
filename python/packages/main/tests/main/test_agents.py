@@ -7,14 +7,13 @@ from uuid import uuid4
 from pytest import fixture, raises
 
 from agent_framework import (
+    Agent,
+    AgentProtocol,
     AgentRunResponse,
     AgentRunResponseUpdate,
     AgentThread,
-    AIAgent,
+    AgentThreadType,
     ChatClient,
-    ChatClientAgent,
-    ChatClientAgentThread,
-    ChatClientAgentThreadType,
     ChatClientBase,
     ChatMessage,
     ChatOptions,
@@ -33,7 +32,7 @@ class MockAgentThread(AgentThread):
 
 
 # Mock Agent implementation for testing
-class MockAgent(AIAgent):
+class MockAgent(AgentProtocol):
     @property
     def id(self) -> str:
         return str(uuid4())
@@ -110,7 +109,7 @@ def agent_thread() -> AgentThread:
 
 
 @fixture
-def agent() -> AIAgent:
+def agent() -> AgentProtocol:
     return MockAgent()
 
 
@@ -123,17 +122,17 @@ def test_agent_thread_type(agent_thread: AgentThread) -> None:
     assert isinstance(agent_thread, AgentThread)
 
 
-def test_agent_type(agent: AIAgent) -> None:
-    assert isinstance(agent, AIAgent)
+def test_agent_type(agent: AgentProtocol) -> None:
+    assert isinstance(agent, AgentProtocol)
 
 
-async def test_agent_run(agent: AIAgent) -> None:
+async def test_agent_run(agent: AgentProtocol) -> None:
     response = await agent.run("test")
     assert response.messages[0].role == ChatRole.ASSISTANT
     assert response.messages[0].text == "Response"
 
 
-async def test_agent_run_streaming(agent: AIAgent) -> None:
+async def test_agent_run_streaming(agent: AgentProtocol) -> None:
     async def collect_updates(updates: AsyncIterable[AgentRunResponseUpdate]) -> list[AgentRunResponseUpdate]:
         return [u async for u in updates]
 
@@ -144,15 +143,15 @@ async def test_agent_run_streaming(agent: AIAgent) -> None:
 
 async def test_chat_client_agent_thread_init_in_memory() -> None:
     messages = [ChatMessage(role=ChatRole.USER, contents=[TextContent("Hello")])]
-    thread = ChatClientAgentThread(messages=messages)
+    thread = AgentThread(messages=messages)
 
-    assert thread.storage_location == ChatClientAgentThreadType.IN_MEMORY_MESSAGES
+    assert thread.storage_location == AgentThreadType.IN_MEMORY_MESSAGES
     assert thread.id is None
     assert thread.chat_messages == messages
 
 
 async def test_chat_client_agent_thread_empty() -> None:
-    thread = ChatClientAgentThread()
+    thread = AgentThread()
 
     assert thread.storage_location is None
     assert thread.id is None
@@ -161,24 +160,24 @@ async def test_chat_client_agent_thread_empty() -> None:
 
 async def test_chat_client_agent_thread_init_invalid() -> None:
     with raises(ValueError, match="Cannot specify both id and messages"):
-        ChatClientAgentThread(id="123", messages=[ChatMessage(role=ChatRole.USER, contents=[TextContent("Hello")])])
+        AgentThread(id="123", messages=[ChatMessage(role=ChatRole.USER, contents=[TextContent("Hello")])])
 
     with raises(ValueError, match="ID cannot be empty or whitespace"):
-        ChatClientAgentThread(id=" ")
+        AgentThread(id=" ")
 
 
 async def test_chat_client_agent_thread_init_conversation_id() -> None:
     thread_id = str(uuid4())
-    thread = ChatClientAgentThread(id=thread_id)
+    thread = AgentThread(id=thread_id)
 
-    assert thread.storage_location == ChatClientAgentThreadType.CONVERSATION_ID
+    assert thread.storage_location == AgentThreadType.CONVERSATION_ID
     assert thread.id == thread_id
     assert thread.chat_messages is None
 
 
 async def test_chat_client_agent_thread_get_messages() -> None:
     messages = [ChatMessage(role=ChatRole.USER, contents=[TextContent("Hello")])]
-    thread = ChatClientAgentThread(messages=messages)
+    thread = AgentThread(messages=messages)
 
     result = [msg async for msg in thread.get_messages()]
     assert result == messages
@@ -188,20 +187,20 @@ async def test_chat_client_agent_thread_on_new_messages_in_memory() -> None:
     initial_message = ChatMessage(role=ChatRole.USER, contents=[TextContent("Initial message")])
     new_message = ChatMessage(role=ChatRole.USER, contents=[TextContent("New message")])
 
-    thread = ChatClientAgentThread(messages=[initial_message])
+    thread = AgentThread(messages=[initial_message])
 
     await thread._on_new_messages(new_message)  # type: ignore[reportPrivateUsage]
     assert thread.chat_messages == [initial_message, new_message]
 
 
 def test_chat_client_agent_type(chat_client: ChatClient) -> None:
-    chat_client_agent = ChatClientAgent(chat_client=chat_client)
-    assert isinstance(chat_client_agent, AIAgent)
+    chat_client_agent = Agent(chat_client=chat_client)
+    assert isinstance(chat_client_agent, AgentProtocol)
 
 
 async def test_chat_client_agent_init(chat_client: ChatClient) -> None:
     agent_id = str(uuid4())
-    agent = ChatClientAgent(chat_client=chat_client, id=agent_id, description="Test")
+    agent = Agent(chat_client=chat_client, id=agent_id, description="Test")
 
     assert agent.id == agent_id
     assert agent.name is None
@@ -211,7 +210,7 @@ async def test_chat_client_agent_init(chat_client: ChatClient) -> None:
 
 async def test_chat_client_agent_init_with_name(chat_client: ChatClient) -> None:
     agent_id = str(uuid4())
-    agent = ChatClientAgent(chat_client=chat_client, id=agent_id, name="Test Agent", description="Test")
+    agent = Agent(chat_client=chat_client, id=agent_id, name="Test Agent", description="Test")
 
     assert agent.id == agent_id
     assert agent.name == "Test Agent"
@@ -220,7 +219,7 @@ async def test_chat_client_agent_init_with_name(chat_client: ChatClient) -> None
 
 
 async def test_chat_client_agent_run(chat_client: ChatClient) -> None:
-    agent = ChatClientAgent(chat_client=chat_client)
+    agent = Agent(chat_client=chat_client)
 
     result = await agent.run("Hello")
 
@@ -228,7 +227,7 @@ async def test_chat_client_agent_run(chat_client: ChatClient) -> None:
 
 
 async def test_chat_client_agent_run_streaming(chat_client: ChatClient) -> None:
-    agent = ChatClientAgent(chat_client=chat_client)
+    agent = Agent(chat_client=chat_client)
 
     result = await AgentRunResponse.from_agent_response_generator(agent.run_streaming("Hello"))
 
@@ -236,24 +235,24 @@ async def test_chat_client_agent_run_streaming(chat_client: ChatClient) -> None:
 
 
 async def test_chat_client_agent_get_new_thread(chat_client: ChatClient) -> None:
-    agent = ChatClientAgent(chat_client=chat_client)
+    agent = Agent(chat_client=chat_client)
     thread = agent.get_new_thread()
 
-    assert isinstance(thread, ChatClientAgentThread)
+    assert isinstance(thread, AgentThread)
     assert thread.storage_location is None
 
 
 async def test_chat_client_agent_prepare_thread_and_messages(chat_client: ChatClient) -> None:
-    agent = ChatClientAgent(chat_client=chat_client)
+    agent = Agent(chat_client=chat_client)
     message = ChatMessage(role=ChatRole.USER, text="Hello")
-    thread = ChatClientAgentThread(messages=[message])
+    thread = AgentThread(messages=[message])
 
     result_thread = agent._validate_or_create_thread_type(  # type: ignore[reportPrivateUsage]
-        thread, lambda: ChatClientAgentThread(), expected_type=ChatClientAgentThread
+        thread, lambda: AgentThread(), expected_type=AgentThread
     )  # type: ignore[reportPrivateUsage]
 
     assert result_thread == thread
-    assert isinstance(result_thread, ChatClientAgentThread)
+    assert isinstance(result_thread, AgentThread)
 
     _, result_messages = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
         thread=result_thread,
@@ -266,15 +265,15 @@ async def test_chat_client_agent_prepare_thread_and_messages(chat_client: ChatCl
 
 
 async def test_chat_client_agent_validate_or_create_thread(chat_client: ChatClient) -> None:
-    agent = ChatClientAgent(chat_client=chat_client)
+    agent = Agent(chat_client=chat_client)
     thread = None
 
     result_thread = agent._validate_or_create_thread_type(  # type: ignore[reportPrivateUsage]
-        thread, lambda: ChatClientAgentThread(), expected_type=ChatClientAgentThread
+        thread, lambda: AgentThread(), expected_type=AgentThread
     )  # type: ignore[reportPrivateUsage]
 
     assert result_thread != thread
-    assert isinstance(result_thread, ChatClientAgentThread)
+    assert isinstance(result_thread, AgentThread)
 
 
 async def test_chat_client_agent_update_thread_id() -> None:
@@ -284,27 +283,27 @@ async def test_chat_client_agent_update_thread_id() -> None:
             conversation_id="123",
         )
     )
-    agent = ChatClientAgent(chat_client=chat_client)
+    agent = Agent(chat_client=chat_client)
     thread = agent.get_new_thread()
 
     result = await agent.run("Hello", thread=thread)
     assert result.text == "test response"
 
     assert thread.id == "123"
-    assert isinstance(thread, ChatClientAgentThread)
-    assert thread.storage_location == ChatClientAgentThreadType.CONVERSATION_ID
+    assert isinstance(thread, AgentThread)
+    assert thread.storage_location == AgentThreadType.CONVERSATION_ID
 
 
 async def test_chat_client_agent_update_thread_messages(chat_client: ChatClient) -> None:
-    agent = ChatClientAgent(chat_client=chat_client)
+    agent = Agent(chat_client=chat_client)
     thread = agent.get_new_thread()
 
     result = await agent.run("Hello", thread=thread)
     assert result.text == "test response"
 
     assert thread.id is None
-    assert isinstance(thread, ChatClientAgentThread)
-    assert thread.storage_location == ChatClientAgentThreadType.IN_MEMORY_MESSAGES
+    assert isinstance(thread, AgentThread)
+    assert thread.storage_location == AgentThreadType.IN_MEMORY_MESSAGES
 
     assert thread.chat_messages is not None
     assert len(thread.chat_messages) == 2
@@ -313,8 +312,8 @@ async def test_chat_client_agent_update_thread_messages(chat_client: ChatClient)
 
 
 async def test_chat_client_agent_update_thread_conversation_id_missing(chat_client: ChatClient) -> None:
-    agent = ChatClientAgent(chat_client=chat_client)
-    thread = ChatClientAgentThread(id="123")
+    agent = Agent(chat_client=chat_client)
+    thread = AgentThread(id="123")
 
     with raises(AgentExecutionException, match="Service did not return a valid conversation id"):
         agent._update_thread_with_type_and_conversation_id(thread, None)  # type: ignore[reportPrivateUsage]
@@ -322,7 +321,7 @@ async def test_chat_client_agent_update_thread_conversation_id_missing(chat_clie
 
 async def test_chat_client_agent_default_author_name(chat_client: ChatClient) -> None:
     # Name is not specified here, so default name should be used
-    agent = ChatClientAgent(chat_client=chat_client)
+    agent = Agent(chat_client=chat_client)
 
     result = await agent.run("Hello")
     assert result.text == "test response"
@@ -331,7 +330,7 @@ async def test_chat_client_agent_default_author_name(chat_client: ChatClient) ->
 
 async def test_chat_client_agent_author_name_as_agent_name(chat_client: ChatClient) -> None:
     # Name is specified here, so it should be used as author name
-    agent = ChatClientAgent(chat_client=chat_client, name="TestAgent")
+    agent = Agent(chat_client=chat_client, name="TestAgent")
 
     result = await agent.run("Hello")
     assert result.text == "test response"
@@ -346,7 +345,7 @@ async def test_chat_client_agent_author_name_is_used_from_response() -> None:
             ]
         )
     )
-    agent = ChatClientAgent(chat_client=chat_client)
+    agent = Agent(chat_client=chat_client)
 
     result = await agent.run("Hello")
     assert result.text == "test response"

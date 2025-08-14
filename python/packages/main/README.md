@@ -62,11 +62,11 @@ Create agents and invoke them directly:
 
 ```python
 import asyncio
-from agent_framework import ChatClientAgent
+from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
 
 async def main():
-    agent = ChatClientAgent(
+    agent = Agent(
         chat_client=OpenAIChatClient(),
         instructions="""
         1) A robot may not injure a human being...
@@ -124,7 +124,7 @@ import asyncio
 from typing import Annotated
 from random import randint
 from pydantic import Field
-from agent_framework import ChatClientAgent
+from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
 
 
@@ -146,7 +146,7 @@ def get_menu_specials() -> str:
 
 
 async def main():
-    agent = ChatClientAgent(
+    agent = Agent(
         chat_client=OpenAIChatClient(),
         instructions="You are a helpful assistant that can provide weather and restaurant information.",
         tools=[get_weather, get_menu_specials]
@@ -170,19 +170,19 @@ Coordinate multiple agents to collaborate on complex tasks using orchestration p
 
 ```python
 import asyncio
-from agent_framework import ChatClientAgent
+from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
 
 
 async def main():
     # Create specialized agents
-    writer = ChatClientAgent(
+    writer = Agent(
         chat_client=OpenAIChatClient(),
         name="Writer",
         instructions="You are a creative content writer. Generate and refine slogans based on feedback."
     )
 
-    reviewer = ChatClientAgent(
+    reviewer = Agent(
         chat_client=OpenAIChatClient(),
         name="Reviewer",
         instructions="You are a critical reviewer. Provide detailed feedback on proposed slogans."

@@ -18,7 +18,7 @@ from ._pydantic import AFBaseSettings
 if TYPE_CHECKING:  # pragma: no cover
     from opentelemetry.util._decorator import _AgnosticContextManager  # type: ignore[reportPrivateUsage]
 
-    from ._agents import AgentThread, AIAgent, ChatClientAgent
+    from ._agents import Agent, AgentProtocol, AgentThread
     from ._clients import ChatClientBase
     from ._tools import AIFunction
     from ._types import (
@@ -31,7 +31,7 @@ if TYPE_CHECKING:  # pragma: no cover
     )
 
 TChatClientBase = TypeVar("TChatClientBase", bound="ChatClientBase")
-TChatClientAgent = TypeVar("TChatClientAgent", bound="ChatClientAgent")
+TAgent = TypeVar("TAgent", bound="Agent")
 
 tracer = get_tracer("agent_framework")
 logger = get_logger()
@@ -40,9 +40,9 @@ __all__ = [
     "AGENT_FRAMEWORK_USER_AGENT",
     "APP_INFO",
     "USER_AGENT_KEY",
+    "OpenTelemetryChatClient",
     "prepend_agent_framework_to_user_agent",
     "use_agent_telemetry",
-    "use_telemetry",
 ]
 
 
@@ -272,26 +272,28 @@ def _set_error(span: Span, error: Exception) -> None:
 
 
 def _trace_chat_get_response(
+    chat_client: "ChatClientBase",
     completion_func: Callable[..., Awaitable["ChatResponse"]],
+    model_diagnostics: ModelDiagnosticSettings,
 ) -> Callable[..., Awaitable["ChatResponse"]]:
     """Decorator to trace chat completion activities.
 
     Args:
+        chat_client: the chat client
         completion_func: The function to trace.
+        model_diagnostics: the settings for what to trace
     """
 
     @functools.wraps(completion_func)
     async def wrap_inner_get_response(
-        self: "ChatClientBase",
         *,
         messages: MutableSequence["ChatMessage"],
         chat_options: "ChatOptions",
         **kwargs: Any,
     ) -> "ChatResponse":
-        if not MODEL_DIAGNOSTICS_SETTINGS.ENABLED:
+        if not model_diagnostics.ENABLED:
             # If model diagnostics are not enabled, just return the completion
             return await completion_func(
-                self,
                 messages=messages,
                 chat_options=chat_options,
                 **kwargs,
@@ -300,17 +302,17 @@ def _trace_chat_get_response(
         with use_span(
             _get_chat_response_span(
                 GenAIAttributes.CHAT_COMPLETION_OPERATION.value,
-                getattr(self, "ai_model_id", chat_options.ai_model_id or "unknown"),
-                self.MODEL_PROVIDER_NAME,
-                self.service_url() if hasattr(self, "service_url") else None,
+                getattr(chat_client, "ai_model_id", chat_options.ai_model_id or "unknown"),
+                chat_client.MODEL_PROVIDER_NAME,
+                chat_client.service_url() if hasattr(chat_client, "service_url") else None,
                 chat_options,
             ),
             end_on_exit=True,
         ) as current_span:
-            _set_chat_response_input(self.MODEL_PROVIDER_NAME, messages)
+            _set_chat_response_input(chat_client.MODEL_PROVIDER_NAME, messages)
             try:
-                response = await completion_func(self, messages=messages, chat_options=chat_options, **kwargs)
-                _set_chat_response_output(current_span, response, self.MODEL_PROVIDER_NAME)
+                response = await completion_func(messages=messages, chat_options=chat_options, **kwargs)
+                _set_chat_response_output(current_span, response, chat_client.MODEL_PROVIDER_NAME)
                 return response
             except Exception as exception:
                 _set_error(current_span, exception)
@@ -323,22 +325,26 @@ def _trace_chat_get_response(
 
 
 def _trace_chat_get_streaming_response(
+    chat_client: "ChatClientBase",
     completion_func: Callable[..., AsyncIterable["ChatResponseUpdate"]],
+    model_diagnostics: ModelDiagnosticSettings,
 ) -> Callable[..., AsyncIterable["ChatResponseUpdate"]]:
     """Decorator to trace streaming chat completion activities.
 
     Args:
+        chat_client: the Chat client.
         completion_func: The function to trace.
+        model_diagnostics: the settings for what to trace.
     """
 
     @functools.wraps(completion_func)
     async def wrap_inner_get_streaming_response(
-        self: "ChatClientBase", *, messages: MutableSequence["ChatMessage"], chat_options: "ChatOptions", **kwargs: Any
+        *, messages: MutableSequence["ChatMessage"], chat_options: "ChatOptions", **kwargs: Any
     ) -> AsyncIterable["ChatResponseUpdate"]:
-        if not MODEL_DIAGNOSTICS_SETTINGS.ENABLED:
+        if not model_diagnostics.ENABLED:
             # If model diagnostics are not enabled, just return the completion
             async for streaming_chat_message_contents in completion_func(
-                self, messages=messages, chat_options=chat_options, **kwargs
+                messages=messages, chat_options=chat_options, **kwargs
             ):
                 yield streaming_chat_message_contents
             return
@@ -350,21 +356,21 @@ def _trace_chat_get_streaming_response(
         with use_span(
             _get_chat_response_span(
                 GenAIAttributes.CHAT_COMPLETION_OPERATION.value,
-                getattr(self, "ai_model_id", chat_options.ai_model_id or "unknown"),
-                self.MODEL_PROVIDER_NAME,
-                self.service_url() if hasattr(self, "service_url") else None,
+                getattr(chat_client, "ai_model_id", chat_options.ai_model_id or "unknown"),
+                chat_client.MODEL_PROVIDER_NAME,
+                chat_client.service_url() if hasattr(chat_client, "service_url") else None,
                 chat_options,
             ),
             end_on_exit=True,
         ) as current_span:
-            _set_chat_response_input(self.MODEL_PROVIDER_NAME, messages)
+            _set_chat_response_input(chat_client.MODEL_PROVIDER_NAME, messages)
             try:
-                async for response in completion_func(self, messages=messages, chat_options=chat_options, **kwargs):
+                async for response in completion_func(messages=messages, chat_options=chat_options, **kwargs):
                     all_updates.append(response)
                     yield response
 
                 all_messages_flattened = ChatResponse.from_chat_response_updates(all_updates)
-                _set_chat_response_output(current_span, all_messages_flattened, self.MODEL_PROVIDER_NAME)
+                _set_chat_response_output(current_span, all_messages_flattened, chat_client.MODEL_PROVIDER_NAME)
             except Exception as exception:
                 _set_error(current_span, exception)
                 raise
@@ -374,7 +380,12 @@ def _trace_chat_get_streaming_response(
     return wrap_inner_get_streaming_response
 
 
-def use_telemetry(cls: type[TChatClientBase]) -> type[TChatClientBase]:
+def OpenTelemetryChatClient(
+    chat_client: TChatClientBase,
+    *,
+    enable_otel_diagnostics: bool | None = None,
+    enable_otel_diagnostics_sensitive: bool | None = None,
+) -> TChatClientBase:
     """Class decorator that enables telemetry for a chat client.
 
     Remarks:
@@ -384,11 +395,19 @@ def use_telemetry(cls: type[TChatClientBase]) -> type[TChatClientBase]:
         It also relies on the presence of the MODEL_PROVIDER_NAME class variable.
         ```
     """
-    if inner_response := getattr(cls, "_inner_get_response", None):
-        cls._inner_get_response = _trace_chat_get_response(inner_response)  # type: ignore
-    if inner_streaming_response := getattr(cls, "_inner_get_streaming_response", None):
-        cls._inner_get_streaming_response = _trace_chat_get_streaming_response(inner_streaming_response)  # type: ignore
-    return cls
+    model_diagnostics = ModelDiagnosticSettings(
+        enable_otel_diagnostics=enable_otel_diagnostics,  # type: ignore
+        enable_otel_diagnostics_sensitive=enable_otel_diagnostics_sensitive,  # type: ignore
+    )
+
+    setattr(chat_client, "__open_telemetry_chat_client__", True)  # noqa: B010
+    if inner_response := getattr(chat_client, "_inner_get_response", None):
+        chat_client._inner_get_response = _trace_chat_get_response(chat_client, inner_response, model_diagnostics)  # type: ignore
+    if inner_streaming_response := getattr(chat_client, "_inner_get_streaming_response", None):
+        chat_client._inner_get_streaming_response = _trace_chat_get_streaming_response(
+            chat_client, inner_streaming_response, model_diagnostics
+        )
+    return chat_client
 
 
 def _get_chat_response_span(
@@ -442,12 +461,13 @@ def _get_chat_response_span(
 def _set_chat_response_input(
     model_provider: str,
     messages: MutableSequence["ChatMessage"],
+    model_diagnostics: ModelDiagnosticSettings = MODEL_DIAGNOSTICS_SETTINGS,
 ) -> None:
     """Set the input for a chat response.
 
     The logs will be associated to the current span.
     """
-    if MODEL_DIAGNOSTICS_SETTINGS.SENSITIVE_EVENTS_ENABLED:
+    if model_diagnostics.SENSITIVE_EVENTS_ENABLED:
         for idx, message in enumerate(messages):
             event_name = ROLE_EVENT_MAP.get(message.role.value)
             logger.info(
@@ -464,6 +484,7 @@ def _set_chat_response_output(
     current_span: Span,
     response: "ChatResponse",
     model_provider: str,
+    model_diagnostics: ModelDiagnosticSettings = MODEL_DIAGNOSTICS_SETTINGS,
 ) -> None:
     """Set the response for a given span."""
     first_completion = response.messages[0]
@@ -490,7 +511,7 @@ def _set_chat_response_output(
             current_span.set_attribute(GenAIAttributes.OUTPUT_TOKENS.value, usage.output_token_count)
 
     # Set the completion event
-    if MODEL_DIAGNOSTICS_SETTINGS.SENSITIVE_EVENTS_ENABLED:
+    if model_diagnostics.SENSITIVE_EVENTS_ENABLED:
         for completion in response.messages:
             full_response: dict[str, Any] = {
                 "message": completion.model_dump(exclude_none=True),
@@ -519,7 +540,7 @@ def _trace_agent_run(
 
     @functools.wraps(run_func)
     async def wrap_run(
-        self: "ChatClientAgent",
+        self: "Agent",
         messages: "str | ChatMessage | list[str] | list[ChatMessage] | None" = None,
         *,
         thread: "AgentThread | None" = None,
@@ -570,7 +591,7 @@ def _trace_agent_run_streaming(
 
     @functools.wraps(run_func)
     async def wrap_run_streaming(
-        self: "ChatClientAgent",
+        self: "Agent",
         messages: "str | ChatMessage | list[str] | list[ChatMessage] | None" = None,
         *,
         thread: "AgentThread | None" = None,
@@ -613,7 +634,7 @@ def _trace_agent_run_streaming(
     return wrap_run_streaming
 
 
-def use_agent_telemetry(cls: type[TChatClientAgent]) -> type[TChatClientAgent]:
+def use_agent_telemetry(cls: type[TAgent]) -> type[TAgent]:
     """Class decorator that enables telemetry for an agent."""
     if run := getattr(cls, "run", None):
         cls.run = _trace_agent_run(run)  # type: ignore
@@ -625,7 +646,7 @@ def use_agent_telemetry(cls: type[TChatClientAgent]) -> type[TChatClientAgent]:
 def _get_agent_run_span(
     *,
     operation_name: str,
-    agent: "AIAgent",
+    agent: "AgentProtocol",
     system: str,
     thread: "AgentThread | None",
     **kwargs: Any,

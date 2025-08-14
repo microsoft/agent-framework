@@ -1,9 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import sys
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, MutableSequence, Sequence
-from functools import wraps
+from functools import partial, wraps
 from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
 
 from pydantic import BaseModel
@@ -22,9 +23,15 @@ from ._types import (
     FunctionResultContent,
     GeneratedEmbeddings,
 )
+from .telemetry import OpenTelemetryChatClient
 
 if TYPE_CHECKING:
-    from ._agents import ChatClientAgent
+    from ._agents import Agent
+
+if sys.version_info >= (3, 11):
+    from typing import Self  # pragma: no cover
+else:
+    from typing_extensions import Self  # pragma: no cover
 
 TInput = TypeVar("TInput", contravariant=True)
 TEmbedding = TypeVar("TEmbedding")
@@ -35,8 +42,9 @@ logger = get_logger()
 __all__ = [
     "ChatClient",
     "ChatClientBase",
+    "ChatClientBuilder",
     "EmbeddingGenerator",
-    "use_tool_calling",
+    "FunctionInvokingChatClient",
 ]
 
 # region Tool Calling Functions and Decorators
@@ -74,13 +82,14 @@ async def _auto_invoke_function(
 
 
 def _tool_call_non_streaming(
+    chat_client: "ChatClientBase",
     func: Callable[..., Awaitable["ChatResponse"]],
+    max_iterations: int = 10,
 ) -> Callable[..., Awaitable["ChatResponse"]]:
     """Decorate the internal _inner_get_response method to enable tool calls."""
 
     @wraps(func)
     async def wrapper(
-        self: "ChatClientBase",
         *,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions,
@@ -88,8 +97,8 @@ def _tool_call_non_streaming(
     ) -> ChatResponse:
         response: ChatResponse | None = None
         fcc_messages: list[ChatMessage] = []
-        for attempt_idx in range(getattr(self, "__maximum_iterations_per_request", 10)):
-            response = await func(self, messages=messages, chat_options=chat_options)
+        for attempt_idx in range(max_iterations):
+            response = await func(messages=messages, chat_options=chat_options)
             # if there are function calls, we will handle them first
             function_results = {
                 it.call_id for it in response.messages[0].contents if isinstance(it, FunctionResultContent)
@@ -139,8 +148,8 @@ def _tool_call_non_streaming(
 
         # Failsafe: give up on tools, ask model for plain answer
         chat_options.tool_choice = "none"
-        self._prepare_tool_choice(chat_options=chat_options)  # type: ignore[reportPrivateUsage]
-        response = await func(self, messages=messages, chat_options=chat_options)
+        chat_client._prepare_tool_choice(chat_options=chat_options)  # type: ignore[reportPrivateUsage]
+        response = await func(messages=messages, chat_options=chat_options)
         if fcc_messages:
             for msg in reversed(fcc_messages):
                 response.messages.insert(0, msg)
@@ -150,23 +159,24 @@ def _tool_call_non_streaming(
 
 
 def _tool_call_streaming(
+    chat_client: "ChatClientBase",
     func: Callable[..., AsyncIterable["ChatResponseUpdate"]],
+    max_iterations: int = 10,
 ) -> Callable[..., AsyncIterable["ChatResponseUpdate"]]:
     """Decorate the internal _inner_get_response method to enable tool calls."""
 
     @wraps(func)
     async def wrapper(
-        self: "ChatClientBase",
         *,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Wrap the inner get streaming response method to handle tool calls."""
-        for attempt_idx in range(getattr(self, "__maximum_iterations_per_request", 10)):
+        for attempt_idx in range(max_iterations):
             function_call_returned = False
             all_messages: list[ChatResponseUpdate] = []
-            async for update in func(self, messages=messages, chat_options=chat_options):
+            async for update in func(messages=messages, chat_options=chat_options):
                 if update.contents and any(isinstance(item, FunctionCallContent) for item in update.contents):
                     all_messages.append(update)
                     function_call_returned = True
@@ -209,41 +219,30 @@ def _tool_call_streaming(
 
         # Failsafe: give up on tools, ask model for plain answer
         chat_options.tool_choice = "none"
-        self._prepare_tool_choice(chat_options=chat_options)  # type: ignore[reportPrivateUsage]
-        async for update in func(self, messages=messages, chat_options=chat_options, **kwargs):
+        chat_client._prepare_tool_choice(chat_options=chat_options)  # type: ignore[reportPrivateUsage]
+        async for update in func(messages=messages, chat_options=chat_options, **kwargs):
             yield update
 
     return wrapper
 
 
-def use_tool_calling(cls: type[TChatClientBase]) -> type[TChatClientBase]:
-    """Class decorator that enables tool calling for a chat client.
+def FunctionInvokingChatClient(chat_client: "ChatClientBase", *, max_iterations: int = 10) -> "ChatClientBase":
+    """Class decorator that enables tool calling for a chat client."""
+    setattr(chat_client, "__function_invoking_chat_client__", True)  # noqa: B010
 
-    Remarks:
-        This only works on classes that derive from ChatClientBase
-        and the `_inner_get_response`
-        and `_inner_get_streaming_response` methods.
-        It also sets a `__maximum_iterations_per_request` attribute on the class.
-        if you want to expose this to end_users, do a version of this:
-
-            @property
-
-            def maximum_iterations_per_request(self):
-                return getattr(self, "__maximum_iterations_per_request", 10)
-
-            @maximum_iterations_per_request.setter
-
-            def maximum_iterations_per_request(self, value: int) -> None:
-                setattr(self, "__maximum_iterations_per_request", value)
-
-    """
-    setattr(cls, "__maximum_iterations_per_request", 10)
-
-    if inner_response := getattr(cls, "_inner_get_response", None):
-        cls._inner_get_response = _tool_call_non_streaming(inner_response)  # type: ignore
-    if inner_streaming_response := getattr(cls, "_inner_get_streaming_response", None):
-        cls._inner_get_streaming_response = _tool_call_streaming(inner_streaming_response)  # type: ignore
-    return cls
+    if inner_response := getattr(chat_client, "_inner_get_response", None):
+        chat_client._inner_get_response = _tool_call_non_streaming(
+            chat_client=chat_client,
+            func=inner_response,
+            max_iterations=max_iterations,
+        )  # type: ignore
+    if inner_streaming_response := getattr(chat_client, "_inner_get_streaming_response", None):
+        chat_client._inner_get_streaming_response = _tool_call_streaming(
+            chat_client=chat_client,
+            func=inner_streaming_response,
+            max_iterations=max_iterations,
+        )  # type: ignore
+    return chat_client
 
 
 # region ChatClient Protocol
@@ -646,7 +645,7 @@ class ChatClientBase(AFBaseModel, ABC):
         | list[MutableMapping[str, Any]]
         | None = None,
         **kwargs: Any,
-    ) -> "ChatClientAgent":
+    ) -> "Agent":
         """Create an agent with the given name and instructions.
 
         Args:
@@ -654,14 +653,132 @@ class ChatClientBase(AFBaseModel, ABC):
             instructions: The instructions for the agent.
             tools: Optional list of tools to associate with the agent.
             **kwargs: Additional keyword arguments to pass to the agent.
-                See ChatClientAgent for all the available options.
+                See Agent for all the available options.
 
         Returns:
-            An instance of ChatClientAgent.
+            An instance of Agent.
         """
-        from ._agents import ChatClientAgent
+        from ._agents import Agent
 
-        return ChatClientAgent(chat_client=self, name=name, instructions=instructions, tools=tools, **kwargs)
+        return Agent(chat_client=self, name=name, instructions=instructions, tools=tools, **kwargs)
+
+
+# region ChatClientBuilder
+
+TChatClientBuilder = TypeVar("TChatClientBuilder", bound="ChatClientBuilder")
+
+
+class ChatClientBuilder:
+    """A builder class for creating ChatClient instances."""
+
+    def __init__(self, chat_client: type[ChatClientBase] | ChatClientBase | None = None) -> None:
+        self.chat_client = self._chat_client
+        self._base_chat_client: type[ChatClientBase] | ChatClientBase | None = chat_client
+        self._decorators: list[Callable[[ChatClientBase], ChatClientBase]] = []
+
+    @classmethod
+    def chat_client(
+        cls: type[TChatClientBuilder], chat_client: type[ChatClientBase] | ChatClientBase
+    ) -> TChatClientBuilder:
+        """Create a new ChatClientBuilder instance with the specified chat client."""
+        return cls(chat_client=chat_client)
+
+    def _chat_client(self, chat_client: type[ChatClientBase] | ChatClientBase) -> Self:
+        """Add a base chat client to the builder.
+
+        Args:
+            chat_client: The base chat client to add.
+
+        Returns:
+            The builder instance.
+        """
+        self._base_chat_client = chat_client
+        return self
+
+    def add_decorator(self, decorator: Callable[[ChatClientBase], ChatClientBase]) -> Self:
+        """Add a decorator to the builder.
+
+        Args:
+            decorator: A callable that takes a ChatClientBase instance and returns a modified instance.
+
+        Returns:
+            The builder instance.
+        """
+        self._decorators.append(decorator)
+        return self
+
+    @property
+    def function_calling(self) -> Self:
+        self.function_calling_with()
+        return self
+
+    def function_calling_with(self, *, max_iterations: int | None = None) -> Self:
+        """Add function calling capabilities to the chat client.
+
+        Returns:
+            The builder instance.
+        """
+        if max_iterations is not None:
+            self.add_decorator(partial(FunctionInvokingChatClient, max_iterations=max_iterations))
+        else:
+            self.add_decorator(FunctionInvokingChatClient)
+        return self
+
+    @property
+    def open_telemetry(self) -> Self:
+        """Add OpenTelemetry capabilities to the chat client.
+
+        Returns:
+            The builder instance.
+        """
+        self.open_telemetry_with()
+        return self
+
+    def open_telemetry_with(
+        self,
+        *,
+        enable_otel_diagnostics: bool | None = None,
+        enable_otel_diagnostics_sensitive: bool | None = None,
+    ) -> Self:
+        """Add OpenTelemetry tracing to the chat client.
+
+        Returns:
+            The builder instance.
+        """
+        self.add_decorator(
+            partial(
+                OpenTelemetryChatClient,
+                enable_otel_diagnostics=enable_otel_diagnostics,
+                enable_otel_diagnostics_sensitive=enable_otel_diagnostics_sensitive,
+            )
+        )
+        return self
+
+    def build(self) -> ChatClientBase:
+        """Build the final chat client instance.
+
+        Returns:
+            The constructed chat client instance.
+        """
+        if self._base_chat_client is None:
+            raise ValueError("Base chat client must be set before building.")
+        chat_client = (
+            self._base_chat_client if isinstance(self._base_chat_client, ChatClientBase) else self._base_chat_client()
+        )
+        for decorator in self._decorators:
+            chat_client = decorator(chat_client)
+        return chat_client
+
+    async def __aenter__(self) -> ChatClientBase:
+        return self.build()
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: Any,
+    ) -> None:
+        pass
 
 
 # region Embedding Client

@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, ClassVar, TypeVar, overload
 
-from agent_framework import AgentRunResponse, AgentRunResponseUpdate, AgentThread, AIAgent, ChatMessage
+from agent_framework import AgentProtocol, AgentRunResponse, AgentRunResponseUpdate, AgentThread, ChatMessage
 
 from ._events import (
     AgentRunEvent,
@@ -218,7 +218,7 @@ class AgentExecutor(Executor):
 
     def __init__(
         self,
-        agent: AIAgent,
+        agent: AgentProtocol,
         *,
         agent_thread: AgentThread | None = None,
         streaming: bool = False,

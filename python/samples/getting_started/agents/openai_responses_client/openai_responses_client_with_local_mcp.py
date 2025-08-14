@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatClientAgent, McpStreamableHttpTool
+from agent_framework import Agent, ChatClientBuilder, McpStreamableHttpTool
 from agent_framework.openai import OpenAIResponsesClient
 
 
@@ -13,11 +13,10 @@ async def streaming_with_mcp(show_raw_stream: bool = False) -> None:
     through the raw_representation. You can view this, by setting the show_raw_stream parameter to True.
     """
     print("=== Tools Defined on Agent Level ===")
-
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
-    async with ChatClientAgent(
-        chat_client=OpenAIResponsesClient(),
+    async with Agent(
+        chat_client=ChatClientBuilder(OpenAIResponsesClient).function_calling_with(max_iterations=5).open_telemetry,
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         tools=McpStreamableHttpTool(  # Tools defined at agent creation
@@ -54,7 +53,7 @@ async def run_with_mcp() -> None:
 
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
-    async with ChatClientAgent(
+    async with Agent(
         chat_client=OpenAIResponsesClient(),
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
@@ -79,7 +78,7 @@ async def run_with_mcp() -> None:
 async def main() -> None:
     print("=== OpenAI Responses Client Agent with Function Tools Examples ===\n")
 
-    await run_with_mcp()
+    # await run_with_mcp()
     await streaming_with_mcp()
 
 
