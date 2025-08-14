@@ -3,8 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
@@ -143,12 +141,17 @@ internal class WorkflowExpressionEngine : IExpressionEngine
 
         EvaluationResult<FormulaValue> expressionResult = evaluator.Invoke(expression, state);
 
-        if (expressionResult.Value is not PrimitiveValue<long> formulaValue)
+        if (expressionResult.Value is BlankValue)
+        {
+            return new EvaluationResult<long>(default, expressionResult.Sensitivity);
+        }
+
+        if (expressionResult.Value is not DecimalValue formulaValue)
         {
             throw new InvalidExpressionOutputTypeException(expressionResult.Value.GetDataType(), DataType.Number);
         }
 
-        return new EvaluationResult<long>(formulaValue.Value, expressionResult.Sensitivity);
+        return new EvaluationResult<long>(Convert.ToInt64(formulaValue.Value), expressionResult.Sensitivity);
     }
 
     private EvaluationResult<double> GetValue<TState>(NumberExpression expression, TState state, Func<ExpressionBase, TState, EvaluationResult<FormulaValue>> evaluator)
@@ -162,9 +165,19 @@ internal class WorkflowExpressionEngine : IExpressionEngine
 
         EvaluationResult<FormulaValue> expressionResult = evaluator.Invoke(expression, state);
 
+        if (expressionResult.Value is BlankValue)
+        {
+            return new EvaluationResult<double>(default, expressionResult.Sensitivity);
+        }
+
+        if (expressionResult.Value is DecimalValue decimalValue)
+        {
+            return new EvaluationResult<double>(Convert.ToDouble(decimalValue.Value), expressionResult.Sensitivity);
+        }
+
         if (expressionResult.Value is not NumberValue formulaValue)
         {
-            throw new InvalidExpressionOutputTypeException(expressionResult.Value.GetDataType(), DataType.Number);
+            throw new InvalidExpressionOutputTypeException(expressionResult.Value.GetDataType(), DataType.Float);
         }
 
         return new EvaluationResult<double>(formulaValue.Value, expressionResult.Sensitivity);

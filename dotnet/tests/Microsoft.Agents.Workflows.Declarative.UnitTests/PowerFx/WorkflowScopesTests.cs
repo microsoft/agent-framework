@@ -4,7 +4,7 @@ using System.Linq;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.PowerFx.Types;
 
-namespace Microsoft.Agents.Workflows.Declarative.UnitTests;
+namespace Microsoft.Agents.Workflows.Declarative.UnitTests.PowerFx;
 
 public class WorkflowScopesTests
 {

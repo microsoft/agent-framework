@@ -1,0 +1,34 @@
+kind: AdaptiveDialog
+beginDialog:
+  
+  kind: OnActivity
+  id: my_workflow
+  type: Message
+  actions:
+  
+    - kind: SetVariable
+      id: setVariable_test
+      variable: Topic.Count
+      value: =32
+
+    - kind: ConditionGroup
+      id: conditionGroup_test
+      conditions:
+        - id: conditionItem_odd
+          #condition: =Topic.Count % 1 == 1
+          condition: false
+          actions:
+            - kind: SendActivity
+              id: sendActivity_odd
+              activity: ODD
+
+        - id: conditionItem_even
+          #condition: =Topic.Count % 1 == 0
+          condition: true
+          actions:
+            - kind: SendActivity
+              id: sendActivity_even
+              activity: EVEN
+
+    - kind: EndConversation
+      id: end_all

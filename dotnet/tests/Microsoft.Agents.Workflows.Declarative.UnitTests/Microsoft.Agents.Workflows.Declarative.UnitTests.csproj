@@ -14,4 +14,10 @@
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="Workflows\*.yaml">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

@@ -68,12 +68,12 @@ internal sealed class ForeachExecutor : WorkflowActionExecutor<Foreach>
         }
     }
 
-    public void Reset(WorkflowExecutionContext context)
-    {
-        context.Engine.ClearScopedVariable(context.Scopes, Throw.IfNull(this.Model.Value));
-        if (this.Model.Index is not null)
-        {
-            context.Engine.ClearScopedVariable(context.Scopes, this.Model.Index);
-        }
-    }
+    //public void Reset(WorkflowExecutionContext context) // %%% NEEDED
+    //{
+    //    context.Engine.ClearScopedVariable(context.Scopes, Throw.IfNull(this.Model.Value));
+    //    if (this.Model.Index is not null)
+    //    {
+    //        context.Engine.ClearScopedVariable(context.Scopes, this.Model.Index);
+    //    }
+    //}
 }
