@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, runt
 from pydantic import BaseModel
 
 from ._logging import get_logger
+from ._mcp import McpTool
 from ._pydantic import AFBaseModel
 from ._threads import ChatMessageStore
 from ._tools import AIFunction, ToolProtocol
@@ -493,6 +494,14 @@ class BaseChatClient(AFBaseModel, ABC):
         Returns:
             A chat response from the model.
         """
+        final_tools: list[AITool | dict[str, Any] | Callable[..., Any]] = []
+        normalized_tools = [] if tools is None else tools if isinstance(tools, list) else [tools]
+        for tool in normalized_tools:
+            if isinstance(tool, McpTool):
+                final_tools.extend(tool.functions)  # type: ignore
+            else:
+                final_tools.append(tool)  # type: ignore
+
         # Should we merge chat options instead of ignoring the input params?
         if "chat_options" in kwargs:
             chat_options = kwargs.pop("chat_options")
@@ -513,7 +522,7 @@ class BaseChatClient(AFBaseModel, ABC):
                 temperature=temperature,
                 top_p=top_p,
                 tool_choice=tool_choice,
-                tools=tools,  # type: ignore
+                tools=final_tools,  # type: ignore
                 user=user,
                 additional_properties=additional_properties or {},
             )
@@ -572,6 +581,13 @@ class BaseChatClient(AFBaseModel, ABC):
         Yields:
             A stream representing the response(s) from the LLM.
         """
+        final_tools: list[AITool | dict[str, Any] | Callable[..., Any]] = []
+        normalized_tools = [] if tools is None else tools if isinstance(tools, list) else [tools]
+        for tool in normalized_tools:
+            if isinstance(tool, McpTool):
+                final_tools.extend(tool.functions)  # type: ignore
+            else:
+                final_tools.append(tool)  # type: ignore
         # Should we merge chat options instead of ignoring the input params?
         if "chat_options" in kwargs:
             chat_options = kwargs.pop("chat_options")
