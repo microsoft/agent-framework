@@ -11,10 +11,10 @@ from agent_framework_workflow._edge import (
     Case,
     Default,
     Edge,
+    FanInEdgeGroup,
+    FanOutEdgeGroup,
     SingleEdgeGroup,
-    SourceEdgeGroup,
     SwitchCaseEdgeGroup,
-    TargetEdgeGroup,
 )
 
 
@@ -199,16 +199,16 @@ async def test_single_edge_group_send_message_with_invalid_data():
 # endregion SingleEdgeGroup
 
 
-# region SourceEdgeGroup
+# region FanOutEdgeGroup
 
 
 def test_source_edge_group():
-    """Test creating a source edge group."""
+    """Test creating a fan-out group."""
     source = MockExecutor(id="source_executor")
     target1 = MockExecutor(id="target_executor_1")
     target2 = MockExecutor(id="target_executor_2")
 
-    edge_group = SourceEdgeGroup(source=source, targets=[target1, target2])
+    edge_group = FanOutEdgeGroup(source=source, targets=[target1, target2])
 
     assert edge_group.source_executors == [source]
     assert edge_group.target_executors == [target1, target2]
@@ -220,21 +220,21 @@ def test_source_edge_group():
 
 
 def test_source_edge_group_invalid_number_of_targets():
-    """Test creating a source edge group with an invalid number of targets."""
+    """Test creating a fan-out group with an invalid number of targets."""
     source = MockExecutor(id="source_executor")
     target = MockExecutor(id="target_executor")
 
-    with pytest.raises(ValueError, match="SourceEdgeGroup must contain at least two targets"):
-        SourceEdgeGroup(source=source, targets=[target])
+    with pytest.raises(ValueError, match="FanOutEdgeGroup must contain at least two targets"):
+        FanOutEdgeGroup(source=source, targets=[target])
 
 
 async def test_source_edge_group_send_message():
-    """Test sending a message through a source edge group."""
+    """Test sending a message through a fan-out group."""
     source = MockExecutor(id="source_executor")
     target1 = MockExecutor(id="target_executor_1")
     target2 = MockExecutor(id="target_executor_2")
 
-    edge_group = SourceEdgeGroup(source=source, targets=[target1, target2])
+    edge_group = FanOutEdgeGroup(source=source, targets=[target1, target2])
 
     from agent_framework_workflow._runner_context import InProcRunnerContext, Message
     from agent_framework_workflow._shared_state import SharedState
@@ -253,12 +253,12 @@ async def test_source_edge_group_send_message():
 
 
 async def test_source_edge_group_send_message_with_target():
-    """Test sending a message through a source edge group with a target."""
+    """Test sending a message through a fan-out group with a target."""
     source = MockExecutor(id="source_executor")
     target1 = MockExecutor(id="target_executor_1")
     target2 = MockExecutor(id="target_executor_2")
 
-    edge_group = SourceEdgeGroup(source=source, targets=[target1, target2])
+    edge_group = FanOutEdgeGroup(source=source, targets=[target1, target2])
 
     from agent_framework_workflow._runner_context import InProcRunnerContext, Message
     from agent_framework_workflow._shared_state import SharedState
@@ -278,12 +278,12 @@ async def test_source_edge_group_send_message_with_target():
 
 
 async def test_source_edge_group_send_message_with_invalid_target():
-    """Test sending a message through a source edge group with an invalid target."""
+    """Test sending a message through a fan-out group with an invalid target."""
     source = MockExecutor(id="source_executor")
     target1 = MockExecutor(id="target_executor_1")
     target2 = MockExecutor(id="target_executor_2")
 
-    edge_group = SourceEdgeGroup(source=source, targets=[target1, target2])
+    edge_group = FanOutEdgeGroup(source=source, targets=[target1, target2])
 
     from agent_framework_workflow._runner_context import InProcRunnerContext, Message
     from agent_framework_workflow._shared_state import SharedState
@@ -299,12 +299,12 @@ async def test_source_edge_group_send_message_with_invalid_target():
 
 
 async def test_source_edge_group_send_message_with_invalid_data():
-    """Test sending a message through a source edge group with invalid data."""
+    """Test sending a message through a fan-out group with invalid data."""
     source = MockExecutor(id="source_executor")
     target1 = MockExecutor(id="target_executor_1")
     target2 = MockExecutor(id="target_executor_2")
 
-    edge_group = SourceEdgeGroup(source=source, targets=[target1, target2])
+    edge_group = FanOutEdgeGroup(source=source, targets=[target1, target2])
 
     from agent_framework_workflow._runner_context import InProcRunnerContext, Message
     from agent_framework_workflow._shared_state import SharedState
@@ -320,12 +320,12 @@ async def test_source_edge_group_send_message_with_invalid_data():
 
 
 async def test_source_edge_group_send_message_only_one_successful_send():
-    """Test sending a message through a source edge group where only one edge can handle the message."""
+    """Test sending a message through a fan-out group where only one edge can handle the message."""
     source = MockExecutor(id="source_executor")
     target1 = MockExecutor(id="target_executor_1")
     target2 = MockExecutorSecondary(id="target_executor_2")
 
-    edge_group = SourceEdgeGroup(source=source, targets=[target1, target2])
+    edge_group = FanOutEdgeGroup(source=source, targets=[target1, target2])
 
     from agent_framework_workflow._runner_context import InProcRunnerContext, Message
     from agent_framework_workflow._shared_state import SharedState
@@ -349,7 +349,7 @@ def test_source_edge_group_with_selection_func():
     target1 = MockExecutor(id="target_executor_1")
     target2 = MockExecutor(id="target_executor_2")
 
-    edge_group = SourceEdgeGroup(
+    edge_group = FanOutEdgeGroup(
         source=source,
         targets=[target1, target2],
         selection_func=lambda data, target_ids: [target1.id],
@@ -365,12 +365,12 @@ def test_source_edge_group_with_selection_func():
 
 
 async def test_source_edge_group_with_selection_func_send_message():
-    """Test sending a message through a source edge group with a selection function."""
+    """Test sending a message through a fan-out group with a selection function."""
     source = MockExecutor(id="source_executor")
     target1 = MockExecutor(id="target_executor_1")
     target2 = MockExecutor(id="target_executor_2")
 
-    edge_group = SourceEdgeGroup(
+    edge_group = FanOutEdgeGroup(
         source=source,
         targets=[target1, target2],
         selection_func=lambda data, target_ids: [target1.id, target2.id],
@@ -393,12 +393,12 @@ async def test_source_edge_group_with_selection_func_send_message():
 
 
 async def test_source_edge_group_with_selection_func_send_message_with_invalid_selection_result():
-    """Test sending a message through a source edge group with a selection func with an invalid selection result."""
+    """Test sending a message through a fan-out group with a selection func with an invalid selection result."""
     source = MockExecutor(id="source_executor")
     target1 = MockExecutor(id="target_executor_1")
     target2 = MockExecutor(id="target_executor_2")
 
-    edge_group = SourceEdgeGroup(
+    edge_group = FanOutEdgeGroup(
         source=source,
         targets=[target1, target2],
         selection_func=lambda data, target_ids: [target1.id, "invalid_target"],
@@ -418,12 +418,12 @@ async def test_source_edge_group_with_selection_func_send_message_with_invalid_s
 
 
 async def test_source_edge_group_with_selection_func_send_message_with_target():
-    """Test sending a message through a source edge group with a selection func with a target."""
+    """Test sending a message through a fan-out group with a selection func with a target."""
     source = MockExecutor(id="source_executor")
     target1 = MockExecutor(id="target_executor_1")
     target2 = MockExecutor(id="target_executor_2")
 
-    edge_group = SourceEdgeGroup(
+    edge_group = FanOutEdgeGroup(
         source=source,
         targets=[target1, target2],
         selection_func=lambda data, target_ids: [target1.id, target2.id],
@@ -447,12 +447,12 @@ async def test_source_edge_group_with_selection_func_send_message_with_target():
 
 
 async def test_source_edge_group_with_selection_func_send_message_with_target_not_in_selection():
-    """Test sending a message through a source edge group with a selection func with a target not in the selection."""
+    """Test sending a message through a fan-out group with a selection func with a target not in the selection."""
     source = MockExecutor(id="source_executor")
     target1 = MockExecutor(id="target_executor_1")
     target2 = MockExecutor(id="target_executor_2")
 
-    edge_group = SourceEdgeGroup(
+    edge_group = FanOutEdgeGroup(
         source=source,
         targets=[target1, target2],
         selection_func=lambda data, target_ids: [target1.id],  # Only target1 will receive the message
@@ -472,12 +472,12 @@ async def test_source_edge_group_with_selection_func_send_message_with_target_no
 
 
 async def test_source_edge_group_with_selection_func_send_message_with_invalid_data():
-    """Test sending a message through a source edge group with a selection func with invalid data."""
+    """Test sending a message through a fan-out group with a selection func with invalid data."""
     source = MockExecutor(id="source_executor")
     target1 = MockExecutor(id="target_executor_1")
     target2 = MockExecutor(id="target_executor_2")
 
-    edge_group = SourceEdgeGroup(
+    edge_group = FanOutEdgeGroup(
         source=source, targets=[target1, target2], selection_func=lambda data, target_ids: [target1.id, target2.id]
     )
 
@@ -495,12 +495,12 @@ async def test_source_edge_group_with_selection_func_send_message_with_invalid_d
 
 
 async def test_source_edge_group_with_selection_func_send_message_with_target_invalid_data():
-    """Test sending a message through a source edge group with a selection func with a target and invalid data."""
+    """Test sending a message through a fan-out group with a selection func with a target and invalid data."""
     source = MockExecutor(id="source_executor")
     target1 = MockExecutor(id="target_executor_1")
     target2 = MockExecutor(id="target_executor_2")
 
-    edge_group = SourceEdgeGroup(
+    edge_group = FanOutEdgeGroup(
         source=source, targets=[target1, target2], selection_func=lambda data, target_ids: [target1.id, target2.id]
     )
 
@@ -517,18 +517,18 @@ async def test_source_edge_group_with_selection_func_send_message_with_target_in
     assert success is False
 
 
-# endregion SourceEdgeGroup
+# endregion FanOutEdgeGroup
 
-# region TargetEdgeGroup
+# region FanInEdgeGroup
 
 
 def test_target_edge_group():
-    """Test creating a target edge group."""
+    """Test creating a fan-in edge group."""
     source1 = MockExecutor(id="source_executor_1")
     source2 = MockExecutor(id="source_executor_2")
     target = MockAggregator(id="target_executor")
 
-    edge_group = TargetEdgeGroup(sources=[source1, source2], target=target)
+    edge_group = FanInEdgeGroup(sources=[source1, source2], target=target)
 
     assert edge_group.source_executors == [source1, source2]
     assert edge_group.target_executors == [target]
@@ -540,21 +540,21 @@ def test_target_edge_group():
 
 
 def test_target_edge_group_invalid_number_of_sources():
-    """Test creating a target edge group with an invalid number of sources."""
+    """Test creating a fan-in edge group with an invalid number of sources."""
     source = MockExecutor(id="source_executor")
     target = MockAggregator(id="target_executor")
 
-    with pytest.raises(ValueError, match="TargetEdgeGroup must contain at least two sources"):
-        TargetEdgeGroup(sources=[source], target=target)
+    with pytest.raises(ValueError, match="FanInEdgeGroup must contain at least two sources"):
+        FanInEdgeGroup(sources=[source], target=target)
 
 
 async def test_target_edge_group_send_message_buffer():
-    """Test sending a message through a target edge group with buffering."""
+    """Test sending a message through a fan-in edge group with buffering."""
     source1 = MockExecutor(id="source_executor_1")
     source2 = MockExecutor(id="source_executor_2")
     target = MockAggregator(id="target_executor")
 
-    edge_group = TargetEdgeGroup(sources=[source1, source2], target=target)
+    edge_group = FanInEdgeGroup(sources=[source1, source2], target=target)
 
     from agent_framework_workflow._runner_context import InProcRunnerContext, Message
     from agent_framework_workflow._shared_state import SharedState
@@ -588,12 +588,12 @@ async def test_target_edge_group_send_message_buffer():
 
 
 async def test_target_edge_group_send_message_with_invalid_target():
-    """Test sending a message through a target edge group with an invalid target."""
+    """Test sending a message through a fan-in edge group with an invalid target."""
     source1 = MockExecutor(id="source_executor_1")
     source2 = MockExecutor(id="source_executor_2")
     target = MockAggregator(id="target_executor")
 
-    edge_group = TargetEdgeGroup(sources=[source1, source2], target=target)
+    edge_group = FanInEdgeGroup(sources=[source1, source2], target=target)
 
     from agent_framework_workflow._runner_context import InProcRunnerContext, Message
     from agent_framework_workflow._shared_state import SharedState
@@ -609,12 +609,12 @@ async def test_target_edge_group_send_message_with_invalid_target():
 
 
 async def test_target_edge_group_send_message_with_invalid_data():
-    """Test sending a message through a target edge group with invalid data."""
+    """Test sending a message through a fan-in edge group with invalid data."""
     source1 = MockExecutor(id="source_executor_1")
     source2 = MockExecutor(id="source_executor_2")
     target = MockAggregator(id="target_executor")
 
-    edge_group = TargetEdgeGroup(sources=[source1, source2], target=target)
+    edge_group = FanInEdgeGroup(sources=[source1, source2], target=target)
 
     from agent_framework_workflow._runner_context import InProcRunnerContext, Message
     from agent_framework_workflow._shared_state import SharedState
@@ -629,7 +629,7 @@ async def test_target_edge_group_send_message_with_invalid_data():
     assert success is False
 
 
-# endregion TargetEdgeGroup
+# endregion FanInEdgeGroup
 
 # region SwitchCaseEdgeGroup
 

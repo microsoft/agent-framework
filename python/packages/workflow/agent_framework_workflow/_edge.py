@@ -183,7 +183,7 @@ class SingleEdgeGroup(EdgeGroup):
         return [self._edge]
 
 
-class SourceEdgeGroup(EdgeGroup):
+class FanOutEdgeGroup(EdgeGroup):
     """Represents a group of edges that share the same source executor.
 
     Assembles a Fan-out pattern where multiple edges share the same source executor
@@ -196,7 +196,7 @@ class SourceEdgeGroup(EdgeGroup):
         targets: Sequence[Executor],
         selection_func: Callable[[Any, list[str]], list[str]] | None = None,
     ) -> None:
-        """Initialize the source edge group with a list of edges.
+        """Initialize the fan-out edge group with a list of edges.
 
         Args:
             source (Executor): The source executor.
@@ -206,14 +206,14 @@ class SourceEdgeGroup(EdgeGroup):
                 IDs, and returns a list of selected target executor IDs.
         """
         if len(targets) <= 1:
-            raise ValueError("SourceEdgeGroup must contain at least two targets.")
+            raise ValueError("FanOutEdgeGroup must contain at least two targets.")
         self._edges = [Edge(source=source, target=target) for target in targets]
         self._target_ids = [edge.target_id for edge in self._edges]
         self._target_map = {edge.target_id: edge for edge in self._edges}
         self._selection_func = selection_func
 
     async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
-        """Send a message through all edges in the source edge group."""
+        """Send a message through all edges in the fan-out edge group."""
         selection_results = (
             self._selection_func(message.data, self._target_ids) if self._selection_func else self._target_ids
         )
@@ -264,7 +264,7 @@ class SourceEdgeGroup(EdgeGroup):
         return all(result in self._target_ids for result in selection_results)
 
 
-class TargetEdgeGroup(EdgeGroup):
+class FanInEdgeGroup(EdgeGroup):
     """Represents a group of edges that share the same target executor.
 
     Assembles a Fan-in pattern where multiple edges send messages to a single target executor.
@@ -272,21 +272,21 @@ class TargetEdgeGroup(EdgeGroup):
     """
 
     def __init__(self, sources: Sequence[Executor], target: Executor) -> None:
-        """Initialize the target edge group with a list of edges.
+        """Initialize the fan-in edge group with a list of edges.
 
         Args:
             sources (Sequence[Executor]): A list of source executors that can send messages to the target executor.
             target (Executor): The target executor that receives a list of messages aggregated from all sources.
         """
         if len(sources) <= 1:
-            raise ValueError("TargetEdgeGroup must contain at least two sources.")
+            raise ValueError("FanInEdgeGroup must contain at least two sources.")
         self._edges = [Edge(source=source, target=target) for source in sources]
         # Buffer to hold messages before sending them to the target executor
         # Key is the source executor ID, value is a list of messages
         self._buffer: dict[str, list[Message]] = defaultdict(list)
 
     async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
-        """Send a message through all edges in the target edge group."""
+        """Send a message through all edges in the fan-in edge group."""
         if message.target_id and message.target_id != self._edges[0].target_id:
             return False
 
@@ -354,7 +354,7 @@ class Default:
     target: Executor
 
 
-class SwitchCaseEdgeGroup(SourceEdgeGroup):
+class SwitchCaseEdgeGroup(FanOutEdgeGroup):
     """Represents a group of edges that assemble a conditional routing pattern.
 
     This is similar to a switch-case construct:

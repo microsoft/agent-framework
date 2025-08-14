@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from enum import Enum
 from typing import Any, Union, get_args, get_origin
 
-from ._edge import Edge, EdgeGroup, TargetEdgeGroup
+from ._edge import Edge, EdgeGroup, FanInEdgeGroup
 from ._executor import Executor
 
 logger = logging.getLogger(__name__)
@@ -207,7 +207,7 @@ class WorkflowGraphValidator:
 
         for source_type in source_output_types:
             for target_type in target_input_types:
-                if isinstance(edge_group, TargetEdgeGroup):
+                if isinstance(edge_group, FanInEdgeGroup):
                     # If the edge is part of an edge group, the target expects a list of data types
                     if self._is_type_compatible(list[source_type], target_type):
                         compatible = True

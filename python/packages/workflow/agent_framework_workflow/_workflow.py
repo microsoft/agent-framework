@@ -13,10 +13,10 @@ from ._edge import (
     Case,
     Default,
     EdgeGroup,
+    FanInEdgeGroup,
+    FanOutEdgeGroup,
     SingleEdgeGroup,
-    SourceEdgeGroup,
     SwitchCaseEdgeGroup,
-    TargetEdgeGroup,
 )
 from ._events import RequestInfoEvent, WorkflowCompletedEvent, WorkflowEvent
 from ._executor import Executor, RequestInfoExecutor
@@ -464,7 +464,7 @@ class WorkflowBuilder:
             source: The source executor of the edges.
             targets: A list of target executors for the edges.
         """
-        self._edge_groups.append(SourceEdgeGroup(source, targets))
+        self._edge_groups.append(FanOutEdgeGroup(source, targets))
 
         return self
 
@@ -510,7 +510,7 @@ class WorkflowBuilder:
             targets: A list of target executors for the edges.
             selection_func: A function that selects target executors for messages.
         """
-        self._edge_groups.append(SourceEdgeGroup(source, targets, selection_func))
+        self._edge_groups.append(FanOutEdgeGroup(source, targets, selection_func))
 
         return self
 
@@ -548,7 +548,7 @@ class WorkflowBuilder:
             sources: A list of source executors for the edges.
             target: The target executor for the edges.
         """
-        self._edge_groups.append(TargetEdgeGroup(sources, target))
+        self._edge_groups.append(FanInEdgeGroup(sources, target))
 
         return self
 
