@@ -68,7 +68,7 @@ public class FormulaValueExtensionsTests
     {
         BlankValue formulaValue = FormulaValue.NewBlank();
 
-        BlankDataValue dataCopy = Assert.IsType<BlankDataValue>(formulaValue.GetDataValue());
+        BlankDataValue dataCopy = Assert.IsType<BlankDataValue>(formulaValue.ToDataValue());
 
         Assert.Equal(string.Empty, formulaValue.Format());
     }
@@ -77,7 +77,7 @@ public class FormulaValueExtensionsTests
     public void VoidValues()
     {
         VoidValue formulaValue = FormulaValue.NewVoid();
-        BlankDataValue dataCopy = Assert.IsType<BlankDataValue>(formulaValue.GetDataValue());
+        BlankDataValue dataCopy = Assert.IsType<BlankDataValue>(formulaValue.ToDataValue());
     }
 
     [Fact]

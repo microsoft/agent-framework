@@ -192,7 +192,7 @@ internal class WorkflowExpressionEngine : IExpressionEngine
 
         EvaluationResult<FormulaValue> expressionResult = evaluator.Invoke(expression, state);
 
-        return new EvaluationResult<DataValue>(expressionResult.Value.GetDataValue(), expressionResult.Sensitivity);
+        return new EvaluationResult<DataValue>(expressionResult.Value.ToDataValue(), expressionResult.Sensitivity);
     }
 
     private EvaluationResult<TValue> GetValue<TValue, TState>(EnumExpression<TValue> expression, TState state, Func<ExpressionBase, TState, EvaluationResult<FormulaValue>> evaluator) where TValue : EnumWrapper

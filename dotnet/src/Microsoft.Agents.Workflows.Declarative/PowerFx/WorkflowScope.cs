@@ -31,7 +31,7 @@ internal sealed class WorkflowScope : Dictionary<string, FormulaValue>
 
         foreach (KeyValuePair<string, FormulaValue> kvp in this)
         {
-            recordBuilder.Properties.Add(kvp.Key, kvp.Value.GetDataValue());
+            recordBuilder.Properties.Add(kvp.Key, kvp.Value.ToDataValue());
         }
 
         return recordBuilder.Build();

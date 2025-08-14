@@ -7,7 +7,7 @@ using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.Workflows.Declarative.Extensions;
 
-internal static class BotElementExtensions
+internal static class DataValueExtensions
 {
     public static FormulaValue ToFormulaValue(this DataValue? value) =>
         value switch
@@ -21,10 +21,13 @@ internal static class BotElementExtensions
             DateTimeDataValue dateTimeValue => FormulaValue.New(dateTimeValue.Value.DateTime),
             DateDataValue dateValue => FormulaValue.NewDateOnly(dateValue.Value),
             TimeDataValue timeValue => FormulaValue.New(timeValue.Value),
-            TableDataValue tableValue => FormulaValue.NewTable(tableValue.Values.First().ParseRecordType(), tableValue.Values.Select(value => value.ToRecordValue())), // %%% FAILS FOR EMPTY TABLE
+            TableDataValue tableValue =>
+                FormulaValue.NewTable(
+                    tableValue.Values.FirstOrDefault()?.ParseRecordType() ?? RecordType.Empty(),
+                    tableValue.Values.Select(value => value.ToRecordValue())),
             RecordDataValue recordValue => recordValue.ToRecordValue(),
             OptionDataValue optionValue => FormulaValue.New(optionValue.Value.Value),
-            //FileDataValue // %%% SUPPORT ???
+            FileDataValue => FormulaValue.NewError(new Microsoft.PowerFx.ExpressionError { Message = $"Unsupported literal type: {nameof(FileDataValue)}" }),
             _ => FormulaValue.NewError(new Microsoft.PowerFx.ExpressionError { Message = $"Unknown literal type: {value.GetType().Name}" }),
         };
 
@@ -40,10 +43,9 @@ internal static class BotElementExtensions
             DateDataType => FormulaType.Date,
             TimeDataType => FormulaType.Time,
             RecordDataType => RecordType.Empty(),
-            //TableDataType => new TableType(), // %%% SUPPORT ??? NEED ELEMENT TYPE
-            //FileDataType // %%% SUPPORT ???
+            TableDataType => TableType.Empty(),
             OptionSetDataType => FormulaType.String,
-            DataType dataType => FormulaType.Blank,
+            _ => FormulaType.Unknown,
         };
 
     public static RecordValue ToRecordValue(this RecordDataValue recordDataValue) =>

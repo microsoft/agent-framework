@@ -4,7 +4,7 @@ using Microsoft.Bot.ObjectModel;
 
 namespace Microsoft.Agents.Workflows.Declarative.Extensions;
 
-internal static class DataValueExtensions
+internal static class GotElementExtensions
 {
     public static string? GetParentId(this BotElement element) => element.Parent?.GetId();
 

@@ -16,7 +16,7 @@ internal static class FormulaValueExtensions
 {
     private static readonly JsonSerializerOptions s_options = new() { WriteIndented = true };
 
-    public static DataValue GetDataValue(this FormulaValue value) =>
+    public static DataValue ToDataValue(this FormulaValue value) =>
         value switch
         {
             BooleanValue booleanValue => booleanValue.ToDataValue(),
@@ -94,7 +94,7 @@ internal static class FormulaValueExtensions
     public static RecordDataValue ToDataValue(this RecordValue value) =>
         RecordDataValue.RecordFromFields(value.OriginalFields.Select(field => field.GetKeyValuePair()).ToImmutableArray());
 
-    private static KeyValuePair<string, DataValue> GetKeyValuePair(this NamedValue value) => new(value.Name, value.Value.GetDataValue());
+    private static KeyValuePair<string, DataValue> GetKeyValuePair(this NamedValue value) => new(value.Name, value.Value.ToDataValue());
 
     public static JsonNode ToJson(this FormulaValue value) =>
         value switch
