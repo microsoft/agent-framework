@@ -67,7 +67,7 @@ internal static class Program
             }
             else if (evt is DeclarativeWorkflowStreamEvent streamEvent)
             {
-                //Console.WriteLine($"#{messageEvent.Data.MessageId}:{Environment.NewLine}{messageEvent.Data}"); // %%% TODO: Streaming
+                //Console.WriteLine($"#{messageEvent.Data.MessageId}:{Environment.NewLine}{messageEvent.Data}"); // %%% FEATURE: Streaming
             }
             else if (evt is DeclarativeWorkflowMessageEvent messageEvent)
             {

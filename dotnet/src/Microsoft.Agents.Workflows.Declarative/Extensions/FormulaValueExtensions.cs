@@ -30,9 +30,11 @@ internal static class FormulaValueExtensions
             VoidValue voidValue => voidValue.ToDataValue(),
             TableValue tableValue => tableValue.ToDataValue(),
             RecordValue recordValue => recordValue.ToDataValue(),
-            //GuidValue guidValue => guidValue.ToDataValue(),  // %%% SUPPORT: DataValue ???
-            //BlobValue => // %%% SUPPORT: DataValue ???
-            //ErrorValue => // %%% SUPPORT: DataValue ???
+            // %%% SUPPORT: DataType ???
+            //ColorValue
+            //GuidValue guidValue => guidValue.ToDataValue(),
+            //BlobValue =>
+            //ErrorValue =>
             _ => throw new NotSupportedException($"Unsupported FormulaValue type: {value.GetType().Name}"),
         };
 
@@ -49,9 +51,11 @@ internal static class FormulaValueExtensions
             StringType => DataType.String,
             BlankType => DataType.String,
             RecordType => DataType.EmptyRecord,
-            //GuidType => DataType.String, // %%% SUPPORT: DataType ???
-            //BlobValue => // %%% SUPPORT: DataType ???
-            //ErrorValue => // %%% SUPPORT: DataType ???
+            // %%% SUPPORT: DataType ???
+            //ColorValue
+            //GuidType => DataType.String,
+            //BlobValue =>
+            //ErrorValue =>
             UnknownType => DataType.Unspecified,
             _ => DataType.Unspecified,
         };
@@ -85,8 +89,8 @@ internal static class FormulaValueExtensions
     public static DataValue ToDataValue(this BlankValue _) => BlankDataValue.Blank();
     public static DataValue ToDataValue(this VoidValue _) => BlankDataValue.Blank();
     public static StringDataValue ToDataValue(this StringValue value) => StringDataValue.Create(value.Value);
-    //public static StringDataValue ToDataValue(this GuidValue value) => StringDataValue.Create(value.Value.ToString("N")); // %%% SUPPORT: DataValue ???
-    //public static StringDataValue ToDataValue(this ColorValue value) => StringDataValue.Create(Enum.GetName(typeof(Color), value.Value)!); // %%% SUPPORT: DataValue ???
+    //public static StringDataValue ToDataValue(this GuidValue value) => StringDataValue.Create(value.Value.ToString("N"));
+    //public static StringDataValue ToDataValue(this ColorValue value) => StringDataValue.Create(Enum.GetName(typeof(Color), value.Value)!);
 
     public static TableDataValue ToDataValue(this TableValue value) =>
         TableDataValue.TableFromRecords(value.Rows.Select(row => row.Value.ToDataValue()).ToImmutableArray());

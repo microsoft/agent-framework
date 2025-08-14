@@ -111,7 +111,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this.ContinueWith(action);
         this.RestartFrom(action.Id, nameof(ConditionGroupExecutor), action.ParentId);
 
-        // %%% SUPPORT: item.ElseActions
+        // %%% BUG: item.ElseActions
 
         int index = 1;
         foreach (ConditionItem conditionItem in item.Conditions)

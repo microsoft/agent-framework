@@ -19,7 +19,7 @@ internal sealed class DeclarativeWorkflowExecutor(string workflowId, WorkflowSco
 {
     public async ValueTask HandleAsync(string message, IWorkflowContext context)
     {
-        scopes.Set("LastMessage", WorkflowScopeType.System, FormulaValue.New(message)); // %%% INIT: SYSTEM VARIABLE
+        scopes.Set("LastMessage", WorkflowScopeType.System, FormulaValue.New(message)); // %%% FEATURE: SYSTEM VARIABLE
 
         //await context.AddEventAsync(new ExecutorInvokeEvent(this.Id, $"{this.Id}: {DateTime.UtcNow.ToShortTimeString()}")).ConfigureAwait(false);
         await context.SendMessageAsync($"{this.Id}: {DateTime.UtcNow.ToShortTimeString()}").ConfigureAwait(false);
