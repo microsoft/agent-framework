@@ -7,7 +7,7 @@ from agent_framework.openai import OpenAIAssistantsClient
 # Helper functions
 
 async def create_vector_store(client: OpenAIAssistantsClient) -> tuple[str, HostedVectorStoreContent]:
-    """Create a vector store with sample documents for testing."""
+    """Create a vector store with sample documents."""
     file = await client.client.files.create(
         file=("todays_weather.txt", b"The weather today is sunny with a high of 75F."), purpose="user_data"
     )
@@ -23,7 +23,7 @@ async def create_vector_store(client: OpenAIAssistantsClient) -> tuple[str, Host
 
 
 async def delete_vector_store(client: OpenAIAssistantsClient, file_id: str, vector_store_id: str) -> None:
-    """Delete the vector store after tests."""
+    """Delete the vector store after using it."""
 
     await client.client.vector_stores.delete(vector_store_id=vector_store_id)
     await client.client.files.delete(file_id=file_id)
