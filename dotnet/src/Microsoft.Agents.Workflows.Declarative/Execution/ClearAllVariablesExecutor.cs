@@ -28,7 +28,7 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : Workf
 
         public void HandleConversationHistory()
         {
-            throw new System.NotImplementedException(); // %%% LOG / NO EXCEPTION - Is this to be supported ???
+            throw new System.NotImplementedException(); // %%% DECISION: Is this to be supported ???
         }
 
         public void HandleConversationScopedVariables()
@@ -43,7 +43,7 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : Workf
 
         public void HandleUserScopedVariables()
         {
-            context.Engine.ClearScope(context.Scopes, WorkflowScopeType.Env); // %%% CORRECT ???
+            context.Engine.ClearScope(context.Scopes, WorkflowScopeType.Env); // %%% DECISION: Is this correct?  If not, what?
         }
     }
 }

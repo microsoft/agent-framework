@@ -175,8 +175,7 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
     {
         // Arrange, Act & Assert
         this.EvaluateExpression(
-            //StringExpression.Expression(@$"""{{{PropertyPath.TopicVariable(Variables.StringValue)}}}"""),
-            StringExpression.Expression(@"""AB"""), // %%% IMPROVE
+            StringExpression.Expression(@"""A"" & ""B"""),
             expectedValue: "AB");
     }
 
@@ -357,8 +356,7 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
     {
         // Arrange, Act & Assert
         this.EvaluateExpression(
-            //DataValueExpression.Expression(@$"""{{{PropertyPath.TopicVariable(Variables.DataValueValue)}}}"""),
-            ValueExpression.Expression(@"""AB"""), // %%% IMPROVE
+            ValueExpression.Expression(@"""A"" & ""B"""),
             expectedValue: DataValue.Create("AB"));
     }
 

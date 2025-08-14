@@ -59,6 +59,6 @@ internal sealed class ParseValueExecutor(ParseValue model) :
         string jsonText = rawText.TrimJsonDelimiter();
         JsonDocument json = JsonDocument.Parse(jsonText);
         JsonElement currentElement = json.RootElement;
-        return recordType.ParseRecord(currentElement); // %%% FIX / REMOVE ???
+        return recordType.ParseRecord(currentElement); // %%% FIX / REIMAGINE & REMOVE
     }
 }

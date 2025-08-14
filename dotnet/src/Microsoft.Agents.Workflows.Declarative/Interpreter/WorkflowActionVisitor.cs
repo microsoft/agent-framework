@@ -185,9 +185,9 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        EndConversationExecutor action = new(item);
-        this.ContinueWith(action);
-        this.RestartFrom(action);
+        string parentId = Throw.IfNull(item.GetParentId(), nameof(BotElement.Parent));
+        this.ContinueWith(this.CreateStep(item.Id.Value, nameof(EndConversation)), parentId);
+        this.RestartFrom(item.Id.Value, nameof(EndConversation), parentId);
     }
 
     protected override void Visit(AnswerQuestionWithAI item)
