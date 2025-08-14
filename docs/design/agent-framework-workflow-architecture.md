@@ -144,7 +144,7 @@ The Workflow ties everything together and manages execution:
 │  .add_switch_case_edge_group(                       │
 │     source=A,                                       │
 │     case=[                                          │
-│       Case(B, condition=lambda x: x > 0),           │
+│       Case(B, condition=lambda x, state: x > 0),    │
 │       Default(C),                                   │
 │     ],                                              │
 │   )                                                 │
@@ -271,8 +271,8 @@ workflow = (
 # Conditional routing
 workflow = (
     WorkflowBuilder()
-    .add_edge(router, executor_a, lambda msg: msg.type == "A")
-    .add_edge(router, executor_b, lambda msg: msg.type == "B")
+    .add_edge(router, executor_a, lambda msg, workflow_state: msg.type == "A")
+    .add_edge(router, executor_b, lambda msg, workflow_state: msg.type == "B")
     .set_start_executor(router)
     .build()
 )
