@@ -504,7 +504,6 @@ public class ConsolePresentationService
 
             foreach (var keyInfo in allConfigKeys)
             {
-                // Converted to switch expression
                 string statusIcon = (keyInfo.HasValue, keyInfo.IsRequired) switch
                 {
                     (true, _) => NavigationConstants.ConfigurationDisplay.SetStatusIcon,
