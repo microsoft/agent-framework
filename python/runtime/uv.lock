@@ -1,0 +1,33 @@
+version = 1
+revision = 2
+requires-python = ">=3.10"
+resolution-markers = [
+    "sys_platform == 'darwin'",
+    "sys_platform == 'linux'",
+    "sys_platform == 'win32'",
+]
+supported-markers = [
+    "sys_platform == 'darwin'",
+    "sys_platform == 'linux'",
+    "sys_platform == 'win32'",
+]
+
+[[package]]
+name = "agent-framework"
+version = "0.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/24/97/8b1ca0c451f2550a6fdb20f0abf91e75f75af2d797d49781ee49f75f0efe/agent_framework-0.0.0.tar.gz", hash = "sha256:0ebb37c7bfc27308ee18bea76a72df50d959fdae4fea222539538fa0a495d82e", size = 753, upload_time = "2025-04-28T20:34:07.536Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b0/83/e0a736528f3510ae8b26eba8d2af2b932e801c867b5c6622c162faf3f275/agent_framework-0.0.0-py3-none-any.whl", hash = "sha256:7b040803b144099c83179c7e0d5f30de5f8f233ea23a1bdbcea72bdd769426ae", size = 1067, upload_time = "2025-04-28T20:34:06.454Z" },
+]
+
+[[package]]
+name = "agent-framework-runtime"
+version = "0.1.0b1"
+source = { editable = "." }
+dependencies = [
+    { name = "agent-framework", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "agent-framework" }]

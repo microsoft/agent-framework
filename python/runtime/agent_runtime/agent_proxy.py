@@ -12,16 +12,23 @@ import os
 import re
 import sys
 import uuid
-from typing import Any
 from collections.abc import AsyncIterable
+from typing import Any
 
 # Add framework to path (same approach as agent_actor.py)
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../packages/main"))
 
-from agent_framework import AgentRunResponse, AgentRunResponseUpdate, AgentThread, AIAgent, ChatMessage, ChatRole  # type: ignore
+from agent_framework import (  # type: ignore
+    AgentRunResponse,
+    AgentRunResponseUpdate,
+    AgentThread,
+    AIAgent,
+    ChatMessage,
+    ChatRole,
+)
 
 from .agent_actor import ActorId, RequestStatus
-from .runtime import ActorResponseHandle, ActorClient
+from .runtime import ActorClient, ActorResponseHandle
 
 
 class AgentProxyThread(AgentThread):
@@ -209,9 +216,7 @@ class AgentProxy(AIAgent):
 
         return self._run_streaming_core(normalized_messages, thread_id)
 
-    def _normalize_messages(
-        self, messages: str | ChatMessage | list[str | ChatMessage]
-    ) -> list[ChatMessage]:
+    def _normalize_messages(self, messages: str | ChatMessage | list[str | ChatMessage]) -> list[ChatMessage]:
         """Normalize messages to a list of ChatMessage objects."""
         if isinstance(messages, str):
             return [ChatMessage(role=ChatRole.USER, text=messages)]
@@ -242,20 +247,11 @@ class AgentProxy(AIAgent):
 
         return thread.id
 
-    async def _run_core(
-        self, messages: list[ChatMessage], thread_id: str
-    ) -> ActorResponseHandle:
+    async def _run_core(self, messages: list[ChatMessage], thread_id: str) -> ActorResponseHandle:
         """Core method to send a run request to the actor."""
         # Create the run request
         run_request = {
-            "messages": [
-                {
-                    "role": msg.role.value,
-                    "text": msg.text,
-                    "message_id": msg.message_id
-                }
-                for msg in messages
-            ]
+            "messages": [{"role": msg.role.value, "text": msg.text, "message_id": msg.message_id} for msg in messages]
         }
 
         # Get message ID from last message or generate new one
@@ -271,7 +267,7 @@ class AgentProxy(AIAgent):
             actor_id=actor_id,
             method="run",  # This should match the agent actor's run method
             params=run_request,
-            message_id=message_id
+            message_id=message_id,
         )
 
     async def _run_streaming_core(

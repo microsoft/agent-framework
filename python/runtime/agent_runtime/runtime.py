@@ -4,26 +4,31 @@ import asyncio
 import logging
 import uuid
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any, Callable
-from collections.abc import AsyncIterator
 
 from .agent_actor import (
-    Actor, ActorRuntimeContext, 
-    ActorId, ActorMessage, ActorRequestMessage, ActorResponseMessage,
-    RequestStatus, ActorMessageType
+    Actor,
+    ActorId,
+    ActorMessage,
+    ActorMessageType,
+    ActorRequestMessage,
+    ActorResponseMessage,
+    ActorRuntimeContext,
+    RequestStatus,
 )
 
 
 class ActorResponseHandle(ABC):
     """Handle for async actor responses (runtime infrastructure)"""
-    
+
     @abstractmethod
     async def get_response(self) -> ActorResponseMessage:
         """Get the final response (blocking until complete)"""
         pass
-    
+
     @abstractmethod
     async def watch_updates(self) -> AsyncIterator[ActorResponseMessage]:
         """Watch for streaming updates"""
@@ -32,17 +37,17 @@ class ActorResponseHandle(ABC):
 
 class ActorStateStorage(ABC):
     """Interface for actor state persistence (runtime infrastructure)"""
-    
+
     @abstractmethod
     async def read_state(self, actor_id: ActorId) -> dict[str, Any]:
         """Read all state for an actor"""
         pass
-    
+
     @abstractmethod
     async def write_state(self, actor_id: ActorId, state: dict[str, Any]) -> bool:
         """Write state for an actor"""
         pass
-    
+
     @abstractmethod
     async def delete_state(self, actor_id: ActorId) -> bool:
         """Delete all state for an actor"""
@@ -51,14 +56,10 @@ class ActorStateStorage(ABC):
 
 class ActorClient(ABC):
     """Interface for sending requests to actors (runtime infrastructure)"""
-    
+
     @abstractmethod
     async def send_request(
-        self, 
-        actor_id: ActorId, 
-        method: str, 
-        params: dict[str, Any] | None = None,
-        message_id: str | None = None
+        self, actor_id: ActorId, method: str, params: dict[str, Any] | None = None, message_id: str | None = None
     ) -> ActorResponseHandle:
         """Send a request to an actor"""
         pass
@@ -69,20 +70,20 @@ logger = logging.getLogger(__name__)
 
 class InMemoryStateStorage(ActorStateStorage):
     """Simple in-memory state storage for development"""
-    
+
     def __init__(self):
         self._storage: dict[str, dict[str, Any]] = {}
         self._lock = asyncio.Lock()
-    
+
     async def read_state(self, actor_id: ActorId) -> dict[str, Any]:
         async with self._lock:
             return self._storage.get(str(actor_id), {})
-    
+
     async def write_state(self, actor_id: ActorId, state: dict[str, Any]) -> bool:
         async with self._lock:
             self._storage[str(actor_id)] = state
             return True
-    
+
     async def delete_state(self, actor_id: ActorId) -> bool:
         async with self._lock:
             self._storage.pop(str(actor_id), None)
@@ -92,6 +93,7 @@ class InMemoryStateStorage(ActorStateStorage):
 @dataclass
 class RequestEntry:
     """Tracks a request, its response, and progress updates."""
+
     request: ActorRequestMessage
     _response_future: Future
     _progress_queue: asyncio.Queue
@@ -115,10 +117,7 @@ class RequestEntry:
             message_type=ActorMessageType.RESPONSE,
             sender_id=None,
             status=RequestStatus.PENDING,
-            data={
-                "sequence": sequence_number,
-                "progress": data
-            }
+            data={"sequence": sequence_number, "progress": data},
         )
         try:
             self._progress_queue.put_nowait(progress)
@@ -128,10 +127,10 @@ class RequestEntry:
 
 class InProcessResponseHandle(ActorResponseHandle):
     """Response handle for in-process actors"""
-    
+
     def __init__(self, entry: RequestEntry):
         self._entry = entry
-    
+
     async def get_response(self) -> ActorResponseMessage:
         future = self._entry.get_response_future()
         return await asyncio.wrap_future(future)
@@ -220,69 +219,69 @@ class InProcessActorContext(ActorRuntimeContext):
 
 class InProcessActorRuntime:
     """In-process actor runtime"""
-    
+
     def __init__(self, storage: ActorStateStorage | None = None):
-            self._storage = storage or InMemoryStateStorage()
-            self._actors = {}
-            self._actor_tasks = {}
-            self._actor_factories = {}
-            self._running = False
-    
+        self._storage = storage or InMemoryStateStorage()
+        self._actors = {}
+        self._actor_tasks = {}
+        self._actor_factories = {}
+        self._running = False
+
     def register_actor_type(self, type_name: str, factory: Callable[[ActorRuntimeContext], Actor]) -> None:
         """Register a factory for creating actors of a given type"""
         self._actor_factories[type_name] = factory
         logger.info(f"Registered actor type: {type_name}")
-    
+
     async def start(self) -> None:
         """Start the runtime"""
         self._running = True
         logger.info("Actor runtime started")
-    
+
     async def stop(self) -> None:
         """Stop the runtime and all actors"""
         self._running = False
-        
+
         # Cancel all actor tasks
         for task in self._actor_tasks.values():
             task.cancel()
-        
+
         # Wait for tasks to complete
         if self._actor_tasks:
             await asyncio.gather(*self._actor_tasks.values(), return_exceptions=True)
-        
+
         # Cleanup actors
         for actor_context in self._actors.values():
             # Allow actors to cleanup
             pass
-        
+
         self._actors.clear()
         self._actor_tasks.clear()
         logger.info("Actor runtime stopped")
-    
+
     def get_or_create_actor(self, actor_id: ActorId) -> InProcessActorContext:
         """Get an existing actor or create a new one"""
         if actor_id in self._actors:
             return self._actors[actor_id]
-        
+
         # Check if we have a factory for this actor type
         if actor_id.type_name not in self._actor_factories:
             raise ValueError(f"No factory registered for actor type: {actor_id.type_name}")
-        
+
         # Create the actor context
         context = InProcessActorContext(actor_id, self._storage, self)
         self._actors[actor_id] = context
-        
+
         # Create the actor instance
         factory = self._actor_factories[actor_id.type_name]
         actor = factory(context)
-        
+
         # Start the actor task
         task = asyncio.create_task(self._run_actor(actor, context))
         self._actor_tasks[actor_id] = task
-        
+
         logger.info(f"Created actor: {actor_id}")
         return context
-    
+
     async def _run_actor(self, actor: Actor, context: InProcessActorContext) -> None:
         """Run an actor instance"""
         try:
@@ -301,33 +300,26 @@ class InProcessActorRuntime:
 
 class InProcessActorClient(ActorClient):
     """Client for sending requests to in-process actors"""
-    
+
     def __init__(self, runtime: InProcessActorRuntime):
         self._runtime = runtime
-    
+
     async def send_request(
-        self, 
-        actor_id: ActorId, 
-        method: str,
-    params: dict[str, Any] | None = None,
-        message_id: str | None = None
+        self, actor_id: ActorId, method: str, params: dict[str, Any] | None = None, message_id: str | None = None
     ) -> ActorResponseHandle:
         """Send a request to an actor"""
         if not message_id:
             message_id = str(uuid.uuid4())
-        
+
         request = ActorRequestMessage(
-            message_id=message_id,
-            message_type=ActorMessageType.REQUEST,
-            method=method,
-            params=params
+            message_id=message_id, message_type=ActorMessageType.REQUEST, method=method, params=params
         )
-        
+
         # Get or create the target actor
         context = self._runtime.get_or_create_actor(actor_id)
-        
+
         # Send the request and get a response handle
         handle = context.send_request(request)
-        
+
         logger.debug(f"Sent request {message_id} to actor {actor_id}")
         return handle

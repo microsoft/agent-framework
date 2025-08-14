@@ -1,42 +1,44 @@
 """AgentActor - bridges AI agents with the actor runtime"""
 
-import asyncio
-import json
 import logging
 import os
 import sys
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from typing import Any
-from datetime import datetime
-from collections.abc import AsyncIterator
 
 # Framework agent types
-sys.path.append(os.path.join(os.path.dirname(__file__), '../../packages/main'))
+sys.path.append(os.path.join(os.path.dirname(__file__), "../../packages/main"))
 
-from agent_framework import AIAgent, ChatMessage, AgentRunResponse, AgentThread, ChatRole, AgentBase  # type: ignore
+from agent_framework import AgentRunResponse, AgentThread, AIAgent, ChatMessage, ChatRole  # type: ignore
+
 
 @dataclass(frozen=True)
 class ActorId:
     """Unique identifier for an actor instance"""
+
     type_name: str
     instance_id: str
-    
+
     def __str__(self) -> str:
         return f"{self.type_name}/{self.instance_id}"
 
 
 class ActorMessageType(Enum):
     """Types of messages that can be sent to actors"""
+
     REQUEST = "request"
     RESPONSE = "response"
 
 
 class RequestStatus(Enum):
     """Status of a request being processed by an actor"""
+
     PENDING = "pending"
-    COMPLETED = "completed" 
+    COMPLETED = "completed"
     FAILED = "failed"
     NOT_FOUND = "not_found"
 
@@ -48,6 +50,7 @@ class ActorMessage:
     NOTE: timestamp must use default_factory to avoid all instances sharing the
     same datetime value at import time (bug fix for initial implementation).
     """
+
     message_id: str
     message_type: ActorMessageType
     timestamp: datetime = field(default_factory=datetime.utcnow)
@@ -56,9 +59,10 @@ class ActorMessage:
 @dataclass
 class ActorRequestMessage(ActorMessage):
     """Request message sent to an actor"""
+
     method: str = ""
     params: dict[str, Any] | None = None
-    
+
     def __post_init__(self):
         self.message_type = ActorMessageType.REQUEST
 
@@ -66,10 +70,11 @@ class ActorRequestMessage(ActorMessage):
 @dataclass
 class ActorResponseMessage(ActorMessage):
     """Response message from an actor"""
+
     sender_id: ActorId | None = None
     status: RequestStatus = RequestStatus.PENDING
     data: Any = None
-    
+
     def __post_init__(self):
         self.message_type = ActorMessageType.RESPONSE
 
@@ -81,34 +86,36 @@ class ActorRuntimeContext(ABC):
     slimmer for the initial Python foundation. Methods for batching state
     operations and fine‑grained progress streaming can be added incrementally.
     """
-    
+
     @property
     @abstractmethod
     def actor_id(self) -> ActorId:
         """Get the actor's unique identifier"""
         pass
-    
+
     @abstractmethod
     async def watch_messages(self) -> AsyncIterator[ActorMessage]:
         """Watch for incoming messages"""
         pass
-    
+
     @abstractmethod
     async def read_state(self, key: str) -> Any | None:
         """Read state value by key"""
         pass
-    
-    @abstractmethod  
+
+    @abstractmethod
     async def write_state(self, key: str, value: Any) -> bool:
         """Write state value by key"""
         pass
-    
+
     @abstractmethod
     def complete_request(self, message_id: str, response: ActorResponseMessage) -> None:
         """Complete a request with a response"""
         pass
 
-    def on_progress_update(self, message_id: str, sequence_number: int, data: Any) -> None:  # pragma: no cover - default no-op
+    def on_progress_update(
+        self, message_id: str, sequence_number: int, data: Any
+    ) -> None:  # pragma: no cover - default no-op
         """Report a progress / streaming update.
 
         Provided as a non-abstract hook so existing simple runtimes do not need
@@ -120,12 +127,12 @@ class ActorRuntimeContext(ABC):
 
 class Actor(ABC):
     """Interface for all actors in the system (runtime infrastructure)"""
-    
+
     @abstractmethod
     async def run(self, context: ActorRuntimeContext) -> None:
         """Main actor execution loop"""
         pass
-    
+
     async def dispose(self) -> None:
         """Cleanup resources when actor is shut down"""
         pass
@@ -136,19 +143,19 @@ logger = logging.getLogger(__name__)
 
 class AgentActor(Actor):
     """Runtime actor that wraps framework AI agents"""
-    
+
     THREAD_STATE_KEY = "agent_thread"
-    
+
     def __init__(self, agent: AIAgent):
         """Initialize with framework agent"""
         self._agent = agent
         self._thread: AgentThread | None = None
-    
+
     async def run(self, context: ActorRuntimeContext) -> None:
         """Main actor execution loop"""
-        agent_name = getattr(self._agent, 'name', None) or getattr(self._agent, 'id', 'unknown')
+        agent_name = getattr(self._agent, "name", None) or getattr(self._agent, "id", "unknown")
         logger.info(f"Agent actor started: {context.actor_id} (agent: {agent_name})")
-        
+
         # Restore thread state
         await self._restore_thread_state(context)
 
@@ -156,11 +163,11 @@ class AgentActor(Actor):
         async for message in context.watch_messages():
             if isinstance(message, ActorRequestMessage):
                 await self._handle_agent_request(message, context)
-    
+
     async def _restore_thread_state(self, context: ActorRuntimeContext):
         """Restore the agent thread state from storage"""
         thread_data = await context.read_state(self.THREAD_STATE_KEY)
-        
+
         if thread_data:
             try:
                 # For now, create new thread - full serialization would need framework support
@@ -172,18 +179,17 @@ class AgentActor(Actor):
         else:
             self._thread = self._agent.get_new_thread()
             logger.debug("Created new thread")
-    
+
     async def _handle_agent_request(self, request: ActorRequestMessage, context: ActorRuntimeContext):
         """Handle agent run requests using framework types directly"""
-        
         if request.method != "run":
             logger.warning(f"Unsupported method: {request.method}")
             await self._send_error_response(request, context, f"Unsupported method: {request.method}")
             return
-        
+
         try:
             logger.info(f"Processing agent request: {request.message_id}")
-            
+
             # Parse messages from request to framework types
             framework_messages = self._parse_framework_messages(request)
 
@@ -195,29 +201,29 @@ class AgentActor(Actor):
 
             # Call framework agent directly
             response = await self._agent.run(framework_messages, thread=self._thread)
-            
+
             # Save updated thread state
             await self._save_thread_state(context)
-            
+
             # Convert framework response to runtime format
             response_data = self._convert_framework_response(response)
-            
+
             # Send success response
             actor_response = ActorResponseMessage(
                 message_id=request.message_id,
                 message_type=ActorMessageType.RESPONSE,
                 sender_id=context.actor_id,
                 status=RequestStatus.COMPLETED,
-                data=response_data
+                data=response_data,
             )
-            
+
             context.complete_request(request.message_id, actor_response)
             logger.info(f"Agent request completed: {request.message_id}")
-            
+
         except Exception as e:
             logger.error(f"Agent request failed: {e}")
             await self._send_error_response(request, context, str(e))
-    
+
     def _parse_framework_messages(self, request: ActorRequestMessage) -> list[ChatMessage]:
         """Convert runtime request to framework ChatMessage objects"""
         if not request.params:
@@ -235,84 +241,77 @@ class AgentActor(Actor):
             except Exception as ex:  # pragma: no cover - defensive
                 logger.error(f"Skipping invalid message entry: {ex}")
         return result
-    
+
     def _convert_framework_response(self, framework_response: AgentRunResponse) -> dict:
         """Convert framework AgentRunResponse to runtime data format"""
         try:
             messages_data = []
-            
+
             # Extract messages from framework response
             for framework_msg in framework_response.messages:
                 msg_data = {
                     "role": self._extract_role(framework_msg),
                     "text": self._extract_content(framework_msg),
-                    "message_id": getattr(framework_msg, 'message_id', None)
+                    "message_id": getattr(framework_msg, "message_id", None),
                 }
-                
+
                 # Add timestamp if available
-                if hasattr(framework_msg, 'timestamp'):
+                if hasattr(framework_msg, "timestamp"):
                     msg_data["timestamp"] = framework_msg.timestamp
-                
+
                 messages_data.append(msg_data)
-            
+
             # Build response data
-            response_data = {
-                "messages": messages_data,
-                "status": "completed"
-            }
-            
+            response_data = {"messages": messages_data, "status": "completed"}
+
             # Add framework metadata if available
-            if hasattr(framework_response, 'status'):
+            if hasattr(framework_response, "status"):
                 response_data["status"] = framework_response.status
-            
+
             return response_data
-            
+
         except Exception as e:
             logger.error(f"Error converting framework response: {e}")
-            return {
-                "messages": [{"role": "assistant", "text": f"Response conversion error: {e}"}],
-                "status": "failed"
-            }
-    
+            return {"messages": [{"role": "assistant", "text": f"Response conversion error: {e}"}], "status": "failed"}
+
     def _extract_role(self, framework_msg: ChatMessage) -> str:
         """Extract role from framework message"""
         try:
             role = framework_msg.role
             # Handle enum vs string
-            return role.value if hasattr(role, 'value') else str(role)
+            return role.value if hasattr(role, "value") else str(role)
         except Exception:
             return "assistant"
-    
+
     def _extract_content(self, framework_msg: ChatMessage) -> str:
         """Extract text content from framework message"""
         try:
             # Framework messages use 'text' attribute primarily
-            if hasattr(framework_msg, 'text'):
+            if hasattr(framework_msg, "text"):
                 return str(framework_msg.text)
-            elif hasattr(framework_msg, 'content'):
+            if hasattr(framework_msg, "content"):
                 return str(framework_msg.content)
-            else:
-                return str(framework_msg)
+            return str(framework_msg)
         except Exception as e:
             logger.error(f"Error extracting content: {e}")
             return "[Content extraction error]"
-    
+
     async def _save_thread_state(self, context: ActorRuntimeContext):
         """Save framework thread state to runtime storage"""
         try:
             if self._thread:
                 # Serialize basic thread info plus messages for persistence tests
                 thread_data = {
-                    "thread_id": getattr(self._thread, 'id', None),
+                    "thread_id": getattr(self._thread, "id", None),
                     "last_updated": str(context.actor_id),
                 }
-                if hasattr(self._thread, 'messages'):
+                if hasattr(self._thread, "messages"):
                     serialized_messages = []
-                    for m in getattr(self._thread, 'messages'):
+                    for m in self._thread.messages:
                         try:
                             serialized_messages.append({
                                 "role": self._extract_role(m),
-                                "text": self._extract_content(m)
+                                "text": self._extract_content(m),
                             })
                         except Exception as e:
                             logger.debug(f"Failed to serialize message for state: {e}")
@@ -321,7 +320,7 @@ class AgentActor(Actor):
                 logger.debug("Saved thread state (messages count=%s)", len(thread_data.get("messages", [])))
         except Exception as e:
             logger.error(f"Error saving thread state: {e}")
-    
+
     async def _send_error_response(self, request: ActorRequestMessage, context: ActorRuntimeContext, error_msg: str):
         """Send error response"""
         error_response = ActorResponseMessage(
@@ -329,8 +328,6 @@ class AgentActor(Actor):
             message_type=ActorMessageType.RESPONSE,
             sender_id=context.actor_id,
             status=RequestStatus.FAILED,
-            data={"error": error_msg}
+            data={"error": error_msg},
         )
         context.complete_request(request.message_id, error_response)
-
-

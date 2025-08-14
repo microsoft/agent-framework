@@ -11,16 +11,17 @@ from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from agent_runtime.agent_proxy import AgentProxy, AgentProxyThread
+
 from agent_runtime.agent_actor import (
     ActorId,
     ActorMessageType,
     ActorResponseMessage,
     RequestStatus,
 )
+from agent_runtime.agent_proxy import AgentProxy, AgentProxyThread
 from agent_runtime.runtime import (
-    ActorResponseHandle,
     ActorClient,
+    ActorResponseHandle,
 )
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../packages/main"))
@@ -47,25 +48,17 @@ class TestAgentProxyThread:
 
         assert thread.id == custom_id
 
-    @pytest.mark.parametrize("valid_id", [
-        "abc123",
-        "test-thread_456",
-        "thread.with.dots",
-        "thread~with~tildes",
-        "123456789abcdef"
-    ])
+    @pytest.mark.parametrize(
+        "valid_id", ["abc123", "test-thread_456", "thread.with.dots", "thread~with~tildes", "123456789abcdef"]
+    )
     def test_constructor_accepts_valid_ids(self, valid_id):
         """Verifies that constructor accepts various valid ID formats."""
         thread = AgentProxyThread(valid_id)
         assert thread.id == valid_id
 
-    @pytest.mark.parametrize("invalid_id", [
-        "invalid thread id!",
-        "thread@with@symbols",
-        "thread with spaces",
-        "thread#hash",
-        ""
-    ])
+    @pytest.mark.parametrize(
+        "invalid_id", ["invalid thread id!", "thread@with@symbols", "thread with spaces", "thread#hash", ""]
+    )
     def test_constructor_rejects_invalid_ids(self, invalid_id):
         """Verifies that constructor rejects invalid ID formats."""
         with pytest.raises(ValueError, match="Thread ID .* is not valid"):
@@ -103,13 +96,7 @@ class TestAgentProxyConstructor:
         assert proxy.display_name == "test_agent"
         assert proxy.description is None
 
-    @pytest.mark.parametrize("valid_name", [
-        "agent",
-        " ",
-        "特殊字符",
-        "    a",
-        "my-agent_123"
-    ])
+    @pytest.mark.parametrize("valid_name", ["agent", " ", "特殊字符", "    a", "my-agent_123"])
     def test_constructor_accepts_various_valid_names(self, valid_name):
         """Verifies that constructor accepts various valid agent names."""
         mock_client = Mock(spec=ActorClient)
@@ -261,7 +248,7 @@ class TestAgentProxyRunAsync:
             message_id="msg1",
             message_type=ActorMessageType.RESPONSE,
             status=RequestStatus.COMPLETED,
-            data=response_data
+            data=response_data,
         )
         mock_handle = MockActorResponseHandle(response=mock_response)
         self.mock_client.send_request = AsyncMock(return_value=mock_handle)
@@ -278,10 +265,7 @@ class TestAgentProxyRunAsync:
         """Verifies that RunAsync raises RuntimeError when status is Failed."""
         # Arrange
         mock_response = ActorResponseMessage(
-            message_id="msg1",
-            message_type=ActorMessageType.RESPONSE,
-            status=RequestStatus.FAILED,
-            data="Error message"
+            message_id="msg1", message_type=ActorMessageType.RESPONSE, status=RequestStatus.FAILED, data="Error message"
         )
         mock_handle = MockActorResponseHandle(response=mock_response)
         self.mock_client.send_request = AsyncMock(return_value=mock_handle)
@@ -295,10 +279,7 @@ class TestAgentProxyRunAsync:
         """Verifies that RunAsync raises RuntimeError when status is Pending."""
         # Arrange
         mock_response = ActorResponseMessage(
-            message_id="msg1",
-            message_type=ActorMessageType.RESPONSE,
-            status=RequestStatus.PENDING,
-            data={}
+            message_id="msg1", message_type=ActorMessageType.RESPONSE, status=RequestStatus.PENDING, data={}
         )
         mock_handle = MockActorResponseHandle(response=mock_response)
         self.mock_client.send_request = AsyncMock(return_value=mock_handle)
@@ -312,10 +293,7 @@ class TestAgentProxyRunAsync:
         """Verifies that RunAsync raises RuntimeError for unsupported status."""
         # Arrange
         mock_response = ActorResponseMessage(
-            message_id="msg1",
-            message_type=ActorMessageType.RESPONSE,
-            status=RequestStatus.NOT_FOUND,
-            data={}
+            message_id="msg1", message_type=ActorMessageType.RESPONSE, status=RequestStatus.NOT_FOUND, data={}
         )
         mock_handle = MockActorResponseHandle(response=mock_response)
         self.mock_client.send_request = AsyncMock(return_value=mock_handle)
@@ -347,7 +325,7 @@ class TestAgentProxyRunAsync:
             message_id="msg1",
             message_type=ActorMessageType.RESPONSE,
             status=RequestStatus.COMPLETED,
-            data=response_data
+            data=response_data,
         )
         mock_handle = MockActorResponseHandle(response=mock_response)
         self.mock_client.send_request = AsyncMock(return_value=mock_handle)
@@ -372,7 +350,7 @@ class TestAgentProxyRunAsync:
         expected_message_id = "custom-msg-id"
         messages_with_id = [
             ChatMessage(role=ChatRole.USER, text="First"),
-            ChatMessage(role=ChatRole.USER, text="Last", message_id=expected_message_id)
+            ChatMessage(role=ChatRole.USER, text="Last", message_id=expected_message_id),
         ]
 
         response_data = {"messages": []}
@@ -380,7 +358,7 @@ class TestAgentProxyRunAsync:
             message_id="msg1",
             message_type=ActorMessageType.RESPONSE,
             status=RequestStatus.COMPLETED,
-            data=response_data
+            data=response_data,
         )
         mock_handle = MockActorResponseHandle(response=mock_response)
         self.mock_client.send_request = AsyncMock(return_value=mock_handle)
@@ -423,17 +401,9 @@ class TestAgentProxyRunStreaming:
     async def test_run_streaming_pending_status_yields_updates(self):
         """Verifies that run_streaming yields updates for pending status."""
         # Arrange
-        update_data = {
-            "progress": {
-                "contents": [],
-                "role": ChatRole.ASSISTANT
-            }
-        }
+        update_data = {"progress": {"contents": [], "role": ChatRole.ASSISTANT}}
         pending_update = ActorResponseMessage(
-            message_id="msg1",
-            message_type=ActorMessageType.RESPONSE,
-            status=RequestStatus.PENDING,
-            data=update_data
+            message_id="msg1", message_type=ActorMessageType.RESPONSE, status=RequestStatus.PENDING, data=update_data
         )
 
         mock_handle = MockActorResponseHandle(updates=[pending_update])
@@ -453,10 +423,7 @@ class TestAgentProxyRunStreaming:
         """Verifies that run_streaming stops on completed status."""
         # Arrange
         completed_update = ActorResponseMessage(
-            message_id="msg1",
-            message_type=ActorMessageType.RESPONSE,
-            status=RequestStatus.COMPLETED,
-            data={}
+            message_id="msg1", message_type=ActorMessageType.RESPONSE, status=RequestStatus.COMPLETED, data={}
         )
 
         mock_handle = MockActorResponseHandle(updates=[completed_update])
@@ -478,7 +445,7 @@ class TestAgentProxyRunStreaming:
             message_id="msg1",
             message_type=ActorMessageType.RESPONSE,
             status=RequestStatus.FAILED,
-            data="Error occurred"
+            data="Error occurred",
         )
 
         mock_handle = MockActorResponseHandle(updates=[failed_update])
