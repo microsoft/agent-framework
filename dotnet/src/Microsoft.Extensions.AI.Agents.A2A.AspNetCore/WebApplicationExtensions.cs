@@ -3,6 +3,7 @@
 using A2A;
 using A2A.AspNetCore;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -23,9 +24,10 @@ public static class WebApplicationExtensions
     {
         var agent = app.Services.GetRequiredKeyedService<AIAgent>(agentName);
         var loggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
+        var actorClient = app.Services.GetRequiredService<IActorClient>();
 
         var taskManager = new TaskManager();
-        agent.AttachA2AMessaging(taskManager, loggerFactory);
+        agent.AttachA2AMessaging(actorClient, taskManager, loggerFactory);
         app.AttachA2A(taskManager, path);
     }
 

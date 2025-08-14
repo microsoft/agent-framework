@@ -17,11 +17,17 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Microsoft.Extensions.AI.Agents.Abstractions\Microsoft.Extensions.AI.Agents.Abstractions.csproj" />
+    <ProjectReference Include="..\Microsoft.Extensions.AI.Agents.Hosting\Microsoft.Extensions.AI.Agents.Hosting.csproj" />
+    <ProjectReference Include="..\Microsoft.Extensions.AI.Agents.Runtime.Abstractions\Microsoft.Extensions.AI.Agents.Runtime.Abstractions.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="Microsoft.Extensions.AI.Agents.A2A.AspNetCore"/>
-    <InternalsVisibleTo Include="Microsoft.Extensions.AI.Agents.A2A.Tests"/>
+    <InternalsVisibleTo Include="Microsoft.Extensions.AI.Agents.A2A.AspNetCore" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <InternalsVisibleTo Include="AgentWebChat.Web" />
+    <InternalsVisibleTo Include="Microsoft.Extensions.AI.Agents.A2A.Tests" />
   </ItemGroup>
 
 </Project>

@@ -9,12 +9,41 @@ namespace Microsoft.Extensions.AI.Agents.A2A.Converters;
 
 internal static class MessageConverter
 {
+    public static List<Part> ToParts(this IList<ChatMessage> chatMessages)
+    {
+        if (chatMessages is null || chatMessages.Count == 0)
+        {
+            return [];
+        }
+
+        var parts = new List<Part>();
+        foreach (var chatMessage in chatMessages)
+        {
+            foreach (var content in chatMessage.Contents)
+            {
+                var part = ConvertAIContentToPart(content);
+                if (part != null)
+                {
+                    parts.Add(part);
+                }
+            }
+
+            // If no parts were created from content, create a text part from the message text
+            if (chatMessage.Contents.Count == 0 && !string.IsNullOrEmpty(chatMessage.Text))
+            {
+                parts.Add(new TextPart { Text = chatMessage.Text });
+            }
+        }
+
+        return parts;
+    }
+
     /// <summary>
     /// Converts A2A MessageSendParams to a collection of Microsoft.Extensions.AI ChatMessage objects.
     /// </summary>
     /// <param name="messageSendParams">The A2A message send parameters to convert.</param>
     /// <returns>A read-only collection of ChatMessage objects.</returns>
-    public static IReadOnlyCollection<ChatMessage> ToChatMessages(this MessageSendParams messageSendParams)
+    public static List<ChatMessage> ToChatMessages(this MessageSendParams messageSendParams)
     {
         if (messageSendParams is null)
         {
@@ -24,7 +53,7 @@ internal static class MessageConverter
         var result = new List<ChatMessage>();
         if (messageSendParams.Message?.Parts != null)
         {
-            var chatMessage = ConvertMessageToChatMessage(messageSendParams.Message);
+            var chatMessage = ToChatMessage(messageSendParams.Message);
             if (chatMessage is not null)
             {
                 result.Add(chatMessage);
@@ -49,7 +78,7 @@ internal static class MessageConverter
         var result = new List<ChatMessage>();
         foreach (var message in messages)
         {
-            var chatMessage = ConvertMessageToChatMessage(message);
+            var chatMessage = ToChatMessage(message);
             if (chatMessage is not null)
             {
                 result.Add(chatMessage);
@@ -64,7 +93,7 @@ internal static class MessageConverter
     /// </summary>
     /// <param name="message">The A2A message to convert.</param>
     /// <returns>A ChatMessage object, or null if conversion is not possible.</returns>
-    private static ChatMessage? ConvertMessageToChatMessage(Message message)
+    public static ChatMessage? ToChatMessage(this Message message)
     {
         if (message?.Parts == null || message.Parts.Count == 0)
         {

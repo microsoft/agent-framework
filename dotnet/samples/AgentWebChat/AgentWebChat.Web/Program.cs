@@ -22,15 +22,11 @@ Uri baseAddress = new("https+http://agenthost");
 // for some reason does not resolve with `apiservice` url
 Uri a2aAddress = new("http://localhost:5390/a2a");
 
-builder.Services.AddHttpClient<IActorClient, HttpActorClient>(client => client.BaseAddress = baseAddress);
 builder.Services.AddHttpClient<AgentDiscoveryClient>(client => client.BaseAddress = baseAddress);
-
-builder.Services.AddSingleton<A2AHandlerClient>(sp =>
+builder.Services.AddHttpClient<IActorClient, HttpActorClient>(client => client.BaseAddress = baseAddress);
+builder.Services.AddSingleton<A2AActorClient>(sp =>
 {
-    return new A2AHandlerClient(
-        sp.GetRequiredService<ILogger<A2AHandlerClient>>(),
-        a2aAddress
-    );
+    return new A2AActorClient(sp.GetRequiredService<ILogger<A2AManualHandlerClient>>(), a2aAddress);
 });
 
 var app = builder.Build();
