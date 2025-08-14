@@ -10,7 +10,7 @@ namespace Microsoft.Agents.Workflows.Declarative.Execution;
 
 internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : WorkflowActionExecutor<ClearAllVariables>(model)
 {
-    protected override ValueTask ExecuteAsync(CancellationToken cancellationToken)
+    protected override ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         EvaluationResult<VariablesToClearWrapper> result = this.Context.ExpressionEngine.GetValue<VariablesToClearWrapper>(this.Model.Variables, this.Context.Scopes);
 

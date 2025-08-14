@@ -9,7 +9,6 @@ using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.Workflows.Reflection;
 using Microsoft.Bot.ObjectModel;
-using Microsoft.Extensions.Logging.Abstractions;
 using Xunit.Abstractions;
 
 namespace Microsoft.Agents.Workflows.Declarative.UnitTests;
@@ -126,7 +125,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData(typeof(UnknownDialogAction.Builder))]
     [InlineData(typeof(UpdateActivity.Builder))]
     [InlineData(typeof(WaitForConnectorTrigger.Builder))]
-    public async Task UnsupportedAction(Type type)
+    public void UnsupportedAction(Type type)
     {
         DialogAction.Builder? unsupportedAction = (DialogAction.Builder?)Activator.CreateInstance(type);
         Assert.NotNull(unsupportedAction);
@@ -143,12 +142,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
             };
 
         WorkflowScopes scopes = new();
-        DeclarativeWorkflowContext workflowContext =
-            new()
-            {
-                LoggerFactory = NullLoggerFactory.Instance,
-                ActivityChannel = this.Output,
-            };
+        DeclarativeWorkflowContext workflowContext = DeclarativeWorkflowContext.Default;
         WorkflowActionVisitor visitor = new(new RootExecutor(), workflowContext, scopes);
         WorkflowElementWalker walker = new(dialogBuilder.Build(), visitor);
         Assert.True(visitor.HasUnsupportedActions);
@@ -175,12 +169,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     private async Task RunWorkflow(string workflowPath)
     {
         using StreamReader yamlReader = File.OpenText(Path.Combine("Workflows", workflowPath));
-        DeclarativeWorkflowContext workflowContext =
-            new()
-            {
-                LoggerFactory = NullLoggerFactory.Instance,
-                ActivityChannel = this.Output,
-            };
+        DeclarativeWorkflowContext workflowContext = DeclarativeWorkflowContext.Default;
 
         Workflow<string> workflow = DeclarativeWorkflowBuilder.Build(yamlReader, workflowContext);
 

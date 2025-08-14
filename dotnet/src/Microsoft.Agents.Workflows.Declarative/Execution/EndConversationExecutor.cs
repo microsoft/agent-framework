@@ -8,7 +8,7 @@ namespace Microsoft.Agents.Workflows.Declarative.Execution;
 
 internal sealed class EndConversationExecutor(EndConversation model) : WorkflowActionExecutor<EndConversation>(model)
 {
-    protected override ValueTask ExecuteAsync(CancellationToken cancellationToken)
+    protected override ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         // %%% DIAGNOSTICS / STATE MANAGEMENT ???
         return new ValueTask();

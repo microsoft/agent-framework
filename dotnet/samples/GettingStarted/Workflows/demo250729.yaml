@@ -42,11 +42,6 @@ beginDialog:
           userInput: =Topic.Question
           additionalInstructions: "{Topic.Instructions}"
 
-        # Display the AI's answer
-        - kind: SendActivity
-          id: sendActivity_zA3f0p
-          activity: "AI - {Topic.Answer}"
-
     # After processing all questions, display a completion message
     - kind: SendActivity
       id: sendActivity_SVoNSV

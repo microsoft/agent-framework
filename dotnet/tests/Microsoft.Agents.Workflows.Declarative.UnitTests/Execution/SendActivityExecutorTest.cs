@@ -1,9 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.IO;
 using System.Threading.Tasks;
-using Microsoft.Bot.ObjectModel;
 using Microsoft.Agents.Workflows.Declarative.Execution;
+using Microsoft.Bot.ObjectModel;
 using Xunit.Abstractions;
 
 namespace Microsoft.Agents.Workflows.Declarative.UnitTests.Execution;
@@ -21,16 +20,14 @@ public sealed class SendActivityExecutorTest(ITestOutputHelper output) : Workflo
             this.CreateModel(
                 this.FormatDisplayName(nameof(CaptureActivity)),
                 "Test activity message");
-        using StringWriter activityWriter = new();
 
         // Act
-        SendActivityExecutor action = new(model, activityWriter);
+        SendActivityExecutor action = new(model);
         await this.Execute(action);
-        activityWriter.Flush();
 
         // Assert
         this.VerifyModel(model, action);
-        Assert.NotEmpty(activityWriter.ToString());
+        // %%% VERIFY EVENT
     }
 
     private SendActivity CreateModel(string displayName, string activityMessage, string? summary = null)

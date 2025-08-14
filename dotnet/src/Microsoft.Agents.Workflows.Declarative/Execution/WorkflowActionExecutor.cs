@@ -64,7 +64,7 @@ internal abstract class WorkflowActionExecutor :
 
         try
         {
-            await this.ExecuteAsync(cancellationToken: default).ConfigureAwait(false);
+            await this.ExecuteAsync(context, cancellationToken: default).ConfigureAwait(false);
 
             await context.SendMessageAsync($"{this.Id}: {DateTime.UtcNow.ToShortTimeString()}").ConfigureAwait(false);
         }
@@ -80,7 +80,7 @@ internal abstract class WorkflowActionExecutor :
         }
     }
 
-    protected abstract ValueTask ExecuteAsync(CancellationToken cancellationToken = default);
+    protected abstract ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default);
 
     protected void AssignTarget(WorkflowExecutionContext context, PropertyPath targetPath, FormulaValue result)
     {

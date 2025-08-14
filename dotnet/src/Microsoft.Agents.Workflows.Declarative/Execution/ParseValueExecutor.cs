@@ -15,7 +15,7 @@ namespace Microsoft.Agents.Workflows.Declarative.Execution;
 internal sealed class ParseValueExecutor(ParseValue model) :
     WorkflowActionExecutor<ParseValue>(model)
 {
-    protected override ValueTask ExecuteAsync(CancellationToken cancellationToken)
+    protected override ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         PropertyPath variablePath = Throw.IfNull(this.Model.Variable?.Path, $"{nameof(this.Model)}.{nameof(model.Variable)}");
         ValueExpression valueExpression = Throw.IfNull(this.Model.Value, $"{nameof(this.Model)}.{nameof(this.Model.Value)}");
@@ -59,6 +59,6 @@ internal sealed class ParseValueExecutor(ParseValue model) :
         string jsonText = rawText.TrimJsonDelimiter();
         JsonDocument json = JsonDocument.Parse(jsonText);
         JsonElement currentElement = json.RootElement;
-        return recordType.ParseRecord(currentElement);
+        return recordType.ParseRecord(currentElement); // %%% FIX / REMOVE ???
     }
 }

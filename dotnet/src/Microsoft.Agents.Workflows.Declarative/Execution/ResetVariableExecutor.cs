@@ -13,7 +13,7 @@ namespace Microsoft.Agents.Workflows.Declarative.Execution;
 internal sealed class ResetVariableExecutor(ResetVariable model) :
     WorkflowActionExecutor<ResetVariable>(model)
 {
-    protected override ValueTask ExecuteAsync(CancellationToken cancellationToken)
+    protected override ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         PropertyPath variablePath = Throw.IfNull(this.Model.Variable, $"{nameof(this.Model)}.{nameof(model.Variable)}");
 

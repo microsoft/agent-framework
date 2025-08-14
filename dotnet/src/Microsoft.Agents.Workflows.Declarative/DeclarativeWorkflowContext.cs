@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
-using System.IO;
 using System.Net.Http;
 using Azure.AI.Agents.Persistent;
 using Azure.Core;
@@ -50,11 +48,6 @@ public sealed class DeclarativeWorkflowContext
     /// Gets the <see cref="ILoggerFactory"/> used to create loggers for workflow components.
     /// </summary>
     public ILoggerFactory LoggerFactory { get; init; } = NullLoggerFactory.Instance;
-
-    /// <summary>
-    /// Gets the <see cref="TextWriter"/> used for activity output and diagnostics.
-    /// </summary>
-    public TextWriter ActivityChannel { get; init; } = TextWriter.Null;
 
     internal WorkflowExecutionContext CreateActionContext(string rootId, WorkflowScopes scopes) =>
         new(RecalcEngineFactory.Create(scopes, this.MaximumExpressionLength),

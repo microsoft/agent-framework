@@ -16,7 +16,6 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 {
     private readonly WorkflowBuilder _workflowBuilder;
     private readonly WorkflowModel _workflowModel;
-    private readonly DeclarativeWorkflowContext _workflowContext;
     private readonly WorkflowScopes _scopes;
     private readonly WorkflowExecutionContext _executionContext;
 
@@ -27,7 +26,6 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this._workflowModel = new WorkflowModel(rootAction);
         this._workflowBuilder = new WorkflowBuilder(rootAction);
-        this._workflowContext = workflowContext;
         this._scopes = scopes;
 
         this._executionContext = workflowContext.CreateActionContext(rootAction.Id, scopes);
@@ -250,7 +248,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        this.ContinueWith(new SendActivityExecutor(item, this._workflowContext.ActivityChannel));
+        this.ContinueWith(new SendActivityExecutor(item));
     }
 
     #region Not supported

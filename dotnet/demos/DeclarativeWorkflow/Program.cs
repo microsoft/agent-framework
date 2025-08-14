@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Azure.Identity;
 using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Declarative;
+using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.Diagnostics;
@@ -37,7 +38,6 @@ internal static class Program
             new()
             {
                 LoggerFactory = NullLoggerFactory.Instance,
-                ActivityChannel = System.Console.Out,
                 ProjectEndpoint = Throw.IfNull(config["AzureAI:Endpoint"]),
                 ProjectCredentials = new AzureCliCredential(),
             };
@@ -64,6 +64,38 @@ internal static class Program
             else if (evt is ExecutorCompleteEvent executorComplete)
             {
                 Debug.WriteLine($"!!! EXIT #{executorComplete.ExecutorId}");
+            }
+            else if (evt is DeclarativeWorkflowStreamEvent streamEvent)
+            {
+                //Console.WriteLine($"#{messageEvent.Data.MessageId}:{Environment.NewLine}{messageEvent.Data}"); // %%% TODO
+            }
+            else if (evt is DeclarativeWorkflowMessageEvent messageEvent)
+            {
+                try
+                {
+                    if (messageEvent.Data.MessageId is null)
+                    {
+                        Console.ForegroundColor = ConsoleColor.Yellow;
+                        Console.WriteLine(messageEvent.Data);
+                    }
+                    else
+                    {
+                        Console.ForegroundColor = ConsoleColor.Gray;
+                        Console.WriteLine($"#{messageEvent.Data.MessageId}:");
+                        Console.ForegroundColor = ConsoleColor.White;
+                        Console.WriteLine(messageEvent.Data);
+                        if (messageEvent.Usage is not null)
+                        {
+                            Console.ForegroundColor = ConsoleColor.DarkGray;
+                            Console.WriteLine($"[Tokens Total: {messageEvent.Usage.TotalTokenCount}, Input: {messageEvent.Usage.InputTokenCount}, Output: {messageEvent.Usage.OutputTokenCount}]");
+                        }
+                    }
+                    Console.WriteLine();
+                }
+                finally
+                {
+                    Console.ResetColor();
+                }
             }
         }
         //////////////////////////////////////////////

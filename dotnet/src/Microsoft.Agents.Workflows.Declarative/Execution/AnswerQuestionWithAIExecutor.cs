@@ -16,7 +16,7 @@ namespace Microsoft.Agents.Workflows.Declarative.Execution;
 
 internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model) : WorkflowActionExecutor<AnswerQuestionWithAI>(model)
 {
-    protected override async ValueTask ExecuteAsync(CancellationToken cancellationToken)
+    protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         PropertyPath variablePath = Throw.IfNull(this.Model.Variable?.Path, $"{nameof(this.Model)}.{nameof(this.Model.Variable)}");
         StringExpression userInputExpression = Throw.IfNull(this.Model.UserInput, $"{nameof(this.Model)}.{nameof(this.Model.UserInput)}");
@@ -38,11 +38,16 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model) :
                 {
                     Instructions = this.Context.Engine.Format(this.Model.AdditionalInstructions) ?? string.Empty,
                 });
-        AgentRunResponse response =
+        AgentRunResponse agentResponse =
             userInput != null ?
                 await agent.RunAsync(userInput, thread: null, options, cancellationToken).ConfigureAwait(false) :
                 await agent.RunAsync(thread: null, options, cancellationToken).ConfigureAwait(false);
-        StringValue responseValue = FormulaValue.New(response.Messages.Last().ToString());
+
+        ChatMessage response = agentResponse.Messages.Last();
+
+        await context.AddEventAsync(new DeclarativeWorkflowMessageEvent(response, agentResponse.Usage)).ConfigureAwait(false);
+
+        StringValue responseValue = FormulaValue.New(response.ToString()); // %%% CPS - AgentMessageType
 
         this.AssignTarget(this.Context, variablePath, responseValue);
     }

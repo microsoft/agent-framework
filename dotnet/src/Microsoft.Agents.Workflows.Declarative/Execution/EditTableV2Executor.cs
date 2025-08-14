@@ -15,7 +15,7 @@ namespace Microsoft.Agents.Workflows.Declarative.Execution;
 
 internal sealed class EditTableV2Executor(EditTableV2 model) : WorkflowActionExecutor<EditTableV2>(model)
 {
-    protected async override ValueTask ExecuteAsync(CancellationToken cancellationToken)
+    protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         PropertyPath variablePath = Throw.IfNull(this.Model.ItemsVariable?.Path, $"{nameof(this.Model)}.{nameof(this.Model.ItemsVariable)}");
 

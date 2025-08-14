@@ -8,17 +8,12 @@ namespace Microsoft.Agents.Workflows.Declarative.Execution;
 
 internal sealed class ConditionGroupExecutor : WorkflowActionExecutor<ConditionGroup>
 {
-    public static class Steps
-    {
-        public static string End(string id) => $"{id}_{nameof(End)}";
-    }
-
     public ConditionGroupExecutor(ConditionGroup model)
         : base(model)
     {
     }
 
-    protected override ValueTask ExecuteAsync(CancellationToken cancellationToken)
+    protected override ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         return new ValueTask();
     }

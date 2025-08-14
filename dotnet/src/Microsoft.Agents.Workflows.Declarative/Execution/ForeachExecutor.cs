@@ -32,7 +32,7 @@ internal sealed class ForeachExecutor : WorkflowActionExecutor<Foreach>
 
     public bool HasValue { get; private set; }
 
-    protected override ValueTask ExecuteAsync(CancellationToken cancellationToken)
+    protected override ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         this._index = 0;
 

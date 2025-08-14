@@ -59,7 +59,6 @@ public class Workflows_Declarative(ITestOutputHelper output) : OrchestrationSamp
                 {
                     HttpClient = customClient,
                     LoggerFactory = this.LoggerFactory,
-                    ActivityChannel = System.Console.Out,
                     ProjectEndpoint = Throw.IfNull(TestConfiguration.AzureAI.Endpoint),
                     ProjectCredentials = new AzureCliCredential(),
                 };
@@ -83,8 +82,25 @@ public class Workflows_Declarative(ITestOutputHelper output) : OrchestrationSamp
                 {
                     Debug.WriteLine($"!!! EXIT #{executorComplete.ExecutorId}");
                 }
+                else if (evt is DeclarativeWorkflowMessageEvent messageEvent)
+                {
+                    if (messageEvent.Data.MessageId is null)
+                    {
+                        Console.WriteLine(messageEvent.Data);
+                    }
+                    else
+                    {
+                        Console.WriteLine($"#{messageEvent.Data.MessageId}:");
+                        Console.WriteLine(messageEvent.Data);
+                        if (messageEvent.Usage is not null)
+                        {
+                            Console.WriteLine($"[Tokens Total: {messageEvent.Usage.TotalTokenCount}, Input: {messageEvent.Usage.InputTokenCount}, Output: {messageEvent.Usage.OutputTokenCount}]");
+                        }
+                        Console.WriteLine();
+                    }
+                }
+                Debug.WriteLine("\nWORKFLOW DONE");
             }
-            Debug.WriteLine("\nWORKFLOW DONE");
         }
         finally
         {

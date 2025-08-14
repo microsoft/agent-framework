@@ -12,7 +12,7 @@ namespace Microsoft.Agents.Workflows.Declarative.Execution;
 
 internal sealed class SetVariableExecutor(SetVariable model) : WorkflowActionExecutor<SetVariable>(model)
 {
-    protected override ValueTask ExecuteAsync(CancellationToken cancellationToken)
+    protected override ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         PropertyPath variablePath = Throw.IfNull(this.Model.Variable?.Path, $"{nameof(this.Model)}.{nameof(model.Variable)}");
 
