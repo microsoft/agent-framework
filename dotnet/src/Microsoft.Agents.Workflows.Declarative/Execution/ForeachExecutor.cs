@@ -44,36 +44,44 @@ internal sealed class ForeachExecutor : WorkflowActionExecutor<Foreach>
         else
         {
             EvaluationResult<DataValue> result = this.Context.ExpressionEngine.GetValue(this.Model.Items, this.Context.Scopes);
-            TableDataValue tableValue = (TableDataValue)result.Value; // %%% CAST - TYPE ASSUMPTION (TableDataValue)
-            this._values = [.. tableValue.Values.Select(value => value.Properties.Values.First().ToFormulaValue())];
+            if (result.Value is TableDataValue tableValue)
+            {
+                this._values = [.. tableValue.Values.Select(value => value.Properties.Values.First().ToFormulaValue())];
+            }
+            else
+            {
+                this._values = [result.Value.ToFormulaValue()];
+            }
         }
+
+        this.Reset();
 
         return new ValueTask();
     }
 
-    public void TakeNext(WorkflowExecutionContext context)
+    public void TakeNext()
     {
         if (this.HasValue = this._index < this._values.Length)
         {
             FormulaValue value = this._values[this._index];
 
-            context.Engine.SetScopedVariable(context.Scopes, Throw.IfNull(this.Model.Value), value);
+            this.Context.Engine.SetScopedVariable(this.Context.Scopes, Throw.IfNull(this.Model.Value), value);
 
             if (this.Model.Index is not null)
             {
-                context.Engine.SetScopedVariable(context.Scopes, this.Model.Index.Path, FormulaValue.New(this._index));
+                this.Context.Engine.SetScopedVariable(this.Context.Scopes, this.Model.Index.Path, FormulaValue.New(this._index));
             }
 
             this._index++;
         }
     }
 
-    //public void Reset(WorkflowExecutionContext context) // %%% NEEDED
-    //{
-    //    context.Engine.ClearScopedVariable(context.Scopes, Throw.IfNull(this.Model.Value));
-    //    if (this.Model.Index is not null)
-    //    {
-    //        context.Engine.ClearScopedVariable(context.Scopes, this.Model.Index);
-    //    }
-    //}
+    public void Reset()
+    {
+        this.Context.Engine.ClearScopedVariable(this.Context.Scopes, Throw.IfNull(this.Model.Value));
+        if (this.Model.Index is not null)
+        {
+            this.Context.Engine.ClearScopedVariable(this.Context.Scopes, this.Model.Index);
+        }
+    }
 }

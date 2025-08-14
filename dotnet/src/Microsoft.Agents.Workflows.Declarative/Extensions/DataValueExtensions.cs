@@ -23,8 +23,8 @@ internal static class BotElementExtensions
             TimeDataValue timeValue => FormulaValue.New(timeValue.Value),
             TableDataValue tableValue => FormulaValue.NewTable(tableValue.Values.First().ParseRecordType(), tableValue.Values.Select(value => value.ToRecordValue())),
             RecordDataValue recordValue => recordValue.ToRecordValue(),
+            OptionDataValue optionValue => FormulaValue.New(optionValue.Value.Value),
             //FileDataValue // %%% SUPPORT ???
-            //OptionDataValue // %%% SUPPORT - Enum ???
             _ => FormulaValue.NewError(new Microsoft.PowerFx.ExpressionError { Message = $"Unknown literal type: {value.GetType().Name}" }),
         };
 
@@ -39,10 +39,10 @@ internal static class BotElementExtensions
             DateTimeDataType => FormulaType.DateTime,
             DateDataType => FormulaType.Date,
             TimeDataType => FormulaType.Time,
-            //TableDataType => new TableType(), %%% ELEMENT TYPE
             RecordDataType => RecordType.Empty(),
+            //TableDataType => new TableType(), // %%% SUPPORT ??? NEED ELEMENT TYPE
             //FileDataType // %%% SUPPORT ???
-            //OptionDataType // %%% SUPPORT - Enum ???
+            OptionSetDataType => FormulaType.String,
             DataType dataType => FormulaType.Blank,
         };
 

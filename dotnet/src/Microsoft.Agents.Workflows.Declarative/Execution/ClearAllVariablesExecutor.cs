@@ -43,7 +43,7 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : Workf
 
         public void HandleUserScopedVariables()
         {
-            context.Engine.ClearScope(context.Scopes, WorkflowScopeType.Env);
+            context.Engine.ClearScope(context.Scopes, WorkflowScopeType.Env); // %%% CORRECT ???
         }
     }
 }

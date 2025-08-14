@@ -148,7 +148,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         void CompletionHandler()
         {
             string completionId = ForeachExecutor.Steps.End(action.Id);
-            this.ContinueWith(this.CreateStep(completionId, $"{nameof(ForeachExecutor)}_End"), action.Id);
+            this.ContinueWith(this.CreateStep(completionId, $"{nameof(ForeachExecutor)}_End", action.Reset), action.Id);
             this._workflowModel.AddLink(completionId, loopId);
         }
     }
@@ -461,13 +461,13 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         return restartId;
     }
 
-    private WorkflowDelegateExecutor CreateStep(string actionId, string name, Action<WorkflowExecutionContext>? stepAction = null)
+    private WorkflowDelegateExecutor CreateStep(string actionId, string name, Action? stepAction = null)
     {
         WorkflowDelegateExecutor stepExecutor =
             new(actionId,
                 () =>
                 {
-                    stepAction?.Invoke(this._executionContext);
+                    stepAction?.Invoke();
                     return new ValueTask();
                 });
 
