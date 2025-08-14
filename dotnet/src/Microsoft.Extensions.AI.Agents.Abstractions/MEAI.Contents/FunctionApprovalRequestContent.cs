@@ -31,7 +31,7 @@ public class FunctionApprovalRequestContent : UserInputRequestContent
     /// <returns>The <see cref="FunctionApprovalResponseContent"/> representing the approval response.</returns>
     public FunctionApprovalResponseContent CreateApproval()
     {
-        return new FunctionApprovalResponseContent(this.Id, true, this.FunctionCall) { OriginalMessageMetadata = this.OriginalMessageMetadata };
+        return new FunctionApprovalResponseContent(this.Id, true, this.FunctionCall);
     }
 
     /// <summary>
@@ -40,6 +40,6 @@ public class FunctionApprovalRequestContent : UserInputRequestContent
     /// <returns>The <see cref="FunctionApprovalResponseContent"/> representing the rejection response.</returns>
     public FunctionApprovalResponseContent CreateRejection()
     {
-        return new FunctionApprovalResponseContent(this.Id, false, this.FunctionCall) { OriginalMessageMetadata = this.OriginalMessageMetadata };
+        return new FunctionApprovalResponseContent(this.Id, false, this.FunctionCall);
     }
 }
