@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-namespace Microsoft.Agents.Workflows;
+namespace Microsoft.Agents.Workflows.Declarative;
 
 /// <summary>
 /// Base class for events that occur during the execution of a declarative workflow.

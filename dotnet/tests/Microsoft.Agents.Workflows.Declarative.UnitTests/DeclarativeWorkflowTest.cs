@@ -14,7 +14,7 @@ using Xunit.Abstractions;
 namespace Microsoft.Agents.Workflows.Declarative.UnitTests;
 
 /// <summary>
-/// Tests exeuction of workflow created by <see cref="DeclarativeWorkflowBuilder"/>.
+/// Tests execution of workflow created by <see cref="DeclarativeWorkflowBuilder"/>.
 /// </summary>
 public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : WorkflowTest(output)
 {
@@ -22,12 +22,14 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
 
     private ImmutableDictionary<Type, int> WorkflowEventCounts { get; set; } = ImmutableDictionary<Type, int>.Empty;
 
-    [Fact]
-    public async Task SingleAction()
+    [Theory]
+    [InlineData("BadEmpty.yaml")]
+    [InlineData("BadId.yaml")]
+    [InlineData("BadKind.yaml")]
+    public async Task InvalidWorkflow(string workflowFile)
     {
-        await this.RunWorkflow("Single.yaml");
-        this.AssertExecutionCount(expectedCount: 1);
-        this.AssertExecuted("end_all");
+        await Assert.ThrowsAsync<UnknownActionException>(() => this.RunWorkflow(workflowFile));
+        this.AssertNotExecuted("end_all");
     }
 
     [Fact]
@@ -79,7 +81,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     public async Task ConditionAction()
     {
         await this.RunWorkflow("Condition.yaml");
-        this.AssertExecutionCount(expectedCount: 16);
+        this.AssertExecutionCount(expectedCount: 9);
         this.AssertExecuted("setVariable_test");
         this.AssertExecuted("conditionGroup_test");
         this.AssertExecuted("conditionItem_even");
@@ -87,6 +89,20 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         this.AssertExecuted("end_all");
         this.AssertNotExecuted("conditionItem_odd");
         this.AssertNotExecuted("sendActivity_odd");
+    }
+
+    [Theory]
+    [InlineData("Single.yaml", 1, "end_all")]
+    [InlineData("EditTable.yaml", 2, "edit_var")]
+    [InlineData("ParseValue.yaml", 1, "parse_var")]
+    [InlineData("SetTextVariable.yaml", 1, "set_text")]
+    [InlineData("ClearAllVariables.yaml", 1, "clear_all")]
+    [InlineData("ResetVariable.yaml", 2, "clear_var")]
+    public async Task ExecuteAction(string workflowFile, int expectedCount, string expectedId)
+    {
+        await this.RunWorkflow(workflowFile);
+        this.AssertExecutionCount(expectedCount);
+        this.AssertExecuted(expectedId);
     }
 
     [Theory]

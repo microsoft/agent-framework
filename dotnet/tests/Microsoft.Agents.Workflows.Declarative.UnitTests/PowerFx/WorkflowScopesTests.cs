@@ -159,4 +159,26 @@ public class WorkflowScopesTests
         FormulaValue result = scopes.Get("key1", WorkflowScopeType.Topic);
         Assert.Equal(newValue, result);
     }
+
+    [Fact]
+    public void RemoveSpecifiedScope()
+    {
+        // Arrange
+        WorkflowScopes scopes = new();
+        FormulaValue testValue = FormulaValue.New("test");
+
+        // Act
+        scopes.Set("key1", testValue);
+
+        // Assert
+        FormulaValue result = scopes.Get("key1");
+        Assert.Equal(testValue, result);
+
+        // Act
+        scopes.Remove("key1");
+
+        // Assert
+        FormulaValue resultBlank = scopes.Get("key1");
+        Assert.IsType<BlankValue>(resultBlank);
+    }
 }

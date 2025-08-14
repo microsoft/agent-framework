@@ -21,7 +21,7 @@ internal static class BotElementExtensions
             DateTimeDataValue dateTimeValue => FormulaValue.New(dateTimeValue.Value.DateTime),
             DateDataValue dateValue => FormulaValue.NewDateOnly(dateValue.Value),
             TimeDataValue timeValue => FormulaValue.New(timeValue.Value),
-            TableDataValue tableValue => FormulaValue.NewTable(tableValue.Values.First().ParseRecordType(), tableValue.Values.Select(value => value.ToRecordValue())),
+            TableDataValue tableValue => FormulaValue.NewTable(tableValue.Values.First().ParseRecordType(), tableValue.Values.Select(value => value.ToRecordValue())), // %%% FAILS FOR EMPTY TABLE
             RecordDataValue recordValue => recordValue.ToRecordValue(),
             OptionDataValue optionValue => FormulaValue.New(optionValue.Value.Value),
             //FileDataValue // %%% SUPPORT ???

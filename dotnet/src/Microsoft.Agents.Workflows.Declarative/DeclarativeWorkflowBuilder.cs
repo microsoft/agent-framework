@@ -19,16 +19,15 @@ public static class DeclarativeWorkflowBuilder
     /// Builds a process from the provided YAML definition of a CPS Topic ObjectModel.
     /// </summary>
     /// <param name="yamlReader">The reader that provides the workflow object model YAML.</param>
-    /// <param name="context">The hosting context for the workflow.</param>
+    /// <param name="context">The execution context for the workflow.</param>
     /// <returns>The <see cref="Workflow"/> that corresponds with the YAML object model.</returns>
-    public static Workflow<string> Build(TextReader yamlReader, DeclarativeWorkflowContext? context = null)
+    public static Workflow<string> Build(TextReader yamlReader, DeclarativeWorkflowContext context)
     {
         Debug.WriteLine("@ PARSING YAML");
         BotElement rootElement = YamlSerializer.Deserialize<BotElement>(yamlReader) ?? throw new UnknownActionException("Unable to parse workflow.");
         string rootId = $"root_{GetRootId(rootElement)}";
 
         Debug.WriteLine("@ INITIALIZING BUILDER");
-        context ??= DeclarativeWorkflowContext.Default;
         WorkflowScopes scopes = new();
         DeclarativeWorkflowExecutor rootExecutor = new(rootId, scopes);
 

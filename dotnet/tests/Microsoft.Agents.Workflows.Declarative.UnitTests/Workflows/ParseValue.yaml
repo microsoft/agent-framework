@@ -1,0 +1,11 @@
+kind: AdaptiveDialog
+beginDialog:
+  kind: OnActivity
+  id: my_workflow
+  type: Message
+  actions:
+    - kind: ParseValue
+      id: parse_var
+      variable: Topic.MyVar
+      value: "42"
+      valueType: Number

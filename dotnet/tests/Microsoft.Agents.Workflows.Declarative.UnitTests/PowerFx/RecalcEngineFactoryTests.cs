@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.PowerFx;
 using Xunit.Abstractions;
 
@@ -48,7 +49,11 @@ public class RecalcEngineFactoryTests(ITestOutputHelper output) : RecalcEngineTe
     public void HasCorrectMaximumExpressionLength()
     {
         // Arrange
-        RecalcEngine engine = this.CreateEngine(2000);
+        RecalcEngine engine = RecalcEngineFactory.Create(this.Scopes, 2000, 3);
+
+        // Assert
+        Assert.Equal(2000, engine.Config.MaximumExpressionLength);
+        Assert.Equal(3, engine.Config.MaxCallDepth);
 
         // Act: Create a long expression that is within the limit
         string goodExpression = string.Concat(GenerateExpression(999));

@@ -234,7 +234,7 @@ internal class WorkflowExpressionEngine : IExpressionEngine
 
         if (expressionResult.Value is not RecordValue formulaValue)
         {
-            throw new CannotParseObjectExpressionOutputException(typeof(TValue), expressionResult.Value.GetDataType());
+            throw new InvalidExpressionOutputTypeException(expressionResult.Value.GetDataType(), DataType.TableFromEnumerable<TValue>());
         }
 
         try
@@ -274,12 +274,12 @@ internal class WorkflowExpressionEngine : IExpressionEngine
     {
         if (value is BlankValue)
         {
-            return ImmutableArray.Create<TValue>();
+            return ImmutableArray<TValue>.Empty;
         }
 
         if (value is not TableValue tableValue)
         {
-            throw new CannotParseObjectExpressionOutputException(typeof(ImmutableArray<TValue>), value.GetDataType());
+            throw new InvalidExpressionOutputTypeException(value.GetDataType(), DataType.TableFromEnumerable<TValue>());
         }
 
         TableDataValue tableDataValue = tableValue.ToDataValue();

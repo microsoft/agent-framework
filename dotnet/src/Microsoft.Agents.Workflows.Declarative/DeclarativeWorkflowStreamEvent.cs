@@ -2,7 +2,7 @@
 
 using Microsoft.Extensions.AI;
 
-namespace Microsoft.Agents.Workflows;
+namespace Microsoft.Agents.Workflows.Declarative;
 
 /// <summary>
 /// Event that represents a streamed message produced by a declarative workflow.

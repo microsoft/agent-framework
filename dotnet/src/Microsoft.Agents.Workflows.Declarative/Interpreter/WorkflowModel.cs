@@ -14,10 +14,8 @@ internal sealed class WorkflowModel
 {
     public WorkflowModel(ExecutorIsh rootStep)
     {
-        this.RootNode = this.DefineNode(rootStep);
+        this.DefineNode(rootStep);
     }
-
-    private ModelNode RootNode { get; }
 
     private Dictionary<string, ModelNode> Nodes { get; } = [];
 
