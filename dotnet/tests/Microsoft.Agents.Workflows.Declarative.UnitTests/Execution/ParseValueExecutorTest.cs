@@ -17,10 +17,18 @@ public sealed class ParseValueExecutorTest(ITestOutputHelper output) : WorkflowA
     public async Task ParseTable()
     {
         // Arrange
+        RecordDataType.Builder recordBuilder =
+            new()
+            {
+                Properties =
+                {
+                    {"key1", new PropertyInfo.Builder() { Type = DataType.String } },
+                }
+            };
         ParseValue model =
             this.CreateModel(
                 this.FormatDisplayName(nameof(ParseTable)),
-                new RecordDataType.Builder(),
+                recordBuilder,
                 @"{ ""key1"": ""val1"" }");
 
         // Act
@@ -40,7 +48,7 @@ public sealed class ParseValueExecutorTest(ITestOutputHelper output) : WorkflowA
             this.CreateModel(
                 this.FormatDisplayName(nameof(ParseTable)),
                 new BooleanDataType.Builder(),
-                "true");
+                "True");
 
         // Act
         ParseValueExecutor action = new(model);

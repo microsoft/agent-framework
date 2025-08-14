@@ -4,6 +4,7 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Execution;
+using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -44,7 +45,7 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
     internal void VerifyState(string variableName, WorkflowScopeType scope, FormulaValue expectedValue)
     {
         FormulaValue actualValue = this.Scopes.Get(variableName, scope);
-        Assert.Equivalent(expectedValue, actualValue);
+        Assert.Equal(expectedValue.Format(), actualValue.Format());
     }
 
     protected void VerifyUndefined(string variableName) => this.VerifyUndefined(variableName, WorkflowScopeType.Topic);
