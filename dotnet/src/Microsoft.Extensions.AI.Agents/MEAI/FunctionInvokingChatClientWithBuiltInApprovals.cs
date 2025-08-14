@@ -413,18 +413,21 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
         // message with multiple content items. We could also use different message IDs per tool content,
         // but there's no benefit to doing so.
         string toolResponseId = Guid.NewGuid().ToString("N");
+
+        // We also need a synthetic ID for the function call content for approved function calls
+        // where we don't know what the original message id of the function call was.
         string functionCallContentFallbackMessageId = Guid.NewGuid().ToString("N");
 
         ApprovalRequiredAIFunction[]? approvalRequiredFunctions = (options?.Tools ?? []).Concat(AdditionalTools ?? []).OfType<ApprovalRequiredAIFunction>().ToArray();
-        bool hasApprovalRequiringFunctions = (options?.Tools is { Count: > 0 } || AdditionalTools is { Count: > 0 }) && approvalRequiredFunctions.Length > 0;
+        bool hasApprovalRequiringFunctions = approvalRequiredFunctions.Length > 0;
 
         var shouldTerminateFromPreInvocationFunctionCalls = false;
 
-        // We should maintain a list of chat messages that need to be returned to the caller
-        // as part of the next response that were generated before the first iteration.
+        // We should maintain a list of chat messages that were generated before the first iteration
+        // and that need to be returned to the caller as part of the next response.
         List<ChatMessage>? augmentedPreInvocationHistory = null;
 
-        // Remove any approval requests and approval request/response pairs that have already been executed.
+        // Extract and remove any approval requests and approval request/response pairs that have already been executed.
         var notExecutedResponses = ProcessApprovalRequestsAndResponses(originalMessages);
 
         // Generate failed function result contents for any rejected requests.
@@ -464,20 +467,7 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
         {
             foreach (var message in augmentedPreInvocationHistory ?? [])
             {
-                var toolResultUpdate = new ChatResponseUpdate
-                {
-                    AdditionalProperties = message.AdditionalProperties,
-                    AuthorName = message.AuthorName,
-                    ConversationId = options?.ConversationId,
-                    CreatedAt = DateTimeOffset.UtcNow,
-                    Contents = message.Contents,
-                    RawRepresentation = message.RawRepresentation,
-                    ResponseId = message.MessageId,
-                    MessageId = message.MessageId,
-                    Role = message.Role,
-                };
-
-                yield return toolResultUpdate;
+                yield return ConvertToolResultMessageToUpdate(message, options?.ConversationId, message.MessageId);
                 Activity.Current = activity; // workaround for https://github.com/dotnet/runtime/issues/47802
             }
         }
@@ -533,6 +523,7 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
                     // we can yield the update as-is.
                     lastYieldedUpdateIndex++;
                     yield return update;
+                    Activity.Current = activity; // workaround for https://github.com/dotnet/runtime/issues/47802
                 }
                 else
                 {
@@ -565,6 +556,7 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
                                 }
                             }
                             yield return updateToYield;
+                            Activity.Current = activity; // workaround for https://github.com/dotnet/runtime/issues/47802
                         }
                     }
                     else
@@ -572,6 +564,8 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
                         // We don't have any appoval requiring function calls yet, but we may receive some in future
                         // so we cannot yield the updates yet. We'll just keep them in the updates list
                         // for later.
+                        // We will yield the updates as soon as we receive a function call content that requires approval or
+                        // when we reach the end of the updates stream.
                     }
                 }
                 // ** Approvals modifications - end **//
@@ -615,20 +609,7 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
             // includes all activities, including generated function results.
             foreach (var message in modeAndMessages.MessagesAdded)
             {
-                var toolResultUpdate = new ChatResponseUpdate
-                {
-                    AdditionalProperties = message.AdditionalProperties,
-                    AuthorName = message.AuthorName,
-                    ConversationId = response.ConversationId,
-                    CreatedAt = DateTimeOffset.UtcNow,
-                    Contents = message.Contents,
-                    RawRepresentation = message.RawRepresentation,
-                    ResponseId = toolResponseId,
-                    MessageId = toolResponseId, // See above for why this can be the same as ResponseId
-                    Role = message.Role,
-                };
-
-                yield return toolResultUpdate;
+                yield return ConvertToolResultMessageToUpdate(message, response.ConversationId, toolResponseId);
                 Activity.Current = activity; // workaround for https://github.com/dotnet/runtime/issues/47802
             }
 
@@ -1149,66 +1130,6 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
     }
 
     /// <summary>
-    /// If we have any rejected approval responses, we need to generate failed function results for them.
-    /// </summary>
-    /// <param name="rejections">Any rejected approval responses.</param>
-    /// <param name="toolResponseId">The message id to use for the tool response.</param>
-    /// <param name="fallbackMessageId">Optional message id to use if no original approval request message is availble to copy from.</param>
-    /// <param name="rejectedFunctionCallMessages">The function call and result content for the rejected calls.</param>
-    /// <param name="augmentedPreInvocationHistory">The list of messages generated before the first invocation, that need to be added to the user response.</param>
-    private static void GenerateRejectedFunctionResults(
-        List<ApprovalResultWithRequestMessage>? rejections,
-        string? toolResponseId,
-        string? fallbackMessageId,
-        ref List<ChatMessage>? rejectedFunctionCallMessages,
-        ref List<ChatMessage>? augmentedPreInvocationHistory)
-    {
-        if (rejections is { Count: > 0 })
-        {
-            rejectedFunctionCallMessages = [];
-            foreach (var rejectedCall in rejections)
-            {
-                // Create a FunctionResultContent for the rejected function call.
-                var functionResult = new FunctionResultContent(rejectedCall.Response.FunctionCall.CallId, "Error: Function invocation approval was not granted.");
-
-                rejectedFunctionCallMessages.Add(ConvertToFunctionCallContentMessage(rejectedCall, fallbackMessageId));
-                rejectedFunctionCallMessages.Add(new ChatMessage(ChatRole.Tool, [functionResult]) { MessageId = toolResponseId });
-            }
-
-            augmentedPreInvocationHistory ??= [];
-            augmentedPreInvocationHistory.AddRange(rejectedFunctionCallMessages);
-        }
-    }
-
-    private static ChatMessage ConvertToFunctionCallContentMessage(ApprovalResultWithRequestMessage resultWithRequestMessage, string? fallbackMessageId)
-    {
-        if (resultWithRequestMessage.RequestMessage is not null)
-        {
-            var functionCallMessage = resultWithRequestMessage.RequestMessage.Clone();
-            functionCallMessage.Contents = [resultWithRequestMessage.Response.FunctionCall];
-            functionCallMessage.MessageId ??= fallbackMessageId;
-            return functionCallMessage;
-        }
-
-        return new ChatMessage(ChatRole.Assistant, [resultWithRequestMessage.Response.FunctionCall]) { MessageId = fallbackMessageId };
-    }
-
-    /// <summary>
-    /// Insert the given <paramref name="augmentedPreInvocationHistory"/> at the start of the <paramref name="response"/>'s messages.
-    /// </summary>
-    private static void UpdateResponseWithPreInvocationHistory(ChatResponse response, List<ChatMessage>? augmentedPreInvocationHistory)
-    {
-        if (augmentedPreInvocationHistory?.Count > 0)
-        {
-            // Since these messages are pre-invocation, we want to insert them at the start of the response messages.
-            for (int i = augmentedPreInvocationHistory.Count - 1; i >= 0; i--)
-            {
-                response.Messages.Insert(0, augmentedPreInvocationHistory[i]);
-            }
-        }
-    }
-
-    /// <summary>
     /// This method extracts the approval requests and responses from the provided list of messages, validates them, filters them to ones that require execution and splits them into approved and rejected.
     /// </summary>
     /// <remarks>
@@ -1341,26 +1262,75 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
         return (notExecutedApprovedFunctionCalls, notExecutedRejectedFunctionCalls);
     }
 
-    /// <summary>Replaces any <see cref="FunctionCallContent"/> from <paramref name="messages"/> with <see cref="FunctionApprovalRequestContent"/>.</summary>
+    /// <summary>
+    /// If we have any rejected approval responses, we need to generate failed function results for them.
+    /// </summary>
+    /// <param name="rejections">Any rejected approval responses.</param>
+    /// <param name="toolResponseId">The message id to use for the tool response.</param>
+    /// <param name="fallbackMessageId">Optional message id to use if no original approval request message is availble to copy from.</param>
+    /// <param name="rejectedFunctionCallMessages">The function call and result content for the rejected calls.</param>
+    /// <param name="augmentedPreInvocationHistory">The list of messages generated before the first invocation, that need to be added to the user response.</param>
+    private static void GenerateRejectedFunctionResults(
+        List<ApprovalResultWithRequestMessage>? rejections,
+        string? toolResponseId,
+        string? fallbackMessageId,
+        ref List<ChatMessage>? rejectedFunctionCallMessages,
+        ref List<ChatMessage>? augmentedPreInvocationHistory)
+    {
+        if (rejections is { Count: > 0 })
+        {
+            rejectedFunctionCallMessages = [];
+            foreach (var rejectedCall in rejections)
+            {
+                // We want to add the original FunctionCallContent that was replaced with an ApprovalRequest back into the chat history as well
+                // otherwise we would have an ApprovalRequest, ApprovalResponse and FunctionResultContent, but no FunctionCallContent matching the FunctionResultContent.
+                rejectedFunctionCallMessages.Add(ConvertToFunctionCallContentMessage(rejectedCall, fallbackMessageId));
+
+                // Create a FunctionResultContent for the rejected function call.
+                var functionResult = new FunctionResultContent(rejectedCall.Response.FunctionCall.CallId, "Error: Function invocation approval was not granted.");
+                rejectedFunctionCallMessages.Add(new ChatMessage(ChatRole.Tool, [functionResult]) { MessageId = toolResponseId });
+            }
+
+            augmentedPreInvocationHistory ??= [];
+            augmentedPreInvocationHistory.AddRange(rejectedFunctionCallMessages);
+        }
+    }
+
+    private static ChatMessage ConvertToFunctionCallContentMessage(ApprovalResultWithRequestMessage resultWithRequestMessage, string? fallbackMessageId)
+    {
+        if (resultWithRequestMessage.RequestMessage is not null)
+        {
+            var functionCallMessage = resultWithRequestMessage.RequestMessage.Clone();
+            functionCallMessage.Contents = [resultWithRequestMessage.Response.FunctionCall];
+            functionCallMessage.MessageId ??= fallbackMessageId;
+            return functionCallMessage;
+        }
+
+        return new ChatMessage(ChatRole.Assistant, [resultWithRequestMessage.Response.FunctionCall]) { MessageId = fallbackMessageId };
+    }
+
+    /// <summary>
+    /// Replaces all <see cref="FunctionCallContent"/> from <paramref name="messages"/> with <see cref="FunctionApprovalRequestContent"/>
+    /// if any one of them requires approval.
+    /// </summary>
     private static async Task ReplaceFunctionCallsWithApprovalRequests(IList<ChatMessage> messages, IList<AITool>? requestOptionsTools, IList<AITool>? additionalTools)
     {
-        bool anyApprovalRequired = false;
-        List<(int, int)>? functionsToReplace = null;
-
         ApprovalRequiredAIFunction[]? approvalRequiredFunctions = null;
 
-        int count = messages.Count;
-        for (int i = 0; i < count; i++)
+        bool anyApprovalRequired = false;
+        List<(int, int)>? allFunctionCallContentIndices = null;
+
+        // Build a list of the indices of all FunctionCallContent items.
+        // Also check if any of them require approval.
+        for (int i = 0; i < messages.Count; i++)
         {
             var content = messages[i].Contents;
-            int contentCount = content.Count;
-
-            for (int j = 0; j < contentCount; j++)
+            for (int j = 0; j < content.Count; j++)
             {
                 if (content[j] is FunctionCallContent functionCall)
                 {
-                    functionsToReplace ??= [];
-                    functionsToReplace.Add((i, j));
+                    allFunctionCallContentIndices ??= [];
+                    allFunctionCallContentIndices.Add((i, j));
 
                     approvalRequiredFunctions ??= (requestOptionsTools ?? []).Concat(additionalTools ?? [])
                         .OfType<ApprovalRequiredAIFunction>()
@@ -1373,15 +1343,46 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
 
         // If any function calls were found, and any of them required approval, we should replace all of them with approval requests.
         // This is because we do not have a way to deal with cases where some function calls require approval and others do not, so we just replace all of them.
-        if (functionsToReplace is not null && anyApprovalRequired)
+        if (allFunctionCallContentIndices is not null && anyApprovalRequired)
         {
-            foreach (var (messageIndex, contentIndex) in functionsToReplace)
+            foreach (var (messageIndex, contentIndex) in allFunctionCallContentIndices)
             {
                 var message = messages[messageIndex];
                 var functionCall = (FunctionCallContent)message.Contents[contentIndex];
                 message.Contents[contentIndex] = new FunctionApprovalRequestContent(functionCall.CallId, functionCall);
             }
         }
+    }
+
+    /// <summary>
+    /// Insert the given <paramref name="augmentedPreInvocationHistory"/> at the start of the <paramref name="response"/>'s messages.
+    /// </summary>
+    private static void UpdateResponseWithPreInvocationHistory(ChatResponse response, List<ChatMessage>? augmentedPreInvocationHistory)
+    {
+        if (augmentedPreInvocationHistory?.Count > 0)
+        {
+            // Since these messages are pre-invocation, we want to insert them at the start of the response messages.
+            for (int i = augmentedPreInvocationHistory.Count - 1; i >= 0; i--)
+            {
+                response.Messages.Insert(0, augmentedPreInvocationHistory[i]);
+            }
+        }
+    }
+
+    private static ChatResponseUpdate ConvertToolResultMessageToUpdate(ChatMessage message, string? converationId, string? messageId)
+    {
+        return new()
+        {
+            AdditionalProperties = message.AdditionalProperties,
+            AuthorName = message.AuthorName,
+            ConversationId = converationId,
+            CreatedAt = DateTimeOffset.UtcNow,
+            Contents = message.Contents,
+            RawRepresentation = message.RawRepresentation,
+            ResponseId = messageId,
+            MessageId = messageId,
+            Role = message.Role,
+        };
     }
 
     private static TimeSpan GetElapsedTime(long startingTimestamp) =>
