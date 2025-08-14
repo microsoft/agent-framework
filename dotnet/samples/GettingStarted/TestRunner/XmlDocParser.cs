@@ -157,7 +157,10 @@ public static partial class XmlDocParser
             }
         }
 
-        return type.FullName ?? type.Name;
+        // XML documentation uses . for nested types, but Type.FullName uses +
+        // So we need to convert + to . for XML documentation lookup
+        var fullName = type.FullName ?? type.Name;
+        return fullName.Replace('+', '.');
     }
 
     /// <summary>
