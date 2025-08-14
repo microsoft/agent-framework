@@ -36,6 +36,7 @@ public class ConfigurationManager
                 {
                     Key = key,
                     FriendlyName = ConfigurationKeyExtractor.GetFriendlyDescription(key),
+                    DetailedDescription = ConfigurationKeyExtractor.GetDetailedDescription(key),
                     IsRequired = true,
                     IsSecret = ConfigurationKeyExtractor.IsSecretKey(key)
                 });
@@ -60,11 +61,12 @@ public class ConfigurationManager
         // Save to user secrets
         foreach (var kvp in configValues)
         {
-            var success = await this.SetUserSecretAsync(kvp.Key, kvp.Value);
+            var (success, errorMessage) = await this.SetUserSecretAsync(kvp.Key, kvp.Value);
             if (!success)
             {
                 result.Success = false;
                 result.FailedKeys.Add(kvp.Key);
+                result.ErrorMessages.Add($"{kvp.Key}: {errorMessage}");
             }
         }
 
@@ -97,6 +99,7 @@ public class ConfigurationManager
                 IsRequired = isRequired,
                 CurrentValue = currentValue,
                 FriendlyName = ConfigurationKeyExtractor.GetFriendlyDescription(key),
+                DetailedDescription = ConfigurationKeyExtractor.GetDetailedDescription(key),
                 IsSecret = ConfigurationKeyExtractor.IsSecretKey(key)
             });
         }
@@ -121,7 +124,8 @@ public class ConfigurationManager
             IsRequired = isRequired,
             IsSecret = isSecret,
             CurrentValue = currentValue,
-            FriendlyName = ConfigurationKeyExtractor.GetFriendlyDescription(key)
+            FriendlyName = ConfigurationKeyExtractor.GetFriendlyDescription(key),
+            DetailedDescription = ConfigurationKeyExtractor.GetDetailedDescription(key)
         };
     }
 
@@ -130,7 +134,7 @@ public class ConfigurationManager
     /// </summary>
     public async Task<bool> UpdateConfigurationValueAsync(string configKey, string value)
     {
-        var success = await this.SetUserSecretAsync(configKey, value);
+        var (success, errorMessage) = await this.SetUserSecretAsync(configKey, value);
         if (success)
         {
             this.RefreshConfiguration();
@@ -154,7 +158,7 @@ public class ConfigurationManager
     /// <summary>
     /// Sets a user secret using dotnet CLI.
     /// </summary>
-    private async Task<bool> SetUserSecretAsync(string key, string value)
+    private async Task<(bool Success, string ErrorMessage)> SetUserSecretAsync(string key, string value)
     {
         try
         {
@@ -171,20 +175,27 @@ public class ConfigurationManager
             using var process = Process.Start(startInfo);
             if (process == null)
             {
-                return false;
+                return (false, "Failed to start dotnet process");
             }
 
 #if !NET8_0_OR_GREATER
             process.WaitForExit();
+            var errorOutput = process.StandardError.ReadToEnd();
 #else
             await process.WaitForExitAsync();
+            var errorOutput = await process.StandardError.ReadToEndAsync();
 #endif
 
-            return process.ExitCode == 0;
+            if (process.ExitCode == 0)
+            {
+                return (true, string.Empty);
+            }
+
+            return (false, string.IsNullOrEmpty(errorOutput) ? $"Process exited with code {process.ExitCode}" : errorOutput);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            return false;
+            return (false, ex.Message);
         }
     }
 

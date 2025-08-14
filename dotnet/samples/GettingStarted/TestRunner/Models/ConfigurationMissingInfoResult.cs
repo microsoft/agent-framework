@@ -9,6 +9,7 @@ public class ConfigurationMissingInfoResult
 {
     public string Key { get; set; } = string.Empty;
     public string FriendlyName { get; set; } = string.Empty;
+    public string DetailedDescription { get; set; } = string.Empty;
     public bool IsRequired { get; set; }
     public bool IsSecret { get; set; }
 }

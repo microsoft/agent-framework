@@ -13,4 +13,5 @@ public class ConfigurationKeyInfo
     public bool IsSecret { get; set; }
     public string CurrentValue { get; set; } = string.Empty;
     public string FriendlyName { get; set; } = string.Empty;
+    public string DetailedDescription { get; set; } = string.Empty;
 }

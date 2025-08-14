@@ -9,4 +9,5 @@ public class ConfigurationUpdateResult
 {
     public bool Success { get; set; }
     public List<string> FailedKeys { get; set; } = new();
+    public List<string> ErrorMessages { get; set; } = new();
 }

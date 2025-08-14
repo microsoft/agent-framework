@@ -481,9 +481,10 @@ public class ConsolePresentationService
             return true;
         }
 
-        foreach (var failedKey in result.FailedKeys)
+        AnsiConsole.MarkupLine("[red]Configuration setup failed. Please set up your configuration manually.[/]");
+        foreach (var errorMessage in result.ErrorMessages)
         {
-            AnsiConsole.MarkupLine($"[red]Failed to set {failedKey}[/]");
+            AnsiConsole.MarkupLine($"[red]Failed to set {errorMessage}[/]");
         }
         return false;
     }
@@ -622,6 +623,13 @@ public class ConsolePresentationService
         // Build prompt text with current value display
         string promptText;
         string? formatedValue = (configInfo.IsSecret) ? MaskSecret(currentValue) : currentValue;
+
+        // Show detailed description as contextual help if available
+        if (!string.IsNullOrEmpty(configInfo.DetailedDescription))
+        {
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine($"[white]{configInfo.DetailedDescription}[/]");
+        }
 
         promptText = $"[blue]Enter {configInfo.FriendlyName}:[/]";
         var prompt = new TextPrompt<string?>(promptText);

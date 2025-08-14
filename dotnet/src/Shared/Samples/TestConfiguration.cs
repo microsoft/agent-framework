@@ -24,12 +24,14 @@ public sealed class TestConfiguration
     public class OpenAIConfig
     {
         /// <summary>Gets or sets the identifier for the chat completion model used in the application.</summary>
-        [Description("OpenAI Chat Model")]
+        [DisplayName("OpenAI Chat Model")]
+        [Description("The OpenAI model identifier to use for chat completions (e.g., 'gpt-4o', 'gpt-5'). This determines which AI model will process your requests.")]
         [Required]
         public string ChatModelId { get; set; }
 
         /// <summary>Gets or sets the API key used for authentication with the OpenAI service.</summary>
-        [Description("OpenAI API Key")]
+        [DisplayName("OpenAI API Key")]
+        [Description("Your OpenAI API key for authentication. You can find this in your OpenAI account dashboard under API keys. Keep this secure as it provides access to your OpenAI account.")]
         [Required, Sensitive]
         public string ApiKey { get; set; }
     }
@@ -40,17 +42,20 @@ public sealed class TestConfiguration
     public class AzureOpenAIConfig
     {
         /// <summary>Gets the URI endpoint used to connect to the service.</summary>
-        [Description("Azure OpenAI Endpoint")]
+        [DisplayName("Azure OpenAI Endpoint")]
+        [Description("The endpoint URL for your Azure OpenAI service instance. This can be found in the Azure portal under your OpenAI resource (e.g., 'https://your-resource.openai.azure.com/').")]
         [Required, Sensitive]
         public Uri Endpoint { get; set; }
 
         /// <summary>Gets or sets the name of the deployment.</summary>
-        [Description("Azure OpenAI Deployment")]
+        [DisplayName("Azure OpenAI Deployment Name")]
+        [Description("The name of your model deployment in Azure OpenAI. This is the deployment you created for your specific model (e.g., 'gpt-4-deployment').")]
         [Required]
         public string DeploymentName { get; set; }
 
         /// <summary>Gets or sets the API key used for authentication with the OpenAI service.</summary>
-        [Description("Azure OpenAI API Key")]
+        [DisplayName("Azure OpenAI API Key")]
+        [Description("Your Azure OpenAI API key for authentication. This can be found in the Azure portal under your OpenAI resource's 'Keys and Endpoint' section. Leave empty to use Azure AD authentication.")]
         [Optional, Sensitive]
         public string? ApiKey { get; set; }
     }
@@ -59,12 +64,14 @@ public sealed class TestConfiguration
     public sealed class AzureAIConfig
     {
         /// <summary>Gets or sets the endpoint of Azure AI Foundry project.</summary>
-        [Description("Azure AI Foundry Project Endpoint")]
+        [DisplayName("Azure AI Foundry Project Endpoint")]
+        [Description("The endpoint URL for your Azure AI Foundry project. This can be found in the Azure AI Foundry portal under your project's overview page (e.g., 'https://your-project.cognitiveservices.azure.com/api/projects/your-project').")]
         [Required, Sensitive]
         public string Endpoint { get; set; }
 
         /// <summary>Gets or sets the name of the model deployment.</summary>
-        [Description("Azure AI Foundry Project Deployment Name")]
+        [DisplayName("Azure AI Foundry Deployment Name")]
+        [Description("The name of your model deployment in Azure AI Foundry. This is the deployment you created for your specific model within your AI Foundry project.")]
         [Required]
         public string DeploymentName { get; set; }
     }

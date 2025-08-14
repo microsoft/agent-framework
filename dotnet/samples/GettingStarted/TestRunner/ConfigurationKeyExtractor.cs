@@ -104,21 +104,29 @@ public static class ConfigurationKeyExtractor
     }
 
     /// <summary>
-    /// Gets the friendly description for a configuration key from its Description attribute.
+    /// Gets the friendly display name for a configuration key, prioritizing DisplayName over Description attribute.
     /// </summary>
-    /// <param name="key">The configuration key to get the description for.</param>
-    /// <returns>The friendly description or a formatted version of the property name.</returns>
+    /// <param name="key">The configuration key to get the display name for.</param>
+    /// <returns>The friendly display name or a formatted version of the property name.</returns>
     public static string GetFriendlyDescription(string key)
     {
         var propertyInfo = GetPropertyInfoFromKey(key);
-        var description = propertyInfo?.GetCustomAttribute<DescriptionAttribute>()?.Description;
 
+        // First try DisplayName attribute
+        var displayName = propertyInfo?.GetCustomAttribute<DisplayNameAttribute>()?.DisplayName;
+        if (!string.IsNullOrEmpty(displayName))
+        {
+            return displayName!;
+        }
+
+        // Fallback to Description attribute for backward compatibility
+        var description = propertyInfo?.GetCustomAttribute<DescriptionAttribute>()?.Description;
         if (!string.IsNullOrEmpty(description))
         {
             return description!;
         }
 
-        // Fallback: format the property name nicely
+        // Final fallback: format the property name nicely
         var parts = key.Split(':');
         if (parts.Length == 2)
         {
@@ -126,6 +134,19 @@ public static class ConfigurationKeyExtractor
         }
 
         return key ?? string.Empty;
+    }
+
+    /// <summary>
+    /// Gets the detailed description for a configuration key from its Description attribute.
+    /// </summary>
+    /// <param name="key">The configuration key to get the detailed description for.</param>
+    /// <returns>The detailed description or an empty string if not available.</returns>
+    public static string GetDetailedDescription(string key)
+    {
+        var propertyInfo = GetPropertyInfoFromKey(key);
+        var description = propertyInfo?.GetCustomAttribute<DescriptionAttribute>()?.Description;
+
+        return description ?? string.Empty;
     }
 
     /// <summary>
