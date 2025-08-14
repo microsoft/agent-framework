@@ -103,19 +103,12 @@ public sealed class AgentProxy : AIAgent
                 throw new InvalidOperationException($"The agent run request failed: {update.Data}");
             }
 
-            AgentRunResponseUpdate runResponseUpdate;
             if (update.Status is RequestStatus.Completed)
             {
-                if (update.Data.ValueKind != JsonValueKind.Undefined && update.Data.ValueKind != JsonValueKind.Null)
-                {
-                    runResponseUpdate = (AgentRunResponseUpdate)update.Data.Deserialize(updateTypeInfo)!;
-                    yield return runResponseUpdate;
-                }
-
                 yield break;
             }
 
-            runResponseUpdate = (AgentRunResponseUpdate)update.Data.Deserialize(updateTypeInfo)!;
+            var runResponseUpdate = (AgentRunResponseUpdate)update.Data.Deserialize(updateTypeInfo)!;
             yield return runResponseUpdate;
         }
     }

@@ -116,8 +116,12 @@ public class A2AActorClient : IActorClient
                     throw new NotSupportedException("Only message is supported in A2A processing, but got: " + @event.GetType());
                 }
 
-                yield return message.ToActorRequestUpdate();
+                // handling of message on agentProxy side expects the 
+                yield return message.ToActorRequestUpdate(status: RequestStatus.Pending);
             }
+
+            // complete request after all updates are sent
+            yield return new ActorRequestUpdate(status: RequestStatus.Completed, data: default);
         }
     }
 }
