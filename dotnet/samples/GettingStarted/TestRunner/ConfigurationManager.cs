@@ -2,16 +2,14 @@
 
 using System.Diagnostics;
 using Microsoft.Extensions.Configuration;
-using Spectre.Console;
 
 namespace GettingStarted.TestRunner;
 
 /// <summary>
-/// Manages configuration validation and user secrets setup.
+/// Manages configuration validation and user secrets setup without UI concerns.
 /// </summary>
 public class ConfigurationManager
 {
-    private static readonly char[] SpaceSeparator = { ' ' };
     private IConfiguration _configuration;
 
     public ConfigurationManager(IConfiguration configuration)
@@ -22,9 +20,10 @@ public class ConfigurationManager
     /// <summary>
     /// Validates that all required configuration is present.
     /// </summary>
-    public async Task<bool> ValidateConfigurationAsync()
+    public ConfigurationValidationResult ValidateConfiguration()
     {
         var missingConfigs = new List<string>();
+        var missingConfigInfos = new List<ConfigurationMissingInfoResult>();
         var allConfigKeys = ConfigurationKeyExtractor.GetConfigurationKeys();
 
         // Check all required configuration keys dynamically
@@ -33,56 +32,30 @@ public class ConfigurationManager
             if (ConfigurationKeyExtractor.IsRequiredKey(key) && string.IsNullOrEmpty(this._configuration[key]))
             {
                 missingConfigs.Add(key);
+                missingConfigInfos.Add(new ConfigurationMissingInfoResult
+                {
+                    Key = key,
+                    FriendlyName = ConfigurationKeyExtractor.GetFriendlyDescription(key),
+                    IsRequired = true,
+                    IsSecret = ConfigurationKeyExtractor.IsSecretKey(key)
+                });
             }
         }
 
-        if (missingConfigs.Count == 0)
+        return new ConfigurationValidationResult
         {
-            AnsiConsole.MarkupLine("[green]✓ All required configuration is present[/]");
-            return true;
-        }
-
-        AnsiConsole.MarkupLine("[yellow]⚠ Missing configuration detected[/]");
-
-        foreach (var config in missingConfigs)
-        {
-            var friendlyName = ConfigurationKeyExtractor.GetFriendlyDescription(config);
-            AnsiConsole.MarkupLine($"[red]✗ Missing: {friendlyName} ({config})[/]");
-        }
-
-        var setupConfig = AnsiConsole.Confirm("Would you like to set up the missing configuration now?");
-
-        if (setupConfig)
-        {
-            return await this.SetupConfigurationAsync(missingConfigs);
-        }
-
-        return false;
+            IsValid = missingConfigs.Count == 0,
+            MissingKeys = missingConfigs,
+            MissingConfigurations = missingConfigInfos
+        };
     }
 
     /// <summary>
-    /// Interactively sets up missing configuration.
+    /// Sets up configuration values from a dictionary.
     /// </summary>
-    private async Task<bool> SetupConfigurationAsync(List<string> missingConfigs)
+    public async Task<ConfigurationUpdateResult> SetupConfigurationAsync(Dictionary<string, string> configValues)
     {
-        AnsiConsole.MarkupLine(NavigationConstants.ConfigurationMessages.SettingUpConfiguration);
-
-        var configValues = new Dictionary<string, string>();
-
-        foreach (var configKey in missingConfigs)
-        {
-            var value = this.PromptForConfigValue(configKey);
-            if (!string.IsNullOrEmpty(value))
-            {
-                configValues[configKey] = value;
-            }
-        }
-
-        if (configValues.Count == 0)
-        {
-            AnsiConsole.MarkupLine(NavigationConstants.ConfigurationMessages.NoValuesProvided);
-            return false;
-        }
+        var result = new ConfigurationUpdateResult { Success = true };
 
         // Save to user secrets
         foreach (var kvp in configValues)
@@ -90,188 +63,92 @@ public class ConfigurationManager
             var success = await this.SetUserSecretAsync(kvp.Key, kvp.Value);
             if (!success)
             {
-                AnsiConsole.MarkupLine($"[red]Failed to set {kvp.Key}[/]");
-                return false;
+                result.Success = false;
+                result.FailedKeys.Add(kvp.Key);
             }
         }
 
-        AnsiConsole.MarkupLine(NavigationConstants.ConfigurationMessages.SavedSuccessfully);
-        AnsiConsole.MarkupLine(NavigationConstants.ConfigurationMessages.RestartNote);
+        if (result.Success)
+        {
+            this.RefreshConfiguration();
+        }
 
-        return true;
+        return result;
     }
 
     /// <summary>
-    /// Interactively manages all configuration settings (add/update/remove).
+    /// Gets all configuration keys with their current status.
     /// </summary>
-    public async Task<bool> ManageConfigurationAsync()
+    public List<ConfigurationKeyInfo> GetAllConfigurationKeys()
     {
-        while (true)
+        var allConfigKeys = ConfigurationKeyExtractor.GetConfigurationKeys();
+        var result = new List<ConfigurationKeyInfo>();
+
+        foreach (var key in allConfigKeys)
         {
-            AnsiConsole.MarkupLine(NavigationConstants.ConfigurationMenu.Title);
-            AnsiConsole.WriteLine();
+            var hasValue = this.HasCurrentConfigurationValue(key);
+            var isRequired = ConfigurationKeyExtractor.IsRequiredKey(key);
+            var currentValue = this.GetCurrentConfigurationValue(key);
 
-            var allConfigKeys = ConfigurationKeyExtractor.GetConfigurationKeys();
-
-            var choices = new List<string>();
-
-            foreach (var key in allConfigKeys)
+            result.Add(new ConfigurationKeyInfo
             {
-                var hasValue = this.HasCurrentConfigurationValue(key);
-                var isRequired = ConfigurationKeyExtractor.IsRequiredKey(key);
-
-                // Converted to switch expression
-                string statusIcon = (hasValue, isRequired) switch
-                {
-                    (true, _) => NavigationConstants.ConfigurationDisplay.SetStatusIcon,
-                    (false, true) => NavigationConstants.ConfigurationDisplay.NotSetStatusIcon,
-                    _ => NavigationConstants.ConfigurationDisplay.OptionalFieldIndicator
-                };
-
-                var currentValue = this.GetCurrentConfigurationValue(key);
-                var displayValue = hasValue
-                    ? $"{NavigationConstants.ConfigurationDisplay.CurrentValuePrefix}{currentValue}{NavigationConstants.ConfigurationDisplay.ClosingParenthesis}"
-                    : (isRequired ? NavigationConstants.ConfigurationDisplay.NotSetSuffix : NavigationConstants.ConfigurationDisplay.OptionalSuffix);
-
-                choices.Add($"{statusIcon} {key}{displayValue}");
-            }
-
-            choices.Add(NavigationConstants.CommonUI.Back);
-
-            var choice = AnsiConsole.Prompt(
-                new SelectionPrompt<string>()
-                    .Title(NavigationConstants.ConfigurationMenu.SelectPrompt)
-                    .HighlightStyle(new Style().Foreground(Color.Yellow))
-                    .AddChoices(choices));
-
-            if (choice == NavigationConstants.CommonUI.Back)
-            {
-                return true;
-            }
-
-            // Extract the config key from the choice
-            var configKey = ExtractConfigKeyFromChoice(choice, allConfigKeys);
-
-            // Update the configuration and continue the loop regardless of result
-            await this.UpdateSingleConfigurationAsync(configKey);
-
-            // Clear the screen for the next iteration
-            AnsiConsole.Clear();
+                Key = key,
+                HasValue = hasValue,
+                IsRequired = isRequired,
+                CurrentValue = currentValue,
+                FriendlyName = ConfigurationKeyExtractor.GetFriendlyDescription(key),
+                IsSecret = ConfigurationKeyExtractor.IsSecretKey(key)
+            });
         }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Gets configuration metadata for a specific key, including display information.
+    /// </summary>
+    public ConfigurationKeyInfo GetConfigurationKeyInfo(string key)
+    {
+        var hasValue = this.HasCurrentConfigurationValue(key);
+        var isRequired = ConfigurationKeyExtractor.IsRequiredKey(key);
+        var isSecret = ConfigurationKeyExtractor.IsSecretKey(key);
+        var currentValue = this.GetCurrentConfigurationValue(key);
+
+        return new ConfigurationKeyInfo
+        {
+            Key = key,
+            HasValue = hasValue,
+            IsRequired = isRequired,
+            IsSecret = isSecret,
+            CurrentValue = currentValue,
+            FriendlyName = ConfigurationKeyExtractor.GetFriendlyDescription(key)
+        };
     }
 
     /// <summary>
     /// Updates a single configuration value.
     /// </summary>
-    private async Task<bool> UpdateSingleConfigurationAsync(string configKey)
+    public async Task<bool> UpdateConfigurationValueAsync(string configKey, string value)
     {
-        var currentValue = this.GetMaskedConfigValue(configKey);
-        var hasCurrentValue = this.HasConfigurationValue(configKey);
-
-        AnsiConsole.MarkupLine($"[blue]Updating: {configKey}[/]");
-
-        if (hasCurrentValue)
+        var success = await this.SetUserSecretAsync(configKey, value);
+        if (success)
         {
-            AnsiConsole.MarkupLine($"[dim]Current value: {currentValue}[/]");
+            this.RefreshConfiguration();
         }
-        else
-        {
-            AnsiConsole.MarkupLine(NavigationConstants.ConfigurationMessages.NoCurrentValue);
-        }
-
-        var actions = new List<string> { NavigationConstants.ConfigurationActions.SetNewValue };
-
-        if (hasCurrentValue)
-        {
-            actions.Add(NavigationConstants.ConfigurationActions.RemoveCurrentValue);
-        }
-
-        actions.Add(NavigationConstants.ConfigurationActions.Cancel);
-
-        var action = AnsiConsole.Prompt(
-            new SelectionPrompt<string>()
-                .Title(NavigationConstants.ConfigurationActions.ActionPrompt)
-                .AddChoices(actions));
-
-        switch (action)
-        {
-            case var _ when action == NavigationConstants.ConfigurationActions.SetNewValue:
-                var existingValue = this._configuration[configKey];
-                var newValue = this.PromptForConfigValue(configKey, existingValue);
-                if (!string.IsNullOrEmpty(newValue))
-                {
-                    var success = await this.SetUserSecretAsync(configKey, newValue);
-                    if (success)
-                    {
-                        this.RefreshConfiguration();
-                        AnsiConsole.MarkupLine(NavigationConstants.ConfigurationMessages.UpdatedSuccessfully);
-                        return true;
-                    }
-                }
-                return false;
-
-            case var _ when action == NavigationConstants.ConfigurationActions.RemoveCurrentValue:
-                var removed = await this.RemoveUserSecretAsync(configKey);
-                if (removed)
-                {
-                    this.RefreshConfiguration();
-                    AnsiConsole.MarkupLine(NavigationConstants.ConfigurationMessages.RemovedSuccessfully);
-                    return true;
-                }
-                return false;
-
-            case var _ when action == NavigationConstants.ConfigurationActions.Cancel:
-                return true;
-
-            default:
-                return false;
-        }
+        return success;
     }
 
     /// <summary>
-    /// Prompts the user for a configuration value with an optional current value as default.
+    /// Removes a configuration value.
     /// </summary>
-    private string PromptForConfigValue(string configKey, string? currentValue = null)
+    public async Task<bool> RemoveConfigurationValueAsync(string configKey)
     {
-        var friendlyName = ConfigurationKeyExtractor.GetFriendlyDescription(configKey);
-        var isSecret = ConfigurationKeyExtractor.IsSecretKey(configKey);
-        var isOptional = !ConfigurationKeyExtractor.IsRequiredKey(configKey);
-
-        // Build prompt text with current value display
-        string promptText;
-        string? formatedValue = (isSecret) ? MaskSecret(currentValue) : currentValue;
-
-        promptText = $"[blue]Enter {friendlyName}:[/]";
-        var prompt = new TextPrompt<string?>(promptText);
-
-        // Configure prompt based on attributes
-        if (isSecret)
+        var success = await this.RemoveUserSecretAsync(configKey);
+        if (success)
         {
-            prompt.PromptStyle("red").Secret();
+            this.RefreshConfiguration();
         }
-
-        if (isOptional)
-        {
-            prompt.AllowEmpty();
-        }
-
-        // Set default value if provided
-        if (!string.IsNullOrEmpty(formatedValue))
-        {
-            // For secrets, allow empty input to keep current value
-            prompt.DefaultValue(formatedValue);
-            AnsiConsole.MarkupLine("[dim]Press Enter to keep current value, or enter a new value[/]");
-        }
-
-        var userInput = AnsiConsole.Prompt(prompt);
-
-        // If user pressed Enter for a secret with current value, return the current value
-        if (isSecret && string.IsNullOrWhiteSpace(userInput) && !string.IsNullOrEmpty(currentValue))
-        {
-            return currentValue!;
-        }
-
-        return userInput ?? string.Empty;
+        return success;
     }
 
     /// <summary>
@@ -294,7 +171,6 @@ public class ConfigurationManager
             using var process = Process.Start(startInfo);
             if (process == null)
             {
-                AnsiConsole.MarkupLine("[red]Failed to start dotnet process[/]");
                 return false;
             }
 
@@ -304,19 +180,10 @@ public class ConfigurationManager
             await process.WaitForExitAsync();
 #endif
 
-            if (process.ExitCode == 0)
-            {
-                AnsiConsole.MarkupLine($"[green]✓ Set {key}[/]");
-                return true;
-            }
-
-            var error = await process.StandardError.ReadToEndAsync();
-            AnsiConsole.MarkupLine($"[red]Failed to set {key}: {error}[/]");
-            return false;
+            return process.ExitCode == 0;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            AnsiConsole.MarkupLine($"[red]Error setting {key}: {ex.Message}[/]");
             return false;
         }
     }
@@ -341,7 +208,6 @@ public class ConfigurationManager
             using var process = Process.Start(startInfo);
             if (process == null)
             {
-                AnsiConsole.MarkupLine("[red]Failed to start dotnet process[/]");
                 return false;
             }
 
@@ -351,50 +217,12 @@ public class ConfigurationManager
             await process.WaitForExitAsync();
 #endif
 
-            if (process.ExitCode == 0)
-            {
-                AnsiConsole.MarkupLine($"[green]✓ Removed {key}[/]");
-                return true;
-            }
-
-            var error = await process.StandardError.ReadToEndAsync();
-            AnsiConsole.MarkupLine($"[red]Failed to remove {key}: {error}[/]");
+            return process.ExitCode == 0;
+        }
+        catch (Exception)
+        {
             return false;
         }
-        catch (Exception ex)
-        {
-            AnsiConsole.MarkupLine($"[red]Error removing {key}: {ex.Message}[/]");
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Checks if a configuration value exists.
-    /// </summary>
-    private bool HasConfigurationValue(string key)
-    {
-        return !string.IsNullOrEmpty(this._configuration[key]);
-    }
-
-    /// <summary>
-    /// Gets a configuration value for display, masking secrets but showing non-secrets.
-    /// </summary>
-    private string GetMaskedConfigValue(string key)
-    {
-        var value = this._configuration[key];
-        if (string.IsNullOrEmpty(value))
-        {
-            return NavigationConstants.ConfigurationMessages.NotSet;
-        }
-
-        // Only mask actual secrets (API keys), show other values as-is
-        if (ConfigurationKeyExtractor.IsSecretKey(key))
-        {
-            var masked = MaskSecret(value);
-            return masked ?? NavigationConstants.ConfigurationMessages.NotSet;
-        }
-
-        return value ?? NavigationConstants.ConfigurationMessages.NotSet;
     }
 
     /// <summary>
@@ -468,25 +296,5 @@ public class ConfigurationManager
 #else
         return secret.Substring(0, 4) + "***" + secret.Substring(secret.Length - 4);
 #endif
-    }
-
-    /// <summary>
-    /// Extracts the configuration key from the formatted choice string.
-    /// </summary>
-    private static string ExtractConfigKeyFromChoice(string choice, string[] allConfigKeys)
-    {
-        // Find the key that matches the choice by checking if the choice contains the key
-        foreach (var key in allConfigKeys)
-        {
-            // Check if the choice starts with a status icon followed by space and then the key
-            if (choice.Contains($" {key}"))
-            {
-                return key;
-            }
-        }
-
-        // Fallback: try the original split method if no match found
-        var parts = choice.Split(SpaceSeparator, StringSplitOptions.RemoveEmptyEntries);
-        return parts.Length > 1 ? parts[1] : choice;
     }
 }

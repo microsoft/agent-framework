@@ -32,10 +32,10 @@ public static class Program
             services.AddSingleton<TestDiscoveryService>();
             services.AddSingleton<ConfigurationManager>();
             services.AddSingleton<TestExecutionService>();
-            services.AddSingleton<InteractiveConsole>();
+            services.AddSingleton<ConsolePresentationService>();
 
             var serviceProvider = services.BuildServiceProvider();
-            var console = serviceProvider.GetRequiredService<InteractiveConsole>();
+            var console = serviceProvider.GetRequiredService<ConsolePresentationService>();
 
             // Check for command line arguments
             if (args.Length > 0 && args[0] == "--test" && args.Length > 1)
