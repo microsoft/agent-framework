@@ -58,20 +58,11 @@ internal sealed class A2AAgentWrapper
             Messages = chatMessages
         };
         var @params = JsonSerializer.SerializeToElement(runRequest, AgentHostingJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentRunRequest)));
+
         var requestHandle = await this._actorClient.SendRequestAsync(new ActorRequest(actorId, messageId, method: "Run" /* ?refer to const here? */, @params: @params), cancellationToken).ConfigureAwait(false);
         var response = await requestHandle.GetResponseAsync(cancellationToken).ConfigureAwait(false);
-        if (response.Status == RequestStatus.Completed)
-        {
-            return response.ToMessage();
-        }
 
-        if (response.Status == RequestStatus.Failed)
-        {
-            throw new A2AException($"The agent request failed: {response.Data}");
-        }
-
-        // something wrong happened - we should not be here
-        throw new A2AException($"The agent request reached unexpected state: {response.Data}");
+        return response.ToMessage();
     }
 
     public Task<AgentCard> GetAgentCardAsync(string agentPath, CancellationToken cancellationToken = default)
