@@ -47,10 +47,10 @@ public class InteractiveConsole
             switch (choice)
             {
                 case var _ when choice == NavigationConstants.MainMenu.RunSamples:
-                    await this.RunTestsMenuAsync();
+                    await this.RunSamplesMenuAsync();
                     break;
                 case var _ when choice == NavigationConstants.MainMenu.Configuration:
-                    await this.ConfigureSecretsAsync();
+                    await this.ConfigurationMenuAsync();
                     break;
                 case var _ when choice == NavigationConstants.MainMenu.Exit:
                     return 0;
@@ -108,19 +108,21 @@ public class InteractiveConsole
     /// </summary>
     private static string ShowMainMenu()
     {
-        return AnsiConsole.Prompt(
-            new SelectionPrompt<string>()
-                .Title("[green]What would you like to do?[/]")
-                .AddChoices(
-                    NavigationConstants.MainMenu.Exit,
-                    NavigationConstants.MainMenu.RunSamples,
-                    NavigationConstants.MainMenu.Configuration));
+        var selectionPrompt = new SelectionPrompt<string>()
+            .Title("[green]Main Menu[/]")
+            .HighlightStyle(new Style().Foreground(Color.Yellow))
+            .AddChoices(
+                NavigationConstants.MainMenu.Exit,
+                NavigationConstants.MainMenu.RunSamples,
+                NavigationConstants.MainMenu.Configuration);
+
+        return AnsiConsole.Prompt(selectionPrompt);
     }
 
     /// <summary>
-    /// Handles the test running menu.
+    /// Handles the sample running menu.
     /// </summary>
-    private async Task RunTestsMenuAsync()
+    private async Task RunSamplesMenuAsync()
     {
         while (true)
         {
@@ -293,7 +295,7 @@ public class InteractiveConsole
     /// <summary>
     /// Handles configuration setup.
     /// </summary>
-    private async Task ConfigureSecretsAsync()
+    private async Task ConfigurationMenuAsync()
     {
         await this._configurationManager.ManageConfigurationAsync();
     }
@@ -368,7 +370,7 @@ public class InteractiveConsole
                 var prefix = i == currentIndex ? "> " : "  ";
                 var style = i == currentIndex ? "[bold yellow]" : "";
                 var endStyle = i == currentIndex ? "[/]" : "";
-                AnsiConsole.MarkupLine($"{prefix}{style}{choices[i]}{endStyle}");
+                AnsiConsole.MarkupLine($"{style}{prefix}{choices[i]}{endStyle}");
             }
 
             // Handle input

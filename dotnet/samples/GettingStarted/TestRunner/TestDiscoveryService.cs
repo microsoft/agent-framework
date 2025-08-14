@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Reflection;
+using System.Text.RegularExpressions;
 using System.Xml;
 
 namespace GettingStarted.TestRunner;
@@ -8,7 +9,7 @@ namespace GettingStarted.TestRunner;
 /// <summary>
 /// Service for discovering test classes, methods, and theory parameters.
 /// </summary>
-public class TestDiscoveryService
+public partial class TestDiscoveryService
 {
     private readonly Assembly _assembly;
 
@@ -27,9 +28,8 @@ public class TestDiscoveryService
 
         // Group by physical directory structure
         var folderGroups = testClasses
-            .GroupBy(t => GetPhysicalFolderPath(t))
-            .Where(g => !string.IsNullOrEmpty(g.Key)) // Exclude classes without clear folder structure
-            .OrderBy(g => g.Key);
+            .GroupBy(GetPhysicalFolderPath)
+            .Where(g => !string.IsNullOrEmpty(g.Key));
 
         foreach (var folderGroup in folderGroups)
         {
@@ -38,7 +38,7 @@ public class TestDiscoveryService
 
             var folder = new TestFolder
             {
-                Name = !string.IsNullOrEmpty(displayName) ? displayName : physicalPath,
+                Name = !string.IsNullOrEmpty(displayName) ? displayName! : physicalPath,
                 PhysicalPath = physicalPath,
                 Description = ExtractFolderDescription(physicalPath),
                 Classes = folderGroup.Select(this.CreateTestClass).ToList()
@@ -56,7 +56,7 @@ public class TestDiscoveryService
     {
         return this._assembly.GetTypes()
             .Where(t => t.IsClass && !t.IsAbstract)
-            .Where(t => HasTestMethods(t))
+            .Where(HasTestMethods)
             .Where(t => !t.Namespace?.Contains("TestRunner") == true) // Exclude our own classes
             .OrderBy(t => t.Name)
             .ToList();
@@ -380,85 +380,76 @@ public class TestDiscoveryService
 
         // Convert <see cref="..."/> tags to blue highlighted references
         // Handle fully qualified type names (extract just the class name)
-        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
-            @"<see cref=""[^""]*\.([^""\.\s]+)""\s*/>",
-            "[blue]$1[/]");
+        cleaned = XmlDocSeeCrefFullyQualifiedTypesRegex().Replace(cleaned, "[blue]$1[/]");
 
         // Handle simple type references
-        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
-            @"<see cref=""([^""]+)""\s*/>",
-            "[blue]$1[/]");
+        cleaned = XmlDocSeeCrefSimpleTypesRegex().Replace(cleaned, "[blue]$1[/]");
 
         // Convert <seealso cref="..."/> tags to dimmed cross-references
-        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
-            @"<seealso cref=""[^""]*\.([^""\.\s]+)""\s*/>",
-            "[dim]See also: [blue]$1[/][/]");
+        cleaned = XmlDocSeeAlsoRegex().Replace(cleaned, "[dim]See also: [blue]$1[/][/]");
 
-        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
-            @"<seealso cref=""([^""]+)""\s*/>",
-            "[dim]See also: [blue]$1[/][/]");
+        // Convert <seealso cref="..."/> tags to dimmed cross-references with cref
+        cleaned = XmlDocSeeAlsoCrefRegex().Replace(cleaned, "[dim]See also: [blue]$1[/][/]");
 
         // Convert <paramref name="..."/> tags to yellow highlighted parameters
-        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
-            @"<paramref name=""([^""]+)""\s*/>",
-            "[yellow]$1[/]");
+        cleaned = XmlDocParamRefRegex().Replace(cleaned, "[yellow]$1[/]");
 
         // Handle <see langword="..."/> tags (like null, true, false)
-        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+        cleaned = Regex.Replace(cleaned,
             @"<see langword=""([^""]+)""\s*/>",
             "[italic]$1[/]");
 
         // Convert <param name="...">...</param> tags to parameter documentation
-        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+        cleaned = Regex.Replace(cleaned,
             @"<param name=""([^""]+)"">([^<]*)</param>",
             "\n[yellow]$1[/]: $2");
 
         // Convert <typeparam name="...">...</typeparam> tags to type parameter documentation
-        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+        cleaned = Regex.Replace(cleaned,
             @"<typeparam name=""([^""]+)"">([^<]*)</typeparam>",
             "\n[cyan]$1[/]: $2");
 
         // Convert <returns>...</returns> tags to return value descriptions
-        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+        cleaned = Regex.Replace(cleaned,
             "<returns>([^<]*)</returns>",
             "\n[green]Returns:[/] $1");
 
         // Convert <exception cref="...">...</exception> tags to exception documentation
-        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+        cleaned = Regex.Replace(cleaned,
             @"<exception cref=""[^""]*\.([^""\.\s]+)"">([^<]*)</exception>",
             "\n[red]Throws $1:[/] $2");
 
-        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+        cleaned = Regex.Replace(cleaned,
             @"<exception cref=""([^""]+)"">([^<]*)</exception>",
             "\n[red]Throws $1:[/] $2");
 
         // Convert <value>...</value> tags to property value descriptions
-        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+        cleaned = Regex.Replace(cleaned,
             "<value>([^<]*)</value>",
             "\n[blue]Value:[/] $1");
 
         // Convert <remarks>...</remarks> tags to additional notes
-        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+        cleaned = Regex.Replace(cleaned,
             "<remarks>([^<]*)</remarks>",
             "\n[dim]Note:[/] $1");
 
         // Convert <c>...</c> tags to grey inline code
-        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+        cleaned = Regex.Replace(cleaned,
             "<c>([^<]*)</c>",
             "[grey]$1[/]");
 
         // Convert <code>...</code> tags to grey code blocks
-        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+        cleaned = Regex.Replace(cleaned,
             "<code[^>]*>([^<]*)</code>",
             "[grey]$1[/]");
 
         // Convert <para>...</para> tags to paragraph breaks
-        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+        cleaned = Regex.Replace(cleaned,
             "<para>([^<]*)</para>",
             "\n\n$1");
 
         // Convert <example>...</example> tags to dimmed examples
-        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+        cleaned = Regex.Replace(cleaned,
             "<example>([^<]*)</example>",
             "\n[dim]Example:[/] $1");
 
@@ -466,11 +457,11 @@ public class TestDiscoveryService
         cleaned = ProcessXmlLists(cleaned);
 
         // Remove any remaining XML tags that we haven't handled
-        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, "<[^>]+>", "");
+        cleaned = Regex.Replace(cleaned, "<[^>]+>", "");
 
         // Clean up whitespace while preserving intentional line breaks
-        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, "[ \\t]+", " ");
-        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, "\\n\\s*\\n", "\n\n");
+        cleaned = Regex.Replace(cleaned, "[ \\t]+", " ");
+        cleaned = Regex.Replace(cleaned, "\\n\\s*\\n", "\n\n");
         cleaned = cleaned.Trim();
 
         return cleaned;
@@ -489,19 +480,19 @@ public class TestDiscoveryService
         var result = xmlText;
 
         // Process bullet lists
-        result = System.Text.RegularExpressions.Regex.Replace(result,
+        result = Regex.Replace(result,
             @"<list type=""bullet"">(.*?)</list>",
             match => ProcessListItems(match.Groups[1].Value, "• "),
             System.Text.RegularExpressions.RegexOptions.Singleline);
 
         // Process numbered lists
-        result = System.Text.RegularExpressions.Regex.Replace(result,
+        result = Regex.Replace(result,
             @"<list type=""number"">(.*?)</list>",
             match => ProcessListItems(match.Groups[1].Value, string.Empty),
             System.Text.RegularExpressions.RegexOptions.Singleline);
 
         // Process table lists (treat as bullet lists for simplicity)
-        result = System.Text.RegularExpressions.Regex.Replace(result,
+        result = Regex.Replace(result,
             @"<list type=""table"">(.*?)</list>",
             match => ProcessListItems(match.Groups[1].Value, "• "),
             System.Text.RegularExpressions.RegexOptions.Singleline);
@@ -652,10 +643,10 @@ public class TestDiscoveryService
         var description = string.Join(" ", descriptionLines);
 
         // Remove common markdown formatting
-        description = System.Text.RegularExpressions.Regex.Replace(description, @"\*\*(.*?)\*\*", "$1"); // Bold
-        description = System.Text.RegularExpressions.Regex.Replace(description, @"\*(.*?)\*", "$1");     // Italic
-        description = System.Text.RegularExpressions.Regex.Replace(description, "`(.*?)`", "$1");       // Code
-        description = System.Text.RegularExpressions.Regex.Replace(description, @"\[(.*?)\]\(.*?\)", "$1"); // Links
+        description = Regex.Replace(description, @"\*\*(.*?)\*\*", "$1"); // Bold
+        description = Regex.Replace(description, @"\*(.*?)\*", "$1");     // Italic
+        description = Regex.Replace(description, "`(.*?)`", "$1");       // Code
+        description = Regex.Replace(description, @"\[(.*?)\]\(.*?\)", "$1"); // Links
 
         return description.Trim();
     }
@@ -663,7 +654,7 @@ public class TestDiscoveryService
     /// <summary>
     /// Extracts the main title from the README.md file in the specified folder.
     /// </summary>
-    private static string ExtractReadmeTitle(string folderName)
+    private static string? ExtractReadmeTitle(string folderName)
     {
         try
         {
@@ -687,7 +678,7 @@ public class TestDiscoveryService
 
             if (!File.Exists(readmePath))
             {
-                return string.Empty;
+                return null;
             }
 
             // Read and parse the README.md content to extract the title
@@ -696,8 +687,8 @@ public class TestDiscoveryService
         }
         catch (Exception)
         {
-            // If anything goes wrong, return empty string to fallback to namespace
-            return string.Empty;
+            // If anything goes wrong, return null to fallback to namespace
+            return null;
         }
     }
 
@@ -723,11 +714,11 @@ public class TestDiscoveryService
                 // Extract the title text after the # and any spaces
                 var titleText = trimmedLine.TrimStart('#').Trim();
 
-                // Remove any markdown formatting from the title
-                titleText = System.Text.RegularExpressions.Regex.Replace(titleText, @"\*\*(.*?)\*\*", "$1"); // Bold
-                titleText = System.Text.RegularExpressions.Regex.Replace(titleText, @"\*(.*?)\*", "$1");     // Italic
-                titleText = System.Text.RegularExpressions.Regex.Replace(titleText, "`(.*?)`", "$1");       // Code
-                titleText = System.Text.RegularExpressions.Regex.Replace(titleText, @"\[(.*?)\]\(.*?\)", "$1"); // Links
+                // Remove known markdown formatting from the title
+                titleText = MarkdownRemoveBold().Replace(titleText, "$1");    // Bold
+                titleText = MarkdownRemoveItalic().Replace(titleText, "$1");        // Italic
+                titleText = MarkdownRemoveCode().Replace(titleText, "$1");           // Code
+                titleText = MarkdownRemoveLinks().Replace(titleText, "$1"); // Links
 
                 return titleText.Trim();
             }
@@ -735,4 +726,53 @@ public class TestDiscoveryService
 
         return string.Empty;
     }
+
+#if NET_80_OR_GREATER
+    [GeneratedRegex(@"\*\*(.*?)\*\*")]
+    private static partial Regex MarkdownRemoveBold();
+
+    [GeneratedRegex(@"\*(.*?)\*")]
+    private static partial Regex MarkdownRemoveItalic();
+
+    [GeneratedRegex(@"\[(.*?)\]\(.*?\)")]
+    private static partial Regex MarkdownRemoveLinks();
+
+    [GeneratedRegex("`(.*?)`")]
+    private static partial Regex MarkdownRemoveCode();
+
+    [GeneratedRegex(@"<see cref=""[^""]*\.([^""\.\s]+)""\s*/>")]
+    private static partial Regex XmlDocSeeCrefFullyQualifiedTypesRegex();
+
+    [GeneratedRegex(@"<see cref=""([^""]+)""\s*/>")]
+    private static partial Regex XmlDocSeeCrefSimpleTypesRegex();
+
+    [GeneratedRegex(@"<seealso cref=""[^""]*\.([^""\.\s]+)""\s*/>")]
+    private static partial Regex XmlDocSeeAlsoRegex();
+
+    [GeneratedRegex(@"<seealso cref=""([^""]+)""\s*/>")]
+    private static partial Regex XmlDocSeeAlsoCrefRegex();
+
+    [GeneratedRegex(@"<paramref name=""([^""]+)""\s*/>")]
+    private static partial Regex XmlDocParamRefRegex();
+#else
+#pragma warning disable SYSLIB1045 // Use GeneratedRegexAttribute for regexes
+    private static Regex MarkdownRemoveBold() => new(@"\*\*(.*?)\*\*");
+
+    private static Regex MarkdownRemoveItalic() => new(@"\*(.*?)\*");
+
+    private static Regex MarkdownRemoveLinks() => new(@"\[(.*?)\]\(.*?\)");
+
+    private static Regex MarkdownRemoveCode() => new("`(.*?)`");
+
+    private static Regex XmlDocSeeCrefFullyQualifiedTypesRegex() => new(@"<see cref=""[^""]*\.([^""\.\s]+)""\s*/>");
+
+    private static Regex XmlDocSeeCrefSimpleTypesRegex() => new(@"<see cref=""([^""]+)""\s*/>");
+
+    private static Regex XmlDocSeeAlsoRegex() => new(@"<seealso cref=""[^""]*\.([^""\.\s]+)""\s*/>");
+
+    private static Regex XmlDocSeeAlsoCrefRegex() => new(@"<seealso cref=""([^""]+)""\s*/>");
+
+    private static Regex XmlDocParamRefRegex() => new(@"<paramref name=""([^""]+)""\s*/>");
+#pragma warning restore SYSLIB1045
+#endif
 }

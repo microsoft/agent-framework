@@ -141,6 +141,7 @@ public class ConfigurationManager
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
                     .Title(NavigationConstants.ConfigurationMenu.SelectPrompt)
+                    .HighlightStyle(new Style().Foreground(Color.Yellow))
                     .AddChoices(choices));
 
             if (choice == NavigationConstants.CommonUI.Back)

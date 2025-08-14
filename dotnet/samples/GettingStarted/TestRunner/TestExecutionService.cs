@@ -12,7 +12,6 @@ namespace GettingStarted.TestRunner;
 /// </summary>
 public class TestExecutionService
 {
-    private static readonly char[] LineSeparators = { '\n' };
     /// <summary>
     /// Executes a test using the specified filter.
     /// </summary>
@@ -26,7 +25,7 @@ public class TestExecutionService
             .Spinner(Spinner.Known.Dots)
             .StartAsync("Running test...", async ctx =>
             {
-                var result = await RunDotnetTestWithStreamingAsync(arguments, ctx);
+                var result = await RunDotnetTestAsync(arguments, ctx);
 
                 ctx.Status = result.Success ? "Test completed successfully" : "Test failed";
 
@@ -123,69 +122,9 @@ public class TestExecutionService
     }
 
     /// <summary>
-    /// Runs the dotnet test command.
-    /// </summary>
-    private static async Task<TestResult> RunDotnetTestAsync(string arguments)
-    {
-        try
-        {
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = "dotnet",
-                Arguments = arguments,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-                WorkingDirectory = GetProjectDirectory()
-            };
-
-            using var process = Process.Start(startInfo);
-            if (process == null)
-            {
-                return new TestResult
-                {
-                    Success = false,
-                    Output = "Failed to start dotnet process",
-                    Error = "Process creation failed"
-                };
-            }
-
-            var outputTask = process.StandardOutput.ReadToEndAsync();
-            var errorTask = process.StandardError.ReadToEndAsync();
-
-#if !NET8_0_OR_GREATER
-            process.WaitForExit();
-#else
-            await process.WaitForExitAsync();
-#endif
-
-            var output = await outputTask;
-            var error = await errorTask;
-
-            return new TestResult
-            {
-                Success = process.ExitCode == 0,
-                ExitCode = process.ExitCode,
-                Output = output,
-                Error = error
-            };
-        }
-        catch (Exception ex)
-        {
-            return new TestResult
-            {
-                Success = false,
-                Output = string.Empty,
-                Error = ex.Message
-            };
-        }
-    }
-
-    /// <summary>
     /// Runs the dotnet test command with live streaming output and status updates.
     /// </summary>
-    private static async Task<TestResult> RunDotnetTestWithStreamingAsync(string arguments, StatusContext ctx)
+    private static async Task<TestResult> RunDotnetTestAsync(string arguments, StatusContext ctx)
     {
         try
         {
@@ -275,27 +214,6 @@ public class TestExecutionService
     }
 
     /// <summary>
-    /// Parses the test list output.
-    /// </summary>
-    private static List<string> ParseTestList(string output)
-    {
-        var tests = new List<string>();
-        var lines = output.Split(LineSeparators, StringSplitOptions.RemoveEmptyEntries);
-
-        foreach (var line in lines)
-        {
-            var trimmed = line.Trim();
-            if (trimmed.Contains('.') && !trimmed.StartsWith("The following", StringComparison.OrdinalIgnoreCase) &&
-                !trimmed.StartsWith("Build", StringComparison.OrdinalIgnoreCase) && !trimmed.StartsWith("Restore", StringComparison.OrdinalIgnoreCase))
-            {
-                tests.Add(trimmed);
-            }
-        }
-
-        return tests;
-    }
-
-    /// <summary>
     /// Generates a filter string for a specific test method.
     /// </summary>
     public static string GenerateMethodFilter(TestMethod method)
@@ -326,21 +244,5 @@ public class TestExecutionService
 
         // Fallback to method filter if we can't construct theory filter
         return GenerateMethodFilter(method);
-    }
-
-    /// <summary>
-    /// Generates a filter string for a test class.
-    /// </summary>
-    public static string GenerateClassFilter(TestClass testClass)
-    {
-        return $"FullyQualifiedName~{testClass.Name}";
-    }
-
-    /// <summary>
-    /// Generates a filter string for a test folder/namespace.
-    /// </summary>
-    public static string GenerateFolderFilter(TestFolder folder)
-    {
-        return $"FullyQualifiedName~{folder.Name}";
     }
 }
