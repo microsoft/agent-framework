@@ -46,6 +46,7 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self  # pragma: no cover
 
+
 __all__ = ["OpenAIAssistantsClient"]
 
 
@@ -247,6 +248,7 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
                 metadata=run_options.get("metadata"),
             )
             run_options["additional_messages"] = []
+            run_options.pop("tool_resources", None)
             return thread.id
 
         if thread_run is not None:

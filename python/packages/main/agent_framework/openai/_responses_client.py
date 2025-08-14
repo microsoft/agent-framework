@@ -82,6 +82,8 @@ __all__ = ["OpenAIResponsesClient"]
 class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
     """Base class for all OpenAI Responses based API's."""
 
+    FILE_SEARCH_MAX_RESULTS: int = 50
+
     @override
     async def get_response(
         self,
@@ -395,7 +397,8 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                             FileSearchToolParam(
                                 type="file_search",
                                 vector_store_ids=inputs,
-                                max_num_results=tool.max_results or 50,  # default to max results (50) if not specified
+                                max_num_results=tool.max_results
+                                or self.FILE_SEARCH_MAX_RESULTS,  # default to max results  if not specified
                             )
                         )
                     case HostedWebSearchTool():
