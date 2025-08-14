@@ -60,7 +60,7 @@ Executors are the fundamental building blocks that process messages in a workflo
 ┌─────────────────────────────────────────┐
 │             Executor                    │
 ├─────────────────────────────────────────┤
-│ ID: "data_processor"                    │
+│ Name: "data_processor"                  │
 ├─────────────────────────────────────────┤
 │ Message Handlers:                       │
 │  • handle_text(TextData) → ProcessedText│
@@ -72,7 +72,7 @@ Messages will be automatically routed to the appropriate handler based on their 
 
 ### 2. Edge
 
-Edges define how messages flow between executors:
+Edges define how messages flow between executors with optional conditions:
 
 ```
 ┌─────────────┐                    ┌─────────────┐
@@ -128,17 +128,26 @@ The Workflow ties everything together and manages execution:
 │  .add_chain([A, B, C])                              │
 │  (*Cycles are not allowed in a chain)               │
 │                                                     │
-│(3) Fan-out:       ┌──► B                            │
+│(3) Fan-out:                                         │
+|                   ┌──► B                            │
 │                A ─┼──► C                            │
 │                   └──► D                            │
 │  .add_fan_out_edges(A, [B, C, D])                   │
 │  (*Messages from A are sent to all B, C, D)         │
+│  (*With an optional selection function,             │
+│     messages can be sent to only a subset of        │
+│     recipients based on custom logic)               │
 │                                                     │
-│(4) Conditional:   ┌─[if x>0]─► B                    │
+│(4) Switch-case:   ┌─[case: x>0]─► B                 │
 │                A ─┤                                 │
-│                   └─[if x<0]─► C                    │
-│  .add_edge(A, B, lambda x: x > 0)                   │
-│  .add_edge(A, C, lambda x: x < 0)                   │
+│                   └─[default]─► C                   │
+│  .add_switch_case_edge_group(                       │
+│     source=A,                                       │
+│     case=[                                          │
+│       Case(B, condition=lambda x: x > 0),           │
+│       Default(C),                                   │
+│     ],                                              │
+│   )                                                 │
 │                                                     │
 │(5) Fan-in:    A ─┐                                  │
 │               B ─┼──► D                             │
@@ -178,7 +187,7 @@ A special built-in executor for handling external interactions:
 2. **Generates Correlation ID**: Creates unique request_id
 3. **Emits Event**: Sends RequestInfoEvent for external handling
 4. **Waits for Response**: Application sends responses back with the same request_id
-5. **Continues Flow**: Response routed back through workflow edges
+5. **Continues Flow**: Response routed back to the original executor
 
 **Use Cases:**
 
@@ -390,7 +399,7 @@ print(f"Workflow completed with result: {result}")
 ### 3. Crossed-platform & Distributed Execution
 
 - Support for executor distribution across nodes
-- Message passing via message queues  
+- Message passing via message queues
 - Distributed shared state with consistency guarantees
 
 ### 4. Enhanced Observability
