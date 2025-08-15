@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 
 namespace Microsoft.Extensions.AI.Agents;
@@ -73,6 +74,12 @@ public class ChatClientAgentOptions
     public ChatOptions? ChatOptions { get; set; }
 
     /// <summary>
+    /// Gets or sets a factory function to create an instance of <see cref="IChatMessageStore"/>
+    /// which will be used to store chat messages for this agent.
+    /// </summary>
+    public Func<IChatMessageStore>? ChatMessageStoreFactory { get; set; } = null;
+
+    /// <summary>
     /// Creates a new instance of <see cref="ChatClientAgentOptions"/> with the same values as this instance.
     /// </summary>
     internal ChatClientAgentOptions Clone()
@@ -82,6 +89,7 @@ public class ChatClientAgentOptions
             Name = this.Name,
             Instructions = this.Instructions,
             Description = this.Description,
-            ChatOptions = this.ChatOptions?.Clone()
+            ChatOptions = this.ChatOptions?.Clone(),
+            ChatMessageStoreFactory = this.ChatMessageStoreFactory
         };
 }

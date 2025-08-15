@@ -37,11 +37,13 @@ public sealed class AIAgent_With_OpenAIResponseClient(ITestOutputHelper output) 
         // Local function to invoke agent and display the conversation messages for the thread.
         async Task RunAgentAsync(string input)
         {
-            this.WriteUserMessage(input);
+            Console.WriteLine(
+                $"""
+                User: {input}
+                Assistant:
+                {await agent.RunAsync(input, thread)}
 
-            var response = await agent.RunAsync(input, thread);
-
-            this.WriteResponseOutput(response);
+                """);
         }
     }
 
@@ -77,11 +79,13 @@ public sealed class AIAgent_With_OpenAIResponseClient(ITestOutputHelper output) 
         // Local function to invoke agent and display the conversation messages for the thread.
         async Task RunAgentAsync(string input)
         {
-            this.WriteUserMessage(input);
+            Console.WriteLine(
+                $"""
+                User: {input}
+                Assistant:
+                {await agent.RunAsync(input, thread)}
 
-            var response = await agent.RunAsync(input, thread);
-
-            this.WriteResponseOutput(response);
+                """);
         }
     }
 }

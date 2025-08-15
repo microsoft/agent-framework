@@ -2,14 +2,16 @@
 
 import sys
 from collections.abc import AsyncIterable, Callable, MutableMapping, Sequence
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from enum import Enum
+from itertools import chain
 from typing import Any, ClassVar, Literal, Protocol, TypeVar, runtime_checkable
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 from ._clients import ChatClient
+from ._mcp import McpTool
 from ._pydantic import AFBaseModel
 from ._tools import AITool
 from ._types import (
@@ -315,6 +317,8 @@ class ChatClientAgent(AgentBase):
     chat_client: ChatClient
     instructions: str | None = None
     chat_options: ChatOptions
+    _local_mcp_tools: list[McpTool] = PrivateAttr(default_factory=list)  # type: ignore[reportUnknownVariableType]
+    _async_exit_stack: AsyncExitStack = PrivateAttr(default_factory=AsyncExitStack)
 
     def __init__(
         self,
@@ -381,6 +385,13 @@ class ChatClientAgent(AgentBase):
             kwargs: any additional keyword arguments.
                 Unused, can be used by subclasses of this Agent.
         """
+        kwargs.update(additional_properties or {})
+
+        # We ignore the MCP Servers here and store them separately,
+        # we add their functions to the tools list at runtime
+        normalized_tools = [] if tools is None else tools if isinstance(tools, list) else [tools]
+        local_mcp_tools = [tool for tool in normalized_tools if isinstance(tool, McpTool)]
+        final_tools = [tool for tool in normalized_tools if not isinstance(tool, McpTool)]
         args: dict[str, Any] = {
             "chat_client": chat_client,
             "chat_options": ChatOptions(
@@ -396,10 +407,10 @@ class ChatClientAgent(AgentBase):
                 store=store,
                 temperature=temperature,
                 tool_choice=tool_choice,
-                tools=tools,  # type: ignore
+                tools=final_tools,  # type: ignore[reportArgumentType]
                 top_p=top_p,
                 user=user,
-                additional_properties=additional_properties or {},
+                additional_properties=kwargs,
             ),
         }
         if instructions is not None:
@@ -412,23 +423,38 @@ class ChatClientAgent(AgentBase):
             args["id"] = id
 
         super().__init__(**args)
+        self._update_agent_name()
+        self._local_mcp_tools = local_mcp_tools  # type: ignore[assignment]
 
     async def __aenter__(self) -> "Self":
         """Async context manager entry.
 
-        If the chat_client supports async context management, enter its context.
+        If either the chat_client or the local_mcp_tools are context managers,
+        they will be entered into the async exit stack to ensure proper cleanup.
+
+        This list might be extended in the future.
         """
-        if isinstance(self.chat_client, AbstractAsyncContextManager):
-            await self.chat_client.__aenter__()  # type: ignore[reportUnknownMemberType]
+        for context_manager in chain([self.chat_client], self._local_mcp_tools):
+            if isinstance(context_manager, AbstractAsyncContextManager):
+                await self._async_exit_stack.enter_async_context(context_manager)
         return self
 
     async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
         """Async context manager exit.
 
-        If the chat_client supports async context management, exit its context.
+        Close the async exit stack to ensure all context managers are exited properly.
         """
-        if isinstance(self.chat_client, AbstractAsyncContextManager):
-            await self.chat_client.__aexit__(exc_type, exc_val, exc_tb)  # type: ignore[reportUnknownMemberType]
+        await self._async_exit_stack.aclose()
+
+    def _update_agent_name(self) -> None:
+        """Update the agent name in a chat client.
+
+        Checks if there is a agent name, the implementation
+        should check if there is already a agent name defined, and if not
+        set it to this value.
+        """
+        if hasattr(self.chat_client, "_update_agent_name") and callable(self.chat_client._update_agent_name):  # type: ignore[reportAttributeAccessIssue]
+            self.chat_client._update_agent_name(self.name)  # type: ignore[reportAttributeAccessIssue]
 
     async def run(
         self,
@@ -491,6 +517,20 @@ class ChatClientAgent(AgentBase):
         """
         input_messages = self._normalize_messages(messages)
         thread, thread_messages = await self._prepare_thread_and_messages(thread=thread, input_messages=input_messages)
+        agent_name = self._get_agent_name()
+
+        # Resolve final tool list (runtime provided tools + local MCP server tools)
+        final_tools: list[AITool | dict[str, Any] | Callable[..., Any]] = []
+        # Normalize tools argument to a list without mutating the original parameter
+        normalized_tools = [] if tools is None else tools if isinstance(tools, list) else [tools]
+        for tool in normalized_tools:
+            if isinstance(tool, McpTool):
+                final_tools.extend(tool.functions)  # type: ignore
+            else:
+                final_tools.append(tool)  # type: ignore
+
+        for mcp_server in self._local_mcp_tools:
+            final_tools.extend(mcp_server.functions)
 
         response = await self.chat_client.get_response(
             messages=thread_messages,
@@ -509,7 +549,7 @@ class ChatClientAgent(AgentBase):
                 store=store,
                 temperature=temperature,
                 tool_choice=tool_choice,
-                tools=tools,  # type: ignore
+                tools=final_tools,  # type: ignore[reportArgumentType]
                 top_p=top_p,
                 user=user,
                 additional_properties=additional_properties or {},
@@ -518,6 +558,11 @@ class ChatClientAgent(AgentBase):
         )
 
         self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
+
+        # Ensure that the author name is set for each message in the response.
+        for message in response.messages:
+            if message.author_name is None:
+                message.author_name = agent_name
 
         # Only notify the thread of new messages if the chatResponse was successful
         # to avoid inconsistent messages state in the thread.
@@ -595,7 +640,21 @@ class ChatClientAgent(AgentBase):
         """
         input_messages = self._normalize_messages(messages)
         thread, thread_messages = await self._prepare_thread_and_messages(thread=thread, input_messages=input_messages)
+        agent_name = self._get_agent_name()
         response_updates: list[ChatResponseUpdate] = []
+
+        # Resolve final tool list (runtime provided tools + local MCP server tools)
+        final_tools: list[AITool | MutableMapping[str, Any] | Callable[..., Any]] = []
+        # Normalize tools argument to a list without mutating the original parameter
+        normalized_tools = [] if tools is None else tools if isinstance(tools, list) else [tools]
+        for tool in normalized_tools:
+            if isinstance(tool, McpTool):
+                final_tools.extend(tool.functions)  # type: ignore
+            else:
+                final_tools.append(tool)
+
+        for mcp_server in self._local_mcp_tools:
+            final_tools.extend(mcp_server.functions)
 
         async for update in self.chat_client.get_streaming_response(
             messages=thread_messages,
@@ -614,7 +673,7 @@ class ChatClientAgent(AgentBase):
                 store=store,
                 temperature=temperature,
                 tool_choice=tool_choice,
-                tools=tools,  # type: ignore
+                tools=final_tools,  # type: ignore[reportArgumentType]
                 top_p=top_p,
                 user=user,
                 additional_properties=additional_properties or {},
@@ -622,6 +681,10 @@ class ChatClientAgent(AgentBase):
             **kwargs,
         ):
             response_updates.append(update)
+
+            if update.author_name is None:
+                update.author_name = agent_name
+
             yield AgentRunResponseUpdate(
                 contents=update.contents,
                 role=update.role,
@@ -720,3 +783,6 @@ class ChatClientAgent(AgentBase):
             return [messages]
 
         return [ChatMessage(role=ChatRole.USER, text=msg) if isinstance(msg, str) else msg for msg in messages]
+
+    def _get_agent_name(self) -> str:
+        return self.name or "UnnamedAgent"

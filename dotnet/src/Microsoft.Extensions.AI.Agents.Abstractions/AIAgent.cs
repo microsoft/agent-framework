@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Shared.Diagnostics;
@@ -50,7 +51,21 @@ public abstract class AIAgent
     /// If the thread needs to be created via a service call it would be created on first use.
     /// </para>
     /// </remarks>
-    public abstract AgentThread GetNewThread();
+    public virtual AgentThread GetNewThread() => new();
+
+    /// <summary>
+    /// Deserialize the thread from JSON.
+    /// </summary>
+    /// <param name="serializedThread">The <see cref="JsonElement"/> representing the thread state.</param>
+    /// <param name="jsonSerializerOptions">Optional <see cref="JsonSerializerOptions"/> to use for deserializing the thread state.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>The deserialized <see cref="AgentThread"/> instance.</returns>
+    public async ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    {
+        var thread = this.GetNewThread();
+        await thread.DeserializeAsync(serializedThread, jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
+        return thread;
+    }
 
     /// <summary>
     /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the thread.
@@ -191,30 +206,6 @@ public abstract class AIAgent
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Checks that the thread is of the expected type, or if null, creates the default thread type.
-    /// </summary>
-    /// <typeparam name="TThreadType">The expected type of the thead.</typeparam>
-    /// <param name="thread">The thread to create if it's null and validate its type if not null.</param>
-    /// <param name="constructThread">A callback to use to construct the thread if it's null.</param>
-    /// <returns>An async task that completes once all update are complete.</returns>
-    protected virtual TThreadType ValidateOrCreateThreadType<TThreadType>(
-        AgentThread? thread,
-        Func<TThreadType> constructThread)
-        where TThreadType : AgentThread
-    {
-        Throw.IfNull(constructThread);
-
-        thread ??= constructThread();
-
-        if (thread is not TThreadType concreteThreadType)
-        {
-            throw new NotSupportedException($"{this.GetType().Name} currently only supports agent threads of type {typeof(TThreadType).Name}.");
-        }
-
-        return concreteThreadType;
-    }
 
     /// <summary>
     /// Notfiy the given thread that new messages are available.
