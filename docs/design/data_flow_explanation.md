@@ -93,7 +93,7 @@ class ParentOrchestrator(Executor):
     """Parent orchestrator with automatic request routing.
     
     The base Executor class automatically routes SubWorkflowRequestInfo 
-    to @handles_request methods when they exist.
+    to @intercepts_request methods when they exist.
     """
     
     def __init__(self):
@@ -107,7 +107,7 @@ class ParentOrchestrator(Executor):
             # Just send the raw string, no wrapper needed!
             await ctx.send_message(email, target_id="email_validator_workflow")
     
-    @handles_request(DomainCheckRequest, from_workflow="email_validator_workflow")
+    @intercepts_request(DomainCheckRequest, from_workflow="email_validator_workflow")
     async def check_domain(self, request: DomainCheckRequest, ctx: WorkflowContext) -> RequestResponse:
         """Handle domain check requests from email validator.
         
@@ -165,17 +165,17 @@ When you have multiple sub-workflows that might use the same request types, you 
 ```python
 class ParentWithMultipleValidators(Executor):
     
-    @handles_request(DomainCheckRequest, from_workflow="email_validator")
+    @intercepts_request(DomainCheckRequest, from_workflow="email_validator")
     async def check_email_domain(self, request: DomainCheckRequest, ctx: WorkflowContext) -> bool:
         """Strict rules for email domains."""
         return request.domain in self.email_domains
     
-    @handles_request(DomainCheckRequest, from_workflow="api_validator")
+    @intercepts_request(DomainCheckRequest, from_workflow="api_validator")
     async def check_api_domain(self, request: DomainCheckRequest, ctx: WorkflowContext) -> bool:
         """Different rules for API domains."""
         return request.domain.endswith(".api.com") or request.domain in self.api_domains
     
-    @handles_request(DomainCheckRequest)  # No scope - catches all others
+    @intercepts_request(DomainCheckRequest)  # No scope - catches all others
     async def check_domain_default(self, request: DomainCheckRequest, ctx: WorkflowContext) -> bool:
         """Fallback for any other validators."""
         return not request.domain.endswith(".blocked")
@@ -232,7 +232,7 @@ STEP 4: Parent intercepts and handles
 ----------------------------------------
 Parent Orchestrator
     |
-    | @handles_request(DomainCheckRequest) method runs
+    | @intercepts_request(DomainCheckRequest) method runs
     | returns: RequestResponse.handled(True)
     |
     | Framework sends: SubWorkflowResponse(
@@ -286,10 +286,10 @@ Everything else uses standard types:
 
 This keeps the design simple while enabling:
 - **Sub-workflow reusability** (doesn't know it's nested)
-- **Parent interception** (can handle requests internally via `@handles_request`)
+- **Parent interception** (can handle requests internally via `@intercepts_request`)
 - **Automatic routing** (base `Executor` handles `SubWorkflowRequestInfo` → handler → `SubWorkflowResponse`)
 - **No boilerplate** (parents only define domain logic, not routing logic)
-- **Zero overhead** (features only activate when `@handles_request` is used)
+- **Zero overhead** (features only activate when `@intercepts_request` is used)
 - **One base class** (no need for special `InterceptingExecutor`)
 - **Proper routing** (responses go to the right sub-workflow)
 - **Clean separation of concerns**
@@ -350,14 +350,14 @@ class WorkflowExecutor(Executor):
 ### Enhanced Base Executor (Framework-Provided)
 
 ```python
-def handles_request(
+def intercepts_request(
     request_type: str | type,
     from_workflow: str | None = None,
     condition: Callable[[Any], bool] | None = None
 ):
     """Framework-provided decorator for request handlers."""
     def decorator(func):
-        func._handles_request = request_type
+        func._intercepts_request = request_type
         func._from_workflow = from_workflow
         func._handle_condition = condition
         return func
@@ -369,11 +369,11 @@ class Executor:
     def __init__(self, id: str | None = None):
         self.id = id or str(uuid.uuid4())
         self._handlers = {}
-        self._request_handlers = {}  # For @handles_request methods
+        self._request_handlers = {}  # For @intercepts_request methods
         self._discover_handlers()
     
     def _discover_handlers(self):
-        """Discover both @handler and @handles_request methods."""
+        """Discover both @handler and @intercepts_request methods."""
         for name in dir(self):
             attr = getattr(self, name)
             
@@ -382,15 +382,15 @@ class Executor:
                 self._handlers[attr._handler_info['input_type']] = attr
             
             # Request handlers (only add automatic routing if they exist)
-            if hasattr(attr, '_handles_request'):
+            if hasattr(attr, '_intercepts_request'):
                 handler_info = {
                     'method': attr,
                     'from_workflow': getattr(attr, '_from_workflow', None),
                     'condition': getattr(attr, '_handle_condition', None)
                 }
-                self._request_handlers[attr._handles_request] = handler_info
+                self._request_handlers[attr._intercepts_request] = handler_info
         
-        # Only register SubWorkflowRequestInfo handler if @handles_request methods exist
+        # Only register SubWorkflowRequestInfo handler if @intercepts_request methods exist
         if self._request_handlers:
             self._register_sub_workflow_handler()
     
@@ -399,15 +399,15 @@ class Executor:
         # This would integrate with the existing handler registration system
         pass
     
-    @handler  # Only active if @handles_request methods exist
+    @handler  # Only active if @intercepts_request methods exist
     async def _handle_sub_workflow_request(
         self,
         request: SubWorkflowRequestInfo,
         ctx: WorkflowContext
     ) -> None:
-        """Automatic routing to @handles_request methods.
+        """Automatic routing to @intercepts_request methods.
         
-        This is only active for executors that have @handles_request methods.
+        This is only active for executors that have @intercepts_request methods.
         Zero overhead for regular executors.
         """
         # Try to match against registered handlers
@@ -479,7 +479,7 @@ class SubWorkflowResponse:
 
 @dataclass
 class RequestResponse:
-    """Response from a @handles_request method."""
+    """Response from a @intercepts_request method."""
     handled: bool
     data: Any = None
     forward_request: Any = None
@@ -501,4 +501,4 @@ class SubWorkflowConfig:
     # ... other configuration options
 ```
 
-The enhanced base `Executor` class handles all the complexity automatically - developers just use `@handles_request` and the framework does the rest! No special base classes, no boilerplate, just clean business logic.
+The enhanced base `Executor` class handles all the complexity automatically - developers just use `@intercepts_request` and the framework does the rest! No special base classes, no boilerplate, just clean business logic.

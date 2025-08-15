@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-This document provides a complete implementation guide for the sub-workflow pattern in the Agent Framework. The design enables workflows to be executed as executors within other workflows, with automatic request interception and routing. The implementation requires only **2 new message types** and enhances the base `Executor` class with `@handles_request` support.
+This document provides a complete implementation guide for the sub-workflow pattern in the Agent Framework. The design enables workflows to be executed as executors within other workflows, with automatic request interception and routing. The implementation requires only **2 new message types** and enhances the base `Executor` class with `@intercepts_request` support.
 
 ## Core Concept
 
@@ -32,7 +32,7 @@ class WorkflowExecutor(Executor):
 ```
 
 ### 2. Enhanced Base Executor 
-The base `Executor` class automatically discovers `@handles_request` methods and provides routing:
+The base `Executor` class automatically discovers `@intercepts_request` methods and provides routing:
 
 ```python
 class Executor:
@@ -42,7 +42,7 @@ class Executor:
         self._discover_request_handlers()
         
     def _discover_request_handlers(self):
-        """Discover @handles_request methods and register SubWorkflowRequestInfo handler."""
+        """Discover @intercepts_request methods and register SubWorkflowRequestInfo handler."""
         # Implementation details below
 ```
 
@@ -65,7 +65,7 @@ class SubWorkflowResponse:
 
 @dataclass 
 class RequestResponse:
-    """Response from @handles_request methods."""
+    """Response from @intercepts_request methods."""
     handled: bool
     data: Any = None
     forward_request: Any = None
@@ -144,14 +144,14 @@ class WorkflowExecutor(Executor):
 ### 2. Enhanced Base Executor Implementation
 
 ```python
-def handles_request(
+def intercepts_request(
     request_type: str | type,
     from_workflow: str | None = None,
     condition: Callable[[Any], bool] | None = None
 ):
     """Decorator to mark methods as request handlers."""
     def decorator(func):
-        func._handles_request = request_type
+        func._intercepts_request = request_type
         func._from_workflow = from_workflow
         func._handle_condition = condition
         return func
@@ -167,7 +167,7 @@ class Executor:
         self._discover_handlers()
     
     def _discover_handlers(self):
-        """Discover both @handler and @handles_request methods."""
+        """Discover both @handler and @intercepts_request methods."""
         for name in dir(self):
             attr = getattr(self, name)
             
@@ -176,16 +176,16 @@ class Executor:
                 input_type = attr._handler_info['input_type']
                 self._handlers[input_type] = attr
             
-            # @handles_request methods
-            if hasattr(attr, '_handles_request'):
+            # @intercepts_request methods
+            if hasattr(attr, '_intercepts_request'):
                 handler_info = {
                     'method': attr,
                     'from_workflow': getattr(attr, '_from_workflow', None),
                     'condition': getattr(attr, '_handle_condition', None)
                 }
-                self._request_handlers[attr._handles_request] = handler_info
+                self._request_handlers[attr._intercepts_request] = handler_info
         
-        # Register SubWorkflowRequestInfo handler if @handles_request methods exist
+        # Register SubWorkflowRequestInfo handler if @intercepts_request methods exist
         if self._request_handlers:
             self._register_sub_workflow_handler()
     
@@ -199,7 +199,7 @@ class Executor:
         request: SubWorkflowRequestInfo,
         ctx: WorkflowContext
     ) -> None:
-        """Automatic routing to @handles_request methods."""
+        """Automatic routing to @intercepts_request methods."""
         
         # Try to match request against registered handlers
         for request_type, handler_info in self._request_handlers.items():
@@ -327,7 +327,7 @@ class ParentOrchestrator(Executor):
         for email in emails:
             await ctx.send_message(email, target_id="validator")
     
-    @handles_request(DomainCheckRequest)
+    @intercepts_request(DomainCheckRequest)
     async def check_domain(
         self,
         request: DomainCheckRequest,
@@ -357,15 +357,15 @@ main_workflow = (
 
 ```python
 class MultiWorkflowOrchestrator(Executor):
-    @handles_request(ConfigRequest, from_workflow="workflow_a")
+    @intercepts_request(ConfigRequest, from_workflow="workflow_a")
     async def config_for_a(self, request: ConfigRequest, ctx: WorkflowContext) -> RequestResponse:
         return RequestResponse.handled(self.config_a)
     
-    @handles_request(ConfigRequest, from_workflow="workflow_b")
+    @intercepts_request(ConfigRequest, from_workflow="workflow_b")
     async def config_for_b(self, request: ConfigRequest, ctx: WorkflowContext) -> RequestResponse:
         return RequestResponse.handled(self.config_b)
     
-    @handles_request(ConfigRequest)  # Fallback for any other workflow
+    @intercepts_request(ConfigRequest)  # Fallback for any other workflow
     async def default_config(self, request: ConfigRequest, ctx: WorkflowContext) -> RequestResponse:
         return RequestResponse.handled(self.default_config)
 ```
@@ -374,7 +374,7 @@ class MultiWorkflowOrchestrator(Executor):
 
 ```python
 class SmartOrchestrator(Executor):
-    @handles_request(DatabaseQueryRequest)
+    @intercepts_request(DatabaseQueryRequest)
     async def handle_db_query(
         self,
         request: DatabaseQueryRequest,
@@ -491,6 +491,64 @@ class Runner:
         # ... existing logic ...
 ```
 
+## Message Visibility and Privacy Considerations
+
+### Current Limitations
+
+The current design does not provide a specific mechanism to control which messages from a sub-workflow are visible to the parent workflow. By default:
+
+- **All completion messages bubble up**: When a sub-workflow completes, its final output is automatically sent to the parent
+- **No built-in filtering**: The `WorkflowExecutor` passes all workflow completion data to the parent without filtering
+- **Privacy concerns**: Sensitive data within a sub-workflow could inadvertently leak to the parent
+
+### Current Workaround: Targeted Messages
+
+The only way to prevent messages from bubbling up to the parent is to use `target_id` for every message send within the sub-workflow:
+
+```python
+class SecureProcessor(Executor):
+    @handler
+    async def process(self, data: SensitiveData, ctx: WorkflowContext) -> None:
+        # Internal message - use target_id to keep it within sub-workflow
+        internal_result = InternalProcessingResult(
+            sensitive_field="private_data",
+            internal_state="should_not_leak"
+        )
+        await ctx.send_message(internal_result, target_id="internal_aggregator")
+        
+        # Only the final executor's output (without target_id) goes to parent
+        public_summary = PublicSummary(status="complete", record_count=42)
+        await ctx.send_message(public_summary)  # This becomes workflow output
+```
+
+This approach requires discipline - every internal message must explicitly specify a `target_id`, or it may become visible to the parent.
+
+### Future Enhancement: Protocol-Based Privacy
+
+In the future, we may provide a mechanism using Python protocols to mark message types as private:
+
+```python
+# Potential future enhancement (not currently implemented)
+class PrivateMessage(Protocol):
+    """Marker protocol for messages that should not leave the workflow."""
+    pass
+
+class InternalState(PrivateMessage):
+    """This message type would automatically be filtered from parent visibility."""
+    sensitive_data: str
+    internal_metrics: dict
+
+class WorkflowExecutor(Executor):
+    async def execute(self, input_data: Any, ctx: WorkflowContext) -> None:
+        async for event in self._workflow.run_streaming(input_data):
+            if isinstance(event, WorkflowCompletedEvent):
+                # Future: Check protocol to filter private messages
+                if not isinstance(event.data, PrivateMessage):
+                    await ctx.send_message(event.data)
+```
+
+This would provide a cleaner, more declarative way to control message visibility without requiring `target_id` on every internal message. However, this is not part of the current design and would be added based on actual use cases and requirements.
+
 ## Testing Strategy
 
 ### Unit Tests
@@ -530,7 +588,7 @@ async def test_conditional_forwarding():
 async def test_end_to_end_sub_workflow():
     """Test complete sub-workflow execution."""
     # Create sub-workflow with RequestInfo
-    # Create parent with @handles_request
+    # Create parent with @intercepts_request
     # Wire together and execute
     # Verify request interception and response
 ```
@@ -540,11 +598,11 @@ async def test_end_to_end_sub_workflow():
 ### For Existing Workflows
 
 1. **No changes required** for existing workflows - they continue to work as before
-2. **Optional enhancement** - add `@handles_request` methods to enable interception
+2. **Optional enhancement** - add `@intercepts_request` methods to enable interception
 3. **Gradual adoption** - start with simple static sub-workflows, add interception later
 
 ### For Custom Executors
 
 1. **No breaking changes** - custom executors inherit new functionality automatically
-2. **Optional adoption** - use `@handles_request` when needed
-3. **Performance** - zero overhead if `@handles_request` not used
+2. **Optional adoption** - use `@intercepts_request` when needed
+3. **Performance** - zero overhead if `@intercepts_request` not used

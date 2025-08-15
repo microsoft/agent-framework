@@ -2,10 +2,10 @@
 
 ## The Problem
 
-With automatic routing to `@handles_request`, what happens when the parent realizes it can't actually handle the request and needs to forward it to external sources?
+With automatic routing to `@intercepts_request`, what happens when the parent realizes it can't actually handle the request and needs to forward it to external sources?
 
 ```python
-@handles_request(DomainCheckRequest)
+@intercepts_request(DomainCheckRequest)
 async def check_domain(self, request: DomainCheckRequest, ctx: WorkflowContext) -> ???:
     """What if we don't have the answer?"""
     
@@ -27,7 +27,7 @@ from agent_framework_workflow import FORWARD_REQUEST
 
 class ParentOrchestrator(InterceptingExecutor):
     
-    @handles_request(DomainCheckRequest)
+    @intercepts_request(DomainCheckRequest)
     async def check_domain(self, request: DomainCheckRequest, ctx: WorkflowContext) -> bool | object:
         """Check domain if we can, otherwise forward."""
         
@@ -70,7 +70,7 @@ from agent_framework_workflow import ForwardRequestException
 
 class ParentOrchestrator(InterceptingExecutor):
     
-    @handles_request(DomainCheckRequest)
+    @intercepts_request(DomainCheckRequest)
     async def check_domain(self, request: DomainCheckRequest, ctx: WorkflowContext) -> bool:
         """Check domain if we can, otherwise forward."""
         
@@ -116,7 +116,7 @@ from agent_framework_workflow import RequestResponse, Forward
 
 class ParentOrchestrator(InterceptingExecutor):
     
-    @handles_request(DomainCheckRequest)
+    @intercepts_request(DomainCheckRequest)
     async def check_domain(self, request: DomainCheckRequest, ctx: WorkflowContext) -> RequestResponse:
         """Check domain if we can, otherwise forward."""
         
@@ -194,7 +194,7 @@ Allow the handler to directly control message flow:
 ```python
 class ParentOrchestrator(InterceptingExecutor):
     
-    @handles_request(DomainCheckRequest, manual_response=True)
+    @intercepts_request(DomainCheckRequest, manual_response=True)
     async def check_domain(
         self, 
         request: DomainCheckRequest, 
@@ -233,7 +233,7 @@ FORWARD: ForwardRequest = "FORWARD"
 
 class ParentOrchestrator(InterceptingExecutor):
     
-    @handles_request(DomainCheckRequest)
+    @intercepts_request(DomainCheckRequest)
     async def check_domain(
         self, 
         request: DomainCheckRequest, 
@@ -266,7 +266,7 @@ class SmartParentOrchestrator(InterceptingExecutor):
         self.domain_cache = {}
         self.cache_ttl = 300  # 5 minutes
     
-    @handles_request(DomainCheckRequest)
+    @intercepts_request(DomainCheckRequest)
     async def check_domain(self, request: DomainCheckRequest, ctx: WorkflowContext) -> RequestResponse:
         """Smart domain checking with caching and forwarding."""
         
@@ -293,7 +293,7 @@ class SmartParentOrchestrator(InterceptingExecutor):
         # Could even modify the request here if needed
         return RequestResponse.forward()
     
-    @handles_request(DatabaseQueryRequest)
+    @intercepts_request(DatabaseQueryRequest)
     async def check_database(self, request: DatabaseQueryRequest, ctx: WorkflowContext) -> RequestResponse:
         """Handle some queries locally, forward complex ones."""
         
@@ -317,7 +317,7 @@ class SmartParentOrchestrator(InterceptingExecutor):
 Support both simple returns (when you can handle) and exceptions (when you can't):
 
 ```python
-@handles_request(DomainCheckRequest)
+@intercepts_request(DomainCheckRequest)
 async def check_domain(self, request: DomainCheckRequest, ctx: WorkflowContext) -> bool:
     if request.domain in self.cached_domains:
         return self.cached_domains[request.domain]  # Simple return when handled

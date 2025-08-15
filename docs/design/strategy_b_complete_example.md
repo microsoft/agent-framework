@@ -80,7 +80,7 @@ class EmailValidator(Executor):
         or external system), the RequestInfoExecutor routes the response back
         to this handler based on the edge in the workflow graph.
         
-        The response type (bool) comes from what the parent's @handles_request
+        The response type (bool) comes from what the parent's @intercepts_request
         method returns.
         """
         
@@ -121,7 +121,7 @@ validation_workflow = (
 from agent_framework_workflow import Executor, WorkflowContext, handler
 from typing import Any, Callable, Protocol
 
-def handles_request(
+def intercepts_request(
     request_type: str | type, 
     from_workflow: str | None = None,
     condition: Callable[[Any], bool] | None = None
@@ -134,7 +134,7 @@ def handles_request(
         condition: Optional additional condition function
     """
     def decorator(func):
-        func._handles_request = request_type
+        func._intercepts_request = request_type
         func._from_workflow = from_workflow
         func._handle_condition = condition
         return func
@@ -149,7 +149,7 @@ class InterceptingExecutor(Executor):
     """Base class for executors that can intercept sub-workflow requests.
     
     This base class automatically handles routing of SubWorkflowRequestInfo
-    to methods decorated with @handles_request, eliminating boilerplate.
+    to methods decorated with @intercepts_request, eliminating boilerplate.
     """
     
     def __init__(self, *args, **kwargs):
@@ -157,17 +157,17 @@ class InterceptingExecutor(Executor):
         self._request_handlers = self._discover_handlers()
     
     def _discover_handlers(self):
-        """Discover methods decorated with @handles_request."""
+        """Discover methods decorated with @intercepts_request."""
         handlers = {}
         for name in dir(self):
             attr = getattr(self, name)
-            if hasattr(attr, '_handles_request'):
+            if hasattr(attr, '_intercepts_request'):
                 handler_info = {
                     'method': attr,
                     'from_workflow': getattr(attr, '_from_workflow', None),
                     'condition': getattr(attr, '_handle_condition', None)
                 }
-                handlers[attr._handles_request] = handler_info
+                handlers[attr._intercepts_request] = handler_info
         return handlers
     
     @handler  # Framework provides this automatically!
@@ -176,7 +176,7 @@ class InterceptingExecutor(Executor):
         request: SubWorkflowRequestInfo,
         ctx: WorkflowContext
     ) -> None:
-        """Automatic routing to @handles_request methods.
+        """Automatic routing to @intercepts_request methods.
         
         This is provided by the framework so developers don't need
         to write boilerplate routing code.
@@ -235,7 +235,7 @@ class EmailProcessingOrchestrator(InterceptingExecutor):
     
     Note: No boilerplate routing method needed! The InterceptingExecutor
     base class automatically handles routing SubWorkflowRequestInfo to
-    our @handles_request methods.
+    our @intercepts_request methods.
     """
     
     def __init__(self):
@@ -247,7 +247,7 @@ class EmailProcessingOrchestrator(InterceptingExecutor):
             "verified-client.net"
         }
     
-    @handles_request(DomainCheckRequest)
+    @intercepts_request(DomainCheckRequest)
     async def check_domain(
         self,
         request: DomainCheckRequest,
@@ -456,7 +456,7 @@ If you have multiple sub-workflows that might use the same request types, you ca
 class OrchestratorWithMultipleSubWorkflows(InterceptingExecutor):
     """Orchestrator managing multiple validation sub-workflows."""
     
-    @handles_request(DomainCheckRequest, from_workflow="email_validator_workflow")
+    @intercepts_request(DomainCheckRequest, from_workflow="email_validator_workflow")
     async def check_email_domain(
         self,
         request: DomainCheckRequest,
@@ -466,7 +466,7 @@ class OrchestratorWithMultipleSubWorkflows(InterceptingExecutor):
         # Strict email domain rules
         return request.domain in self.approved_email_domains
     
-    @handles_request(DomainCheckRequest, from_workflow="api_validator_workflow")
+    @intercepts_request(DomainCheckRequest, from_workflow="api_validator_workflow")
     async def check_api_domain(
         self,
         request: DomainCheckRequest,
@@ -476,7 +476,7 @@ class OrchestratorWithMultipleSubWorkflows(InterceptingExecutor):
         # Different rules for API domains
         return request.domain in self.approved_api_domains or request.domain.endswith(".api.internal")
     
-    @handles_request(DomainCheckRequest)  # No scope - catches all others
+    @intercepts_request(DomainCheckRequest)  # No scope - catches all others
     async def check_domain_fallback(
         self,
         request: DomainCheckRequest,
@@ -490,7 +490,7 @@ class OrchestratorWithMultipleSubWorkflows(InterceptingExecutor):
 You can also use conditions for more complex logic:
 
 ```python
-    @handles_request(
+    @intercepts_request(
         DomainCheckRequest,
         condition=lambda req: req.data.check_type == "strict"
     )
@@ -540,7 +540,7 @@ Final Results:
 
 2. **WorkflowExecutor wraps the request**: It creates a `SubWorkflowRequestInfo` wrapper and sends it to the parent.
 
-3. **Parent intercepts and handles**: The `EmailProcessingOrchestrator` has a `@handles_request(DomainCheckRequest)` method that checks the domain against its internal list.
+3. **Parent intercepts and handles**: The `EmailProcessingOrchestrator` has a `@intercepts_request(DomainCheckRequest)` method that checks the domain against its internal list.
 
 4. **Response flows back**: The parent sends a `SubWorkflowResponse` back through the `WorkflowExecutor` to the sub-workflow.
 
