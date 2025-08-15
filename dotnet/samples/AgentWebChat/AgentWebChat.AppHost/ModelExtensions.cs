@@ -1,5 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Aspire.Hosting;
+using Aspire.Hosting.ApplicationModel;
+
 namespace AgentWebChat.AppHost;
 
 public static class ModelExtensions

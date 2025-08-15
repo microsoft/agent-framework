@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using AgentWebChat.AppHost;
+using Aspire.Hosting;
 
 var builder = DistributedApplication.CreateBuilder(args);
 
