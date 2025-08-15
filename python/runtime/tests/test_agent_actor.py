@@ -115,7 +115,10 @@ class TestAgentActorWrapper:
             message_id="test-123",
             message_type=ActorMessageType.REQUEST,
             method="run",
-            params={"messages": [{"role": "user", "content": "Test message", "message_id": "user-msg-1"}]},
+            params={
+                "agent_name": "echo_agent",
+                "messages": [ChatMessage(role=ChatRole.USER, text="Test message", message_id="user-msg-1")]
+            },
         )
 
         # Process message by simulating the actor handling
@@ -128,8 +131,11 @@ class TestAgentActorWrapper:
         assert response.status == RequestStatus.COMPLETED
         assert "messages" in response.data
         assert len(response.data["messages"]) == 1
-        assert response.data["messages"][0]["role"] == "assistant"
-        assert "Echo: Test message" in response.data["messages"][0]["text"]
+        assert response.data["messages"][0]["role"]["value"] == "assistant"
+        # ChatMessage has contents list with text content
+        contents = response.data["messages"][0]["contents"]
+        assert len(contents) > 0
+        assert "Echo: Test message" in contents[0]["text"]
 
     @pytest.mark.asyncio
     async def test_agent_actor_invalid_method(self, echo_actor, mock_context):
@@ -156,6 +162,7 @@ class TestAgentActorWrapper:
             message_type=ActorMessageType.REQUEST,
             method="run",
             params={
+                "agent_name": "echo_agent", 
                 "messages": "not_a_list"  # Invalid format
             },
         )
@@ -177,7 +184,10 @@ class TestAgentActorWrapper:
             message_id="msg-1",
             message_type=ActorMessageType.REQUEST,
             method="run",
-            params={"messages": [{"role": "user", "content": "First message"}]},
+            params={
+                "agent_name": "echo_agent",
+                "messages": [ChatMessage(role=ChatRole.USER, text="First message")]
+            },
         )
 
         await echo_actor._handle_agent_request(request1, mock_context)
@@ -193,7 +203,10 @@ class TestAgentActorWrapper:
             message_id="msg-2",
             message_type=ActorMessageType.REQUEST,
             method="run",
-            params={"messages": [{"role": "user", "content": "Second message"}]},
+            params={
+                "agent_name": "echo_agent",
+                "messages": [ChatMessage(role=ChatRole.USER, text="Second message")]
+            },
         )
 
         await echo_actor._handle_agent_request(request2, mock_context)

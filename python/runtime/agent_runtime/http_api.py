@@ -5,29 +5,14 @@ from contextlib import asynccontextmanager
 
 try:
     from fastapi import FastAPI, HTTPException
-    from pydantic import BaseModel
 except ImportError:
-    print("FastAPI and Pydantic are required for HTTP API. Install with: pip install fastapi pydantic uvicorn")
+    print("FastAPI is required for HTTP API. Install with: pip install fastapi uvicorn")
     raise
 
-from .agent_actor import ActorId
+from .agent_actor import ActorId, AgentRunRequest
 from .runtime import InProcessActorClient, InProcessActorRuntime
 
 logger = logging.getLogger(__name__)
-
-
-# Request/Response models
-class ChatMessageModel(BaseModel):
-    role: str
-    text: str | None = None
-    content: str | None = None
-    message_id: str | None = None
-
-
-class AgentRunRequest(BaseModel):
-    agent_name: str
-    conversation_id: str | None = None
-    messages: list[ChatMessageModel]
 
 
 # Note: We'll use the framework's AgentRunResponse instead of defining our own

@@ -13,7 +13,15 @@ from typing import Any
 # Framework agent types
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../packages/main"))
 
+from pydantic import BaseModel
+
 from agent_framework import AgentRunResponse, AgentThread, AIAgent, ChatMessage, ChatRole  # type: ignore
+
+
+class AgentRunRequest(BaseModel):
+    agent_name: str
+    conversation_id: str | None = None
+    messages: list[ChatMessage]
 
 
 @dataclass(frozen=True)
@@ -190,8 +198,15 @@ class AgentActor(Actor):
         try:
             logger.info(f"Processing agent request: {request.message_id}")
 
-            # Parse messages from request to framework types
-            framework_messages = self._parse_framework_messages(request)
+            # Validate request format early
+            if not request.params:
+                raise ValueError("Request params are required")
+            
+            # Parse and validate the request
+            run_request = AgentRunRequest.model_validate(request.params)
+            
+            # Extract messages directly - no conversion needed!
+            framework_messages = run_request.messages
 
             # Ensure a thread exists (may be None if _restore_thread_state not yet called in some test paths)
             if self._thread is None:
@@ -224,77 +239,18 @@ class AgentActor(Actor):
             logger.error(f"Agent request failed: {e}")
             await self._send_error_response(request, context, str(e))
 
-    def _parse_framework_messages(self, request: ActorRequestMessage) -> list[ChatMessage]:
-        """Convert runtime request to framework ChatMessage objects"""
-        if not request.params:
-            return []
-        raw_messages = request.params.get("messages", [])
-        if not isinstance(raw_messages, list):
-            raise ValueError("messages must be a list")
-        result: list[ChatMessage] = []
-        for msg in raw_messages:
-            try:
-                role_value = msg.get("role", "user")
-                role = getattr(ChatRole, str(role_value).upper(), ChatRole.USER)
-                text = msg.get("text", "")
-                result.append(ChatMessage(role=role, text=text))
-            except Exception as ex:  # pragma: no cover - defensive
-                logger.error(f"Skipping invalid message entry: {ex}")
-        return result
 
     def _convert_framework_response(self, framework_response: AgentRunResponse) -> dict:
-        """Convert framework AgentRunResponse to runtime data format"""
+        """Convert framework AgentRunResponse to runtime data format using built-in serialization"""
         try:
-            messages_data = []
-
-            # Extract messages from framework response
-            for framework_msg in framework_response.messages:
-                msg_data = {
-                    "role": self._extract_role(framework_msg),
-                    "text": self._extract_content(framework_msg),
-                    "message_id": getattr(framework_msg, "message_id", None),
-                }
-
-                # Add timestamp if available
-                if hasattr(framework_msg, "timestamp"):
-                    msg_data["timestamp"] = framework_msg.timestamp
-
-                messages_data.append(msg_data)
-
-            # Build response data
-            response_data = {"messages": messages_data, "status": "completed"}
-
-            # Add framework metadata if available
-            if hasattr(framework_response, "status"):
-                response_data["status"] = framework_response.status
-
-            return response_data
-
+            # Use framework's built-in serialization (like .NET does)
+            # This preserves all content types including images, files, function calls, etc.
+            return framework_response.model_dump()
+            
         except Exception as e:
             logger.error(f"Error converting framework response: {e}")
             return {"messages": [{"role": "assistant", "text": f"Response conversion error: {e}"}], "status": "failed"}
 
-    def _extract_role(self, framework_msg: ChatMessage) -> str:
-        """Extract role from framework message"""
-        try:
-            role = framework_msg.role
-            # Handle enum vs string
-            return role.value if hasattr(role, "value") else str(role)
-        except Exception:
-            return "assistant"
-
-    def _extract_content(self, framework_msg: ChatMessage) -> str:
-        """Extract text content from framework message"""
-        try:
-            # Framework messages use 'text' attribute primarily
-            if hasattr(framework_msg, "text"):
-                return str(framework_msg.text)
-            if hasattr(framework_msg, "content"):
-                return str(framework_msg.content)
-            return str(framework_msg)
-        except Exception as e:
-            logger.error(f"Error extracting content: {e}")
-            return "[Content extraction error]"
 
     async def _save_thread_state(self, context: ActorRuntimeContext):
         """Save framework thread state to runtime storage"""
@@ -309,10 +265,8 @@ class AgentActor(Actor):
                     serialized_messages = []
                     for m in self._thread.messages:
                         try:
-                            serialized_messages.append({
-                                "role": self._extract_role(m),
-                                "text": self._extract_content(m),
-                            })
+                            # Use framework's built-in serialization
+                            serialized_messages.append(m.model_dump())
                         except Exception as e:
                             logger.debug(f"Failed to serialize message for state: {e}")
                     thread_data["messages"] = serialized_messages
