@@ -2,7 +2,6 @@
 
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Execution;
 using Microsoft.Agents.Workflows.InProc;
 
 namespace Microsoft.Agents.Workflows;

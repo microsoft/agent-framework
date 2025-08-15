@@ -92,8 +92,3 @@ public class EdgeConnection(List<string> sourceIds, List<string> sinkIds) : IEqu
     /// </summary>
     public List<string> SinkIds { get; } = sinkIds;
 }
-
-//internal class JsonSerializer : ISerializer
-//{
-
-//}

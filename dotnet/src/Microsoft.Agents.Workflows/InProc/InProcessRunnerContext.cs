@@ -5,6 +5,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+
+using Microsoft.Agents.Workflows.Checkpointing;
 using Microsoft.Agents.Workflows.Execution;
 using Microsoft.Agents.Workflows.Specialized;
 using Microsoft.Extensions.Logging;
@@ -109,7 +111,7 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
             => RunnerContext.StateManager.ReadStateAsync<T>(ExecutorId, scopeName, key);
     }
 
-    internal ValueTask<RunnerCheckpointData> ExportStateAsync()
+    internal ValueTask<RunnerStateData> ExportStateAsync()
     {
         if (this.QueuedEvents.Count > 0)
         {
@@ -122,7 +124,7 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
             queuedMessages[identity] = this._nextStep.QueuedMessages.Values.Select(message => new ExportedState(message)).ToList();
         }
 
-        RunnerCheckpointData result = new(queuedMessages, this._externalRequests.Values.ToList());
+        RunnerStateData result = new(queuedMessages, this._externalRequests.Values.ToList());
 
         return new(result);
     }
@@ -134,7 +136,7 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
             throw new InvalidOperationException("Cannot import state when there are queued events. Please process or clear the events before importing state.");
         }
 
-        RunnerCheckpointData importedState = checkpoint.RunnerData;
+        RunnerStateData importedState = checkpoint.RunnerData;
 
         this._nextStep = new StepContext();
         this._nextStep.ImportMessages(importedState.QueuedMessages);

@@ -2,7 +2,7 @@
 
 using System.Threading.Tasks;
 
-namespace Microsoft.Agents.Workflows.Execution;
+namespace Microsoft.Agents.Workflows.Checkpointing;
 
 /// <summary>
 /// A manager for storing and retrieving workflow execution checkpoints.

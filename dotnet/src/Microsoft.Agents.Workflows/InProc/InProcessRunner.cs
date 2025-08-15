@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.Workflows.Checkpointing;
 using Microsoft.Agents.Workflows.Execution;
 using Microsoft.Shared.Diagnostics;
 
@@ -204,7 +205,7 @@ internal class InProcessRunner<TInput> : ISuperStepRunner, ICheckpointingRunner 
         await this.CheckpointAsync().ConfigureAwait(false);
     }
 
-    private Representation.WorkflowInfo? _workflowInfoCache = null;
+    private WorkflowInfo? _workflowInfoCache = null;
     private readonly List<CheckpointInfo> _checkpoints = [];
     internal async ValueTask CheckpointAsync()
     {
@@ -219,7 +220,7 @@ internal class InProcessRunner<TInput> : ISuperStepRunner, ICheckpointingRunner 
             this._workflowInfoCache = this.Workflow.ToWorkflowInfo();
         }
 
-        RunnerCheckpointData runnerData = await this.RunContext.ExportStateAsync().ConfigureAwait(false);
+        RunnerStateData runnerData = await this.RunContext.ExportStateAsync().ConfigureAwait(false);
         Dictionary<ScopeKey, ExportedState> stateData = await this.RunContext.StateManager.ExportStateAsync().ConfigureAwait(false);
         Dictionary<EdgeConnection, ExportedState> edgeData = await this.EdgeMap.ExportStateAsync().ConfigureAwait(false);
 

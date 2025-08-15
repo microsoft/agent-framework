@@ -3,6 +3,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using Microsoft.Agents.Workflows.Checkpointing;
 
 namespace Microsoft.Agents.Workflows.Execution;
 
