@@ -6,6 +6,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Microsoft.Extensions.AI.Agents\Microsoft.Extensions.AI.Agents.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Extensions.AI.Agents.CopilotStudio\Microsoft.Extensions.AI.Agents.CopilotStudio.csproj" />
   </ItemGroup>
 
   <ItemGroup>

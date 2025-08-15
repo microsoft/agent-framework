@@ -23,11 +23,14 @@ async def non_streaming_example() -> None:
 
     # Since no Agent ID is provided, the agent will be automatically created
     # and deleted after getting a response
-    async with FoundryChatClient(async_ad_credential=DefaultAzureCredential()).create_agent(
-        name="WeatherAgent",
-        instructions="You are a helpful weather agent.",
-        tools=get_weather,
-    ) as agent:
+    async with (
+        DefaultAzureCredential() as credential,
+        FoundryChatClient(async_ad_credential=credential).create_agent(
+            name="WeatherAgent",
+            instructions="You are a helpful weather agent.",
+            tools=get_weather,
+        ) as agent,
+    ):
         query = "What's the weather like in Seattle?"
         print(f"User: {query}")
         result = await agent.run(query)
@@ -40,11 +43,14 @@ async def streaming_example() -> None:
 
     # Since no Agent ID is provided, the agent will be automatically created
     # and deleted after getting a response
-    async with FoundryChatClient(async_ad_credential=DefaultAzureCredential()).create_agent(
-        name="WeatherAgent",
-        instructions="You are a helpful weather agent.",
-        tools=get_weather,
-    ) as agent:
+    async with (
+        DefaultAzureCredential() as credential,
+        FoundryChatClient(async_ad_credential=credential).create_agent(
+            name="WeatherAgent",
+            instructions="You are a helpful weather agent.",
+            tools=get_weather,
+        ) as agent,
+    ):
         query = "What's the weather like in Portland?"
         print(f"User: {query}")
         print("Agent: ", end="", flush=True)
