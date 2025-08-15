@@ -62,33 +62,6 @@ internal sealed class A2AAgentWrapper
         return response.ToMessage();
     }
 
-    /// <summary>
-    /// AgentFramework does not have full info at this point, so is an incomplete AgentCard provider.
-    /// </summary>
-    public Task<AgentCard> GetAgentCardAsync(string agentPath, CancellationToken cancellationToken = default)
-    {
-        if (cancellationToken.IsCancellationRequested)
-        {
-            return Task.FromCanceled<AgentCard>(cancellationToken);
-        }
-
-        return Task.FromResult(new AgentCard()
-        {
-            Name = this._innerAgent.Name ?? string.Empty,
-            Description = this._innerAgent.Description ?? string.Empty,
-            Url = agentPath,
-            Version = "0.0.0",
-            DefaultInputModes = ["text"],
-            DefaultOutputModes = ["text"],
-            Capabilities = new()
-            {
-                Streaming = true,
-                PushNotifications = false,
-            },
-            Skills = [],
-        });
-    }
-
     private ActorType GetActorType()
     {
         // agent is registered in DI via name

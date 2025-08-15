@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Threading.Tasks;
 using A2A;
 using Microsoft.Extensions.AI.Agents.A2A.Internal;
 using Microsoft.Extensions.AI.Agents.Runtime;
@@ -18,21 +19,46 @@ public static class AIAgentExtensions
     /// </summary>
     /// <param name="agent">Agent to attach A2A messaging processing capabilities to.</param>
     /// <param name="actorClient">The actor client implementation to use.</param>
-    /// <param name="taskManager">Instance of <see cref="TaskManager"/> to configure for A2A messaging.</param>
+    /// <param name="taskManager">Instance of <see cref="TaskManager"/> to configure for A2A messaging. New instance will be created if not passed.</param>
     /// <param name="loggerFactory">The logger factory to use for creating <see cref="ILogger"/> instances.</param>
-    public static void AttachA2AMessaging(
+    /// <returns>The configured <see cref="TaskManager"/>.</returns>
+    public static TaskManager AttachA2AMessaging(
         this AIAgent agent,
         IActorClient actorClient,
-        TaskManager taskManager,
+        TaskManager? taskManager = null,
         ILoggerFactory? loggerFactory = null)
     {
         ArgumentNullException.ThrowIfNull(agent, nameof(agent));
         ArgumentNullException.ThrowIfNull(actorClient, nameof(actorClient));
-        ArgumentNullException.ThrowIfNull(taskManager, nameof(taskManager));
+
+        taskManager ??= new();
 
         var a2aAgentWrapper = new A2AAgentWrapper(actorClient, agent, loggerFactory);
 
-        taskManager.OnAgentCardQuery += a2aAgentWrapper.GetAgentCardAsync;
         taskManager.OnMessageReceived += a2aAgentWrapper.ProcessMessageAsync;
+
+        return taskManager;
+    }
+
+    /// <summary>
+    /// Attaches A2A (Agent-to-Agent) messaging capabilities via Message processing to the specified <see cref="AIAgent"/>.
+    /// </summary>
+    /// <param name="agent">Agent to attach A2A messaging processing capabilities to.</param>
+    /// <param name="actorClient">The actor client implementation to use.</param>
+    /// <param name="agentCard">The agent card to return on query.</param>
+    /// <param name="taskManager">Instance of <see cref="TaskManager"/> to configure for A2A messaging. New instance will be created if not passed.</param>
+    /// <param name="loggerFactory">The logger factory to use for creating <see cref="ILogger"/> instances.</param>
+    /// <returns>The configured <see cref="TaskManager"/>.</returns>
+    public static TaskManager AttachA2AMessaging(
+        this AIAgent agent,
+        IActorClient actorClient,
+        AgentCard agentCard,
+        TaskManager? taskManager = null,
+        ILoggerFactory? loggerFactory = null)
+    {
+        taskManager = agent.AttachA2AMessaging(actorClient, taskManager, loggerFactory);
+
+        taskManager.OnAgentCardQuery += (context, query) => Task.FromResult(agentCard);
+        return taskManager;
     }
 }

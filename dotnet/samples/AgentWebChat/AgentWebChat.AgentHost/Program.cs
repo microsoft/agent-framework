@@ -96,7 +96,14 @@ app.MapActors();
 
 // attach a2a with simple message communication
 app.AttachA2AMessaging(agentName: "pirate", path: "/a2a/pirate");
-app.AttachA2AMessaging(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves");
+app.AttachA2AMessaging(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves", agentCard: new()
+{
+    Name = "Knights and Knaves",
+    Description = "An agent that helps you solve the knights and knaves puzzle.",
+    Version = "1.0",
+    Url = "https://agentwebchat.azurewebsites.net/a2a/knights-and-knaves",
+    IconUrl = "https://agentwebchat.azurewebsites.net/images/knights-and-knaves.png",
+});
 
 // Map the agents HTTP endpoints
 app.MapAgentDiscovery("/agents");

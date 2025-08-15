@@ -26,8 +26,28 @@ public static class WebApplicationExtensions
         var loggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
         var actorClient = app.Services.GetRequiredService<IActorClient>();
 
-        var taskManager = new TaskManager();
-        agent.AttachA2AMessaging(actorClient, taskManager, loggerFactory);
+        var taskManager = agent.AttachA2AMessaging(actorClient, loggerFactory: loggerFactory);
+        app.AttachA2A(taskManager, path);
+    }
+
+    /// <summary>
+    /// Attaches A2A (Agent-to-Agent) communication capabilities via Message processing to the specified web application.
+    /// </summary>
+    /// <param name="app">The web application used to configure the pipeline and routes.</param>
+    /// <param name="agentName">The name of the agent to use for A2A protocol integration.</param>
+    /// <param name="path">The route group to use for A2A endpoints.</param>
+    /// <param name="agentCard">Agent card info to return on query.</param>
+    public static void AttachA2AMessaging(
+        this WebApplication app,
+        string agentName,
+        string path,
+        AgentCard agentCard)
+    {
+        var agent = app.Services.GetRequiredKeyedService<AIAgent>(agentName);
+        var loggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
+        var actorClient = app.Services.GetRequiredService<IActorClient>();
+
+        var taskManager = agent.AttachA2AMessaging(actorClient, agentCard: agentCard, loggerFactory: loggerFactory);
         app.AttachA2A(taskManager, path);
     }
 
