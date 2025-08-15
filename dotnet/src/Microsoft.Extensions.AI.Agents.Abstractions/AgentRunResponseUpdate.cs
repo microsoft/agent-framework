@@ -98,7 +98,7 @@ public class AgentRunResponseUpdate
     /// This property concatenates all <see cref="UserInputRequestContent"/> instances in the response.
     /// </remarks>
     [JsonIgnore]
-    public IEnumerable<UserInputRequestContent> UserInputRequests => this._contents?.OfType<UserInputRequestContent>() ?? Array.Empty<UserInputRequestContent>();
+    public IEnumerable<UserInputRequestContent> UserInputRequests => this._contents?.OfType<UserInputRequestContent>() ?? [];
 
     /// <summary>Gets or sets the agent run response update content items.</summary>
     [AllowNull]
