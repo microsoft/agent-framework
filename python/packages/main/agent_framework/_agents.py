@@ -4,6 +4,8 @@ import sys
 from collections.abc import AsyncIterable, Callable, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from enum import Enum
+from functools import wraps
+from inspect import isasyncgenfunction
 from itertools import chain
 from typing import Any, ClassVar, Literal, Protocol, TypeVar, runtime_checkable
 from uuid import uuid4
@@ -47,6 +49,7 @@ __all__ = [
     "AgentThread",
     "AgentThreadType",
     "MessagesRetrievableThread",
+    "agent",
 ]
 
 
@@ -794,3 +797,93 @@ class Agent(AgentBase):
 
     def _get_agent_name(self) -> str:
         return self.name or "UnnamedAgent"
+
+
+def agent(
+    func: Callable[..., AgentRunResponse] | Callable[..., AsyncIterable[AgentRunResponseUpdate]] | None = None,
+    *,
+    id: str | None = None,
+    name: str | None = None,
+    description: str | None = None,
+    instructions: str | None = None,
+    **kwargs: Any,
+) -> "AgentProtocol":
+    """Create a simple agent out of a function."""
+
+    def decorator(
+        func: Callable[..., AgentRunResponse] | Callable[..., AsyncIterable[AgentRunResponseUpdate]],
+    ) -> "AgentProtocol":
+        @wraps(func)
+        def wrapper(
+            f: Callable[..., AgentRunResponse] | Callable[..., AsyncIterable[AgentRunResponseUpdate]],
+        ) -> "AgentProtocol":
+            agent_name = name or f.__name__
+            agent_description = description or f.__doc__
+            agent_instructions = instructions or "You are a agent."
+            if not isasyncgenfunction(f):
+
+                class RunFunctionAgent:
+                    def __init__(
+                        self,
+                        run: Callable[..., AgentRunResponse],
+                        id: str | None,
+                        name: str | None,
+                        description: str | None,
+                        instructions: str | None,
+                        **kwargs: Any,
+                    ):
+                        self._func = run
+                        self.id = id or str(uuid4())
+                        self.name = name
+                        self.description = description
+                        self.instructions = instructions
+                        self.additional_properties = kwargs
+                        self.display_name = name or self.id
+
+                    async def run(self, *args, **kwargs) -> AgentRunResponse:
+                        return await self._func(*args, **kwargs)
+
+                    async def run_streaming(self, *args, **kwargs) -> AsyncIterable[AgentRunResponseUpdate]:
+                        raise NotImplementedError("Streaming is not supported for this agent.")
+
+                    def get_new_thread(self) -> AgentThread:
+                        return AgentThread()
+
+                return RunFunctionAgent(f, id, agent_name, agent_description, agent_instructions)
+            if isasyncgenfunction(f):
+
+                class StreamingRunFunctionAgent:
+                    def __init__(
+                        self,
+                        run_streaming: Callable[..., AsyncIterable[AgentRunResponseUpdate]],
+                        id: str | None,
+                        name: str | None,
+                        description: str | None,
+                        instructions: str | None,
+                        **kwargs: Any,
+                    ):
+                        self._func = run_streaming
+                        self.id = id or str(uuid4())
+                        self.name = name
+                        self.description = description
+                        self.instructions = instructions
+                        self.additional_properties = kwargs
+                        self.display_name = name or self.id
+
+                    async def run(self, *args, **kwargs) -> AgentRunResponse:
+                        raise NotImplementedError("Streaming is not supported for this agent.")
+
+                    async def run_streaming(self, *args, **kwargs) -> AsyncIterable[AgentRunResponseUpdate]:
+                        async for update in self._func(*args, **kwargs):
+                            yield update
+
+                    def get_new_thread(self) -> AgentThread:
+                        return AgentThread()
+
+                return StreamingRunFunctionAgent(f, id, agent_name, agent_description, agent_instructions)
+
+            raise ValueError("Invalid function type.")
+
+        return wrapper(func)
+
+    return decorator(func) if func else decorator  # type: ignore[reportReturnType, return-value]
