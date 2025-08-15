@@ -12,39 +12,66 @@ if TYPE_CHECKING:
 
 async def handle_approvals_without_thread(query: str, agent: "AIAgent"):
     """When we don't have a thread, we need to ensure we return with the input, approval request and approval."""
-    from agent_framework import ChatMessage, FunctionApprovalRequestContent
+    from agent_framework import ChatMessage
 
     result = await agent.run(query)
     while len(result.user_input_requests) > 0:
-        approvals: list[Any] = [query]
-        for approval in result.user_input_requests:
-            assert isinstance(approval, FunctionApprovalRequestContent)
-            print(
-                f"User Input Request for function from {agent.name}: {approval.function_call.name}"
-                f" with arguments: {approval.function_call.arguments}"
-            )
-            approvals.append(ChatMessage(role="assistant", contents=[approval]))
-            approvals.append(approval.approve())
-        result = await agent.run(approvals)
+        new_inputs: list[Any] = [query]
+        for user_input_needed in result.user_input_requests:
+            if user_input_needed.type == "function_approval":
+                print(
+                    f"User Input Request for function from {agent.name}: {user_input_needed.function_call.name}"
+                    f" with arguments: {user_input_needed.function_call.arguments}"
+                )
+                new_inputs.append(ChatMessage(role="assistant", contents=[user_input_needed]))
+                new_inputs.append(ChatMessage(role="user", contents=[user_input_needed.create_approval()]))
+            else:
+                print(f"Other user input requested: {user_input_needed.type}")
+        result = await agent.run(new_inputs)
     return result
 
 
 async def handle_approvals_with_thread(query: str, agent: "AIAgent", thread: "AgentThread"):
     """Here we let the thread deal with the previous responses, and we just rerun with the approval."""
-    from agent_framework import FunctionApprovalRequestContent
+    from agent_framework import ChatMessage
 
     result = await agent.run(query, thread=thread, store=True)
     while len(result.user_input_requests) > 0:
-        approvals: list[Any] = []
-        for approval in result.user_input_requests:
-            assert isinstance(approval, FunctionApprovalRequestContent)
-            print(
-                f"User Input Request for function from {agent.name}: {approval.function_call.name}"
-                f" with arguments: {approval.function_call.arguments}"
-            )
-            approvals.append(approval.approve())
-        result = await agent.run(approvals, thread=thread, store=True)
+        new_input: list[Any] = []
+        for user_input_needed in result.user_input_requests:
+            if user_input_needed.type == "function_approval":
+                print(
+                    f"User Input Request for function from {agent.name}: {user_input_needed.function_call.name}"
+                    f" with arguments: {user_input_needed.function_call.arguments}"
+                )
+                new_input.append(ChatMessage(role="user", contents=[user_input_needed.create_approval()]))
+            else:
+                print(f"Other user input requested: {user_input_needed.type}")
+        result = await agent.run(new_input, thread=thread, store=True)
     return result
+
+
+async def handle_approvals_with_thread_streaming(query: str, agent: "AIAgent", thread: "AgentThread"):
+    """Here we let the thread deal with the previous responses, and we just rerun with the approval."""
+    from agent_framework import ChatMessage
+
+    new_input: list[ChatMessage | str] = []
+    new_input_added = True
+    while new_input_added:
+        new_input_added = False
+        new_input.append(query)
+        async for update in agent.run_streaming(new_input, thread=thread, store=True):
+            if update.user_input_requests:
+                for user_input_needed in update.user_input_requests:
+                    if user_input_needed.type == "function_approval":
+                        print(
+                            f"User Input Request for function from {agent.name}: {user_input_needed.function_call.name}"
+                            f" with arguments: {user_input_needed.function_call.arguments}"
+                        )
+                        new_input.append(ChatMessage(role="user", contents=[user_input_needed.create_approval()]))
+                        new_input_added = True
+            else:
+                yield update
 
 
 async def run_hosted_mcp_wo_thread() -> None:
@@ -61,7 +88,7 @@ async def run_hosted_mcp_wo_thread() -> None:
             name="Microsoft Learn MCP",
             url="https://learn.microsoft.com/api/mcp",
             # we require approval for all function calls
-            approval_mode="always_require",
+            approval_mode={"specific": {"never_require_approval": ["microsoft_docs_search"]}},
         ),
     ) as agent:
         # First query
@@ -140,12 +167,48 @@ async def run_hosted_mcp_with_thread() -> None:
         print(f"{agent.name}: {result2}\n")
 
 
+async def run_hosted_mcp_with_thread_streaming() -> None:
+    """Example showing Mcp Tools with approvals using a thread."""
+    print("=== Mcp with approvals and with thread ===")
+
+    # Tools are provided when creating the agent
+    # The agent can use these tools for any query during its lifetime
+    async with ChatClientAgent(
+        chat_client=OpenAIResponsesClient(),
+        name="DocsAgent",
+        instructions="You are a helpful assistant that can help with microsoft documentation questions.",
+        tools=HostedMcpTool(
+            name="Microsoft Learn MCP",
+            url="https://learn.microsoft.com/api/mcp",
+            # we require approval for all function calls
+            approval_mode="always_require",
+        ),
+    ) as agent:
+        # First query
+        thread = agent.get_new_thread()
+        query1 = "How to create an Azure storage account using az cli?"
+        print(f"User: {query1}")
+        print(f"{agent.name}: ", end="")
+        async for update in handle_approvals_with_thread_streaming(query1, agent, thread):
+            print(update, end="")
+        print("\n")
+        print("\n=======================================\n")
+        # Second query
+        query2 = "What is Microsoft Semantic Kernel?"
+        print(f"User: {query2}")
+        print(f"{agent.name}: ", end="")
+        async for update in handle_approvals_with_thread_streaming(query2, agent, thread):
+            print(update, end="")
+        print("\n")
+
+
 async def main() -> None:
     print("=== OpenAI Responses Client Agent with Hosted Mcp Tools Examples ===\n")
 
-    await run_hosted_mcp_with_thread()
-    await run_hosted_mcp_wo_thread()
-    await run_hosted_mcp_wo_approval()
+    await run_hosted_mcp_with_thread_streaming()
+    # await run_hosted_mcp_with_thread()
+    # await run_hosted_mcp_wo_thread()
+    # await run_hosted_mcp_wo_approval()
 
 
 if __name__ == "__main__":

@@ -13,14 +13,7 @@ from openai.types.responses.parsed_response import (
     ParsedResponse,
 )
 from openai.types.responses.response import Response as OpenAIResponse
-from openai.types.responses.response_completed_event import ResponseCompletedEvent
-from openai.types.responses.response_content_part_added_event import ResponseContentPartAddedEvent
-from openai.types.responses.response_function_call_arguments_delta_event import ResponseFunctionCallArgumentsDeltaEvent
-from openai.types.responses.response_output_item_added_event import ResponseOutputItemAddedEvent
-from openai.types.responses.response_output_refusal import ResponseOutputRefusal
-from openai.types.responses.response_output_text import ResponseOutputText
 from openai.types.responses.response_stream_event import ResponseStreamEvent as OpenAIResponseStreamEvent
-from openai.types.responses.response_text_delta_event import ResponseTextDeltaEvent
 from openai.types.responses.response_usage import ResponseUsage
 from openai.types.responses.tool_param import (
     CodeInterpreter,
@@ -38,7 +31,6 @@ from .._tools import (
     AIFunction,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
-    HostedMcpApprovalMode,
     HostedMcpTool,
     HostedWebSearchTool,
     ToolProtocol,
@@ -393,19 +385,20 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         if tool.allowed_tools:
                             mcp["allowed_tools"] = list(tool.allowed_tools)
                         if tool.approval_mode:
-                            if tool.approval_mode == HostedMcpApprovalMode.ALWAYS_REQUIRE:
-                                mcp["require_approval"] = "always"
-                            elif tool.approval_mode == HostedMcpApprovalMode.NEVER_REQUIRE:
-                                mcp["require_approval"] = "never"
-                            elif tool.approval_mode == HostedMcpApprovalMode.SPECIFIC:
-                                if tool.approval_mode.always_require_approval:
-                                    mcp["require_approval"] = {
-                                        "always": {"tool_names": list(tool.approval_mode.always_require_approval)}
-                                    }
-                                if tool.approval_mode.never_require_approval:
-                                    mcp["require_approval"] = {
-                                        "never": {"tool_names": list(tool.approval_mode.never_require_approval)}
-                                    }
+                            match tool.approval_mode:
+                                case str():
+                                    mcp["require_approval"] = (
+                                        "always" if tool.approval_mode == "always_require" else "never"
+                                    )
+                                case _:
+                                    if always_require_approvals := tool.approval_mode.get("always_require_approval"):
+                                        mcp["require_approval"] = {
+                                            "always": {"tool_names": list(always_require_approvals)}
+                                        }
+                                    if never_require_approvals := tool.approval_mode.get("never_require_approval"):
+                                        mcp["require_approval"] = {
+                                            "never": {"tool_names": list(never_require_approvals)}
+                                        }
                         response_tools.append(mcp)
                     case HostedCodeInterpreterTool():
                         tool_args: CodeInterpreterContainerCodeInterpreterToolAuto = {"type": "auto"}
@@ -783,7 +776,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         )
                 # TODO(peterychang): Add support for other content types
                 case _:
-                    logger.debug("Unparsed content of type: %s: %s", item.type, item)
+                    logger.debug("Unparsed output of type: %s: %s", item.type, item)
         response_message = ChatMessage(role="assistant", contents=contents)
         args: dict[str, Any] = {
             "response_id": response.id,
@@ -811,35 +804,149 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
     ) -> ChatResponseUpdate:
         """Create a streaming chat message content object from a choice."""
         metadata: dict[str, Any] = {}
-        items: list[Contents] = []
+        contents: list[Contents] = []
         conversation_id: str | None = None
         model = self.ai_model_id
         # TODO(peterychang): Add support for other content types
-        match event:
-            case ResponseContentPartAddedEvent():
-                match event.part:
-                    case ResponseOutputText():
-                        items.append(TextContent(text=event.part.text, raw_representation=event))
+        match event.type:
+            # types:
+            # ResponseAudioDeltaEvent,
+            # ResponseAudioDoneEvent,
+            # ResponseAudioTranscriptDeltaEvent,
+            # ResponseAudioTranscriptDoneEvent,
+            # ResponseCodeInterpreterCallCodeDeltaEvent,
+            # ResponseCodeInterpreterCallCodeDoneEvent,
+            # ResponseCodeInterpreterCallCompletedEvent,
+            # ResponseCodeInterpreterCallInProgressEvent,
+            # ResponseCodeInterpreterCallInterpretingEvent,
+            # ResponseCompletedEvent,
+            # ResponseContentPartAddedEvent,
+            # ResponseContentPartDoneEvent,
+            # ResponseCreatedEvent,
+            # ResponseErrorEvent,
+            # ResponseFileSearchCallCompletedEvent,
+            # ResponseFileSearchCallInProgressEvent,
+            # ResponseFileSearchCallSearchingEvent,
+            # ResponseFunctionCallArgumentsDeltaEvent,
+            # ResponseFunctionCallArgumentsDoneEvent,
+            # ResponseInProgressEvent,
+            # ResponseFailedEvent,
+            # ResponseIncompleteEvent,
+            # ResponseOutputItemAddedEvent,
+            # ResponseOutputItemDoneEvent,
+            # ResponseReasoningSummaryPartAddedEvent,
+            # ResponseReasoningSummaryPartDoneEvent,
+            # ResponseReasoningSummaryTextDeltaEvent,
+            # ResponseReasoningSummaryTextDoneEvent,
+            # ResponseReasoningTextDeltaEvent,
+            # ResponseReasoningTextDoneEvent,
+            # ResponseRefusalDeltaEvent,
+            # ResponseRefusalDoneEvent,
+            # ResponseTextDeltaEvent,
+            # ResponseTextDoneEvent,
+            # ResponseWebSearchCallCompletedEvent,
+            # ResponseWebSearchCallInProgressEvent,
+            # ResponseWebSearchCallSearchingEvent,
+            # ResponseImageGenCallCompletedEvent,
+            # ResponseImageGenCallGeneratingEvent,
+            # ResponseImageGenCallInProgressEvent,
+            # ResponseImageGenCallPartialImageEvent,
+            # ResponseMcpCallArgumentsDeltaEvent,
+            # ResponseMcpCallArgumentsDoneEvent,
+            # ResponseMcpCallCompletedEvent,
+            # ResponseMcpCallFailedEvent,
+            # ResponseMcpCallInProgressEvent,
+            # ResponseMcpListToolsCompletedEvent,
+            # ResponseMcpListToolsFailedEvent,
+            # ResponseMcpListToolsInProgressEvent,
+            # ResponseOutputTextAnnotationAddedEvent,
+            # ResponseQueuedEvent,
+            # ResponseCustomToolCallInputDeltaEvent,
+            # ResponseCustomToolCallInputDoneEvent,
+            case "response.content_part.added":
+                match event.part.type:
+                    case "output_text":
+                        contents.append(TextContent(text=event.part.text, raw_representation=event))
                         metadata.update(self._get_metadata_from_response(event.part))
-                    case ResponseOutputRefusal():
-                        items.append(TextContent(text=event.part.refusal, raw_representation=event))
-            case ResponseTextDeltaEvent():
-                items.append(TextContent(text=event.delta, raw_representation=event))
+                    case "refusal":
+                        contents.append(TextContent(text=event.part.refusal, raw_representation=event))
+            case "response.output_text.delta":
+                contents.append(TextContent(text=event.delta, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
-            case ResponseCompletedEvent():
+            case "response.completed":
                 conversation_id = event.response.id if chat_options.store is True else None
                 model = event.response.model
                 if event.response.usage:
                     usage = self._usage_details_from_openai(event.response.usage)
                     if usage:
-                        items.append(UsageContent(details=usage, raw_representation=event))
-            case ResponseOutputItemAddedEvent():
-                if event.item.type == "function_call":
-                    function_call_ids[event.output_index] = (event.item.call_id, event.item.name)
-            case ResponseFunctionCallArgumentsDeltaEvent():
+                        contents.append(UsageContent(details=usage, raw_representation=event))
+            case "response.output_item.added":
+                match event.item.type:
+                    # types:
+                    # ResponseOutputMessage,
+                    # ResponseFileSearchToolCall,
+                    # ResponseFunctionToolCall,
+                    # ResponseFunctionWebSearch,
+                    # ResponseComputerToolCall,
+                    # ResponseReasoningItem,
+                    # ImageGenerationCall,
+                    # ResponseCodeInterpreterToolCall,
+                    # LocalShellCall,
+                    # McpCall,
+                    # McpListTools,
+                    # McpApprovalRequest,
+                    # ResponseCustomToolCall,
+                    case "function_call":
+                        function_call_ids[event.output_index] = (event.item.call_id, event.item.name)
+                    case "mcp_approval_request":
+                        contents.append(
+                            FunctionApprovalRequestContent(
+                                id=event.item.id,
+                                function_call=FunctionCallContent(
+                                    call_id=event.item.id,
+                                    name=event.item.name,
+                                    arguments=event.item.arguments,
+                                    additional_properties={"server_label": event.item.server_label},
+                                    raw_representation=event.item,
+                                ),
+                            )
+                        )
+                    case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
+                        if event.item.outputs:
+                            for code_output in event.item.outputs:
+                                if code_output.type == "logs":
+                                    contents.append(TextContent(text=code_output.logs, raw_representation=event.item))
+                                if code_output.type == "image":
+                                    contents.append(
+                                        UriContent(
+                                            uri=code_output.url,
+                                            raw_representation=event.item,
+                                            # no more specific media type then this can be inferred
+                                            media_type="image",
+                                        )
+                                    )
+                        elif event.item.code:
+                            # fallback if no output was returned is the code:
+                            contents.append(TextContent(text=event.item.code, raw_representation=event.item))
+                    case "reasoning":  # ResponseOutputReasoning
+                        if event.item.content:
+                            for index, reasoning_content in enumerate(event.item.content):
+                                additional_properties = None
+                                if event.item.summary and index < len(event.item.summary):
+                                    additional_properties = {"summary": event.item.summary[index]}
+                                contents.append(
+                                    TextReasoningContent(
+                                        text=reasoning_content.text,
+                                        raw_representation=reasoning_content,
+                                        additional_properties=additional_properties,
+                                    )
+                                )
+                    case _:
+                        logger.debug("Unparsed event of type: %s: %s", event.type, event)
+            case "response.function_call_arguments.delta":
                 call_id, name = function_call_ids.get(event.output_index, (None, None))
                 if call_id and name:
-                    items.append(
+                    contents.append(
                         FunctionCallContent(
                             call_id=call_id,
                             name=name,
@@ -849,10 +956,10 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         )
                     )
             case _:
-                logger.debug("Unparsed event: %s", event)
+                logger.debug("Unparsed event of type: %s: %s", event.type, event)
 
         return ChatResponseUpdate(
-            contents=items,
+            contents=contents,
             conversation_id=conversation_id,
             role=Role.ASSISTANT,
             ai_model_id=model,

@@ -1098,12 +1098,14 @@ class HostedVectorStoreContent(BaseContent):
 class UserInputRequestContent(BaseContent):
     """Base class for all user requests."""
 
+    type: Literal["user_input_request"] = "user_input_request"  # type: ignore[assignment]
     id: Annotated[str, Field(..., min_length=1)]
 
 
 class UserInputResponseContent(BaseContent):
     """Base class for all user responses."""
 
+    type: Literal["user_input_response"] = "user_input_response"  # type: ignore[assignment]
     id: Annotated[str, Field(..., min_length=1)]
 
 
@@ -1150,7 +1152,7 @@ class FunctionApprovalResponseContent(UserInputResponseContent):
 class FunctionApprovalRequestContent(UserInputRequestContent):
     """Represents a request for user approval of a function call."""
 
-    type: Literal["function_approval_request"] = "function_approval_request"  # type: ignore[assignment]
+    type: Literal["function_approval"] = "function_approval"  # type: ignore[assignment]
     function_call: FunctionCallContent
 
     def __init__(
@@ -1182,34 +1184,29 @@ class FunctionApprovalRequestContent(UserInputRequestContent):
             **kwargs,
         )
 
-    def approve(self) -> "ChatMessage":
+    def create_approval(self) -> "FunctionApprovalResponseContent":
         """Approve the function call."""
-        return ChatMessage(
-            role=Role.USER,
-            contents=[
-                FunctionApprovalResponseContent(
-                    True,
-                    id=self.id,
-                    function_call=self.function_call,
-                    additional_properties=self.additional_properties,
-                )
-            ],
+        return FunctionApprovalResponseContent(
+            True,
+            id=self.id,
+            function_call=self.function_call,
+            additional_properties=self.additional_properties,
         )
 
-    def reject(self) -> "ChatMessage":
+    def create_rejection(self) -> "FunctionApprovalResponseContent":
         """Reject the function call."""
-        return ChatMessage(
-            role=Role.USER,
-            contents=[
-                FunctionApprovalResponseContent(
-                    False,
-                    id=self.id,
-                    function_call=self.function_call,
-                    additional_properties=self.additional_properties,
-                )
-            ],
+        return FunctionApprovalResponseContent(
+            False,
+            id=self.id,
+            function_call=self.function_call,
+            additional_properties=self.additional_properties,
         )
 
+
+UserInputRequestContents = Annotated[
+    FunctionApprovalRequestContent | UserInputRequestContent,
+    Field(discriminator="type"),
+]
 
 Contents = Annotated[
     TextContent
@@ -2078,7 +2075,7 @@ class AgentRunResponse(AFBaseModel):
         return "".join(msg.text for msg in self.messages) if self.messages else ""
 
     @property
-    def user_input_requests(self) -> list[UserInputRequestContent]:
+    def user_input_requests(self) -> list[UserInputRequestContents]:
         """Get all UserInputRequestContent messages from the response."""
         return [
             content for msg in self.messages for content in msg.contents if isinstance(content, UserInputRequestContent)
@@ -2135,7 +2132,7 @@ class AgentRunResponseUpdate(AFBaseModel):
         )
 
     @property
-    def user_input_requests(self) -> list[UserInputRequestContent]:
+    def user_input_requests(self) -> list[UserInputRequestContents]:
         """Get all UserInputRequestContent messages from the response."""
         return [content for content in self.contents if isinstance(content, UserInputRequestContent)]
 
