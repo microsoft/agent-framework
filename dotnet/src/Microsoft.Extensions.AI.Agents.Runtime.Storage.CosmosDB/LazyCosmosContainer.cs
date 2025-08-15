@@ -2,9 +2,9 @@
 
 using System;
 using System.Collections.ObjectModel;
+using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Net;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Options;
 using Microsoft.Extensions.Options;
