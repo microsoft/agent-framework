@@ -47,6 +47,7 @@
     <PackageVersion Include="Microsoft.Extensions.AI" Version="9.7.1" />
     <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="9.7.1-preview.1.25365.4" />
     <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="9.7.1" />
+    <PackageVersion Include="OpenAI" Version="2.2.0" />
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="9.0.7" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Abstractions" Version="9.0.7" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Binder" Version="9.0.7" />
@@ -58,6 +59,7 @@
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="9.0.7" />
     <PackageVersion Include="Microsoft.Extensions.Logging" Version="9.0.7" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.7" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="9.0.7" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Testing" Version="9.0.7" />
     <!-- Vector Stores -->
     <PackageVersion Include="Microsoft.SemanticKernel.Connectors.InMemory" Version="1.61.0-preview" />

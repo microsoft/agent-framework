@@ -4,15 +4,8 @@
     <BuildType Name="Publish" />
     <BuildType Name="Release" />
   </Configurations>
-  <Folder Name="/ConformanceTests/">
-    <Project Path="tests/AgentConformance.IntegrationTests/AgentConformance.IntegrationTests.csproj" />
-    <Project Path="tests/AzureAIAgentsPersistent.IntegrationTests/AzureAIAgentsPersistent.IntegrationTests.csproj" />
-    <Project Path="tests/CopilotStudio.IntegrationTests/CopilotStudio.IntegrationTests.csproj" />
-    <Project Path="tests/OpenAIAssistant.IntegrationTests/OpenAIAssistant.IntegrationTests.csproj" />
-    <Project Path="tests/OpenAIChatCompletion.IntegrationTests/OpenAIChatCompletion.IntegrationTests.csproj" />
-    <Project Path="tests/OpenAIResponse.IntegrationTests/OpenAIResponse.IntegrationTests.csproj" />
-  </Folder>
   <Folder Name="/Demos/">
+    <Project Path="demos/AgentOpenTelemetry/AgentOpenTelemetry.csproj" />
     <Project Path="demos/MinimalConsole/MinimalConsole.csproj" />
   </Folder>
   <Folder Name="/Samples/">
@@ -30,15 +23,6 @@
     <File Path="Directory.Build.props" />
     <File Path="Directory.Build.targets" />
     <File Path="Directory.Packages.props" />
-  </Folder>
-  <Folder Name="/Solution Items/nuget/">
-    <File Path="nuget/icon.png" />
-    <File Path="nuget/nuget-package.props" />
-    <File Path="nuget/NUGET.md" />
-  </Folder>
-  <Folder Name="/Solution Items/tests/">
-    <File Path="tests/.editorconfig" />
-    <File Path="tests/Directory.Build.props" />
   </Folder>
   <Folder Name="/Solution Items/.github/" />
   <Folder Name="/Solution Items/.github/workflows/">
@@ -61,22 +45,10 @@
     <File Path="eng/MSBuild/Shared.props" />
     <File Path="eng/MSBuild/Shared.targets" />
   </Folder>
-  <Folder Name="/Solution Items/src/Shared/" />
-  <Folder Name="/Solution Items/src/Shared/Throw/">
-    <File Path="src/Shared/Throw/README.md" />
-    <File Path="src/Shared/Throw/Throw.cs" />
-  </Folder>
-  <Folder Name="/Solution Items/src/Shared/IntegrationTests/">
-    <File Path="src/Shared/IntegrationTests/AzureAIConfiguration.cs" />
-    <File Path="src/Shared/IntegrationTests/OpenAIConfiguration.cs" />
-    <File Path="src/Shared/IntegrationTests/README.md" />
-  </Folder>
-  <Folder Name="/Solution Items/src/Shared/Samples/">
-    <File Path="src/Shared/Samples/README.md" />
-    <File Path="src/Shared/Samples/BaseSample.cs" />
-    <File Path="src/Shared/Samples/TestConfiguration.cs" />
-    <File Path="src/Shared/Samples/TextOutputHelperExtensions.cs" />
-    <File Path="src/Shared/Samples/XunitLogger.cs" />
+  <Folder Name="/Solution Items/nuget/">
+    <File Path="nuget/icon.png" />
+    <File Path="nuget/nuget-package.props" />
+    <File Path="nuget/NUGET.md" />
   </Folder>
   <Folder Name="/Solution Items/samples/">
     <File Path="samples/.editorconfig" />
@@ -95,8 +67,8 @@
     <File Path="src/LegacySupport/DiagnosticAttributes/README.md" />
   </Folder>
   <Folder Name="/Solution Items/src/LegacySupport/DiagnosticClasses/">
-    <File Path="src/LegacySupport/DiagnosticClasses/UnreachableException.cs" />
     <File Path="src/LegacySupport/DiagnosticClasses/README.md" />
+    <File Path="src/LegacySupport/DiagnosticClasses/UnreachableException.cs" />
   </Folder>
   <Folder Name="/Solution Items/src/LegacySupport/ExperimentalAttribute/">
     <File Path="src/LegacySupport/ExperimentalAttribute/ExperimentalAttribute.cs" />
@@ -114,6 +86,27 @@
     <File Path="src/LegacySupport/TrimAttributes/RequiresUnreferencedCodeAttribute.cs" />
     <File Path="src/LegacySupport/TrimAttributes/UnconditionalSuppressMessageAttribute.cs" />
   </Folder>
+  <Folder Name="/Solution Items/src/Shared/" />
+  <Folder Name="/Solution Items/src/Shared/IntegrationTests/">
+    <File Path="src/Shared/IntegrationTests/AzureAIConfiguration.cs" />
+    <File Path="src/Shared/IntegrationTests/OpenAIConfiguration.cs" />
+    <File Path="src/Shared/IntegrationTests/README.md" />
+  </Folder>
+  <Folder Name="/Solution Items/src/Shared/Samples/">
+    <File Path="src/Shared/Samples/BaseSample.cs" />
+    <File Path="src/Shared/Samples/README.md" />
+    <File Path="src/Shared/Samples/TestConfiguration.cs" />
+    <File Path="src/Shared/Samples/TextOutputHelperExtensions.cs" />
+    <File Path="src/Shared/Samples/XunitLogger.cs" />
+  </Folder>
+  <Folder Name="/Solution Items/src/Shared/Throw/">
+    <File Path="src/Shared/Throw/README.md" />
+    <File Path="src/Shared/Throw/Throw.cs" />
+  </Folder>
+  <Folder Name="/Solution Items/tests/">
+    <File Path="tests/.editorconfig" />
+    <File Path="tests/Directory.Build.props" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/Microsoft.Agents.Orchestration/Microsoft.Agents.Orchestration.csproj" />
     <Project Path="src/Microsoft.Agents.Workflows/Microsoft.Agents.Workflows.csproj" />
@@ -127,14 +120,21 @@
     <Project Path="src/Microsoft.Extensions.AI.Agents.Runtime/Microsoft.Extensions.AI.Agents.Runtime.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents/Microsoft.Extensions.AI.Agents.csproj" />
   </Folder>
-  <Folder Name="/UnitTests/">
+  <Folder Name="/Tests/" />
+  <Folder Name="/Tests/IntegrationTests/">
+    <Project Path="tests/AgentConformance.IntegrationTests/AgentConformance.IntegrationTests.csproj" />
+    <Project Path="tests/AzureAIAgentsPersistent.IntegrationTests/AzureAIAgentsPersistent.IntegrationTests.csproj" />
+    <Project Path="tests/CopilotStudio.IntegrationTests/CopilotStudio.IntegrationTests.csproj" />
+    <Project Path="tests/OpenAIAssistant.IntegrationTests/OpenAIAssistant.IntegrationTests.csproj" />
+    <Project Path="tests/OpenAIChatCompletion.IntegrationTests/OpenAIChatCompletion.IntegrationTests.csproj" />
+    <Project Path="tests/OpenAIResponse.IntegrationTests/OpenAIResponse.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/Tests/UnitTests/">
     <Project Path="tests/Microsoft.Agents.Orchestration.UnitTests/Microsoft.Agents.Orchestration.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.Workflows.UnitTests/Microsoft.Agents.Workflows.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Extensions.AI.Agents.Abstractions.UnitTests/Microsoft.Extensions.AI.Agents.Abstractions.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Extensions.AI.Agents.Hosting.UnitTests/Microsoft.Extensions.AI.Agents.Hosting.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Extensions.AI.Agents.Runtime.Abstractions.UnitTests/Microsoft.Extensions.AI.Agents.Runtime.Abstractions.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Extensions.AI.Agents.UnitTests/Microsoft.Extensions.AI.Agents.UnitTests.csproj" />
-    <Project Path="tests/CosmosDB.IntegrationTests/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests.AppHost/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests.AppHost.csproj" />
-    <Project Path="tests/CosmosDB.IntegrationTests/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests.csproj" />
   </Folder>
 </Solution>
