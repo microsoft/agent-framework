@@ -14,5 +14,26 @@ public sealed class ApprovalRequiredAIFunction(AIFunction function) : Delegating
     /// <summary>
     /// An optional callback that can be used to determine if the function call requires approval, instead of the default behavior, which is to always require approval.
     /// </summary>
-    public Func<AIFunctionApprovalContext, ValueTask<bool>> RequiresApprovalCallback { get; set; } = delegate { return new ValueTask<bool>(true); };
+    public Func<ApprovalContext, ValueTask<bool>> RequiresApprovalCallback { get; set; } = delegate { return new ValueTask<bool>(true); };
+
+    /// <summary>
+    /// Context object that provides information about the function call that requires approval.
+    /// </summary>
+    public sealed class ApprovalContext
+    {
+        /// <summary>
+        /// Initializes a new instance of the <see cref="ApprovalContext"/> class.
+        /// </summary>
+        /// <param name="functionCall">The <see cref="FunctionCallContent"/> containing the details of the invocation.</param>
+        /// <exception cref="ArgumentNullException"></exception>
+        public ApprovalContext(FunctionCallContent functionCall)
+        {
+            this.FunctionCall = functionCall ?? throw new ArgumentNullException(nameof(functionCall));
+        }
+
+        /// <summary>
+        /// Gets the <see cref="FunctionCallContent"/> containing the details of the invocation that will be made if approval is granted.
+        /// </summary>
+        public FunctionCallContent FunctionCall { get; }
+    }
 }

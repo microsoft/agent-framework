@@ -7,7 +7,7 @@ namespace Microsoft.Extensions.AI;
 /// <summary>
 /// Represents a request for user approval of a function call.
 /// </summary>
-public class FunctionApprovalRequestContent : UserInputRequestContent
+public sealed class FunctionApprovalRequestContent : UserInputRequestContent
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="FunctionApprovalRequestContent"/> class.

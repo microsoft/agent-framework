@@ -89,7 +89,7 @@ public class AgentRunResponse
     /// This property concatenates all <see cref="UserInputRequestContent"/> instances in the response.
     /// </remarks>
     [JsonIgnore]
-    public IEnumerable<UserInputRequestContent> UserInputRequests => this._messages?.SelectMany(x => x.Contents).OfType<UserInputRequestContent>() ?? Array.Empty<UserInputRequestContent>();
+    public IEnumerable<UserInputRequestContent> UserInputRequests => this._messages?.SelectMany(x => x.Contents).OfType<UserInputRequestContent>() ?? [];
 
     /// <summary>Gets or sets the ID of the agent that produced the response.</summary>
     public string? AgentId { get; set; }

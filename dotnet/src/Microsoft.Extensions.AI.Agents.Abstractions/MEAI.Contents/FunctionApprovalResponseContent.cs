@@ -7,7 +7,7 @@ namespace Microsoft.Extensions.AI;
 /// <summary>
 /// Represents a response to a function approval request.
 /// </summary>
-public class FunctionApprovalResponseContent : UserInputResponseContent
+public sealed class FunctionApprovalResponseContent : UserInputResponseContent
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="FunctionApprovalResponseContent"/> class.
@@ -25,7 +25,7 @@ public class FunctionApprovalResponseContent : UserInputResponseContent
     /// <summary>
     /// Gets or sets a value indicating whether the user approved the request.
     /// </summary>
-    public bool Approved { get; set; }
+    public bool Approved { get; }
 
     /// <summary>
     /// Gets the function call that pre-invoke approval is required for.
