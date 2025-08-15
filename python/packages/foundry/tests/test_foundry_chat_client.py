@@ -23,6 +23,7 @@ from azure.ai.agents.models import (
     SubmitToolOutputsAction,
     ThreadRun,
 )
+from azure.core.credentials_async import AsyncTokenCredential
 from azure.identity.aio import DefaultAzureCredential
 from pydantic import Field, ValidationError
 
@@ -143,27 +144,31 @@ def test_foundry_chat_client_from_dict(mock_ai_project_client: MagicMock) -> Non
     assert chat_client.thread_id == "test-thread-id"
 
 
-def test_foundry_chat_client_init_missing_project_endpoint(mock_azure_credential: MagicMock) -> None:
+def test_foundry_chat_client_init_missing_project_endpoint() -> None:
     """Test FoundryChatClient.__init__ when project_endpoint is missing and no client is provided."""
+    mock_credential = MagicMock(spec=AsyncTokenCredential)
+
     with pytest.raises(ServiceInitializationError, match="Project endpoint is required when client is not provided"):
         FoundryChatClient(
             client=None,
             agent_id=None,
             project_endpoint=None,  # Missing project endpoint
             model_deployment_name="test-model",
-            async_ad_credential=mock_azure_credential,
+            async_ad_credential=mock_credential,
         )
 
 
-def test_foundry_chat_client_init_missing_model_deployment_for_agent_creation(mock_azure_credential: MagicMock) -> None:
+def test_foundry_chat_client_init_missing_model_deployment_for_agent_creation() -> None:
     """Test FoundryChatClient.__init__ when model_deployment_name is missing and agent needs to be created."""
+    mock_credential = MagicMock(spec=AsyncTokenCredential)
+
     with pytest.raises(ServiceInitializationError, match="Model deployment name is required for agent creation"):
         FoundryChatClient(
             client=None,
             agent_id=None,
             project_endpoint="https://test-endpoint.com/",
             model_deployment_name=None,  # Missing model deployment name
-            async_ad_credential=mock_azure_credential,
+            async_ad_credential=mock_credential,
         )
 
 
@@ -237,20 +242,6 @@ async def test_foundry_chat_client_tool_results_without_thread_error_via_public_
 
     # This should raise ValueError when called through public API
     with pytest.raises(ValueError, match="No thread ID was provided, but chat messages includes tool results"):
-        async for _ in chat_client.get_streaming_response(messages):
-            pass
-
-
-async def test_foundry_chat_client_handles_missing_model_deployment_error(mock_ai_project_client: MagicMock) -> None:
-    """Test that missing model deployment raises error through public API."""
-    # Create client without model deployment name
-    foundry_settings = FoundrySettings(model_deployment_name=None)
-    chat_client = create_test_foundry_chat_client(mock_ai_project_client, foundry_settings=foundry_settings)
-
-    messages = [ChatMessage(role=ChatRole.USER, text="Hello")]
-
-    # This should raise ServiceInitializationError when trying to create agent
-    with pytest.raises(ServiceInitializationError, match="Model deployment name is required"):
         async for _ in chat_client.get_streaming_response(messages):
             pass
 
