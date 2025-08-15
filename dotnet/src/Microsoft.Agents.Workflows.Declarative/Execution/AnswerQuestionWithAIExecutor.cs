@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -9,7 +11,6 @@ using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
-using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.Execution;
@@ -38,17 +39,46 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model) :
                 {
                     Instructions = this.Context.Engine.Format(this.Model.AdditionalInstructions) ?? string.Empty,
                 });
-        AgentRunResponse agentResponse =
+
+        //AgentRunResponse agentResponse =
+        //    userInput != null ?
+        //        await agent.RunAsync(userInput, thread: null, options, cancellationToken).ConfigureAwait(false) :
+        //        await agent.RunAsync(thread: null, options, cancellationToken).ConfigureAwait(false);
+
+        IAsyncEnumerable<AgentRunResponseUpdate> agentUpdates =
             userInput != null ?
-                await agent.RunAsync(userInput, thread: null, options, cancellationToken).ConfigureAwait(false) :
-                await agent.RunAsync(thread: null, options, cancellationToken).ConfigureAwait(false);
+                agent.RunStreamingAsync(userInput, thread: null, options, cancellationToken) :
+                agent.RunStreamingAsync(thread: null, options, cancellationToken);
 
-        ChatMessage response = agentResponse.Messages.Last();
+        await context.AddEventAsync(new DeclarativeWorkflowMessageEvent(new ChatMessage(ChatRole.Assistant, "TESTING"))).ConfigureAwait(false);
 
+        string? conversationId = null;
+        string? messageId = null;
+        List<AgentRunResponseUpdate> agentResponseUpdates = [];
+        await foreach (AgentRunResponseUpdate update in agentUpdates.ConfigureAwait(false))
+        {
+            if (messageId is null)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("STREAM: BEGIN");
+                Console.ResetColor();
+            }
+
+            agentResponseUpdates.Add(update);
+            conversationId ??= update.ResponseId;
+            messageId ??= update.MessageId;
+            await context.AddEventAsync(new DeclarativeWorkflowStreamEvent(update)).ConfigureAwait(false);
+        }
+
+        Console.ForegroundColor = ConsoleColor.Red;
+        Console.WriteLine("STREAM: COMPLETE");
+        Console.ResetColor();
+
+        AgentRunResponse agentResponse = agentResponseUpdates.ToAgentRunResponse();
+
+        ChatMessage response = agentResponse.Messages.Last(); // %%% DECISION: Is last sufficient? (probably not)
         await context.AddEventAsync(new DeclarativeWorkflowMessageEvent(response, agentResponse.Usage)).ConfigureAwait(false);
 
-        StringValue responseValue = FormulaValue.New(response.ToString()); // %%% CPS - AgentMessageType
-
-        this.AssignTarget(this.Context, variablePath, responseValue);
+        this.AssignTarget(this.Context, variablePath, response.ToRecord());
     }
 }
