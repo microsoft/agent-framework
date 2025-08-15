@@ -3,10 +3,11 @@
 import inspect
 import logging
 from collections import defaultdict
+from collections.abc import Sequence
 from enum import Enum
 from typing import Any, Union, get_args, get_origin
 
-from ._edge import Edge
+from ._edge import Edge, EdgeGroup, FanInEdgeGroup
 from ._executor import Executor
 
 logger = logging.getLogger(__name__)
@@ -92,18 +93,19 @@ class WorkflowGraphValidator:
         self._executors: dict[str, Executor] = {}
 
     # region Core Validation Methods
-    def validate_workflow(self, edges: list[Edge], start_executor: Executor | str) -> None:
+    def validate_workflow(self, edge_groups: Sequence[EdgeGroup], start_executor: Executor | str) -> None:
         """Validate the entire workflow graph.
 
         Args:
-            edges: list of edges in the workflow
+            edge_groups: list of edge groups in the workflow
             start_executor: The starting executor (can be instance or ID)
 
         Raises:
             WorkflowValidationError: If any validation fails
         """
-        self._edges = edges
-        self._executors = self._build_executor_map(edges)
+        self._executors = self._build_executor_map(edge_groups)
+        self._edges = [edge for group in edge_groups for edge in group.edges]
+        self._edge_groups = edge_groups
 
         # Validate that start_executor exists in the graph
         # It should because we check for it in the WorkflowBuilder
@@ -121,12 +123,13 @@ class WorkflowGraphValidator:
         self._validate_dead_ends()
         self._validate_cycles()
 
-    def _build_executor_map(self, edges: list[Edge]) -> dict[str, Executor]:
+    def _build_executor_map(self, edge_groups: Sequence[EdgeGroup]) -> dict[str, Executor]:
         """Build a map of executor IDs to executor instances."""
         executors: dict[str, Executor] = {}
-        for edge in edges:
-            executors[edge.source_id] = edge.source
-            executors[edge.target_id] = edge.target
+        for group in edge_groups:
+            for executor in group.source_executors + group.target_executors:
+                executors[executor.id] = executor
+
         return executors
 
     # endregion
@@ -155,64 +158,80 @@ class WorkflowGraphValidator:
         Raises:
             TypeCompatibilityError: If type incompatibility is detected
         """
-        for edge in self._edges:
-            source_executor = edge.source
-            target_executor = edge.target
+        for edge_group in self._edge_groups:
+            for edge in edge_group.edges:
+                self._validate_edge_type_compatibility(edge, edge_group)
 
-            # Get output types from source executor
-            source_output_types = self._get_executor_output_types(source_executor)
+    def _validate_edge_type_compatibility(self, edge: Edge, edge_group: EdgeGroup) -> None:
+        """Validate type compatibility for a specific edge.
 
-            # Get input types from target executor
-            target_input_types = self._get_executor_input_types(target_executor)
+        This checks that the output types of the source executor are compatible
+        with the input types expected by the target executor.
 
-            # If either executor has no type information, log warning and skip validation
-            # This allows for dynamic typing scenarios but warns about reduced validation coverage
-            if not source_output_types or not target_input_types:
-                if not source_output_types:
-                    logger.warning(
-                        f"Executor '{source_executor.id}' has no output type annotations. "
-                        f"Type compatibility validation will be skipped for edges from this executor. "
-                        f"Consider adding output_types to @handler decorators for better validation."
-                    )
-                if not target_input_types:
-                    logger.warning(
-                        f"Executor '{target_executor.id}' has no input type annotations. "
-                        f"Type compatibility validation will be skipped for edges to this executor. "
-                        f"Consider adding type annotations to message handler parameters for better validation."
-                    )
-                continue
+        Args:
+            edge: The edge to validate
+            edge_group: The edge group containing this edge
 
-            # Check if any source output type is compatible with any target input type
-            compatible = False
-            compatible_pairs: list[tuple[type[Any], type[Any]]] = []
+        Raises:
+            TypeCompatibilityError: If type incompatibility is detected
+        """
+        source_executor = edge.source
+        target_executor = edge.target
 
-            for source_type in source_output_types:
-                for target_type in target_input_types:
-                    if edge.has_edge_group():
-                        # If the edge is part of an edge group, the target expects a list of data types
-                        if self._is_type_compatible(list[source_type], target_type):
-                            compatible = True
-                            compatible_pairs.append((list[source_type], target_type))
-                    else:
-                        if self._is_type_compatible(source_type, target_type):
-                            compatible = True
-                            compatible_pairs.append((source_type, target_type))
+        # Get output types from source executor
+        source_output_types = self._get_executor_output_types(source_executor)
 
-            # Log successful type compatibility for debugging
-            if compatible:
-                logger.debug(
-                    f"Type compatibility validated for edge '{source_executor.id}' -> '{target_executor.id}'. "
-                    f"Compatible type pairs: {[(str(s), str(t)) for s, t in compatible_pairs]}"
+        # Get input types from target executor
+        target_input_types = self._get_executor_input_types(target_executor)
+
+        # If either executor has no type information, log warning and skip validation
+        # This allows for dynamic typing scenarios but warns about reduced validation coverage
+        if not source_output_types or not target_input_types:
+            if not source_output_types:
+                logger.warning(
+                    f"Executor '{source_executor.id}' has no output type annotations. "
+                    f"Type compatibility validation will be skipped for edges from this executor. "
+                    f"Consider adding output_types to @handler decorators for better validation."
                 )
-
-            if not compatible:
-                # Enhanced error with more detailed information
-                raise TypeCompatibilityError(
-                    source_executor.id,
-                    target_executor.id,
-                    source_output_types,
-                    target_input_types,
+            if not target_input_types:
+                logger.warning(
+                    f"Executor '{target_executor.id}' has no input type annotations. "
+                    f"Type compatibility validation will be skipped for edges to this executor. "
+                    f"Consider adding type annotations to message handler parameters for better validation."
                 )
+            return
+
+        # Check if any source output type is compatible with any target input type
+        compatible = False
+        compatible_pairs: list[tuple[type[Any], type[Any]]] = []
+
+        for source_type in source_output_types:
+            for target_type in target_input_types:
+                if isinstance(edge_group, FanInEdgeGroup):
+                    # If the edge is part of an edge group, the target expects a list of data types
+                    if self._is_type_compatible(list[source_type], target_type):
+                        compatible = True
+                        compatible_pairs.append((list[source_type], target_type))
+                else:
+                    if self._is_type_compatible(source_type, target_type):
+                        compatible = True
+                        compatible_pairs.append((source_type, target_type))
+
+        # Log successful type compatibility for debugging
+        if compatible:
+            logger.debug(
+                f"Type compatibility validated for edge '{source_executor.id}' -> '{target_executor.id}'. "
+                f"Compatible type pairs: {[(str(s), str(t)) for s, t in compatible_pairs]}"
+            )
+
+        if not compatible:
+            # Enhanced error with more detailed information
+            raise TypeCompatibilityError(
+                source_executor.id,
+                target_executor.id,
+                source_output_types,
+                target_input_types,
+            )
 
     def _get_executor_output_types(self, executor: Executor) -> list[type[Any]]:
         """Extract output types from an executor's message handlers.
@@ -479,15 +498,15 @@ class WorkflowGraphValidator:
 # endregion
 
 
-def validate_workflow_graph(edges: list[Edge], start_executor: Executor | str) -> None:
+def validate_workflow_graph(edge_groups: Sequence[EdgeGroup], start_executor: Executor | str) -> None:
     """Convenience function to validate a workflow graph.
 
     Args:
-        edges: list of edges in the workflow
+        edge_groups: list of edge groups in the workflow
         start_executor: The starting executor (can be instance or ID)
 
     Raises:
         WorkflowValidationError: If any validation fails
     """
     validator = WorkflowGraphValidator()
-    validator.validate_workflow(edges, start_executor)
+    validator.validate_workflow(edge_groups, start_executor)

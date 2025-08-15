@@ -32,6 +32,8 @@ _IMPORTS = [
     "InMemoryCheckpointStorage",
     "CheckpointStorage",
     "WorkflowCheckpoint",
+    "Case",
+    "Default",
 ]
 
 
