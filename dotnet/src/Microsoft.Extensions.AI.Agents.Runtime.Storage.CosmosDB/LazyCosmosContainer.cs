@@ -22,6 +22,9 @@ internal sealed class LazyCosmosContainer
     private readonly string? _containerName;
     private readonly Lazy<Task<Container>> _lazyContainer;
 
+    // internal for testing
+    internal readonly static string[] CosmosPartitionKeyPaths = ["/actorType", "/actorKey"];
+
     /// <summary>
     /// LazyCosmosContainer constructor that initializes the container lazily.
     /// </summary>
@@ -56,7 +59,7 @@ internal sealed class LazyCosmosContainer
         // Create database if it doesn't exist
         var database = await this._cosmosClient!.CreateDatabaseIfNotExistsAsync(this._databaseName!).ConfigureAwait(false);
 
-        var containerProperties = new ContainerProperties(this._containerName!, "/actorId")
+        var containerProperties = new ContainerProperties(this._containerName!, CosmosPartitionKeyPaths)
         {
             Id = this._containerName!,
             IndexingPolicy = new IndexingPolicy
@@ -64,13 +67,14 @@ internal sealed class LazyCosmosContainer
                 IndexingMode = IndexingMode.Consistent,
                 Automatic = true
             },
-            PartitionKeyPaths = ["/actorId"]
+            PartitionKeyPaths = CosmosPartitionKeyPaths
         };
 
         // Add composite index for efficient queries
         containerProperties.IndexingPolicy.CompositeIndexes.Add(new Collection<CompositePath>
         {
-            new() { Path = "/actorId", Order = CompositePathSortOrder.Ascending },
+            new() { Path = "/actorType", Order = CompositePathSortOrder.Ascending },
+            new() { Path = "/actorKey", Order = CompositePathSortOrder.Ascending },
             new() { Path = "/key", Order = CompositePathSortOrder.Ascending }
         });
 

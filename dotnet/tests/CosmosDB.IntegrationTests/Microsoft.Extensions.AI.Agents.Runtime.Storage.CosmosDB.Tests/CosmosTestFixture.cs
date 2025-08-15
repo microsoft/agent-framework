@@ -4,6 +4,7 @@ using System.Text.Json;
 using Aspire.Hosting;
 using Azure.Identity;
 using Microsoft.Azure.Cosmos;
+using Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB;
 using Microsoft.Extensions.Logging;
 
 #pragma warning disable CA2007, VSTHRD111, CS1591
@@ -73,7 +74,7 @@ public class CosmosTestFixture : IAsyncLifetime
         var containerProperties = new ContainerProperties()
         {
             Id = "CosmosActorStateStorageTests",
-            PartitionKeyPath = "/actorId"
+            PartitionKeyPath = LazyCosmosContainer.CosmosPartitionKeyPaths
         };
 
         this.Container = await database.CreateContainerIfNotExistsAsync(containerProperties);
