@@ -19,26 +19,23 @@ namespace Microsoft.Extensions.AI.Agents.A2A.Internal;
 internal sealed class A2AAgentWrapper
 {
     private readonly ILogger _logger;
-    private readonly TaskManager _taskManager;
     private readonly AIAgent _innerAgent;
     private readonly IActorClient _actorClient;
 
     public A2AAgentWrapper(
         IActorClient actorClient,
         AIAgent innerAgent,
-        TaskManager taskManager,
         ILoggerFactory? loggerFactory = null)
     {
         this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<A2AAgentWrapper>();
 
         this._actorClient = actorClient;
-        this._taskManager = taskManager ?? throw new ArgumentNullException(nameof(taskManager));
         this._innerAgent = innerAgent ?? throw new ArgumentNullException(nameof(innerAgent));
     }
 
     public async Task<Message> ProcessMessageAsync(MessageSendParams messageSendParams, CancellationToken cancellationToken)
     {
-        var contextId = messageSendParams.Message.ContextId!;
+        var contextId = messageSendParams.Message.ContextId ?? Guid.NewGuid().ToString();
         var messageId = messageSendParams.Message.MessageId;
 
         var actorId = new ActorId(type: this.GetActorType(), key: contextId!);
@@ -65,6 +62,9 @@ internal sealed class A2AAgentWrapper
         return response.ToMessage();
     }
 
+    /// <summary>
+    /// AgentFramework does not have full info at this point, so is an incomplete AgentCard provider.
+    /// </summary>
     public Task<AgentCard> GetAgentCardAsync(string agentPath, CancellationToken cancellationToken = default)
     {
         if (cancellationToken.IsCancellationRequested)
@@ -77,7 +77,7 @@ internal sealed class A2AAgentWrapper
             Name = this._innerAgent.Name ?? string.Empty,
             Description = this._innerAgent.Description ?? string.Empty,
             Url = agentPath,
-            Version = this._innerAgent.Id,
+            Version = "0.0.0",
             DefaultInputModes = ["text"],
             DefaultOutputModes = ["text"],
             Capabilities = new()

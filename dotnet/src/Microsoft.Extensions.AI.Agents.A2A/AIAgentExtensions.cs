@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using A2A;
 using Microsoft.Extensions.AI.Agents.A2A.Internal;
 using Microsoft.Extensions.AI.Agents.Runtime;
@@ -25,8 +26,11 @@ public static class AIAgentExtensions
         TaskManager taskManager,
         ILoggerFactory? loggerFactory = null)
     {
-        taskManager ??= new();
-        var a2aAgentWrapper = new A2AAgentWrapper(actorClient, agent, taskManager, loggerFactory);
+        ArgumentNullException.ThrowIfNull(agent, nameof(agent));
+        ArgumentNullException.ThrowIfNull(actorClient, nameof(actorClient));
+        ArgumentNullException.ThrowIfNull(taskManager, nameof(taskManager));
+
+        var a2aAgentWrapper = new A2AAgentWrapper(actorClient, agent, loggerFactory);
 
         taskManager.OnAgentCardQuery += a2aAgentWrapper.GetAgentCardAsync;
         taskManager.OnMessageReceived += a2aAgentWrapper.ProcessMessageAsync;
