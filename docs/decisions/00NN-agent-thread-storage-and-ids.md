@@ -2,7 +2,7 @@
 # These are optional elements. Feel free to remove any of them.
 status: proposed
 contact: westey-m
-date: 2025-08-15 {YYYY-MM-DD when the decision was last updated}
+date: 2025-08-15 # {YYYY-MM-DD when the decision was last updated}
 deciders: sergeymenshykh, markwallace-microsoft, rogerbarreto, dmytrostruk, westey-m, eavanvalkenburg, stephentoub, peterychang
 consulted: 
 informed: 
@@ -98,7 +98,7 @@ Similarly to the previous example the internal thread id used to communicate wit
 |OpenAI Responses (store = true)|Y|
 |OpenAI Responses (store = false)|N|
 |OpenAI Chat|N|
-|All other infererence services|N|
+|All other inference services|N|
 |A2A|Y|
 |CopilotStudio|Y|
 |Custom Agent|Could be either, agent decides|
@@ -155,7 +155,7 @@ var multipleInternalIds = new AgentThread()
     Id = "thread-1",
     AdditionalProperties = new Dictionary<string, string>
     {
-        { "response-id", "r-12345" }
+        { "response-id", "r-12345" },
         { "foundry-id", "f-12345" }
     }
 }
