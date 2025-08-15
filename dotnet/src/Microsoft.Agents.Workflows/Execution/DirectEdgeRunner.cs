@@ -16,8 +16,14 @@ internal class DirectEdgeRunner(IRunnerContext runContext, DirectEdgeData edgeDa
                                     .ConfigureAwait(false);
     }
 
-    public async ValueTask<IEnumerable<object?>> ChaseAsync(object message)
+    public async ValueTask<IEnumerable<object?>> ChaseAsync(MessageEnvelope envelope)
     {
+        if (envelope.TargetId != null && this.EdgeData.SinkId != envelope.TargetId)
+        {
+            return [];
+        }
+
+        object message = envelope.Message;
         if (this.EdgeData.Condition != null && !this.EdgeData.Condition(message))
         {
             return [];

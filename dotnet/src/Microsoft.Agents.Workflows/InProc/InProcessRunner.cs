@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -57,11 +58,14 @@ internal class InProcessRunner<TInput> : ISuperStepRunner where TInput : notnull
         return message is ExternalResponse;
     }
 
-    private ValueTask<IEnumerable<object?>> RouteExternalMessageAsync(object message)
+    private ValueTask<IEnumerable<object?>> RouteExternalMessageAsync(MessageEnvelope envelope)
     {
+        Debug.Assert(envelope.TargetId == null, "External Messages cannot be targeted to a specific executor.");
+
+        object message = envelope.Message;
         return message is ExternalResponse response
             ? this.CompleteExternalResponseAsync(response)
-            : this.EdgeMap.InvokeInputAsync(message);
+            : this.EdgeMap.InvokeInputAsync(envelope);
     }
 
     private ValueTask<IEnumerable<object?>> CompleteExternalResponseAsync(ExternalResponse response)
@@ -113,16 +117,16 @@ internal class InProcessRunner<TInput> : ISuperStepRunner where TInput : notnull
         List<Task<IEnumerable<object?>>> edgeTasks = new();
         foreach (ExecutorIdentity sender in currentStep.QueuedMessages.Keys)
         {
-            IEnumerable<object> senderMessages = currentStep.QueuedMessages[sender];
+            IEnumerable<MessageEnvelope> senderMessages = currentStep.QueuedMessages[sender];
             if (sender.Id is null)
             {
-                edgeTasks.AddRange(senderMessages.Select(message => this.RouteExternalMessageAsync(message).AsTask()));
+                edgeTasks.AddRange(senderMessages.Select(envelope => this.RouteExternalMessageAsync(envelope).AsTask()));
             }
             else if (this.Workflow.Edges.TryGetValue(sender.Id!, out HashSet<Edge>? outgoingEdges))
             {
                 foreach (Edge outgoingEdge in outgoingEdges)
                 {
-                    edgeTasks.AddRange(senderMessages.Select(message => this.EdgeMap.InvokeEdgeAsync(outgoingEdge, sender.Id, message).AsTask()));
+                    edgeTasks.AddRange(senderMessages.Select(envelope => this.EdgeMap.InvokeEdgeAsync(outgoingEdge, sender.Id, envelope).AsTask()));
                 }
             }
         }

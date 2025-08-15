@@ -23,9 +23,10 @@ internal class InputEdgeRunner(IRunnerContext runContext, string sinkId)
         return await this.RunContext.EnsureExecutorAsync(this.EdgeData).ConfigureAwait(false);
     }
 
-    public async ValueTask<object?> ChaseAsync(object message)
+    public async ValueTask<object?> ChaseAsync(MessageEnvelope envelope)
     {
         Executor target = await this.FindExecutorAsync().ConfigureAwait(false);
+        object message = envelope.Message;
         if (target.CanHandle(message.GetType()))
         {
             return await target.ExecuteAsync(message, this.WorkflowContext)
