@@ -7,6 +7,7 @@ from itertools import chain
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from openai import AsyncOpenAI, BadRequestError
+from openai.types.responses.file_search_tool_param import FileSearchToolParam
 from openai.types.responses.function_tool_param import FunctionToolParam
 from openai.types.responses.parsed_response import (
     ParsedResponse,
@@ -26,13 +27,15 @@ from openai.types.responses.tool_param import (
     CodeInterpreterContainerCodeInterpreterToolAuto,
     ToolParam,
 )
+from openai.types.responses.web_search_tool_param import UserLocation as WebSearchUserLocation
+from openai.types.responses.web_search_tool_param import WebSearchToolParam
 from pydantic import BaseModel, SecretStr, ValidationError
 
 from agent_framework import DataContent, TextReasoningContent, UriContent, UsageContent
 
 from .._clients import ChatClientBase, use_tool_calling
 from .._logging import get_logger
-from .._tools import AIFunction, AITool, HostedCodeInterpreterTool
+from .._tools import AIFunction, AITool, HostedCodeInterpreterTool, HostedFileSearchTool, HostedWebSearchTool
 from .._types import (
     AIContents,
     ChatMessage,
@@ -44,6 +47,7 @@ from .._types import (
     FunctionCallContent,
     FunctionResultContent,
     HostedFileContent,
+    HostedVectorStoreContent,
     TextContent,
     TextSpanRegion,
     UsageDetails,
@@ -77,6 +81,8 @@ __all__ = ["OpenAIResponsesClient"]
 
 class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
     """Base class for all OpenAI Responses based API's."""
+
+    FILE_SEARCH_MAX_RESULTS: int = 50
 
     @override
     async def get_response(
@@ -374,6 +380,45 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                                 strict=False,
                                 type="function",
                                 description=tool.description,
+                            )
+                        )
+                    case HostedFileSearchTool():
+                        if not tool.inputs:
+                            raise ValueError("HostedFileSearchTool requires inputs to be specified.")
+                        inputs: list[str] = [
+                            inp.vector_store_id for inp in tool.inputs if isinstance(inp, HostedVectorStoreContent)
+                        ]
+                        if not inputs:
+                            raise ValueError(
+                                "HostedFileSearchTool requires inputs to be of type `HostedVectorStoreContent`."
+                            )
+
+                        response_tools.append(
+                            FileSearchToolParam(
+                                type="file_search",
+                                vector_store_ids=inputs,
+                                max_num_results=tool.max_results
+                                or self.FILE_SEARCH_MAX_RESULTS,  # default to max results  if not specified
+                            )
+                        )
+                    case HostedWebSearchTool():
+                        location: dict[str, str] | None = (
+                            tool.additional_properties.get("user_location", None)
+                            if tool.additional_properties
+                            else None
+                        )
+                        response_tools.append(
+                            WebSearchToolParam(
+                                type="web_search_preview",
+                                user_location=WebSearchUserLocation(
+                                    type="approximate",
+                                    city=location.get("city", None),
+                                    country=location.get("country", None),
+                                    region=location.get("region", None),
+                                    timezone=location.get("timezone", None),
+                                )
+                                if location
+                                else None,
                             )
                         )
                     case _:
