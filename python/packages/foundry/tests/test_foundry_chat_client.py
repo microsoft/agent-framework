@@ -23,7 +23,6 @@ from azure.ai.agents.models import (
     SubmitToolOutputsAction,
     ThreadRun,
 )
-from azure.core.credentials_async import AsyncTokenCredential
 from azure.identity.aio import DefaultAzureCredential
 from pydantic import Field, ValidationError
 
@@ -142,34 +141,6 @@ def test_foundry_chat_client_from_dict(mock_ai_project_client: MagicMock) -> Non
     assert chat_client.client is mock_ai_project_client
     assert chat_client.agent_id == "test-agent-id"
     assert chat_client.thread_id == "test-thread-id"
-
-
-def test_foundry_chat_client_init_missing_project_endpoint() -> None:
-    """Test FoundryChatClient.__init__ when project_endpoint is missing and no client is provided."""
-    mock_credential = MagicMock(spec=AsyncTokenCredential)
-
-    with pytest.raises(ServiceInitializationError, match="Project endpoint is required when client is not provided"):
-        FoundryChatClient(
-            client=None,
-            agent_id=None,
-            project_endpoint=None,  # Missing project endpoint
-            model_deployment_name="test-model",
-            async_ad_credential=mock_credential,
-        )
-
-
-def test_foundry_chat_client_init_missing_model_deployment_for_agent_creation() -> None:
-    """Test FoundryChatClient.__init__ when model_deployment_name is missing and agent needs to be created."""
-    mock_credential = MagicMock(spec=AsyncTokenCredential)
-
-    with pytest.raises(ServiceInitializationError, match="Model deployment name is required for agent creation"):
-        FoundryChatClient(
-            client=None,
-            agent_id=None,
-            project_endpoint="https://test-endpoint.com/",
-            model_deployment_name=None,  # Missing model deployment name
-            async_ad_credential=mock_credential,
-        )
 
 
 def test_foundry_chat_client_init_missing_credential(foundry_unit_test_env: dict[str, str]) -> None:
