@@ -28,7 +28,7 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
 {
     private const LogLevel EventLogLevel = LogLevel.Information;
     private JsonSerializerOptions _jsonSerializerOptions;
-    private readonly OpenTelemetryChatClient? _openTelementryChatClient;
+    private readonly OpenTelemetryChatClient? _openTelemetryChatClient;
     private readonly string? _system;
     private readonly AIAgent _innerAgent;
     private readonly ActivitySource _activitySource;
@@ -54,10 +54,10 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
         this._system = this.GetService<AIAgentMetadata>()?.ProviderName ?? OpenTelemetryConsts.GenAI.SystemNameValues.MicrosoftExtensionsAIAgents;
 
         // Attempt to get the open telemetry chat client if the inner agent is a ChatClientAgent.
-        this._openTelementryChatClient = (innerAgent as ChatClientAgent)?.ChatClient.GetService<OpenTelemetryChatClient>();
+        this._openTelemetryChatClient = (innerAgent as ChatClientAgent)?.ChatClient.GetService<OpenTelemetryChatClient>();
 
         // Inherit by default the EnableSensitiveData setting from the TelemetryChatClient if available.
-        this.EnableSensitiveData = this._openTelementryChatClient?.EnableSensitiveData ?? false;
+        this.EnableSensitiveData = this._openTelemetryChatClient?.EnableSensitiveData ?? false;
 
         this._operationDurationHistogram = this._meter.CreateHistogram<double>(
             OpenTelemetryConsts.GenAI.Client.OperationDuration.Name,
@@ -375,7 +375,7 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
 
     private void LogChatMessages(IEnumerable<ChatMessage> messages)
     {
-        if (this._openTelementryChatClient is not null)
+        if (this._openTelemetryChatClient is not null)
         {
             // To avoid duplication of telemetry data the logging will be skipped if the agent is a ChatClientAgent and
             // its innerChatClient already has telemetry enabled, 
@@ -438,7 +438,7 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
 
     private void LogAgentResponse(AgentRunResponse response)
     {
-        if (this._openTelementryChatClient is not null)
+        if (this._openTelemetryChatClient is not null)
         {
             // To avoid duplication of telemetry data the logging will be skipped if the agent is a ChatClientAgent and
             // its innerChatClient already has telemetry enabled

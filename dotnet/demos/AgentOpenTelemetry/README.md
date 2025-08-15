@@ -24,6 +24,7 @@ graph TD
 - .NET 8.0 SDK or later
 - Azure OpenAI service endpoint and deployment configured
 - Azure CLI installed and authenticated (for Azure credential authentication)
+- Docker installed (for running Aspire Dashboard)
 
 ## Configuration
 
