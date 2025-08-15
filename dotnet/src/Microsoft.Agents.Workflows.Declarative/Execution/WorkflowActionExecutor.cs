@@ -85,6 +85,7 @@ internal abstract class WorkflowActionExecutor :
     protected void AssignTarget(WorkflowExecutionContext context, PropertyPath targetPath, FormulaValue result)
     {
         context.Engine.SetScopedVariable(context.Scopes, targetPath, result);
+#if DEBUG
         string? resultValue = result.Format();
         string valuePosition = (resultValue?.IndexOf('\n') ?? -1) >= 0 ? Environment.NewLine : " ";
         Debug.WriteLine(
@@ -93,5 +94,6 @@ internal abstract class WorkflowActionExecutor :
                 NAME: {targetPath.Format()}
                 VALUE:{valuePosition}{result.Format()} ({result.GetType().Name})
             """);
+#endif
     }
 }

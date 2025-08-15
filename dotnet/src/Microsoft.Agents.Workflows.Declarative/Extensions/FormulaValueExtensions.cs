@@ -49,9 +49,10 @@ internal static class FormulaValueExtensions
             DateTimeType => DataType.DateTime,
             TimeType => DataType.Time,
             StringType => DataType.String,
-            BlankType => DataType.String,
+            BlankType => DataType.Blank,
             RecordType => DataType.EmptyRecord,
             // %%% SUPPORT: DataType ???
+            //TableType
             //ColorValue
             //GuidType => DataType.String,
             //BlobValue =>
@@ -69,7 +70,7 @@ internal static class FormulaValueExtensions
             DateValue dateValue => $"{dateValue.GetConvertedValue(TimeZoneInfo.Utc)}",
             DateTimeValue datetimeValue => $"{datetimeValue.GetConvertedValue(TimeZoneInfo.Utc)}",
             TimeValue timeValue => $"{timeValue.Value}",
-            StringValue stringValue => $"{stringValue.Value}",
+            StringValue stringValue => stringValue.Value,
             GuidValue guidValue => $"{guidValue.Value}",
             BlankValue blankValue => string.Empty,
             VoidValue voidValue => string.Empty,

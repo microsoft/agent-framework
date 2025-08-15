@@ -62,7 +62,6 @@ public sealed class DeclarativeWorkflowContext
         if (this.HttpClient is not null)
         {
             clientOptions.Transport = new HttpClientTransport(this.HttpClient);
-            // %%% CONSIDER: clientOptions.RetryPolicy = new RetryPolicy(maxRetries: 0);
         }
 
         return new PersistentAgentsClient(this.ProjectEndpoint, this.ProjectCredentials, clientOptions);
