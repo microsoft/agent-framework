@@ -11,7 +11,8 @@ internal interface ISuperStepRunner
     bool HasUnservicedRequests { get; }
     bool HasUnprocessedMessages { get; }
 
-    ValueTask EnqueueMessageAsync(object message);
+    ValueTask EnqueueResponseAsync(ExternalResponse response);
+    ValueTask<bool> EnqueueMessageAsync<T>(T message);
 
     event EventHandler<WorkflowEvent>? WorkflowEvent;
 

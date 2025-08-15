@@ -33,7 +33,7 @@ internal class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData edgeData
 
         if (target.CanHandle(message.GetType()))
         {
-            return await target.ExecuteAsync(message, this.BoundContext)
+            return await target.ExecuteAsync(message, envelope.MessageType, this.BoundContext)
                                .ConfigureAwait(false);
         }
         return null;

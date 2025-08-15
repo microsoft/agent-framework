@@ -37,7 +37,7 @@ internal class FanOutEdgeRunner(IRunnerContext runContext, FanOutEdgeData edgeDa
 
             if (executor.CanHandle(message.GetType()))
             {
-                return await executor.ExecuteAsync(message, this.BoundContexts[targetId])
+                return await executor.ExecuteAsync(message, envelope.MessageType, this.BoundContexts[targetId])
                                      .ConfigureAwait(false);
             }
 

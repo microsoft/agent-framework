@@ -30,9 +30,38 @@ internal class InProcessRunner<TInput> : ISuperStepRunner where TInput : notnull
         this.EdgeMap = new EdgeMap(this.RunContext, this.Workflow.Edges, this.Workflow.Ports.Values, this.Workflow.StartExecutorId);
     }
 
-    ValueTask ISuperStepRunner.EnqueueMessageAsync(object message)
+    public async ValueTask<bool> IsValidInputAsync<TMessage>(TMessage message)
     {
-        return this.RunContext.AddExternalMessageAsync(message);
+        Throw.IfNull(message);
+
+        Type type = typeof(TMessage);
+
+        // Short circuit the logic if the type is the input type
+        if (type == typeof(TInput))
+        {
+            return true;
+        }
+
+        Executor startingExecutor = await this.RunContext.EnsureExecutorAsync(this.Workflow.StartExecutorId).ConfigureAwait(false);
+        return startingExecutor.CanHandle(type);
+    }
+
+    async ValueTask<bool> ISuperStepRunner.EnqueueMessageAsync<T>(T message)
+    {
+        // Check that the type of the incoming message is compatible with the starting executor's
+        // input type.
+        if (!await this.IsValidInputAsync(message).ConfigureAwait(false))
+        {
+            return false;
+        }
+
+        await this.RunContext.AddExternalMessageAsync<T>(message).ConfigureAwait(false);
+        return true;
+    }
+
+    ValueTask ISuperStepRunner.EnqueueResponseAsync(ExternalResponse response)
+    {
+        return this.RunContext.AddExternalMessageAsync(response);
     }
 
     private Dictionary<string, string> PendingCalls { get; } = new();

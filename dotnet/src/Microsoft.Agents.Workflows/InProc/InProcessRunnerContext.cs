@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Execution;
@@ -44,11 +43,19 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
         return executor;
     }
 
-    public ValueTask AddExternalMessageAsync([NotNull] object message)
+    public ValueTask AddExternalMessageUntypedAsync(object message)
     {
         Throw.IfNull(message);
 
         this._nextStep.MessagesFor(ExecutorIdentity.None).Add(new MessageEnvelope(message));
+        return default;
+    }
+
+    public ValueTask AddExternalMessageAsync<T>(T message)
+    {
+        Throw.IfNull(message);
+
+        this._nextStep.MessagesFor(ExecutorIdentity.None).Add(new MessageEnvelope(message, declaredType: typeof(T)));
         return default;
     }
 

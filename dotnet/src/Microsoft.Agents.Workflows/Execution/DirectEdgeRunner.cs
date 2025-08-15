@@ -30,9 +30,9 @@ internal class DirectEdgeRunner(IRunnerContext runContext, DirectEdgeData edgeDa
         }
 
         Executor target = await this.FindRouterAsync().ConfigureAwait(false);
-        if (target.CanHandle(message.GetType()))
+        if (target.CanHandle(envelope.MessageType))
         {
-            return [await target.ExecuteAsync(message, this.WorkflowContext).ConfigureAwait(false)];
+            return [await target.ExecuteAsync(message, envelope.MessageType, this.WorkflowContext).ConfigureAwait(false)];
         }
 
         return [];
