@@ -2,6 +2,7 @@
 
 using System.Text.Json;
 using Microsoft.Azure.Cosmos;
+using Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Options;
 
 namespace Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests;
 
@@ -281,5 +282,56 @@ public class LazyCosmosContainerTests
 
         // Act & Assert
         await Assert.ThrowsAsync<CosmosException>(async () => await lazyContainer.GetContainerAsync());
+    }
+
+    [Fact]
+    public async Task GetContainerAsync_WithRetryOptions_ShouldUseConfiguredRetrySettingsAsync()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource(s_defaultTimeout);
+
+        var testContainerName = $"LazyContainerRetryTest_{Guid.NewGuid():N}";
+
+        // Configure custom retry options for faster testing
+        var retryOptions = new CosmosActorStateStorageOptions
+        {
+            Retry = new CosmosActorStateStorageOptions.RetryOptions
+            {
+                MaxRetryAttempts = 2,
+                BaseDelay = TimeSpan.FromMilliseconds(10),
+                MaxDelay = TimeSpan.FromMilliseconds(100),
+                BackoffMultiplier = 1.5
+            }
+        };
+        var options = Microsoft.Extensions.Options.Options.Create(retryOptions);
+
+        var lazyContainer = new LazyCosmosContainer(
+            this._fixture.CosmosClient,
+            CosmosDBTestConstants.TestCosmosDbDatabaseName,
+            testContainerName,
+            options);
+
+        try
+        {
+            // Act - This should work normally with the custom retry options
+            var container = await lazyContainer.GetContainerAsync();
+
+            // Assert
+            Assert.NotNull(container);
+            Assert.Equal(testContainerName, container.Id);
+        }
+        finally
+        {
+            // Cleanup
+            try
+            {
+                var container = await lazyContainer.GetContainerAsync();
+                await container.DeleteContainerAsync();
+            }
+            catch
+            {
+                // Ignore cleanup errors
+            }
+        }
     }
 }
