@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Sample;
+using Microsoft.Agents.Workflows.UnitTests.Sample;
 
 namespace Microsoft.Agents.Workflows.UnitTests;
 
@@ -82,6 +83,22 @@ public class SampleSmokeTest
 
         string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: responder.InvokeNext);
         Assert.Equal("You guessed correctly! You Win!", guessResult);
+    }
+
+    [Fact]
+    public async Task Test_RunSample_Step6Async()
+    {
+        using StringWriter writer = new();
+
+        await Step6EntryPoint.RunAsync(writer);
+
+        string result = writer.ToString();
+        string[] lines = result.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries);
+
+        Assert.Collection(lines,
+            line => Assert.Contains($"{HelloAgent.DefaultId}: {HelloAgent.Greeting}", line),
+            line => Assert.Contains($"{EchoAgent.DefaultId}: {EchoAgent.Prefix}{HelloAgent.Greeting}", line)
+        );
     }
 }
 
