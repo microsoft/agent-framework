@@ -103,13 +103,6 @@ Similarly to the previous example the internal thread id used to communicate wit
 |CopilotStudio|Y|
 |Custom Agent|Could be either, agent decides|
 
-## Decision Drivers
-
-- Agents should encapsulate their internal logic and not leak it to the caller.
-- We need to support approvals for local actions as well as remote actions.
-- We need to support approvals for service-side tool use, such as remote MCP tool invocations
-- We should consider how other user input requests will be modeled, so that we can have a consistent approach for user input requests and approvals.
-
 ## Considered Options
 
 ### Decision A: Id Management
