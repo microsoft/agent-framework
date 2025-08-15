@@ -27,7 +27,7 @@ from agent_framework import (
     use_tool_calling,
 )
 from agent_framework._pydantic import AFBaseSettings
-from agent_framework.exceptions import ServiceInitializationError
+from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
 from agent_framework.telemetry import use_telemetry
 from azure.ai.agents.models import (
     AgentsNamedToolChoice,
@@ -48,6 +48,7 @@ from azure.ai.agents.models import (
     RequiredFunctionToolCall,
     ResponseFormatJsonSchema,
     ResponseFormatJsonSchemaType,
+    RunError,
     RunStatus,
     RunStep,
     SubmitToolOutputsAction,
@@ -427,6 +428,12 @@ class FoundryChatClient(ChatClientBase):
                     raw_representation=event_data,
                     response_id=response_id,
                 )
+            elif (
+                event_type == AgentStreamEvent.THREAD_RUN_FAILED
+                and isinstance(event_data, ThreadRun)
+                and isinstance(event_data.last_error, RunError)
+            ):
+                raise ServiceResponseException(event_data.last_error.message)
             else:
                 yield ChatResponseUpdate(
                     contents=[],
