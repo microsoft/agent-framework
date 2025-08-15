@@ -5,12 +5,15 @@
 // functionality that will be moved to MEAI in the future.
 // This file is not intended to be modified.
 
+using System.Diagnostics.CodeAnalysis;
+
 namespace Microsoft.Extensions.AI;
 
 #pragma warning disable CA1716 // Identifiers should not match keywords
 #pragma warning disable S4041 // Type names should not match namespaces
 
 /// <summary>Provides constants used by various telemetry services.</summary>
+[ExcludeFromCodeCoverage]
 internal static class OpenTelemetryConsts
 {
     public const string DefaultSourceName = "Experimental.Microsoft.Extensions.AI";

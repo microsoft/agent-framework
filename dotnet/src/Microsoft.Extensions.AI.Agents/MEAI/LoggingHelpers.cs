@@ -9,11 +9,13 @@
 #pragma warning disable S108 // Nested blocks of code should not be left empty
 #pragma warning disable S2486 // Generic exceptions should not be ignored
 
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 
 namespace Microsoft.Extensions.AI;
 
 /// <summary>Provides internal helpers for implementing logging.</summary>
+[ExcludeFromCodeCoverage]
 internal static class LoggingHelpers
 {
     /// <summary>Serializes <paramref name="value"/> as JSON for logging purposes.</summary>

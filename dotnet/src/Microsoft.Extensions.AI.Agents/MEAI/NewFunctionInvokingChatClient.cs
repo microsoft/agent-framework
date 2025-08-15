@@ -56,6 +56,7 @@ namespace Microsoft.Extensions.AI;
 /// invocation requests to that same function.
 /// </para>
 /// </remarks>
+[ExcludeFromCodeCoverage]
 public partial class NewFunctionInvokingChatClient : DelegatingChatClient
 {
     /// <summary>The <see cref="FunctionInvocationContext"/> for the current function invocation.</summary>
