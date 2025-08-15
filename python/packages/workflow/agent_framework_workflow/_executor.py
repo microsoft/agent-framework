@@ -31,7 +31,7 @@ class Executor:
         Args:
             id: A unique identifier for the executor. If None, a new UUID will be generated.
         """
-        self._id = id or str(uuid.uuid4())
+        self._id = id or f"{self.__class__.__name__}/{uuid.uuid4()}"
 
         self._handlers: dict[type, Callable[[Any, WorkflowContext], Any]] = {}
         self._discover_handlers()

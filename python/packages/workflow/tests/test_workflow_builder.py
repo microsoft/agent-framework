@@ -60,6 +60,6 @@ def test_workflow_builder_fluent_api():
         .build()
     )
 
-    assert len(workflow.edges) == 6
+    assert len(workflow.edge_groups) == 4
     assert workflow.start_executor.id == executor_a.id
     assert len(workflow.executors) == 6

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import pytest
 from agent_framework.workflow import Executor, WorkflowCompletedEvent, WorkflowContext, WorkflowEvent, handler
 
-from agent_framework_workflow._edge import Edge
+from agent_framework_workflow._edge import SingleEdgeGroup
 from agent_framework_workflow._runner import Runner
 from agent_framework_workflow._runner_context import InProcRunnerContext, RunnerContext
 from agent_framework_workflow._shared_state import SharedState
@@ -36,12 +36,12 @@ def test_create_runner():
     executor_b = MockExecutor(id="executor_b")
 
     # Create a loop
-    edges = [
-        Edge(source=executor_a, target=executor_b),
-        Edge(source=executor_b, target=executor_a),
+    edge_groups = [
+        SingleEdgeGroup(executor_a, executor_b),
+        SingleEdgeGroup(executor_b, executor_a),
     ]
 
-    runner = Runner(edges, shared_state=SharedState(), ctx=InProcRunnerContext())
+    runner = Runner(edge_groups, shared_state=SharedState(), ctx=InProcRunnerContext())
 
     assert runner.context is not None and isinstance(runner.context, RunnerContext)
 
@@ -53,8 +53,8 @@ async def test_runner_run_until_convergence():
 
     # Create a loop
     edges = [
-        Edge(source=executor_a, target=executor_b),
-        Edge(source=executor_b, target=executor_a),
+        SingleEdgeGroup(executor_a, executor_b),
+        SingleEdgeGroup(executor_b, executor_a),
     ]
 
     shared_state = SharedState()
@@ -87,8 +87,8 @@ async def test_runner_run_until_convergence_not_completed():
 
     # Create a loop
     edges = [
-        Edge(source=executor_a, target=executor_b),
-        Edge(source=executor_b, target=executor_a),
+        SingleEdgeGroup(executor_a, executor_b),
+        SingleEdgeGroup(executor_b, executor_a),
     ]
 
     shared_state = SharedState()
@@ -117,8 +117,8 @@ async def test_runner_already_running():
 
     # Create a loop
     edges = [
-        Edge(source=executor_a, target=executor_b),
-        Edge(source=executor_b, target=executor_a),
+        SingleEdgeGroup(executor_a, executor_b),
+        SingleEdgeGroup(executor_b, executor_a),
     ]
 
     shared_state = SharedState()
