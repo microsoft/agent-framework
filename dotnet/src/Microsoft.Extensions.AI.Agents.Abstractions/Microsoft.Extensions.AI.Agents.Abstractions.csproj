@@ -30,8 +30,4 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Microsoft.Extensions.AI.Agents.Abstractions.UnitTests" />
   </ItemGroup>
-
-  <ItemGroup>
-    <InternalsVisibleTo Include="Microsoft.Extensions.AI.Agents.A2A" />
-  </ItemGroup>
 </Project>
