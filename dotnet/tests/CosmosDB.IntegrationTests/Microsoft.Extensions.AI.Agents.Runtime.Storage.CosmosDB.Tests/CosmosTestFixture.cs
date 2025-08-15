@@ -74,7 +74,7 @@ public class CosmosTestFixture : IAsyncLifetime
         var containerProperties = new ContainerProperties()
         {
             Id = "CosmosActorStateStorageTests",
-            PartitionKeyPath = LazyCosmosContainer.CosmosPartitionKeyPaths
+            PartitionKeyPaths = LazyCosmosContainer.CosmosPartitionKeyPaths
         };
 
         this.Container = await database.CreateContainerIfNotExistsAsync(containerProperties);
