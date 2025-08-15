@@ -57,7 +57,7 @@ if runtime_path not in sys.path:
 
 from agent_runtime.agent_proxy import AgentProxy, AgentProxyThread
 from agent_runtime.http_actor_client import HttpActorClient
-from agent_runtime.runtime_abstractions import ActorId
+from agent_runtime.agent_actor import ActorId
 
 DEFAULT_RUNTIME_PORT = int(os.environ.get("AGENT_RUNTIME_PORT", "8000"))
 DEFAULT_APP_PORT = int(os.environ.get("WEB_CHAT_PORT", "5174"))
@@ -189,8 +189,9 @@ async def send_agent_message_via_proxy(actor_client: HttpActorClient, agent: str
     # Create agent proxy
     agent_proxy = AgentProxy(agent, actor_client)
     
-    # Create or get thread
-    thread = AgentProxyThread(conversation_id)
+    # Create or get thread (separate per agent)
+    agent_conversation_id = f"{conversation_id}-{agent}"
+    thread = AgentProxyThread(agent_conversation_id)
     
     # Send message via proxy
     response = await agent_proxy.run(user_text, thread=thread)
@@ -215,8 +216,10 @@ async def send_agent_message_via_proxy(actor_client: HttpActorClient, agent: str
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request, conversation_id: str | None = Cookie(default=None), client: httpx.AsyncClient = Depends(get_http_client)):
     agents = await discover_agents(client)
-    # Choose default agent
-    default_agent = next((a for a in agents if a["name"] == "helpful"), agents[0] if agents else None)
+    # Choose default agent (prefer travel, then pirate)
+    default_agent = next((a for a in agents if a["name"] == "travel"), 
+                        next((a for a in agents if a["name"] == "pirate"), 
+                             agents[0] if agents else None))
     if not conversation_id:
         # new conversation id
         conversation_id = str(uuid.uuid4())
@@ -237,11 +240,10 @@ async def index(request: Request, conversation_id: str | None = Cookie(default=N
 @app.post("/chat/send", response_class=HTMLResponse)
 async def chat_send(
     request: Request, 
-    client: httpx.AsyncClient = Depends(get_http_client), 
     conversation_id: str | None = Cookie(default=None)
 ):
     form = await request.form()
-    agent = form.get("agent") or "helpful"
+    agent = form.get("agent") or "travel"
     message = form.get("message") or ""
     if not message.strip():
         return HTMLResponse("<div class='error'>Empty message.</div>")

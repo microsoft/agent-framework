@@ -18,8 +18,7 @@ async def main():
     print("🚀 Starting Framework Integration Demo")
 
     # Import our runtime components
-    from agent_runtime.runtime_abstractions import ActorId
-
+    from agent_runtime.agent_actor import ActorId
     from agent_runtime.runtime import InProcessActorClient, InProcessActorRuntime
 
     # Import framework directly
@@ -96,7 +95,8 @@ async def main():
         framework_agents_registered = False
 
     # Also register simple runtime agent for comparison
-    from agent_runtime.agent_actor import AgentActor, EchoAgent
+    from agent_runtime.agent_actor import AgentActor
+    from agent_runtime.tests.mock_agents import EchoAgent
 
     runtime.register_actor_type("simple-echo", lambda actor_id: AgentActor(EchoAgent()))
 

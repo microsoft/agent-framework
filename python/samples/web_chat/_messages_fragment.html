@@ -2,5 +2,5 @@
 <div class="message user"><span class="role">You:</span> {{ user_msg }}</div>
 {% endif %}
 {% if assistant_msg %}
-<div class="message assistant"><span class="role">Agent:</span> {{ assistant_msg }}</div>
+<div class="message assistant"><span class="role">Agent:</span> <span class="assistant-message">{{ assistant_msg }}</span></div>
 {% endif %}

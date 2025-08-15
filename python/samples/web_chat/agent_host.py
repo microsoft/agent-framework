@@ -23,8 +23,7 @@ if runtime_path not in sys.path:
     sys.path.append(runtime_path)
 
 from agent_runtime.runtime import InProcessActorRuntime, InProcessActorClient
-from agent_runtime.agent_actor import AgentActor, MockAIAgent, EchoAgent
-from agent_runtime.runtime_abstractions import ActorId
+from agent_runtime.agent_actor import AgentActor, ActorId
 
 try:
     from fastapi import FastAPI, HTTPException
@@ -68,28 +67,8 @@ def configure_agents():
     if not runtime:
         return
     
-    # Register standard agents (always available)
-    runtime.register_actor_type(
-        "helpful", 
-        lambda actor_id: AgentActor(MockAIAgent("Helpful Assistant", [
-            "I'm here to help! What would you like to know?",
-            "That's a great question. Let me think about it.",
-            "I'd be happy to assist you with that.",
-            "Here's what I think about your request.",
-            "Is there anything else I can help you with?"
-        ]))
-    )
-    runtime.register_actor_type(
-        "echo", 
-        lambda actor_id: AgentActor(EchoAgent("Echo Assistant"))
-    )
-    runtime.register_actor_type(
-        "mock-ai", 
-        lambda actor_id: AgentActor(MockAIAgent("Mock AI Assistant"))
-    )
-    
-    # Register Azure agent if configured
-    _register_azure_agent_if_configured()
+    # Register Azure agents if configured
+    _register_azure_agents_if_configured()
     
     logger.info("Configured agents for web chat sample")
 
@@ -118,8 +97,8 @@ def _load_env_files():
                 logger.warning("Failed loading %s: %s", f, e)
 
 
-def _register_azure_agent_if_configured():
-    """Register Azure agent if environment variables are present"""
+def _register_azure_agents_if_configured():
+    """Register Azure agents if environment variables are present"""
     _load_env_files()
     
     # Check for Azure environment variables
@@ -142,7 +121,7 @@ def _register_azure_agent_if_configured():
             
             api_version = os.environ.get("AZURE_OPENAI_API_VERSION")
             
-            def azure_factory(actor_id):
+            def pirate_agent_factory(actor_id):
                 chat_client = AzureChatClient(
                     api_key=required_key,
                     deployment_name=required_deployment,
@@ -150,7 +129,7 @@ def _register_azure_agent_if_configured():
                     api_version=api_version,
                 )
                 agent = chat_client.create_agent(
-                    name="Azure Chat Assistant",
+                    name="Pirate Assistant",
                     instructions=(
                         "You are a helpful AI assistant powered by Azure OpenAI. "
                         "Adopt a light, friendly pirate persona: sprinkle in mild pirate slang like 'Ahoy', 'aye', and 'matey'. "
@@ -160,8 +139,27 @@ def _register_azure_agent_if_configured():
                 )
                 return AgentActor(agent)
             
-            runtime.register_actor_type("azure", azure_factory)
-            logger.info("Registered Azure OpenAI agent")
+            def travel_agent_factory(actor_id):
+                chat_client = AzureChatClient(
+                    api_key=required_key,
+                    deployment_name=required_deployment,
+                    endpoint=endpoint,
+                    api_version=api_version,
+                )
+                agent = chat_client.create_agent(
+                    name="Travel Assistant",
+                    instructions=(
+                        "You are a knowledgeable and enthusiastic travel assistant powered by Azure OpenAI. "
+                        "Help users plan trips, find destinations, suggest activities, and provide travel advice. "
+                        "Be warm, encouraging, and share interesting facts about places. "
+                        "Always consider practical aspects like budget, time, and accessibility when making recommendations."
+                    )
+                )
+                return AgentActor(agent)
+            
+            runtime.register_actor_type("pirate", pirate_agent_factory)
+            runtime.register_actor_type("travel", travel_agent_factory)
+            logger.info("Registered Azure OpenAI agents: pirate and travel")
             
         except ImportError as e:
             logger.warning(f"Azure agent not registered (import failure): {e}")
@@ -232,14 +230,10 @@ async def list_agents():
     agents = []
     
     for name in agent_factories.keys():
-        if name == "helpful":
-            agents.append(AgentInfo(name="helpful", type="mock", description="Helpful assistant with predefined responses"))
-        elif name == "echo":
-            agents.append(AgentInfo(name="echo", type="test", description="Echo agent that repeats your messages"))
-        elif name == "mock-ai":
-            agents.append(AgentInfo(name="mock-ai", type="mock", description="Mock AI assistant for testing"))
-        elif name == "azure":
-            agents.append(AgentInfo(name="azure", type="azure-openai", description="Azure OpenAI chat agent (live model)"))
+        if name == "pirate":
+            agents.append(AgentInfo(name="pirate", type="azure-openai", description="Friendly pirate assistant with Azure OpenAI"))
+        elif name == "travel":
+            agents.append(AgentInfo(name="travel", type="azure-openai", description="Knowledgeable travel planning assistant with Azure OpenAI"))
         else:
             agents.append(AgentInfo(name=name, type="unknown", description=f"Agent: {name}"))
     
