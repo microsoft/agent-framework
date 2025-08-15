@@ -120,8 +120,7 @@ async def main():
     workflow = (
         WorkflowBuilder()
         .set_start_executor(group_chat_manager)
-        .add_edge(group_chat_manager, writer)
-        .add_edge(group_chat_manager, reviewer)
+        .add_fan_out_edges(group_chat_manager, [writer, reviewer])
         .add_edge(writer, group_chat_manager)
         .add_edge(reviewer, group_chat_manager)
         .build()
