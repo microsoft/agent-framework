@@ -255,9 +255,6 @@ public class ConfigurationManager
     /// </summary>
     public string GetCurrentConfigurationValue(string key)
     {
-        // Always refresh configuration to get the latest values
-        this.RefreshConfiguration();
-
         var value = this._configuration[key];
 
         if (string.IsNullOrEmpty(value))
