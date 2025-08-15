@@ -11,5 +11,6 @@ except importlib.metadata.PackageNotFoundError:
 from ._agents import *  # noqa: F403
 from ._clients import *  # noqa: F403
 from ._logging import *  # noqa: F403
+from ._mcp import *  # noqa: F403
 from ._tools import *  # noqa: F403
 from ._types import *  # noqa: F403

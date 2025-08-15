@@ -44,7 +44,6 @@ from .._types import (
     FunctionCallContent,
     FunctionResultContent,
     HostedFileContent,
-    StructuredResponse,
     TextContent,
     TextSpanRegion,
     UsageDetails,
@@ -605,7 +604,8 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
             args["usage_details"] = usage_details
         if structured_response:
             args["value"] = structured_response
-            return StructuredResponse(**args)
+        elif chat_options.response_format:
+            args["response_format"] = chat_options.response_format
         return ChatResponse(**args)
 
     def _create_streaming_response_content(

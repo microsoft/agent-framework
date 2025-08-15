@@ -48,6 +48,11 @@ timeout = 120
 [tool.ruff]
 extend = "../../pyproject.toml"
 
+[tool.coverage.run]
+omit = [
+    "**/__init__.py"
+]
+
 [tool.pyright]
 extend = "../../pyproject.toml"
 exclude = ['tests']
@@ -76,6 +81,7 @@ executor.type = "uv"
 include = "../../shared_tasks.toml"
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_azure"
+test = "pytest --cov=agent_framework_azure --cov-report=term-missing:skip-covered tests"
 
 [tool.uv.build-backend]
 module-name = "agent_framework_azure"
