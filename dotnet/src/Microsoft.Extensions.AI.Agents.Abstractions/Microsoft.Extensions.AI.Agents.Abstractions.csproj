@@ -31,4 +31,8 @@
     <InternalsVisibleTo Include="Microsoft.Extensions.AI.Agents.Abstractions.UnitTests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="MEAI\" />
+  </ItemGroup>
+
 </Project>

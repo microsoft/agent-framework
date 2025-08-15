@@ -6,6 +6,7 @@ using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Samples;
+using OpenAI.Assistants;
 using OpenAI.Files;
 using OpenAI.VectorStores;
 
@@ -29,7 +30,7 @@ public sealed class Step07_ChatClientAgent_UsingFileSearchTools(ITestOutputHelpe
         var vectorStoreId = await CreateVectorStoreAsync([fileId], provider);
 
         // Create a file search tool that can access the vector store.
-        var fileSearchTool = new NewHostedFileSearchTool()
+        var fileSearchTool = new HostedFileSearchTool()
         {
             Inputs = [new HostedVectorStoreContent(vectorStoreId)],
         };
@@ -44,7 +45,8 @@ public sealed class Step07_ChatClientAgent_UsingFileSearchTools(ITestOutputHelpe
         // Create the server-side agent Id when applicable (depending on the provider).
         agentOptions.Id = await base.AgentCreateAsync(provider, agentOptions);
 
-        using var chatClient = base.GetChatClient(provider, agentOptions);
+        using var chatClient = new NewOpenAIAssistantChatClient(new AssistantClient(TestConfiguration.OpenAI.ApiKey), agentOptions.Id!);
+        //using var chatClient = base.GetChatClient(provider, agentOptions);
 
         ChatClientAgent agent = new(chatClient, agentOptions);
 
