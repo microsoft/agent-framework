@@ -54,11 +54,11 @@ public sealed class Step10_ChatClientAgent_UsingFunctionToolsWithApprovals(ITest
                 return new HostedMCPChatClient(innerClient, new HttpClient());
             });
         }
-        if (chatClient.GetService<FunctionInvokingChatClientWithBuiltInApprovals>() is null)
+        if (chatClient.GetService<NewFunctionInvokingChatClient>() is null)
         {
             chatBuilder.Use((IChatClient innerClient, IServiceProvider services) =>
             {
-                return new FunctionInvokingChatClientWithBuiltInApprovals(innerClient, null, services);
+                return new NewFunctionInvokingChatClient(innerClient, null, services);
             });
         }
         using var chatClientWithMCPAndApprovals = chatBuilder.Build();
@@ -147,11 +147,11 @@ public sealed class Step10_ChatClientAgent_UsingFunctionToolsWithApprovals(ITest
                 return new HostedMCPChatClient(innerClient, new HttpClient());
             });
         }
-        if (chatClient.GetService<FunctionInvokingChatClientWithBuiltInApprovals>() is null)
+        if (chatClient.GetService<NewFunctionInvokingChatClient>() is null)
         {
             chatBuilder.Use((IChatClient innerClient, IServiceProvider services) =>
             {
-                return new FunctionInvokingChatClientWithBuiltInApprovals(innerClient, null, services);
+                return new NewFunctionInvokingChatClient(innerClient, null, services);
             });
         }
         using var chatClientWithMCPAndApprovals = chatBuilder.Build();

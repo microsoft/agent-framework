@@ -3,6 +3,7 @@
 // Line removed as it is unnecessary due to ImplicitUsings being enabled.
 
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Microsoft.Extensions.AI;
 
@@ -10,6 +11,7 @@ namespace Microsoft.Extensions.AI;
 /// Proposal for abstraction updates based on the common file search tool properties.
 /// This provides a standardized interface for file search functionality across providers.
 /// </summary>
+[ExcludeFromCodeCoverage]
 public class NewHostedFileSearchTool : AITool
 {
     /// <summary>Gets or sets a collection of <see cref="AIContent"/> to be used as input to the code interpreter tool.</summary>

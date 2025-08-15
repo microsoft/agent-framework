@@ -17,13 +17,13 @@ internal static class ChatClientExtensions
             chatBuilder.UseAgentInvocation();
         }
 
-        if (chatClient.GetService<FunctionInvokingChatClientWithBuiltInApprovals>() is null)
+        if (chatClient.GetService<NewFunctionInvokingChatClient>() is null)
         {
             chatBuilder.Use((IChatClient innerClient, IServiceProvider services) =>
             {
                 var loggerFactory = services.GetService<ILoggerFactory>();
 
-                return new FunctionInvokingChatClientWithBuiltInApprovals(innerClient, loggerFactory, services);
+                return new NewFunctionInvokingChatClient(innerClient, loggerFactory, services);
             });
         }
 

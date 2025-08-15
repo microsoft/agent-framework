@@ -2,6 +2,7 @@
 
 using System;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI;
@@ -14,6 +15,7 @@ namespace Microsoft.Extensions.AI;
 /// by the AI service and referenced by an identifier. Such identifiers are specific to the provider.
 /// </remarks>
 [DebuggerDisplay("FileId = {FileId}")]
+[ExcludeFromCodeCoverage]
 public sealed class HostedFileContent : AIContent
 {
     private string _fileId;

@@ -1,5 +1,17 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+// WARNING:
+// This class is a copy of FunctionInvokingChatClient from MEAI, and is intended to be modified with
+// changes that we want to prototype here, before updating FunctionInvokingChatClient in MEAI.
+// The intention is to keep the changes in this file to a minimum, so that we can easily
+// merge them back into MEAI when ready.
+
+// AF repo suppressions for code copied from MEAI.
+#pragma warning disable IDE1006 // Naming Styles
+#pragma warning disable IDE0009 // Member access should be qualified.
+#pragma warning disable CA2007 // Consider calling ConfigureAwait on the awaited task
+#pragma warning disable VSTHRD111 // Use ConfigureAwait(bool)
+
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -17,12 +29,6 @@ using Microsoft.Shared.Diagnostics;
 #pragma warning disable EA0002 // Use 'System.TimeProvider' to make the code easier to test
 #pragma warning disable SA1202 // 'protected' members should come before 'private' members
 #pragma warning disable S107 // Methods should not have too many parameters
-
-// AF repo suppressions for code copied from MEAI.
-#pragma warning disable IDE1006 // Naming Styles
-#pragma warning disable IDE0009 // Member access should be qualified.
-#pragma warning disable CA2007 // Consider calling ConfigureAwait on the awaited task
-#pragma warning disable VSTHRD111 // Use ConfigureAwait(bool)
 
 namespace Microsoft.Extensions.AI;
 
@@ -50,12 +56,13 @@ namespace Microsoft.Extensions.AI;
 /// invocation requests to that same function.
 /// </para>
 /// </remarks>
-public partial class FunctionInvokingChatClientWithBuiltInApprovals : DelegatingChatClient
+[ExcludeFromCodeCoverage]
+public partial class NewFunctionInvokingChatClient : DelegatingChatClient
 {
     /// <summary>The <see cref="FunctionInvocationContext"/> for the current function invocation.</summary>
     private static readonly AsyncLocal<FunctionInvocationContext?> _currentContext = new();
 
-    /// <summary>Gets the <see cref="IServiceProvider"/> specified when constructing the <see cref="FunctionInvokingChatClientWithBuiltInApprovals"/>, if any.</summary>
+    /// <summary>Gets the <see cref="IServiceProvider"/> specified when constructing the <see cref="FunctionInvokingChatClient"/>, if any.</summary>
     protected IServiceProvider? FunctionInvocationServices { get; }
 
     /// <summary>The logger to use for logging information about function invocation.</summary>
@@ -72,15 +79,15 @@ public partial class FunctionInvokingChatClientWithBuiltInApprovals : Delegating
     private int _maximumConsecutiveErrorsPerRequest = 3;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="FunctionInvokingChatClientWithBuiltInApprovals"/> class.
+    /// Initializes a new instance of the <see cref="FunctionInvokingChatClient"/> class.
     /// </summary>
     /// <param name="innerClient">The underlying <see cref="IChatClient"/>, or the next instance in a chain of clients.</param>
     /// <param name="loggerFactory">An <see cref="ILoggerFactory"/> to use for logging information about function invocation.</param>
     /// <param name="functionInvocationServices">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
-    public FunctionInvokingChatClientWithBuiltInApprovals(IChatClient innerClient, ILoggerFactory? loggerFactory = null, IServiceProvider? functionInvocationServices = null)
+    public NewFunctionInvokingChatClient(IChatClient innerClient, ILoggerFactory? loggerFactory = null, IServiceProvider? functionInvocationServices = null)
         : base(innerClient)
     {
-        _logger = (ILogger?)loggerFactory?.CreateLogger<FunctionInvokingChatClientWithBuiltInApprovals>() ?? NullLogger.Instance;
+        _logger = (ILogger?)loggerFactory?.CreateLogger<FunctionInvokingChatClient>() ?? NullLogger.Instance;
         _activitySource = innerClient.GetService<ActivitySource>();
         FunctionInvocationServices = functionInvocationServices;
     }

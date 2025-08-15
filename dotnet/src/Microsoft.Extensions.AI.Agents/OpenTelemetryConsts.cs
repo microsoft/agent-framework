@@ -1,22 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// WARNING:
-// This class has been temporarily copied here from MEAI, to allow prototyping
-// functionality that will be moved to MEAI in the future.
-// This file is not intended to be modified.
-
-using System.Diagnostics.CodeAnalysis;
-
-namespace Microsoft.Extensions.AI;
-
-#pragma warning disable CA1716 // Identifiers should not match keywords
-#pragma warning disable S4041 // Type names should not match namespaces
+namespace Microsoft.Extensions.AI.Agents;
 
 /// <summary>Provides constants used by various telemetry services.</summary>
-[ExcludeFromCodeCoverage]
 internal static class OpenTelemetryConsts
 {
-    public const string DefaultSourceName = "Experimental.Microsoft.Extensions.AI";
+    public const string DefaultSourceName = "Experimental.Microsoft.Extensions.AI.Agents";
 
     public const string SecondsUnit = "s";
     public const string TokensUnit = "token";
@@ -34,11 +23,24 @@ internal static class OpenTelemetryConsts
     public static class GenAI
     {
         public const string Choice = "gen_ai.choice";
+
         public const string SystemName = "gen_ai.system";
+
+        public static class SystemNameValues
+        {
+            public const string MicrosoftExtensionsAIAgents = "microsoft.extensions.ai.agents";
+        }
 
         public const string Chat = "chat";
         public const string Embeddings = "embeddings";
         public const string ExecuteTool = "execute_tool";
+
+        public static class Agent
+        {
+            public const string Id = "gen_ai.agent.id";
+            public const string Name = "gen_ai.agent.name";
+            public const string Description = "gen_ai.agent.description";
+        }
 
         public static class Assistant
         {
@@ -70,6 +72,11 @@ internal static class OpenTelemetryConsts
         public static class Operation
         {
             public const string Name = "gen_ai.operation.name";
+
+            public static class NameValues
+            {
+                public const string InvokeAgent = "invoke_agent";
+            }
         }
 
         public static class Output
@@ -89,6 +96,9 @@ internal static class OpenTelemetryConsts
             public const string Temperature = "gen_ai.request.temperature";
             public const string TopK = "gen_ai.request.top_k";
             public const string TopP = "gen_ai.request.top_p";
+
+            // Not available in OTEL : Potential proposals
+            public const string Instructions = "gen_ai.request.instructions";
 
             public static string PerProvider(string providerName, string parameterName) => $"gen_ai.{providerName}.request.{parameterName}";
         }

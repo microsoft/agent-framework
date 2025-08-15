@@ -31,7 +31,7 @@ public class HostedMCPChatClient : DelegatingChatClient
     private ConcurrentDictionary<string, IMcpClient>? _mcpClients = null;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="FunctionInvokingChatClientWithBuiltInApprovals"/> class.
+    /// Initializes a new instance of the <see cref="HostedMCPChatClient"/> class.
     /// </summary>
     /// <param name="innerClient">The underlying <see cref="IChatClient"/>, or the next instance in a chain of clients.</param>
     /// <param name="httpClient">The <see cref="HttpClient"/> to use when connecting to the remote MCP server.</param>
@@ -40,7 +40,7 @@ public class HostedMCPChatClient : DelegatingChatClient
         : base(innerClient)
     {
         this._loggerFactory = loggerFactory;
-        this._logger = (ILogger?)loggerFactory?.CreateLogger<FunctionInvokingChatClientWithBuiltInApprovals>() ?? NullLogger.Instance;
+        this._logger = (ILogger?)loggerFactory?.CreateLogger<HostedMCPChatClient>() ?? NullLogger.Instance;
         this._httpClient = Throw.IfNull(httpClient);
     }
 
