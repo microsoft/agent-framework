@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
+from ._threads import ChatMessageStore
 from ._tools import AIFunction, AITool
 from ._types import (
     AIContents,
@@ -645,6 +646,7 @@ class ChatClientBase(AFBaseModel, ABC):
         | MutableMapping[str, Any]
         | list[MutableMapping[str, Any]]
         | None = None,
+        chat_message_store_factory: Callable[[], ChatMessageStore] | None = None,
         **kwargs: Any,
     ) -> "ChatClientAgent":
         """Create an agent with the given name and instructions.
@@ -653,6 +655,8 @@ class ChatClientBase(AFBaseModel, ABC):
             name: The name of the agent.
             instructions: The instructions for the agent.
             tools: Optional list of tools to associate with the agent.
+            chat_message_store_factory: Factory function to create an instance of ChatMessageStore. If not provided,
+                the default in-memory store will be used.
             **kwargs: Additional keyword arguments to pass to the agent.
                 See ChatClientAgent for all the available options.
 
@@ -661,7 +665,14 @@ class ChatClientBase(AFBaseModel, ABC):
         """
         from ._agents import ChatClientAgent
 
-        return ChatClientAgent(chat_client=self, name=name, instructions=instructions, tools=tools, **kwargs)
+        return ChatClientAgent(
+            chat_client=self,
+            name=name,
+            instructions=instructions,
+            tools=tools,
+            chat_message_store_factory=chat_message_store_factory,
+            **kwargs,
+        )
 
 
 # region Embedding Client
