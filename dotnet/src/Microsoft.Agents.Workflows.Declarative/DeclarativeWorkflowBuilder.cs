@@ -21,7 +21,7 @@ public static class DeclarativeWorkflowBuilder
     public static Workflow<TInput> Build<TInput>(TextReader yamlReader, DeclarativeWorkflowContext context) where TInput : notnull
     {
         BotElement rootElement = YamlSerializer.Deserialize<BotElement>(yamlReader) ?? throw new UnknownActionException("Unable to parse workflow.");
-        string rootId = $"root_{GetRootId(rootElement)}";
+        string rootId = WorkflowActionVisitor.RootId(GetWorkflowId(rootElement));
 
         DeclarativeWorkflowExecutor<TInput> rootExecutor = new(rootId);
 
@@ -31,7 +31,7 @@ public static class DeclarativeWorkflowBuilder
         return walker.GetWorkflow<TInput>();
     }
 
-    private static string GetRootId(BotElement element) => // %%% CPS - WORKFLOW TYPE
+    private static string GetWorkflowId(BotElement element) => // %%% CPS - WORKFLOW TYPE
         element switch
         {
             AdaptiveDialog adaptiveDialog => adaptiveDialog.BeginDialog?.Id.Value ?? throw new UnknownActionException("Undefined dialog"),

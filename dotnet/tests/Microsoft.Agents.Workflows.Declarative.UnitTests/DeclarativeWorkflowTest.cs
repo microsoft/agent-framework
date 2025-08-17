@@ -240,13 +240,21 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         this.WorkflowEvents = run.WatchStreamAsync().ToEnumerable().ToImmutableList();
         foreach (WorkflowEvent workflowEvent in this.WorkflowEvents)
         {
-            this.Output.WriteLine(workflowEvent.ToString());
+            if (workflowEvent is ExecutorInvokeEvent invokeEvent)
+            {
+                ExecutionResultMessage? message = invokeEvent.Data as ExecutionResultMessage;
+                this.Output.WriteLine($"EXEC: {invokeEvent.ExecutorId} << {message?.ExecutorId ?? "?"} [{message?.Result ?? "-"}]");
+            }
+            else if (workflowEvent is DeclarativeWorkflowMessageEvent messageEvent)
+            {
+                this.Output.WriteLine($"MESSAGE: {messageEvent.Data.Text.Trim()}");
+            }
         }
         this.WorkflowEventCounts = this.WorkflowEvents.GroupBy(e => e.GetType()).ToImmutableDictionary(e => e.Key, e => e.Count());
     }
 
     private sealed class RootExecutor() :
-        ReflectingExecutor<RootExecutor>("root_workflow"),
+        ReflectingExecutor<RootExecutor>(WorkflowActionVisitor.RootId("workflow")),
         IMessageHandler<string>
     {
         public async ValueTask HandleAsync(string message, IWorkflowContext context)
