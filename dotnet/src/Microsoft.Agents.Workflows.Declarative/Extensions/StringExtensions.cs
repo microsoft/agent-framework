@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.RegularExpressions;
+using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.Workflows.Declarative.Extensions;
 
@@ -18,4 +19,7 @@ internal static class StringExtensions
 
         return value.Trim();
     }
+
+    public static FormulaValue ToFormulaValue(this string? value) =>
+        string.IsNullOrWhiteSpace(value) ? FormulaValue.NewBlank() : FormulaValue.New(value);
 }

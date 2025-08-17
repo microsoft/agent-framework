@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Declarative.Execution;
+using Microsoft.Agents.Workflows.Declarative.ObjectModel;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
 using Xunit.Abstractions;
@@ -11,7 +11,7 @@ namespace Microsoft.Agents.Workflows.Declarative.UnitTests.Execution;
 /// <summary>
 /// Tests for <see cref="ResetVariableExecutor"/>.
 /// </summary>
-public sealed class ResetVariableTest(ITestOutputHelper output) : WorkflowActionExecutorTest(output)
+public sealed class ResetVariableExecutorTest(ITestOutputHelper output) : WorkflowActionExecutorTest(output)
 {
     [Fact]
     public async Task ResetDefinedValue()

@@ -7,23 +7,24 @@ using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.Agents.Persistent;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
+using Microsoft.Agents.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
+using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.Workflows.Declarative.Execution;
+namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model) : WorkflowActionExecutor<AnswerQuestionWithAI>(model)
+internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, PersistentAgentsClient client) : DeclarativeActionExecutor<AnswerQuestionWithAI>(model)
 {
     protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        PropertyPath variablePath = Throw.IfNull(this.Model.Variable?.Path, $"{nameof(this.Model)}.{nameof(this.Model.Variable)}");
         StringExpression userInputExpression = Throw.IfNull(this.Model.UserInput, $"{nameof(this.Model)}.{nameof(this.Model.UserInput)}");
 
-        PersistentAgentsClient client = this.Context.ClientFactory.Invoke();
-        using NewPersistentAgentsChatClient chatClient = new(client, "asst_ueIjfGxAjsnZ4A61LlbjG9vJ"); // %%% HAXX - AGENT ID
+        using NewPersistentAgentsChatClient chatClient = new(client, this.Id); // %%% HAXX - AGENT ID
         ChatClientAgent agent = new(chatClient);
 
         string? userInput = null;
@@ -45,12 +46,17 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model) :
         //        await agent.RunAsync(userInput, thread: null, options, cancellationToken).ConfigureAwait(false) :
         //        await agent.RunAsync(thread: null, options, cancellationToken).ConfigureAwait(false);
 
-        IAsyncEnumerable<AgentRunResponseUpdate> agentUpdates =
-            userInput != null ?
-                agent.RunStreamingAsync(userInput, thread: null, options, cancellationToken) :
-                agent.RunStreamingAsync(thread: null, options, cancellationToken);
+        AgentThread? thread = null; // %%% HAXX: SYSTEM THREAD
+        FormulaValue conversationValue = this.Context.Scopes.Get("ConversationId", WorkflowScopeType.System);
+        if (conversationValue is StringValue stringValue)
+        {
+            thread = new AgentThread() { ConversationId = stringValue.Value };
+        }
 
-        await context.AddEventAsync(new DeclarativeWorkflowMessageEvent(new ChatMessage(ChatRole.Assistant, "TESTING"))).ConfigureAwait(false);
+        IAsyncEnumerable<AgentRunResponseUpdate> agentUpdates =
+            !string.IsNullOrWhiteSpace(userInput) ?
+                agent.RunStreamingAsync(userInput, thread, options, cancellationToken) :
+                agent.RunStreamingAsync(thread, options, cancellationToken);
 
         string? conversationId = null;
         string? messageId = null;
@@ -65,7 +71,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model) :
             }
 
             agentResponseUpdates.Add(update);
-            conversationId ??= update.ResponseId;
+            conversationId ??= ((ChatResponseUpdate)update.RawRepresentation!).ConversationId;
             messageId ??= update.MessageId;
             await context.AddEventAsync(new DeclarativeWorkflowStreamEvent(update)).ConfigureAwait(false);
         }
@@ -79,6 +85,12 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model) :
         ChatMessage response = agentResponse.Messages.Last(); // %%% DECISION: Is last sufficient? (probably not)
         await context.AddEventAsync(new DeclarativeWorkflowMessageEvent(response, agentResponse.Usage)).ConfigureAwait(false);
 
-        this.AssignTarget(this.Context, variablePath, response.ToRecord());
+        this.AssignTarget(this.Context, PropertyPath.FromSegments(WorkflowScopeType.System.Name, "ConversationId"), FormulaValue.New(conversationId)); // %%% HAXX: SYSTEM THREAD
+
+        PropertyPath? variablePath = this.Model.Variable?.Path;
+        if (variablePath is not null)
+        {
+            this.AssignTarget(this.Context, variablePath, response.ToRecordValue());
+        }
     }
 }

@@ -3,12 +3,11 @@
 using System;
 using System.Diagnostics;
 using System.Linq;
-using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Declarative.Execution;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
-using Microsoft.Agents.Workflows.Declarative.PowerFx;
+using Microsoft.Agents.Workflows.Declarative.ObjectModel;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Shared.Diagnostics;
+using static System.Collections.Specialized.BitVector32;
 
 namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
@@ -16,30 +15,26 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 {
     private readonly WorkflowBuilder _workflowBuilder;
     private readonly WorkflowModel _workflowModel;
-    private readonly WorkflowScopes _scopes;
-    private readonly WorkflowExecutionContext _executionContext;
+    private readonly DeclarativeWorkflowContext _workflowContext;
 
     public WorkflowActionVisitor(
-        ExecutorIsh rootAction,
-        DeclarativeWorkflowContext workflowContext,
-        WorkflowScopes scopes)
+        Executor rootAction,
+        DeclarativeWorkflowContext workflowContext)
     {
         this._workflowModel = new WorkflowModel(rootAction);
         this._workflowBuilder = new WorkflowBuilder(rootAction);
-        this._scopes = scopes;
-
-        this._executionContext = workflowContext.CreateActionContext(rootAction.Id, scopes);
+        this._workflowContext = workflowContext;
     }
 
     public bool HasUnsupportedActions { get; private set; }
 
-    public Workflow<string> Complete()
+    public Workflow<TInput> Complete<TInput>()
     {
         // Process the cached links
         this._workflowModel.ConnectNodes(this._workflowBuilder);
 
         // Build final workflow
-        return this._workflowBuilder.Build<string>();
+        return this._workflowBuilder.Build<TInput>();
     }
 
     protected override void Visit(ActionScope item)
@@ -47,19 +42,23 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this.Trace(item);
 
         string parentId = Throw.IfNull(item.GetParentId(), nameof(BotElement.Parent));
+
+        // %%% COMMENTS
         if (item.Id.Equals(parentId))
         {
             parentId = $"root_{parentId}";
         }
-        this.ContinueWith(this.CreateStep(item.Id.Value, nameof(ActionScope)), parentId, condition: null, CompletionHandler);
 
+        this.ContinueWith(this.CreateStep(item.Id.Value), parentId, condition: null, CompletionHandler);
+
+        // %%% COMMENTS
         void CompletionHandler()
         {
             if (this._workflowModel.GetDepth(item.Id.Value) > 1)
             {
-                string completionId = RestartId(item.Id.Value);
-                this.ContinueWith(this.CreateStep(completionId, $"{nameof(ActionScope)}_Post"), item.Id.Value);
-                this._workflowModel.AddLink(completionId, RestartId(parentId));
+                string completionId = RestartId(item.Id.Value); // %%% RESTART: FALSE
+                this.ContinueWith(this.CreateStep(completionId), item.Id.Value);
+                this._workflowModel.AddLink(completionId, RestartId(parentId)); // %%% RESTART: FALSE
             }
         }
     }
@@ -68,37 +67,25 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        Func<object?, bool>? condition = null;
-
-        if (item.Condition is not null)
+        ConditionGroupExecutor? conditionGroup = this._workflowModel.LocateParent<ConditionGroupExecutor>(item.GetParentId());
+        if (conditionGroup is not null)
         {
-            // %%% BUG: ONLY ONE (FIRST) CONDITION
-            condition =
-                new((_) =>
-                {
-                    bool result = this._executionContext.Engine.Eval(item.Condition.ExpressionText ?? "true").AsBoolean();
-                    Debug.WriteLine($"!!! CONDITION: {item.Condition.ExpressionText ?? "true"}={result}");
-                    return result;
-                });
-        }
+            string stepId = ConditionGroupExecutor.Steps.Item(conditionGroup.Model, item);
+            string parentId = Throw.IfNull(item.GetParentId(), nameof(BotElement.Parent));
+            this._workflowModel.AddNode(this.CreateStep(stepId), parentId, CompletionHandler);
 
-        string stepId = item.Id ?? $"{nameof(ConditionItem)}_{Guid.NewGuid():N}";
-        string parentId = Throw.IfNull(item.GetParentId(), nameof(BotElement.Parent));
+            base.VisitConditionItem(item);
 
-        WorkflowDelegateExecutor executor = this.CreateStep(stepId, nameof(ConditionItem));
-        this._workflowModel.AddNode(executor, parentId, CompletionHandler);
-        this._workflowModel.AddLink(parentId, stepId, condition);
-
-        base.VisitConditionItem(item);
-
-        void CompletionHandler()
-        {
-            string completionId = this.RestartFrom(stepId, nameof(ConditionItem), parentId);
-            this._workflowModel.AddLink(completionId, RestartId(parentId));
-
-            if (!item.Actions.Any())
+            // %%% COMMENTS
+            void CompletionHandler()
             {
-                this._workflowModel.AddLink(stepId, completionId);
+                string completionId = this.RestartAfter(stepId, parentId); // %%% RESTART: FALSE
+                this._workflowModel.AddLink(completionId, RestartId(parentId)); // %%% RESTART: FALSE
+
+                if (!item.Actions.Any())
+                {
+                    this._workflowModel.AddLink(stepId, completionId);
+                }
             }
         }
     }
@@ -109,17 +96,20 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
         ConditionGroupExecutor action = new(item);
         this.ContinueWith(action);
-        this.RestartFrom(action.Id, nameof(ConditionGroupExecutor), action.ParentId);
+        this.RestartAfter(action); // %%% RESTART: FALSE
 
-        // %%% BUG: item.ElseActions
-
-        int index = 1;
         foreach (ConditionItem conditionItem in item.Conditions)
         {
-            // Visit each action in the condition item
-            conditionItem.Accept(this);
+            string stepId = ConditionGroupExecutor.Steps.Item(item, conditionItem);
+            this._workflowModel.AddLink(action.Id, stepId, (result) => action.IsMatch(conditionItem, result));
 
-            ++index;
+            conditionItem.Accept(this);
+        }
+
+        if (item.ElseActions?.Actions.Length > 0)
+        {
+            string stepId = ConditionGroupExecutor.Steps.Else(item);
+            this._workflowModel.AddLink(action.Id, stepId, (result) => action.IsElse(result));
         }
     }
 
@@ -128,9 +118,9 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this.Trace(item);
 
         string parentId = Throw.IfNull(item.GetParentId(), nameof(BotElement.Parent));
-        this.ContinueWith(this.CreateStep(item.Id.Value, nameof(GotoAction)), parentId);
+        this.ContinueWith(this.CreateStep(item.Id.Value), parentId);
         this._workflowModel.AddLink(item.Id.Value, item.ActionId.Value);
-        this.RestartFrom(item.Id.Value, nameof(GotoAction), parentId);
+        this.RestartAfter(item.Id.Value, parentId); // %%% RESTART: TRUE
     }
 
     protected override void Visit(Foreach item)
@@ -140,15 +130,15 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         ForeachExecutor action = new(item);
         string loopId = ForeachExecutor.Steps.Next(action.Id);
         this.ContinueWith(action, condition: null, CompletionHandler);
-        string restartId = this.RestartFrom(action);
-        this.ContinueWith(this.CreateStep(loopId, $"{nameof(ForeachExecutor)}_Next", action.TakeNext), action.Id);
+        string restartId = this.RestartAfter(action); // %%% RESTART: FALSE
+        this.ContinueWith(this.CreateStep(loopId, action.TakeNext), action.Id);
         this._workflowModel.AddLink(loopId, restartId, (_) => !action.HasValue);
-        this.ContinueWith(this.CreateStep(ForeachExecutor.Steps.Start(action.Id), $"{nameof(ForeachExecutor)}_Start"), action.Id, (_) => action.HasValue);
+        this.ContinueWith(this.CreateStep(ForeachExecutor.Steps.Start(action.Id)), action.Id, (_) => action.HasValue);
 
         void CompletionHandler()
         {
             string completionId = ForeachExecutor.Steps.End(action.Id);
-            this.ContinueWith(this.CreateStep(completionId, $"{nameof(ForeachExecutor)}_End", action.Reset), action.Id);
+            this.ContinueWith(this.CreateStep(completionId, action.Reset), action.Id);
             this._workflowModel.AddLink(completionId, loopId);
         }
     }
@@ -157,13 +147,13 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        string? loopId = this._workflowModel.LocateParent<ForeachExecutor>(item.GetParentId());
-        if (loopId is not null)
+        ForeachExecutor? loopExecutor = this._workflowModel.LocateParent<ForeachExecutor>(item.GetParentId());
+        if (loopExecutor is not null)
         {
             string parentId = Throw.IfNull(item.GetParentId(), nameof(BotElement.Parent));
-            this.ContinueWith(this.CreateStep(item.Id.Value, nameof(BreakLoop)), parentId);
-            this._workflowModel.AddLink(item.Id.Value, RestartId(loopId));
-            this.RestartFrom(item.Id.Value, nameof(BreakLoop), parentId);
+            this.ContinueWith(this.CreateStep(item.Id.Value), parentId);
+            this._workflowModel.AddLink(item.Id.Value, RestartId(loopExecutor.Id)); // %%% RESTART: TRUE
+            this.RestartAfter(item.Id.Value, parentId);
         }
     }
 
@@ -171,13 +161,13 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        string? loopId = this._workflowModel.LocateParent<ForeachExecutor>(item.GetParentId());
-        if (loopId is not null)
+        ForeachExecutor? loopExecutor = this._workflowModel.LocateParent<ForeachExecutor>(item.GetParentId());
+        if (loopExecutor is not null)
         {
             string parentId = Throw.IfNull(item.GetParentId(), nameof(BotElement.Parent));
-            this.ContinueWith(this.CreateStep(item.Id.Value, nameof(ContinueLoop)), parentId);
-            this._workflowModel.AddLink(item.Id.Value, ForeachExecutor.Steps.Next(loopId));
-            this.RestartFrom(item.Id.Value, nameof(ContinueLoop), parentId);
+            this.ContinueWith(this.CreateStep(item.Id.Value), parentId);
+            this._workflowModel.AddLink(item.Id.Value, ForeachExecutor.Steps.Next(loopExecutor.Id));
+            this.RestartAfter(item.Id.Value, parentId); // %%% RESTART: TRUE
         }
     }
 
@@ -186,15 +176,15 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this.Trace(item);
 
         string parentId = Throw.IfNull(item.GetParentId(), nameof(BotElement.Parent));
-        this.ContinueWith(this.CreateStep(item.Id.Value, nameof(EndConversation)), parentId);
-        this.RestartFrom(item.Id.Value, nameof(EndConversation), parentId);
+        this.ContinueWith(this.CreateStep(item.Id.Value), parentId);
+        this.RestartAfter(item.Id.Value, parentId); // %%% RESTART: TRUE
     }
 
     protected override void Visit(AnswerQuestionWithAI item)
     {
         this.Trace(item);
 
-        this.ContinueWith(new AnswerQuestionWithAIExecutor(item));
+        this.ContinueWith(new AnswerQuestionWithAIExecutor(item, this._workflowContext.CreateClient()));
     }
 
     protected override void Visit(SetVariable item)
@@ -435,7 +425,8 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         Func<object?, bool>? condition = null,
         Action? completionHandler = null)
     {
-        executor.Attach(this._executionContext);
+        executor.Logger = this._workflowContext.LoggerFactory.CreateLogger(executor.Id);
+        executor.WorkflowContext = this._workflowContext; // %%% HAXX: Initial state
         this.ContinueWith(executor, executor.ParentId, condition, completionHandler);
     }
 
@@ -451,25 +442,19 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     private static string RestartId(string actionId) => $"{actionId}_Post";
 
-    private string RestartFrom(WorkflowActionExecutor executor) =>
-        this.RestartFrom(executor.Id, executor.GetType().Name, executor.ParentId);
+    private string RestartAfter(WorkflowActionExecutor executor) =>
+        this.RestartAfter(executor.Id, executor.ParentId);
 
-    private string RestartFrom(string actionId, string name, string parentId)
+    private string RestartAfter(string actionId, string parentId)
     {
         string restartId = RestartId(actionId);
-        this._workflowModel.AddNode(this.CreateStep(restartId, $"{name}_Post"), parentId);
+        this._workflowModel.AddNode(this.CreateStep(restartId), parentId);
         return restartId;
     }
 
-    private WorkflowDelegateExecutor CreateStep(string actionId, string name, Action? stepAction = null)
+    private DelegateActionExecutor CreateStep(string actionId, Action? stepAction = null)
     {
-        WorkflowDelegateExecutor stepExecutor =
-            new(actionId,
-                () =>
-                {
-                    stepAction?.Invoke();
-                    return new ValueTask();
-                });
+        DelegateActionExecutor stepExecutor = new(actionId, stepAction);
 
         return stepExecutor;
     }

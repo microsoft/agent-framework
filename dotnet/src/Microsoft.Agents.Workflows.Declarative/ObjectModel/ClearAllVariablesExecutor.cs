@@ -2,13 +2,14 @@
 
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 
-namespace Microsoft.Agents.Workflows.Declarative.Execution;
+namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : WorkflowActionExecutor<ClearAllVariables>(model)
+internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : DeclarativeActionExecutor<ClearAllVariables>(model)
 {
     protected override ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
@@ -16,7 +17,7 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : Workf
 
         result.Value.Handle(new ScopeHandler(this.Context));
 
-        return new ValueTask();
+        return default;
     }
 
     private sealed class ScopeHandler(WorkflowExecutionContext context) : IEnumVariablesToClearHandler

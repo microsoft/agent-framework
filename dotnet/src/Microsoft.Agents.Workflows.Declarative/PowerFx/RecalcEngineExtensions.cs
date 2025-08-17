@@ -42,7 +42,7 @@ internal static class RecalcEngineExtensions
         engine.UpdateScope(scopes, scope);
     }
 
-    public static void SetScope(this RecalcEngine engine, string scopeName, RecordValue scopeRecord)
+    public static void AssignScope(this RecalcEngine engine, string scopeName, RecordValue scopeRecord)
     {
         engine.DeleteFormula(scopeName);
         engine.UpdateVariable(scopeName, scopeRecord);
@@ -51,6 +51,6 @@ internal static class RecalcEngineExtensions
     private static void UpdateScope(this RecalcEngine engine, WorkflowScopes scopes, WorkflowScopeType scope)
     {
         RecordValue scopeRecord = scopes.BuildRecord(scope);
-        engine.SetScope(scope.Name, scopeRecord);
+        engine.AssignScope(scope.Name, scopeRecord);
     }
 }

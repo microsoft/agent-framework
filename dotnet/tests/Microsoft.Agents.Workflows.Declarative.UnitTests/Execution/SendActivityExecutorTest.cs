@@ -2,7 +2,7 @@
 
 using System.Linq;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Declarative.Execution;
+using Microsoft.Agents.Workflows.Declarative.ObjectModel;
 using Microsoft.Bot.ObjectModel;
 using Xunit.Abstractions;
 

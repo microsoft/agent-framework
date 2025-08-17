@@ -4,16 +4,20 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.Workflows.Reflection;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.PowerFx.Types;
 
-namespace Microsoft.Agents.Workflows.Declarative.Execution;
+namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
-internal abstract class WorkflowActionExecutor<TAction>(TAction model) :
+internal sealed record class ExecutionResultMessage(string ExecutorId, object? Result = null);
+
+internal abstract class DeclarativeActionExecutor<TAction>(TAction model) :
     WorkflowActionExecutor(model)
     where TAction : DialogAction
 {
@@ -22,7 +26,7 @@ internal abstract class WorkflowActionExecutor<TAction>(TAction model) :
 
 internal abstract class WorkflowActionExecutor :
     ReflectingExecutor<WorkflowActionExecutor>,
-    IMessageHandler<string>
+    IMessageHandler<ExecutionResultMessage>
 {
     public const string RootActionId = "(root)";
 
@@ -40,21 +44,25 @@ internal abstract class WorkflowActionExecutor :
         this.Model = model;
     }
 
+    public DialogAction Model { get; }
+
     public string ParentId => this._parentId ??= this.Model.GetParentId() ?? RootActionId;
 
-    public DialogAction Model { get; }
+    internal ILogger Logger { get; set; } = NullLogger<WorkflowActionExecutor>.Instance;
+
+    internal DeclarativeWorkflowContext WorkflowContext { get; set; } = DeclarativeWorkflowContext.Default; // %%% HAXX: Initial state
 
     protected WorkflowExecutionContext Context =>
         this._context ??
         throw new WorkflowExecutionException("Context not assigned");
 
-    internal void Attach(WorkflowExecutionContext executionContext)
+    private void Attach(WorkflowExecutionContext executionContext) // %%% IMPROVE ???
     {
         this._context = executionContext;
     }
 
     /// <inheritdoc/>
-    public async ValueTask HandleAsync(string message, IWorkflowContext context)
+    public async ValueTask HandleAsync(ExecutionResultMessage message, IWorkflowContext context)
     {
         if (this.Model.Disabled)
         {
@@ -62,11 +70,16 @@ internal abstract class WorkflowActionExecutor :
             return;
         }
 
+        WorkflowScopes scopes = await context.GetScopesAsync(default).ConfigureAwait(false);
+        WorkflowExecutionContext executionContext = this.WorkflowContext.CreateActionContext(this.Id, scopes); // %%% IMPROVE ???
+        this.Attach(executionContext); // %%% REMOVE
+
         try
         {
             await this.ExecuteAsync(context, cancellationToken: default).ConfigureAwait(false);
 
-            await context.SendMessageAsync($"{this.Id}: {DateTime.UtcNow.ToShortTimeString()}").ConfigureAwait(false);
+            await context.SetScopesAsync(scopes, default).ConfigureAwait(false);
+            await context.SendMessageAsync(new ExecutionResultMessage(this.Id, executionContext.Result)).ConfigureAwait(false);
         }
         catch (WorkflowExecutionException)
         {

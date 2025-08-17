@@ -83,6 +83,17 @@ public class SampleSmokeTest
         string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: responder.InvokeNext);
         Assert.Equal("You guessed correctly! You Win!", guessResult);
     }
+
+    [Fact]
+    public async Task Test_RunSample_Step6Async()
+    {
+        using StringWriter writer = new();
+
+        await Step6Switch.RunAsync(writer);
+
+        string result = writer.ToString();
+        Assert.Contains("#exit: ResultExecutor2", result);
+    }
 }
 
 internal sealed class VerifyingPlaybackResponder<TInput, TResponse>

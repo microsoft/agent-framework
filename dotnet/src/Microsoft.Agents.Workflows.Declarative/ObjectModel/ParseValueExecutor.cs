@@ -5,15 +5,16 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
+using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.Workflows.Declarative.Execution;
+namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
 internal sealed class ParseValueExecutor(ParseValue model) :
-    WorkflowActionExecutor<ParseValue>(model)
+    DeclarativeActionExecutor<ParseValue>(model)
 {
     protected override ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
@@ -51,7 +52,7 @@ internal sealed class ParseValueExecutor(ParseValue model) :
 
         this.AssignTarget(this.Context, variablePath, parsedResult);
 
-        return new ValueTask();
+        return default;
     }
 
     private static RecordValue ParseRecord(RecordDataType recordType, string rawText)

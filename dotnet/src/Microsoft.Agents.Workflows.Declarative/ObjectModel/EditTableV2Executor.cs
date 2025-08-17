@@ -5,15 +5,16 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
+using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.Workflows.Declarative.Execution;
+namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class EditTableV2Executor(EditTableV2 model) : WorkflowActionExecutor<EditTableV2>(model)
+internal sealed class EditTableV2Executor(EditTableV2 model) : DeclarativeActionExecutor<EditTableV2>(model)
 {
     protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {

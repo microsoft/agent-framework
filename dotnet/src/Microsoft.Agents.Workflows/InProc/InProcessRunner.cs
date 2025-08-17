@@ -34,7 +34,6 @@ internal class InProcessRunner<TInput> : ISuperStepRunner where TInput : notnull
         return this.RunContext.AddExternalMessageAsync(message);
     }
 
-    private Dictionary<string, string> PendingCalls { get; } = new();
     private Workflow<TInput> Workflow { get; init; }
     private InProcessRunnerContext<TInput> RunContext { get; init; }
     private EdgeMap EdgeMap { get; init; }
@@ -50,11 +49,6 @@ internal class InProcessRunner<TInput> : ISuperStepRunner where TInput : notnull
     private void RaiseWorkflowEvent(WorkflowEvent workflowEvent)
     {
         this.WorkflowEvent?.Invoke(this, workflowEvent);
-    }
-
-    private bool IsResponse(object message)
-    {
-        return message is ExternalResponse;
     }
 
     private ValueTask<IEnumerable<object?>> RouteExternalMessageAsync(object message)
@@ -110,7 +104,7 @@ internal class InProcessRunner<TInput> : ISuperStepRunner where TInput : notnull
     private async ValueTask RunSuperstepAsync(StepContext currentStep)
     {
         // Deliver the messages and queue the next step
-        List<Task<IEnumerable<object?>>> edgeTasks = new();
+        List<Task<IEnumerable<object?>>> edgeTasks = [];
         foreach (ExecutorIdentity sender in currentStep.QueuedMessages.Keys)
         {
             IEnumerable<object> senderMessages = currentStep.QueuedMessages[sender];

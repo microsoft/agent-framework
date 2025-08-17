@@ -3,13 +3,14 @@
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
+using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.Workflows.Declarative.Execution;
+namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class SetTextVariableExecutor(SetTextVariable model) : WorkflowActionExecutor<SetTextVariable>(model)
+internal sealed class SetTextVariableExecutor(SetTextVariable model) : DeclarativeActionExecutor<SetTextVariable>(model)
 {
     protected override ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
@@ -26,6 +27,6 @@ internal sealed class SetTextVariableExecutor(SetTextVariable model) : WorkflowA
             this.AssignTarget(this.Context, variablePath, result);
         }
 
-        return new ValueTask();
+        return default;
     }
 }

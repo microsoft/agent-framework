@@ -1,0 +1,46 @@
+kind: AdaptiveDialog
+beginDialog:
+
+  kind: OnActivity
+  id: workflow_demo
+  actions:
+
+    - kind: SetVariable
+      id: set_project
+      variable: Topic.Project
+      value: =System.LastMessage.Text
+
+    - kind: SetVariable # // %%% HAXX
+      id: set_count_0
+      variable: Topic.TurnCount
+      value: 0
+
+    - kind: AnswerQuestionWithAI
+      id: asst_Tq5lpaIHgIbqQSKIpGxNq6A5 # // %%% HAXX
+      displayName: Student
+      userInput: =Topic.Project
+
+    - kind: ResetVariable
+      id: reset_project
+      variable: Topic.Project
+
+    - kind: AnswerQuestionWithAI
+      id: asst_0d4uQ7HiFCfRXEuiQkspCx2T # // %%% HAXX
+      displayName: Teacher
+      userInput: ="" # // %%% HAXX
+
+    - kind: SetVariable
+      id: set_count_increment
+      variable: Topic.TurnCount
+      value: =Topic.TurnCount + 1
+
+    - kind: ConditionGroup
+      id: check_completion
+      conditions:
+        - condition: =Topic.TurnCount < 4
+          id: check_turn_count
+          actions:
+    
+            - kind: GotoAction
+              id: goto_student_agent
+              actionId: asst_Tq5lpaIHgIbqQSKIpGxNq6A5

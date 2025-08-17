@@ -8,21 +8,21 @@ beginDialog:
   
     - kind: SetVariable
       id: setVariable_test
-      variable: Topic.Count
-      value: =32
+      variable: Topic.TestValue
+      value: =Value(System.LastMessage.Text)
 
     - kind: ConditionGroup
       id: conditionGroup_test
       conditions:
         - id: conditionItem_odd
-          condition: =Mod(Topic.Count, 1) = 1
+          condition: =Mod(Topic.TestValue, 2) = 1
           actions:
             - kind: SendActivity
               id: sendActivity_odd
               activity: ODD
 
         - id: conditionItem_even
-          condition: =Mod(Topic.Count, 1) = 0
+          condition: =Mod(Topic.TestValue, 2) = 0
           actions:
             - kind: SendActivity
               id: sendActivity_even

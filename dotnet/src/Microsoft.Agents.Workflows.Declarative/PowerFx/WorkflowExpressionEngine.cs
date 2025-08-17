@@ -308,7 +308,7 @@ internal class WorkflowExpressionEngine : IExpressionEngine
         {
             if (kvp.Value is RecordDataValue scopeRecord)
             {
-                this._engine.SetScope(kvp.Key, scopeRecord.ToRecordValue());
+                this._engine.AssignScope(kvp.Key, scopeRecord.ToRecordValue());
             }
         }
 
@@ -317,10 +317,10 @@ internal class WorkflowExpressionEngine : IExpressionEngine
 
     private EvaluationResult<FormulaValue> EvaluateScope(ExpressionBase expression, WorkflowScopes state)
     {
-        this._engine.SetScope(WorkflowScopeType.System.Name, state.BuildRecord(WorkflowScopeType.System));
-        this._engine.SetScope(WorkflowScopeType.Env.Name, state.BuildRecord(WorkflowScopeType.Env));
-        this._engine.SetScope(WorkflowScopeType.Global.Name, state.BuildRecord(WorkflowScopeType.Global));
-        this._engine.SetScope(WorkflowScopeType.Topic.Name, state.BuildRecord(WorkflowScopeType.Topic));
+        this._engine.AssignScope(WorkflowScopeType.System.Name, state.BuildRecord(WorkflowScopeType.System));
+        this._engine.AssignScope(WorkflowScopeType.Env.Name, state.BuildRecord(WorkflowScopeType.Env));
+        this._engine.AssignScope(WorkflowScopeType.Global.Name, state.BuildRecord(WorkflowScopeType.Global));
+        this._engine.AssignScope(WorkflowScopeType.Topic.Name, state.BuildRecord(WorkflowScopeType.Topic));
 
         return this.Evaluate(expression);
     }

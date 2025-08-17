@@ -3,6 +3,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
 using Azure.Identity;
@@ -29,7 +30,7 @@ internal static class Program
         //
         // HOW TO: Create a workflow from a YAML file.
         //
-        using StreamReader yamlReader = File.OpenText("demo250729.yaml");
+        using StreamReader yamlReader = File.OpenText(args.FirstOrDefault() ?? "demo250729.yaml");
         //
         // DeclarativeWorkflowContext provides the components for workflow execution.
         //
@@ -49,12 +50,12 @@ internal static class Program
 
         Notify($"PROCESS DEFINED: {timer.Elapsed}\n");
 
-        Notify("PROCESS INVOKE");
+        Notify("PROCESS INVOKE\n");
 
         //////////////////////////////////////////////
         // Run the workflow, just like any other workflow
         string? messageId = null;
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, "<placeholder>");
+        StreamingRun run = await InProcessExecution.StreamAsync(workflow, "What is the formula for fibbinocci sequence");
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
             if (evt is ExecutorInvokeEvent executorInvoked)

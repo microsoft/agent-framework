@@ -3,11 +3,12 @@
 using System;
 using System.Linq;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Declarative.Execution;
+using Microsoft.Agents.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
+using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
+using Microsoft.Agents.Workflows.Reflection;
 using Microsoft.Bot.ObjectModel;
-using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.PowerFx.Types;
 using Xunit.Abstractions;
 
@@ -26,10 +27,11 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
 
     internal async Task<WorkflowEvent[]> Execute(WorkflowActionExecutor executor)
     {
-        WorkflowExecutionContext context = new(RecalcEngineFactory.Create(this.Scopes), this.Scopes, () => null!, NullLogger.Instance);
-        executor.Attach(context);
-        WorkflowBuilder workflowBuilder = new(executor);
-        StreamingRun run = await InProcessExecution.StreamAsync(workflowBuilder.Build<string>(), "<placeholder>");
+        WorkflowExecutionContext context = new(RecalcEngineFactory.Create(this.Scopes), this.Scopes);
+        TestWorkflowExecutor workflowExecutor = new();
+        WorkflowBuilder workflowBuilder = new(workflowExecutor);
+        workflowBuilder.AddEdge(workflowExecutor, executor);
+        StreamingRun run = await InProcessExecution.StreamAsync(workflowBuilder.Build<WorkflowScopes>(), this.Scopes);
         WorkflowEvent[] events = await run.WatchStreamAsync().ToArrayAsync();
         return events;
     }
@@ -68,5 +70,16 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
         OnActivity model = activityBuilder.Build();
 
         return (TAction)model.Actions[0];
+    }
+
+    internal sealed class TestWorkflowExecutor() :
+        ReflectingExecutor<TestWorkflowExecutor>(nameof(TestWorkflowExecutor)),
+        IMessageHandler<WorkflowScopes>
+    {
+        public async ValueTask HandleAsync(WorkflowScopes message, IWorkflowContext context)
+        {
+            await context.SetScopesAsync(message, default).ConfigureAwait(false);
+            await context.SendMessageAsync(new ExecutionResultMessage(this.Id)).ConfigureAwait(false);
+        }
     }
 }
