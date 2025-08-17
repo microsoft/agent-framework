@@ -44,7 +44,7 @@ internal static class Program
         //
         // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
         //
-        Workflow<string> workflow = DeclarativeWorkflowBuilder.Build(yamlReader, workflowContext);
+        Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>(yamlReader, workflowContext);
         //
         //////////////////////////////////////////////////////
 

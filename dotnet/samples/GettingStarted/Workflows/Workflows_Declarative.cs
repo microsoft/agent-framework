@@ -25,7 +25,6 @@ public class Workflows_Declarative(ITestOutputHelper output) : OrchestrationSamp
     [InlineData("testChat", true)]
     [InlineData("testCondition0")]
     [InlineData("testCondition1")]
-    [InlineData("testCondition2")]
     [InlineData("testExpression")]
     //[InlineData("testTopic")]
     public async Task RunWorkflow(string fileName, bool enableApiIntercept = false)

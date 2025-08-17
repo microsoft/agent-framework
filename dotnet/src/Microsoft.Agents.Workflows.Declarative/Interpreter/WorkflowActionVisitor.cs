@@ -55,7 +55,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         {
             if (this._workflowModel.GetDepth(item.Id.Value) > 1)
             {
-                string completionId = this.CompletionFor(item.Id.Value); // End scope
+                string completionId = this.ContinuationFor(item.Id.Value); // End scope
                 this._workflowModel.AddLinkFromPeer(item.Id.Value, completionId); // Connect with final action
                 this._workflowModel.AddLink(completionId, PostId(parentId)); // Merge with parent scope
             }
@@ -78,9 +78,10 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
             // Complete the condition item.
             void CompletionHandler()
             {
-                string completionId = this.CompletionFor(stepId); // End items
+                string completionId = this.ContinuationFor(stepId); // End items
                 this._workflowModel.AddLink(completionId, PostId(conditionGroup.Id)); // Merge with parent scope
 
+                // Merge link when no action group is defined
                 if (!item.Actions.Any())
                 {
                     this._workflowModel.AddLink(stepId, completionId);
@@ -95,18 +96,26 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
         ConditionGroupExecutor action = new(item);
         this.ContinueWith(action);
-        this.CompletionFor(action.Id);
+        this.ContinuationFor(action.Id, action.ParentId);
 
+        string? lastConditionItemId = null;
         foreach (ConditionItem conditionItem in item.Conditions)
         {
-            string stepId = ConditionGroupExecutor.Steps.Item(item, conditionItem);
-            this._workflowModel.AddLink(action.Id, stepId, (result) => action.IsMatch(conditionItem, result));
+            // Create conditional link for conditional action
+            lastConditionItemId = ConditionGroupExecutor.Steps.Item(item, conditionItem);
+            this._workflowModel.AddLink(action.Id, lastConditionItemId, (result) => action.IsMatch(conditionItem, result));
 
             conditionItem.Accept(this);
         }
 
         if (item.ElseActions?.Actions.Length > 0)
         {
+            if (lastConditionItemId is not null)
+            {
+                // Create clean start for else action from prior conditions
+                this.RestartAfter(lastConditionItemId, action.Id);
+            }
+            // Create conditional link for else action
             string stepId = ConditionGroupExecutor.Steps.Else(item);
             this._workflowModel.AddLink(action.Id, stepId, (result) => action.IsElse(result));
         }
@@ -130,15 +139,15 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         string loopId = ForeachExecutor.Steps.Next(action.Id);
         this.ContinueWith(action, condition: null, CompletionHandler); // Foreach
         this.ContinueWith(this.CreateStep(loopId, action.TakeNext), action.Id); // Loop Increment
-        string exitId = this.CompletionFor(action.Id); // Loop exit
-        this._workflowModel.AddLink(loopId, exitId, (_) => !action.HasValue);
-        DelegateActionExecutor startAction = this.CreateStep(ForeachExecutor.Steps.Start(action.Id)); // Start actions
+        string continuationId = this.ContinuationFor(action.Id, action.ParentId); // Action continuation
+        this._workflowModel.AddLink(loopId, continuationId, (_) => !action.HasValue);
+        DelegateActionExecutor startAction = this.CreateStep(ForeachExecutor.Steps.Start(action.Id)); // Action start
         this._workflowModel.AddNode(startAction, action.Id);
         this._workflowModel.AddLink(loopId, startAction.Id, (_) => action.HasValue);
 
         void CompletionHandler()
         {
-            string endActionsId = ForeachExecutor.Steps.End(action.Id); // End actions
+            string endActionsId = ForeachExecutor.Steps.End(action.Id); // Loop continuation
             this.ContinueWith(this.CreateStep(endActionsId, action.Reset), action.Id);
             this._workflowModel.AddLink(endActionsId, loopId);
         }
@@ -445,9 +454,11 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     private static string PostId(string actionId) => $"{actionId}_Post";
 
-    private string CompletionFor(string parentId)
+    private string ContinuationFor(string parentId) => this.ContinuationFor(parentId, parentId);
+
+    private string ContinuationFor(string actionId, string parentId)
     {
-        string actionId = PostId(parentId);
+        actionId = PostId(actionId);
         this._workflowModel.AddNode(this.CreateStep(actionId), parentId);
         return actionId;
     }

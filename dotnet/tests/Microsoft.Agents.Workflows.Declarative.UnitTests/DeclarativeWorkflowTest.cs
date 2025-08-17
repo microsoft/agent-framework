@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.CodeDom.Compiler;
 using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
@@ -108,7 +107,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
 
     [Theory]
     [InlineData(12, 7)]
-    [InlineData(37, 8)]
+    [InlineData(37, 9)]
     public async Task ConditionActionWithElse(int input, int expectedActions)
     {
         await this.RunWorkflow("ConditionElse.yaml", input);
