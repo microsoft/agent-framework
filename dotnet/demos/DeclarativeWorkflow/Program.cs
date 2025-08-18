@@ -45,7 +45,7 @@ internal static class Program
         //
         // DeclarativeWorkflowContext provides the components for workflow execution.
         //
-        DeclarativeWorkflowContext workflowContext =
+        DeclarativeWorkflowOptions workflowContext =
             new()
             {
                 HttpClient = customClient,
@@ -98,7 +98,7 @@ internal static class Program
                 }
                 try
                 {
-                    Console.ForegroundColor = ConsoleColor.Gray;
+                    Console.ForegroundColor = ConsoleColor.Yellow;
                     Console.Write(streamEvent.Data);
                 }
                 finally
@@ -118,10 +118,10 @@ internal static class Program
                     }
                     else
                     {
-                        Console.ForegroundColor = ConsoleColor.White;
-                        Console.WriteLine($"#{messageEvent.Data.MessageId}:");
-                        Console.ForegroundColor = ConsoleColor.DarkGreen;
-                        Console.WriteLine(messageEvent.Data?.Text.Trim());
+                        //Console.ForegroundColor = ConsoleColor.White;
+                        //Console.WriteLine($"#{messageEvent.Data.MessageId}:");
+                        //Console.ForegroundColor = ConsoleColor.DarkGreen;
+                        //Console.WriteLine(messageEvent.Data?.Text.Trim());
                         if (messageEvent.Usage is not null)
                         {
                             Console.ForegroundColor = ConsoleColor.DarkGray;
@@ -145,9 +145,11 @@ internal static class Program
 
             try
             {
-                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.ForegroundColor = ConsoleColor.DarkGreen;
 
                 Console.Write("\nINPUT: ");
+
+                Console.ForegroundColor = ConsoleColor.Yellow;
 
                 if (!string.IsNullOrWhiteSpace(input))
                 {

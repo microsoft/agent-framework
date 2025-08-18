@@ -3,6 +3,7 @@
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using Microsoft.Bot.ObjectModel;
+using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.Workflows.Declarative.PowerFx;
@@ -40,6 +41,28 @@ internal sealed class WorkflowScopes
             {
                 yield return new(kvp.Key.Name, kvp.Value.BuildState());
             }
+        }
+    }
+
+    public void Bind(RecalcEngine engine, WorkflowScopeType? type = null)
+    {
+        if (type is not null)
+        {
+            Bind(type);
+        }
+        else
+        {
+            Bind(WorkflowScopeType.Topic);
+            Bind(WorkflowScopeType.Global);
+            Bind(WorkflowScopeType.Env);
+            Bind(WorkflowScopeType.System);
+        }
+
+        void Bind(WorkflowScopeType scope)
+        {
+            RecordValue scopeRecord = this.BuildRecord(scope);
+            engine.DeleteFormula(scope.Name);
+            engine.UpdateVariable(scope.Name, scopeRecord);
         }
     }
 

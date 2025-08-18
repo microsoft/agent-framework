@@ -49,7 +49,7 @@ public class RecalcEngineFactoryTests(ITestOutputHelper output) : RecalcEngineTe
     public void HasCorrectMaximumExpressionLength()
     {
         // Arrange
-        RecalcEngine engine = RecalcEngineFactory.Create(this.Scopes, 2000, 3);
+        RecalcEngine engine = RecalcEngineFactory.Create(2000, 3);
 
         // Assert
         Assert.Equal(2000, engine.Config.MaximumExpressionLength);

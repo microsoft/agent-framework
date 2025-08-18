@@ -18,7 +18,7 @@ public static class DeclarativeWorkflowBuilder
     /// <param name="yamlReader">The reader that provides the workflow object model YAML.</param>
     /// <param name="context">The execution context for the workflow.</param>
     /// <returns>The <see cref="Workflow"/> that corresponds with the YAML object model.</returns>
-    public static Workflow<TInput> Build<TInput>(TextReader yamlReader, DeclarativeWorkflowContext context) where TInput : notnull
+    public static Workflow<TInput> Build<TInput>(TextReader yamlReader, DeclarativeWorkflowOptions context) where TInput : notnull
     {
         BotElement rootElement = YamlSerializer.Deserialize<BotElement>(yamlReader) ?? throw new UnknownActionException("Unable to parse workflow.");
         string rootId = WorkflowActionVisitor.RootId(GetWorkflowId(rootElement));

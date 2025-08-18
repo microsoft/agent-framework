@@ -10,9 +10,9 @@ namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 /// <summary>
 /// Provides dynamic model for constructing a declarative workflow.
 /// </summary>
-internal sealed class WorkflowModel
+internal sealed class DeclarativeWorkflowModel
 {
-    public WorkflowModel(Executor rootStep)
+    public DeclarativeWorkflowModel(Executor rootStep)
     {
         this.DefineNode(rootStep);
     }

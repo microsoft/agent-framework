@@ -9,11 +9,11 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace Microsoft.Agents.Workflows.Declarative;
 
 /// <summary>
-/// Provides configuration and context for workflow execution.
+/// Configuration options for workflow execution.
 /// </summary>
-public sealed class DeclarativeWorkflowContext
+public sealed class DeclarativeWorkflowOptions
 {
-    internal static DeclarativeWorkflowContext Default { get; } = new();
+    internal static DeclarativeWorkflowOptions Default { get; } = new();
 
     /// <summary>
     /// Defines the endpoint for the Foundry project.

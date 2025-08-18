@@ -2,17 +2,17 @@
 
 using Azure.AI.Agents.Persistent;
 using Azure.Core.Pipeline;
-using Microsoft.Agents.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
+using Microsoft.PowerFx;
 
 namespace Microsoft.Agents.Workflows.Declarative.Extensions;
 
 internal static class DeclarativeWorkflowContextExtensions
 {
-    public static WorkflowExecutionContext CreateActionContext(this DeclarativeWorkflowContext context, string rootId, WorkflowScopes scopes) =>
-        new(RecalcEngineFactory.Create(scopes, context.MaximumExpressionLength, context.MaximumCallDepth), scopes);
+    public static RecalcEngine CreateRecalcEngine(this DeclarativeWorkflowOptions context) =>
+        RecalcEngineFactory.Create(context.MaximumExpressionLength, context.MaximumCallDepth);
 
-    public static PersistentAgentsClient CreateClient(this DeclarativeWorkflowContext context)
+    public static PersistentAgentsClient CreateClient(this DeclarativeWorkflowOptions context)
     {
         PersistentAgentsAdministrationClientOptions clientOptions = new();
 

@@ -23,27 +23,27 @@ public class Workflows_Declarative(ITestOutputHelper output) : OrchestrationSamp
     {
         Debug.WriteLine("WORKFLOW INIT\n");
 
-        //////////////////////////////////////////////////////
-        //
-        // HOW TO: Create a workflow from a YAML file.
-        //
-        using StreamReader yamlReader = File.OpenText(@$"{nameof(Workflows)}\{fileName}.yaml");
-        //
-        // DeclarativeWorkflowContext provides the components for workflow execution.
-        //
-        DeclarativeWorkflowContext workflowContext =
-            new()
-            {
-                LoggerFactory = this.LoggerFactory,
-                ProjectEndpoint = Throw.IfNull(TestConfiguration.AzureAI.Endpoint),
-                ProjectCredentials = new AzureCliCredential(),
-            };
-        //
-        // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
-        //
-        Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>(yamlReader, workflowContext);
-        //
-        //////////////////////////////////////////////////////
+            //////////////////////////////////////////////////////
+            //
+            // HOW TO: Create a workflow from a YAML file.
+            //
+            using StreamReader yamlReader = File.OpenText(@$"{nameof(Workflows)}\{fileName}.yaml");
+            //
+            // DeclarativeWorkflowContext provides the components for workflow execution.
+            //
+            DeclarativeWorkflowOptions workflowContext =
+                new()
+                {
+                    LoggerFactory = this.LoggerFactory,
+                    ProjectEndpoint = Throw.IfNull(TestConfiguration.AzureAI.Endpoint),
+                    ProjectCredentials = new AzureCliCredential(),
+                };
+            //
+            // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
+            //
+            Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>(yamlReader, workflowContext);
+            //
+            //////////////////////////////////////////////////////
 
         Debug.WriteLine("\nWORKFLOW INVOKE\n");
 

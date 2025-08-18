@@ -5,7 +5,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
-using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.PowerFx.Types;
@@ -33,7 +32,7 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
 
     public bool HasValue { get; private set; }
 
-    protected override ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    protected override ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         this._index = 0;
 
@@ -44,14 +43,14 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
         }
         else
         {
-            EvaluationResult<DataValue> result = this.Context.ExpressionEngine.GetValue(this.Model.Items, this.Context.Scopes);
-            if (result.Value is TableDataValue tableValue)
+            EvaluationResult<DataValue> expressionResult = this.State.ExpressionEngine.GetValue(this.Model.Items);
+            if (expressionResult.Value is TableDataValue tableValue)
             {
                 this._values = [.. tableValue.Values.Select(value => value.Properties.Values.First().ToFormulaValue())];
             }
             else
             {
-                this._values = [result.Value.ToFormulaValue()];
+                this._values = [expressionResult.Value.ToFormulaValue()];
             }
         }
 
@@ -66,11 +65,11 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
         {
             FormulaValue value = this._values[this._index];
 
-            this.Context.Engine.SetScopedVariable(this.Context.Scopes, Throw.IfNull(this.Model.Value), value);
+            this.State.Set(Throw.IfNull(this.Model.Value), value);
 
             if (this.Model.Index is not null)
             {
-                this.Context.Engine.SetScopedVariable(this.Context.Scopes, this.Model.Index.Path, FormulaValue.New(this._index));
+                this.State.Set(this.Model.Index.Path, FormulaValue.New(this._index));
             }
 
             this._index++;
@@ -79,10 +78,10 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
 
     public void Reset()
     {
-        this.Context.Engine.ClearScopedVariable(this.Context.Scopes, Throw.IfNull(this.Model.Value));
+        this.State.Clear(Throw.IfNull(this.Model.Value));
         if (this.Model.Index is not null)
         {
-            this.Context.Engine.ClearScopedVariable(this.Context.Scopes, this.Model.Index);
+            this.State.Clear(this.Model.Index);
         }
     }
 }

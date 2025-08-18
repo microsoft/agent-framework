@@ -16,16 +16,16 @@ namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 internal sealed class ParseValueExecutor(ParseValue model) :
     DeclarativeActionExecutor<ParseValue>(model)
 {
-    protected override ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         PropertyPath variablePath = Throw.IfNull(this.Model.Variable?.Path, $"{nameof(this.Model)}.{nameof(model.Variable)}");
         ValueExpression valueExpression = Throw.IfNull(this.Model.Value, $"{nameof(this.Model)}.{nameof(this.Model.Value)}");
 
-        EvaluationResult<DataValue> result = this.Context.ExpressionEngine.GetValue(valueExpression, this.Context.Scopes);
+        EvaluationResult<DataValue> expressionResult = this.State.ExpressionEngine.GetValue(valueExpression);
 
         FormulaValue? parsedResult = null;
 
-        if (result.Value is StringDataValue stringValue)
+        if (expressionResult.Value is StringDataValue stringValue)
         {
             if (string.IsNullOrWhiteSpace(stringValue.Value))
             {
@@ -47,10 +47,10 @@ internal sealed class ParseValueExecutor(ParseValue model) :
 
         if (parsedResult is null)
         {
-            throw new WorkflowExecutionException($"Unable to parse {result.Value.GetType().Name}");
+            throw new WorkflowExecutionException($"Unable to parse {expressionResult.Value.GetType().Name}");
         }
 
-        this.AssignTarget(this.Context, variablePath, parsedResult);
+        this.AssignTarget(variablePath, parsedResult);
 
         return default;
     }

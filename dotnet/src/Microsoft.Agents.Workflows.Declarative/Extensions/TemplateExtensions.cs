@@ -20,7 +20,7 @@ internal static class TemplateExtensions
         return string.Concat(line?.Segments.Select(segment => engine.Format(segment)) ?? [string.Empty]);
     }
 
-    private static string? Format(this RecalcEngine engine, TemplateSegment segment)
+    public static string? Format(this RecalcEngine engine, TemplateSegment segment)
     {
         if (segment is TextSegment textSegment)
         {
