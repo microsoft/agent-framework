@@ -2,7 +2,8 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
+    <TargetFrameworks>net9.0</TargetFrameworks>
+    <ProjectsDebugTargetFrameworks>net9.0</ProjectsDebugTargetFrameworks>
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
     <UserSecretsId>5ee045b0-aea3-4f08-8d31-32d1a6f8fed0</UserSecretsId>
   </PropertyGroup>
@@ -24,12 +25,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Microsoft.Agents.Workflows\Microsoft.Agents.Workflows.csproj" />
     <ProjectReference Include="..\..\src\Microsoft.Agents.Workflows.Declarative\Microsoft.Agents.Workflows.Declarative.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Update="demo250729.yaml">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
   </ItemGroup>
 
 </Project>

@@ -20,9 +20,14 @@ beginDialog:
       displayName: Student
       userInput: =Topic.Project
 
-    - kind: ResetVariable
+    # - kind: ResetVariable
+    #   id: reset_project
+    #   variable: Topic.Project
+
+    - kind: SetVariable # // %%% HAXX
       id: reset_project
       variable: Topic.Project
+      value: =Blank()
 
     - kind: AnswerQuestionWithAI
       id: asst_0d4uQ7HiFCfRXEuiQkspCx2T # // %%% HAXX

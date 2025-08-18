@@ -4,6 +4,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Reflection;
 using System.Threading.Tasks;
 using Azure.Identity;
@@ -17,12 +18,22 @@ namespace Demo.DeclarativeWorkflow;
 
 internal static class Program
 {
+    private const string DefaultWorkflow = "HelloWorld.yaml";
+    private const string HttpEventFileName = "http.log";
+
     public static async Task Main(string[] args)
     {
+        string workflowFile = GetWorkflowFile(args);
+
         // Load configuration and create kernel with Azure OpenAI Chat Completion service
         IConfiguration config = InitializeConfig();
 
-        Notify("PROCESS INIT\n");
+        // Create custom HTTP client with intercept handler
+        await using StreamWriter eventWriter = new(HttpEventFileName, append: false);
+        using HttpClient customClient = new(new HttpInterceptHandler() { OnIntercept = OnHttpIntercept, CheckCertificateRevocationList = true }, disposeHandler: true);
+
+        // Read and parse the declarative workflow.
+        Notify("PROCESS INIT");
 
         Stopwatch timer = Stopwatch.StartNew();
 
@@ -30,13 +41,14 @@ internal static class Program
         //
         // HOW TO: Create a workflow from a YAML file.
         //
-        using StreamReader yamlReader = File.OpenText(args.FirstOrDefault() ?? "demo250729.yaml");
+        using StreamReader yamlReader = File.OpenText(workflowFile);
         //
         // DeclarativeWorkflowContext provides the components for workflow execution.
         //
         DeclarativeWorkflowContext workflowContext =
             new()
             {
+                HttpClient = customClient,
                 LoggerFactory = NullLoggerFactory.Instance,
                 ProjectEndpoint = Throw.IfNull(config["AzureAI:Endpoint"]),
                 ProjectCredentials = new AzureCliCredential(),
@@ -48,14 +60,14 @@ internal static class Program
         //
         //////////////////////////////////////////////////////
 
-        Notify($"PROCESS DEFINED: {timer.Elapsed}\n");
+        Notify($"\nPROCESS DEFINED: {timer.Elapsed}");
 
-        Notify("PROCESS INVOKE\n");
+        Notify("\nPROCESS INVOKE");
 
         //////////////////////////////////////////////
         // Run the workflow, just like any other workflow
         string? messageId = null;
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, "What is the formula for fibbinocci sequence");
+        StreamingRun run = await InProcessExecution.StreamAsync(workflow, GetWorkflowInput(args));
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
             if (evt is ExecutorInvokeEvent executorInvoked)
@@ -65,6 +77,10 @@ internal static class Program
             else if (evt is ExecutorCompleteEvent executorComplete)
             {
                 Debug.WriteLine($"!!! EXIT #{executorComplete.ExecutorId}");
+            }
+            else if (evt is ExecutorFailureEvent executorFailure)
+            {
+                Debug.WriteLine($"!!! ERROR #{executorFailure.ExecutorId}: {executorFailure.Data?.Message ?? "Unknown"}");
             }
             else if (evt is DeclarativeWorkflowStreamEvent streamEvent)
             {
@@ -84,11 +100,6 @@ internal static class Program
                 {
                     Console.ForegroundColor = ConsoleColor.Gray;
                     Console.Write(streamEvent.Data);
-                    //if (streamEvent.Usage is not null)
-                    //{
-                    //    Console.ForegroundColor = ConsoleColor.DarkGray;
-                    //    Console.WriteLine($"[Tokens Total: {streamEvent.Usage.TotalTokenCount}, Input: {streamEvent.Usage.InputTokenCount}, Output: {streamEvent.Usage.OutputTokenCount}]");
-                    //}
                 }
                 finally
                 {
@@ -99,19 +110,18 @@ internal static class Program
             {
                 try
                 {
-                    Console.WriteLine(Environment.NewLine);
-
+                    Console.WriteLine();
                     if (messageEvent.Data.MessageId is null)
                     {
                         Console.ForegroundColor = ConsoleColor.Yellow;
-                        Console.WriteLine(messageEvent.Data);
+                        Console.WriteLine(messageEvent.Data?.Text.Trim());
                     }
                     else
                     {
                         Console.ForegroundColor = ConsoleColor.White;
                         Console.WriteLine($"#{messageEvent.Data.MessageId}:");
                         Console.ForegroundColor = ConsoleColor.DarkGreen;
-                        Console.WriteLine(messageEvent.Data);
+                        Console.WriteLine(messageEvent.Data?.Text.Trim());
                         if (messageEvent.Usage is not null)
                         {
                             Console.ForegroundColor = ConsoleColor.DarkGray;
@@ -127,7 +137,75 @@ internal static class Program
         }
         //////////////////////////////////////////////
 
-        Notify("PROCESS DONE");
+        Notify("\nPROCESS DONE");
+
+        string GetWorkflowInput(string[] args)
+        {
+            string? input = GetWorkflowInputs(args).FirstOrDefault();
+
+            try
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+
+                Console.Write("\nINPUT: ");
+
+                if (!string.IsNullOrWhiteSpace(input))
+                {
+                    Console.WriteLine(input);
+                    return input;
+                }
+                while (string.IsNullOrWhiteSpace(input))
+                {
+                    input = Console.ReadLine();
+                }
+
+                Console.WriteLine();
+
+                return input.Trim();
+            }
+            finally
+            {
+                Console.ResetColor();
+            }
+        }
+
+        ValueTask OnHttpIntercept(HttpResponseIntercept intercept)
+        {
+            eventWriter.WriteLine($"{intercept.RequestMethod} {intercept.RequestUri}");
+            if (intercept.ResponseContent is not null)
+            {
+                eventWriter.WriteLine($"API:{Environment.NewLine}" + intercept.ResponseContent);
+            }
+            return default;
+        }
+    }
+
+    private static string GetWorkflowFile(string[] args)
+    {
+        string workflowFile = args.FirstOrDefault() ?? DefaultWorkflow;
+        if (!File.Exists(workflowFile) && !Path.IsPathFullyQualified(workflowFile))
+        {
+            workflowFile = Path.Combine(@"..\..\..\..\..\..\Workflows", workflowFile);
+        }
+
+        if (!File.Exists(workflowFile))
+        {
+            throw new InvalidOperationException($"Unable to locate workflow: {Path.GetFullPath(workflowFile)}.");
+        }
+
+        return workflowFile;
+    }
+
+    private static string[] GetWorkflowInputs(string[] args)
+    {
+        if (args.Length == 0)
+        {
+            return [];
+        }
+
+        string[] workflowInput = [.. args.Skip(1)];
+
+        return workflowInput;
     }
 
     // Load configuration from user-secrets

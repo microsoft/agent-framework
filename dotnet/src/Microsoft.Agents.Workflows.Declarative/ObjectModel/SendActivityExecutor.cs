@@ -26,7 +26,7 @@ internal sealed class SendActivityExecutor(SendActivity model) :
             string? activityText = this.Context.Engine.Format(messageActivity.Text)?.Trim();
             templateBuilder.AppendLine(activityText);
 
-            await context.AddEventAsync(new DeclarativeWorkflowMessageEvent(new ChatMessage(ChatRole.Assistant, templateBuilder.ToString()))).ConfigureAwait(false);
+            await context.AddEventAsync(new DeclarativeWorkflowMessageEvent(new ChatMessage(ChatRole.Assistant, templateBuilder.ToString().Trim()))).ConfigureAwait(false);
         }
     }
 }

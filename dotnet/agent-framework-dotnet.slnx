@@ -19,7 +19,9 @@
     <Project Path="samples/AgentWebChat/AgentWebChat.Web/AgentWebChat.Web.csproj" />
   </Folder>
   <Folder Name="/Samples/Workflows/">
+    <File Path="../workflows/HelloWorld.yaml" />
     <File Path="../workflows/MathChat.yaml" />
+    <File Path="../workflows/Question.yaml" />
   </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />

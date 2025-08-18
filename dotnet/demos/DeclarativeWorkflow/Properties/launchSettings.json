@@ -1,15 +1,20 @@
 {
   "profiles": {
-    "Default": {
-      "commandName": "Project"
-    },
-    "MathChat": {
+    "HelloWorld": {
       "commandName": "Project",
-      "commandLineArgs": "\"C:\\Users\\crickman\\source\\repos\\af5\\workflows\\MathChat.yaml\""
+      "commandLineArgs": "\"HelloWorld.yaml\" \"HELLO WORLD!\""
+    },
+    "Interactive": {
+      "commandName": "Project",
+      "commandLineArgs": "\"Question.yaml\""
     },
     "Question": {
       "commandName": "Project",
-      "commandLineArgs": "\"C:\\Users\\crickman\\source\\repos\\af4\\workflows\\Question.yaml\""
+      "commandLineArgs": "\"Question.yaml\" \"Why is the sky blue?\""
+    },
+    "MathChat": {
+      "commandName": "Project",
+      "commandLineArgs": "\"MathChat.yaml\" \"What is the formula for fibbinocci sequence?\""
     }
   }
 }

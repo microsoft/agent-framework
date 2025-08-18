@@ -8,4 +8,4 @@ beginDialog:
     - kind: AnswerQuestionWithAI
       id: asst_Tq5lpaIHgIbqQSKIpGxNq6A5
       variable: Topic.Answer
-      userInput: Why is the sky blue?
+      userInput: {System.LastMessage.Text}

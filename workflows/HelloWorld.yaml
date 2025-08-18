@@ -1,0 +1,10 @@
+kind: AdaptiveDialog
+beginDialog:
+  kind: OnActivity
+  id: workflow_demo
+  actions:
+
+    # Respond with input
+    - kind: SendActivity
+      id: sendActivity_demo
+      activity: {System.LastMessage.Text}
