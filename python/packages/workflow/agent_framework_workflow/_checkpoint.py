@@ -71,7 +71,7 @@ class CheckpointStorage(Protocol):
 class InMemoryCheckpointStorage:
     """In-memory checkpoint storage for testing and development."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the memory storage."""
         self._checkpoints: dict[str, WorkflowCheckpoint] = {}
 
@@ -143,7 +143,7 @@ class FileCheckpointStorage:
 
         def _read() -> dict[str, Any]:
             with open(file_path) as f:
-                return json.load(f)
+                return json.load(f)  # type: ignore[no-any-return]
 
         checkpoint_dict = await asyncio.to_thread(_read)
 

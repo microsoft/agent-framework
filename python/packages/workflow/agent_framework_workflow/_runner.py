@@ -25,7 +25,7 @@ class Runner:
         ctx: RunnerContext,
         max_iterations: int = 100,
         workflow_id: str | None = None,
-    ):
+    ) -> None:
         """Initialize the runner with edges, shared state, and context.
 
         Args:
@@ -123,7 +123,7 @@ class Runner:
         finally:
             self._running = False
 
-    async def _run_iteration(self):
+    async def _run_iteration(self) -> None:
         async def _deliver_messages(source_executor_id: str, messages: list[Message]) -> None:
             """Outer loop to concurrently deliver messages from all sources to their targets."""
 
