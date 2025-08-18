@@ -24,9 +24,8 @@ There are three different messages storage scenarios we need to support:
 
 With Scenario 1 the storage of messages is built into the underlying service, and the service typically only supports storage of messages it its own storage.
 
-Where services do not have built in storage (1), the caller typically has to provide all chat history on each invocation.
+Where services do not have built in storage, the service caller has to provide all chat history on each invocation.
 The messages making up this chat history, can be stored either in memory locally or in some 3rd party storage location.
-The service is agnostic to where the messages are stored, and any such 3rd party storage needs to be provided by the agent framework.
 
 ### Service message storage
 
@@ -107,6 +106,8 @@ Similarly to the previous example the internal thread id used to communicate wit
 
 ### Decision A: Id Management
 
+We have to decide what kinds of ids we want to support on AgentThread and whether those are stongly typed or not.
+
 #### Option 1 - Public Id has concrete property, service thread id is considered implementation detail of Agent and stored in AdditionalProperties
 
 AgentThread has an `Id` property that exposes the thread's public ID.
@@ -128,6 +129,9 @@ new AgentThread()
     }
 }
 ```
+
+PRO: Consistent experience with any type of agent.
+CONS: Harder to use with the common case where only a single service thread id is needed.
 
 #### Option 2 - Public Id has concrete property, service thread id has concrete property
 
@@ -161,7 +165,40 @@ var multipleInternalIds = new AgentThread()
 }
 ```
 
+PRO: Simple to use for agents that only need a single service thread id.
+CONS: For agents that need multiple service thread ids, we end up with an unused property which may confuse users.
+
+#### Option 3 - Public Id has concrete property, agents subclass AgentThread if they need to store additional ids
+
+AgentThread has an `Id` property that exposes the thread's public ID.
+If a specific agent needs to store additional IDs, it can subclass `AgentThread` and add the necessary properties.
+
+```csharp
+public class AgentThread
+{
+    public string Id { get; set; }
+    public string? ServiceThreadId { get; set; }
+}
+
+// Could have an implementation specific agent thread.
+public class ChatClientAgentThread : AgentThread
+{
+    public string? ServiceThreadId { get; set; }
+}
+
+// Could have common reusable sub classes.
+public class ServiceThreadAgentThread : AgentThread
+{
+    public string? ServiceThreadId { get; set; }
+}
+```
+
+PRO: Consistent experience with any type of agent.
+CONS: Needs subclassing for agent types, which makes this harder to understand and use.
+
 ### Decision B: Message Storage
+
+We have to decide how we support message storage with Agent Threads where they are not stored in the service.
 
 #### Option 1 - Store messages in an IChatMessageStore, defaulted to InMemoryChatMessageStore
 
