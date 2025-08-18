@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
-using Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests;
+
+using CosmosDB.Testing.AppHost;
 
 var builder = DistributedApplication.CreateBuilder(args);
 var cosmosDb = builder.AddAzureCosmosDB(CosmosDBTestConstants.TestCosmosDbName);

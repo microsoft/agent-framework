@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using CosmosDB.Testing.AppHost;
+
 namespace Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests;
 
 /// <summary>

@@ -5,6 +5,10 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
+  <PropertyGroup>
+    <!-- Aspire -->
+    <AspireAppHostSdkVersion>9.4.1</AspireAppHostSdkVersion>
+  </PropertyGroup>
   <ItemGroup>
     <!-- Azure.* -->
     <PackageVersion Include="Aspire.Azure.AI.OpenAI" Version="9.4.1-preview.1.25408.4" />

@@ -47,8 +47,8 @@ public class CosmosActorStateStorage : IActorStateStorage
         }
 
         var container = await this._lazyContainer.GetContainerAsync().ConfigureAwait(false);
-        var batch = container.CreateTransactionalBatch(GetPartitionKey(actorId));
-        var actorIdStr = actorId.ToString();
+        var (partitionKey, actorType, actorKey) = BuildPartitionKey(actorId);
+        var batch = container.CreateTransactionalBatch(partitionKey);
 
         // Add data operations to batch
         foreach (var op in operations)
@@ -61,7 +61,8 @@ public class CosmosActorStateStorage : IActorStateStorage
                     var item = new ActorStateDocument
                     {
                         Id = docId,
-                        ActorId = actorIdStr,
+                        ActorType = actorType,
+                        ActorKey = actorKey,
                         Key = set.Key,
                         Value = set.Value
                     };
@@ -83,7 +84,8 @@ public class CosmosActorStateStorage : IActorStateStorage
         var newRoot = new ActorRootDocument
         {
             Id = RootDocumentId,
-            ActorId = actorId.ToString(),
+            ActorType = actorType,
+            ActorKey = actorKey,
             LastModified = DateTimeOffset.UtcNow,
         };
 
@@ -103,6 +105,7 @@ public class CosmosActorStateStorage : IActorStateStorage
             var result = await batch.ExecuteAsync(cancellationToken).ConfigureAwait(false);
             if (!result.IsSuccessStatusCode)
             {
+                _ = result.ErrorMessage;
                 return new WriteResponse(eTag: string.Empty, success: false);
             }
 
@@ -212,7 +215,18 @@ public class CosmosActorStateStorage : IActorStateStorage
     private const string RootDocumentId = "rootdoc";
 
     private static PartitionKey GetPartitionKey(ActorId actorId)
-        => new(actorId.ToString());
+    {
+        var (partitionKey, _, _) = BuildPartitionKey(actorId);
+        return partitionKey;
+    }
+
+    private static (PartitionKey partitionKey, string actorType, string actorKey) BuildPartitionKey(ActorId actorId)
+    {
+        var actorType = actorId.Type.ToString();
+        var actorKey = actorId.Key;
+        var partitionKey = new PartitionKeyBuilder().Add(actorType).Add(actorKey).Build();
+        return (partitionKey, actorType, actorKey);
+    }
 
     /// <summary>
     /// Gets the current ETag for the actor's root document.

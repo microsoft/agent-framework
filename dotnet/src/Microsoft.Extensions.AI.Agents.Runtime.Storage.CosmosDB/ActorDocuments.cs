@@ -27,9 +27,13 @@ public sealed class ActorRootDocument
     public string Id { get; set; } = default!;
 
     /// <summary>
-    /// The actor ID.
+    /// The actor type.
     /// </summary>
-    public string ActorId { get; set; } = default!;
+    public string ActorType { get; set; } = default!;
+    /// <summary>
+    /// The actor key.
+    /// </summary>
+    public string ActorKey { get; set; } = default!;
 
     /// <summary>
     /// The last modified timestamp.
@@ -55,9 +59,13 @@ public sealed class ActorStateDocument
     public string Id { get; set; } = default!;
 
     /// <summary>
-    /// The actor ID.
+    /// The actor type.
     /// </summary>
-    public string ActorId { get; set; } = default!;
+    public string ActorType { get; set; } = default!;
+    /// <summary>
+    /// The actor key.
+    /// </summary>
+    public string ActorKey { get; set; } = default!;
 
     /// <summary>
     /// The logical key for the state entry.

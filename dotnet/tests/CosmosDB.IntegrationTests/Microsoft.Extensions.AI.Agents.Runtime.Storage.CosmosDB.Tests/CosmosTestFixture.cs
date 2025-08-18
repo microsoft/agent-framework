@@ -3,6 +3,7 @@
 using System.Text.Json;
 using Aspire.Hosting;
 using Azure.Identity;
+using CosmosDB.Testing.AppHost;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Logging;
 
@@ -30,7 +31,7 @@ public class CosmosTestFixture : IAsyncLifetime
         var cancellationToken = cts.Token;
 
         var appHost = await DistributedApplicationTestingBuilder
-            .CreateAsync<Projects.Microsoft_Extensions_AI_Agents_Runtime_Storage_CosmosDB_Tests_AppHost>(cancellationToken);
+            .CreateAsync<Projects.CosmosDB_Testing_AppHost>(cancellationToken);
 
         appHost.Services.AddLogging(logging =>
         {
