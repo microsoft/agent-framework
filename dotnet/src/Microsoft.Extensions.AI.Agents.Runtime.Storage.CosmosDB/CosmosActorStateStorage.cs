@@ -138,6 +138,8 @@ public class CosmosActorStateStorage : IActorStateStorage
 
         // Read root document first to get actor-level ETag
         string actorETag = await this.GetActorETagAsync(container, actorId, cancellationToken).ConfigureAwait(false);
+        var actorType = actorId.Type.ToString();
+        var actorKey = actorId.Key;
 
         foreach (var op in operations)
         {
@@ -165,14 +167,16 @@ public class CosmosActorStateStorage : IActorStateStorage
                     QueryDefinition query;
                     if (!string.IsNullOrEmpty(list.KeyPrefix))
                     {
-                        query = new QueryDefinition("SELECT c.key FROM c WHERE c.actorId = @actorId AND c.key != null AND STARTSWITH(c.key, @keyPrefix)")
-                            .WithParameter("@actorId", actorId.ToString())
+                        query = new QueryDefinition("SELECT c.key FROM c WHERE c.actorType = @actorType AND c.actorKey = @actorKey AND c.key != null AND STARTSWITH(c.key, @keyPrefix)")
+                            .WithParameter("@actorType", actorType)
+                            .WithParameter("@actorKey", actorKey)
                             .WithParameter("@keyPrefix", list.KeyPrefix);
                     }
                     else
                     {
-                        query = new QueryDefinition("SELECT c.key FROM c WHERE c.actorId = @actorId AND c.key != null")
-                            .WithParameter("@actorId", actorId.ToString());
+                        query = new QueryDefinition("SELECT c.key FROM c WHERE c.actorType = @actorType AND c.actorKey = @actorKey AND c.key != null")
+                            .WithParameter("@actorType", actorType)
+                            .WithParameter("@actorKey", actorKey);
                     }
 
                     var requestOptions = new QueryRequestOptions
