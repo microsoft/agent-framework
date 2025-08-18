@@ -2,14 +2,14 @@
 
 """Workflow visualization module using graphviz."""
 
+import hashlib
+import re
 import tempfile
 from pathlib import Path
 from typing import Literal
-import hashlib
-import re
 
-from ._workflow import Workflow
 from ._edge import FanInEdgeGroup
+from ._workflow import Workflow
 
 
 class WorkflowViz:
@@ -166,6 +166,7 @@ class WorkflowViz:
         Returns:
             A string representation of the workflow in Mermaid flowchart syntax.
         """
+
         def _san(s: str) -> str:
             """Sanitize an ID for Mermaid (alphanumeric and underscore, start with letter)."""
             s2 = re.sub(r"[^0-9A-Za-z_]", "_", s)
@@ -178,13 +179,14 @@ class WorkflowViz:
         # Nodes
         start_executor = self._workflow.start_executor
         start_id = _san(start_executor.id)
-        lines.append(f"  {start_id}[{start_executor.id} (Start)]")
+        # End statements with semicolons for better compatibility and quote labels for special chars
+        lines.append(f'  {start_id}["{start_executor.id} (Start)"];')
 
         for executor in self._workflow.executors:
             if executor.id == start_executor.id:
                 continue
             eid = _san(executor.id)
-            lines.append(f"  {eid}[{executor.id}]")
+            lines.append(f'  {eid}["{executor.id}"];')
 
         # Build shared structures
         fan_in_nodes_dot = self._compute_fan_in_descriptors()  # uses DOT node ids
@@ -197,22 +199,23 @@ class WorkflowViz:
 
         for fan_node_id, _, _ in fan_in_nodes:
             # Use double parentheses to make it circular in Mermaid
+            # (Keep this line without a trailing semicolon to match existing tests.)
             lines.append(f"  {fan_node_id}((fan-in))")
 
         # Fan-in edges
         for fan_node_id, sources, target in fan_in_nodes:
             for s in sources:
-                lines.append(f"  {_san(s)} --> {fan_node_id}")
-            lines.append(f"  {fan_node_id} --> {_san(target)}")
+                lines.append(f"  {_san(s)} --> {fan_node_id};")
+            lines.append(f"  {fan_node_id} --> {_san(target)};")
 
         # Normal edges
         for src, tgt, is_cond in self._compute_normal_edges():
             s = _san(src)
             t = _san(tgt)
             if is_cond:
-                lines.append(f"  {s} -. conditional .-> {t}")
+                lines.append(f"  {s} -. conditional .-> {t};")
             else:
-                lines.append(f"  {s} --> {t}")
+                lines.append(f"  {s} --> {t};")
 
         return "\n".join(lines)
 
