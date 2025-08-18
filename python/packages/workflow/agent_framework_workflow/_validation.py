@@ -88,7 +88,7 @@ class WorkflowGraphValidator:
     3. Graph connectivity validation
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._edges: list[Edge] = []
         self._executors: dict[str, Executor] = {}
 
@@ -209,9 +209,9 @@ class WorkflowGraphValidator:
             for target_type in target_input_types:
                 if isinstance(edge_group, FanInEdgeGroup):
                     # If the edge is part of an edge group, the target expects a list of data types
-                    if self._is_type_compatible(list[source_type], target_type):
+                    if self._is_type_compatible(list[source_type], target_type):  # type: ignore[valid-type]
                         compatible = True
-                        compatible_pairs.append((list[source_type], target_type))
+                        compatible_pairs.append((list[source_type], target_type))  # type: ignore[valid-type]
                 else:
                     if self._is_type_compatible(source_type, target_type):
                         compatible = True

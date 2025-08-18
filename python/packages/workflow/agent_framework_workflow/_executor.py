@@ -294,7 +294,7 @@ class RequestInfoExecutor(Executor):
     # Well-known ID for the request info executor
     EXECUTOR_ID: ClassVar[str] = "request_info"
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the RequestInfoExecutor with its well-known ID."""
         super().__init__(id=self.EXECUTOR_ID)
         self._request_events: dict[str, RequestInfoEvent] = {}
