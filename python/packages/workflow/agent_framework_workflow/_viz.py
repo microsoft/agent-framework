@@ -2,12 +2,14 @@
 
 """Workflow visualization module using graphviz."""
 
-import hashlib
 import tempfile
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Literal
+import hashlib
+import re
 
 from ._workflow import Workflow
+from ._edge import FanInEdgeGroup
 
 
 class WorkflowViz:
@@ -42,58 +44,25 @@ class WorkflowViz:
             if executor.id != start_executor.id:
                 lines.append(f'  "{executor.id}" [label="{executor.id}"];')
 
-        # Build fan-in groups:
-        # - key: sorted tuple of edge IDs in the group (including self)
-        # - value: info about target, sources set, and a synthetic node id
-        class _FanInGroup(TypedDict):
-            target: str
-            sources: set[str]
-            node_id: str
+        # Build shared structures
+        fan_in_nodes = self._compute_fan_in_descriptors()  # (node_id, sources, target)
+        normal_edges = self._compute_normal_edges()  # (src, tgt, is_conditional)
 
-        groups: dict[tuple[str, ...], _FanInGroup] = {}
-        for edge in self._workflow.edges:
-            if edge.has_edge_group():
-                group_ids = tuple(sorted([*edge._edge_group_ids, edge.id]))
-                if group_ids not in groups:
-                    # Deterministic node id based on target + group ids
-                    digest = hashlib.sha256((edge.target_id + "|" + "|".join(group_ids)).encode("utf-8")).hexdigest()[
-                        :8
-                    ]
-                    node_id = f"fan_in::{edge.target_id}::{digest}"
-                    groups[group_ids] = {"target": edge.target_id, "sources": set(), "node_id": node_id}
-                # Track the source for this group
-                sources = groups[group_ids]["sources"]
-                if not isinstance(sources, set):
-                    raise TypeError("Internal error: 'sources' is expected to be a set of str.")
-                sources.add(edge.source_id)
+        if fan_in_nodes:
+            lines.append("")
+            for node_id, _, _ in fan_in_nodes:
+                lines.append(f'  "{node_id}" [shape=ellipse, fillcolor=lightgoldenrod, label="fan-in"];')
 
-        lines.append("")
-
-        # Add intermediate fan-in nodes with special styling and label on the node
-        for group in groups.values():
-            node_id = group["node_id"]
-            # Use a distinct shape/color to differentiate aggregation nodes
-            lines.append(f'  "{node_id}" [shape=ellipse, fillcolor=lightgoldenrod, label="fan-in"];')
-
-        # Add edges
-        for edge in self._workflow.edges:
-            edge_attr = ""
-            if edge._condition is not None:
-                edge_attr = ' [style=dashed, label="conditional"]'
-            # Skip direct rendering of grouped edges; they'll be routed via the fan-in node below
-            if edge.has_edge_group():
-                continue
-
-            lines.append(f'  "{edge.source_id}" -> "{edge.target_id}"{edge_attr};')
-
-        # Route grouped edges through the intermediate fan-in node
-        for group in groups.values():
-            node_id = group["node_id"]
-            target_id = group["target"]
-            sources = group["sources"]
-            for src in sorted(sources):
+        # Route fan-in via intermediate nodes
+        for node_id, sources, target in fan_in_nodes:
+            for src in sources:
                 lines.append(f'  "{src}" -> "{node_id}";')
-            lines.append(f'  "{node_id}" -> "{target_id}";')
+            lines.append(f'  "{node_id}" -> "{target}";')
+
+        # Draw normal edges
+        for src, tgt, is_cond in normal_edges:
+            edge_attr = ' [style=dashed, label="conditional"]' if is_cond else ""
+            lines.append(f'  "{src}" -> "{tgt}"{edge_attr};')
 
         lines.append("}")
         return "\n".join(lines)
@@ -190,3 +159,93 @@ class WorkflowViz:
             The path to the saved PDF file.
         """
         return self.export(format="pdf", filename=filename)
+
+    def to_mermaid(self) -> str:
+        """Export the workflow as a Mermaid flowchart string.
+
+        Returns:
+            A string representation of the workflow in Mermaid flowchart syntax.
+        """
+        def _san(s: str) -> str:
+            """Sanitize an ID for Mermaid (alphanumeric and underscore, start with letter)."""
+            s2 = re.sub(r"[^0-9A-Za-z_]", "_", s)
+            if not s2 or not s2[0].isalpha():
+                s2 = f"n_{s2}"
+            return s2
+
+        lines: list[str] = ["flowchart TD"]
+
+        # Nodes
+        start_executor = self._workflow.start_executor
+        start_id = _san(start_executor.id)
+        lines.append(f"  {start_id}[{start_executor.id} (Start)]")
+
+        for executor in self._workflow.executors:
+            if executor.id == start_executor.id:
+                continue
+            eid = _san(executor.id)
+            lines.append(f"  {eid}[{executor.id}]")
+
+        # Build shared structures
+        fan_in_nodes_dot = self._compute_fan_in_descriptors()  # uses DOT node ids
+        # Convert DOT-style node ids to Mermaid-safe ones
+        fan_in_nodes: list[tuple[str, list[str], str]] = []
+        for dot_node_id, sources, target in fan_in_nodes_dot:
+            digest = dot_node_id.split("::")[-1]
+            fan_node_id = f"fan_in__{_san(target)}__{digest}"
+            fan_in_nodes.append((fan_node_id, sources, target))
+
+        for fan_node_id, _, _ in fan_in_nodes:
+            # Use double parentheses to make it circular in Mermaid
+            lines.append(f"  {fan_node_id}((fan-in))")
+
+        # Fan-in edges
+        for fan_node_id, sources, target in fan_in_nodes:
+            for s in sources:
+                lines.append(f"  {_san(s)} --> {fan_node_id}")
+            lines.append(f"  {fan_node_id} --> {_san(target)}")
+
+        # Normal edges
+        for src, tgt, is_cond in self._compute_normal_edges():
+            s = _san(src)
+            t = _san(tgt)
+            if is_cond:
+                lines.append(f"  {s} -. conditional .-> {t}")
+            else:
+                lines.append(f"  {s} --> {t}")
+
+        return "\n".join(lines)
+
+    # region Private helpers
+
+    def _fan_in_digest(self, target: str, sources: list[str]) -> str:
+        sources_sorted = sorted(sources)
+        return hashlib.sha256((target + "|" + "|".join(sources_sorted)).encode("utf-8")).hexdigest()[:8]
+
+    def _compute_fan_in_descriptors(self) -> list[tuple[str, list[str], str]]:
+        """Return list of (node_id, sources, target) for fan-in groups.
+
+        node_id is DOT-oriented: fan_in::target::digest
+        """
+        result: list[tuple[str, list[str], str]] = []
+        for group in self._workflow.edge_groups:
+            if isinstance(group, FanInEdgeGroup):
+                target = group.target_executors[0].id
+                sources = [src.id for src in group.source_executors]
+                digest = self._fan_in_digest(target, sources)
+                node_id = f"fan_in::{target}::{digest}"
+                result.append((node_id, sorted(sources), target))
+        return result
+
+    def _compute_normal_edges(self) -> list[tuple[str, str, bool]]:
+        """Return list of (source_id, target_id, is_conditional) for non-fan-in groups."""
+        edges: list[tuple[str, str, bool]] = []
+        for group in self._workflow.edge_groups:
+            if isinstance(group, FanInEdgeGroup):
+                continue
+            for edge in group.edges:
+                is_cond = getattr(edge, "_condition", None) is not None
+                edges.append((edge.source_id, edge.target_id, is_cond))
+        return edges
+
+    # endregion

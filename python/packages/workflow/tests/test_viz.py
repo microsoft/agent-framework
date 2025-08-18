@@ -9,9 +9,17 @@ from agent_framework.workflow import Executor, WorkflowBuilder, WorkflowContext,
 class MockExecutor(Executor):
     """A mock executor for testing purposes."""
 
-    @handler
+    @handler(output_types=[str])
     async def mock_handler(self, message: str, ctx: WorkflowContext) -> None:
         """A mock handler that does nothing."""
+        pass
+
+
+class ListStrTargetExecutor(Executor):
+    """A mock executor that accepts a list of strings (for fan-in targets)."""
+
+    @handler
+    async def handle(self, message: list[str], ctx: WorkflowContext) -> None:  # type: ignore[type-arg]
         pass
 
 
@@ -174,7 +182,7 @@ def test_workflow_viz_fan_in_edge_group():
     start = MockExecutor(id="start")
     s1 = MockExecutor(id="s1")
     s2 = MockExecutor(id="s2")
-    t = MockExecutor(id="t")
+    t = ListStrTargetExecutor(id="t")
 
     # Build a connected workflow: start fans out to s1 and s2, which then fan-in to t
     wf = (
@@ -208,3 +216,70 @@ def test_workflow_viz_fan_in_edge_group():
     # Ensure direct edges are not present
     assert '"s1" -> "t"' not in dot
     assert '"s2" -> "t"' not in dot
+
+
+def test_workflow_viz_to_mermaid_basic():
+    """Mermaid: basic workflow nodes and edge are present with start label."""
+    executor1 = MockExecutor(id="executor1")
+    executor2 = MockExecutor(id="executor2")
+
+    workflow = WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor1).build()
+    mermaid = WorkflowViz(workflow).to_mermaid()
+
+    # Start node and normal node
+    assert "executor1[executor1 (Start)]" in mermaid
+    assert "executor2[executor2]" in mermaid
+    # Edge uses sanitized ids (same as ids here)
+    assert "executor1 --> executor2" in mermaid
+
+
+def test_workflow_viz_mermaid_conditional_edge():
+    """Mermaid: conditional edges are dotted with a label."""
+    start = MockExecutor(id="start")
+    mid = MockExecutor(id="mid")
+
+    def only_if_foo(msg: str) -> bool:  # pragma: no cover - simple predicate
+        return msg == "foo"
+
+    wf = WorkflowBuilder().add_edge(start, mid, condition=only_if_foo).set_start_executor(start).build()
+    mermaid = WorkflowViz(wf).to_mermaid()
+
+    assert "start -. conditional .-> mid" in mermaid
+
+
+def test_workflow_viz_mermaid_fan_in_edge_group():
+    """Mermaid: fan-in uses an intermediate node and routes edges via it."""
+    start = MockExecutor(id="start")
+    s1 = MockExecutor(id="s1")
+    s2 = MockExecutor(id="s2")
+    t = ListStrTargetExecutor(id="t")
+
+    wf = (
+        WorkflowBuilder()
+        .add_fan_out_edges(start, [s1, s2])
+        .add_fan_in_edges([s1, s2], t)
+        .set_start_executor(start)
+        .build()
+    )
+
+    mermaid = WorkflowViz(wf).to_mermaid()
+    lines = [line.strip() for line in mermaid.splitlines()]
+    # Find the fan-in node (line ends with ((fan-in)))
+    fan_lines = [ln for ln in lines if ln.endswith("((fan-in))")]
+    assert len(fan_lines) == 1
+    fan_line = fan_lines[0]
+    # fan_in node is emitted as: <id>((fan-in)) -> extract <id>
+    token = fan_line.strip()
+    suffix = "((fan-in))"
+    assert token.endswith(suffix)
+    fan_node_id = token[: -len(suffix)]
+    assert fan_node_id
+
+    # Ensure routing via the intermediate node
+    assert f"s1 --> {fan_node_id}" in mermaid
+    assert f"s2 --> {fan_node_id}" in mermaid
+    assert f"{fan_node_id} --> t" in mermaid
+
+    # Ensure direct edges to target are not present
+    assert "s1 --> t" not in mermaid
+    assert "s2 --> t" not in mermaid
