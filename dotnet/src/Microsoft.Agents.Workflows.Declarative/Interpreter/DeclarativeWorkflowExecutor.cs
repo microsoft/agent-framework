@@ -19,12 +19,19 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(string workflowId) :
 {
     public async ValueTask HandleAsync(TInput message, IWorkflowContext context)
     {
-        ChatMessage input = new(ChatRole.User, $"{message}"); // %%% HAXX: Convert to ChatMessage
-        WorkflowScopes scopes = await context.GetScopesAsync(default).ConfigureAwait(false);
+        ChatMessage input =
+            message switch
+            {
+                ChatMessage chatMessage => chatMessage,
+                string stringMessage => new ChatMessage(ChatRole.User, stringMessage),
+                _ => new(ChatRole.User, $"{message}")
+            };
+
+        WorkflowScopes scopes = await context.GetScopedStateAsync(default).ConfigureAwait(false);
 
         scopes.Set("LastMessage", WorkflowScopeType.System, input.ToRecordValue());
 
-        await context.SetScopesAsync(scopes, default).ConfigureAwait(false);
+        await context.SetScopedStateAsync(scopes, default).ConfigureAwait(false);
         await context.SendMessageAsync(new ExecutionResultMessage(this.Id)).ConfigureAwait(false);
     }
 }

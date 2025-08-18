@@ -10,10 +10,10 @@ internal static class IWorkflowContextExtensions
 {
     private const string ScopesKey = "__scopes__";
 
-    public static async Task<WorkflowScopes> GetScopesAsync(this IWorkflowContext context, CancellationToken cancellationToken) =>
-        await context.ReadWorkflowStateAsync<WorkflowScopes>(ScopesKey).ConfigureAwait(false) ?? // %%% DEEPER INTEGRATION
+    public static async Task<WorkflowScopes> GetScopedStateAsync(this IWorkflowContext context, CancellationToken cancellationToken) =>
+        await context.ReadWorkflowStateAsync<WorkflowScopes>(ScopesKey).ConfigureAwait(false) ??
         new();
 
-    public static async Task SetScopesAsync(this IWorkflowContext context, WorkflowScopes scopes, CancellationToken cancellationToken) =>
-        await context.QueueWorkflowStateUpdateAsync(ScopesKey, scopes).ConfigureAwait(false); // %%% DEEPER INTEGRATION
+    public static async Task SetScopedStateAsync(this IWorkflowContext context, WorkflowScopes scopes, CancellationToken cancellationToken) =>
+        await context.QueueWorkflowStateUpdateAsync(ScopesKey, scopes).ConfigureAwait(false);
 }

@@ -67,14 +67,14 @@ internal abstract class WorkflowActionExecutor :
             return;
         }
 
-        WorkflowScopes scopes = await context.GetScopesAsync(default).ConfigureAwait(false);
+        WorkflowScopes scopes = await context.GetScopedStateAsync(default).ConfigureAwait(false);
         this.State = new DeclarativeWorkflowState(this.Options.CreateRecalcEngine(), scopes);
 
         try
         {
             object? result = await this.ExecuteAsync(context, cancellationToken: default).ConfigureAwait(false);
 
-            await context.SetScopesAsync(scopes, default).ConfigureAwait(false);
+            await context.SetScopedStateAsync(scopes, default).ConfigureAwait(false);
             await context.SendMessageAsync(new ExecutionResultMessage(this.Id, result)).ConfigureAwait(false);
         }
         catch (WorkflowExecutionException)

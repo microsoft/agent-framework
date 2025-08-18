@@ -179,25 +179,23 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
             expectedValue: "AB");
     }
 
-    //[Fact] // %%% TEST COVERAGE
-    //public void GetValueForStringExpressionWithRecordDataValue()
-    //{
-    //    // Arrange
-    //    RecalcEngine engine = this.CreateEngine();
-    //    WorkflowExpressionEngine expressionEngine = new(engine);
-    //    RecordDataValue state = new RecordDataValue();
-    //    RecordDataValue globalScope = new RecordDataValue();
-    //    globalScope.Properties["testValue"] = new StringDataValue("test");
-    //    state.Properties["Global"] = globalScope;
-    //    StringExpression expression = StringExpression.Variable(PropertyPath.Create("Global.testValue"));
+    [Fact]
+    public void StringExpressionGetValueForRecord()
+    {
+        // Arrange
+        RecordValue state = FormulaValue.NewRecordFromFields([new NamedValue("test", FormulaValue.New("value"))]);
+        this.Scopes.Set("TestRecord", WorkflowScopeType.Global, state);
 
-    //    // Act
-    //    EvaluationResult<string> result = expressionEngine.GetValue(expression, state);
-
-    //    // Assert
-    //    Assert.Equal("test", result.Value);
-    //    Assert.Equal(SensitivityLevel.None, result.Sensitivity);
-    //}
+        // Arrange, Act & Assert
+        this.EvaluateExpression(
+            StringExpression.Variable(PropertyPath.Create("Global.TestRecord")),
+            expectedValue:
+                """
+                {
+                  "test": "value"
+                }
+                """.Replace("\n", Environment.NewLine));
+    }
 
     #endregion
 
@@ -469,15 +467,6 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
             useState);
     }
 
-    //[Fact] // %%% TEST COVERAGE
-    //public void ObjectExpressionGetValueForFormula()
-    //{
-    //    // Arrange, Act & Assert
-    //    this.EvaluateExpression(
-    //        ObjectExpression<RecordDataValue>.Expression(@"""{\""schemaName\"": "" & "" \""test\""}"""),
-    //        expectedValue: ObjectData.ToDataValue());
-    //}
-
     #endregion
 
     #region ArrayExpression Tests
@@ -660,6 +649,7 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
     {
         // Arrange
         RecalcEngine engine = this.CreateEngine();
+        this.Scopes.Bind(engine);
         WorkflowExpressionEngine expressionEngine = new(engine);
 
         // Act
@@ -678,6 +668,7 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
     {
         // Arrange
         RecalcEngine engine = this.CreateEngine();
+        this.Scopes.Bind(engine);
         WorkflowExpressionEngine expressionEngine = new(engine);
 
         // Act
@@ -694,6 +685,7 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
     {
         // Arrange
         RecalcEngine engine = this.CreateEngine();
+        this.Scopes.Bind(engine);
         WorkflowExpressionEngine expressionEngine = new(engine);
 
         // Act
@@ -704,6 +696,7 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
     {
         // Arrange
         RecalcEngine engine = this.CreateEngine();
+        this.Scopes.Bind(engine);
         WorkflowExpressionEngine expressionEngine = new(engine);
 
         // Act

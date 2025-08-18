@@ -77,7 +77,7 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
     {
         public async ValueTask HandleAsync(WorkflowScopes message, IWorkflowContext context)
         {
-            await context.SetScopesAsync(message, default).ConfigureAwait(false);
+            await context.SetScopedStateAsync(message, default).ConfigureAwait(false);
             await context.SendMessageAsync(new ExecutionResultMessage(this.Id)).ConfigureAwait(false);
         }
     }
