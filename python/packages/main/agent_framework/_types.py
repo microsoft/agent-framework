@@ -1309,6 +1309,7 @@ class ChatMessage(AFBaseModel):
 
 ResponseStatusStr: TypeAlias = Literal["completed", "failed", "in_progress", "cancelled", "queued", "incomplete"]
 
+
 class ResponseStatus(AFBaseModel):
     """Describes the status of the response.
 
@@ -1322,7 +1323,7 @@ class ResponseStatus(AFBaseModel):
         CANCELLED: The request has been cancelled.
         QUEUED: the request is queued for processing.
         INCOMPLETE: The response is incomplete.
-        
+
     """
 
     value: ResponseStatusStr = Field(..., kw_only=False)
@@ -1348,12 +1349,14 @@ class ResponseStatus(AFBaseModel):
         """Returns the string representation of the role."""
         return f"ResponseStatus(value={self.value!r})"
 
+
 ResponseStatus.COMPLETED = ResponseStatus(value="completed")  # type: ignore[assignment]
 ResponseStatus.FAILED = ResponseStatus(value="failed")  # type: ignore[assignment]
 ResponseStatus.IN_PROGRESS = ResponseStatus(value="in_progress")  # type: ignore[assignment]
 ResponseStatus.CANCELLED = ResponseStatus(value="cancelled")  # type: ignore[assignment]
 ResponseStatus.QUEUED = ResponseStatus(value="queued")  # type: ignore[assignment]
 ResponseStatus.INCOMPLETE = ResponseStatus(value="incomplete")  # type: ignore[assignment]
+
 
 class ChatResponse(AFBaseModel):
     """Represents the response to a chat request.

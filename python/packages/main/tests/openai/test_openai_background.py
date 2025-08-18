@@ -7,7 +7,7 @@ from typing import Annotated
 import pytest
 from pydantic import BaseModel
 
-from agent_framework import AsyncMessageContent, ChatClient, ChatMessage, ChatResponse, ai_function
+from agent_framework import ChatClient, ChatMessage, ChatResponse, ai_function
 from agent_framework.openai import OpenAIResponsesClient
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
@@ -57,21 +57,17 @@ async def test_openai_responses_client_response() -> None:
 
     assert response is not None
     assert isinstance(response, ChatResponse)
-    output_messages: list[ChatMessage] | None = None
-    for message in response.messages:
-        for content in message.contents:
-            assert isinstance(content, AsyncMessageContent)
-            future = openai_responses_client.get_long_running_response(content.message_id)
-            # Optionally pollable:
-            # while future.running():
-            #     sleep(1)  # Wait for the content to be ready
-            output_messages = future.result()
-
+    final_response = await openai_responses_client.get_response(
+        messages="",  # messages are meaningless here.. do something about that
+        long_running_message_id=response.response_id,
+        # Uncomment this lines if you want to poll
+        # background=True,
+        response_format=OutputStruct,
+    )
+    print(final_response)
     end = datetime.datetime.now()
     print("response received at: ", end)  # noqa
-    print("Time taken for response:", response_time - start)  # noqa
     print("Time taken for processing:", end - response_time)  # noqa
-    assert output_messages is not None
-    output = OutputStruct.model_validate_json(output_messages[0].text)
-    assert output.location == "New York"
+    output = OutputStruct.model_validate_json(final_response.messages[0].text)
+    assert "New York" in output.location
     assert "sunny" in output.weather

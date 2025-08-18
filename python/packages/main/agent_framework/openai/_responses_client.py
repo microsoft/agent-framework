@@ -79,6 +79,7 @@ __all__ = ["OpenAIResponsesClient"]
 
 # region ResponsesClient
 
+
 class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
     """Base class for all OpenAI Responses based API's."""
 
@@ -154,23 +155,24 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         Returns:
             A chat response from the model.
         """
-
-        if background and not store:
+        if background and not (store or long_running_message_id):
             raise ValueError("Background responses must be stored.")
         additional_properties = additional_properties or {}
-        additional_properties.update(self._filter_options(
-            background=background,
-            include=include,
-            instructions=instructions,
-            parallel_tool_calls=parallel_tool_calls,
-            model=model,
-            previous_response_id=previous_response_id,
-            reasoning=reasoning,
-            service_tier=service_tier,
-            truncation=truncation,
-            timeout=timeout,
-        ))
-        
+        additional_properties.update(
+            self._filter_options(
+                background=background,
+                include=include,
+                instructions=instructions,
+                parallel_tool_calls=parallel_tool_calls,
+                model=model,
+                previous_response_id=previous_response_id,
+                reasoning=reasoning,
+                service_tier=service_tier,
+                truncation=truncation,
+                timeout=timeout,
+            )
+        )
+
         chat_options = ChatOptions(
             max_tokens=max_tokens,
             response_format=response_format,
@@ -255,22 +257,24 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         Returns:
             A stream representing the response(s) from the LLM.
         """
-        if background and not store:
+        if background and not (store or long_running_message_id):
             raise ValueError("Background responses must be stored.")
         additional_properties = additional_properties or {}
-        additional_properties.update(self._filter_options(
-            background=background,
-            include=include,
-            instructions=instructions,
-            parallel_tool_calls=parallel_tool_calls,
-            model=model,
-            previous_response_id=previous_response_id,
-            reasoning=reasoning,
-            service_tier=service_tier,
-            truncation=truncation,
-            timeout=timeout,
-        ))
-        
+        additional_properties.update(
+            self._filter_options(
+                background=background,
+                include=include,
+                instructions=instructions,
+                parallel_tool_calls=parallel_tool_calls,
+                model=model,
+                previous_response_id=previous_response_id,
+                reasoning=reasoning,
+                service_tier=service_tier,
+                truncation=truncation,
+                timeout=timeout,
+            )
+        )
+
         chat_options = ChatOptions(
             max_tokens=max_tokens,
             response_format=response_format,
@@ -301,11 +305,11 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         long_running_message_id: str | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
+        print(long_running_message_id)
         options_dict = self._prepare_options(messages, chat_options)
         try:
             if not long_running_message_id:
                 if not chat_options.response_format:
-                    print(options_dict)
                     response = await self.client.responses.create(
                         stream=False,
                         **options_dict,
@@ -314,6 +318,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                     return self._create_response_content(response, chat_options=chat_options)
                 # create call does not support response_format, so we need to handle it via parse call
                 resp_format = chat_options.response_format
+                print(options_dict)
                 response = await self.client.responses.parse(
                     text_format=resp_format,
                     stream=False,
@@ -327,14 +332,13 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                     while response.status in {"queued", "in_progress"}:
                         await asyncio.sleep(2)
                         response = await self.client.responses.retrieve(long_running_message_id)
-
             if response.status != "completed":
                 # TODO(peterychang): Do something interesting with failed responses
                 return ChatResponse(
                     response_id=response.id,
                     conversation_id=response.id if chat_options.store is True else None,
                     messages=[],
-                    status=response.status
+                    status=response.status,
                 )
             return self._create_response_content(response, chat_options=chat_options)
         except BadRequestError as ex:
@@ -569,7 +573,8 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                         match message_content.type:
                             case "output_text":
                                 text_content = TextContent(
-                                    text=message_content.text, raw_representation=message_content  # type: ignore
+                                    text=message_content.text,
+                                    raw_representation=message_content,  # type: ignore
                                 )
                                 metadata.update(self._get_metadata_from_response(message_content))
                                 if message_content.annotations:

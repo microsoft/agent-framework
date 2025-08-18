@@ -90,7 +90,9 @@ def _tool_call_non_streaming(
         response: ChatResponse | None = None
         fcc_messages: list[ChatMessage] = []
         for attempt_idx in range(getattr(self, "__maximum_iterations_per_request", 10)):
-            response = await func(self, messages=messages, chat_options=chat_options)
+            response = await func(self, messages=messages, chat_options=chat_options, **kwargs)
+            if not response.messages:
+                return response
             # if there are function calls, we will handle them first
             function_results = {
                 it.call_id for it in response.messages[0].contents if isinstance(it, FunctionResultContent)
@@ -673,7 +675,6 @@ class ChatClientBase(AFBaseModel, ABC):
             chat_message_store_factory=chat_message_store_factory,
             **kwargs,
         )
-
 
 
 # region Embedding Client
