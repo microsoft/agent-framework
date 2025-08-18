@@ -227,8 +227,8 @@ def test_workflow_viz_to_mermaid_basic():
     mermaid = WorkflowViz(workflow).to_mermaid()
 
     # Start node and normal node
-    assert "executor1[executor1 (Start)]" in mermaid
-    assert "executor2[executor2]" in mermaid
+    assert 'executor1["executor1 (Start)"]' in mermaid
+    assert 'executor2["executor2"]' in mermaid
     # Edge uses sanitized ids (same as ids here)
     assert "executor1 --> executor2" in mermaid
 
