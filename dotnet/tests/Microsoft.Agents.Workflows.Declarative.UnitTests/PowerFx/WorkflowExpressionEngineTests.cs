@@ -179,7 +179,7 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
             expectedValue: "AB");
     }
 
-    //[Fact]
+    //[Fact] // %%% TEST COVERAGE
     //public void GetValueForStringExpressionWithRecordDataValue()
     //{
     //    // Arrange
@@ -469,7 +469,7 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
             useState);
     }
 
-    //[Fact] // %%% TODO: TEST COVERAGE
+    //[Fact] // %%% TEST COVERAGE
     //public void ObjectExpressionGetValueForFormula()
     //{
     //    // Arrange, Act & Assert

@@ -13,7 +13,7 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : Decla
 {
     protected override ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        EvaluationResult<VariablesToClearWrapper> variablesResult = this.State.ExpressionEngine.GetValue<VariablesToClearWrapper>(this.Model.Variables, this.State.Scopes);
+        EvaluationResult<VariablesToClearWrapper> variablesResult = this.State.ExpressionEngine.GetValue<VariablesToClearWrapper>(this.Model.Variables);
 
         variablesResult.Value.Handle(new ScopeHandler(this.State));
 

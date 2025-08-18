@@ -21,7 +21,7 @@ internal sealed class ParseValueExecutor(ParseValue model) :
         PropertyPath variablePath = Throw.IfNull(this.Model.Variable?.Path, $"{nameof(this.Model)}.{nameof(model.Variable)}");
         ValueExpression valueExpression = Throw.IfNull(this.Model.Value, $"{nameof(this.Model)}.{nameof(this.Model.Value)}");
 
-        EvaluationResult<DataValue> expressionResult = this.State.ExpressionEngine.GetValue(valueExpression, this.State.Scopes);
+        EvaluationResult<DataValue> expressionResult = this.State.ExpressionEngine.GetValue(valueExpression);
 
         FormulaValue? parsedResult = null;
 

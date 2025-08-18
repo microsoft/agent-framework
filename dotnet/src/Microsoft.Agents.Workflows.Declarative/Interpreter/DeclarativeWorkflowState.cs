@@ -23,10 +23,6 @@ internal sealed class DeclarativeWorkflowState
         this._scopes.Bind(this._engine);
     }
 
-    // %%% TODO: IWorkflowContext
-
-    public WorkflowScopes Scopes => this._scopes; // %%% NOT PUBLIC
-
     public WorkflowExpressionEngine ExpressionEngine => this._expressionEngine ??= new WorkflowExpressionEngine(this._engine);
 
     public void Clear(PropertyPath variablePath) =>
@@ -45,6 +41,12 @@ internal sealed class DeclarativeWorkflowState
 
         this._scopes.Bind(this._engine, scope);
     }
+
+    public FormulaValue Get(PropertyPath variablePath) =>
+        this.Get(WorkflowScopeType.Parse(variablePath.VariableScopeName), Throw.IfNull(variablePath.VariableName));
+
+    public FormulaValue Get(WorkflowScopeType scope, string varName) =>
+        this._scopes.Get(varName, scope);
 
     public void Set(PropertyPath variablePath, FormulaValue value) =>
         this.Set(WorkflowScopeType.Parse(variablePath.VariableScopeName), Throw.IfNull(variablePath.VariableName), value);

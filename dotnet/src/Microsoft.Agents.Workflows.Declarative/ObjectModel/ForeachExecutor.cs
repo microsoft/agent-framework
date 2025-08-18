@@ -43,7 +43,7 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
         }
         else
         {
-            EvaluationResult<DataValue> expressionResult = this.State.ExpressionEngine.GetValue(this.Model.Items, this.State.Scopes);
+            EvaluationResult<DataValue> expressionResult = this.State.ExpressionEngine.GetValue(this.Model.Items);
             if (expressionResult.Value is TableDataValue tableValue)
             {
                 this._values = [.. tableValue.Values.Select(value => value.Properties.Values.First().ToFormulaValue())];

@@ -23,7 +23,7 @@ internal sealed class SetVariableExecutor(SetVariable model) : DeclarativeAction
         }
         else
         {
-            EvaluationResult<DataValue> expressionResult = this.State.ExpressionEngine.GetValue(this.Model.Value, this.State.Scopes);
+            EvaluationResult<DataValue> expressionResult = this.State.ExpressionEngine.GetValue(this.Model.Value);
 
             this.AssignTarget(variablePath, expressionResult.Value.ToFormulaValue());
         }

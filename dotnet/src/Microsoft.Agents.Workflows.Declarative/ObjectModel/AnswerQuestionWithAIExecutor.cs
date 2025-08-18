@@ -30,7 +30,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
         string? userInput = null;
         if (this.Model.UserInput is not null)
         {
-            EvaluationResult<string> expressionResult = this.State.ExpressionEngine.GetValue(userInputExpression, this.State.Scopes);
+            EvaluationResult<string> expressionResult = this.State.ExpressionEngine.GetValue(userInputExpression);
             userInput = expressionResult.Value;
         }
 
@@ -47,7 +47,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
         //        await agent.RunAsync(thread: null, options, cancellationToken).ConfigureAwait(false);
 
         AgentThread? thread = null; // %%% HAXX: SYSTEM THREAD
-        FormulaValue conversationValue = this.State.Scopes.Get("ConversationId", WorkflowScopeType.System);
+        FormulaValue conversationValue = this.State.Get(WorkflowScopeType.System, "ConversationId");
         if (conversationValue is StringValue stringValue)
         {
             thread = new AgentThread() { ConversationId = stringValue.Value };
