@@ -1,0 +1,11 @@
+kind: AdaptiveDialog
+beginDialog:
+  kind: OnActivity
+  id: workflow_demo
+  actions:
+
+    # Use AI to answer the question
+    - kind: AnswerQuestionWithAI
+      id: asst_Tq5lpaIHgIbqQSKIpGxNq6A5
+      variable: Topic.Answer
+      userInput: Why is the sky blue?

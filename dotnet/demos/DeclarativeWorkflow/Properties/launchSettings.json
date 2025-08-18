@@ -5,7 +5,11 @@
     },
     "MathChat": {
       "commandName": "Project",
-      "commandLineArgs": "\"C:\\Users\\crickman\\source\\repos\\af3\\workflows\\MathChat.yaml\""
+      "commandLineArgs": "\"C:\\Users\\crickman\\source\\repos\\af5\\workflows\\MathChat.yaml\""
+    },
+    "Question": {
+      "commandName": "Project",
+      "commandLineArgs": "\"C:\\Users\\crickman\\source\\repos\\af4\\workflows\\Question.yaml\""
     }
   }
 }
