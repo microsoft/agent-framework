@@ -141,7 +141,7 @@ def _tool_call_non_streaming(
         # Failsafe: give up on tools, ask model for plain answer
         chat_options.tool_choice = "none"
         self._prepare_tool_choice(chat_options=chat_options)  # type: ignore[reportPrivateUsage]
-        response = await func(self, messages=messages, chat_options=chat_options)
+        response = await func(self, messages=messages, chat_options=chat_options, **kwargs)
         if fcc_messages:
             for msg in reversed(fcc_messages):
                 response.messages.insert(0, msg)
@@ -167,7 +167,7 @@ def _tool_call_streaming(
         for attempt_idx in range(getattr(self, "__maximum_iterations_per_request", 10)):
             function_call_returned = False
             all_messages: list[ChatResponseUpdate] = []
-            async for update in func(self, messages=messages, chat_options=chat_options):
+            async for update in func(self, messages=messages, chat_options=chat_options, **kwargs):
                 if update.contents and any(isinstance(item, FunctionCallContent) for item in update.contents):
                     all_messages.append(update)
                     function_call_returned = True
