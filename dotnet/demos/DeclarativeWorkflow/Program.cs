@@ -92,13 +92,13 @@ internal static class Program
 
                     if (messageId is not null)
                     {
-                        Console.ForegroundColor = ConsoleColor.White;
+                        Console.ForegroundColor = ConsoleColor.Cyan;
                         Console.WriteLine($"#{messageId}:");
                     }
                 }
                 try
                 {
-                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.ResetColor();
                     Console.Write(streamEvent.Data);
                 }
                 finally
@@ -118,10 +118,6 @@ internal static class Program
                     }
                     else
                     {
-                        //Console.ForegroundColor = ConsoleColor.White;
-                        //Console.WriteLine($"#{messageEvent.Data.MessageId}:");
-                        //Console.ForegroundColor = ConsoleColor.DarkGreen;
-                        //Console.WriteLine(messageEvent.Data?.Text.Trim());
                         if (messageEvent.Usage is not null)
                         {
                             Console.ForegroundColor = ConsoleColor.DarkGray;
@@ -149,7 +145,7 @@ internal static class Program
 
                 Console.Write("\nINPUT: ");
 
-                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.ForegroundColor = ConsoleColor.White;
 
                 if (!string.IsNullOrWhiteSpace(input))
                 {
