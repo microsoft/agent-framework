@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
+from ._threads import ChatMessageStore
 from ._tools import AIFunction, AITool
 from ._types import (
     AIContents,
@@ -142,7 +143,7 @@ def _tool_call_non_streaming(
         # Failsafe: give up on tools, ask model for plain answer
         chat_options.tool_choice = "none"
         self._prepare_tool_choice(chat_options=chat_options)  # type: ignore[reportPrivateUsage]
-        response = await func(self, messages=messages, chat_options=chat_options)
+        response = await func(self, messages=messages, chat_options=chat_options, **kwargs)
         if fcc_messages:
             for msg in reversed(fcc_messages):
                 response.messages.insert(0, msg)
@@ -168,7 +169,7 @@ def _tool_call_streaming(
         for attempt_idx in range(getattr(self, "__maximum_iterations_per_request", 10)):
             function_call_returned = False
             all_messages: list[ChatResponseUpdate] = []
-            async for update in func(self, messages=messages, chat_options=chat_options):
+            async for update in func(self, messages=messages, chat_options=chat_options, **kwargs):
                 if update.contents and any(isinstance(item, FunctionCallContent) for item in update.contents):
                     all_messages.append(update)
                     function_call_returned = True
@@ -287,13 +288,13 @@ class ChatClient(Protocol):
 
         Args:
             messages: The sequence of input messages to send.
+            response_format: the format of the response.
             frequency_penalty: the frequency penalty to use.
             logit_bias: the logit bias to use.
             max_tokens: The maximum number of tokens to generate.
             metadata: additional metadata to include in the request.
             model: The model to use for the agent.
             presence_penalty: the presence penalty to use.
-            response_format: the format of the response.
             seed: the random seed to use.
             stop: the stop sequence(s) for the request.
             store: whether to store the response.
@@ -647,6 +648,7 @@ class ChatClientBase(AFBaseModel, ABC):
         | MutableMapping[str, Any]
         | list[MutableMapping[str, Any]]
         | None = None,
+        chat_message_store_factory: Callable[[], ChatMessageStore] | None = None,
         **kwargs: Any,
     ) -> "ChatClientAgent":
         """Create an agent with the given name and instructions.
@@ -655,6 +657,8 @@ class ChatClientBase(AFBaseModel, ABC):
             name: The name of the agent.
             instructions: The instructions for the agent.
             tools: Optional list of tools to associate with the agent.
+            chat_message_store_factory: Factory function to create an instance of ChatMessageStore. If not provided,
+                the default in-memory store will be used.
             **kwargs: Additional keyword arguments to pass to the agent.
                 See ChatClientAgent for all the available options.
 
@@ -663,7 +667,14 @@ class ChatClientBase(AFBaseModel, ABC):
         """
         from ._agents import ChatClientAgent
 
-        return ChatClientAgent(chat_client=self, name=name, instructions=instructions, tools=tools, **kwargs)
+        return ChatClientAgent(
+            chat_client=self,
+            name=name,
+            instructions=instructions,
+            tools=tools,
+            chat_message_store_factory=chat_message_store_factory,
+            **kwargs,
+        )
 
 
 class LongRunningChatClient(ChatClientBase):

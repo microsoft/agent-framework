@@ -13,6 +13,10 @@ def is_instance_of(data: Any, target_type: type) -> bool:
     Returns:
         bool: True if data is an instance of target_type, False otherwise.
     """
+    # Case 0: target_type is Any - always return True
+    if target_type is Any:
+        return True
+
     origin = get_origin(target_type)
     args = get_args(target_type)
 

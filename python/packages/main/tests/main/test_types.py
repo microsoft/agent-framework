@@ -31,7 +31,6 @@ from agent_framework import (
     HostedFileContent,
     HostedVectorStoreContent,
     SpeechToTextOptions,
-    StructuredResponse,
     TextContent,
     TextReasoningContent,
     TextSpanRegion,
@@ -472,27 +471,44 @@ def test_chat_response():
     assert str(response) == response.text
 
 
-# region StructuredResponse
+class OutputModel(BaseModel):
+    response: str
 
 
-def test_structured_response():
-    """Test the StructuredResponse class to ensure it initializes correctly with a value."""
+def test_chat_response_with_format():
+    """Test the ChatResponse class to ensure it initializes correctly with a message."""
+    # Create a ChatMessage
+    message = ChatMessage(role="assistant", text='{"response": "Hello"}')
 
-    class ResponseModel(BaseModel):
-        content: str
-        action: str
-
-    # Create a StructuredResponse with a value
-    response = StructuredResponse[ResponseModel](
-        value=ResponseModel(content="Hello, world!", action="test"),
-        text="{'content': 'Hello, world!', 'action': 'test'}",
-    )
+    # Create a ChatResponse with the message
+    response = ChatResponse(messages=message)
 
     # Check the type and content
-    assert response.value == ResponseModel(content="Hello, world!", action="test")
-    assert isinstance(response, StructuredResponse)
-    # text property returns joined messages text (single message present)
-    assert isinstance(response.text, str)
+    assert response.messages[0].role == ChatRole.ASSISTANT
+    assert response.messages[0].text == '{"response": "Hello"}'
+    assert isinstance(response.messages[0], ChatMessage)
+    assert response.text == '{"response": "Hello"}'
+    assert response.value is None
+    response.try_parse_value(OutputModel)
+    assert response.value is not None
+    assert response.value.response == "Hello"
+
+
+def test_chat_response_with_format_init():
+    """Test the ChatResponse class to ensure it initializes correctly with a message."""
+    # Create a ChatMessage
+    message = ChatMessage(role="assistant", text='{"response": "Hello"}')
+
+    # Create a ChatResponse with the message
+    response = ChatResponse(messages=message, response_format=OutputModel)
+
+    # Check the type and content
+    assert response.messages[0].role == ChatRole.ASSISTANT
+    assert response.messages[0].text == '{"response": "Hello"}'
+    assert isinstance(response.messages[0], ChatMessage)
+    assert response.text == '{"response": "Hello"}'
+    assert response.value is not None
+    assert response.value.response == "Hello"
 
 
 # region ChatResponseUpdate
@@ -634,6 +650,32 @@ async def test_chat_response_from_async_generator():
 
     resp = await ChatResponse.from_chat_response_generator(gen())
     assert resp.text == "Hello world"
+
+
+@mark.asyncio
+async def test_chat_response_from_async_generator_output_format():
+    async def gen() -> AsyncIterable[ChatResponseUpdate]:
+        yield ChatResponseUpdate(text='{ "respon', message_id="1")
+        yield ChatResponseUpdate(text='se": "Hello" }', message_id="1")
+
+    resp = await ChatResponse.from_chat_response_generator(gen())
+    assert resp.text == '{ "response": "Hello" }'
+    assert resp.value is None
+    resp.try_parse_value(OutputModel)
+    assert resp.value is not None
+    assert resp.value.response == "Hello"
+
+
+@mark.asyncio
+async def test_chat_response_from_async_generator_output_format_in_method():
+    async def gen() -> AsyncIterable[ChatResponseUpdate]:
+        yield ChatResponseUpdate(text='{ "respon', message_id="1")
+        yield ChatResponseUpdate(text='se": "Hello" }', message_id="1")
+
+    resp = await ChatResponse.from_chat_response_generator(gen(), output_format_type=OutputModel)
+    assert resp.text == '{ "response": "Hello" }'
+    assert resp.value is not None
+    assert resp.value.response == "Hello"
 
 
 # region ChatToolMode
