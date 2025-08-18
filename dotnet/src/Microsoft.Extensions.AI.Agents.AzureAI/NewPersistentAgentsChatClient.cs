@@ -295,7 +295,7 @@ namespace Azure.AI.Agents.Persistent
                                     BinaryData.FromBytes(JsonSerializer.SerializeToUtf8Bytes(aiFunction.JsonSchema, AgentsChatClientJsonContext.Default.JsonElement))));
                                 break;
 
-                            case NewHostedCodeInterpreterTool codeTool:
+                            case HostedCodeInterpreterTool codeTool:
                                 toolDefinitions.Add(new CodeInterpreterToolDefinition());
 
                                 if (codeTool.Inputs is { Count: > 0 })
@@ -313,7 +313,7 @@ namespace Azure.AI.Agents.Persistent
                                 }
                                 break;
 
-                            case NewHostedFileSearchTool fileSearchTool:
+                            case HostedFileSearchTool fileSearchTool:
                                 toolDefinitions.Add(new FileSearchToolDefinition());
 
                                 if (fileSearchTool.Inputs is { Count: > 0 })

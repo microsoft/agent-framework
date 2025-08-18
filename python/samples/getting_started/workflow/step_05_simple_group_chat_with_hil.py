@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatClientAgent, ChatMessage, ChatRole
+from agent_framework import ChatMessage, ChatRole
 from agent_framework.azure import AzureChatClient
 from agent_framework.workflow import (
     AgentExecutor,
@@ -18,6 +18,7 @@ from agent_framework.workflow import (
     WorkflowViz,
     handler,
 )
+from azure.identity import DefaultAzureCredential
 
 """
 The following sample demonstrates a basic workflow that simulates
@@ -136,9 +137,9 @@ class CriticGroupChatManager(Executor):
 async def main():
     """Main function to run the group chat workflow."""
     # Step 1: Create the executors.
+    chat_client = AzureChatClient(ad_credential=DefaultAzureCredential())
     writer = AgentExecutor(
-        ChatClientAgent(
-            AzureChatClient(),
+        chat_client.create_agent(
             instructions=(
                 "You are an excellent content writer. You create new content and edit contents based on the feedback."
             ),
@@ -147,8 +148,7 @@ async def main():
         ),
     )
     reviewer = AgentExecutor(
-        ChatClientAgent(
-            AzureChatClient(),
+        chat_client.create_agent(
             instructions=(
                 "You are an excellent content reviewer. You review the content and provide feedback to the writer. "
                 "You do not address user requests. Only provide feedback to the writer."
@@ -168,8 +168,7 @@ async def main():
         .set_start_executor(group_chat_manager)
         .add_edge(group_chat_manager, request_info_executor)
         .add_edge(request_info_executor, group_chat_manager)
-        .add_edge(group_chat_manager, writer)
-        .add_edge(group_chat_manager, reviewer)
+        .add_fan_out_edges(group_chat_manager, [writer, reviewer])
         .add_edge(writer, group_chat_manager)
         .add_edge(reviewer, group_chat_manager)
         .build()

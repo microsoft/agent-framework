@@ -4,8 +4,8 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import ChatClientAgent
 from agent_framework.azure import AzureAssistantsClient
+from azure.identity import DefaultAzureCredential
 from pydantic import Field
 
 
@@ -23,8 +23,7 @@ async def non_streaming_example() -> None:
 
     # Since no assistant ID is provided, the assistant will be automatically created
     # and deleted after getting a response
-    async with ChatClientAgent(
-        chat_client=AzureAssistantsClient(),
+    async with AzureAssistantsClient(ad_credential=DefaultAzureCredential()).create_agent(
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     ) as agent:
@@ -40,8 +39,7 @@ async def streaming_example() -> None:
 
     # Since no assistant ID is provided, the assistant will be automatically created
     # and deleted after getting a response
-    async with ChatClientAgent(
-        chat_client=AzureAssistantsClient(),
+    async with AzureAssistantsClient(ad_credential=DefaultAzureCredential()).create_agent(
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     ) as agent:

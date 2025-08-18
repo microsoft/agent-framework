@@ -12,7 +12,7 @@ class WorkflowEvent:
         """Initialize the workflow event with optional data."""
         self.data = data
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """Return a string representation of the workflow event."""
         return f"{self.__class__.__name__}(data={self.data if self.data is not None else 'None'})"
 
@@ -36,7 +36,7 @@ class WorkflowWarningEvent(WorkflowEvent):
         """Initialize the workflow warning event with optional data and warning message."""
         super().__init__(data)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """Return a string representation of the workflow warning event."""
         return f"{self.__class__.__name__}(message={self.data})"
 
@@ -48,7 +48,7 @@ class WorkflowErrorEvent(WorkflowEvent):
         """Initialize the workflow error event with optional data and error message."""
         super().__init__(data)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """Return a string representation of the workflow error event."""
         return f"{self.__class__.__name__}(exception={self.data})"
 
@@ -76,7 +76,7 @@ class RequestInfoEvent(WorkflowEvent):
         self.source_executor_id = source_executor_id
         self.request_type = request_type
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """Return a string representation of the request info event."""
         return (
             f"{self.__class__.__name__}("
@@ -95,7 +95,7 @@ class ExecutorEvent(WorkflowEvent):
         super().__init__(data)
         self.executor_id = executor_id
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """Return a string representation of the executor event."""
         return f"{self.__class__.__name__}(executor_id={self.executor_id}, data={self.data})"
 
@@ -103,7 +103,7 @@ class ExecutorEvent(WorkflowEvent):
 class ExecutorInvokeEvent(ExecutorEvent):
     """Event triggered when an executor handler is invoked."""
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """Return a string representation of the executor handler invoke event."""
         return f"{self.__class__.__name__}(executor_id={self.executor_id})"
 
@@ -111,7 +111,7 @@ class ExecutorInvokeEvent(ExecutorEvent):
 class ExecutorCompletedEvent(ExecutorEvent):
     """Event triggered when an executor handler is completed."""
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """Return a string representation of the executor handler complete event."""
         return f"{self.__class__.__name__}(executor_id={self.executor_id})"
 
@@ -123,7 +123,7 @@ class AgentRunStreamingEvent(ExecutorEvent):
         """Initialize the agent streaming event."""
         super().__init__(executor_id, data)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """Return a string representation of the agent streaming event."""
         return f"{self.__class__.__name__}(executor_id={self.executor_id}, messages={self.data})"
 
@@ -135,6 +135,6 @@ class AgentRunEvent(ExecutorEvent):
         """Initialize the agent run event."""
         super().__init__(executor_id, data)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """Return a string representation of the agent run event."""
         return f"{self.__class__.__name__}(executor_id={self.executor_id}, data={self.data})"
