@@ -4,7 +4,17 @@ import inspect
 from collections.abc import Awaitable, Callable
 from functools import wraps
 from time import perf_counter
-from typing import TYPE_CHECKING, Annotated, Any, Generic, Protocol, TypeVar, get_args, get_origin, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    Generic,
+    Protocol,
+    TypeVar,
+    get_args,
+    get_origin,
+    runtime_checkable,
+)
 
 from opentelemetry import metrics, trace
 from pydantic import BaseModel, Field, PrivateAttr, create_model
@@ -20,7 +30,14 @@ tracer: trace.Tracer = trace.get_tracer("agent_framework")
 meter: metrics.Meter = metrics.get_meter_provider().get_meter("agent_framework")
 logger = get_logger()
 
-__all__ = ["AIFunction", "AITool", "HostedCodeInterpreterTool", "ai_function"]
+__all__ = [
+    "AIFunction",
+    "AITool",
+    "HostedCodeInterpreterTool",
+    "HostedFileSearchTool",
+    "HostedWebSearchTool",
+    "ai_function",
+]
 
 
 def _parse_inputs(
@@ -157,6 +174,81 @@ class HostedCodeInterpreterTool(AIToolBase):
             args["additional_properties"] = additional_properties
         if "name" in kwargs:
             raise ValueError("The 'name' argument is reserved for the HostedCodeInterpreterTool and cannot be set.")
+        super().__init__(**args, **kwargs)
+
+
+class HostedWebSearchTool(AIToolBase):
+    """Represents a web search tool that can be specified to an AI service to enable it to perform web searches."""
+
+    def __init__(
+        self,
+        description: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ):
+        """Initialize a HostedWebSearchTool.
+
+        Args:
+            description: A description of the tool.
+            additional_properties: Additional properties associated with the tool
+                (e.g., {"user_location": {"city": "Seattle", "country": "US"}}).
+            **kwargs: Additional keyword arguments to pass to the base class.
+        """
+        args: dict[str, Any] = {
+            "name": "web_search",
+        }
+        if description is not None:
+            args["description"] = description
+        if additional_properties is not None:
+            args["additional_properties"] = additional_properties
+        if "name" in kwargs:
+            raise ValueError("The 'name' argument is reserved for the HostedFileSearchTool and cannot be set.")
+        super().__init__(**args, **kwargs)
+
+
+class HostedFileSearchTool(AIToolBase):
+    """Represents a file search tool that can be specified to an AI service to enable it to perform file searches."""
+
+    inputs: list[Any] | None = None
+    max_results: int | None = None
+
+    def __init__(
+        self,
+        inputs: "AIContents | dict[str, Any] | str | list[AIContents | dict[str, Any] | str] | None" = None,
+        max_results: int | None = None,
+        description: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ):
+        """Initialize a FileSearchTool.
+
+        Args:
+            inputs: A list of contents that the tool can accept as input. Defaults to None.
+                This should be one or more HostedVectorStoreContents.
+                When supplying a list, it can contain:
+                - AIContents instances
+                - dicts with properties for AIContents (e.g., {"uri": "http://example.com", "media_type": "text/html"})
+                - strings (which will be converted to UriContent with media_type "text/plain").
+                If None, defaults to an empty list.
+            max_results: The maximum number of results to return from the file search.
+                If None, max limit is applied.
+            description: A description of the tool.
+            additional_properties: Additional properties associated with the tool.
+            **kwargs: Additional keyword arguments to pass to the base class.
+        """
+        args: dict[str, Any] = {
+            "name": "file_search",
+        }
+        if inputs:
+            args["inputs"] = _parse_inputs(inputs)
+        if max_results:
+            args["max_results"] = max_results
+        if description is not None:
+            args["description"] = description
+        if additional_properties is not None:
+            args["additional_properties"] = additional_properties
+        if "name" in kwargs:
+            raise ValueError("The 'name' argument is reserved for the HostedFileSearchTool and cannot be set.")
         super().__init__(**args, **kwargs)
 
 

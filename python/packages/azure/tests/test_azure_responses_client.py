@@ -4,7 +4,14 @@ import os
 from typing import Annotated
 
 import pytest
-from agent_framework import ChatClient, ChatMessage, ChatResponse, ChatResponseUpdate, TextContent, ai_function
+from agent_framework import (
+    ChatClient,
+    ChatMessage,
+    ChatResponse,
+    ChatResponseUpdate,
+    TextContent,
+    ai_function,
+)
 from agent_framework.azure import AzureResponsesClient
 from agent_framework.exceptions import ServiceInitializationError
 from azure.identity import DefaultAzureCredential
@@ -132,17 +139,17 @@ async def test_azure_responses_client_response() -> None:
     messages.append(ChatMessage(role="user", text="The weather in New York is sunny"))
     messages.append(ChatMessage(role="user", text="What is the weather in New York?"))
 
-    # Test that the client can be used to get a response
-    response = await azure_responses_client.get_response(
+    # Test that the client can be used to get a structured response
+    structured_response = await azure_responses_client.get_response(  # type: ignore[reportAssignmentType]
         messages=messages,
         response_format=OutputStruct,
     )
 
-    assert response is not None
-    assert isinstance(response, ChatResponse)
-    output = OutputStruct.model_validate_json(response.text)
-    assert output.location == "New York"
-    assert "sunny" in output.weather.lower()
+    assert structured_response is not None
+    assert isinstance(structured_response, ChatResponse)
+    assert isinstance(structured_response.value, OutputStruct)
+    assert structured_response.value.location == "New York"
+    assert "sunny" in structured_response.value.weather.lower()
 
 
 @skip_if_azure_integration_tests_disabled
@@ -170,18 +177,18 @@ async def test_azure_responses_client_response_tools() -> None:
     messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
 
     # Test that the client can be used to get a response
-    response = await azure_responses_client.get_response(
+    structured_response: ChatResponse = await azure_responses_client.get_response(  # type: ignore[reportAssignmentType]
         messages=messages,
         tools=[get_weather],
         tool_choice="auto",
         response_format=OutputStruct,
     )
 
-    assert response is not None
-    assert isinstance(response, ChatResponse)
-    output = OutputStruct.model_validate_json(response.text)
-    assert "Seattle" in output.location
-    assert "sunny" in output.weather.lower()
+    assert structured_response is not None
+    assert isinstance(structured_response, ChatResponse)
+    assert isinstance(structured_response.value, OutputStruct)
+    assert "Seattle" in structured_response.value.location
+    assert "sunny" in structured_response.value.weather.lower()
 
 
 @skip_if_azure_integration_tests_disabled
@@ -220,21 +227,18 @@ async def test_azure_responses_client_streaming() -> None:
     messages.append(ChatMessage(role="user", text="The weather in Seattle is sunny"))
     messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
 
-    response = azure_responses_client.get_streaming_response(
-        messages=messages,
-        response_format=OutputStruct,
+    structured_response = await ChatResponse.from_chat_response_generator(
+        azure_responses_client.get_streaming_response(
+            messages=messages,
+            response_format=OutputStruct,
+        ),
+        output_format_type=OutputStruct,
     )
-    full_message = ""
-    async for chunk in response:
-        assert chunk is not None
-        assert isinstance(chunk, ChatResponseUpdate)
-        for content in chunk.contents:
-            if isinstance(content, TextContent) and content.text:
-                full_message += content.text
-
-    output = OutputStruct.model_validate_json(full_message)
-    assert "Seattle" in output.location
-    assert "sunny" in output.weather.lower()
+    assert structured_response is not None
+    assert isinstance(structured_response, ChatResponse)
+    assert isinstance(structured_response.value, OutputStruct)
+    assert "Seattle" in structured_response.value.location
+    assert "sunny" in structured_response.value.weather.lower()
 
 
 @skip_if_azure_integration_tests_disabled
@@ -265,14 +269,14 @@ async def test_azure_responses_client_streaming_tools() -> None:
     messages.clear()
     messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
 
-    response = azure_responses_client.get_streaming_response(
+    structured_response = azure_responses_client.get_streaming_response(
         messages=messages,
         tools=[get_weather],
         tool_choice="auto",
         response_format=OutputStruct,
     )
     full_message = ""
-    async for chunk in response:
+    async for chunk in structured_response:
         assert chunk is not None
         assert isinstance(chunk, ChatResponseUpdate)
         for content in chunk.contents:

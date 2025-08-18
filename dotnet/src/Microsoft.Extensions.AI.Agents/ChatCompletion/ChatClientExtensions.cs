@@ -13,7 +13,7 @@ internal static class ChatClientExtensions
             chatBuilder.UseAgentInvocation();
         }
 
-        if (chatClient.GetService<FunctionInvokingChatClient>() is null)
+        if (chatClient.GetService<NewFunctionInvokingChatClient>() is null)
         {
             chatBuilder.UseFunctionInvocation();
         }
