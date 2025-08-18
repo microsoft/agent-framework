@@ -10,15 +10,13 @@ informed: {}
 
 ## Context and Problem Statement
 
-The current Agent Framework lacks a standardized, extensible mechanism for intercepting and processing agent execution at various stages of the lifecycle. Developers need the ability to implement cross-cutting concerns such as logging, validation, caching, rate limiting, approval workflows, and error handling without modifying core agent implementations. While the framework has basic agent abstractions with `RunAsync` and `RunStreamingAsync` methods, there is no middleware-like pipeline that allows for composable, reusable processing components that can be applied to different agent execution contexts.
+The current Agent Framework lacks a standardized, extensible mechanism for intercepting and processing agent execution. Developers need the ability to add custom filters/middleware to intercept and modify agent behavior at various stages of the execution pipeline. While the framework has basic agent abstractions with `RunAsync` and `RunStreamingAsync` methods, and standards like approval workflows, there is no middleware-like pipeline that allows for composable, reusable processing components that can be applied to different agent execution contexts.
 
 The challenge is to design an architecture that supports:
-- Multiple execution contexts (pre-invocation, function calls, approval requests, post-execution, error handling)
-- Both streaming and non-streaming scenarios
+- Multiple execution contexts (invocation, function calls, approval requests, error handling)
+- Support for both streaming and non-streaming scenarios
 - Composable middleware-like behavior with proper chaining
-- Self-registering processors that declare their supported contexts
-- Manual setup (without DI) and dependency injection scenarios
-- True middleware behavior where post-`next()` logic executes after core agent logic
+- Dependency injection friendly setup
 
 ## Decision Drivers
 
