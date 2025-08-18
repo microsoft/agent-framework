@@ -3,7 +3,6 @@
 import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, MutableSequence, Sequence
-from concurrent.futures import Future
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
 
@@ -38,7 +37,6 @@ __all__ = [
     "ChatClient",
     "ChatClientBase",
     "EmbeddingGenerator",
-    "LongRunningChatClient",
     "use_tool_calling",
 ]
 
@@ -676,27 +674,6 @@ class ChatClientBase(AFBaseModel, ABC):
             **kwargs,
         )
 
-
-class LongRunningChatClient(ChatClientBase):
-    """A chat client that supports long-running requests.
-
-    This is a base class for chat clients that can handle long-running requests.
-    It should be extended by specific implementations that support long-running requests.
-    """
-
-    @abstractmethod
-    def get_long_running_response(
-        self,
-        message_id: str,
-    ) -> Future[list[ChatMessage]]:
-        """Get a long-running response from the chat client.
-
-        Args:
-            message_id: The ID of the message to retrieve the response for.
-
-        Returns:
-            A future of a list of chat messages.
-        """
 
 
 # region Embedding Client

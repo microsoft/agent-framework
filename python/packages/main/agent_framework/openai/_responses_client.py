@@ -3,10 +3,8 @@
 import asyncio
 import sys
 from collections.abc import AsyncIterable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
-from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
 from itertools import chain
-from time import sleep
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from openai import AsyncOpenAI, BadRequestError
@@ -36,12 +34,11 @@ from pydantic import BaseModel, SecretStr, ValidationError
 
 from agent_framework import DataContent, TextReasoningContent, UriContent, UsageContent
 
-from .._clients import LongRunningChatClient, use_tool_calling
+from .._clients import ChatClientBase, use_tool_calling
 from .._logging import get_logger
 from .._tools import AIFunction, AITool, HostedCodeInterpreterTool, HostedFileSearchTool, HostedWebSearchTool
 from .._types import (
     AIContents,
-    AsyncMessageContent,
     ChatMessage,
     ChatOptions,
     ChatResponse,
@@ -82,11 +79,16 @@ __all__ = ["OpenAIResponsesClient"]
 
 # region ResponsesClient
 
-
-class OpenAIResponsesClientBase(OpenAIHandler, LongRunningChatClient):
+class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
     """Base class for all OpenAI Responses based API's."""
 
     FILE_SEARCH_MAX_RESULTS: int = 50
+
+    def _filter_options(self, **kwargs: Any) -> dict[str, Any]:
+        """Filter options for the responses call."""
+        # The responses call does not support all the options that the chat completion call does.
+        # We filter out the unsupported options.
+        return {key: value for key, value in kwargs.items() if value is not None}
 
     @override
     async def get_response(
@@ -95,7 +97,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, LongRunningChatClient):
         *,
         background: bool | None = None,
         include: list["ResponseIncludable"] | None = None,
-        instruction: str | None = None,
+        instructions: str | None = None,
         max_tokens: int | None = None,
         parallel_tool_calls: bool | None = None,
         model: str | None = None,
@@ -119,6 +121,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, LongRunningChatClient):
         truncation: str | None = None,
         timeout: float | None = None,
         additional_properties: dict[str, Any] | None = None,
+        long_running_message_id: str | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         """Get a response from the OpenAI API.
@@ -151,30 +154,40 @@ class OpenAIResponsesClientBase(OpenAIHandler, LongRunningChatClient):
         Returns:
             A chat response from the model.
         """
+
         if background and not store:
             raise ValueError("Background responses must be stored.")
-
-        return await super().get_response(
-            messages=messages,
+        additional_properties = additional_properties or {}
+        additional_properties.update(self._filter_options(
+            background=background,
             include=include,
-            instruction=instruction,
-            max_tokens=max_tokens,
+            instructions=instructions,
             parallel_tool_calls=parallel_tool_calls,
             model=model,
             previous_response_id=previous_response_id,
             reasoning=reasoning,
             service_tier=service_tier,
+            truncation=truncation,
+            timeout=timeout,
+        ))
+        
+        chat_options = ChatOptions(
+            max_tokens=max_tokens,
             response_format=response_format,
             seed=seed,
             store=store,
             temperature=temperature,
             tool_choice=tool_choice,
-            tools=tools,
+            tools=tools,  # type: ignore
             top_p=top_p,
             user=user,
-            truncation=truncation,
-            timeout=timeout,
             additional_properties=additional_properties,
+        )
+
+        return await super().get_response(
+            messages=messages,
+            chat_options=chat_options,
+            long_running_message_id=long_running_message_id,
             **kwargs,
         )
 
@@ -185,7 +198,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, LongRunningChatClient):
         *,
         background: bool | None = None,
         include: list["ResponseIncludable"] | None = None,
-        instruction: str | None = None,
+        instructions: str | None = None,
         max_tokens: int | None = None,
         parallel_tool_calls: bool | None = None,
         model: str | None = None,
@@ -209,6 +222,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, LongRunningChatClient):
         truncation: str | None = None,
         timeout: float | None = None,
         additional_properties: dict[str, Any] | None = None,
+        long_running_message_id: str | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Get a streaming response from the OpenAI API.
@@ -243,28 +257,36 @@ class OpenAIResponsesClientBase(OpenAIHandler, LongRunningChatClient):
         """
         if background and not store:
             raise ValueError("Background responses must be stored.")
-
-        async for update in super().get_streaming_response(
-            messages=messages,
+        additional_properties = additional_properties or {}
+        additional_properties.update(self._filter_options(
+            background=background,
             include=include,
-            instruction=instruction,
-            max_tokens=max_tokens,
+            instructions=instructions,
             parallel_tool_calls=parallel_tool_calls,
             model=model,
             previous_response_id=previous_response_id,
             reasoning=reasoning,
             service_tier=service_tier,
+            truncation=truncation,
+            timeout=timeout,
+        ))
+        
+        chat_options = ChatOptions(
+            max_tokens=max_tokens,
             response_format=response_format,
             seed=seed,
             store=store,
             temperature=temperature,
             tool_choice=tool_choice,
-            tools=tools,
+            tools=tools,  # type: ignore
             top_p=top_p,
             user=user,
-            truncation=truncation,
-            timeout=timeout,
             additional_properties=additional_properties,
+        )
+        async for update in super().get_streaming_response(
+            messages=messages,
+            chat_options=chat_options,
+            long_running_message_id=long_running_message_id,
             **kwargs,
         ):
             yield update
@@ -276,43 +298,43 @@ class OpenAIResponsesClientBase(OpenAIHandler, LongRunningChatClient):
         *,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions,
+        long_running_message_id: str | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         options_dict = self._prepare_options(messages, chat_options)
         try:
-            if not chat_options.response_format:
-                response = await self.client.responses.create(
+            if not long_running_message_id:
+                if not chat_options.response_format:
+                    print(options_dict)
+                    response = await self.client.responses.create(
+                        stream=False,
+                        **options_dict,
+                    )
+                    chat_options.conversation_id = response.id if chat_options.store is True else None
+                    return self._create_response_content(response, chat_options=chat_options)
+                # create call does not support response_format, so we need to handle it via parse call
+                resp_format = chat_options.response_format
+                response = await self.client.responses.parse(
+                    text_format=resp_format,
                     stream=False,
                     **options_dict,
                 )
                 chat_options.conversation_id = response.id if chat_options.store is True else None
-                return self._create_response_content(response, chat_options=chat_options)
-            # create call does not support response_format, so we need to handle it via parse call
-            resp_format = chat_options.response_format
-            response = await self.client.responses.parse(
-                text_format=resp_format,
-                stream=False,
-                **options_dict,
-            )
-            chat_options.conversation_id = response.id if chat_options.store is True else None
+            else:
+                response = await self.client.responses.retrieve(long_running_message_id)
+                # Is this a reasonable thing to do?
+                if not chat_options.additional_properties.get("background", False):
+                    while response.status in {"queued", "in_progress"}:
+                        await asyncio.sleep(2)
+                        response = await self.client.responses.retrieve(long_running_message_id)
 
-            if response.status in {"queued", "in_progress"}:
-                # This is a long-running response, we don't have the final output yet.
+            if response.status != "completed":
+                # TODO(peterychang): Do something interesting with failed responses
                 return ChatResponse(
                     response_id=response.id,
                     conversation_id=response.id if chat_options.store is True else None,
-                    messages=[
-                        ChatMessage(
-                            role=ChatRole.ASSISTANT,
-                            message_id=response.id,
-                            contents=[
-                                AsyncMessageContent(
-                                    message_id=response.id,
-                                    source=f"f{self.MODEL_PROVIDER_NAME}:RESPONSE:{self.ai_model_id}",
-                                )
-                            ],
-                        )
-                    ],
+                    messages=[],
+                    status=response.status
                 )
             return self._create_response_content(response, chat_options=chat_options)
         except BadRequestError as ex:
@@ -378,18 +400,6 @@ class OpenAIResponsesClientBase(OpenAIHandler, LongRunningChatClient):
                 inner_exception=ex,
             ) from ex
 
-    # region Prep methods
-    def _await_response(self, message_id: str) -> list[ChatMessage]:
-        response = asyncio.run(self.client.responses.retrieve(message_id))
-        while response.status in {"queued", "in_progress"}:
-            sleep(2)
-            response = asyncio.run(self.client.responses.retrieve(message_id))
-        # TODO(peterychang): This is a quick and dirty way to get the final response.
-        chat_options = ChatOptions()
-        chat_options.store = True
-        chat_resp = self._create_response_content(response, chat_options)
-        return chat_resp.messages
-
     def _chat_to_response_tool_spec(
         self, tools: list[AITool | MutableMapping[str, Any]]
     ) -> list[ToolParam | dict[str, Any]]:
@@ -403,7 +413,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, LongRunningChatClient):
                             tool_args["file_ids"] = []
                             for tool_input in tool.inputs:
                                 if isinstance(tool_input, HostedFileContent):
-                                    tool_args["file_ids"].append(tool_input.file_id)
+                                    tool_args["file_ids"].append(tool_input.file_id)  # type: ignore
                             if not tool_args["file_ids"]:
                                 tool_args.pop("file_ids")
                         response_tools.append(
@@ -559,7 +569,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, LongRunningChatClient):
                         match message_content.type:
                             case "output_text":
                                 text_content = TextContent(
-                                    text=message_content.text, raw_representation=message_content
+                                    text=message_content.text, raw_representation=message_content  # type: ignore
                                 )
                                 metadata.update(self._get_metadata_from_response(message_content))
                                 if message_content.annotations:
@@ -835,12 +845,6 @@ class OpenAIResponsesClientBase(OpenAIHandler, LongRunningChatClient):
                 "logprobs": logprobs,
             }
         return {}
-
-    def get_long_running_response(
-        self,
-        message_id: str,
-    ) -> Future[list[ChatMessage]]:
-        return ThreadPoolExecutor().submit(self._await_response, message_id)
 
 
 TOpenAIResponsesClient = TypeVar("TOpenAIResponsesClient", bound="OpenAIResponsesClient")

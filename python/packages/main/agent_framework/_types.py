@@ -15,7 +15,7 @@ from collections.abc import (
     Sequence,
 )
 from copy import deepcopy
-from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, overload
+from typing import Annotated, Any, ClassVar, Generic, Literal, TypeAlias, TypeVar, overload
 
 from pydantic import (
     BaseModel,
@@ -85,7 +85,6 @@ __all__ = [
     "AgentRunResponseUpdate",
     "AnnotatedRegion",
     "AnnotatedRegions",
-    "AsyncMessageContent",
     "ChatFinishReason",
     "ChatMessage",
     "ChatOptions",
@@ -1111,40 +1110,6 @@ class HostedVectorStoreContent(AIContent):
         )
 
 
-class AsyncMessageContent(AIContent):
-    """Represents a background task or process whose response will be generated asynchronously.
-
-    Attributes:
-        type: The type of content, which is always "async_message" for this class.
-        message_id: The identifier of the background task.
-        source: The source of the background task.
-        additional_properties: Optional additional properties associated with the content.
-        raw_representation: Optional raw representation of the content.
-    """
-
-    message_id: str
-    source: str | None = None
-    type: Literal["async_message"] = "async_message"  # type: ignore[assignment]
-
-    def __init__(
-        self,
-        message_id: str,
-        source: str | None = None,
-        *,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes a AsyncMessageContent instance."""
-        super().__init__(
-            message_id=message_id,  # type: ignore[reportCallIssue]
-            source=source,  # type: ignore[reportCallIssue]
-            raw_representation=raw_representation,
-            additional_properties=additional_properties,
-            **kwargs,
-        )
-
-
 AIContents = Annotated[
     TextContent
     | DataContent
@@ -1155,8 +1120,7 @@ AIContents = Annotated[
     | ErrorContent
     | UsageContent
     | HostedFileContent
-    | HostedVectorStoreContent
-    | AsyncMessageContent,
+    | HostedVectorStoreContent,
     Field(discriminator="type"),
 ]
 
@@ -1343,6 +1307,54 @@ class ChatMessage(AFBaseModel):
 # region ChatResponse
 
 
+ResponseStatusStr: TypeAlias = Literal["completed", "failed", "in_progress", "cancelled", "queued", "incomplete"]
+
+class ResponseStatus(AFBaseModel):
+    """Describes the status of the response.
+
+    Attributes:
+        value: The string representation of the status.
+
+    Properties:
+        COMPLETED: The request has been completed successfully. Messages are attached to the response
+        FAILED: The request has failed.
+        IN_PROGRESS: The request is in progress. No messages are attached to the response
+        CANCELLED: The request has been cancelled.
+        QUEUED: the request is queued for processing.
+        INCOMPLETE: The response is incomplete.
+        
+    """
+
+    value: ResponseStatusStr = Field(..., kw_only=False)
+
+    COMPLETED: ClassVar[Self]  # type: ignore[assignment]
+    """The request has been completed successfully."""
+    FAILED: ClassVar[Self]  # type: ignore[assignment]
+    """The request has failed."""
+    IN_PROGRESS: ClassVar[Self]  # type: ignore[assignment]
+    """The request is in progress."""
+    CANCELLED: ClassVar[Self]  # type: ignore[assignment]
+    """The request has been cancelled."""
+    QUEUED: ClassVar[Self]  # type: ignore[assignment]
+    """The request is queued."""
+    INCOMPLETE: ClassVar[Self]  # type: ignore[assignment]
+    """The request is incomplete."""
+
+    def __str__(self) -> str:
+        """Returns the string representation of the role."""
+        return self.value
+
+    def __repr__(self) -> str:
+        """Returns the string representation of the role."""
+        return f"ResponseStatus(value={self.value!r})"
+
+ResponseStatus.COMPLETED = ResponseStatus(value="completed")  # type: ignore[assignment]
+ResponseStatus.FAILED = ResponseStatus(value="failed")  # type: ignore[assignment]
+ResponseStatus.IN_PROGRESS = ResponseStatus(value="in_progress")  # type: ignore[assignment]
+ResponseStatus.CANCELLED = ResponseStatus(value="cancelled")  # type: ignore[assignment]
+ResponseStatus.QUEUED = ResponseStatus(value="queued")  # type: ignore[assignment]
+ResponseStatus.INCOMPLETE = ResponseStatus(value="incomplete")  # type: ignore[assignment]
+
 class ChatResponse(AFBaseModel):
     """Represents the response to a chat request.
 
@@ -1380,6 +1392,7 @@ class ChatResponse(AFBaseModel):
     """Any additional properties associated with the chat response."""
     raw_representation: Any | None = None
     """The raw representation of the chat response from an underlying implementation."""
+    status: ResponseStatus | None = None
 
     @overload
     def __init__(
@@ -1395,6 +1408,7 @@ class ChatResponse(AFBaseModel):
         value: Any | None = None,
         response_format: type[BaseModel] | None = None,
         additional_properties: dict[str, Any] | None = None,
+        status: ResponseStatus | ResponseStatusStr | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
     ) -> None:
@@ -1431,6 +1445,7 @@ class ChatResponse(AFBaseModel):
         response_format: type[BaseModel] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
+        status: ResponseStatus | ResponseStatusStr | None = None,
         **kwargs: Any,
     ) -> None:
         """Initializes a ChatResponse with the provided parameters.
@@ -1466,6 +1481,7 @@ class ChatResponse(AFBaseModel):
         response_format: type[BaseModel] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
+        status: ResponseStatus | ResponseStatusStr | None = None,
         **kwargs: Any,
     ) -> None:
         """Initializes a ChatResponse with the provided parameters."""
@@ -1488,6 +1504,7 @@ class ChatResponse(AFBaseModel):
             usage_details=usage_details,  # type: ignore[reportCallIssue]
             value=value,  # type: ignore[reportCallIssue]
             additional_properties=additional_properties,  # type: ignore[reportCallIssue]
+            status=ResponseStatus(value=status) if isinstance(status, str) else status,  # type: ignore[reportCallIssue]
             raw_representation=raw_representation,  # type: ignore[reportCallIssue]
             **kwargs,
         )
