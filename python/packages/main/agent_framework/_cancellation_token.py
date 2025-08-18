@@ -5,6 +5,8 @@ from asyncio import Future
 from collections.abc import Callable
 from typing import Any
 
+__all__ = ["CancellationToken"]
+
 
 # from https://github.com/microsoft/autogen/blob/main/python/packages/autogen-core/src/autogen_core/_cancellation_token.py
 class CancellationToken:

@@ -9,6 +9,7 @@ except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0"  # Fallback for development mode
 
 from ._agents import *  # noqa: F403
+from ._cancellation_token import *  # noqa: F403
 from ._clients import *  # noqa: F403
 from ._logging import *  # noqa: F403
 from ._mcp import *  # noqa: F403

@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import json
 from collections.abc import AsyncIterable, Mapping, MutableMapping, MutableSequence, Sequence
 from datetime import datetime
@@ -17,6 +18,7 @@ from pydantic import BaseModel, SecretStr, ValidationError
 
 from agent_framework import AIFunction, AITool, UsageContent
 
+from .._cancellation_token import CancellationToken
 from .._clients import ChatClientBase, use_tool_calling
 from .._logging import get_logger
 from .._tools import HostedWebSearchTool
@@ -58,13 +60,15 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
         *,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions,
+        cancellation_token: CancellationToken | None,
         **kwargs: Any,
     ) -> ChatResponse:
         options_dict = self._prepare_options(messages, chat_options)
         try:
-            return self._create_chat_response(
-                await self.client.chat.completions.create(stream=False, **options_dict), chat_options
-            )
+            future = asyncio.ensure_future(self.client.chat.completions.create(stream=False, **options_dict))
+            if cancellation_token:
+                cancellation_token.link_future(future)
+            return self._create_chat_response(await future, chat_options)
         except BadRequestError as ex:
             if ex.code == "content_filter":
                 raise OpenAIContentFilterException(
@@ -86,15 +90,25 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
         *,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions,
+        cancellation_token: CancellationToken | None,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         options_dict = self._prepare_options(messages, chat_options)
         options_dict["stream_options"] = {"include_usage": True}
         try:
-            async for chunk in await self.client.chat.completions.create(stream=True, **options_dict):
-                if len(chunk.choices) == 0 and chunk.usage is None:
-                    continue
-                yield self._create_chat_response_update(chunk)
+            stream_future = asyncio.ensure_future(self.client.chat.completions.create(stream=True, **options_dict))
+            if cancellation_token:
+                cancellation_token.link_future(stream_future)
+            stream = await stream_future
+            while True:
+                try:
+                    chunk_future = asyncio.ensure_future(anext(stream))
+                    if cancellation_token is not None:
+                        cancellation_token.link_future(chunk_future)
+                    chunk = await chunk_future
+                    yield self._create_chat_response_update(chunk)
+                except StopAsyncIteration:
+                    break
         except BadRequestError as ex:
             if ex.code == "content_filter":
                 raise OpenAIContentFilterException(

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, runt
 
 from pydantic import BaseModel
 
+from ._cancellation_token import CancellationToken
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
 from ._threads import ChatMessageStore
@@ -85,12 +86,15 @@ def _tool_call_non_streaming(
         *,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions,
+        cancellation_token: CancellationToken | None,
         **kwargs: Any,
     ) -> ChatResponse:
         response: ChatResponse | None = None
         fcc_messages: list[ChatMessage] = []
         for attempt_idx in range(getattr(self, "__maximum_iterations_per_request", 10)):
-            response = await func(self, messages=messages, chat_options=chat_options)
+            response = await func(
+                self, messages=messages, chat_options=chat_options, cancellation_token=cancellation_token, **kwargs
+            )
             # if there are function calls, we will handle them first
             function_results = {
                 it.call_id for it in response.messages[0].contents if isinstance(it, FunctionResultContent)
@@ -141,7 +145,9 @@ def _tool_call_non_streaming(
         # Failsafe: give up on tools, ask model for plain answer
         chat_options.tool_choice = "none"
         self._prepare_tool_choice(chat_options=chat_options)  # type: ignore[reportPrivateUsage]
-        response = await func(self, messages=messages, chat_options=chat_options, **kwargs)
+        response = await func(
+            self, messages=messages, chat_options=chat_options, cancellation_token=cancellation_token, **kwargs
+        )
         if fcc_messages:
             for msg in reversed(fcc_messages):
                 response.messages.insert(0, msg)
@@ -161,13 +167,16 @@ def _tool_call_streaming(
         *,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions,
+        cancellation_token: CancellationToken | None,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Wrap the inner get streaming response method to handle tool calls."""
         for attempt_idx in range(getattr(self, "__maximum_iterations_per_request", 10)):
             function_call_returned = False
             all_messages: list[ChatResponseUpdate] = []
-            async for update in func(self, messages=messages, chat_options=chat_options, **kwargs):
+            async for update in func(
+                self, messages=messages, chat_options=chat_options, cancellation_token=cancellation_token, **kwargs
+            ):
                 if update.contents and any(isinstance(item, FunctionCallContent) for item in update.contents):
                     all_messages.append(update)
                     function_call_returned = True
@@ -211,7 +220,9 @@ def _tool_call_streaming(
         # Failsafe: give up on tools, ask model for plain answer
         chat_options.tool_choice = "none"
         self._prepare_tool_choice(chat_options=chat_options)  # type: ignore[reportPrivateUsage]
-        async for update in func(self, messages=messages, chat_options=chat_options, **kwargs):
+        async for update in func(
+            self, messages=messages, chat_options=chat_options, cancellation_token=cancellation_token, **kwargs
+        ):
             yield update
 
     return wrapper
@@ -403,6 +414,7 @@ class ChatClientBase(AFBaseModel, ABC):
         *,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions,
+        cancellation_token: CancellationToken | None,
         **kwargs: Any,
     ) -> ChatResponse:
         """Send a chat request to the AI service.
@@ -410,6 +422,7 @@ class ChatClientBase(AFBaseModel, ABC):
         Args:
             messages: The chat messages to send.
             chat_options: The options for the request.
+            cancellation_token: An optional cancellation token.
             kwargs: Any additional keyword arguments.
 
         Returns:
@@ -422,6 +435,7 @@ class ChatClientBase(AFBaseModel, ABC):
         *,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions,
+        cancellation_token: CancellationToken | None,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Send a streaming chat request to the AI service.
@@ -429,6 +443,7 @@ class ChatClientBase(AFBaseModel, ABC):
         Args:
             messages: The chat messages to send.
             chat_options: The chat_options for the request.
+            cancellation_token: An optional cancellation token.
             kwargs: Any additional keyword arguments.
 
         Yields:
@@ -471,6 +486,7 @@ class ChatClientBase(AFBaseModel, ABC):
         top_p: float | None = None,
         user: str | None = None,
         additional_properties: dict[str, Any] | None = None,
+        cancellation_token: CancellationToken | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         """Get a response from a chat client.
@@ -493,6 +509,7 @@ class ChatClientBase(AFBaseModel, ABC):
             top_p: the nucleus sampling probability to use.
             user: the user to associate with the request.
             additional_properties: additional properties to include in the request.
+            cancellation_token: An optional cancellation token.
             kwargs: any additional keyword arguments,
                 will only be passed to functions that are called.
 
@@ -524,7 +541,12 @@ class ChatClientBase(AFBaseModel, ABC):
             )
         prepped_messages = self._prepare_messages(messages)
         self._prepare_tool_choice(chat_options=chat_options)
-        return await self._inner_get_response(messages=prepped_messages, chat_options=chat_options, **kwargs)
+        return await self._inner_get_response(
+            messages=prepped_messages,
+            chat_options=chat_options,
+            cancellation_token=cancellation_token,
+            **kwargs,
+        )
 
     async def get_streaming_response(
         self,
@@ -552,6 +574,7 @@ class ChatClientBase(AFBaseModel, ABC):
         top_p: float | None = None,
         user: str | None = None,
         additional_properties: dict[str, Any] | None = None,
+        cancellation_token: CancellationToken | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Get a streaming response from a chat client.
@@ -574,6 +597,7 @@ class ChatClientBase(AFBaseModel, ABC):
             top_p: the nucleus sampling probability to use.
             user: the user to associate with the request.
             additional_properties: additional properties to include in the request
+            cancellation_token: An optional cancellation token.
             kwargs: any additional keyword arguments
 
         Yields:
@@ -606,7 +630,10 @@ class ChatClientBase(AFBaseModel, ABC):
         prepped_messages = self._prepare_messages(messages)
         self._prepare_tool_choice(chat_options=chat_options)
         async for update in self._inner_get_streaming_response(
-            messages=prepped_messages, chat_options=chat_options, **kwargs
+            messages=prepped_messages,
+            chat_options=chat_options,
+            cancellation_token=cancellation_token,
+            **kwargs,
         ):
             yield update
 

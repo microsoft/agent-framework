@@ -19,6 +19,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from opentelemetry.util._decorator import _AgnosticContextManager  # type: ignore[reportPrivateUsage]
 
     from ._agents import AIAgent, ChatClientAgent
+    from ._cancellation_token import CancellationToken
     from ._clients import ChatClientBase
     from ._threads import AgentThread
     from ._tools import AIFunction
@@ -287,6 +288,7 @@ def _trace_chat_get_response(
         *,
         messages: MutableSequence["ChatMessage"],
         chat_options: "ChatOptions",
+        cancellation_token: "CancellationToken | None",
         **kwargs: Any,
     ) -> "ChatResponse":
         if not MODEL_DIAGNOSTICS_SETTINGS.ENABLED:
@@ -295,6 +297,7 @@ def _trace_chat_get_response(
                 self,
                 messages=messages,
                 chat_options=chat_options,
+                cancellation_token=cancellation_token,
                 **kwargs,
             )
 
@@ -310,7 +313,9 @@ def _trace_chat_get_response(
         ) as current_span:
             _set_chat_response_input(self.MODEL_PROVIDER_NAME, messages)
             try:
-                response = await completion_func(self, messages=messages, chat_options=chat_options, **kwargs)
+                response = await completion_func(
+                    self, messages=messages, chat_options=chat_options, cancellation_token=cancellation_token, **kwargs
+                )
                 _set_chat_response_output(current_span, response, self.MODEL_PROVIDER_NAME)
                 return response
             except Exception as exception:
@@ -334,12 +339,17 @@ def _trace_chat_get_streaming_response(
 
     @functools.wraps(completion_func)
     async def wrap_inner_get_streaming_response(
-        self: "ChatClientBase", *, messages: MutableSequence["ChatMessage"], chat_options: "ChatOptions", **kwargs: Any
+        self: "ChatClientBase",
+        *,
+        messages: MutableSequence["ChatMessage"],
+        chat_options: "ChatOptions",
+        cancellation_token: "CancellationToken | None",
+        **kwargs: Any,
     ) -> AsyncIterable["ChatResponseUpdate"]:
         if not MODEL_DIAGNOSTICS_SETTINGS.ENABLED:
             # If model diagnostics are not enabled, just return the completion
             async for streaming_chat_message_contents in completion_func(
-                self, messages=messages, chat_options=chat_options, **kwargs
+                self, messages=messages, chat_options=chat_options, cancellation_token=cancellation_token, **kwargs
             ):
                 yield streaming_chat_message_contents
             return
@@ -360,7 +370,9 @@ def _trace_chat_get_streaming_response(
         ) as current_span:
             _set_chat_response_input(self.MODEL_PROVIDER_NAME, messages)
             try:
-                async for response in completion_func(self, messages=messages, chat_options=chat_options, **kwargs):
+                async for response in completion_func(
+                    self, messages=messages, chat_options=chat_options, cancellation_token=cancellation_token, **kwargs
+                ):
                     all_updates.append(response)
                     yield response
 
