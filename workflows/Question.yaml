@@ -6,6 +6,6 @@ beginDialog:
 
     # Use AI to answer the question
     - kind: AnswerQuestionWithAI
-      id: asst_Tq5lpaIHgIbqQSKIpGxNq6A5
+      id: asst_orsBf06Bxz9B1hjVjiiQoPqf
       variable: Topic.Answer
-      userInput: {System.LastMessage.Text}
+      userInput: =System.LastMessage.Text

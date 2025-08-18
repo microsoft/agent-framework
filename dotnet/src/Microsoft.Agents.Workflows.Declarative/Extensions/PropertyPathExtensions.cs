@@ -6,5 +6,5 @@ namespace Microsoft.Agents.Workflows.Declarative.Extensions;
 
 internal static class PropertyPathExtensions
 {
-    public static string Format(this PropertyPath path) => $"{path.VariableScopeName}.{path.VariableName}";
+    public static string Format(this PropertyPath path) => string.Join(".", path.Segments());
 }
