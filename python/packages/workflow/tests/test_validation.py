@@ -17,7 +17,7 @@ from agent_framework_workflow import (
     handler,
     validate_workflow_graph,
 )
-from agent_framework_workflow._edge import Edge
+from agent_framework_workflow._edge import SingleEdgeGroup
 
 
 class StringExecutor(Executor):
@@ -159,10 +159,13 @@ def test_graph_connectivity_isolated_executors():
     executor3 = StringExecutor(id="executor3")  # This will be isolated
 
     # Create edges that include an isolated executor (self-loop that's not connected to main graph)
-    edges = [Edge(executor1, executor2), Edge(executor3, executor3)]  # Self-loop to include in graph
+    edge_groups = [
+        SingleEdgeGroup(executor1, executor2),
+        SingleEdgeGroup(executor3, executor3),
+    ]  # Self-loop to include in graph
 
     with pytest.raises(GraphConnectivityError) as exc_info:
-        validate_workflow_graph(edges, executor1)
+        validate_workflow_graph(edge_groups, executor1)
 
     assert "unreachable" in str(exc_info.value).lower()
     assert "executor3" in str(exc_info.value)
@@ -239,15 +242,15 @@ def test_type_compatibility_inheritance():
 def test_direct_validation_function():
     executor1 = StringExecutor(id="executor1")
     executor2 = StringExecutor(id="executor2")
-    edges = [Edge(executor1, executor2)]
+    edge_groups = [SingleEdgeGroup(executor1, executor2)]
 
     # This should not raise any exceptions
-    validate_workflow_graph(edges, executor1)
+    validate_workflow_graph(edge_groups, executor1)
 
     # Test with invalid start executor
     executor3 = StringExecutor(id="executor3")
     with pytest.raises(GraphConnectivityError):
-        validate_workflow_graph(edges, executor3)
+        validate_workflow_graph(edge_groups, executor3)
 
 
 def test_fan_out_validation():

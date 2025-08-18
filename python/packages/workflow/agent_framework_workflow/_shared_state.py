@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -34,7 +35,7 @@ class SharedState:
             await self.delete_within_hold(key)
 
     @asynccontextmanager
-    async def hold(self):
+    async def hold(self) -> AsyncIterator["SharedState"]:
         """Context manager to hold the shared state lock for multiple operations.
 
         Usage:

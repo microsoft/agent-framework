@@ -11,6 +11,7 @@ from ._checkpoint import (
 from ._const import (
     DEFAULT_MAX_ITERATIONS,
 )
+from ._edge import Case, Default
 from ._events import (
     AgentRunEvent,
     AgentRunStreamingEvent,
@@ -60,7 +61,9 @@ __all__ = [
     "AgentExecutorResponse",
     "AgentRunEvent",
     "AgentRunStreamingEvent",
+    "Case",
     "CheckpointStorage",
+    "Default",
     "EdgeDuplicationError",
     "Executor",
     "ExecutorCompletedEvent",
