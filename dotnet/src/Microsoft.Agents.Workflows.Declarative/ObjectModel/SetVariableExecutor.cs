@@ -13,19 +13,19 @@ namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
 internal sealed class SetVariableExecutor(SetVariable model) : DeclarativeActionExecutor<SetVariable>(model)
 {
-    protected override ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    protected override ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         PropertyPath variablePath = Throw.IfNull(this.Model.Variable?.Path, $"{nameof(this.Model)}.{nameof(model.Variable)}");
 
         if (this.Model.Value is null)
         {
-            this.AssignTarget(this.Context, variablePath, FormulaValue.NewBlank());
+            this.AssignTarget(variablePath, FormulaValue.NewBlank());
         }
         else
         {
-            EvaluationResult<DataValue> result = this.Context.ExpressionEngine.GetValue(this.Model.Value, this.Context.Scopes);
+            EvaluationResult<DataValue> expressionResult = this.State.ExpressionEngine.GetValue(this.Model.Value, this.State.Scopes);
 
-            this.AssignTarget(this.Context, variablePath, result.Value.ToFormulaValue());
+            this.AssignTarget(variablePath, expressionResult.Value.ToFormulaValue());
         }
 
         return default;

@@ -11,20 +11,20 @@ namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
 internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : DeclarativeActionExecutor<ClearAllVariables>(model)
 {
-    protected override ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    protected override ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        EvaluationResult<VariablesToClearWrapper> result = this.Context.ExpressionEngine.GetValue<VariablesToClearWrapper>(this.Model.Variables, this.Context.Scopes);
+        EvaluationResult<VariablesToClearWrapper> variablesResult = this.State.ExpressionEngine.GetValue<VariablesToClearWrapper>(this.Model.Variables, this.State.Scopes);
 
-        result.Value.Handle(new ScopeHandler(this.Context));
+        variablesResult.Value.Handle(new ScopeHandler(this.State));
 
         return default;
     }
 
-    private sealed class ScopeHandler(WorkflowExecutionContext context) : IEnumVariablesToClearHandler
+    private sealed class ScopeHandler(DeclarativeWorkflowState state) : IEnumVariablesToClearHandler
     {
         public void HandleAllGlobalVariables()
         {
-            context.Engine.ClearScope(context.Scopes, WorkflowScopeType.Global);
+            state.Clear(WorkflowScopeType.Global);
         }
 
         public void HandleConversationHistory()
@@ -34,7 +34,7 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : Decla
 
         public void HandleConversationScopedVariables()
         {
-            context.Engine.ClearScope(context.Scopes, WorkflowScopeType.Topic);
+            state.Clear(WorkflowScopeType.Topic);
         }
 
         public void HandleUnknownValue()
@@ -44,7 +44,7 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : Decla
 
         public void HandleUserScopedVariables()
         {
-            context.Engine.ClearScope(context.Scopes, WorkflowScopeType.Env); // %%% DECISION: Is this correct?  If not, what?
+            state.Clear(WorkflowScopeType.Env); // %%% DECISION: Is this correct?  If not, what?
         }
     }
 }

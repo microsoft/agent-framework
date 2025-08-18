@@ -110,6 +110,7 @@ public class TemplateExtensionsTests(ITestOutputHelper output) : RecalcEngineTes
         ExpressionSegment expressionSegment = new(ValueExpression.Variable(PropertyPath.TopicVariable("Source")));
         TemplateLine line = new([expressionSegment]);
         RecalcEngine engine = this.CreateEngine();
+        this.Scopes.Bind(engine);
 
         // Act
         string? result = engine.Format(line);
@@ -117,29 +118,6 @@ public class TemplateExtensionsTests(ITestOutputHelper output) : RecalcEngineTes
         // Assert
         Assert.Equal("Hello World", result);
     }
-
-    //[Fact]
-    //public void Format_WithExpressionSegmentWithVariableReference_ReturnsEvaluatedValue()
-    //{
-    //    // Arrange
-    //    Mock<VariableReference> mockVariableRef = new();
-    //    mockVariableRef.Setup(vr => vr.ToString()).Returns("myVariable");
-
-    //    Expression expression = new() { VariableReference = mockVariableRef.Object };
-    //    ExpressionSegment expressionSegment = new() { Expression = expression };
-    //    TemplateLine line = new([expressionSegment]);
-
-    //    _mockFormulaValue.Setup(fv => fv.Format()).Returns("VariableValue");
-    //    _mockEngine.Setup(e => e.Eval("myVariable")).Returns(_mockFormulaValue.Object);
-
-    //    // Act
-    //    string? result = engine.Format(line);
-
-    //    // Assert
-    //    Assert.Equal("VariableValue", result);
-    //    _mockEngine.Verify(e => e.Eval("myVariable"), Times.Once);
-    //    _mockFormulaValue.Verify(fv => fv.Format(), Times.Once);
-    //}
 
     [Fact]
     public void FormatExpressionSegmentUndefined()

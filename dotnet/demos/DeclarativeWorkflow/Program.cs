@@ -34,7 +34,7 @@ internal static class Program
         //
         // DeclarativeWorkflowContext provides the components for workflow execution.
         //
-        DeclarativeWorkflowContext workflowContext =
+        DeclarativeWorkflowOptions workflowContext =
             new()
             {
                 LoggerFactory = NullLoggerFactory.Instance,

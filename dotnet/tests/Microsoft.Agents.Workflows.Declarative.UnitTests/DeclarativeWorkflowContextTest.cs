@@ -14,7 +14,7 @@ public class DeclarativeWorkflowContextTests
     public void DefaultHasExpectedValues()
     {
         // Assert
-        DeclarativeWorkflowContext context = DeclarativeWorkflowContext.Default;
+        DeclarativeWorkflowOptions context = DeclarativeWorkflowOptions.Default;
         Assert.Equal(string.Empty, context.ProjectEndpoint);
         Assert.IsType<DefaultAzureCredential>(context.ProjectCredentials);
         Assert.Null(context.MaximumCallDepth);
@@ -27,7 +27,7 @@ public class DeclarativeWorkflowContextTests
     public void InitializeDefaultValues()
     {
         // Act
-        DeclarativeWorkflowContext context = new();
+        DeclarativeWorkflowOptions context = new();
 
         // Assert
         Assert.Equal(string.Empty, context.ProjectEndpoint);
@@ -50,7 +50,7 @@ public class DeclarativeWorkflowContextTests
         ILoggerFactory loggerFactory = LoggerFactory.Create(builder => { });
 
         // Act
-        DeclarativeWorkflowContext context = new()
+        DeclarativeWorkflowOptions context = new()
         {
             ProjectEndpoint = projectEndpoint,
             ProjectCredentials = credentials,

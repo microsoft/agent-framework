@@ -31,7 +31,7 @@ internal abstract class WorkflowActionExecutor :
     public const string RootActionId = "(root)";
 
     private string? _parentId;
-    private WorkflowExecutionContext? _context;
+    private DeclarativeWorkflowState? _state;
 
     protected WorkflowActionExecutor(DialogAction model)
         : base(model.Id.Value)
@@ -50,15 +50,12 @@ internal abstract class WorkflowActionExecutor :
 
     internal ILogger Logger { get; set; } = NullLogger<WorkflowActionExecutor>.Instance;
 
-    internal DeclarativeWorkflowContext WorkflowContext { get; set; } = DeclarativeWorkflowContext.Default; // %%% HAXX: Initial state
+    internal DeclarativeWorkflowOptions Options { get; set; } = DeclarativeWorkflowOptions.Default;
 
-    protected WorkflowExecutionContext Context =>
-        this._context ??
-        throw new WorkflowExecutionException("Context not assigned");
-
-    private void Attach(WorkflowExecutionContext executionContext) // %%% IMPROVE ???
+    protected DeclarativeWorkflowState State
     {
-        this._context = executionContext;
+        get => this._state ?? throw new WorkflowExecutionException("Context not assigned");
+        private set { this._state = value; }
     }
 
     /// <inheritdoc/>
@@ -71,15 +68,14 @@ internal abstract class WorkflowActionExecutor :
         }
 
         WorkflowScopes scopes = await context.GetScopesAsync(default).ConfigureAwait(false);
-        WorkflowExecutionContext executionContext = this.WorkflowContext.CreateActionContext(this.Id, scopes); // %%% IMPROVE ???
-        this.Attach(executionContext); // %%% REMOVE
+        this.State = new DeclarativeWorkflowState(this.Options.CreateRecalcEngine(), scopes);
 
         try
         {
-            await this.ExecuteAsync(context, cancellationToken: default).ConfigureAwait(false);
+            object? result = await this.ExecuteAsync(context, cancellationToken: default).ConfigureAwait(false);
 
             await context.SetScopesAsync(scopes, default).ConfigureAwait(false);
-            await context.SendMessageAsync(new ExecutionResultMessage(this.Id, executionContext.Result)).ConfigureAwait(false);
+            await context.SendMessageAsync(new ExecutionResultMessage(this.Id, result)).ConfigureAwait(false);
         }
         catch (WorkflowExecutionException)
         {
@@ -93,11 +89,11 @@ internal abstract class WorkflowActionExecutor :
         }
     }
 
-    protected abstract ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default);
+    protected abstract ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default);
 
-    protected void AssignTarget(WorkflowExecutionContext context, PropertyPath targetPath, FormulaValue result)
+    protected void AssignTarget(PropertyPath targetPath, FormulaValue result)
     {
-        context.Engine.SetScopedVariable(context.Scopes, targetPath, result);
+        this.State.Set(targetPath, result);
 #if DEBUG
         string? resultValue = result.Format();
         string valuePosition = (resultValue?.IndexOf('\n') ?? -1) >= 0 ? Environment.NewLine : " ";

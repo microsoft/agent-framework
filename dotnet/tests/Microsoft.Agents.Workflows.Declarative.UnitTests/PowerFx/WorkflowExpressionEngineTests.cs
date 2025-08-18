@@ -417,26 +417,6 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
             expectedValue: VariablesToClear.ConversationScopedVariables);
     }
 
-    //// Enum Expression Tests
-    //[Fact]
-    //public void GetValueForEnumExpressionWithLiteral()
-    //{
-    //    // Arrange
-    //    RecalcEngine engine = this.CreateEngine();
-    //    WorkflowExpressionEngine expressionEngine = new(engine);
-    //    WorkflowScopes scopes = new();
-
-    //    TestEnum testEnum = TestEnum.Create(TestEnumValue.Value1);
-    //    EnumExpression<TestEnum> expression = new EnumExpression<TestEnum>(testEnum);
-
-    //    // Act
-    //    EvaluationResult<TestEnum> result = expressionEngine.GetValue(expression, scopes);
-
-    //    // Assert
-    //    Assert.Equal(TestEnumValue.Value1, result.Value.Value);
-    //    Assert.Equal(SensitivityLevel.None, result.Sensitivity);
-    //}
-
     #endregion
 
     #region ObjectExpression Tests

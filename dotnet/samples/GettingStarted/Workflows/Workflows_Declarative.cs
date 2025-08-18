@@ -47,7 +47,7 @@ public class Workflows_Declarative(ITestOutputHelper output) : OrchestrationSamp
             //
             // DeclarativeWorkflowContext provides the components for workflow execution.
             //
-            DeclarativeWorkflowContext workflowContext =
+            DeclarativeWorkflowOptions workflowContext =
                 new()
                 {
                     HttpClient = customClient,

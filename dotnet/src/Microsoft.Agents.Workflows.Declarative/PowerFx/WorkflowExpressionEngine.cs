@@ -22,39 +22,39 @@ internal class WorkflowExpressionEngine : IExpressionEngine
         this._engine = engine;
     }
 
-    public EvaluationResult<bool> GetValue(BoolExpression boolean, WorkflowScopes state) => this.GetValue(boolean, state, this.EvaluateScope);
+    public EvaluationResult<bool> GetValue(BoolExpression boolean, WorkflowScopes? state = null) => this.GetValue(boolean, state, this.EvaluateScope);
 
     public EvaluationResult<bool> GetValue(BoolExpression boolean, RecordDataValue state) => this.GetValue(boolean, state, this.EvaluateState);
 
-    public EvaluationResult<string> GetValue(StringExpression expression, WorkflowScopes state) => this.GetValue(expression, state, this.EvaluateScope);
+    public EvaluationResult<string> GetValue(StringExpression expression, WorkflowScopes? state = null) => this.GetValue(expression, state, this.EvaluateScope);
 
     public EvaluationResult<string> GetValue(StringExpression expression, RecordDataValue state) => this.GetValue(expression, state, this.EvaluateState);
 
-    public EvaluationResult<DataValue> GetValue(ValueExpression expression, WorkflowScopes state) => this.GetValue(expression, state, this.EvaluateScope);
+    public EvaluationResult<DataValue> GetValue(ValueExpression expression, WorkflowScopes? state = null) => this.GetValue(expression, state, this.EvaluateScope);
 
     public EvaluationResult<DataValue> GetValue(ValueExpression expression, RecordDataValue state) => this.GetValue(expression, state, this.EvaluateState);
 
-    public EvaluationResult<long> GetValue(IntExpression expression, WorkflowScopes state) => this.GetValue(expression, state, this.EvaluateScope);
+    public EvaluationResult<long> GetValue(IntExpression expression, WorkflowScopes? state = null) => this.GetValue(expression, state, this.EvaluateScope);
 
     public EvaluationResult<long> GetValue(IntExpression expression, RecordDataValue state) => this.GetValue(expression, state, this.EvaluateState);
 
-    public EvaluationResult<double> GetValue(NumberExpression expression, WorkflowScopes state) => this.GetValue(expression, state, this.EvaluateScope);
+    public EvaluationResult<double> GetValue(NumberExpression expression, WorkflowScopes? state = null) => this.GetValue(expression, state, this.EvaluateScope);
 
     public EvaluationResult<double> GetValue(NumberExpression expression, RecordDataValue state) => this.GetValue(expression, state, this.EvaluateState);
 
-    public EvaluationResult<TValue?> GetValue<TValue>(ObjectExpression<TValue> expression, WorkflowScopes state) where TValue : BotElement => this.GetValue(expression, state, this.EvaluateScope);
+    public EvaluationResult<TValue?> GetValue<TValue>(ObjectExpression<TValue> expression, WorkflowScopes? state = null) where TValue : BotElement => this.GetValue(expression, state, this.EvaluateScope);
 
     public EvaluationResult<TValue?> GetValue<TValue>(ObjectExpression<TValue> expression, RecordDataValue state) where TValue : BotElement => this.GetValue(expression, state, this.EvaluateState);
 
-    public ImmutableArray<T> GetValue<T>(ArrayExpression<T> expression, WorkflowScopes state) => this.GetValue(expression, state, this.EvaluateScope).Value;
+    public ImmutableArray<T> GetValue<T>(ArrayExpression<T> expression, WorkflowScopes? state = null) => this.GetValue(expression, state, this.EvaluateScope).Value;
 
     public ImmutableArray<T> GetValue<T>(ArrayExpression<T> expression, RecordDataValue state) => this.GetValue(expression, state, this.EvaluateState).Value;
 
-    public ImmutableArray<T> GetValue<T>(ArrayExpressionOnly<T> expression, WorkflowScopes state) => this.GetValue(expression, state, this.EvaluateScope).Value;
+    public ImmutableArray<T> GetValue<T>(ArrayExpressionOnly<T> expression, WorkflowScopes? state = null) => this.GetValue(expression, state, this.EvaluateScope).Value;
 
     public ImmutableArray<T> GetValue<T>(ArrayExpressionOnly<T> expression, RecordDataValue state) => this.GetValue(expression, state, this.EvaluateState).Value;
 
-    public EvaluationResult<TValue> GetValue<TValue>(EnumExpression<TValue> expression, WorkflowScopes state) where TValue : EnumWrapper =>
+    public EvaluationResult<TValue> GetValue<TValue>(EnumExpression<TValue> expression, WorkflowScopes? state = null) where TValue : EnumWrapper =>
         this.GetValue<TValue, WorkflowScopes>(expression, state, this.EvaluateScope);
 
     public EvaluationResult<TValue> GetValue<TValue>(EnumExpression<TValue> expression, RecordDataValue state) where TValue : EnumWrapper =>
@@ -181,7 +181,7 @@ internal class WorkflowExpressionEngine : IExpressionEngine
         return new EvaluationResult<double>(formulaValue.Value, expressionResult.Sensitivity);
     }
 
-    private EvaluationResult<DataValue> GetValue<TState>(ValueExpression expression, TState state, Func<ExpressionBase, TState, EvaluationResult<FormulaValue>> evaluator)
+    private EvaluationResult<DataValue> GetValue<TState>(ValueExpression expression, TState? state, Func<ExpressionBase, TState?, EvaluationResult<FormulaValue>> evaluator)
     {
         Throw.IfNull(expression, nameof(expression));
 
@@ -195,7 +195,7 @@ internal class WorkflowExpressionEngine : IExpressionEngine
         return new EvaluationResult<DataValue>(expressionResult.Value.ToDataValue(), expressionResult.Sensitivity);
     }
 
-    private EvaluationResult<TValue> GetValue<TValue, TState>(EnumExpression<TValue> expression, TState state, Func<ExpressionBase, TState, EvaluationResult<FormulaValue>> evaluator) where TValue : EnumWrapper
+    private EvaluationResult<TValue> GetValue<TValue, TState>(EnumExpression<TValue> expression, TState? state, Func<ExpressionBase, TState?, EvaluationResult<FormulaValue>> evaluator) where TValue : EnumWrapper
     {
         Throw.IfNull(expression, nameof(expression));
 
@@ -302,25 +302,31 @@ internal class WorkflowExpressionEngine : IExpressionEngine
         }
     }
 
-    private EvaluationResult<FormulaValue> EvaluateState(ExpressionBase expression, RecordDataValue state)
+    private EvaluationResult<FormulaValue> EvaluateState(ExpressionBase expression, RecordDataValue? state)
     {
-        foreach (KeyValuePair<string, DataValue> kvp in state.Properties)
+        if (state is not null)
         {
-            if (kvp.Value is RecordDataValue scopeRecord)
+            foreach (KeyValuePair<string, DataValue> kvp in state.Properties)
             {
-                this._engine.AssignScope(kvp.Key, scopeRecord.ToRecordValue());
+                if (kvp.Value is RecordDataValue scopeRecord)
+                {
+                    Bind(kvp.Key, scopeRecord.ToRecordValue());
+                }
             }
         }
 
         return this.Evaluate(expression);
+
+        void Bind(string scopeName, RecordValue stateRecord)
+        {
+            this._engine.DeleteFormula(scopeName);
+            this._engine.UpdateVariable(scopeName, stateRecord);
+        }
     }
 
-    private EvaluationResult<FormulaValue> EvaluateScope(ExpressionBase expression, WorkflowScopes state)
+    private EvaluationResult<FormulaValue> EvaluateScope(ExpressionBase expression, WorkflowScopes? state = null)
     {
-        this._engine.AssignScope(WorkflowScopeType.System.Name, state.BuildRecord(WorkflowScopeType.System));
-        this._engine.AssignScope(WorkflowScopeType.Env.Name, state.BuildRecord(WorkflowScopeType.Env));
-        this._engine.AssignScope(WorkflowScopeType.Global.Name, state.BuildRecord(WorkflowScopeType.Global));
-        this._engine.AssignScope(WorkflowScopeType.Topic.Name, state.BuildRecord(WorkflowScopeType.Topic));
+        state?.Bind(this._engine);
 
         return this.Evaluate(expression);
     }

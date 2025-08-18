@@ -27,7 +27,6 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
 
     internal async Task<WorkflowEvent[]> Execute(WorkflowActionExecutor executor)
     {
-        WorkflowExecutionContext context = new(RecalcEngineFactory.Create(this.Scopes), this.Scopes);
         TestWorkflowExecutor workflowExecutor = new();
         WorkflowBuilder workflowBuilder = new(workflowExecutor);
         workflowBuilder.AddEdge(workflowExecutor, executor);

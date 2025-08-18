@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Bot.ObjectModel;
+using Microsoft.Bot.ObjectModel.Abstractions;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
@@ -50,21 +51,25 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
         return string.Equals(Steps.Else(this.Model), message.Result as string, StringComparison.Ordinal);
     }
 
-    protected override ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+#pragma warning disable CS1998 // Async method lacks 'await' operators and will run synchronously
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+#pragma warning restore CS1998 // Async method lacks 'await' operators and will run synchronously
     {
         for (int index = 0; index < this.Model.Conditions.Length; ++index)
         {
             ConditionItem conditionItem = this.Model.Conditions[index];
-            bool result = this.Context.Engine.Eval(conditionItem.Condition?.ExpressionText ?? "true").AsBoolean();
-            if (result)
+            if (conditionItem.Condition is null)
             {
-                this.Context.Result = Steps.Item(this.Model, conditionItem);
-                break;
+                continue; // Skip if no condition is defined
+            }
+
+            EvaluationResult<bool> expressionResult = this.State.ExpressionEngine.GetValue(conditionItem.Condition, this.State.Scopes);
+            if (expressionResult.Value)
+            {
+                return Steps.Item(this.Model, conditionItem);
             }
         }
 
-        this.Context.Result ??= Steps.Else(this.Model);
-
-        return default;
+        return Steps.Else(this.Model);
     }
 }

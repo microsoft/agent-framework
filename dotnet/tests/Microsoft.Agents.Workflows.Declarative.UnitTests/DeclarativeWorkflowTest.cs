@@ -196,7 +196,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
             };
 
         WorkflowScopes scopes = new();
-        DeclarativeWorkflowContext workflowContext = DeclarativeWorkflowContext.Default;
+        DeclarativeWorkflowOptions workflowContext = DeclarativeWorkflowOptions.Default;
         WorkflowActionVisitor visitor = new(new RootExecutor(), workflowContext);
         WorkflowElementWalker walker = new(dialogBuilder.Build(), visitor);
         Assert.True(visitor.HasUnsupportedActions);
@@ -230,7 +230,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     private async Task RunWorkflow<TInput>(string workflowPath, TInput workflowInput) where TInput : notnull
     {
         using StreamReader yamlReader = File.OpenText(Path.Combine("Workflows", workflowPath));
-        DeclarativeWorkflowContext workflowContext = new() { LoggerFactory = this.Output };
+        DeclarativeWorkflowOptions workflowContext = new() { LoggerFactory = this.Output };
 
         Workflow<TInput> workflow = DeclarativeWorkflowBuilder.Build<TInput>(yamlReader, workflowContext);
 

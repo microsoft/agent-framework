@@ -13,16 +13,16 @@ namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 internal sealed class WorkflowActionVisitor : DialogActionVisitor
 {
     private readonly WorkflowBuilder _workflowBuilder;
-    private readonly WorkflowModel _workflowModel;
-    private readonly DeclarativeWorkflowContext _workflowContext;
+    private readonly DeclarativeWorkflowModel _workflowModel;
+    private readonly DeclarativeWorkflowOptions _options;
 
     public WorkflowActionVisitor(
         Executor rootAction,
-        DeclarativeWorkflowContext workflowContext)
+        DeclarativeWorkflowOptions workflowContext)
     {
-        this._workflowModel = new WorkflowModel(rootAction);
+        this._workflowModel = new DeclarativeWorkflowModel(rootAction);
         this._workflowBuilder = new WorkflowBuilder(rootAction);
-        this._workflowContext = workflowContext;
+        this._options = workflowContext;
     }
 
     public bool HasUnsupportedActions { get; private set; }
@@ -194,7 +194,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        this.ContinueWith(new AnswerQuestionWithAIExecutor(item, this._workflowContext.CreateClient()));
+        this.ContinueWith(new AnswerQuestionWithAIExecutor(item, this._options.CreateClient()));
     }
 
     protected override void Visit(SetVariable item)
@@ -435,8 +435,8 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         Func<object?, bool>? condition = null,
         Action? completionHandler = null)
     {
-        executor.Logger = this._workflowContext.LoggerFactory.CreateLogger(executor.Id);
-        executor.WorkflowContext = this._workflowContext; // %%% HAXX: Initial state
+        executor.Logger = this._options.LoggerFactory.CreateLogger(executor.Id);
+        executor.Options = this._options;
         this.ContinueWith(executor, executor.ParentId, condition, completionHandler);
     }
 
