@@ -28,6 +28,8 @@ public class FormulaValueExtensionsTests
     public void StringValues()
     {
         StringValue formulaValue = FormulaValue.New("test value");
+        Assert.Equal(StringDataType.Instance, formulaValue.GetDataType());
+
         StringDataValue dataValue = formulaValue.ToDataValue();
         Assert.Equal(formulaValue.Value, dataValue.Value);
 
@@ -41,6 +43,8 @@ public class FormulaValueExtensionsTests
     public void DecimalValues()
     {
         DecimalValue formulaValue = FormulaValue.New(45.3m);
+        Assert.Equal(NumberDataType.Instance, formulaValue.GetDataType());
+
         NumberDataValue dataValue = formulaValue.ToDataValue();
         Assert.Equal(formulaValue.Value, dataValue.Value);
 
@@ -54,6 +58,8 @@ public class FormulaValueExtensionsTests
     public void NumberValues()
     {
         NumberValue formulaValue = FormulaValue.New(3.1415926535897);
+        Assert.Equal(FloatDataType.Instance, formulaValue.GetDataType());
+
         FloatDataValue dataValue = formulaValue.ToDataValue();
         Assert.Equal(formulaValue.Value, dataValue.Value);
 
@@ -67,8 +73,9 @@ public class FormulaValueExtensionsTests
     public void BlankValues()
     {
         BlankValue formulaValue = FormulaValue.NewBlank();
+        Assert.Equal(DataType.Blank, formulaValue.GetDataType());
 
-        BlankDataValue dataCopy = Assert.IsType<BlankDataValue>(formulaValue.GetDataValue());
+        BlankDataValue dataCopy = Assert.IsType<BlankDataValue>(formulaValue.ToDataValue());
 
         Assert.Equal(string.Empty, formulaValue.Format());
     }
@@ -77,7 +84,8 @@ public class FormulaValueExtensionsTests
     public void VoidValues()
     {
         VoidValue formulaValue = FormulaValue.NewVoid();
-        BlankDataValue dataCopy = Assert.IsType<BlankDataValue>(formulaValue.GetDataValue());
+        Assert.Equal(DataType.Unspecified, formulaValue.GetDataType());
+        BlankDataValue dataCopy = Assert.IsType<BlankDataValue>(formulaValue.ToDataValue());
     }
 
     [Fact]
@@ -85,6 +93,8 @@ public class FormulaValueExtensionsTests
     {
         DateTime timestamp = DateTime.UtcNow.Date;
         DateValue formulaValue = FormulaValue.NewDateOnly(timestamp);
+        Assert.Equal(DataType.Date, formulaValue.GetDataType());
+
         DateDataValue dataValue = formulaValue.ToDataValue();
         Assert.Equal(formulaValue.GetConvertedValue(TimeZoneInfo.Utc), dataValue.Value);
 
@@ -99,6 +109,8 @@ public class FormulaValueExtensionsTests
     {
         DateTime timestamp = DateTime.UtcNow;
         DateTimeValue formulaValue = FormulaValue.New(timestamp);
+        Assert.Equal(DataType.DateTime, formulaValue.GetDataType());
+
         DateTimeDataValue dataValue = formulaValue.ToDataValue();
         Assert.Equal(formulaValue.GetConvertedValue(TimeZoneInfo.Utc), dataValue.Value);
 
@@ -112,6 +124,8 @@ public class FormulaValueExtensionsTests
     public void TimeValues()
     {
         TimeValue formulaValue = FormulaValue.New(TimeSpan.Parse("10:35"));
+        Assert.Equal(DataType.Time, formulaValue.GetDataType());
+
         TimeDataValue dataValue = formulaValue.ToDataValue();
         Assert.Equal(formulaValue.Value, dataValue.Value);
 
@@ -128,6 +142,8 @@ public class FormulaValueExtensionsTests
             new NamedValue("FieldA", FormulaValue.New("Value1")),
             new NamedValue("FieldB", FormulaValue.New("Value2")),
             new NamedValue("FieldC", FormulaValue.New("Value3")));
+        Assert.Equal(DataType.EmptyRecord, formulaValue.GetDataType());
+
         RecordDataValue dataValue = formulaValue.ToDataValue();
         Assert.Equal(formulaValue.Fields.Count(), dataValue.Properties.Count);
         foreach (KeyValuePair<string, DataValue> property in dataValue.Properties)
@@ -161,6 +177,7 @@ public class FormulaValueExtensionsTests
             new NamedValue("FieldB", FormulaValue.New("Value2")),
             new NamedValue("FieldC", FormulaValue.New("Value3")));
         TableValue formulaValue = TableValue.NewTable(recordValue.Type, [recordValue]);
+
         TableDataValue dataValue = formulaValue.ToDataValue();
         Assert.Equal(formulaValue.Rows.Count(), dataValue.Values.Length);
 

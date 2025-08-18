@@ -16,7 +16,7 @@ internal static class FormulaValueExtensions
 {
     private static readonly JsonSerializerOptions s_options = new() { WriteIndented = true };
 
-    public static DataValue GetDataValue(this FormulaValue value) =>
+    public static DataValue ToDataValue(this FormulaValue value) =>
         value switch
         {
             BooleanValue booleanValue => booleanValue.ToDataValue(),
@@ -30,9 +30,11 @@ internal static class FormulaValueExtensions
             VoidValue voidValue => voidValue.ToDataValue(),
             TableValue tableValue => tableValue.ToDataValue(),
             RecordValue recordValue => recordValue.ToDataValue(),
-            //GuidValue guidValue => guidValue.ToDataValue(),  // %%% SUPPORT: DataValue ???
-            //BlobValue => // %%% SUPPORT: DataValue ???
-            //ErrorValue => // %%% SUPPORT: DataValue ???
+            // %%% SUPPORT: DataType ???
+            //ColorValue
+            //GuidValue guidValue => guidValue.ToDataValue(),
+            //BlobValue =>
+            //ErrorValue =>
             _ => throw new NotSupportedException($"Unsupported FormulaValue type: {value.GetType().Name}"),
         };
 
@@ -47,11 +49,14 @@ internal static class FormulaValueExtensions
             DateTimeType => DataType.DateTime,
             TimeType => DataType.Time,
             StringType => DataType.String,
-            BlankType => DataType.String,
+            BlankType => DataType.Blank,
             RecordType => DataType.EmptyRecord,
-            //GuidType => DataType.String, // %%% SUPPORT: DataType ???
-            //BlobValue => // %%% SUPPORT: DataType ???
-            //ErrorValue => // %%% SUPPORT: DataType ???
+            // %%% SUPPORT: DataType ???
+            //TableType
+            //ColorValue
+            //GuidType => DataType.String,
+            //BlobValue =>
+            //ErrorValue =>
             UnknownType => DataType.Unspecified,
             _ => DataType.Unspecified,
         };
@@ -65,7 +70,7 @@ internal static class FormulaValueExtensions
             DateValue dateValue => $"{dateValue.GetConvertedValue(TimeZoneInfo.Utc)}",
             DateTimeValue datetimeValue => $"{datetimeValue.GetConvertedValue(TimeZoneInfo.Utc)}",
             TimeValue timeValue => $"{timeValue.Value}",
-            StringValue stringValue => $"{stringValue.Value}",
+            StringValue stringValue => stringValue.Value,
             GuidValue guidValue => $"{guidValue.Value}",
             BlankValue blankValue => string.Empty,
             VoidValue voidValue => string.Empty,
@@ -85,8 +90,8 @@ internal static class FormulaValueExtensions
     public static DataValue ToDataValue(this BlankValue _) => BlankDataValue.Blank();
     public static DataValue ToDataValue(this VoidValue _) => BlankDataValue.Blank();
     public static StringDataValue ToDataValue(this StringValue value) => StringDataValue.Create(value.Value);
-    //public static StringDataValue ToDataValue(this GuidValue value) => StringDataValue.Create(value.Value.ToString("N")); // %%% SUPPORT: DataValue ???
-    //public static StringDataValue ToDataValue(this ColorValue value) => StringDataValue.Create(Enum.GetName(typeof(Color), value.Value)!); // %%% SUPPORT: DataValue ???
+    //public static StringDataValue ToDataValue(this GuidValue value) => StringDataValue.Create(value.Value.ToString("N"));
+    //public static StringDataValue ToDataValue(this ColorValue value) => StringDataValue.Create(Enum.GetName(typeof(Color), value.Value)!);
 
     public static TableDataValue ToDataValue(this TableValue value) =>
         TableDataValue.TableFromRecords(value.Rows.Select(row => row.Value.ToDataValue()).ToImmutableArray());
@@ -94,7 +99,7 @@ internal static class FormulaValueExtensions
     public static RecordDataValue ToDataValue(this RecordValue value) =>
         RecordDataValue.RecordFromFields(value.OriginalFields.Select(field => field.GetKeyValuePair()).ToImmutableArray());
 
-    private static KeyValuePair<string, DataValue> GetKeyValuePair(this NamedValue value) => new(value.Name, value.Value.GetDataValue());
+    private static KeyValuePair<string, DataValue> GetKeyValuePair(this NamedValue value) => new(value.Name, value.Value.ToDataValue());
 
     public static JsonNode ToJson(this FormulaValue value) =>
         value switch

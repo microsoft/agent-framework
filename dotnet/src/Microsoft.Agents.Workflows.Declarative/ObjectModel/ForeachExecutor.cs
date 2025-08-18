@@ -4,15 +4,16 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
+using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.Workflows.Declarative.Execution;
+namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class ForeachExecutor : WorkflowActionExecutor<Foreach>
+internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
 {
     public static class Steps
     {
@@ -56,7 +57,7 @@ internal sealed class ForeachExecutor : WorkflowActionExecutor<Foreach>
 
         this.Reset();
 
-        return new ValueTask();
+        return default;
     }
 
     public void TakeNext()

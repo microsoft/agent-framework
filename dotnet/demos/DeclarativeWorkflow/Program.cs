@@ -3,12 +3,12 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
 using Azure.Identity;
 using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Declarative;
-using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.Diagnostics;
@@ -30,7 +30,7 @@ internal static class Program
         //
         // HOW TO: Create a workflow from a YAML file.
         //
-        using StreamReader yamlReader = File.OpenText("demo250729.yaml");
+        using StreamReader yamlReader = File.OpenText(args.FirstOrDefault() ?? "demo250729.yaml");
         //
         // DeclarativeWorkflowContext provides the components for workflow execution.
         //
@@ -44,7 +44,7 @@ internal static class Program
         //
         // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
         //
-        Workflow<string> workflow = DeclarativeWorkflowBuilder.Build(yamlReader, workflowContext);
+        Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>(yamlReader, workflowContext);
         //
         //////////////////////////////////////////////////////
 
@@ -54,7 +54,8 @@ internal static class Program
 
         //////////////////////////////////////////////
         // Run the workflow, just like any other workflow
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, "<placeholder>");
+        string? messageId = null;
+        StreamingRun run = await InProcessExecution.StreamAsync(workflow, "What is the formula for fibbinocci sequence");
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
             if (evt is ExecutorInvokeEvent executorInvoked)
@@ -67,12 +68,39 @@ internal static class Program
             }
             else if (evt is DeclarativeWorkflowStreamEvent streamEvent)
             {
-                //Console.WriteLine($"#{messageEvent.Data.MessageId}:{Environment.NewLine}{messageEvent.Data}"); // %%% TODO: Streaming
+                if (!string.Equals(messageId, streamEvent.Data.MessageId, StringComparison.Ordinal))
+                {
+                    messageId = streamEvent.Data.MessageId;
+
+                    Console.WriteLine();
+
+                    if (messageId is not null)
+                    {
+                        Console.ForegroundColor = ConsoleColor.White;
+                        Console.WriteLine($"#{messageId}:");
+                    }
+                }
+                try
+                {
+                    Console.ForegroundColor = ConsoleColor.Gray;
+                    Console.Write(streamEvent.Data);
+                    //if (streamEvent.Usage is not null)
+                    //{
+                    //    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    //    Console.WriteLine($"[Tokens Total: {streamEvent.Usage.TotalTokenCount}, Input: {streamEvent.Usage.InputTokenCount}, Output: {streamEvent.Usage.OutputTokenCount}]");
+                    //}
+                }
+                finally
+                {
+                    Console.ResetColor();
+                }
             }
             else if (evt is DeclarativeWorkflowMessageEvent messageEvent)
             {
                 try
                 {
+                    Console.WriteLine(Environment.NewLine);
+
                     if (messageEvent.Data.MessageId is null)
                     {
                         Console.ForegroundColor = ConsoleColor.Yellow;
@@ -80,16 +108,15 @@ internal static class Program
                     }
                     else
                     {
-                        Console.ForegroundColor = ConsoleColor.Gray;
-                        Console.WriteLine($"#{messageEvent.Data.MessageId}:");
                         Console.ForegroundColor = ConsoleColor.White;
+                        Console.WriteLine($"#{messageEvent.Data.MessageId}:");
+                        Console.ForegroundColor = ConsoleColor.DarkGreen;
                         Console.WriteLine(messageEvent.Data);
                         if (messageEvent.Usage is not null)
                         {
                             Console.ForegroundColor = ConsoleColor.DarkGray;
                             Console.WriteLine($"[Tokens Total: {messageEvent.Usage.TotalTokenCount}, Input: {messageEvent.Usage.InputTokenCount}, Output: {messageEvent.Usage.OutputTokenCount}]");
                         }
-                        Console.WriteLine();
                     }
                 }
                 finally

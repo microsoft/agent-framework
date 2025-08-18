@@ -16,8 +16,8 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
 {
     private StepContext _nextStep = new();
     private readonly Dictionary<string, ExecutorProvider<Executor>> _executorProviders;
-    private readonly Dictionary<string, Executor> _executors = new();
-    private readonly Dictionary<string, ExternalRequest> _externalRequests = new();
+    private readonly Dictionary<string, Executor> _executors = [];
+    private readonly Dictionary<string, ExternalRequest> _externalRequests = [];
 
     public InProcessRunnerContext(Workflow workflow, ILogger? logger = null)
     {
@@ -85,12 +85,14 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
 
     public bool CompleteRequest(string requestId) => this._externalRequests.Remove(requestId);
 
-    public readonly List<WorkflowEvent> QueuedEvents = new();
+    public readonly List<WorkflowEvent> QueuedEvents = [];
 
     internal StateManager StateManager { get; } = new();
 
     private class BoundContext(InProcessRunnerContext<TExternalInput> RunnerContext, string ExecutorId) : IWorkflowContext
     {
+        private const string WorkflowId = "__workflow__";
+
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent) => RunnerContext.AddEventAsync(workflowEvent);
         public ValueTask SendMessageAsync(object message) => RunnerContext.SendMessageAsync(ExecutorId, message);
 
@@ -99,5 +101,11 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
 
         public ValueTask<T?> ReadStateAsync<T>(string key, string? scopeName = null)
             => RunnerContext.StateManager.ReadStateAsync<T>(ExecutorId, scopeName, key);
+
+        public ValueTask QueueWorkflowStateUpdateAsync<T>(string key, T? value, string? scopeName = null) // %%% HAXX: WORKFLOW STATE
+            => RunnerContext.StateManager.WriteStateAsync(WorkflowId, scopeName, key, value);
+
+        public ValueTask<T?> ReadWorkflowStateAsync<T>(string key, string? scopeName = null) // %%% HAXX: WORKFLOW STATE
+            => RunnerContext.StateManager.ReadStateAsync<T>(WorkflowId, scopeName, key);
     }
 }

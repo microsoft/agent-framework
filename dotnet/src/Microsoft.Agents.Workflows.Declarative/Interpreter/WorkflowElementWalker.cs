@@ -12,10 +12,9 @@ internal sealed class WorkflowElementWalker : BotElementWalker
     {
         this._visitor = visitor;
         this.Visit(rootElement);
-        this.Workflow = this._visitor.Complete();
     }
 
-    public Workflow<string> Workflow { get; }
+    public Workflow<TInput> GetWorkflow<TInput>() => this._visitor.Complete<TInput>();
 
     public override bool DefaultVisit(BotElement definition)
     {

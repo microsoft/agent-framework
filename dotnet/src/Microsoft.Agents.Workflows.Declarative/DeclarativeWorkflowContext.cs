@@ -1,12 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Net.Http;
-using Azure.AI.Agents.Persistent;
 using Azure.Core;
-using Azure.Core.Pipeline;
 using Azure.Identity;
-using Microsoft.Agents.Workflows.Declarative.Execution;
-using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -48,23 +44,4 @@ public sealed class DeclarativeWorkflowContext
     /// Gets the <see cref="ILoggerFactory"/> used to create loggers for workflow components.
     /// </summary>
     public ILoggerFactory LoggerFactory { get; init; } = NullLoggerFactory.Instance;
-
-    internal WorkflowExecutionContext CreateActionContext(string rootId, WorkflowScopes scopes) =>
-        new(RecalcEngineFactory.Create(scopes, this.MaximumExpressionLength),
-            scopes,
-            this.CreateClient,
-            this.LoggerFactory.CreateLogger(rootId));
-
-    private PersistentAgentsClient CreateClient()
-    {
-        PersistentAgentsAdministrationClientOptions clientOptions = new();
-
-        if (this.HttpClient is not null)
-        {
-            clientOptions.Transport = new HttpClientTransport(this.HttpClient);
-            // %%% CONSIDER: clientOptions.RetryPolicy = new RetryPolicy(maxRetries: 0);
-        }
-
-        return new PersistentAgentsClient(this.ProjectEndpoint, this.ProjectCredentials, clientOptions);
-    }
 }

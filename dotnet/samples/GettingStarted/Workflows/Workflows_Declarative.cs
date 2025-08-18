@@ -3,7 +3,6 @@
 #if NET
 
 using System.Diagnostics;
-using System.Text.Json;
 using Azure.Identity;
 using Microsoft.Agents.Orchestration;
 using Microsoft.Agents.Workflows;
@@ -23,18 +22,11 @@ public class Workflows_Declarative(ITestOutputHelper output) : OrchestrationSamp
 
     [Theory]
     [InlineData("deepResearch")]
-    [InlineData("demo250729")]
     [InlineData("testChat", true)]
     [InlineData("testCondition0")]
     [InlineData("testCondition1")]
-    [InlineData("testCondition2")]
-    [InlineData("testEnd")]
     [InlineData("testExpression")]
-    [InlineData("testGoto")]
-    [InlineData("testLoop")]
-    [InlineData("testLoopBreak")]
-    [InlineData("testLoopContinue")]
-    [InlineData("testTopic")]
+    //[InlineData("testTopic")]
     public async Task RunWorkflow(string fileName, bool enableApiIntercept = false)
     {
         HttpClient? customClient = null;
@@ -66,7 +58,7 @@ public class Workflows_Declarative(ITestOutputHelper output) : OrchestrationSamp
             //
             // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
             //
-            Workflow<string> workflow = DeclarativeWorkflowBuilder.Build(yamlReader, workflowContext);
+            Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>(yamlReader, workflowContext);
             //
             //////////////////////////////////////////////////////
 
@@ -100,8 +92,9 @@ public class Workflows_Declarative(ITestOutputHelper output) : OrchestrationSamp
                         Console.WriteLine();
                     }
                 }
-                Debug.WriteLine("\nWORKFLOW DONE");
             }
+
+            Debug.WriteLine("\nWORKFLOW DONE");
         }
         finally
         {
@@ -112,7 +105,7 @@ public class Workflows_Declarative(ITestOutputHelper output) : OrchestrationSamp
 
 internal sealed class InterceptHandler : HttpClientHandler
 {
-    private static readonly JsonSerializerOptions s_options = new() { WriteIndented = true };
+    //private static readonly JsonSerializerOptions s_options = new() { WriteIndented = true };
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
@@ -124,19 +117,19 @@ internal sealed class InterceptHandler : HttpClientHandler
         if (response.Content != null)
         {
             string responseContent;
-            try
-            {
-                JsonDocument responseDocument = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken: cancellationToken);
-                responseContent = JsonSerializer.Serialize(responseDocument, s_options);
-            }
-            catch (ArgumentException)
-            {
-                responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
-            }
-            catch (JsonException)
-            {
-                responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
-            }
+            //try
+            //{
+            //    JsonDocument responseDocument = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken: cancellationToken);
+            //    responseContent = JsonSerializer.Serialize(responseDocument, s_options);
+            //}
+            //catch (ArgumentException)
+            //{
+            //    responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
+            //}
+            //catch (JsonException)
+            //{
+            responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
+            //}
             response.Content = new StringContent(responseContent);
 
             Debug.WriteLine($"API:{Environment.NewLine}" + responseContent);

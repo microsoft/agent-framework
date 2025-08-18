@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
 using Xunit.Abstractions;
 
 namespace Microsoft.Agents.Workflows.Declarative.UnitTests;
@@ -28,7 +29,7 @@ public sealed class DeclarativeWorkflowEventTest(ITestOutputHelper output) : Wor
     [Fact]
     public void DeclarativeWorkflowStreamEvent()
     {
-        ChatResponseUpdate testUpdate = new(ChatRole.Assistant, "test message");
+        AgentRunResponseUpdate testUpdate = new(ChatRole.Assistant, "test message");
         DeclarativeWorkflowStreamEvent workflowEvent = new(testUpdate);
         Assert.Equal(testUpdate, workflowEvent.Data);
     }

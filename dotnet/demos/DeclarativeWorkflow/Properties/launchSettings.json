@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "Default": {
+      "commandName": "Project"
+    },
+    "MathChat": {
+      "commandName": "Project",
+      "commandLineArgs": "\"C:\\Users\\crickman\\source\\repos\\af3\\workflows\\MathChat.yaml\""
+    }
+  }
+}

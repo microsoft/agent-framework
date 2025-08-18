@@ -28,7 +28,7 @@ internal static class RecordDataTypeExtensions
                         DateDataType => DateValue.New(propertyElement.GetDateTime()),
                         TimeDataType => TimeValue.New(propertyElement.GetDateTimeOffset().TimeOfDay),
                         RecordDataType recordType => recordType.ParseRecord(propertyElement),
-                        //TableDataType tableType => FormulaValue.NewSingleColumnTable(propertyElement.EnumerateArray().Select(item => // %%% SUPPORT: Table )))
+                        //TableDataType tableType => FormulaValue.NewTable(propertyElement.EnumerateArray().Select(item => // %%% SUPPORT: Table )))
                         _ => throw new UnknownDataTypeException($"Unsupported data type '{property.Value.Type}' for property '{property.Key}'")
                     };
                 yield return new NamedValue(property.Key, parsedValue);

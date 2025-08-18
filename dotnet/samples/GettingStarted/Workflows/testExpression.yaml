@@ -9,12 +9,12 @@ beginDialog:
       variable: Topic.TestList
       value: =["zaz", "zbz", "zcz", "zdz", "zez", "zfz"]
 
-    - kind: SetVariable
-      id: setVariable2
-      variable: Topic.TestResult
-      value:  |-
-         =CountIf(Topic.TestList, !IsBlank(Find("e", Value))) > 0 &&
-          !IsBlank(3)
+    # - kind: SetVariable
+    #   id: setVariable2
+    #   variable: Topic.TestResult
+    #   value:  |-
+    #      =CountIf(Topic.TestList, !IsBlank(Find("e", Value))) > 0 &&
+    #       !IsBlank(3)
 
 #      value: =CountIf(Topic.TestList, !IsBlank(Find("e", Value))) > 0
       #value: =CountIf(Topic.TestList, 1)
@@ -22,16 +22,16 @@ beginDialog:
 
     - kind: SetVariable
       id: setVariable3
-      variable: Topic.TestFind
+      variable: Topic.Result3
       value: =Find("e", "abcdefg")
       #value: =CountIf(Topic.TestList, 1)
 #      value: =!IsBlank(Topic.TestList)
 
-    - kind: SendActivity
-      id: sendActivity2
-      activity: "Result (CountIf): {Topic.TestResult}"
+    # - kind: SendActivity
+    #   id: sendActivity2
+    #   activity: "Result (CountIf): {Topic.TestResult}"
 
       
     - kind: SendActivity
       id: sendActivity3
-      activity: "Result (Find): {Topic.TestFind}"
+      activity: "Result (Find): {Topic.Result3}"

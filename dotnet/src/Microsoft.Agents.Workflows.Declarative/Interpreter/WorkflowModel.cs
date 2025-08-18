@@ -12,7 +12,7 @@ namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 /// </summary>
 internal sealed class WorkflowModel
 {
-    public WorkflowModel(ExecutorIsh rootStep)
+    public WorkflowModel(Executor rootStep)
     {
         this.DefineNode(rootStep);
     }
@@ -100,7 +100,7 @@ internal sealed class WorkflowModel
         }
     }
 
-    private ModelNode DefineNode(ExecutorIsh executor, ModelNode? parentNode = null, Type? executorType = null, Action? completionHandler = null)
+    private ModelNode DefineNode(Executor executor, ModelNode? parentNode = null, Type? executorType = null, Action? completionHandler = null)
     {
         ModelNode stepNode = new(executor, parentNode, executorType, completionHandler);
 
@@ -109,7 +109,7 @@ internal sealed class WorkflowModel
         return stepNode;
     }
 
-    internal string? LocateParent<TAction>(string? itemId)
+    internal TAction? LocateParent<TAction>(string? itemId) where TAction : Executor
     {
         if (string.IsNullOrEmpty(itemId))
         {
@@ -125,7 +125,7 @@ internal sealed class WorkflowModel
 
             if (itemNode.ExecutorType == typeof(TAction))
             {
-                return itemNode.Id;
+                return (TAction)itemNode.Executor;
             }
 
             itemId = itemNode.Parent?.Id;
@@ -134,11 +134,11 @@ internal sealed class WorkflowModel
         return null;
     }
 
-    private sealed class ModelNode(ExecutorIsh executor, ModelNode? parent = null, Type? executorType = null, Action? completionHandler = null)
+    private sealed class ModelNode(Executor executor, ModelNode? parent = null, Type? executorType = null, Action? completionHandler = null)
     {
         public string Id => executor.Id;
 
-        public ExecutorIsh Executor => executor;
+        public Executor Executor => executor;
 
         public Type? ExecutorType => executorType;
 

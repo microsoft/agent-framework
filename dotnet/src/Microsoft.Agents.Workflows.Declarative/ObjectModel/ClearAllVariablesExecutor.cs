@@ -2,13 +2,14 @@
 
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 
-namespace Microsoft.Agents.Workflows.Declarative.Execution;
+namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : WorkflowActionExecutor<ClearAllVariables>(model)
+internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : DeclarativeActionExecutor<ClearAllVariables>(model)
 {
     protected override ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
@@ -16,7 +17,7 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : Workf
 
         result.Value.Handle(new ScopeHandler(this.Context));
 
-        return new ValueTask();
+        return default;
     }
 
     private sealed class ScopeHandler(WorkflowExecutionContext context) : IEnumVariablesToClearHandler
@@ -28,7 +29,7 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : Workf
 
         public void HandleConversationHistory()
         {
-            throw new System.NotImplementedException(); // %%% LOG / NO EXCEPTION - Is this to be supported ???
+            throw new System.NotImplementedException(); // %%% DECISION: Is this to be supported ???
         }
 
         public void HandleConversationScopedVariables()
@@ -43,7 +44,7 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : Workf
 
         public void HandleUserScopedVariables()
         {
-            context.Engine.ClearScope(context.Scopes, WorkflowScopeType.Env); // %%% CORRECT ???
+            context.Engine.ClearScope(context.Scopes, WorkflowScopeType.Env); // %%% DECISION: Is this correct?  If not, what?
         }
     }
 }

@@ -1,10 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Diagnostics;
 using System.IO;
-using Microsoft.Agents.Workflows.Declarative.Execution;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
-using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Yaml;
 
@@ -21,24 +18,20 @@ public static class DeclarativeWorkflowBuilder
     /// <param name="yamlReader">The reader that provides the workflow object model YAML.</param>
     /// <param name="context">The execution context for the workflow.</param>
     /// <returns>The <see cref="Workflow"/> that corresponds with the YAML object model.</returns>
-    public static Workflow<string> Build(TextReader yamlReader, DeclarativeWorkflowContext context)
+    public static Workflow<TInput> Build<TInput>(TextReader yamlReader, DeclarativeWorkflowContext context) where TInput : notnull
     {
-        Debug.WriteLine("@ PARSING YAML");
         BotElement rootElement = YamlSerializer.Deserialize<BotElement>(yamlReader) ?? throw new UnknownActionException("Unable to parse workflow.");
-        string rootId = $"root_{GetRootId(rootElement)}";
+        string rootId = WorkflowActionVisitor.RootId(GetWorkflowId(rootElement));
 
-        Debug.WriteLine("@ INITIALIZING BUILDER");
-        WorkflowScopes scopes = new();
-        DeclarativeWorkflowExecutor rootExecutor = new(rootId, scopes);
+        DeclarativeWorkflowExecutor<TInput> rootExecutor = new(rootId);
 
-        Debug.WriteLine("@ INTERPRETING WORKFLOW");
-        WorkflowActionVisitor visitor = new(rootExecutor, context, scopes);
+        WorkflowActionVisitor visitor = new(rootExecutor, context);
         WorkflowElementWalker walker = new(rootElement, visitor);
 
-        return walker.Workflow;
+        return walker.GetWorkflow<TInput>();
     }
 
-    private static string GetRootId(BotElement element) => // %%% CPS - WORKFLOW TYPE
+    private static string GetWorkflowId(BotElement element) => // %%% CPS - WORKFLOW TYPE
         element switch
         {
             AdaptiveDialog adaptiveDialog => adaptiveDialog.BeginDialog?.Id.Value ?? throw new UnknownActionException("Undefined dialog"),
