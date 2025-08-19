@@ -32,12 +32,12 @@ internal sealed class EditTableV2Executor(EditTableV2 model) : DeclarativeAction
             EvaluationResult<DataValue> expressionResult = this.State.ExpressionEngine.GetValue(addItemValue);
             RecordValue newRecord = BuildRecord(tableValue.Type.ToRecord(), expressionResult.Value.ToFormulaValue());
             await tableValue.AppendAsync(newRecord, cancellationToken).ConfigureAwait(false);
-            this.AssignTarget(variablePath, tableValue);
+            this.AssignTarget(variablePath, newRecord);
         }
         else if (changeType is ClearItemsOperation)
         {
             await tableValue.ClearAsync(cancellationToken).ConfigureAwait(false);
-            this.AssignTarget(variablePath, tableValue);
+            this.AssignTarget(variablePath, FormulaValue.NewBlank());
         }
         else if (changeType is RemoveItemOperation removeItemOperation)
         {
@@ -46,11 +46,26 @@ internal sealed class EditTableV2Executor(EditTableV2 model) : DeclarativeAction
             if (expressionResult.Value.ToFormulaValue() is TableValue removeItemTable)
             {
                 await tableValue.RemoveAsync(removeItemTable?.Rows.Select(row => row.Value), all: true, cancellationToken).ConfigureAwait(false);
+                this.AssignTarget(variablePath, FormulaValue.NewBlank());
+            }
+        }
+        else if (changeType is TakeLastItemOperation)
+        {
+            RecordValue? lastRow = tableValue.Rows.LastOrDefault()?.Value;
+            if (lastRow is not null)
+            {
+                await tableValue.RemoveAsync([lastRow], all: true, cancellationToken).ConfigureAwait(false);
+                this.AssignTarget(variablePath, lastRow);
             }
         }
         else if (changeType is TakeFirstItemOperation)
         {
-            this.AssignTarget(variablePath, tableValue.Rows.First().Value); // %%% TABLE OR RECORD ???
+            RecordValue? firstRow = tableValue.Rows.FirstOrDefault()?.Value;
+            if (firstRow is not null)
+            {
+                await tableValue.RemoveAsync([firstRow], all: true, cancellationToken).ConfigureAwait(false);
+                this.AssignTarget(variablePath, firstRow);
+            }
         }
 
         return default;

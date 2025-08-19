@@ -53,6 +53,16 @@ internal static class DataValueExtensions
             recordDataValue.Properties.Select(
                 property => new NamedValue(property.Key, property.Value.ToFormulaValue())));
 
+    public static RecordType ToRecordType(this RecordDataType record)
+    {
+        RecordType recordType = RecordType.Empty();
+        foreach (KeyValuePair<string, PropertyInfo> property in record.Properties)
+        {
+            recordType.Add(property.Key, property.Value.Type.ToFormulaType());
+        }
+        return recordType;
+    }
+
     public static RecordType ParseRecordType(this RecordDataValue record)
     {
         RecordType recordType = RecordType.Empty();

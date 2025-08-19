@@ -225,9 +225,11 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this.ContinueWith(new ResetVariableExecutor(item));
     }
 
-    protected override void Visit(EditTable item) // %%% SUPPORT: EditTable
+    protected override void Visit(EditTable item)
     {
         this.Trace(item);
+
+        this.ContinueWith(new EditTableExecutor(item));
     }
 
     protected override void Visit(EditTableV2 item)

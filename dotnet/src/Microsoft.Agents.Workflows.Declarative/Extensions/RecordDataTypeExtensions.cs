@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
@@ -28,10 +29,19 @@ internal static class RecordDataTypeExtensions
                         DateDataType => DateValue.New(propertyElement.GetDateTime()),
                         TimeDataType => TimeValue.New(propertyElement.GetDateTimeOffset().TimeOfDay),
                         RecordDataType recordType => recordType.ParseRecord(propertyElement),
-                        //TableDataType tableType => FormulaValue.NewTable(propertyElement.EnumerateArray().Select(item => // %%% SUPPORT: Table )))
-                        _ => throw new UnknownDataTypeException($"Unsupported data type '{property.Value.Type}' for property '{property.Key}'")
+                        TableDataType tableType => ParseTable(tableType, propertyElement),
+                        _ => throw new UnknownDataTypeException($"Unsupported data type '{property.Value.Type}' for property '{property.Key}'"),
                     };
                 yield return new NamedValue(property.Key, parsedValue);
+            }
+
+            static TableValue ParseTable(TableDataType tableType, JsonElement propertyElement)
+            {
+                RecordDataType recordType = tableType.ToRecord();
+                return
+                    FormulaValue.NewTable(
+                        recordType.ToRecordType(),
+                        propertyElement.EnumerateArray().Select(tableElement => ParseRecord(recordType, tableElement)));
             }
         }
     }
