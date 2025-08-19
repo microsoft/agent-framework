@@ -93,6 +93,7 @@ internal abstract class WorkflowActionExecutor :
     protected void AssignTarget(PropertyPath targetPath, FormulaValue result)
     {
         this.State.Set(targetPath, result);
+
 #if DEBUG
         string? resultValue = result.Format();
         string valuePosition = (resultValue?.IndexOf('\n') ?? -1) >= 0 ? Environment.NewLine : " ";

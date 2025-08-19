@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
@@ -14,16 +15,16 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : Decla
     {
         EvaluationResult<VariablesToClearWrapper> variablesResult = this.State.ExpressionEngine.GetValue<VariablesToClearWrapper>(this.Model.Variables);
 
-        variablesResult.Value.Handle(new ScopeHandler(this.State));
+        variablesResult.Value.Handle(new ScopeHandler(this.Id, this.State));
 
         return default;
     }
 
-    private sealed class ScopeHandler(DeclarativeWorkflowState state) : IEnumVariablesToClearHandler
+    private sealed class ScopeHandler(string executorId, DeclarativeWorkflowState state) : IEnumVariablesToClearHandler
     {
         public void HandleAllGlobalVariables()
         {
-            state.Clear(VariableScopeNames.Global);
+            this.ClearAll(VariableScopeNames.Global);
         }
 
         public void HandleConversationHistory()
@@ -33,7 +34,7 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : Decla
 
         public void HandleConversationScopedVariables()
         {
-            state.Clear(VariableScopeNames.Topic);
+            this.ClearAll(VariableScopeNames.Topic);
         }
 
         public void HandleUnknownValue()
@@ -43,7 +44,17 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : Decla
 
         public void HandleUserScopedVariables()
         {
-            state.Clear(VariableScopeNames.Environment); // %%% DECISION: Is this correct?  If not, what?
+            this.ClearAll(VariableScopeNames.Environment); // %%% DECISION: Is this correct?  If not, what?
+        }
+
+        private void ClearAll(string scope)
+        {
+            state.Clear(VariableScopeNames.Global);
+            Debug.WriteLine(
+                $"""
+                 !!! CLEAR {this.GetType().Name} [{executorId}]
+                     SCOPE: {VariableScopeNames.Global}
+                 """);
         }
     }
 }

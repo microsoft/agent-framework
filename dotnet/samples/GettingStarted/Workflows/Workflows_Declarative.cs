@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Diagnostics;
 using Azure.Identity;
 using Microsoft.Agents.Orchestration;
 using Microsoft.Agents.Workflows;
@@ -21,42 +20,42 @@ public class Workflows_Declarative(ITestOutputHelper output) : OrchestrationSamp
     //[InlineData("testTopic")]
     public async Task RunWorkflow(string fileName)
     {
-        Debug.WriteLine("WORKFLOW INIT\n");
+        Console.WriteLine("WORKFLOW INIT\n");
 
-            //////////////////////////////////////////////////////
-            //
-            // HOW TO: Create a workflow from a YAML file.
-            //
-            using StreamReader yamlReader = File.OpenText(@$"{nameof(Workflows)}\{fileName}.yaml");
-            //
-            // DeclarativeWorkflowContext provides the components for workflow execution.
-            //
-            DeclarativeWorkflowOptions workflowContext =
-                new()
-                {
-                    LoggerFactory = this.LoggerFactory,
-                    ProjectEndpoint = Throw.IfNull(TestConfiguration.AzureAI.Endpoint),
-                    ProjectCredentials = new AzureCliCredential(),
-                };
-            //
-            // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
-            //
-            Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>(yamlReader, workflowContext);
-            //
-            //////////////////////////////////////////////////////
+        //////////////////////////////////////////////////////
+        //
+        // HOW TO: Create a workflow from a YAML file.
+        //
+        using StreamReader yamlReader = File.OpenText(@$"{nameof(Workflows)}\{fileName}.yaml");
+        //
+        // DeclarativeWorkflowContext provides the components for workflow execution.
+        //
+        DeclarativeWorkflowOptions workflowContext =
+            new()
+            {
+                LoggerFactory = this.LoggerFactory,
+                ProjectEndpoint = Throw.IfNull(TestConfiguration.AzureAI.Endpoint),
+                ProjectCredentials = new AzureCliCredential(),
+            };
+        //
+        // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
+        //
+        Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>(yamlReader, workflowContext);
+        //
+        //////////////////////////////////////////////////////
 
-        Debug.WriteLine("\nWORKFLOW INVOKE\n");
+        Console.WriteLine("\nWORKFLOW INVOKE\n");
 
         StreamingRun run = await InProcessExecution.StreamAsync(workflow, "<placeholder>");
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
             if (evt is ExecutorInvokeEvent executorInvoked)
             {
-                Debug.WriteLine($"!!! ENTER #{executorInvoked.ExecutorId}");
+                Console.WriteLine($"!!! ENTER #{executorInvoked.ExecutorId}");
             }
             else if (evt is ExecutorCompleteEvent executorComplete)
             {
-                Debug.WriteLine($"!!! EXIT #{executorComplete.ExecutorId}");
+                Console.WriteLine($"!!! EXIT #{executorComplete.ExecutorId}");
             }
             else if (evt is DeclarativeWorkflowMessageEvent messageEvent)
             {
@@ -77,6 +76,6 @@ public class Workflows_Declarative(ITestOutputHelper output) : OrchestrationSamp
             }
         }
 
-        Debug.WriteLine("\nWORKFLOW DONE");
+        Console.WriteLine("\nWORKFLOW DONE");
     }
 }

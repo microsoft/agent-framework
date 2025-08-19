@@ -3,7 +3,6 @@
 #if NET
 
 using System;
-using System.Diagnostics;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -22,15 +21,12 @@ internal sealed class HttpInterceptHandler : HttpClientHandler
         HttpResponseMessage response = await base.SendAsync(request, cancellationToken);
 
         // Intercept and modify the response
-        Debug.WriteLine($"{request.Method} {request.RequestUri}");
         string? responseContent = null;
         if (response.Content != null)
         {
             responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
 
             response.Content = new StringContent(responseContent);
-
-            Debug.WriteLine($"API:{Environment.NewLine}" + responseContent);
         }
 
         if (this.OnIntercept is not null)
