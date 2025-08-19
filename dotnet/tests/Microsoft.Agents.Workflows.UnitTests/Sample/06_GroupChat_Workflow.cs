@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -37,11 +38,13 @@ internal static class Step6EntryPoint
             {
                 Debug.WriteLine($"{executorComplete.ExecutorId}: {executorComplete.Data}");
             }
-            else if (evt is AgentRunEvent agentRun && agentRun.Data is AgentRunResponse response)
+            else if (evt is AgentRunUpdateEvent update)
             {
+                AgentRunResponse response = update.AsResponse();
+
                 foreach (ChatMessage message in response.Messages)
                 {
-                    writer.WriteLine($"{agentRun.ExecutorId}: {message.Text}");
+                    writer.WriteLine($"{update.ExecutorId}: {message.Text}");
                 }
             }
         }
@@ -76,16 +79,21 @@ internal sealed class HelloAgent(string id = nameof(HelloAgent)) : AIAgent
 
     public override string Id => id;
 
-    public override Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public override async Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        AgentRunResponse response = new(new ChatMessage(ChatRole.Assistant, "Hello World!"));
+        IEnumerable<AgentRunResponseUpdate> update = [
+            await this.RunStreamingAsync(messages, thread, options, cancellationToken)
+                      .SingleAsync(cancellationToken)
+                      .ConfigureAwait(false)];
 
-        return Task.FromResult(response);
+        return update.ToAgentRunResponse();
     }
 
-    public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        throw new NotImplementedException();
+        AgentRunResponseUpdate response = new(ChatRole.Assistant, "Hello World!");
+
+        yield return response;
     }
 }
 
@@ -96,7 +104,17 @@ internal sealed class EchoAgent(string id = nameof(EchoAgent)) : AIAgent
 
     public override string Id => id;
 
-    public override Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public override async Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        IEnumerable<AgentRunResponseUpdate> update = [
+            await this.RunStreamingAsync(messages, thread, options, cancellationToken)
+                      .SingleAsync(cancellationToken)
+                      .ConfigureAwait(false)];
+
+        return update.ToAgentRunResponse();
+    }
+
+    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         if (messages.Count == 0)
         {
@@ -110,13 +128,8 @@ internal sealed class EchoAgent(string id = nameof(EchoAgent)) : AIAgent
             collectedText.AppendLine(messageText);
         }
 
-        AgentRunResponse result = new(new ChatMessage(ChatRole.Assistant, collectedText.ToString()));
-        return Task.FromResult(result);
-    }
-
-    public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
-    {
-        throw new NotImplementedException();
+        AgentRunResponseUpdate result = new(ChatRole.Assistant, collectedText.ToString());
+        yield return result;
     }
 }
 
@@ -265,7 +278,7 @@ internal sealed class GroupChatBuilder
             if (this.TryEnterConversation())
             {
                 // Capture the initial turn token's EmitEvents setting
-                this._shouldHostEmitEvents = token.EmitEvents;
+                this._shouldHostEmitEvents = token.EmitEvents.HasValue ? token.EmitEvents.Value : false;
             }
 
             int? nextSpeakerIndex = this._manager.GetNextTurnExecutor(this._history);
