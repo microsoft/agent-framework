@@ -103,17 +103,6 @@ public class StateSmokeTest
         Assert.Equal(Value2, await manager.ReadStateAsync<string>(sharedScope2, Key));
 
         // Try to publish the updates
-        try
-        {
-            await manager.PublishUpdatesAsync();
-            Assert.Fail("Expected InvalidOperationException due to conflicting writes.");
-        }
-        catch (InvalidOperationException)
-        {
-        }
-        catch (Exception ex)
-        {
-            Assert.Fail($"Expected InvalidOperationException, but got {ex.GetType().Name}.");
-        }
+        await Assert.ThrowsAsync<InvalidOperationException>(() => manager.PublishUpdatesAsync().AsTask());
     }
 }
