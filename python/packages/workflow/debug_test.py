@@ -63,8 +63,8 @@ class EmailValidator(Executor):
         # Request domain check from external source
         print(f"DEBUG: EmailValidator requesting domain check for: {domain}")
         domain_check = DomainCheckRequest(domain=domain)
-        print(f"DEBUG: Sending domain check to {RequestInfoExecutor.EXECUTOR_ID}")
-        await ctx.send_message(domain_check, target_id=RequestInfoExecutor.EXECUTOR_ID)
+        print(f"DEBUG: Sending domain check to sub_request_info")
+        await ctx.send_message(domain_check, target_id="sub_request_info")
     
     @handler(output_types=[ValidationResult])
     async def handle_domain_response(self, approved: bool, ctx: WorkflowContext) -> None:
@@ -101,20 +101,20 @@ async def test_basic_sub_workflow_debug():
     """Test basic sub-workflow execution with debug output."""
     # Create sub-workflow
     email_validator = EmailValidator()
-    request_info = RequestInfoExecutor()
+    sub_request_info = RequestInfoExecutor(id="sub_request_info")
     
     validation_workflow = (
         WorkflowBuilder()
         .set_start_executor(email_validator)
-        .add_edge(email_validator, request_info)
-        .add_edge(request_info, email_validator)
+        .add_edge(email_validator, sub_request_info)
+        .add_edge(sub_request_info, email_validator)
         .build()
     )
     
     # Create parent workflow
     parent = SimpleParent()
     workflow_executor = WorkflowExecutor(validation_workflow, id="email_workflow")
-    main_request_info = RequestInfoExecutor()
+    main_request_info = RequestInfoExecutor(id="main_request_info")
     
     main_workflow = (
         WorkflowBuilder()

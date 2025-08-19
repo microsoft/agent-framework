@@ -185,8 +185,8 @@ class Workflow:
             raise RuntimeError(f"Failed to restore from checkpoint: {checkpoint_id}")
 
         if responses:
-            request_info_executor = self._get_executor_by_id(RequestInfoExecutor.EXECUTOR_ID)
-            if isinstance(request_info_executor, RequestInfoExecutor):
+            request_info_executor = self._find_request_info_executor()
+            if request_info_executor:
                 for request_id, response_data in responses.items():
                     await request_info_executor.handle_response(
                         response_data,
@@ -212,9 +212,9 @@ class Workflow:
         Yields:
             WorkflowEvent: The events generated during the workflow execution after sending the responses.
         """
-        request_info_executor = self._get_executor_by_id(RequestInfoExecutor.EXECUTOR_ID)
-        if not isinstance(request_info_executor, RequestInfoExecutor):
-            raise ValueError(f"Executor with ID {RequestInfoExecutor.EXECUTOR_ID} is not a RequestInfoExecutor.")
+        request_info_executor = self._find_request_info_executor()
+        if not request_info_executor:
+            raise ValueError("No RequestInfoExecutor found in workflow.")
 
         async def _handle_response(response: Any, request_id: str) -> None:
             """Handle the response from the RequestInfoExecutor."""
@@ -297,6 +297,18 @@ class Workflow:
         if executor_id not in self._executors:
             raise ValueError(f"Executor with ID {executor_id} not found.")
         return self._executors[executor_id]
+
+    def _find_request_info_executor(self) -> "RequestInfoExecutor | None":
+        """Find the RequestInfoExecutor instance in this workflow.
+        
+        Returns:
+            The RequestInfoExecutor instance if found, None otherwise.
+        """
+        from ._executor import RequestInfoExecutor
+        for executor in self._executors.values():
+            if isinstance(executor, RequestInfoExecutor):
+                return executor
+        return None
 
     async def _restore_from_external_checkpoint(
         self, checkpoint_id: str, checkpoint_storage: CheckpointStorage

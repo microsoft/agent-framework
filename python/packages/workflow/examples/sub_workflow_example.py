@@ -76,7 +76,7 @@ class EmailValidator(Executor):
         # Request domain check
         print(f"Checking domain: {domain}")
         domain_check = DomainCheckRequest(domain=domain)
-        await ctx.send_message(domain_check, target_id=RequestInfoExecutor.EXECUTOR_ID)
+        await ctx.send_message(domain_check, target_id="email_request_info")
     
     @handler(output_types=[ValidationResult])
     async def handle_domain_response(self, approved: bool, ctx: WorkflowContext) -> None:

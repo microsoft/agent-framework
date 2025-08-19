@@ -172,13 +172,13 @@ async def main():
 
     # Step 1: Create the email validation sub-workflow
     email_validator = EmailValidator()
-    request_info = RequestInfoExecutor()
+    email_request_info = RequestInfoExecutor(id="email_request_info")
 
     validation_workflow = (
         WorkflowBuilder()
         .set_start_executor(email_validator)
-        .add_edge(email_validator, request_info)
-        .add_edge(request_info, email_validator)
+        .add_edge(email_validator, email_request_info)
+        .add_edge(email_request_info, email_validator)
         .build()
     )
 
@@ -187,14 +187,15 @@ async def main():
     # Step 2: Create the parent workflow with interception
     orchestrator = SmartEmailOrchestrator()
     workflow_executor = WorkflowExecutor(validation_workflow, id="email_validator_workflow")
+    main_request_info = RequestInfoExecutor(id="main_request_info")
 
     main_workflow = (
         WorkflowBuilder()
         .set_start_executor(orchestrator)
         .add_edge(orchestrator, workflow_executor)
         .add_edge(workflow_executor, orchestrator)
-        .add_edge(orchestrator, request_info)
-        .add_edge(request_info, workflow_executor)
+        .add_edge(orchestrator, main_request_info)
+        .add_edge(main_request_info, workflow_executor)
         .build()
     )
 

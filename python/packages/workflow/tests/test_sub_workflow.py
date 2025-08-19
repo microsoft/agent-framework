@@ -70,7 +70,7 @@ class EmailValidator(Executor):
         
         # Request domain check from external source
         domain_check = DomainCheckRequest(domain=domain)
-        await ctx.send_message(domain_check, target_id=RequestInfoExecutor.EXECUTOR_ID)
+        await ctx.send_message(domain_check, target_id="email_request_info")
     
     @handler(output_types=[ValidationResult])
     async def handle_domain_response(self, approved: bool, ctx: WorkflowContext) -> None:
@@ -125,13 +125,13 @@ async def test_basic_sub_workflow():
     """Test basic sub-workflow execution without interception."""
     # Create sub-workflow
     email_validator = EmailValidator()
-    request_info = RequestInfoExecutor()
+    email_request_info = RequestInfoExecutor(id="email_request_info")
     
     validation_workflow = (
         WorkflowBuilder()
         .set_start_executor(email_validator)
-        .add_edge(email_validator, request_info)
-        .add_edge(request_info, email_validator)
+        .add_edge(email_validator, email_request_info)
+        .add_edge(email_request_info, email_validator)
         .build()
     )
     
@@ -152,7 +152,7 @@ async def test_basic_sub_workflow():
     
     parent = SimpleParent()
     workflow_executor = WorkflowExecutor(validation_workflow, id="email_workflow")
-    main_request_info = RequestInfoExecutor()
+    main_request_info = RequestInfoExecutor(id="main_request_info")
     
     main_workflow = (
         WorkflowBuilder()
@@ -174,13 +174,10 @@ async def test_basic_sub_workflow():
     assert isinstance(request_events[0].data.data, DomainCheckRequest)
     assert request_events[0].data.data.domain == "example.com"
     
-    # Send response directly to the WorkflowExecutor
-    sub_response = SubWorkflowResponse(
-        request_id=request_events[0].request_id,
-        data=True  # Domain is approved
-    )
-    dummy_ctx = WorkflowContext("dummy", ["dummy"], {}, {})
-    await workflow_executor.handle_response(sub_response, dummy_ctx)
+    # Send response through the main workflow
+    await main_workflow.send_responses({
+        request_events[0].request_id: True  # Domain is approved
+    })
     
     # Check result
     assert parent.result is not None
@@ -193,13 +190,13 @@ async def test_sub_workflow_with_interception():
     """Test sub-workflow with parent interception of requests."""
     # Create sub-workflow
     email_validator = EmailValidator()
-    request_info = RequestInfoExecutor()
+    email_request_info = RequestInfoExecutor(id="email_request_info")
     
     validation_workflow = (
         WorkflowBuilder()
         .set_start_executor(email_validator)
-        .add_edge(email_validator, request_info)
-        .add_edge(request_info, email_validator)
+        .add_edge(email_validator, email_request_info)
+        .add_edge(email_request_info, email_validator)
         .build()
     )
     

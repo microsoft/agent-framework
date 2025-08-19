@@ -175,12 +175,13 @@ class Executor:
                         if response.forward_request:
                             request.data = response.forward_request
 
-                        # Send to RequestInfoExecutor directly to create external request
-                        from . import RequestInfoExecutor
+                        # Send the inner request to RequestInfoExecutor to create external request
+                        # This will forward the original request (e.g., DomainCheckRequest) to RequestInfoExecutor
                         from ._runner_context import Message
-
                         forward_message = Message(
-                            source_id=self.id, target_id=RequestInfoExecutor.EXECUTOR_ID, data=request
+                            source_id=self.id, 
+                            target_id=None,  # Let workflow route via edges
+                            data=request.data
                         )
                         await ctx.send_message(forward_message)
                 else:
@@ -194,12 +195,14 @@ class Executor:
                     )
                 return
 
-        # No interceptor found - forward entire request to RequestInfoExecutor
-        # (preserves routing context)
-        from . import RequestInfoExecutor
+        # No interceptor found - forward inner request to RequestInfoExecutor
+        # This sends the original request (e.g., DomainCheckRequest) to RequestInfoExecutor
         from ._runner_context import Message
-
-        forward_message = Message(source_id=self.id, target_id=RequestInfoExecutor.EXECUTOR_ID, data=request)
+        forward_message = Message(
+            source_id=self.id, 
+            target_id=None,  # Let workflow route via edges 
+            data=request.data
+        )
         await ctx.send_message(forward_message)
 
     def can_handle(self, message: Any) -> bool:
@@ -532,12 +535,16 @@ class RequestInfoExecutor(Executor):
     a response is provided externally, it emits the response as a message.
     """
 
-    # Well-known ID for the request info executor
-    EXECUTOR_ID: ClassVar[str] = "request_info"
-
-    def __init__(self):
-        """Initialize the RequestInfoExecutor with its well-known ID."""
-        super().__init__(id=self.EXECUTOR_ID)
+    def __init__(self, id: str | None = None):
+        """Initialize the RequestInfoExecutor with an optional custom ID.
+        
+        Args:
+            id: Optional custom ID for this RequestInfoExecutor. If not provided,
+                a unique ID will be generated.
+        """
+        import uuid
+        executor_id = id or f"request_info_{uuid.uuid4().hex[:8]}"
+        super().__init__(id=executor_id)
         self._request_events: dict[str, RequestInfoEvent] = {}
         self._sub_workflow_contexts: dict[str, dict[str, str]] = {}
 
@@ -566,7 +573,6 @@ class RequestInfoExecutor(Executor):
         This method handles requests that were forwarded from parent workflows
         because they couldn't be handled locally.
         """
-        print(f"DEBUG: RequestInfoExecutor received SubWorkflowRequestInfo: {message.request_id}")
         # When called directly from runner, we need to use the sub_workflow_id as the source
         source_executor_id = message.sub_workflow_id
 
@@ -583,7 +589,6 @@ class RequestInfoExecutor(Executor):
             request_type=type(message),  # SubWorkflowRequestInfo type
             request_data=message,  # The full SubWorkflowRequestInfo
         )
-        print(f"DEBUG: RequestInfoExecutor creating RequestInfoEvent: {event.request_id}")
         self._request_events[message.request_id] = event
         await ctx.add_event(event)
 
@@ -600,7 +605,6 @@ class RequestInfoExecutor(Executor):
             response_data: The data returned in the response.
             ctx: The workflow context for sending the response.
         """
-        print(f"DEBUG: RequestInfoExecutor.handle_response called for request {request_id}")
         if request_id not in self._request_events:
             raise ValueError(f"No request found with ID: {request_id}")
 
@@ -611,10 +615,6 @@ class RequestInfoExecutor(Executor):
             context = self._sub_workflow_contexts.pop(request_id)
 
             # Send back to sub-workflow that made the original request
-            print(
-                f"DEBUG: RequestInfoExecutor sending response to sub-workflow {context['sub_workflow_id']} for request {request_id}"
-            )
-            # Don't wrap in Message - ctx.send_message will do that
             await ctx.send_message(
                 SubWorkflowResponse(
                     request_id=request_id,
@@ -682,14 +682,12 @@ class WorkflowExecutor(Executor):
 
                 elif isinstance(event, RequestInfoEvent):
                     # Sub-workflow needs external information
-                    print(f"DEBUG: WorkflowExecutor {self.id} got RequestInfoEvent: {event.request_id} for {type(event.data).__name__}")
                     # Wrap request with routing context and send to parent
                     wrapped_request = SubWorkflowRequestInfo(
                         request_id=event.request_id,
                         sub_workflow_id=self.id,
                         data=event.data,
                     )
-                    print(f"DEBUG: WorkflowExecutor {self.id} sending SubWorkflowRequestInfo to parent")
 
                     await ctx.send_message(wrapped_request)
                     # Exit and wait for response - sub-workflow is paused
@@ -719,27 +717,21 @@ class WorkflowExecutor(Executor):
             response: The response to a previous request.
             ctx: The workflow context.
         """
-        print(f"DEBUG: WorkflowExecutor {self.id} received response for request {response.request_id}: {response.data}")
         
         from ._events import RequestInfoEvent, WorkflowCompletedEvent
 
         try:
             # Send the response to the sub-workflow and continue execution
-            print(f"DEBUG: WorkflowExecutor {self.id} calling send_responses for request {response.request_id}")
             await self._workflow.send_responses({response.request_id: response.data})
-            print(f"DEBUG: WorkflowExecutor {self.id} sent response to sub-workflow")
             
             # Continue running the sub-workflow until completion  
-            print(f"DEBUG: WorkflowExecutor {self.id} calling workflow.run(None) to continue execution")
             result = await self._workflow.run(None)
-            print(f"DEBUG: WorkflowExecutor {self.id} sub-workflow completed with result: {result}")
             
             # Send result to parent (but only if we have a real context with send_message)
             if hasattr(ctx, 'send_message') and callable(ctx.send_message):
                 await ctx.send_message(result)
             
         except Exception as e:
-            print(f"DEBUG: WorkflowExecutor {self.id} error in handle_response: {e}")
             raise
 
 
