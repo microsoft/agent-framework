@@ -19,7 +19,7 @@ from ._events import (
 from ._typing_utils import is_instance_of
 from ._workflow_context import WorkflowContext
 
-# region: Executor
+# region Executor
 
 
 class Executor:
@@ -31,7 +31,7 @@ class Executor:
         Args:
             id: A unique identifier for the executor. If None, a new UUID will be generated.
         """
-        self._id = id or str(uuid.uuid4())
+        self._id = id or f"{self.__class__.__name__}/{uuid.uuid4()}"
 
         self._handlers: dict[type, Callable[[Any, WorkflowContext], Any]] = {}
         self._discover_handlers()
@@ -96,7 +96,7 @@ class Executor:
 
 # endregion: Executor
 
-# region: Handler Decorator
+# region Handler Decorator
 
 
 ExecutorT = TypeVar("ExecutorT", bound="Executor")
@@ -183,7 +183,7 @@ def handler(
 
 # endregion: Handler Decorator
 
-# region: Agent Executor
+# region Agent Executor
 
 
 @dataclass
@@ -268,7 +268,7 @@ class AgentExecutor(Executor):
 # endregion: Agent Executor
 
 
-# region: Request Info Executor
+# region Request Info Executor
 
 
 @dataclass
@@ -294,7 +294,7 @@ class RequestInfoExecutor(Executor):
     # Well-known ID for the request info executor
     EXECUTOR_ID: ClassVar[str] = "request_info"
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the RequestInfoExecutor with its well-known ID."""
         super().__init__(id=self.EXECUTOR_ID)
         self._request_events: dict[str, RequestInfoEvent] = {}
