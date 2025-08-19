@@ -24,6 +24,8 @@ to a final count per word.
 
 Intermediate results are stored in a temporary directory, and the
 final results are written to a file in the same directory.
+
+This sample also shows how you can visualize a workflow using `WorkflowViz`.
 """
 
 # Define the temporary directory for storing intermediate results

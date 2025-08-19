@@ -7,7 +7,6 @@ from agent_framework.workflow import (
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
-    WorkflowViz,
     handler,
 )
 
@@ -55,24 +54,6 @@ async def main():
         .set_start_executor(upper_case_executor)
         .build()
     )
-
-    # Step 2.5: Visualize the workflow (optional)
-    print("🎨 Generating workflow visualization...")
-    viz = WorkflowViz(workflow)
-    # Print out the mermaid string.
-    print("🧜 Mermaid string: \n=======")
-    print(viz.to_mermaid())
-    print("=======")
-    # Print out the DiGraph string.
-    print("📊 DiGraph string: \n=======")
-    print(viz.to_digraph())
-    print("=======")
-    try:
-        # Export the DiGraph visualization as SVG.
-        svg_file = viz.export(format="svg")
-        print(f"🖼️  SVG file saved to: {svg_file}")
-    except ImportError:
-        print("💡 Tip: Install 'viz' extra to export workflow visualization: pip install agent-framework-workflow[viz]")
 
     # Step 3: Run the workflow with an initial message.
     completion_event = None
