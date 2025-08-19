@@ -100,7 +100,7 @@ public class CosmosTestFixture : IAsyncLifetime
         }
         catch (Exception ex)
         {
-            throw new ArgumentException("Initialization error. Cosmos ConnectionString: " + cs, ex);
+            throw new ArgumentException($"Initialization error. Cosmos ConnectionString: {cs}; ENV: useEmulator={CosmosDBTestConstants.UseEmulatorForTesting};CICD={CosmosDBTestConstants.RunningCosmosDbTestsInCICD}", ex);
         }
     }
 
