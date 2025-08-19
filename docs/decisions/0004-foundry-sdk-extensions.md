@@ -18,7 +18,7 @@ The purpose of this ADR is to decide where these extension methods should live.
 ## Decision Drivers
 
 - Provide the optimum experience for developers.
-- Avoid adding additional dependencies to the `Azure.AI.Agents.Persistent` package (not and in the future)
+- Avoid adding additional dependencies to the `Azure.AI.Agents.Persistent` package (and not in the future)
 
 ## Considered Options
 
@@ -33,7 +33,7 @@ The purpose of this ADR is to decide where these extension methods should live.
 
 - Good because, extension methods are in the `Azure.AI.Agents.Persistent` package and can be easily kept up-to-date
 - Good because, developers don't need to explicitly depend on a new package to get Agent Framework functionality
-- Bad because, it inntroduces additional dependencies which would possibly grow overtime
+- Bad because, it introduces additional dependencies which would possibly grow overtime
 
 
 ### - Add the extension methods to the `Azure.AI.Agents.Persistent` package without changing it's dependencies
@@ -43,8 +43,8 @@ The purpose of this ADR is to decide where these extension methods should live.
 
 - Good because, extension methods are in the `Azure.AI.Agents.Persistent` package and can be easily kept up-to-date
 - Good because, developers don't need to explicitly depend on a new package to get Agent Framework functionality
-- Good becaused, it introduces minimal additional dependencies
-- Bad becase, it add's additional dependencies to `Microsoft.Extensions.AI.Abstractions`
+- Good because, it introduces minimal additional dependencies
+- Bad because, it adds additional dependencies to `Microsoft.Extensions.AI.Abstractions` and these additional dependencies add up as transitive to `Azure`.AI.Agents.Persistent`
 
 
 ### Add the extension methods to a `Microsoft.Extensions.AI.Azure` package
@@ -52,9 +52,8 @@ The purpose of this ADR is to decide where these extension methods should live.
 - Introduce a new package called `Microsoft.Extensions.AI.Azure` where the extension methods would live
 - `Azure.AI.Agents.Persistent` does not change
 
-- Good becaused, it introduces no additional dependencies to `Azure.AI.Agents.Persistent` package
+- Good because, it introduces no additional dependencies to `Azure.AI.Agents.Persistent` package
 - Bad because, extension methods are not in the `Azure.AI.Agents.Persistent` package and cannot be easily kept up-to-date
-- Bad becase, it add's additional dependencies to `Microsoft.Extensions.AI.Abstractions`
 - Bad because, developers need to explicitly depend on a new package to get Agent Framework functionality
 
 ## Decision Outcome
