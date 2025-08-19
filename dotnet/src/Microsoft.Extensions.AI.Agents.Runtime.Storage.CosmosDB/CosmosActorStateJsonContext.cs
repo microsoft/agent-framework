@@ -16,4 +16,6 @@ namespace Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB;
 [JsonSerializable(typeof(ActorStateDocument))]
 [JsonSerializable(typeof(ActorRootDocument))]
 [JsonSerializable(typeof(KeyProjection))]
-internal sealed partial class CosmosActorStateJsonContext : JsonSerializerContext;
+[JsonSerializable(typeof(KeyProjection[]))]
+[JsonSerializable(typeof(JsonElement))]
+public sealed partial class CosmosActorStateJsonContext : JsonSerializerContext;
