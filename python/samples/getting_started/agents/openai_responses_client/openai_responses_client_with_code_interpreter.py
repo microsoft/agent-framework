@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatClientAgent, HostedCodeInterpreterTool
+from agent_framework import ChatClientAgent, ChatResponse, HostedCodeInterpreterTool
 from agent_framework.openai import OpenAIResponsesClient
 from openai.types.responses.response import Response as OpenAIResponse
 from openai.types.responses.response_code_interpreter_tool_call import ResponseCodeInterpreterToolCall
@@ -18,17 +18,18 @@ async def main() -> None:
         tools=HostedCodeInterpreterTool(),
     )
 
-    query = "What is current datetime?"
+    query = "Use code to get the factorial of 100?"
     print(f"User: {query}")
     result = await agent.run(query)
     print(f"Result: {result}\n")
 
     if (
-        isinstance(result.raw_representation, OpenAIResponse)
-        and len(result.raw_representation.output) > 0
-        and isinstance(result.raw_representation.output[0], ResponseCodeInterpreterToolCall)
+        isinstance(result.raw_representation, ChatResponse)
+        and isinstance(result.raw_representation.raw_representation, OpenAIResponse)
+        and len(result.raw_representation.raw_representation.output) > 0
+        and isinstance(result.raw_representation.raw_representation.output[0], ResponseCodeInterpreterToolCall)
     ):
-        generated_code = result.raw_representation.output[0].code
+        generated_code = result.raw_representation.raw_representation.output[0].code
 
         print(f"Generated code:\n{generated_code}")
 

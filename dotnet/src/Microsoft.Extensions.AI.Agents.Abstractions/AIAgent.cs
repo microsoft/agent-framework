@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Shared.Diagnostics;
@@ -37,6 +38,36 @@ public abstract class AIAgent
     /// </summary>
     public virtual string? Description { get; }
 
+    /// <summary>Asks the <see cref="AIAgent"/> for an object of the specified type <paramref name="serviceType"/>.</summary>
+    /// <param name="serviceType">The type of object being requested.</param>
+    /// <param name="serviceKey">An optional key that can be used to help identify the target service.</param>
+    /// <returns>The found object, otherwise <see langword="null"/>.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="serviceType"/> is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// The purpose of this method is to allow for the retrieval of strongly-typed services that might be provided by the <see cref="AIAgent"/>,
+    /// including itself or any services it might be wrapping. For example, to access the <see cref="AIAgentMetadata"/> for the instance,
+    /// <see cref="GetService"/> may be used to request it.
+    /// </remarks>
+    public virtual object? GetService(Type serviceType, object? serviceKey = null)
+    {
+        _ = Throw.IfNull(serviceType);
+
+        return serviceKey is null && serviceType.IsInstanceOfType(this)
+            ? this
+            : null;
+    }
+
+    /// <summary>Asks the <see cref="AIAgent"/> for an object of type <typeparamref name="TService"/>.</summary>
+    /// <typeparam name="TService">The type of the object to be retrieved.</typeparam>
+    /// <param name="serviceKey">An optional key that can be used to help identify the target service.</param>
+    /// <returns>The found object, otherwise <see langword="null"/>.</returns>
+    /// <remarks>
+    /// The purpose of this method is to allow for the retrieval of strongly typed services that may be provided by the <see cref="AIAgent"/>,
+    /// including itself or any services it might be wrapping.
+    /// </remarks>
+    public TService? GetService<TService>(object? serviceKey = null)
+        => this.GetService(typeof(TService), serviceKey) is TService service ? service : default;
+
     /// <summary>
     /// Get a new <see cref="AgentThread"/> instance that is compatible with the agent.
     /// </summary>
@@ -50,7 +81,21 @@ public abstract class AIAgent
     /// If the thread needs to be created via a service call it would be created on first use.
     /// </para>
     /// </remarks>
-    public abstract AgentThread GetNewThread();
+    public virtual AgentThread GetNewThread() => new();
+
+    /// <summary>
+    /// Deserialize the thread from JSON.
+    /// </summary>
+    /// <param name="serializedThread">The <see cref="JsonElement"/> representing the thread state.</param>
+    /// <param name="jsonSerializerOptions">Optional <see cref="JsonSerializerOptions"/> to use for deserializing the thread state.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>The deserialized <see cref="AgentThread"/> instance.</returns>
+    public async ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    {
+        var thread = this.GetNewThread();
+        await thread.DeserializeAsync(serializedThread, jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
+        return thread;
+    }
 
     /// <summary>
     /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the thread.
@@ -191,30 +236,6 @@ public abstract class AIAgent
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Checks that the thread is of the expected type, or if null, creates the default thread type.
-    /// </summary>
-    /// <typeparam name="TThreadType">The expected type of the thead.</typeparam>
-    /// <param name="thread">The thread to create if it's null and validate its type if not null.</param>
-    /// <param name="constructThread">A callback to use to construct the thread if it's null.</param>
-    /// <returns>An async task that completes once all update are complete.</returns>
-    protected virtual TThreadType ValidateOrCreateThreadType<TThreadType>(
-        AgentThread? thread,
-        Func<TThreadType> constructThread)
-        where TThreadType : AgentThread
-    {
-        Throw.IfNull(constructThread);
-
-        thread ??= constructThread();
-
-        if (thread is not TThreadType concreteThreadType)
-        {
-            throw new NotSupportedException($"{this.GetType().Name} currently only supports agent threads of type {typeof(TThreadType).Name}.");
-        }
-
-        return concreteThreadType;
-    }
 
     /// <summary>
     /// Notfiy the given thread that new messages are available.

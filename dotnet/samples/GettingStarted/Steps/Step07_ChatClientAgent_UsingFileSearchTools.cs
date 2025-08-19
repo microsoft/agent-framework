@@ -29,7 +29,7 @@ public sealed class Step07_ChatClientAgent_UsingFileSearchTools(ITestOutputHelpe
         var vectorStoreId = await CreateVectorStoreAsync([fileId], provider);
 
         // Create a file search tool that can access the vector store.
-        var fileSearchTool = new NewHostedFileSearchTool()
+        var fileSearchTool = new HostedFileSearchTool()
         {
             Inputs = [new HostedVectorStoreContent(vectorStoreId)],
         };
@@ -100,17 +100,12 @@ public sealed class Step07_ChatClientAgent_UsingFileSearchTools(ITestOutputHelpe
     }
 
     private Task<string> CreateVectorStoreAsync(IEnumerable<string> fileIds, ChatClientProviders provider)
-    {
-        switch (provider)
+        => provider switch
         {
-            case ChatClientProviders.OpenAIAssistant:
-                return CreateVectorStoreOpenAIAssistantAsync(fileIds);
-            case ChatClientProviders.AzureAIAgentsPersistent:
-                return CreateVectorStoreAzureAIAgentsPersistentAsync(fileIds);
-            default:
-                throw new NotSupportedException($"Client provider {provider} is not supported.");
-        }
-    }
+            ChatClientProviders.OpenAIAssistant => CreateVectorStoreOpenAIAssistantAsync(fileIds),
+            ChatClientProviders.AzureAIAgentsPersistent => CreateVectorStoreAzureAIAgentsPersistentAsync(fileIds),
+            _ => throw new NotSupportedException($"Client provider {provider} is not supported."),
+        };
 
     private async Task<string> CreateVectorStoreOpenAIAssistantAsync(IEnumerable<string> fileIds)
     {

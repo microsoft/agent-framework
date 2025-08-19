@@ -141,9 +141,11 @@ public class AgentRunResponseUpdate
 
     /// <summary>Gets a <see cref="AIContent"/> object to display in the debugger display.</summary>
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    [ExcludeFromCodeCoverage]
     private AIContent? ContentForDebuggerDisplay => this._contents is { Count: > 0 } ? this._contents[0] : null;
 
     /// <summary>Gets an indication for the debugger display of whether there's more content.</summary>
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    [ExcludeFromCodeCoverage]
     private string EllipsesForDebuggerDisplay => this._contents is { Count: > 1 } ? ", ..." : string.Empty;
 }

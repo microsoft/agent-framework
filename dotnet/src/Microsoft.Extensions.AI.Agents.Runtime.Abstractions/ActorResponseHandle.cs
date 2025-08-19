@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
@@ -10,7 +11,7 @@ namespace Microsoft.Extensions.AI.Agents.Runtime;
 /// <summary>
 /// Represents a handle to an actor response, allowing retrieval of the response data and status updates.
 /// </summary>
-public abstract class ActorResponseHandle
+public abstract class ActorResponseHandle : IDisposable
 {
     /// <summary>
     /// Attempts to get the response from the request if it is immediately available.
@@ -43,4 +44,17 @@ public abstract class ActorResponseHandle
     /// <param name="cancellationToken">A token to cancel the watch operation.</param>
     /// <returns>An asynchronous enumerable of request updates.</returns>
     public abstract IAsyncEnumerable<ActorRequestUpdate> WatchUpdatesAsync(CancellationToken cancellationToken);
+
+    /// <inheritdoc/>
+    public void Dispose()
+    {
+        this.Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    /// <summary>
+    /// Disposes of the resources used by the <see cref="ActorResponseHandle"/> class.
+    /// </summary>
+    /// <param name="disposing">A boolean indicating whether the method is being called from the <see cref="Dispose()"/> method.</param>
+    protected virtual void Dispose(bool disposing) { }
 }
