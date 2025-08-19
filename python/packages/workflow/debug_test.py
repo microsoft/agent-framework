@@ -76,7 +76,11 @@ class EmailValidator(Executor):
                 is_valid=approved,
                 reason="Domain approved" if approved else "Domain not approved"
             )
+            # Send the result and complete the workflow
             await ctx.send_message(result)
+            
+            from agent_framework_workflow import WorkflowCompletedEvent
+            await ctx.add_event(WorkflowCompletedEvent(data=result))
             self._pending_email = None
 
 
@@ -123,6 +127,7 @@ async def test_basic_sub_workflow_debug():
         .add_edge(workflow_executor, parent)
         .add_edge(parent, main_request_info)  # For forwarded external requests
         .add_edge(main_request_info, parent)
+        .add_edge(main_request_info, workflow_executor)  # For SubWorkflowResponse delivery
         .build()
     )
     
@@ -143,11 +148,14 @@ async def test_basic_sub_workflow_debug():
     print(f"Expected at least 1 request event, got {len(request_events)}")
     
     if request_events:
-        # Test sending a response
+        # Test sending a response and continuing workflow
         print("DEBUG: Sending response to the request...")
-        await main_workflow.send_responses({
+        result_events = [event async for event in main_workflow.send_responses_streaming({
             request_events[0].request_id: True  # Domain is approved
-        })
+        })]
+        print(f"DEBUG: Got {len(result_events)} events from send_responses_streaming")
+        for i, event in enumerate(result_events):
+            print(f"DEBUG: Event {i}: {type(event).__name__} - {event}")
         print(f"DEBUG: Parent result after response: {parent.result}")
 
 
