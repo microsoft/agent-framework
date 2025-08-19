@@ -16,7 +16,7 @@ beginDialog:
       value: 0
 
     - kind: AnswerQuestionWithAI
-      id: asst_Tq5lpaIHgIbqQSKIpGxNq6A5 # // %%% HAXX
+      id: asst_jCrWfBd1XrfVXMtpbfyVoIHC # // %%% HAXX
       displayName: Student
       userInput: =Topic.Project
 
@@ -30,7 +30,7 @@ beginDialog:
       value: =Blank()
 
     - kind: AnswerQuestionWithAI
-      id: asst_0d4uQ7HiFCfRXEuiQkspCx2T # // %%% HAXX
+      id: asst_aArB2g4tFWOTcgmUua062wjM # // %%% HAXX
       displayName: Teacher
       userInput: ="" # // %%% HAXX
 
@@ -48,4 +48,4 @@ beginDialog:
     
             - kind: GotoAction
               id: goto_student_agent
-              actionId: asst_Tq5lpaIHgIbqQSKIpGxNq6A5
+              actionId: asst_jCrWfBd1XrfVXMtpbfyVoIHC

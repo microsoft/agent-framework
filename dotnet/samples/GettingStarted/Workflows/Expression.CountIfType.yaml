@@ -1,0 +1,48 @@
+kind: AdaptiveDialog
+beginDialog:
+
+  kind: OnActivity
+  id: activity_xyz123
+  type: Message
+  actions:
+    # - kind: SetVariable
+    #   id: setVariable1
+    #   variable: Topic.TestList
+    #   value: ["zaz", "zbz", "zcz", "zdz", "zez", "zfz"]
+
+    # - kind: ParseValue
+    #   id: setVariable2
+    #   displayName: Parse ledger response
+    #   variable: Topic.TestList
+    #   valueType:
+    #     kind: Record
+    #     properties:
+    #       key: Number
+    #   value: |-
+    #       =[{"Key": 1}, {"Key": 2}]
+
+    - kind: SetVariable
+      id: setVariable_list
+      variable: Topic.TestList
+      value: |-
+        =[
+           { key: 1 },
+           { key: 2 }
+         ]
+
+    - kind: SendActivity
+      id: sendActivity_list
+      activity: "{Topic.TestList}"
+
+    - kind: SetVariable
+      id: setVariable_result
+      variable: Topic.TestResult
+      value: =CountIf(Topic.TestList, key > 1)
+      #value: =Find("e", "abcdefg")
+      #value: =CountIf(Topic.TestList, 1)
+      #value: =CountIf(Topic.TestList, !IsBlank(Find("e", Value)))
+      #value: =!IsBlank(Topic.TestList)
+      
+    - kind: SendActivity
+      id: sendActivity_result
+      activity: "{Topic.TestResult}"

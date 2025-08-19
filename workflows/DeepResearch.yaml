@@ -1,5 +1,3 @@
-# TaskDialog
-# AgentDialog
 kind: AdaptiveDialog
 beginDialog:
   kind: OnActivity

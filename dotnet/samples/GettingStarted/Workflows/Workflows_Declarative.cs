@@ -16,8 +16,10 @@ namespace Workflows;
 public class Workflows_Declarative(ITestOutputHelper output) : OrchestrationSample(output)
 {
     [Theory]
-    [InlineData("testExpression")]
-    //[InlineData("testTopic")]
+    [InlineData("Expression.CountIf")]
+    [InlineData("Expression.CountIfType")]
+    [InlineData("Expression.DropColumns")]
+    [InlineData("Expression.ForAll")]
     public async Task RunWorkflow(string fileName)
     {
         Console.WriteLine("WORKFLOW INIT\n");

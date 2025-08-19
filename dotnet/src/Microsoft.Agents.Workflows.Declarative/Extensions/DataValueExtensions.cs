@@ -27,8 +27,25 @@ internal static class DataValueExtensions
                     tableValue.Values.Select(value => value.ToRecordValue())),
             RecordDataValue recordValue => recordValue.ToRecordValue(),
             OptionDataValue optionValue => FormulaValue.New(optionValue.Value.Value),
-            FileDataValue => FormulaValue.NewError(new Microsoft.PowerFx.ExpressionError { Message = $"Unsupported literal type: {nameof(FileDataValue)}" }),
             _ => FormulaValue.NewError(new Microsoft.PowerFx.ExpressionError { Message = $"Unknown literal type: {value.GetType().Name}" }),
+        };
+
+    public static FormulaType ToFormulaType(this DataValue? value) =>
+        value switch
+        {
+            null => FormulaType.Blank,
+            BlankDataValue => FormulaType.Blank,
+            BooleanDataValue => FormulaType.Boolean,
+            NumberDataValue numberValue => FormulaType.Number,
+            FloatDataValue floatValue => FormulaType.Decimal,
+            StringDataValue stringValue => FormulaType.String,
+            DateTimeDataValue dateTimeValue => FormulaType.DateTime,
+            DateDataValue dateValue => FormulaType.Date,
+            TimeDataValue timeValue => FormulaType.Time,
+            TableDataValue tableValue => tableValue.Values.FirstOrDefault()?.ParseRecordType() ?? RecordType.Empty(),
+            RecordDataValue recordValue => recordValue.ParseRecordType(),
+            OptionDataValue optionValue => FormulaType.String,
+            _ => FormulaType.Unknown,
         };
 
     public static FormulaType ToFormulaType(this DataType? type) =>
@@ -58,17 +75,17 @@ internal static class DataValueExtensions
         RecordType recordType = RecordType.Empty();
         foreach (KeyValuePair<string, PropertyInfo> property in record.Properties)
         {
-            recordType.Add(property.Key, property.Value.Type.ToFormulaType());
+            recordType = recordType.Add(property.Key, property.Value.Type.ToFormulaType());
         }
         return recordType;
     }
 
-    public static RecordType ParseRecordType(this RecordDataValue record)
+    private static RecordType ParseRecordType(this RecordDataValue record)
     {
         RecordType recordType = RecordType.Empty();
         foreach (KeyValuePair<string, DataValue> property in record.Properties)
         {
-            recordType.Add(property.Key, property.Value.GetDataType().ToFormulaType());
+            recordType = recordType.Add(property.Key, property.Value.ToFormulaType());
         }
         return recordType;
     }

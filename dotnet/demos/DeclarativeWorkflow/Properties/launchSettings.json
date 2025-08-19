@@ -15,6 +15,10 @@
     "MathChat": {
       "commandName": "Project",
       "commandLineArgs": "\"MathChat.yaml\" \"What is the formula for Fibonacci sequence?\""
+    },
+    "Research": {
+      "commandName": "Project",
+      "commandLineArgs": "\"DeepResearch.yaml\" \"What is the closest bus-stop to Ishoni grill in Seattle?\""
     }
   }
 }

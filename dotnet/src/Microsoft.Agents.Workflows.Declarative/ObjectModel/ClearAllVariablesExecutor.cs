@@ -49,11 +49,11 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : Decla
 
         private void ClearAll(string scope)
         {
-            state.Clear(VariableScopeNames.Global);
+            state.Clear(scope);
             Debug.WriteLine(
                 $"""
                  !!! CLEAR {this.GetType().Name} [{executorId}]
-                     SCOPE: {VariableScopeNames.Global}
+                     SCOPE: {scope}
                  """);
         }
     }
