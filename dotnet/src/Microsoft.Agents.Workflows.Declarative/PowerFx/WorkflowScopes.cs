@@ -59,10 +59,10 @@ internal sealed class WorkflowScopes : IEnumerable<WorkflowScope>
         }
         else
         {
-            Bind(VariableScopeNames.Topic);
-            Bind(VariableScopeNames.Global);
-            Bind(VariableScopeNames.Environment);
-            Bind(VariableScopeNames.System);
+            foreach (string scopeName in VariableScopeNames.AllScopes)
+            {
+                Bind(scopeName);
+            }
         }
 
         void Bind(string scopeName)
