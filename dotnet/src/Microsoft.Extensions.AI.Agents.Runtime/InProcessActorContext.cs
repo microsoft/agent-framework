@@ -100,6 +100,21 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
         }
     }
 
+    public bool TryGetResponseHandle(string messageId, [NotNullWhen(true)] out ActorResponseHandle? handle)
+    {
+        lock (this._lock)
+        {
+            if (!this._inbox.TryGetValue(messageId, out var entry))
+            {
+                handle = null;
+                return false;
+            }
+
+            handle = new InProcessActorResponseHandle(this, entry);
+            return true;
+        }
+    }
+
     public ActorResponseHandle SendRequest(ActorRequest request)
     {
         using var activity = ActivitySource.StartActivity(
@@ -133,7 +148,9 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
                     requestStatus = "found";
                 }
 
+#pragma warning disable CA2000 // Dispose objects before losing scope
                 var handle = new InProcessActorResponseHandle(this, entry);
+#pragma warning restore CA2000 // Dispose objects before losing scope
                 Log.ResponseHandleCreated(this._logger, this.ActorId.ToString(), request.MessageId);
 
                 activity.Complete(RequestCompleted, this.ActorId, [(Tel.Request.Status, requestStatus), (Tel.Response.Status, HandleCreated)],
@@ -243,19 +260,11 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
             [.. operations.Operations.OfType<ActorStateWriteOperation>()];
 
         WriteResponse result;
-        if (writeOps.Count == 0)
-        {
-            // Nothing to write
-            result = new WriteResponse(operations.ETag, success: true);
-        }
-        else
-        {
-            result = await this.Storage.WriteStateAsync(
-                this.ActorId,
-                writeOps,
-                operations.ETag,
-                cancellationToken).ConfigureAwait(false);
-        }
+        result = await this.Storage.WriteStateAsync(
+            this.ActorId,
+            writeOps,
+            operations.ETag,
+            cancellationToken).ConfigureAwait(false);
 
         Log.WriteOperationCompleted(this._logger, this.ActorId.ToString(), result.Success);
 
@@ -396,7 +405,7 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
                 {
                     ActorId = context.ActorId,
                     MessageId = entry.Request.MessageId,
-                    Data = JsonSerializer.SerializeToElement($"Error: {exception.Message}", ActorRuntimeJsonContext.Default.String),
+                    Data = JsonSerializer.SerializeToElement($"Error: {exception.Message}", AgentRuntimeJsonUtilities.JsonContext.Default.String),
                     Status = RequestStatus.Failed,
                 };
             }
@@ -433,6 +442,13 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
             {
                 yield return new ActorRequestUpdate(update.Status, update.Data);
             }
+
+            var response = await entry.Response
+#if NET8_0_OR_GREATER
+                .WaitAsync(cancellationToken)
+#endif
+                .ConfigureAwait(false);
+            yield return new ActorRequestUpdate(response.Status, response.Data);
         }
     }
 }
