@@ -30,16 +30,28 @@ internal static class FormulaValueExtensions
             VoidValue voidValue => voidValue.ToDataValue(),
             TableValue tableValue => tableValue.ToDataValue(),
             RecordValue recordValue => recordValue.ToDataValue(),
-            // %%% SUPPORT: DataType ???
-            //ColorValue
-            //GuidValue guidValue => guidValue.ToDataValue(),
-            //BlobValue =>
-            //ErrorValue =>
             _ => throw new NotSupportedException($"Unsupported FormulaValue type: {value.GetType().Name}"),
         };
 
     public static DataType GetDataType(this FormulaValue value) =>
-        value.Type switch
+        value switch
+        {
+            null => DataType.Blank,
+            BooleanValue => DataType.Boolean,
+            DecimalValue => DataType.Number,
+            NumberValue => DataType.Float,
+            DateValue => DataType.Date,
+            DateTimeValue => DataType.DateTime,
+            TimeValue => DataType.Time,
+            StringValue => DataType.String,
+            BlankValue => DataType.Blank,
+            RecordValue recordValue => recordValue.Type.ToDataType(),
+            TableValue tableValue => tableValue.Type.ToDataType(),
+            _ => DataType.Unspecified,
+        };
+
+    public static DataType GetDataType(this FormulaType type) =>
+        type switch
         {
             null => DataType.Blank,
             BooleanType => DataType.Boolean,
@@ -50,14 +62,8 @@ internal static class FormulaValueExtensions
             TimeType => DataType.Time,
             StringType => DataType.String,
             BlankType => DataType.Blank,
-            RecordType => DataType.EmptyRecord,
-            // %%% SUPPORT: DataType ???
-            //TableType
-            //ColorValue
-            //GuidType => DataType.String,
-            //BlobValue =>
-            //ErrorValue =>
-            UnknownType => DataType.Unspecified,
+            RecordType recordType => recordType.ToDataType(),
+            TableType tableType => tableType.ToDataType(),
             _ => DataType.Unspecified,
         };
 
@@ -77,7 +83,6 @@ internal static class FormulaValueExtensions
             TableValue tableValue => tableValue.ToJson().ToJsonString(s_options),
             RecordValue recordValue => recordValue.ToJson().ToJsonString(s_options),
             ErrorValue errorValue => $"Error:{Environment.NewLine}{string.Join(Environment.NewLine, errorValue.Errors.Select(error => $"{error.MessageKey}: {error.Message}"))}",
-            //BlobValue blobValue => NO SPECIAL FORMATTING
             _ => $"[{value.GetType().Name}]",
         };
 
@@ -90,14 +95,32 @@ internal static class FormulaValueExtensions
     public static DataValue ToDataValue(this BlankValue _) => BlankDataValue.Blank();
     public static DataValue ToDataValue(this VoidValue _) => BlankDataValue.Blank();
     public static StringDataValue ToDataValue(this StringValue value) => StringDataValue.Create(value.Value);
-    //public static StringDataValue ToDataValue(this GuidValue value) => StringDataValue.Create(value.Value.ToString("N"));
-    //public static StringDataValue ToDataValue(this ColorValue value) => StringDataValue.Create(Enum.GetName(typeof(Color), value.Value)!);
 
     public static TableDataValue ToDataValue(this TableValue value) =>
         TableDataValue.TableFromRecords(value.Rows.Select(row => row.Value.ToDataValue()).ToImmutableArray());
 
     public static RecordDataValue ToDataValue(this RecordValue value) =>
         RecordDataValue.RecordFromFields(value.OriginalFields.Select(field => field.GetKeyValuePair()).ToImmutableArray());
+
+    public static RecordDataType ToDataType(this RecordType record)
+    {
+        RecordDataType recordType = new();
+        foreach (string fieldName in record.FieldNames)
+        {
+            recordType.Properties.Add(fieldName, PropertyInfo.Create(record.GetFieldType(fieldName).GetDataType()));
+        }
+        return recordType;
+    }
+
+    public static TableDataType ToDataType(this TableType table)
+    {
+        TableDataType tableType = new();
+        foreach (string fieldName in table.FieldNames)
+        {
+            tableType.Properties.Add(fieldName, PropertyInfo.Create(table.GetFieldType(fieldName).GetDataType()));
+        }
+        return tableType;
+    }
 
     private static KeyValuePair<string, DataValue> GetKeyValuePair(this NamedValue value) => new(value.Name, value.Value.ToDataValue());
 
@@ -117,7 +140,6 @@ internal static class FormulaValueExtensions
             BlankValue blankValue => JsonValue.Create(string.Empty),
             //VoidValue voidValue => JsonValue.Create(),
             //ErrorValue errorValue => $"Error:{Environment.NewLine}{string.Join(Environment.NewLine, errorValue.Errors.Select(error => $"{error.MessageKey}: {error.Message}"))}",
-            //BlobValue blobValue => NO SPECIAL FORMATTING
             _ => $"[{value.GetType().Name}]",
         };
 
