@@ -87,6 +87,7 @@ public class CosmosTestFixture : IAsyncLifetime
         }
 
         var database = this.CosmosClient.GetDatabase(CosmosDBTestConstants.TestCosmosDbDatabaseName);
+        var db = await this.CosmosClient.CreateDatabaseIfNotExistsAsync(CosmosDBTestConstants.TestCosmosDbDatabaseName);
 
         var containerProperties = new ContainerProperties()
         {
