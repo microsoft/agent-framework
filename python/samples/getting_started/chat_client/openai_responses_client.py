@@ -17,15 +17,15 @@ def get_weather(
 
 
 async def main() -> None:
-    client = OpenAIResponsesClient(ai_model_id="gpt-4o-mini")
+    client = OpenAIResponsesClient()
     message = "What's the weather in Amsterdam and in Paris?"
     stream = False
     print(f"User: {message}")
     if stream:
         print("Assistant: ", end="")
         async for chunk in client.get_streaming_response(message, tools=get_weather):
-            if str(chunk):
-                print(str(chunk), end="")
+            if chunk.text:
+                print(chunk.text, end="")
         print("")
     else:
         response = await client.get_response(message, tools=get_weather)

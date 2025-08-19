@@ -12,6 +12,7 @@ from agent_framework import (
     AIAnnotation,
     AIContent,
     AIContents,
+    AIFunction,
     AITool,
     AnnotatedRegion,
     ChatFinishReason,
@@ -27,8 +28,9 @@ from agent_framework import (
     FunctionCallContent,
     FunctionResultContent,
     GeneratedEmbeddings,
+    HostedFileContent,
+    HostedVectorStoreContent,
     SpeechToTextOptions,
-    StructuredResponse,
     TextContent,
     TextReasoningContent,
     TextSpanRegion,
@@ -187,6 +189,68 @@ def test_uri_content():
     assert isinstance(content, AIContent)
 
 
+# region: HostedFileContent
+
+
+def test_hosted_file_content():
+    """Test the HostedFileContent class to ensure it initializes correctly."""
+    content = HostedFileContent(file_id="file-123", additional_properties={"version": 1})
+
+    # Check the type and content
+    assert content.type == "hosted_file"
+    assert content.file_id == "file-123"
+    assert content.additional_properties["version"] == 1
+
+    # Ensure the instance is of type AIContent
+    assert isinstance(content, AIContent)
+
+
+def test_hosted_file_content_minimal():
+    """Test the HostedFileContent class with minimal parameters."""
+    content = HostedFileContent(file_id="file-456")
+
+    # Check the type and content
+    assert content.type == "hosted_file"
+    assert content.file_id == "file-456"
+    assert content.additional_properties is None
+    assert content.raw_representation is None
+
+    # Ensure the instance is of type AIContent
+    assert isinstance(content, AIContent)
+
+
+# region: HostedVectorStoreContent
+
+
+def test_hosted_vector_store_content():
+    """Test the HostedVectorStoreContent class to ensure it initializes correctly."""
+    content = HostedVectorStoreContent(vector_store_id="vs-789", additional_properties={"version": 1})
+
+    # Check the type and content
+    assert content.type == "hosted_vector_store"
+    assert content.vector_store_id == "vs-789"
+    assert content.additional_properties["version"] == 1
+
+    # Ensure the instance is of type AIContent
+    assert isinstance(content, HostedVectorStoreContent)
+    assert isinstance(content, AIContent)
+
+
+def test_hosted_vector_store_content_minimal():
+    """Test the HostedVectorStoreContent class with minimal parameters."""
+    content = HostedVectorStoreContent(vector_store_id="vs-101112")
+
+    # Check the type and content
+    assert content.type == "hosted_vector_store"
+    assert content.vector_store_id == "vs-101112"
+    assert content.additional_properties is None
+    assert content.raw_representation is None
+
+    # Ensure the instance is of type AIContent
+    assert isinstance(content, HostedVectorStoreContent)
+    assert isinstance(content, AIContent)
+
+
 # region FunctionCallContent
 
 
@@ -328,6 +392,8 @@ def test_usage_details_add_with_none_and_type_errors():
         (UriContent, {"uri": "http://example.com", "media_type": "text/html"}),
         (FunctionCallContent, {"call_id": "1", "name": "example_function", "arguments": {}}),
         (FunctionResultContent, {"call_id": "1", "result": {}}),
+        (HostedFileContent, {"file_id": "file-123"}),
+        (HostedVectorStoreContent, {"vector_store_id": "vs-789"}),
     ],
 )
 def test_ai_content_serialization(content_type: type[AIContent], args: dict):
@@ -405,27 +471,44 @@ def test_chat_response():
     assert str(response) == response.text
 
 
-# region StructuredResponse
+class OutputModel(BaseModel):
+    response: str
 
 
-def test_structured_response():
-    """Test the StructuredResponse class to ensure it initializes correctly with a value."""
+def test_chat_response_with_format():
+    """Test the ChatResponse class to ensure it initializes correctly with a message."""
+    # Create a ChatMessage
+    message = ChatMessage(role="assistant", text='{"response": "Hello"}')
 
-    class ResponseModel(BaseModel):
-        content: str
-        action: str
-
-    # Create a StructuredResponse with a value
-    response = StructuredResponse[ResponseModel](
-        value=ResponseModel(content="Hello, world!", action="test"),
-        text="{'content': 'Hello, world!', 'action': 'test'}",
-    )
+    # Create a ChatResponse with the message
+    response = ChatResponse(messages=message)
 
     # Check the type and content
-    assert response.value == ResponseModel(content="Hello, world!", action="test")
-    assert isinstance(response, StructuredResponse)
-    # text property returns joined messages text (single message present)
-    assert isinstance(response.text, str)
+    assert response.messages[0].role == ChatRole.ASSISTANT
+    assert response.messages[0].text == '{"response": "Hello"}'
+    assert isinstance(response.messages[0], ChatMessage)
+    assert response.text == '{"response": "Hello"}'
+    assert response.value is None
+    response.try_parse_value(OutputModel)
+    assert response.value is not None
+    assert response.value.response == "Hello"
+
+
+def test_chat_response_with_format_init():
+    """Test the ChatResponse class to ensure it initializes correctly with a message."""
+    # Create a ChatMessage
+    message = ChatMessage(role="assistant", text='{"response": "Hello"}')
+
+    # Create a ChatResponse with the message
+    response = ChatResponse(messages=message, response_format=OutputModel)
+
+    # Check the type and content
+    assert response.messages[0].role == ChatRole.ASSISTANT
+    assert response.messages[0].text == '{"response": "Hello"}'
+    assert isinstance(response.messages[0], ChatMessage)
+    assert response.text == '{"response": "Hello"}'
+    assert response.value is not None
+    assert response.value.response == "Hello"
 
 
 # region ChatResponseUpdate
@@ -569,6 +652,32 @@ async def test_chat_response_from_async_generator():
     assert resp.text == "Hello world"
 
 
+@mark.asyncio
+async def test_chat_response_from_async_generator_output_format():
+    async def gen() -> AsyncIterable[ChatResponseUpdate]:
+        yield ChatResponseUpdate(text='{ "respon', message_id="1")
+        yield ChatResponseUpdate(text='se": "Hello" }', message_id="1")
+
+    resp = await ChatResponse.from_chat_response_generator(gen())
+    assert resp.text == '{ "response": "Hello" }'
+    assert resp.value is None
+    resp.try_parse_value(OutputModel)
+    assert resp.value is not None
+    assert resp.value.response == "Hello"
+
+
+@mark.asyncio
+async def test_chat_response_from_async_generator_output_format_in_method():
+    async def gen() -> AsyncIterable[ChatResponseUpdate]:
+        yield ChatResponseUpdate(text='{ "respon', message_id="1")
+        yield ChatResponseUpdate(text='se": "Hello" }', message_id="1")
+
+    resp = await ChatResponse.from_chat_response_generator(gen(), output_format_type=OutputModel)
+    assert resp.text == '{ "response": "Hello" }'
+    assert resp.value is not None
+    assert resp.value.response == "Hello"
+
+
 # region ChatToolMode
 
 
@@ -657,11 +766,12 @@ def test_chat_options_init_with_args(ai_function_tool, ai_tool) -> None:
     assert options.presence_penalty == 0.0
     assert options.frequency_penalty == 0.0
     assert options.user == "user-123"
-    for tool in options._ai_tools:
+    for tool in options.tools:
         assert isinstance(tool, AITool)
         assert tool.name is not None
         assert tool.description is not None
-        assert tool.parameters() is not None
+        if isinstance(tool, AIFunction):
+            assert tool.parameters() is not None
 
     settings = options.to_provider_settings()
     assert settings["model"] == "gpt-4"  # uses alias
@@ -688,8 +798,6 @@ def test_chat_options_and(ai_function_tool, ai_tool) -> None:
     options3 = options1 & options2
 
     assert options3.ai_model_id == "gpt-4.1"
-    assert len(options3._ai_tools) == 2
-    assert options3._ai_tools == [ai_function_tool, ai_tool]
     assert options3.tools == [ai_function_tool, ai_tool]
     assert options3.logit_bias == {"x": 1}
     assert options3.metadata == {"a": "b"}

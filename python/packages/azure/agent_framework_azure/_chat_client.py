@@ -2,25 +2,21 @@
 
 import json
 import logging
+import sys
 from collections.abc import Mapping
-from copy import deepcopy
 from typing import Any, TypeVar
-from uuid import uuid4
 
 from agent_framework import (
-    ChatFinishReason,
     ChatResponse,
     ChatResponseUpdate,
-    FunctionCallContent,
-    FunctionResultContent,
+    CitationAnnotation,
     TextContent,
 )
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai._chat_client import OpenAIChatClientBase
-from agent_framework.openai._shared import OpenAIModelTypes
+from azure.identity import ChainedTokenCredential
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
-from openai.types.chat.chat_completion import ChatCompletion, Choice
-from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+from openai.types.chat.chat_completion import Choice
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from pydantic import SecretStr, ValidationError
 from pydantic.networks import AnyUrl
@@ -30,9 +26,15 @@ from ._shared import (
     AzureOpenAISettings,
 )
 
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+
 logger: logging.Logger = logging.getLogger(__name__)
 
 TChatResponse = TypeVar("TChatResponse", ChatResponse, ChatResponseUpdate)
+TAzureChatClient = TypeVar("TAzureChatClient", bound="AzureChatClient")
 
 
 class AzureChatClient(AzureOpenAIConfigBase, OpenAIChatClientBase):
@@ -48,6 +50,7 @@ class AzureChatClient(AzureOpenAIConfigBase, OpenAIChatClientBase):
         ad_token: str | None = None,
         ad_token_provider: AsyncAzureADTokenProvider | None = None,
         token_endpoint: str | None = None,
+        ad_credential: ChainedTokenCredential | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | None = None,
         env_file_path: str | None = None,
@@ -70,6 +73,7 @@ class AzureChatClient(AzureOpenAIConfigBase, OpenAIChatClientBase):
             ad_token: The Azure Active Directory token. (Optional)
             ad_token_provider: The Azure Active Directory token provider. (Optional)
             token_endpoint: The token endpoint to request an Azure token. (Optional)
+            ad_credential: The Azure Active Directory credential. (Optional)
             default_headers: The default headers mapping of string keys to
                 string values for HTTP requests. (Optional)
             async_client: An existing client to use. (Optional)
@@ -107,14 +111,14 @@ class AzureChatClient(AzureOpenAIConfigBase, OpenAIChatClientBase):
             ad_token=ad_token,
             ad_token_provider=ad_token_provider,
             token_endpoint=azure_openai_settings.token_endpoint,
+            ad_credential=ad_credential,
             default_headers=default_headers,
-            ai_model_type=OpenAIModelTypes.CHAT,
             client=async_client,
             instruction_role=instruction_role,
         )
 
     @classmethod
-    def from_dict(cls, settings: dict[str, Any]) -> "AzureChatClient":
+    def from_dict(cls: type[TAzureChatClient], settings: dict[str, Any]) -> TAzureChatClient:
         """Initialize an Azure OpenAI service from a dictionary of settings.
 
         Args:
@@ -122,7 +126,7 @@ class AzureChatClient(AzureOpenAIConfigBase, OpenAIChatClientBase):
                 should contain keys: service_id, and optionally:
                 ad_auth, ad_token_provider, default_headers
         """
-        return AzureChatClient(
+        return cls(
             api_key=settings.get("api_key"),
             deployment_name=settings.get("deployment_name"),
             endpoint=settings.get("endpoint"),
@@ -134,99 +138,49 @@ class AzureChatClient(AzureOpenAIConfigBase, OpenAIChatClientBase):
             env_file_path=settings.get("env_file_path"),
         )
 
-    def _create_chat_message_content(
-        self, response: ChatCompletion, choice: Choice, response_metadata: dict[str, Any]
-    ) -> ChatResponse:
-        """Create an Azure chat message content object from a choice."""
-        content = super()._create_chat_message_content(response, choice, response_metadata)
-        return self._add_tool_message_to_chat_message_content(content, choice)
+    @override
+    def _parse_text_from_choice(self, choice: Choice | ChunkChoice) -> TextContent | None:
+        """Parse the choice into a TextContent object.
 
-    def _create_streaming_chat_message_content(
-        self,
-        chunk: ChatCompletionChunk,
-        choice: ChunkChoice,
-        chunk_metadata: dict[str, Any],
-    ) -> ChatResponseUpdate:
-        """Create an Azure streaming chat message content object from a choice."""
-        content = super()._create_streaming_chat_message_content(chunk, choice, chunk_metadata)
-        assert isinstance(content, ChatResponseUpdate) and isinstance(choice, ChunkChoice)  # nosec # noqa: S101
-        return self._add_tool_message_to_chat_message_content(content, choice)
-
-    def _add_tool_message_to_chat_message_content(
-        self,
-        content: TChatResponse,
-        choice: Choice | ChunkChoice,
-    ) -> TChatResponse:
-        if tool_message := self._get_tool_message_from_chat_choice(choice=choice):
-            if not isinstance(tool_message, dict):
-                # try to json, to ensure it is a dictionary
-                try:
-                    tool_message = json.loads(tool_message)
-                except json.JSONDecodeError:
-                    logger.warning("Tool message is not a dictionary, ignore context.")
-                    return content
-            function_call = FunctionCallContent(
-                call_id=str(uuid4()),
-                name="Azure-OnYourData",
-                arguments={"query": tool_message.get("intent", [])},
-            )
-            result = FunctionResultContent(
-                call_id=function_call.call_id,
-                result=tool_message["citations"],
-                exception=function_call.exception,
-                additional_properties=function_call.additional_properties,
-            )
-
-            inner_content = content.messages[0].contents if isinstance(content, ChatResponse) else content.contents
-
-            inner_content.insert(0, function_call)
-            inner_content.insert(1, result)
-        return content
-
-    def _get_tool_message_from_chat_choice(self, choice: Choice | ChunkChoice) -> dict[str, Any] | None:
-        """Get the tool message from a choice."""
-        content = choice.message if isinstance(choice, Choice) else choice.delta
-        # When you enable asynchronous content filtering in Azure OpenAI, you may receive empty deltas
-        if content and content.model_extra is not None:
-            return content.model_extra.get("context", None)
-        # openai allows extra content, so model_extra will be a dict, but we need to check anyway, but no way to test.
-        return None  # pragma: no cover
-
-    @staticmethod
-    def _split_message(message: "ChatResponse") -> ChatResponse:
-        """Split an Azure On Your Data response into separate ChatMessages within the ChatResponse.
-
-        If the message does not have three contents, and those three are one each of:
-        FunctionCallContent, FunctionResultContent, and TextContent,
-        it will not return three messages, potentially only one or two.
-
-        The order of the returned messages is as expected by OpenAI.
+        Overwritten from OpenAIChatClientBase to deal with Azure On Your Data function.
+        For docs see:
+        https://learn.microsoft.com/en-us/azure/ai-foundry/openai/references/on-your-data?tabs=python#context
         """
-        if len(message.messages) == 0:
-            return message
-        if len(message.messages[0].contents) != 3:
-            return message
-        messages = {
-            "tool_call": deepcopy(message.messages[0]),
-            "tool_result": deepcopy(message.messages[0]),
-            "assistant": deepcopy(message.messages[0]),
-        }
-        for key, msg in messages.items():
-            if key == "tool_call":
-                msg.contents = [item for item in msg.contents if isinstance(item, FunctionCallContent)]
-                message.finish_reason = ChatFinishReason.TOOL_CALLS
-            if key == "tool_result":
-                msg.contents = [item for item in msg.contents if isinstance(item, FunctionResultContent)]
-            if key == "assistant":
-                msg.contents = [item for item in msg.contents if isinstance(item, TextContent)]
+        message = choice.message if isinstance(choice, Choice) else choice.delta
+        if hasattr(message, "refusal") and message.refusal:
+            return TextContent(text=message.refusal, raw_representation=choice)
+        if not message.content:
+            return None
+        text_content = TextContent(text=message.content, raw_representation=choice)
+        if not message.model_extra or "context" not in message.model_extra:
+            return text_content
 
-        return ChatResponse(
-            response_id=message.response_id,
-            conversation_id=message.conversation_id,
-            messages=[messages["tool_call"], messages["tool_result"], messages["assistant"]],
-            created_at=message.created_at,
-            model_id=message.ai_model_id,
-            usage_details=message.usage_details,
-            finish_reason=message.finish_reason,
-            additional_properties=message.additional_properties,
-        )
+        context: dict[str, Any] | str = message.context  # type: ignore[assignment, union-attr]
+        if isinstance(context, str):
+            try:
+                context = json.loads(context)
+            except json.JSONDecodeError:
+                logger.warning("Context is not a valid JSON string, ignoring context.")
+                return text_content
+        if not isinstance(context, dict):
+            logger.warning("Context is not a valid dictionary, ignoring context.")
+            return text_content
+        # `all_retrieved_documents` is currently not used, but can be retrieved
+        # through the raw_representation in the text content.
+        if intent := context.get("intent"):
+            text_content.additional_properties = {"intent": intent}
+        if citations := context.get("citations"):
+            text_content.annotations = []
+            for citation in citations:
+                text_content.annotations.append(
+                    CitationAnnotation(
+                        title=citation.get("title", ""),
+                        url=citation.get("url", ""),
+                        snippet=citation.get("content", ""),
+                        file_id=citation.get("filepath", ""),
+                        tool_name="Azure-on-your-Data",
+                        additional_properties={"chunk_id": citation.get("chunk_id", "")},
+                        raw_representation=citation,
+                    )
+                )
+        return text_content
