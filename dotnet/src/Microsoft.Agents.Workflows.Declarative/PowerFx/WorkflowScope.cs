@@ -10,8 +10,10 @@ namespace Microsoft.Agents.Workflows.Declarative.PowerFx;
 /// <summary>
 /// The set of variables for a specific action scope.
 /// </summary>
-internal sealed class WorkflowScope : Dictionary<string, FormulaValue>
+internal sealed class WorkflowScope(string scopeName) : Dictionary<string, FormulaValue>
 {
+    public string Name => scopeName;
+
     public RecordValue BuildRecord()
     {
         return FormulaValue.NewRecordFromFields(GetFields());

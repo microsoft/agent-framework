@@ -3,7 +3,6 @@
 using System;
 using System.Linq;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
@@ -41,19 +40,19 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
         Assert.Equal(model, action.Model);
     }
 
-    protected void VerifyState(string variableName, FormulaValue expectedValue) => this.VerifyState(variableName, WorkflowScopeType.Topic, expectedValue);
+    protected void VerifyState(string variableName, FormulaValue expectedValue) => this.VerifyState(variableName, VariableScopeNames.Topic, expectedValue);
 
-    internal void VerifyState(string variableName, WorkflowScopeType scope, FormulaValue expectedValue)
+    internal void VerifyState(string variableName, string scopeName, FormulaValue expectedValue)
     {
-        FormulaValue actualValue = this.Scopes.Get(variableName, scope);
+        FormulaValue actualValue = this.Scopes.Get(variableName, scopeName);
         Assert.Equal(expectedValue.Format(), actualValue.Format());
     }
 
-    protected void VerifyUndefined(string variableName) => this.VerifyUndefined(variableName, WorkflowScopeType.Topic);
+    protected void VerifyUndefined(string variableName) => this.VerifyUndefined(variableName, VariableScopeNames.Topic);
 
-    internal void VerifyUndefined(string variableName, WorkflowScopeType scope)
+    internal void VerifyUndefined(string variableName, string scopeName)
     {
-        Assert.IsType<BlankValue>(this.Scopes.Get(variableName, scope));
+        Assert.IsType<BlankValue>(this.Scopes.Get(variableName, scopeName));
     }
 
     protected TAction AssignParent<TAction>(DialogAction.Builder actionBuilder) where TAction : DialogAction

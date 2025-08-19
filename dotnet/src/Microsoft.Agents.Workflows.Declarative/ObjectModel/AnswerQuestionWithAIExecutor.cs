@@ -8,7 +8,6 @@ using System.Threading.Tasks;
 using Azure.AI.Agents.Persistent;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
-using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.Extensions.AI;
@@ -42,7 +41,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
                 });
 
         AgentThread? thread = null;
-        FormulaValue conversationValue = this.State.Get(WorkflowScopeType.System, "ConversationId"); // %%% HAXX: SYSTEM THREAD
+        FormulaValue conversationValue = this.State.Get(VariableScopeNames.System, "ConversationId"); // %%% HAXX: SYSTEM THREAD
         if (conversationValue is StringValue stringValue)
         {
             thread = new AgentThread() { ConversationId = stringValue.Value };
@@ -80,7 +79,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
         ChatMessage response = agentResponse.Messages.Last(); // %%% DECISION: Is last sufficient? (probably not)
         await context.AddEventAsync(new DeclarativeWorkflowMessageEvent(response, agentResponse.Usage)).ConfigureAwait(false);
 
-        this.AssignTarget(PropertyPath.FromSegments(WorkflowScopeType.System.Name, "ConversationId"), FormulaValue.New(conversationId)); // %%% HAXX: SYSTEM THREAD
+        this.AssignTarget(PropertyPath.FromSegments(VariableScopeNames.System, "ConversationId"), FormulaValue.New(conversationId)); // %%% HAXX: SYSTEM THREAD
 
         PropertyPath? variablePath = this.Model.Variable?.Path;
         if (variablePath is not null)

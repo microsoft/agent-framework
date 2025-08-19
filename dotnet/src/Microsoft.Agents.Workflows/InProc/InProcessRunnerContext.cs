@@ -91,8 +91,6 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
 
     private class BoundContext(InProcessRunnerContext<TExternalInput> RunnerContext, string ExecutorId) : IWorkflowContext
     {
-        private const string WorkflowId = "__workflow__";
-
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent) => RunnerContext.AddEventAsync(workflowEvent);
         public ValueTask SendMessageAsync(object message) => RunnerContext.SendMessageAsync(ExecutorId, message);
 
@@ -101,11 +99,5 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
 
         public ValueTask<T?> ReadStateAsync<T>(string key, string? scopeName = null)
             => RunnerContext.StateManager.ReadStateAsync<T>(ExecutorId, scopeName, key);
-
-        public ValueTask QueueWorkflowStateUpdateAsync<T>(string key, T? value, string? scopeName = null) // %%% HAXX: _WORKFLOW_ STATE
-            => RunnerContext.StateManager.WriteStateAsync(WorkflowId, scopeName, key, value);
-
-        public ValueTask<T?> ReadWorkflowStateAsync<T>(string key, string? scopeName = null) // %%% HAXX: _WORKFLOW_ STATE
-            => RunnerContext.StateManager.ReadStateAsync<T>(WorkflowId, scopeName, key);
     }
 }

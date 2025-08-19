@@ -16,7 +16,7 @@ namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 internal sealed class ParseValueExecutor(ParseValue model) :
     DeclarativeActionExecutor<ParseValue>(model)
 {
-    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    protected override ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         PropertyPath variablePath = Throw.IfNull(this.Model.Variable?.Path, $"{nameof(this.Model)}.{nameof(model.Variable)}");
         ValueExpression valueExpression = Throw.IfNull(this.Model.Value, $"{nameof(this.Model)}.{nameof(this.Model.Value)}");

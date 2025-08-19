@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.Workflows.Reflection;
+using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
@@ -29,7 +30,7 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(string workflowId) :
 
         WorkflowScopes scopes = await context.GetScopedStateAsync(default).ConfigureAwait(false);
 
-        scopes.Set("LastMessage", WorkflowScopeType.System, input.ToRecordValue());
+        scopes.Set("LastMessage", VariableScopeNames.System, input.ToRecordValue());
 
         await context.SetScopedStateAsync(scopes, default).ConfigureAwait(false);
         await context.SendMessageAsync(new ExecutionResultMessage(this.Id)).ConfigureAwait(false);

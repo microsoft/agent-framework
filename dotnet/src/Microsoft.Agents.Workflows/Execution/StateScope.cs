@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Shared.Diagnostics;
 
@@ -43,19 +44,19 @@ internal class StateScope
                 continue;
             }
 
-            if (updates[key].Count > 1)
-            {
-                throw new InvalidOperationException($"Expected exactly one update for key '{key}'.");
-            }
+            //if (updates[key].Count > 1) // %%% HAXX: SUPERSTEP STATE MANAGEMENT
+            //{
+            //    throw new InvalidOperationException($"Expected exactly one update for key '{key}'.");
+            //}
 
-            StateUpdate upadte = updates[key][0];
-            if (upadte.IsDelete)
+            StateUpdate update = updates[key].Last();
+            if (update.IsDelete)
             {
                 this._stateData.Remove(key);
             }
             else
             {
-                this._stateData[key] = upadte.Value!;
+                this._stateData[key] = update.Value!;
             }
         }
 

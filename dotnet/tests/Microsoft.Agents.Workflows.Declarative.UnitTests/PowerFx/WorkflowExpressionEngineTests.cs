@@ -34,15 +34,15 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
     public WorkflowExpressionEngineTests(ITestOutputHelper output)
         : base(output)
     {
-        this.Scopes.Set(Variables.GlobalValue, WorkflowScopeType.Global, FormulaValue.New(255));
-        this.Scopes.Set(Variables.BoolValue, WorkflowScopeType.Topic, FormulaValue.New(true));
-        this.Scopes.Set(Variables.StringValue, WorkflowScopeType.Topic, FormulaValue.New("Hello World"));
-        this.Scopes.Set(Variables.IntValue, WorkflowScopeType.Topic, FormulaValue.New(long.MaxValue));
-        this.Scopes.Set(Variables.NumberValue, WorkflowScopeType.Topic, FormulaValue.New(33.3));
-        this.Scopes.Set(Variables.EnumValue, WorkflowScopeType.Topic, FormulaValue.New(nameof(VariablesToClear.ConversationScopedVariables)));
-        this.Scopes.Set(Variables.ObjectValue, WorkflowScopeType.Topic, ObjectData);
-        this.Scopes.Set(Variables.ArrayValue, WorkflowScopeType.Topic, TableData);
-        this.Scopes.Set(Variables.BlankValue, WorkflowScopeType.Topic, FormulaValue.NewBlank());
+        this.Scopes.Set(Variables.GlobalValue, VariableScopeNames.Global, FormulaValue.New(255));
+        this.Scopes.Set(Variables.BoolValue, VariableScopeNames.Topic, FormulaValue.New(true));
+        this.Scopes.Set(Variables.StringValue, VariableScopeNames.Topic, FormulaValue.New("Hello World"));
+        this.Scopes.Set(Variables.IntValue, VariableScopeNames.Topic, FormulaValue.New(long.MaxValue));
+        this.Scopes.Set(Variables.NumberValue, VariableScopeNames.Topic, FormulaValue.New(33.3));
+        this.Scopes.Set(Variables.EnumValue, VariableScopeNames.Topic, FormulaValue.New(nameof(VariablesToClear.ConversationScopedVariables)));
+        this.Scopes.Set(Variables.ObjectValue, VariableScopeNames.Topic, ObjectData);
+        this.Scopes.Set(Variables.ArrayValue, VariableScopeNames.Topic, TableData);
+        this.Scopes.Set(Variables.BlankValue, VariableScopeNames.Topic, FormulaValue.NewBlank());
     }
 
     #region Unsupported Expression Tests
@@ -184,7 +184,7 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
     {
         // Arrange
         RecordValue state = FormulaValue.NewRecordFromFields([new NamedValue("test", FormulaValue.New("value"))]);
-        this.Scopes.Set("TestRecord", WorkflowScopeType.Global, state);
+        this.Scopes.Set("TestRecord", VariableScopeNames.Global, state);
 
         // Arrange, Act & Assert
         this.EvaluateExpression(

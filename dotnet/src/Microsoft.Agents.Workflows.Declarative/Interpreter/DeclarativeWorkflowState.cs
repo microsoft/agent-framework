@@ -26,36 +26,36 @@ internal sealed class DeclarativeWorkflowState
     public WorkflowExpressionEngine ExpressionEngine => this._expressionEngine ??= new WorkflowExpressionEngine(this._engine);
 
     public void Clear(PropertyPath variablePath) =>
-        this.Clear(WorkflowScopeType.Parse(variablePath.VariableScopeName), Throw.IfNull(variablePath.VariableName));
+        this.Clear(Throw.IfNull(variablePath.VariableScopeName), Throw.IfNull(variablePath.VariableName));
 
-    public void Clear(WorkflowScopeType scope, string? varName = null)
+    public void Clear(string scopeName, string? varName = null)
     {
         if (string.IsNullOrWhiteSpace(varName))
         {
-            this._scopes.Clear(scope);
+            this._scopes.Clear(scopeName);
         }
         else
         {
-            this._scopes.Remove(varName, scope);
+            this._scopes.Remove(varName, scopeName);
         }
 
-        this._scopes.Bind(this._engine, scope);
+        this._scopes.Bind(this._engine, scopeName);
     }
 
     public FormulaValue Get(PropertyPath variablePath) =>
-        this.Get(WorkflowScopeType.Parse(variablePath.VariableScopeName), Throw.IfNull(variablePath.VariableName));
+        this.Get(Throw.IfNull(variablePath.VariableScopeName), Throw.IfNull(variablePath.VariableName));
 
-    public FormulaValue Get(WorkflowScopeType scope, string varName) =>
+    public FormulaValue Get(string scope, string varName) =>
         this._scopes.Get(varName, scope);
 
     public void Set(PropertyPath variablePath, FormulaValue value) =>
-        this.Set(WorkflowScopeType.Parse(variablePath.VariableScopeName), Throw.IfNull(variablePath.VariableName), value);
+        this.Set(Throw.IfNull(variablePath.VariableScopeName), Throw.IfNull(variablePath.VariableName), value);
 
-    public void Set(WorkflowScopeType scope, string varName, FormulaValue value)
+    public void Set(string scopeName, string varName, FormulaValue value)
     {
-        this._scopes.Set(varName, scope, value);
+        this._scopes.Set(varName, scopeName, value);
 
-        this._scopes.Bind(this._engine, scope);
+        this._scopes.Bind(this._engine, scopeName);
     }
 
     public string? Format(IEnumerable<TemplateLine> template) => this._engine.Format(template);

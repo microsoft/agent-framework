@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Linq;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;
@@ -11,25 +13,30 @@ namespace Microsoft.Agents.Workflows.Declarative.PowerFx;
 /// <summary>
 /// Contains all action scopes for a process.
 /// </summary>
-internal sealed class WorkflowScopes
+internal sealed class WorkflowScopes : IEnumerable<WorkflowScope>
 {
-    private readonly ImmutableDictionary<WorkflowScopeType, WorkflowScope> _scopes;
+    private readonly ImmutableDictionary<string, WorkflowScope> _scopes;
 
-    public WorkflowScopes()
+    public WorkflowScopes(Dictionary<string, WorkflowScope>? scopes = null)
     {
-        Dictionary<WorkflowScopeType, WorkflowScope> scopes =
-            new()
-            {
-                { WorkflowScopeType.Env, [] },
-                { WorkflowScopeType.Topic, [] },
-                { WorkflowScopeType.Global, [] },
-                { WorkflowScopeType.System, [] },
-            };
+        this._scopes = VariableScopeNames.AllScopes.ToDictionary(scopeName => scopeName, scopeName => GetScope(scopeName)).ToImmutableDictionary();
 
-        this._scopes = scopes.ToImmutableDictionary();
+        WorkflowScope GetScope(string scopeName)
+        {
+            if (scopes is not null && scopes.TryGetValue(scopeName, out WorkflowScope? scope))
+            {
+                return scope;
+            }
+
+            return new WorkflowScope(scopeName);
+        }
     }
 
-    public RecordValue BuildRecord(WorkflowScopeType scope) => this._scopes[scope].BuildRecord();
+    IEnumerator IEnumerable.GetEnumerator() => this.GetEnumerator();
+
+    public IEnumerator<WorkflowScope> GetEnumerator() => this._scopes.Values.GetEnumerator();
+
+    public RecordValue BuildRecord(string scopeName) => this._scopes[scopeName].BuildRecord();
 
     public RecordDataValue BuildState()
     {
@@ -37,14 +44,14 @@ internal sealed class WorkflowScopes
 
         IEnumerable<KeyValuePair<string, DataValue>> BuildStateFields()
         {
-            foreach (KeyValuePair<WorkflowScopeType, WorkflowScope> kvp in this._scopes)
+            foreach (KeyValuePair<string, WorkflowScope> kvp in this._scopes)
             {
-                yield return new(kvp.Key.Name, kvp.Value.BuildState());
+                yield return new(kvp.Key, kvp.Value.BuildState());
             }
         }
     }
 
-    public void Bind(RecalcEngine engine, WorkflowScopeType? type = null)
+    public void Bind(RecalcEngine engine, string? type = null)
     {
         if (type is not null)
         {
@@ -52,23 +59,23 @@ internal sealed class WorkflowScopes
         }
         else
         {
-            Bind(WorkflowScopeType.Topic);
-            Bind(WorkflowScopeType.Global);
-            Bind(WorkflowScopeType.Env);
-            Bind(WorkflowScopeType.System);
+            Bind(VariableScopeNames.Topic);
+            Bind(VariableScopeNames.Global);
+            Bind(VariableScopeNames.Environment);
+            Bind(VariableScopeNames.System);
         }
 
-        void Bind(WorkflowScopeType scope)
+        void Bind(string scopeName)
         {
-            RecordValue scopeRecord = this.BuildRecord(scope);
-            engine.DeleteFormula(scope.Name);
-            engine.UpdateVariable(scope.Name, scopeRecord);
+            RecordValue scopeRecord = this.BuildRecord(scopeName);
+            engine.DeleteFormula(scopeName);
+            engine.UpdateVariable(scopeName, scopeRecord);
         }
     }
 
-    public FormulaValue Get(string name, WorkflowScopeType? type = null)
+    public FormulaValue Get(string name, string? scopeName = null)
     {
-        if (this._scopes[type ?? WorkflowScopeType.Topic].TryGetValue(name, out FormulaValue? value))
+        if (this._scopes[scopeName ?? VariableScopeNames.Topic].TryGetValue(name, out FormulaValue? value))
         {
             return value;
         }
@@ -76,13 +83,13 @@ internal sealed class WorkflowScopes
         return FormulaValue.NewBlank();
     }
 
-    public void Clear(WorkflowScopeType type) => this._scopes[type].Clear();
+    public void Clear(string scopeName) => this._scopes[scopeName].Clear();
 
-    public void Remove(string name) => this.Remove(name, WorkflowScopeType.Topic);
+    public void Remove(string name) => this.Remove(name, VariableScopeNames.Topic);
 
-    public void Remove(string name, WorkflowScopeType type) => this._scopes[type].Remove(name);
+    public void Remove(string name, string scopeName) => this._scopes[scopeName].Remove(name);
 
-    public void Set(string name, FormulaValue value) => this.Set(name, WorkflowScopeType.Topic, value);
+    public void Set(string name, FormulaValue value) => this.Set(name, VariableScopeNames.Topic, value);
 
-    public void Set(string name, WorkflowScopeType type, FormulaValue value) => this._scopes[type][name] = value;
+    public void Set(string name, string scopeName, FormulaValue value) => this._scopes[scopeName][name] = value;
 }
