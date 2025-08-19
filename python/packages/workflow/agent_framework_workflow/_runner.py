@@ -87,7 +87,7 @@ class Runner:
                 else:
                     logger.info("Skipping 'after_initial_execution' checkpoint because we resumed from a checkpoint")
 
-            # Initialize context with starting iteration state
+            # Initialize context with starting iteration state the workflow
             await self._update_context_with_shared_state()
 
             while self._iteration < self._max_iterations:
@@ -131,16 +131,113 @@ class Runner:
             ) -> None:
                 for message in messages:
                     if message.target_id is not None and message.target_id != edge.target_id:
+                        # print(f"DEBUG: Skipping message to {message.target_id}, edge targets {edge.target_id}")
                         continue
                     if not edge.can_handle(message.data):
+                        # print(f"DEBUG: Edge {edge.source_id}->{edge.target_id} cannot handle {type(message.data).__name__}")
                         continue
+                    # print(f"DEBUG: Delivering {type(message.data).__name__} via edge {edge.source_id}->{edge.target_id}")
                     await edge.send_message(message, self._shared_state, self._ctx)
 
+            # Special handling for SubWorkflowRequestInfo messages
+            async def _deliver_sub_workflow_requests(messages: list[Message]) -> None:
+                from ._executor import RequestInfoExecutor, SubWorkflowRequestInfo
+
+                # Handle SubWorkflowRequestInfo messages - only process those not already targeted
+                sub_workflow_messages = []
+                for msg in messages:
+                    # Skip messages sent directly to RequestInfoExecutor - they are already forwarded
+                    if msg.target_id == RequestInfoExecutor.EXECUTOR_ID:
+                        continue
+                        
+                    if isinstance(msg.data, SubWorkflowRequestInfo):
+                        sub_workflow_messages.append(msg)
+
+                for message in sub_workflow_messages:
+                    sub_request = message.data
+                    wrapped_type = type(sub_request.data)
+                    print(f"DEBUG: Runner processing SubWorkflowRequestInfo for {wrapped_type.__name__}")
+
+                    # Find executor that can intercept the wrapped type
+                    interceptor_found = False
+                    all_executors = set()
+                    for edges in self._edge_map.values():
+                        for edge in edges:
+                            all_executors.add(edge.target)
+
+                    for executor in all_executors:
+                        if (
+                            hasattr(executor, "_request_interceptors")
+                            and wrapped_type in executor._request_interceptors
+                        ):
+                            print(f"DEBUG: Runner found interceptor {executor.__class__.__name__} for {wrapped_type.__name__}")
+                            # Send directly to the intercepting executor
+                            await executor.execute(sub_request, self._ctx)
+                            interceptor_found = True
+                            break
+
+                    if not interceptor_found:
+                        print(f"DEBUG: Runner forwarding {wrapped_type.__name__} to RequestInfoExecutor")
+                        # No interceptor found - send directly to RequestInfoExecutor
+                        # Find the RequestInfoExecutor instance
+                        request_info_executor = None
+                        for edges in self._edge_map.values():
+                            for edge in edges:
+                                if edge.target.id == RequestInfoExecutor.EXECUTOR_ID:
+                                    request_info_executor = edge.target
+                                    break
+                            if request_info_executor:
+                                break
+                        
+                        if request_info_executor:
+                            await request_info_executor.execute(sub_request, self._ctx)
+                        else:
+                            print(f"DEBUG: RequestInfoExecutor not found in workflow!")
+                            # Fallback to message queue
+                            forward_message = Message(
+                                source_id=source_executor_id, target_id=RequestInfoExecutor.EXECUTOR_ID, data=sub_request
+                            )
+                            await self._ctx.send_message(forward_message)
+
             associated_edges = self._edge_map.get(source_executor_id, [])
-            tasks = [asyncio.create_task(_deliver_messages_inner(edge, messages)) for edge in associated_edges]
+
+            # Handle SubWorkflowRequestInfo messages specially
+            await _deliver_sub_workflow_requests(messages)
+
+            # Filter out SubWorkflowRequestInfo messages from normal edge routing
+            # since they were handled specially
+            from ._executor import RequestInfoExecutor, SubWorkflowRequestInfo
+
+            non_sub_workflow_messages = []
+            for msg in messages:
+                # Keep messages sent directly to RequestInfoExecutor (forwarded messages)
+                if msg.target_id == RequestInfoExecutor.EXECUTOR_ID:
+                    non_sub_workflow_messages.append(msg)
+                    continue
+
+                # Skip SubWorkflowRequestInfo messages (handled by special routing)
+                if isinstance(msg.data, SubWorkflowRequestInfo):
+                    continue
+                    
+                non_sub_workflow_messages.append(msg)
+
+            # Handle other messages normally
+            tasks = [
+                asyncio.create_task(_deliver_messages_inner(edge, non_sub_workflow_messages))
+                for edge in associated_edges
+            ]
             await asyncio.gather(*tasks)
 
         messages = await self._ctx.drain_messages()
+        print(f"DEBUG: Total messages from {len(messages)} sources")
+        for source_id, msg_list in messages.items():
+            msg_types = []
+            for msg in msg_list:
+                msg_types.append(f"{type(msg.data).__name__}")
+                if hasattr(msg.data, 'data'):
+                    msg_types[-1] += f"({type(msg.data.data).__name__})"
+            print(f"DEBUG: {source_id} has {len(msg_list)} messages: {msg_types}")
+
         tasks = [
             asyncio.create_task(_deliver_messages(source_executor_id, messages))
             for source_executor_id, messages in messages.items()

@@ -4,8 +4,11 @@ import functools
 import inspect
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from typing import Any, ClassVar, TypeVar, overload
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, overload
+
+if TYPE_CHECKING:
+    from ._workflow import Workflow
 
 from agent_framework import AgentRunResponse, AgentRunResponseUpdate, AgentThread, AIAgent, ChatMessage
 
@@ -34,6 +37,7 @@ class Executor:
         self._id = id or str(uuid.uuid4())
 
         self._handlers: dict[type, Callable[[Any, WorkflowContext], Any]] = {}
+        self._request_interceptors: dict[type | str, dict] = {}
         self._discover_handlers()
 
         if not self._handlers:
@@ -52,15 +56,26 @@ class Executor:
         Returns:
             An awaitable that resolves to the result of the execution.
         """
+        # print(f"DEBUG: Executor {self.id} received message of type {type(message).__name__}")
+
+        # Lazy registration for SubWorkflowRequestInfo if we have interceptors
+        if self._request_interceptors and message.__class__.__name__ == "SubWorkflowRequestInfo":
+            # Directly handle SubWorkflowRequestInfo
+            await context.add_event(ExecutorInvokeEvent(self.id))
+            await self._handle_sub_workflow_request(message, context)
+            await context.add_event(ExecutorCompletedEvent(self.id))
+            return
+
         handler: Callable[[Any, WorkflowContext], Any] | None = None
         for message_type in self._handlers:
             if is_instance_of(message, message_type):
                 handler = self._handlers[message_type]
+                # print(f"DEBUG: Found handler for {type(message).__name__}: {handler.__name__}")
                 break
 
         if handler is None:
+            print(f"DEBUG: Available handlers in {self.__class__.__name__}: {list(self._handlers.keys())}")
             raise RuntimeError(f"Executor {self.__class__.__name__} cannot handle message of type {type(message)}.")
-
         await context.add_event(ExecutorInvokeEvent(self.id))
         await handler(message, context)
         await context.add_event(ExecutorCompletedEvent(self.id))
@@ -71,16 +86,121 @@ class Executor:
         return self._id
 
     def _discover_handlers(self) -> None:
-        """Discover message handlers in the executor class."""
+        """Discover message handlers and request interceptors in the executor class."""
         for attr_name in dir(self):
             attr = getattr(self, attr_name)
-            if callable(attr) and hasattr(attr, "_handler_spec"):
-                handler_spec = attr._handler_spec  # type: ignore
-                if self._handlers.get(handler_spec["message_type"]) is not None:
-                    raise ValueError(
-                        f"Duplicate handler for type {handler_spec['message_type']} in {self.__class__.__name__}"
+            if callable(attr):
+                # Discover @handler methods
+                if hasattr(attr, "_handler_spec"):
+                    handler_spec = attr._handler_spec  # type: ignore
+                    if self._handlers.get(handler_spec["message_type"]) is not None:
+                        raise ValueError(
+                            f"Duplicate handler for type {handler_spec['message_type']} in {self.__class__.__name__}"
+                        )
+                    self._handlers[handler_spec["message_type"]] = attr
+
+                # Discover @intercepts_request methods
+                if hasattr(attr, "_intercepts_request"):
+                    interceptor_info = {
+                        "method": attr,
+                        "from_workflow": getattr(attr, "_from_workflow", None),
+                        "condition": getattr(attr, "_intercept_condition", None),
+                    }
+                    request_type = attr._intercepts_request  # type: ignore
+                    self._request_interceptors[request_type] = interceptor_info
+
+    def _register_sub_workflow_handler(self) -> None:
+        """Register automatic handler for SubWorkflowRequestInfo messages."""
+        # We need to use a string reference until the class is defined
+        # This will be resolved later when the class is actually used
+        pass  # Will be registered lazily when needed
+
+    async def _handle_sub_workflow_request(
+        self,
+        request: "SubWorkflowRequestInfo",
+        ctx: WorkflowContext,
+    ) -> None:
+        """Automatic routing to @intercepts_request methods.
+
+        This is only active for executors that have @intercepts_request methods.
+        """
+        # Try to match against registered interceptors
+        for request_type, interceptor_info in self._request_interceptors.items():
+            matched = False
+
+            # Check type matching
+            if isinstance(request_type, type) and isinstance(request.data, request_type):
+                matched = True
+            elif isinstance(request_type, str):
+                # String matching - could check against type name or other attributes
+                if hasattr(request.data, "__class__") and request.data.__class__.__name__ == request_type:
+                    matched = True
+
+            if matched:
+                # Check workflow scope if specified
+                from_workflow = interceptor_info["from_workflow"]
+                if from_workflow and request.sub_workflow_id != from_workflow:
+                    continue  # Skip this interceptor, wrong workflow
+
+                # Check additional condition
+                condition = interceptor_info["condition"]
+                if condition and not condition(request):
+                    continue
+
+                # Call the interceptor method
+                method = interceptor_info["method"]
+                response = await method(request.data, ctx)
+
+                # Check if interceptor handled it or needs to forward
+                if isinstance(response, RequestResponse):
+                    if response.handled:
+                        # print(f"DEBUG: Request {request.data} was handled, sending response")
+                        # Send response back to sub-workflow
+                        from ._runner_context import Message
+
+                        response_message = Message(
+                            source_id=self.id,
+                            target_id=request.sub_workflow_id,
+                            data=SubWorkflowResponse(
+                                request_id=request.request_id,
+                                data=response.data,
+                            ),
+                        )
+                        # print(f"DEBUG: Sending response to target_id: {request.sub_workflow_id}")
+                        await ctx.send_message(response_message)
+                    else:
+                        # print(f"DEBUG: Request {request.data} being forwarded as external request")
+                        # Forward WITH CONTEXT PRESERVED
+                        # Update the data if interceptor provided a modified request
+                        if response.forward_request:
+                            request.data = response.forward_request
+
+                        # Send to RequestInfoExecutor directly to create external request
+                        from . import RequestInfoExecutor
+                        from ._runner_context import Message
+
+                        forward_message = Message(
+                            source_id=self.id, target_id=RequestInfoExecutor.EXECUTOR_ID, data=request
+                        )
+                        await ctx.send_message(forward_message)
+                else:
+                    # Legacy support: direct return means handled
+                    await ctx.send_message(
+                        SubWorkflowResponse(
+                            request_id=request.request_id,
+                            data=response,
+                        ),
+                        target_id=request.sub_workflow_id,
                     )
-                self._handlers[handler_spec["message_type"]] = attr
+                return
+
+        # No interceptor found - forward entire request to RequestInfoExecutor
+        # (preserves routing context)
+        from . import RequestInfoExecutor
+        from ._runner_context import Message
+
+        forward_message = Message(source_id=self.id, target_id=RequestInfoExecutor.EXECUTOR_ID, data=request)
+        await ctx.send_message(forward_message)
 
     def can_handle(self, message: Any) -> bool:
         """Check if the executor can handle a given message type.
@@ -183,6 +303,79 @@ def handler(
 
 # endregion: Handler Decorator
 
+# region Intercepts Request Decorator
+
+
+@overload
+def intercepts_request(
+    request_type: type | str,
+) -> Callable[
+    [Callable[[ExecutorT, Any, WorkflowContext], Awaitable["RequestResponse"]]],
+    Callable[[ExecutorT, Any, WorkflowContext], Awaitable["RequestResponse"]],
+]: ...
+
+
+@overload
+def intercepts_request(
+    request_type: type | str,
+    *,
+    from_workflow: str | None = None,
+    condition: Callable[[Any], bool] | None = None,
+) -> Callable[
+    [Callable[[ExecutorT, Any, WorkflowContext], Awaitable["RequestResponse"]]],
+    Callable[[ExecutorT, Any, WorkflowContext], Awaitable["RequestResponse"]],
+]: ...
+
+
+def intercepts_request(
+    request_type: type | str,
+    *,
+    from_workflow: str | None = None,
+    condition: Callable[[Any], bool] | None = None,
+) -> Callable[
+    [Callable[[ExecutorT, Any, WorkflowContext], Awaitable["RequestResponse"]]],
+    Callable[[ExecutorT, Any, WorkflowContext], Awaitable["RequestResponse"]],
+]:
+    """Decorator to mark methods that intercept sub-workflow requests.
+
+    This decorator allows parent workflows to intercept and handle requests from
+    sub-workflows before they are sent to external sources.
+
+    Args:
+        request_type: The type of request to intercept (can be a class or string).
+        from_workflow: Optional ID of specific sub-workflow to intercept from.
+        condition: Optional callable that must return True for interception.
+
+    Returns:
+        The decorated function with interception metadata.
+
+    Example:
+        @intercepts_request(DomainCheckRequest)
+        async def check_domain(self, request: DomainCheckRequest, ctx: WorkflowContext) -> RequestResponse:
+            if request.domain in self.approved_domains:
+                return RequestResponse.handled(True)
+            return RequestResponse.forward()
+    """
+
+    def decorator(
+        func: Callable[[ExecutorT, Any, WorkflowContext], Awaitable["RequestResponse"]],
+    ) -> Callable[[ExecutorT, Any, WorkflowContext], Awaitable["RequestResponse"]]:
+        @functools.wraps(func)
+        async def wrapper(self: ExecutorT, request: Any, ctx: WorkflowContext) -> "RequestResponse":
+            return await func(self, request, ctx)
+
+        # Add metadata for discovery
+        wrapper._intercepts_request = request_type  # type: ignore
+        wrapper._from_workflow = from_workflow  # type: ignore
+        wrapper._intercept_condition = condition  # type: ignore
+
+        return wrapper
+
+    return decorator
+
+
+# endregion: Intercepts Request Decorator
+
 # region Agent Executor
 
 
@@ -280,7 +473,55 @@ class RequestInfoMessage:
     the request/response pattern explicit.
     """
 
-    request_id: str = str(uuid.uuid4())
+    request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+
+
+@dataclass
+class SubWorkflowRequestInfo:
+    """Routes requests from sub-workflows to parent workflows.
+
+    This message type wraps requests from sub-workflows to add routing context,
+    allowing parent workflows to intercept and potentially handle the request.
+    """
+
+    request_id: str  # Original request ID from sub-workflow
+    sub_workflow_id: str  # ID of the WorkflowExecutor that sent this
+    data: Any  # The actual request data
+
+
+@dataclass
+class SubWorkflowResponse:
+    """Routes responses back to sub-workflows.
+
+    This message type is used to send responses back to sub-workflows that
+    made requests, ensuring the response reaches the correct sub-workflow.
+    """
+
+    request_id: str  # Matches the original request ID
+    data: Any  # The actual response data
+
+
+@dataclass
+class RequestResponse:
+    """Response from @intercepts_request methods.
+
+    This type allows intercepting executors to indicate whether they handled
+    a request or whether it should be forwarded to external sources.
+    """
+
+    handled: bool
+    data: Any = None
+    forward_request: Any = None
+
+    @staticmethod
+    def handled(data: Any) -> "RequestResponse":
+        """Create a response indicating the request was handled."""
+        return RequestResponse(handled=True, data=data)
+
+    @staticmethod
+    def forward(modified_request: Any = None) -> "RequestResponse":
+        """Create a response indicating the request should be forwarded."""
+        return RequestResponse(handled=False, forward_request=modified_request)
 
 
 class RequestInfoExecutor(Executor):
@@ -298,6 +539,7 @@ class RequestInfoExecutor(Executor):
         """Initialize the RequestInfoExecutor with its well-known ID."""
         super().__init__(id=self.EXECUTOR_ID)
         self._request_events: dict[str, RequestInfoEvent] = {}
+        self._sub_workflow_contexts: dict[str, dict[str, str]] = {}
 
     @handler
     async def run(self, message: RequestInfoMessage, ctx: WorkflowContext) -> None:
@@ -310,6 +552,38 @@ class RequestInfoExecutor(Executor):
             request_type=type(message),
             request_data=message,
         )
+        self._request_events[message.request_id] = event
+        await ctx.add_event(event)
+
+    @handler
+    async def handle_sub_workflow_request(
+        self,
+        message: SubWorkflowRequestInfo,
+        ctx: WorkflowContext,
+    ) -> None:
+        """Handle forwarded sub-workflow request.
+
+        This method handles requests that were forwarded from parent workflows
+        because they couldn't be handled locally.
+        """
+        print(f"DEBUG: RequestInfoExecutor received SubWorkflowRequestInfo: {message.request_id}")
+        # When called directly from runner, we need to use the sub_workflow_id as the source
+        source_executor_id = message.sub_workflow_id
+
+        # Store context for routing response back
+        self._sub_workflow_contexts[message.request_id] = {
+            "sub_workflow_id": message.sub_workflow_id,
+            "parent_executor_id": source_executor_id,
+        }
+
+        # Create event for external handling - preserve the SubWorkflowRequestInfo wrapper
+        event = RequestInfoEvent(
+            request_id=message.request_id,  # Use original request ID
+            source_executor_id=source_executor_id,
+            request_type=type(message),  # SubWorkflowRequestInfo type
+            request_data=message,  # The full SubWorkflowRequestInfo
+        )
+        print(f"DEBUG: RequestInfoExecutor creating RequestInfoEvent: {event.request_id}")
         self._request_events[message.request_id] = event
         await ctx.add_event(event)
 
@@ -326,11 +600,147 @@ class RequestInfoExecutor(Executor):
             response_data: The data returned in the response.
             ctx: The workflow context for sending the response.
         """
+        print(f"DEBUG: RequestInfoExecutor.handle_response called for request {request_id}")
         if request_id not in self._request_events:
             raise ValueError(f"No request found with ID: {request_id}")
 
         event = self._request_events.pop(request_id)
-        await ctx.send_message(response_data, target_id=event.source_executor_id)
+
+        # Check if this was a forwarded sub-workflow request
+        if request_id in self._sub_workflow_contexts:
+            context = self._sub_workflow_contexts.pop(request_id)
+
+            # Send back to sub-workflow that made the original request
+            print(
+                f"DEBUG: RequestInfoExecutor sending response to sub-workflow {context['sub_workflow_id']} for request {request_id}"
+            )
+            # Don't wrap in Message - ctx.send_message will do that
+            await ctx.send_message(
+                SubWorkflowResponse(
+                    request_id=request_id,
+                    data=response_data,
+                ),
+                target_id=context["sub_workflow_id"],
+            )
+        else:
+            # Regular response - send directly back to source
+            await ctx.send_message(response_data, target_id=event.source_executor_id)
 
 
 # endregion: Request Info Executor
+
+# region Workflow Executor
+
+
+class WorkflowExecutor(Executor):
+    """An executor that runs another workflow as its execution logic.
+
+    This executor wraps a workflow to make it behave as an executor, enabling
+    hierarchical workflow composition. Sub-workflows can send requests that
+    are intercepted by parent workflows.
+    """
+
+    def __init__(self, workflow: "Workflow", id: str | None = None):
+        """Initialize the WorkflowExecutor.
+
+        Args:
+            workflow: The workflow to execute as a sub-workflow.
+            id: Optional unique identifier for this executor.
+        """
+        super().__init__(id)
+        self._workflow = workflow
+        # Track pending external responses by request_id
+        self._pending_responses: dict[str, Any] = {}  # request_id -> response_data
+
+    @handler  # No output_types - can send any completion data type
+    async def process_workflow(self, input_data: object, ctx: WorkflowContext) -> None:
+        """Execute the sub-workflow with raw input data.
+
+        This handler starts a new sub-workflow execution. When the sub-workflow
+        needs external information, it pauses and sends a request to the parent.
+
+        Args:
+            input_data: The input data to send to the sub-workflow.
+            ctx: The workflow context from the parent.
+        """
+        # Skip SubWorkflowResponse and SubWorkflowRequestInfo - they have specific handlers
+        if isinstance(input_data, (SubWorkflowResponse, SubWorkflowRequestInfo)):
+            return
+
+        from ._events import RequestInfoEvent, WorkflowCompletedEvent
+
+        try:
+            # Run the sub-workflow and collect all events
+            events = [event async for event in self._workflow.run_streaming(input_data)]
+
+            # Process events to check for completion or requests
+            for event in events:
+                if isinstance(event, WorkflowCompletedEvent):
+                    # Sub-workflow completed normally - send result to parent
+                    await ctx.send_message(event.data)
+                    return  # Exit after completion
+
+                elif isinstance(event, RequestInfoEvent):
+                    # Sub-workflow needs external information
+                    print(f"DEBUG: WorkflowExecutor {self.id} got RequestInfoEvent: {event.request_id} for {type(event.data).__name__}")
+                    # Wrap request with routing context and send to parent
+                    wrapped_request = SubWorkflowRequestInfo(
+                        request_id=event.request_id,
+                        sub_workflow_id=self.id,
+                        data=event.data,
+                    )
+                    print(f"DEBUG: WorkflowExecutor {self.id} sending SubWorkflowRequestInfo to parent")
+
+                    await ctx.send_message(wrapped_request)
+                    # Exit and wait for response - sub-workflow is paused
+                    return
+
+        except Exception as e:
+            from ._events import ExecutorEvent
+
+            # Sub-workflow failed - create error event
+            error_event = ExecutorEvent(executor_id=self.id, data={"error": str(e), "type": "sub_workflow_error"})
+            await ctx.add_event(error_event)
+            raise
+
+
+    @handler
+    async def handle_response(
+        self,
+        response: SubWorkflowResponse,
+        ctx: WorkflowContext,
+    ) -> None:
+        """Handle response from parent for a forwarded request.
+
+        This handler receives responses and sends them directly to the sub-workflow
+        and continues execution in the next superstep.
+
+        Args:
+            response: The response to a previous request.
+            ctx: The workflow context.
+        """
+        print(f"DEBUG: WorkflowExecutor {self.id} received response for request {response.request_id}: {response.data}")
+        
+        from ._events import RequestInfoEvent, WorkflowCompletedEvent
+
+        try:
+            # Send the response to the sub-workflow and continue execution
+            print(f"DEBUG: WorkflowExecutor {self.id} calling send_responses for request {response.request_id}")
+            await self._workflow.send_responses({response.request_id: response.data})
+            print(f"DEBUG: WorkflowExecutor {self.id} sent response to sub-workflow")
+            
+            # Continue running the sub-workflow until completion  
+            print(f"DEBUG: WorkflowExecutor {self.id} calling workflow.run(None) to continue execution")
+            result = await self._workflow.run(None)
+            print(f"DEBUG: WorkflowExecutor {self.id} sub-workflow completed with result: {result}")
+            
+            # Send result to parent (but only if we have a real context with send_message)
+            if hasattr(ctx, 'send_message') and callable(ctx.send_message):
+                await ctx.send_message(result)
+            
+        except Exception as e:
+            print(f"DEBUG: WorkflowExecutor {self.id} error in handle_response: {e}")
+            raise
+
+
+# endregion: Workflow Executor

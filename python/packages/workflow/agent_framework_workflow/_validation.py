@@ -232,6 +232,13 @@ class WorkflowGraphValidator:
                 handler_output_types = handler_spec.get("output_types", [])
                 output_types.extend(handler_output_types)
 
+        # Also include intercepted request types as potential outputs
+        # since @intercepts_request methods can forward requests
+        if hasattr(executor, '_request_interceptors'):
+            for request_type in executor._request_interceptors.keys():
+                if isinstance(request_type, type):
+                    output_types.append(request_type)
+
         return output_types
 
     def _get_executor_input_types(self, executor: Executor) -> list[type[Any]]:
