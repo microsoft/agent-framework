@@ -41,13 +41,8 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
                     Instructions = this.State.Format(this.Model.AdditionalInstructions) ?? string.Empty,
                 });
 
-        //AgentRunResponse agentResponse =
-        //    userInput != null ?
-        //        await agent.RunAsync(userInput, thread: null, options, cancellationToken).ConfigureAwait(false) :
-        //        await agent.RunAsync(thread: null, options, cancellationToken).ConfigureAwait(false);
-
-        AgentThread? thread = null; // %%% HAXX: SYSTEM THREAD
-        FormulaValue conversationValue = this.State.Get(WorkflowScopeType.System, "ConversationId");
+        AgentThread? thread = null;
+        FormulaValue conversationValue = this.State.Get(WorkflowScopeType.System, "ConversationId"); // %%% HAXX: SYSTEM THREAD
         if (conversationValue is StringValue stringValue)
         {
             thread = new AgentThread() { ConversationId = stringValue.Value };

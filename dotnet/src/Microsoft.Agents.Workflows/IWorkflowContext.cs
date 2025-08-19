@@ -58,7 +58,7 @@ public interface IWorkflowContext
     /// <param name="key">The key of the state value.</param>
     /// <param name="scopeName">The name of the scope.</param>
     /// <returns>A <see cref="ValueTask{T}"/> representing the asynchronous operation.</returns>
-    ValueTask<T?> ReadWorkflowStateAsync<T>(string key, string? scopeName = null); // %%% HAXX: WORKFLOW STATE
+    ValueTask<T?> ReadWorkflowStateAsync<T>(string key, string? scopeName = null); // %%% HAXX: _WORKFLOW_ STATE
 
     /// <summary>
     /// Asynchronously updates the state of a queue entry identified by the specified key and optional scope.
@@ -74,5 +74,5 @@ public interface IWorkflowContext
     /// <param name="scopeName">An optional name that specifies the scope within which the queue entry resides. If null, the default scope is
     /// used.</param>
     /// <returns>A ValueTask that represents the asynchronous update operation.</returns>
-    ValueTask QueueWorkflowStateUpdateAsync<T>(string key, T? value, string? scopeName = null); // %%% HAXX: WORKFLOW STATE
+    ValueTask QueueWorkflowStateUpdateAsync<T>(string key, T? value, string? scopeName = null); // %%% HAXX: _WORKFLOW_ STATE
 }
