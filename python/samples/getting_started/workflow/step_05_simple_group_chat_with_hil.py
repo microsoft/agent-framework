@@ -3,6 +3,7 @@
 import asyncio
 
 from agent_framework import ChatMessage, ChatRole
+from typing import Any
 from agent_framework.azure import AzureChatClient
 from agent_framework.workflow import (
     AgentExecutor,
@@ -35,8 +36,8 @@ class CriticGroupChatManager(Executor):
         self._current_round = 0
         self._chat_history: list[ChatMessage] = []
 
-    @handler(output_types=[AgentExecutorRequest])
-    async def start(self, task: str, ctx: WorkflowContext) -> None:
+    @handler
+    async def start(self, task: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
         """Handler that starts the group chat with an initial task."""
         initial_message = ChatMessage(ChatRole.USER, text=task)
 
@@ -52,8 +53,12 @@ class CriticGroupChatManager(Executor):
         # Update the cache with the initial message
         self._chat_history.append(initial_message)
 
-    @handler(output_types=[AgentExecutorRequest, RequestInfoMessage])
-    async def handle_agent_response(self, response: AgentExecutorResponse, ctx: WorkflowContext) -> None:
+    @handler
+    async def handle_agent_response(
+        self,
+        response: AgentExecutorResponse,
+        ctx: WorkflowContext[Any],
+    ) -> None:
         """Handler that processes the response from the agent."""
         # Update the chat history with the response
         self._chat_history.extend(response.agent_run_response.messages)
@@ -75,8 +80,8 @@ class CriticGroupChatManager(Executor):
         selection = self._get_next_member()
         await ctx.send_message(AgentExecutorRequest(messages=[], should_respond=True), target_id=selection)
 
-    @handler(output_types=[AgentExecutorRequest])
-    async def handle_request_response(self, response: list[ChatMessage], ctx: WorkflowContext) -> None:
+    @handler
+    async def handle_request_response(self, response: list[ChatMessage], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
         """Handler that processes the response from the RequestInfoExecutor."""
         # Update the chat history with the response
         self._chat_history.extend(response)
@@ -96,7 +101,7 @@ class CriticGroupChatManager(Executor):
     async def _broadcast_message(
         self,
         messages: list[ChatMessage],
-        ctx: WorkflowContext,
+    ctx: WorkflowContext[AgentExecutorRequest],
         exclude_id: str | None = None,
     ) -> None:
         """Broadcast messages to all members."""

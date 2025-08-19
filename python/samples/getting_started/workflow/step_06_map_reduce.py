@@ -5,6 +5,7 @@ import asyncio
 import os
 from collections import defaultdict
 from dataclasses import dataclass
+from typing import Any
 
 import aiofiles
 from agent_framework.workflow import (
@@ -49,8 +50,8 @@ class Split(Executor):
         super().__init__(id)
         self._map_executor_ids = map_executor_ids
 
-    @handler(output_types=[SplitCompleted])
-    async def split(self, data: str, ctx: WorkflowContext) -> None:
+    @handler
+    async def split(self, data: str, ctx: WorkflowContext[SplitCompleted]) -> None:
         """Execute the task by splitting the data into chunks.
 
         Args:
@@ -104,8 +105,8 @@ class MapCompleted:
 class Map(Executor):
     """An executor that applies a function to each item in the data and save the result to a file."""
 
-    @handler(output_types=[MapCompleted])
-    async def map(self, _: SplitCompleted, ctx: WorkflowContext) -> None:
+    @handler
+    async def map(self, _: SplitCompleted, ctx: WorkflowContext[MapCompleted]) -> None:
         """Execute the task by applying a function to each item and same result to a file.
 
         Args:
@@ -141,8 +142,8 @@ class Shuffle(Executor):
         super().__init__(id)
         self._reducer_ids = reducer_ids
 
-    @handler(output_types=[ShuffleCompleted])
-    async def shuffle(self, data: list[MapCompleted], ctx: WorkflowContext) -> None:
+    @handler
+    async def shuffle(self, data: list[MapCompleted], ctx: WorkflowContext[ShuffleCompleted]) -> None:
         """Execute the task by aggregating the results.
 
         Args:
@@ -216,8 +217,8 @@ class ReduceCompleted:
 class Reduce(Executor):
     """An executor that reduces the results from the ShuffleExecutor."""
 
-    @handler(output_types=[ReduceCompleted])
-    async def _execute(self, data: ShuffleCompleted, ctx: WorkflowContext) -> None:
+    @handler
+    async def _execute(self, data: ShuffleCompleted, ctx: WorkflowContext[ReduceCompleted]) -> None:
         """Execute the task by reducing the results.
 
         Args:
@@ -250,7 +251,7 @@ class CompletionExecutor(Executor):
     """An executor that completes the workflow by aggregating the results from the ReduceExecutors."""
 
     @handler
-    async def complete(self, data: list[ReduceCompleted], ctx: WorkflowContext) -> None:
+    async def complete(self, data: list[ReduceCompleted], ctx: WorkflowContext[Any]) -> None:
         """Execute the task by aggregating the results.
 
         Args:
