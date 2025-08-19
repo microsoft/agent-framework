@@ -8,6 +8,8 @@ var cosmosDb = builder.AddAzureCosmosDB(CosmosDBTestConstants.TestCosmosDbName);
 if (CosmosDBTestConstants.UseEmulatorInCICD)
 {
     // Emulator created in the CI/CD pipeline gives more control over some settings and port-configuration today.
+    // it probably should be configured differently here, but we leave a default setup for now.
+    cosmosDb.RunAsEmulator(emulator => emulator.WithLifetime(ContainerLifetime.Persistent));
 }
 else if (CosmosDBTestConstants.UseAspireEmulatorForTesting)
 {
