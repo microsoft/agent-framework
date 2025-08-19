@@ -11,7 +11,7 @@ using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
 using Xunit.Abstractions;
 
-namespace Microsoft.Agents.Workflows.Declarative.UnitTests.Execution;
+namespace Microsoft.Agents.Workflows.Declarative.UnitTests.ObjectModel;
 
 /// <summary>
 /// Base test class for <see cref="WorkflowActionExecutor"/> implementations.

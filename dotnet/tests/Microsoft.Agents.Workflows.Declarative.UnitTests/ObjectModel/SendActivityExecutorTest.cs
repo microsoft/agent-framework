@@ -6,7 +6,7 @@ using Microsoft.Agents.Workflows.Declarative.ObjectModel;
 using Microsoft.Bot.ObjectModel;
 using Xunit.Abstractions;
 
-namespace Microsoft.Agents.Workflows.Declarative.UnitTests.Execution;
+namespace Microsoft.Agents.Workflows.Declarative.UnitTests.ObjectModel;
 
 /// <summary>
 /// Tests for <see cref="SendActivityExecutor"/>.
