@@ -5,6 +5,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework.azure import AzureChatClient
+from azure.identity import DefaultAzureCredential
 from pydantic import Field
 
 
@@ -17,7 +18,7 @@ def get_weather(
 
 
 async def main() -> None:
-    client = AzureChatClient()
+    client = AzureChatClient(ad_credential=DefaultAzureCredential())
     message = "What's the weather in Amsterdam and in Paris?"
     stream = False
     print(f"User: {message}")

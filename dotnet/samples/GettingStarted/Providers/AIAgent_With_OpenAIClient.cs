@@ -33,11 +33,13 @@ public sealed class AIAgent_With_OpenAIClient(ITestOutputHelper output) : AgentS
         // Local function to invoke agent and display the conversation messages for the thread.
         async Task RunAgentAsync(string input)
         {
-            Console.WriteLine(input);
+            Console.WriteLine(
+                $"""
+                User: {input}
+                Assistant:
+                {await agent.RunAsync(input, thread)}
 
-            var response = await agent.RunAsync(input, thread);
-
-            Console.WriteLine(response.Messages.Last().Text);
+                """);
         }
     }
 
@@ -59,12 +61,17 @@ public sealed class AIAgent_With_OpenAIClient(ITestOutputHelper output) : AgentS
         // Local function to invoke agent and display the conversation messages for the thread.
         async Task RunAgentAsync(string input)
         {
-            Console.WriteLine(input);
+            Console.WriteLine($"User: {input}");
 
             var response = await agent.RunAsync(input, thread);
             var chatCompletion = response.AsChatCompletion();
 
-            Console.WriteLine(chatCompletion.Content.Last().Text);
+            Console.WriteLine(
+                $"""
+                Assistant:
+                {chatCompletion.Content.Last().Text}
+
+                """);
         }
     }
 
@@ -86,13 +93,18 @@ public sealed class AIAgent_With_OpenAIClient(ITestOutputHelper output) : AgentS
         // Local function to invoke agent and display the conversation messages for the thread.
         async Task RunAgentAsync(string input)
         {
-            Console.WriteLine(input);
+            Console.WriteLine($"User: {input}");
 
             // Use the OpenAI.Chat message types directly
             var chatMessage = new UserChatMessage(input);
             var chatCompletion = await agent.RunAsync(chatMessage, thread);
 
-            Console.WriteLine(chatCompletion.Content.Last().Text);
+            Console.WriteLine(
+                $"""
+                Assistant:
+                {chatCompletion.Content.Last().Text}
+
+                """);
         }
     }
 }

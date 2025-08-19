@@ -162,7 +162,17 @@ internal sealed class InProcessActorClient(InProcessActorRuntime runtime) : IAct
 
         activity.SetupRequestOperation(actorId, messageId, service: "ActorClient", rpcMethod: "GetResponse");
 
-        throw new NotImplementedException("GetResponseAsync is not yet implemented");
+        var actorContext = this._runtime.GetOrCreateActor(actorId);
+#pragma warning disable CA2000 // Dispose objects before losing scope
+        if (actorContext.TryGetResponseHandle(messageId, out var handle))
+        {
+            return new(handle);
+        }
+#pragma warning restore CA2000 // Dispose objects before losing scope
+
+#pragma warning disable CA2000 // Dispose objects before losing scope
+        return new(new NotFoundActorResponseHandle(actorId, messageId));
+#pragma warning restore CA2000 // Dispose objects before losing scope
     }
 
     public ValueTask<ActorResponseHandle> SendRequestAsync(ActorRequest request, CancellationToken cancellationToken)
@@ -180,7 +190,9 @@ internal sealed class InProcessActorClient(InProcessActorRuntime runtime) : IAct
             // Ensure the message is enqueued on the actor's inbox, getting a response handle for it.
             var actorId = request.ActorId;
             var actorContext = this._runtime.GetOrCreateActor(actorId);
+#pragma warning disable CA2000 // Dispose objects before losing scope
             var response = actorContext.SendRequest(request);
+#pragma warning restore CA2000 // Dispose objects before losing scope
 
             activity.Complete(MessageSent, actorId, Sent, (Tel.Message.Id, request.MessageId));
 

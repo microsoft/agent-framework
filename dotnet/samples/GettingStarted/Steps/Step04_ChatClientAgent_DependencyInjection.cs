@@ -9,6 +9,9 @@ namespace Steps;
 
 public sealed class Step04_ChatClientAgent_DependencyInjection(ITestOutputHelper output) : AgentSample(output)
 {
+    private const string JokerName = "Joker";
+    private const string JokerInstructions = "You are good at telling jokes.";
+
     [Theory]
     [InlineData(ChatClientProviders.AzureAIAgentsPersistent)]
     [InlineData(ChatClientProviders.AzureOpenAI)]
@@ -20,9 +23,7 @@ public sealed class Step04_ChatClientAgent_DependencyInjection(ITestOutputHelper
         // Adding multiple chat clients to the service collection.
         var services = new ServiceCollection();
 
-        var agentOptions = new ChatClientAgentOptions(
-            name: "Parrot",
-            instructions: "Repeat the user message in the voice of a pirate and then end with a parrot sound.");
+        var agentOptions = new ChatClientAgentOptions(JokerInstructions, JokerName);
 
         services.AddLogging();
 
