@@ -1,14 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import Mapping
-from typing import Any, ClassVar
+from typing import Any, TypeVar
 from urllib.parse import urljoin
 
 from agent_framework import use_tool_calling
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai._responses_client import OpenAIResponsesClientBase
-from agent_framework.openai._shared import OpenAIModelTypes
 from agent_framework.telemetry import use_telemetry
+from azure.identity import ChainedTokenCredential
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from pydantic import SecretStr, ValidationError
 from pydantic.networks import AnyUrl
@@ -18,13 +18,13 @@ from ._shared import (
     AzureOpenAISettings,
 )
 
+TAzureResponsesClient = TypeVar("TAzureResponsesClient", bound="AzureResponsesClient")
+
 
 @use_telemetry
 @use_tool_calling
 class AzureResponsesClient(AzureOpenAIConfigBase, OpenAIResponsesClientBase):
     """Azure Responses completion class."""
-
-    MODEL_PROVIDER_NAME: ClassVar[str] = "azure_openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     def __init__(
         self,
@@ -36,6 +36,7 @@ class AzureResponsesClient(AzureOpenAIConfigBase, OpenAIResponsesClientBase):
         ad_token: str | None = None,
         ad_token_provider: AsyncAzureADTokenProvider | None = None,
         token_endpoint: str | None = None,
+        ad_credential: ChainedTokenCredential | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | None = None,
         env_file_path: str | None = None,
@@ -58,6 +59,7 @@ class AzureResponsesClient(AzureOpenAIConfigBase, OpenAIResponsesClientBase):
             ad_token: The Azure Active Directory token. (Optional)
             ad_token_provider: The Azure Active Directory token provider. (Optional)
             token_endpoint: The token endpoint to request an Azure token. (Optional)
+            ad_credential: The Azure Active Directory credential. (Optional)
             default_headers: The default headers mapping of string keys to
                 string values for HTTP requests. (Optional)
             async_client: An existing client to use. (Optional)
@@ -105,20 +107,20 @@ class AzureResponsesClient(AzureOpenAIConfigBase, OpenAIResponsesClientBase):
             ad_token=ad_token,
             ad_token_provider=ad_token_provider,
             token_endpoint=azure_openai_settings.token_endpoint,
+            ad_credential=ad_credential,
             default_headers=default_headers,
-            ai_model_type=OpenAIModelTypes.RESPONSE,
             client=async_client,
             instruction_role=instruction_role,
         )
 
     @classmethod
-    def from_dict(cls, settings: dict[str, Any]) -> "AzureResponsesClient":
+    def from_dict(cls: type[TAzureResponsesClient], settings: dict[str, Any]) -> TAzureResponsesClient:
         """Initialize an Open AI service from a dictionary of settings.
 
         Args:
             settings: A dictionary of settings for the service.
         """
-        return AzureResponsesClient(
+        return cls(
             api_key=settings.get("api_key"),
             deployment_name=settings.get("deployment_name"),
             endpoint=settings.get("endpoint"),
