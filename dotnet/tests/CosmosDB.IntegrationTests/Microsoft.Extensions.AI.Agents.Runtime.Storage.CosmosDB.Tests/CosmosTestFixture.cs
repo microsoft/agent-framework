@@ -55,7 +55,16 @@ public class CosmosTestFixture : IAsyncLifetime
             {
                 PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
                 TypeInfoResolver = CosmosActorStateJsonContext.Default
-            }
+            },
+            HttpClientFactory = () =>
+            {
+                HttpMessageHandler httpMessageHandler = new HttpClientHandler()
+                {
+                    // ignore SSL errors for testing with emulator
+                    ServerCertificateCustomValidationCallback = (req, cert, chain, errors) => true
+                };
+                return new HttpClient(httpMessageHandler);
+            },
         };
 
         if (CosmosDBTestConstants.UseEmulatorForTesting)
