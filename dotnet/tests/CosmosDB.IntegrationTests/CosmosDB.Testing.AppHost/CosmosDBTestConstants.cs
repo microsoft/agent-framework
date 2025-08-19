@@ -19,6 +19,6 @@ public static class CosmosDBTestConstants
 
     public static bool RunningCosmosDbTestsInCICD => string.Equals(
         Environment.GetEnvironmentVariable("COSMOSDB_TESTS_CICD"),
-        "false",
+        "true",
         StringComparison.OrdinalIgnoreCase);
 }
