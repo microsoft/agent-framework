@@ -1,0 +1,18 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using Microsoft.Extensions.AI.Agents;
+
+namespace Microsoft.Agents.Workflows;
+
+/// <summary>
+/// Sent to an <see cref="AIAgent"/>-based executor to request
+/// a response to accumulated <see cref="Microsoft.Extensions.AI.ChatMessage"/>.
+/// </summary>
+/// <param name="emitEvents">Whether to raise AgentRunEvents for this executor.</param>
+public class TurnToken(bool emitEvents = false)
+{
+    /// <summary>
+    /// Gets a value indicating whether events are emitted by the receiving executor.
+    /// </summary>
+    public bool EmitEvents => emitEvents;
+}

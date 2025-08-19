@@ -14,14 +14,20 @@ internal class FanOutEdgeRunner(IRunnerContext runContext, FanOutEdgeData edgeDa
             sinkId => sinkId,
             sinkId => runContext.Bind(sinkId));
 
-    public async ValueTask<IEnumerable<object?>> ChaseAsync(object message)
+    public async ValueTask<IEnumerable<object?>> ChaseAsync(MessageEnvelope envelope)
     {
+        object message = envelope.Message;
         List<string> targets =
             this.EdgeData.PartitionAssigner == null
                 ? this.EdgeData.SinkIds
-                : this.EdgeData.PartitionAssigner(message, this.BoundContexts.Count).Select(i => this.EdgeData.SinkIds[i]).ToList();
+                : this.EdgeData.PartitionAssigner(message, this.BoundContexts.Count)
+                               .Select(i => this.EdgeData.SinkIds[i]).ToList();
 
-        object?[] result = await Task.WhenAll(targets.Select(ProcessTargetAsync)).ConfigureAwait(false);
+        IEnumerable<string> filteredTargets = envelope.TargetId != null
+                                            ? targets.Where(IsValidTarget)
+                                            : targets;
+
+        object?[] result = await Task.WhenAll(filteredTargets.Select(ProcessTargetAsync)).ConfigureAwait(false);
         return result.Where(r => r is not null);
 
         async Task<object?> ProcessTargetAsync(string targetId)
@@ -31,11 +37,16 @@ internal class FanOutEdgeRunner(IRunnerContext runContext, FanOutEdgeData edgeDa
 
             if (executor.CanHandle(message.GetType()))
             {
-                return await executor.ExecuteAsync(message, this.BoundContexts[targetId])
+                return await executor.ExecuteAsync(message, envelope.MessageType, this.BoundContexts[targetId])
                                      .ConfigureAwait(false);
             }
 
             return null;
+        }
+
+        bool IsValidTarget(string targetId)
+        {
+            return envelope.TargetId == null || targetId == envelope.TargetId;
         }
     }
 }

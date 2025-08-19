@@ -16,6 +16,59 @@ namespace Microsoft.Agents.Workflows;
 public static class WorkflowBuilderExtensions
 {
     /// <summary>
+    /// Adds edges to the workflow that forward messages of the specified type from the source executor to
+    /// one or more target executors.
+    /// </summary>
+    /// <typeparam name="TMessage">The type of message to forward.</typeparam>
+    /// <param name="builder">The <see cref="WorkflowBuilder"/> to which the edges will be added.</param>
+    /// <param name="source">The source executor from which messages will be forwarded.</param>
+    /// <param name="executors">The target executors to which messages will be forwarded.</param>
+    /// <returns>The updated <see cref="WorkflowBuilder"/> instance.</returns>
+    public static WorkflowBuilder ForwardMessage<TMessage>(this WorkflowBuilder builder, ExecutorIsh source, params ExecutorIsh[] executors)
+    {
+        Throw.IfNullOrEmpty(executors);
+
+        if (executors.Length == 1)
+        {
+            return builder.AddEdge(source, executors[0], IsAllowedType);
+        }
+
+        return builder.AddSwitch(source,
+            (switch_) =>
+            {
+                switch_.AddCase(IsAllowedType, executors);
+            });
+
+        bool IsAllowedType(object? message) => message is TMessage;
+    }
+
+    /// <summary>
+    /// Adds edges from the specified source to the provided executors, excluding messages of a specified type.
+    /// </summary>
+    /// <typeparam name="TMessage">The type of messages to exclude from being forwarded to the executors.</typeparam>
+    /// <param name="builder">The <see cref="WorkflowBuilder"/> instance to which the edges will be added.</param>
+    /// <param name="source">The source executor from which messages will be forwarded.</param>
+    /// <param name="executors">The target executors to which messages, except those of type <typeparamref name="TMessage"/>, will be forwarded.</param>
+    /// <returns>The updated <see cref="WorkflowBuilder"/> instance with the added edges.</returns>
+    public static WorkflowBuilder ForwardExcept<TMessage>(this WorkflowBuilder builder, ExecutorIsh source, params ExecutorIsh[] executors)
+    {
+        Throw.IfNullOrEmpty(executors);
+
+        if (executors.Length == 1)
+        {
+            return builder.AddEdge(source, executors[0], IsAllowedType);
+        }
+
+        return builder.AddSwitch(source,
+            (switch_) =>
+            {
+                switch_.AddCase(IsAllowedType, executors);
+            });
+
+        bool IsAllowedType(object? message) => message is not TMessage;
+    }
+
+    /// <summary>
     /// Adds a sequential chain of executors to the workflow, connecting each executor in order so that each is
     /// executed after the previous one.
     /// </summary>

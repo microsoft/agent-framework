@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -29,9 +30,38 @@ internal class InProcessRunner<TInput> : ISuperStepRunner where TInput : notnull
         this.EdgeMap = new EdgeMap(this.RunContext, this.Workflow.Edges, this.Workflow.Ports.Values, this.Workflow.StartExecutorId);
     }
 
-    ValueTask ISuperStepRunner.EnqueueMessageAsync(object message)
+    public async ValueTask<bool> IsValidInputAsync<TMessage>(TMessage message)
     {
-        return this.RunContext.AddExternalMessageAsync(message);
+        Throw.IfNull(message);
+
+        Type type = typeof(TMessage);
+
+        // Short circuit the logic if the type is the input type
+        if (type == typeof(TInput))
+        {
+            return true;
+        }
+
+        Executor startingExecutor = await this.RunContext.EnsureExecutorAsync(this.Workflow.StartExecutorId).ConfigureAwait(false);
+        return startingExecutor.CanHandle(type);
+    }
+
+    async ValueTask<bool> ISuperStepRunner.EnqueueMessageAsync<T>(T message)
+    {
+        // Check that the type of the incoming message is compatible with the starting executor's
+        // input type.
+        if (!await this.IsValidInputAsync(message).ConfigureAwait(false))
+        {
+            return false;
+        }
+
+        await this.RunContext.AddExternalMessageAsync<T>(message).ConfigureAwait(false);
+        return true;
+    }
+
+    ValueTask ISuperStepRunner.EnqueueResponseAsync(ExternalResponse response)
+    {
+        return this.RunContext.AddExternalMessageAsync(response);
     }
 
     private Dictionary<string, string> PendingCalls { get; } = new();
@@ -57,11 +87,14 @@ internal class InProcessRunner<TInput> : ISuperStepRunner where TInput : notnull
         return message is ExternalResponse;
     }
 
-    private ValueTask<IEnumerable<object?>> RouteExternalMessageAsync(object message)
+    private ValueTask<IEnumerable<object?>> RouteExternalMessageAsync(MessageEnvelope envelope)
     {
+        Debug.Assert(envelope.TargetId == null, "External Messages cannot be targeted to a specific executor.");
+
+        object message = envelope.Message;
         return message is ExternalResponse response
             ? this.CompleteExternalResponseAsync(response)
-            : this.EdgeMap.InvokeInputAsync(message);
+            : this.EdgeMap.InvokeInputAsync(envelope);
     }
 
     private ValueTask<IEnumerable<object?>> CompleteExternalResponseAsync(ExternalResponse response)
@@ -113,16 +146,16 @@ internal class InProcessRunner<TInput> : ISuperStepRunner where TInput : notnull
         List<Task<IEnumerable<object?>>> edgeTasks = new();
         foreach (ExecutorIdentity sender in currentStep.QueuedMessages.Keys)
         {
-            IEnumerable<object> senderMessages = currentStep.QueuedMessages[sender];
+            IEnumerable<MessageEnvelope> senderMessages = currentStep.QueuedMessages[sender];
             if (sender.Id is null)
             {
-                edgeTasks.AddRange(senderMessages.Select(message => this.RouteExternalMessageAsync(message).AsTask()));
+                edgeTasks.AddRange(senderMessages.Select(envelope => this.RouteExternalMessageAsync(envelope).AsTask()));
             }
             else if (this.Workflow.Edges.TryGetValue(sender.Id!, out HashSet<Edge>? outgoingEdges))
             {
                 foreach (Edge outgoingEdge in outgoingEdges)
                 {
-                    edgeTasks.AddRange(senderMessages.Select(message => this.EdgeMap.InvokeEdgeAsync(outgoingEdge, sender.Id, message).AsTask()));
+                    edgeTasks.AddRange(senderMessages.Select(envelope => this.EdgeMap.InvokeEdgeAsync(outgoingEdge, sender.Id, envelope).AsTask()));
                 }
             }
         }
