@@ -4,7 +4,7 @@ status: proposed
 contact: markwallace
 date: 2025-08-06
 deciders: markwallace-microsoft, westey-m, quibitron
-consulted: 
+consulted: shawnhenry, elijahstraight
 informed: 
 ---
 
