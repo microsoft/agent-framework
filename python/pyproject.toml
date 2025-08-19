@@ -7,6 +7,7 @@ dependencies = [
     "agent-framework",
     "agent-framework-azure",
     "agent-framework-foundry",
+    "agent_framework-workflow",
 ]
 
 [dependency-groups]
@@ -42,6 +43,7 @@ dev = [
     "diskcache",
     "redis",
     "sphinx-autobuild",
+    "aiofiles>=24.1.0",
 ]
 
 [tool.uv]
@@ -61,6 +63,7 @@ exclude = [ "packages/agent_framework_project.egg-info" ]
 agent-framework = { workspace = true }
 agent-framework-azure = { workspace = true }
 agent-framework-foundry = { workspace = true }
+agent-framework-workflow = { workspace = true }
 
 [tool.ruff]
 line-length = 120
@@ -120,6 +123,19 @@ convention = "google"
 notice-rgx = "^# Copyright \\(c\\) Microsoft\\. All rights reserved\\."
 min-file-size = 1
 
+[tool.pytest.ini_options]
+testpaths = 'tests'
+addopts = "-ra -q -r fEX"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = []
+timeout = 120
+
+[tool.coverage.run]
+omit = [
+    "**/__init__.py"
+]
+
 [tool.pyright]
 include = ["agent_framework", "samples"]
 exclude = ["**/tests/**", "docs", "**/.venv/**"]
@@ -158,7 +174,7 @@ docs-serve = "sphinx-autobuild --watch docs/agent-framework docs/build --port 80
 docs-check = "sphinx-build --fail-on-warning docs/agent-framework docs/build"
 docs-check-examples = "sphinx-build -b code_lint docs/agent-framework docs/build"
 pre-commit-install = "uv run pre-commit install --install-hooks --overwrite"
-install = "uv sync --all-packages --dev -U --prerelease=if-necessary-or-explicit"
+install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit"
 test = "python run_tasks_in_packages_if_exists.py test"
 fmt = "python run_tasks_in_packages_if_exists.py fmt"
 format.ref = "fmt"
@@ -169,6 +185,7 @@ build = "python run_tasks_in_packages_if_exists.py build"
 # combined checks
 check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint", "samples-code-check"]
 pre-commit-check = ["fmt", "lint", "pyright", "markdown-code-lint", "samples-code-check"]
+all-tests = "pytest --cov=agent_framework --cov=agent_framework_azure --cov=agent_framework_foundry --cov=agent_framework_workflow --cov-report=term-missing:skip-covered packages/**/tests"
 
 [tool.poe.tasks.venv]
 cmd = "uv venv --clear --python $python"
@@ -181,24 +198,7 @@ sequence = [
 ]
 args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
 
-
 [tool.setuptools.packages.find]
 where = ["packages"]
 include = ["agent_framework**"]
 namespaces = true
-
-[tool.tox]
-requires = ["tox>=4", "tox-uv>=1"]
-env_list = [ "3.13"] #, "3.12", "3.11", "3.10" ]
-
-[tool.tox.env_run_base]
-no_package = true
-description = "run tests"
-dependency_groups = [
-  "dev",
-]
-deps = [
-    "-e packages/azure",
-    "-e packages/main"
-]
-commands = [["pytest", { replace = "posargs", default = ["packages/main/tests"], extend = true }]]

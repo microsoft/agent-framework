@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -19,7 +20,7 @@ public class JsonSerializationTests
             WriteIndented = false, // Use compact JSON for easier testing
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
             Converters = { new JsonStringEnumConverter() },
-            TypeInfoResolver = ActorJsonContext.Default
+            TypeInfoResolver = AgentRuntimeAbstractionsJsonUtilities.JsonContext.Default
         };
     }
 
@@ -329,6 +330,205 @@ public class JsonSerializationTests
         Assert.NotNull(deserializedUpdate);
         Assert.Equal(originalUpdate.Status, deserializedUpdate.Status);
         Assert.Equal(originalUpdate.Data.GetRawText(), deserializedUpdate.Data.GetRawText());
+    }
+
+    #endregion
+
+    #region ActorResponse Tests
+
+    [Fact]
+    public void ActorResponse_SerializesAndDeserializes()
+    {
+        // Arrange
+        var originalResponse = new ActorResponse
+        {
+            ActorId = new ActorId("TestActor", "instance1"),
+            MessageId = "msg123",
+            Status = RequestStatus.Completed,
+            Data = JsonSerializer.SerializeToElement(new { result = "success" })
+        };
+
+        // Act - Serialize to JSON
+        string json = JsonSerializer.Serialize(originalResponse, this._options);
+
+        // Assert - JSON structure
+        Assert.Contains("\"messageId\":\"msg123\"", json);
+        Assert.Contains("\"status\":\"completed\"", json);
+
+        // Act - Deserialize back
+        var deserializedResponse = JsonSerializer.Deserialize<ActorResponse>(json, this._options);
+
+        // Assert - Verify deserialization
+        Assert.NotNull(deserializedResponse);
+        Assert.Equal(originalResponse.MessageId, deserializedResponse.MessageId);
+        Assert.Equal(originalResponse.Status, deserializedResponse.Status);
+        Assert.Equal(originalResponse.ActorId.Type.Name, deserializedResponse.ActorId.Type.Name);
+        Assert.Equal(originalResponse.ActorId.Key, deserializedResponse.ActorId.Key);
+        Assert.Equal(originalResponse.Data.GetRawText(), deserializedResponse.Data.GetRawText());
+    }
+
+    [Fact]
+    public void ActorResponse_ToString_OutputsExpectedFormat()
+    {
+        // Arrange
+        var testData = JsonSerializer.SerializeToElement(new { result = "success" });
+        var response = new ActorResponse
+        {
+            ActorId = new ActorId("TestActor", "instance1"),
+            MessageId = "msg123",
+            Status = RequestStatus.Completed,
+            Data = testData
+        };
+
+        // Act
+        string result = response.ToString();
+
+        // Assert
+        Assert.Equal($"ActorResponse(ActorId: TestActor/instance1, Status: Completed, MessageId: msg123, Data: {testData.GetRawText()})", result);
+    }
+
+    [Fact]
+    public void ActorResponse_ToString_WithNullMessageId_OutputsExpectedFormat()
+    {
+        // Arrange
+        var testData = JsonSerializer.SerializeToElement(new { error = "timeout" });
+        var response = new ActorResponse
+        {
+            ActorId = new ActorId("TestActor", "instance1"),
+            MessageId = null,
+            Status = RequestStatus.Pending,
+            Data = testData
+        };
+
+        // Act
+        string result = response.ToString();
+
+        // Assert
+        Assert.Equal($"ActorResponse(ActorId: TestActor/instance1, Status: Pending, MessageId: null, Data: {testData.GetRawText()})", result);
+    }
+
+    [Fact]
+    public void ActorResponse_ToString_WithEmptyData_OutputsExpectedFormat()
+    {
+        // Arrange
+        var emptyData = new JsonElement(); // Default JsonElement (empty)
+        var response = new ActorResponse
+        {
+            ActorId = new ActorId("TestActor", "instance1"),
+            MessageId = "msg456",
+            Status = RequestStatus.Failed,
+            Data = emptyData
+        };
+
+        // Act
+        string result = response.ToString();
+
+        // Assert
+        Assert.Equal("ActorResponse(ActorId: TestActor/instance1, Status: Failed, MessageId: msg456, Data: undefined)", result);
+    }
+
+    [Fact]
+    public void ActorResponse_ToString_WithLargeData_TruncatesAfter250Characters()
+    {
+        // Arrange
+        // Create a large object that will serialize to more than 250 characters
+        var largeArray = new List<object>();
+        for (int i = 0; i < 20; i++)
+        {
+            largeArray.Add(new
+            {
+                id = $"item-{i:000}",
+                name = $"This is item number {i} with a long description to make the JSON larger",
+                properties = new
+                {
+                    prop1 = $"value1-{i}",
+                    prop2 = $"value2-{i}",
+                    prop3 = $"value3-{i}",
+                    prop4 = $"value4-{i}",
+                    prop5 = $"value5-{i}"
+                }
+            });
+        }
+        var largeData = JsonSerializer.SerializeToElement(largeArray);
+        var response = new ActorResponse
+        {
+            ActorId = new ActorId("TestActor", "instance1"),
+            MessageId = "msg789",
+            Status = RequestStatus.Completed,
+            Data = largeData
+        };
+
+        // Act
+        string result = response.ToString();
+        var rawText = largeData.GetRawText();
+
+        // Assert
+        // Verify that the raw JSON is indeed larger than 250 characters
+        Assert.True(rawText.Length > 250, $"Test data should be larger than 250 characters, but was {rawText.Length}");
+
+        // The ToString should truncate the data and add "..."
+        Assert.EndsWith("...)", result);
+
+        // Extract the data portion from the result
+        var dataStartIndex = result.IndexOf("Data: ", System.StringComparison.Ordinal) + 6;
+        var dataEndIndex = result.Length - 1; // Exclude the closing parenthesis
+        var dataInResult = result.Substring(dataStartIndex, dataEndIndex - dataStartIndex);
+
+        // Verify truncation: data should be 253 characters (250 + "...")
+        Assert.Equal(253, dataInResult.Length);
+
+        // Verify that the truncated data matches the first 250 characters of the original
+#pragma warning disable CA1846 // Prefer 'AsSpan' over 'Substring'
+        Assert.Equal(rawText.Substring(0, 250), dataInResult.Substring(0, 250));
+#pragma warning restore CA1846
+    }
+
+    [Fact]
+    public void ActorResponse_ToString_WithSmallData_DoesNotTruncate()
+    {
+        // Arrange
+        var smallObject = new
+        {
+            id = "test-id-123",
+            name = "Small Test Object",
+            value = 42
+        };
+        var smallData = JsonSerializer.SerializeToElement(smallObject);
+        var response = new ActorResponse
+        {
+            ActorId = new ActorId("TestActor", "instance1"),
+            MessageId = "msg789",
+            Status = RequestStatus.Completed,
+            Data = smallData
+        };
+
+        // Act
+        string result = response.ToString();
+
+        // Assert
+        // The ToString should include the full JSON data without truncation
+        Assert.Equal($"ActorResponse(ActorId: TestActor/instance1, Status: Completed, MessageId: msg789, Data: {smallData.GetRawText()})", result);
+        // Verify no truncation occurred
+        Assert.DoesNotContain("...", result);
+    }
+
+    [Fact]
+    public void ActorResponse_ToString_WithNullData_OutputsExpectedFormat()
+    {
+        // Arrange
+        var response = new ActorResponse
+        {
+            ActorId = new ActorId("TestActor", "instance1"),
+            MessageId = "msg999",
+            Status = RequestStatus.Completed,
+            Data = JsonSerializer.SerializeToElement((object?)null)
+        };
+
+        // Act
+        string result = response.ToString();
+
+        // Assert
+        Assert.Equal("ActorResponse(ActorId: TestActor/instance1, Status: Completed, MessageId: msg999, Data: null)", result);
     }
 
     #endregion

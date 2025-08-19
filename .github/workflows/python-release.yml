@@ -7,9 +7,9 @@ on:
 permissions:
   contents: write
   id-token: write
-
 env:
-  UV_SEMVER: "0.8.x"
+  # Configure a constant location for the uv cache
+  UV_CACHE_DIR: /tmp/.uv-cache
 
 jobs:
   python-build-assets:
@@ -27,7 +27,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
-          version: ${{ env.UV_SEMVER }}
+          version-file: "python/pyproject.toml"
           enable-cache: true
           cache-suffix: ${{ runner.os }}-${{ env.UV_PYTHON }}
           cache-dependency-glob: "**/uv.lock"

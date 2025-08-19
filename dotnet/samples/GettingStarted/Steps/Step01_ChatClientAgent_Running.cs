@@ -16,6 +16,9 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
     private const string ParrotName = "Parrot";
     private const string ParrotInstructions = "Repeat the user message in the voice of a pirate and then end with a parrot sound.";
 
+    private const string JokerName = "Joker";
+    private const string JokerInstructions = "You are good at telling jokes.";
+
     /// <summary>
     /// Demonstrate the most basic Agent case, where we do not have a server-side agent
     /// but just an in-memory agent, backed by an inference service,
@@ -33,7 +36,7 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
         IChatClient chatClient = base.GetChatClient(provider);
 
         // Define the agent
-        AIAgent agent = new ChatClientAgent(chatClient, name: ParrotName, instructions: ParrotInstructions);
+        AIAgent agent = new ChatClientAgent(chatClient, ParrotInstructions);
 
         // Invoke the agent and output the text result.
         Console.WriteLine(await agent.RunAsync("Fortune favors the bold."));
@@ -95,8 +98,8 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
         // Define the options for the chat client agent.
         var agentOptions = new ChatClientAgentOptions
         {
-            Name = ParrotName,
-            Instructions = ParrotInstructions,
+            Name = JokerName,
+            Instructions = JokerInstructions,
 
             // Get chat options based on the store type, if needed.
             ChatOptions = base.GetChatOptions(provider),
@@ -145,7 +148,7 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
     public async Task RunStreamingWithThread(ChatClientProviders provider)
     {
         // Define the options for the chat client agent.
-        var agentOptions = new ChatClientAgentOptions(name: ParrotName, instructions: ParrotInstructions)
+        var agentOptions = new ChatClientAgentOptions(name: JokerName, instructions: JokerInstructions)
         {
             // Get chat options based on the store type, if needed.
             ChatOptions = base.GetChatOptions(provider),
