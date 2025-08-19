@@ -22,9 +22,6 @@ on:
       - '.github/workflows/dotnet-cosmosdb-integration-tests.yml'
   schedule:
     - cron: "0 2 * * *" # Run at 2 AM UTC daily
-    
-env:
-  COSMOSDB_TESTS_USE_EMULATOR: "true"
 
 jobs:
   build-and-test:
@@ -39,16 +36,17 @@ jobs:
 
     services:
       cosmosdb:
-        image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview
+        image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:latest
         ports:
           - 8081:8081
+          - 10251:10251
+          - 10252:10252
+          - 10253:10253
+          - 10254:10254
+        # Optional emulator settings
         env:
-          PROTOCOL: https
-
-    env:
-      COSMOSDB_CONNECTION_STRING: ${{ secrets.COSMOSDB_CONNECTION_STRING }}
-      COSMOSDB_DATABASE_NAME: ${{ vars.COSMOSDB_DATABASE_NAME }}
-      COSMOSDB_CONTAINER_NAME: ${{ vars.COSMOSDB_CONTAINER_NAME }}
+          AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE: "false"
+          AZURE_COSMOS_EMULATOR_PARTITION_COUNT: "1"
 
     steps:
       - uses: actions/checkout@v4
@@ -104,13 +102,42 @@ jobs:
           popd
           rm -rf "$TEMP_DIR"
 
-      - name: Export Cosmos DB Emulator Certificate
+      - name: Wait for Cosmos DB Emulator to be ready
         run: |
-          sudo apt update && sudo apt install -y openssl
-          openssl s_client -connect localhost:8081 </dev/null | sed -ne '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/p' > cosmos_emulator.cert
-          
-          sudo cp cosmos_emulator.cert /usr/local/share/ca-certificates/
+          set -e
+          for i in $(seq 1 120); do
+            if curl -sk https://localhost:8081/_explorer/emulator.pem -o /dev/null; then
+              echo "Emulator is up."
+              break
+            fi
+            echo "Waiting for emulator... ($i/120)"
+            sleep 2
+          done
+
+      - name: Install emulator TLS certificate into system trust store
+        run: |
+          set -e
+          sudo apt-get update
+          sudo apt-get install -y ca-certificates curl openssl
+          # Fetch the PEM directly from the emulator's explorer endpoint
+          curl -sk https://localhost:8081/_explorer/emulator.pem -o cosmos-emulator.crt
+          # Install with the correct .crt extension so update-ca-certificates picks it up
+          sudo cp cosmos-emulator.crt /usr/local/share/ca-certificates/cosmos-emulator.crt
           sudo update-ca-certificates
+
+      - name: Verify TLS now trusts the emulator
+        run: |
+          # Use -servername to avoid SNI warning and check verification
+          echo | openssl s_client -connect localhost:8081 -servername localhost 2>/dev/null | grep -E "Verify return code|subject=|issuer="
+          # Expect: "Verify return code: 0 (ok)"
+
+      # - name: Export Cosmos DB Emulator Certificate
+      #   run: |
+      #     sudo apt update && sudo apt install -y openssl
+      #     openssl s_client -connect localhost:8081 </dev/null | sed -ne '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/p' > cosmos_emulator.cert
+          
+      #     sudo cp cosmos_emulator.cert /usr/local/share/ca-certificates/
+      #     sudo update-ca-certificates
 
       - name: Run Cosmos DB Integration Tests
         shell: bash
