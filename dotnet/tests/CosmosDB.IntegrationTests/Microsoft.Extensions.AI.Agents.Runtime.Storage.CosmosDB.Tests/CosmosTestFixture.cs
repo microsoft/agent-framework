@@ -6,7 +6,6 @@ using Azure.Identity;
 using CosmosDB.Testing.AppHost;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Logging;
-using static System.Net.WebRequestMethods;
 
 #pragma warning disable CA2007, VSTHRD111, CS1591
 
@@ -87,7 +86,7 @@ public class CosmosTestFixture : IAsyncLifetime
         }
 
         var database = this.CosmosClient.GetDatabase(CosmosDBTestConstants.TestCosmosDbDatabaseName);
-        var db = await this.CosmosClient.CreateDatabaseIfNotExistsAsync(CosmosDBTestConstants.TestCosmosDbDatabaseName);
+        var db = await this.CosmosClient.CreateDatabaseIfNotExistsAsync(CosmosDBTestConstants.TestCosmosDbDatabaseName, throughputProperties: ThroughputProperties.CreateAutoscaleThroughput(100000));
 
         var containerProperties = new ContainerProperties()
         {
@@ -95,14 +94,7 @@ public class CosmosTestFixture : IAsyncLifetime
             PartitionKeyPaths = LazyCosmosContainer.CosmosPartitionKeyPaths
         };
 
-        try
-        {
-            this.Container = await database.CreateContainerIfNotExistsAsync(containerProperties);
-        }
-        catch (Exception ex)
-        {
-            throw new ArgumentException($"Initialization error. Cosmos ConnectionString: {cs}; ENV: useEmulator={CosmosDBTestConstants.UseEmulatorForTesting};CICD={CosmosDBTestConstants.RunningCosmosDbTestsInCICD}", ex);
-        }
+        this.Container = await database.CreateContainerIfNotExistsAsync(containerProperties);
     }
 
     public async Task DisposeAsync()

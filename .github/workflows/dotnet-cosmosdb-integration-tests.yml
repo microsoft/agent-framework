@@ -46,7 +46,7 @@ jobs:
         # Optional emulator settings
         env:
           AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE: "false"
-          AZURE_COSMOS_EMULATOR_PARTITION_COUNT: "1"
+          AZURE_COSMOS_EMULATOR_PARTITION_COUNT: "20" # the more the better for stable tests
 
     steps:
       - uses: actions/checkout@v4
