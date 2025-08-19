@@ -84,13 +84,19 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
 
     FILE_SEARCH_MAX_RESULTS: int = 50
 
+    def _filter_options(self, **kwargs: Any) -> dict[str, Any]:
+        """Filter options for the responses call."""
+        # The responses call does not support all the options that the chat completion call does.
+        # We filter out the unsupported options.
+        return {key: value for key, value in kwargs.items() if value is not None}
+
     @override
     async def get_response(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage],
         *,
         include: list["ResponseIncludable"] | None = None,
-        instruction: str | None = None,
+        instructions: str | None = None,
         max_tokens: int | None = None,
         parallel_tool_calls: bool | None = None,
         model: str | None = None,
@@ -121,7 +127,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         Args:
             messages: the message or messages to send to the model
             include: additional output data to include in the model response.
-            instruction: a system (or developer) message inserted into the model's context.
+            instructions: a system (or developer) message inserted into the model's context.
             max_tokens: The maximum number of tokens to generate.
             parallel_tool_calls: Whether to enable parallel tool calls.
             model: The model to use for the agent.
@@ -145,27 +151,37 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         Returns:
             A chat response from the model.
         """
-        return await super().get_response(
-            messages=messages,
-            include=include,
-            instruction=instruction,
+        additional_properties = additional_properties or {}
+        additional_properties.update(
+            self._filter_options(
+                include=include,
+                instructions=instructions,
+                parallel_tool_calls=parallel_tool_calls,
+                model=model,
+                previous_response_id=previous_response_id,
+                reasoning=reasoning,
+                service_tier=service_tier,
+                truncation=truncation,
+                timeout=timeout,
+            )
+        )
+
+        chat_options = ChatOptions(
             max_tokens=max_tokens,
-            parallel_tool_calls=parallel_tool_calls,
-            model=model,
-            previous_response_id=previous_response_id,
-            reasoning=reasoning,
-            service_tier=service_tier,
             response_format=response_format,
             seed=seed,
             store=store,
             temperature=temperature,
             tool_choice=tool_choice,
-            tools=tools,
+            tools=tools,  # type: ignore
             top_p=top_p,
             user=user,
-            truncation=truncation,
-            timeout=timeout,
             additional_properties=additional_properties,
+        )
+
+        return await super().get_response(
+            messages=messages,
+            chat_options=chat_options,
             **kwargs,
         )
 
@@ -176,7 +192,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         *,
         # TODO(peterychang): enable this option. background: bool | None = None,
         include: list["ResponseIncludable"] | None = None,
-        instruction: str | None = None,
+        instructions: str | None = None,
         max_tokens: int | None = None,
         parallel_tool_calls: bool | None = None,
         model: str | None = None,
@@ -207,7 +223,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         Args:
             messages: the message or messages to send to the model
             include: additional output data to include in the model response.
-            instruction: a system (or developer) message inserted into the model's context.
+            instructions: a system (or developer) message inserted into the model's context.
             max_tokens: The maximum number of tokens to generate.
             parallel_tool_calls: Whether to enable parallel tool calls.
             model: The model to use for the agent.
@@ -231,27 +247,37 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         Returns:
             A stream representing the response(s) from the LLM.
         """
-        async for update in super().get_streaming_response(
-            messages=messages,
-            include=include,
-            instruction=instruction,
+        additional_properties = additional_properties or {}
+        additional_properties.update(
+            self._filter_options(
+                include=include,
+                instructions=instructions,
+                parallel_tool_calls=parallel_tool_calls,
+                model=model,
+                previous_response_id=previous_response_id,
+                reasoning=reasoning,
+                service_tier=service_tier,
+                truncation=truncation,
+                timeout=timeout,
+            )
+        )
+
+        chat_options = ChatOptions(
             max_tokens=max_tokens,
-            parallel_tool_calls=parallel_tool_calls,
-            model=model,
-            previous_response_id=previous_response_id,
-            reasoning=reasoning,
-            service_tier=service_tier,
             response_format=response_format,
             seed=seed,
             store=store,
             temperature=temperature,
             tool_choice=tool_choice,
-            tools=tools,
+            tools=tools,  # type: ignore
             top_p=top_p,
             user=user,
-            truncation=truncation,
-            timeout=timeout,
             additional_properties=additional_properties,
+        )
+
+        async for update in super().get_streaming_response(
+            messages=messages,
+            chat_options=chat_options,
             **kwargs,
         ):
             yield update
