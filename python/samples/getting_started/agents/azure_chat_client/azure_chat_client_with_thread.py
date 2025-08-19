@@ -4,8 +4,9 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import ChatClientAgent, ChatClientAgentThread
+from agent_framework import AgentThread, ChatClientAgent, ChatMessageList
 from agent_framework.azure import AzureChatClient
+from azure.identity import DefaultAzureCredential
 from pydantic import Field
 
 
@@ -22,7 +23,7 @@ async def example_with_automatic_thread_creation() -> None:
     print("=== Automatic Thread Creation Example ===")
 
     agent = ChatClientAgent(
-        chat_client=AzureChatClient(),
+        chat_client=AzureChatClient(ad_credential=DefaultAzureCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -47,7 +48,7 @@ async def example_with_thread_persistence() -> None:
     print("Using the same thread across multiple conversations to maintain context.\n")
 
     agent = ChatClientAgent(
-        chat_client=AzureChatClient(),
+        chat_client=AzureChatClient(ad_credential=DefaultAzureCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -80,14 +81,13 @@ async def example_with_existing_thread_messages() -> None:
     print("=== Existing Thread Messages Example ===")
 
     agent = ChatClientAgent(
-        chat_client=AzureChatClient(),
+        chat_client=AzureChatClient(ad_credential=DefaultAzureCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
 
     # Start a conversation and build up message history
     thread = agent.get_new_thread()
-    assert isinstance(thread, ChatClientAgentThread)  # Ensure we have the right type
 
     query1 = "What's the weather in Paris?"
     print(f"User: {query1}")
@@ -95,14 +95,16 @@ async def example_with_existing_thread_messages() -> None:
     print(f"Agent: {result1.text}")
 
     # The thread now contains the conversation history in memory
-    message_count = len(thread.chat_messages or [])
+    messages = await thread.list_messages()
+
+    message_count = len(messages or [])
     print(f"Thread contains {message_count} messages")
 
     print("\n--- Continuing with the same thread in a new agent instance ---")
 
     # Create a new agent instance but use the existing thread with its message history
     new_agent = ChatClientAgent(
-        chat_client=AzureChatClient(),
+        chat_client=AzureChatClient(ad_credential=DefaultAzureCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -117,8 +119,9 @@ async def example_with_existing_thread_messages() -> None:
     print("\n--- Alternative: Creating a new thread from existing messages ---")
 
     # You can also create a new thread from existing messages
-    existing_messages = thread.chat_messages or []
-    new_thread = ChatClientAgentThread(messages=existing_messages)
+    messages = await thread.list_messages()
+
+    new_thread = AgentThread(message_store=ChatMessageList(messages))
 
     query3 = "How does the Paris weather compare to London?"
     print(f"User: {query3}")

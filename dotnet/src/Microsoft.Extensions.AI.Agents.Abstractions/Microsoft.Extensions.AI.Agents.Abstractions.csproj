@@ -10,6 +10,7 @@
 
   <PropertyGroup>
     <InjectSharedThrow>true</InjectSharedThrow>
+    <InjectDiagnosticClassesOnLegacy>true</InjectDiagnosticClassesOnLegacy>
     <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>
   </PropertyGroup>
 
@@ -29,5 +30,4 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Microsoft.Extensions.AI.Agents.Abstractions.UnitTests" />
   </ItemGroup>
-
 </Project>

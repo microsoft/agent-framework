@@ -53,6 +53,7 @@ public class CosmosTestFixture : IAsyncLifetime
             UseSystemTextJsonSerializerWithOptions = new JsonSerializerOptions()
             {
                 PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                TypeInfoResolver = CosmosActorStateJsonContext.Default
             }
         };
 

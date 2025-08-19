@@ -116,7 +116,7 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
         => new(new PersistentAgentsClient(TestConfiguration.AzureAI.Endpoint, new AzureCliCredential()), options.Id!);
 
     private NewOpenAIAssistantChatClient GetOpenAIAssistantChatClient(ChatClientAgentOptions options)
-        => new(new(TestConfiguration.OpenAI.ApiKey), options.Id!, null);
+        => new(new AssistantClient(TestConfiguration.OpenAI.ApiKey), options.Id!);
 
     #endregion
 
@@ -167,7 +167,7 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
         // If a thread is provided, delete it as well.
         if (thread is not null)
         {
-            await persistentAgentsClient.Threads.DeleteThreadAsync(thread.Id, cancellationToken);
+            await persistentAgentsClient.Threads.DeleteThreadAsync(thread.ConversationId, cancellationToken);
         }
     }
 
@@ -183,7 +183,7 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
         // If a thread is provided, delete it as well.
         if (thread is not null)
         {
-            await assistantClient.DeleteThreadAsync(thread.Id, cancellationToken);
+            await assistantClient.DeleteThreadAsync(thread.ConversationId, cancellationToken);
         }
     }
 
