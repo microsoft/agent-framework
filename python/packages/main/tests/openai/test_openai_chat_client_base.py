@@ -15,7 +15,6 @@ from pydantic import BaseModel
 
 from agent_framework import ChatMessage, ChatResponseUpdate
 from agent_framework.exceptions import (
-    ServiceInvalidResponseError,
     ServiceResponseException,
 )
 from agent_framework.openai import OpenAIChatClient
@@ -192,7 +191,7 @@ async def test_cmc_general_exception(
 
 
 @patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
-async def test_scmc(
+async def test_get_streaming(
     mock_create: AsyncMock,
     chat_history: list[ChatMessage],
     openai_unit_test_env: dict[str, str],
@@ -231,7 +230,7 @@ async def test_scmc(
 
 
 @patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
-async def test_scmc_singular(
+async def test_get_streaming_singular(
     mock_create: AsyncMock,
     chat_history: list[ChatMessage],
     openai_unit_test_env: dict[str, str],
@@ -270,7 +269,7 @@ async def test_scmc_singular(
 
 
 @patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
-async def test_scmc_structured_output_no_fcc(
+async def test_get_streaming_structured_output_no_fcc(
     mock_create: AsyncMock,
     chat_history: list[ChatMessage],
     openai_unit_test_env: dict[str, str],
@@ -308,7 +307,7 @@ async def test_scmc_structured_output_no_fcc(
 
 
 @patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
-async def test_scmc_no_fcc_in_response(
+async def test_get_streaming_no_fcc_in_response(
     mock_create: AsyncMock,
     chat_history: list[ChatMessage],
     mock_streaming_chat_completion_response: ChatCompletion,
@@ -334,7 +333,7 @@ async def test_scmc_no_fcc_in_response(
 
 
 @patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
-async def test_scmc_no_stream(
+async def test_get_streaming_no_stream(
     mock_create: AsyncMock,
     chat_history: list[ChatMessage],
     openai_unit_test_env: dict[str, str],
@@ -344,7 +343,7 @@ async def test_scmc_no_stream(
     chat_history.append(ChatMessage(role="user", text="hello world"))
 
     openai_chat_completion = OpenAIChatClient()
-    with pytest.raises(ServiceInvalidResponseError):
+    with pytest.raises(ServiceResponseException):
         [
             msg
             async for msg in openai_chat_completion.get_streaming_response(

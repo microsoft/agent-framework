@@ -4,6 +4,7 @@ using System;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI.Agents.Runtime;
 
@@ -13,15 +14,21 @@ namespace Microsoft.Extensions.AI.Agents.Runtime;
 [JsonConverter(typeof(Converter))]
 public readonly partial struct ActorType : IEquatable<ActorType>
 {
+#if NET7_0_OR_GREATER
+    [System.Diagnostics.CodeAnalysis.StringSyntax("Regex")]
+#endif
+    private const string AgentTypeValidationRegex = "^[a-zA-Z_][a-zA-Z._:\\-0-9]*$";
+
     /// <summary>
     /// Initializes a new instance of the <see cref="ActorId"/> struct.
     /// </summary>
     /// <param name="type">The actor type.</param>
     public ActorType(string type)
     {
-        if (!IsValid(type))
+        Throw.IfNullOrEmpty(type);
+        if (!IsValidType(type))
         {
-            throw new ArgumentException($"Invalid type: '{type}'. Must be alphanumeric (a-z, 0-9, _) and cannot start with a number or contain spaces.");
+            throw new ArgumentException($"Invalid type: '{type}'. Must start with a letter or underscore, and can only contain letters, dots, underscores, colons, hyphens, and numbers.", nameof(type));
         }
 
         this.Name = type;
@@ -59,15 +66,22 @@ public readonly partial struct ActorType : IEquatable<ActorType>
     public static bool operator !=(ActorType left, ActorType right) =>
         !(left == right);
 
-    internal static bool IsValid(string type) =>
-        type is not null && TypeRegex().IsMatch(type);
-
-#if NET
-    [GeneratedRegex("^[a-zA-Z_][a-zA-Z_:0-9]*$")]
+#if NET7_0_OR_GREATER
+    [GeneratedRegex(AgentTypeValidationRegex)]
     private static partial Regex TypeRegex();
 #else
-    private static Regex TypeRegex() => new("^[a-zA-Z_][a-zA-Z_:0-9:]*$", RegexOptions.Compiled);
+    private static readonly Regex s_typeRegex = new(AgentTypeValidationRegex, RegexOptions.Compiled);
+    private static Regex TypeRegex() => s_typeRegex;
 #endif
+
+    /// <summary>
+    /// Validates whether the provided type string is a valid actor type.
+    /// </summary>
+    public static bool IsValidType(string type)
+    {
+        Throw.IfNullOrEmpty(type);
+        return TypeRegex().IsMatch(type);
+    }
 
     /// <summary>
     /// JSON converter for <see cref="ActorType"/>.
