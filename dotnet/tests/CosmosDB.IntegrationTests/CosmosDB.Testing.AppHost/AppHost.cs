@@ -8,7 +8,8 @@ var cosmosDb = builder.AddAzureCosmosDB(CosmosDBTestConstants.TestCosmosDbName);
 if (CosmosDBTestConstants.UseEmulatorInCICD)
 {
     // Emulator created in the CI/CD pipeline gives more control over some settings and port-configuration today.
-    // it probably should be configured differently here, but we leave a default setup for now.
+    // It probably should be configured here to use 8081 port + setup the partition count and throughput, but it's not supported in Aspire yet, so leaving as a placeholder.
+    // Once Aspire's emulator is suported, the emulator in CI/CD can be removed.
     cosmosDb.RunAsEmulator(emulator => emulator.WithLifetime(ContainerLifetime.Persistent));
 }
 else if (CosmosDBTestConstants.UseAspireEmulatorForTesting)
