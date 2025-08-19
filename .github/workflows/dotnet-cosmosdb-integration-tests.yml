@@ -23,6 +23,8 @@ on:
   schedule:
     - cron: "0 2 * * *" # Run at 2 AM UTC daily
     
+env:
+  COSMOSDB_TESTS_USE_EMULATOR: "true"
 
 jobs:
   build-and-test:
