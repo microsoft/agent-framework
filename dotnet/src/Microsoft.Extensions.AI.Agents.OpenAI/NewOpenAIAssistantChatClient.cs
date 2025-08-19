@@ -11,7 +11,6 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Text.Json.Serialization;
 using Microsoft.Shared.Diagnostics;
 using OpenAI;
 using OpenAI.Assistants;
@@ -48,7 +47,7 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
     /// <summary>List of tools associated with the assistant.</summary>
     private IReadOnlyList<ToolDefinition>? _assistantTools;
 
-    /// <summary>Initializes a new instance of the <see cref="OpenAIAssistantChatClient"/> class for the specified <see cref="AssistantClient"/>.</summary>
+    /// <summary>Initializes a new instance of the <see cref="NewOpenAIAssistantChatClient"/> class for the specified <see cref="AssistantClient"/>.</summary>
     public NewOpenAIAssistantChatClient(AssistantClient assistantClient, string assistantId, string? defaultThreadId = null)
     {
         _client = Throw.IfNull(assistantClient);
@@ -96,7 +95,7 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
             {
                 switch (tool)
                 {
-                    case NewHostedCodeInterpreterTool codeTool:
+                    case HostedCodeInterpreterTool codeTool:
 
                         if (codeTool.Inputs is { Count: > 0 })
                         {
@@ -115,7 +114,7 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
 
                         break;
 
-                    case NewHostedFileSearchTool fileSearchTool:
+                    case HostedFileSearchTool fileSearchTool:
 
                         // Handle file IDs for file search tool
                         if (fileSearchTool.Inputs is { Count: > 0 })
@@ -155,7 +154,7 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
         _ = Throw.IfNull(messages);
 
         // Extract necessary state from messages and options.
-        (RunCreationOptions runOptions, List<FunctionResultContent>? toolResults) = await CreateRunOptionsAsync(messages, options, cancellationToken).ConfigureAwait(false);
+        (RunCreationOptions runOptions, ToolResources? toolResources, List<FunctionResultContent>? toolResults) = await CreateRunOptionsAsync(messages, options, cancellationToken).ConfigureAwait(false);
 
         // Get the thread ID.
         string? threadId = options?.ConversationId ?? _defaultThreadId;
@@ -202,7 +201,7 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
                 // No thread ID was provided, so create a new thread.
                 ThreadCreationOptions threadCreationOptions = new()
                 {
-                    ToolResources = CreateToolResources(options)
+                    ToolResources = toolResources,
                 };
 
                 foreach (var message in runOptions.AdditionalMessages)
@@ -268,18 +267,19 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
 
                     if (ru is RequiredActionUpdate rau && rau.ToolCallId is string toolCallId && rau.FunctionName is string functionName)
                     {
-                        ruUpdate.Contents.Add(
-                            new FunctionCallContent(
-                                JsonSerializer.Serialize([ru.Value.Id, toolCallId], OpenAIJsonContext.Default.StringArray),
-                                functionName,
-                                JsonSerializer.Deserialize(rau.FunctionArguments, OpenAIJsonContext.Default.IDictionaryStringObject)!));
+                        var fcc = OpenAIClientExtensions2.ParseCallContent(
+                            rau.FunctionArguments,
+                            JsonSerializer.Serialize([ru.Value.Id, toolCallId], OpenAIJsonContext.Default.StringArray),
+                            functionName);
+                        fcc.RawRepresentation = ru;
+                        ruUpdate.Contents.Add(fcc);
                     }
 
                     yield return ruUpdate;
                     break;
 
                 case MessageContentUpdate mcu:
-                    yield return new(mcu.Role == MessageRole.User ? ChatRole.User : ChatRole.Assistant, mcu.Text)
+                    ChatResponseUpdate textUpdate = new(mcu.Role == MessageRole.User ? ChatRole.User : ChatRole.Assistant, mcu.Text)
                     {
                         AuthorName = _assistantId,
                         ConversationId = threadId,
@@ -287,10 +287,48 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
                         RawRepresentation = mcu,
                         ResponseId = responseId,
                     };
+
+                    // Add any annotations from the text update. The OpenAI Assistants API does not support passing these back
+                    // into the model (MessageContent.FromXx does not support providing annotations), so they end up being one way and are dropped
+                    // on subsequent requests.
+                    if (mcu.TextAnnotation is { } tau)
+                    {
+                        string? fileId = null;
+                        string? toolName = null;
+                        if (!string.IsNullOrWhiteSpace(tau.InputFileId))
+                        {
+                            fileId = tau.InputFileId;
+                            toolName = "file_search";
+                        }
+                        else if (!string.IsNullOrWhiteSpace(tau.OutputFileId))
+                        {
+                            fileId = tau.OutputFileId;
+                            toolName = "code_interpreter";
+                        }
+
+                        if (fileId is not null)
+                        {
+                            if (textUpdate.Contents.Count == 0)
+                            {
+                                // Create a empty chunk of text content to hold the annotation.
+                                textUpdate.Contents.Add(new TextContent(string.Empty));
+                            }
+
+                            (((TextContent)textUpdate.Contents[0]).Annotations ??= []).Add(new CitationAnnotation
+                            {
+                                RawRepresentation = tau,
+                                AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = tau.StartIndex, EndIndex = tau.EndIndex }],
+                                FileId = fileId,
+                                ToolName = toolName,
+                            });
+                        }
+                    }
+
+                    yield return textUpdate;
                     break;
 
                 default:
-                    yield return new ChatResponseUpdate
+                    yield return new()
                     {
                         AuthorName = _assistantId,
                         ConversationId = threadId,
@@ -329,13 +367,15 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
     /// Creates the <see cref="RunCreationOptions"/> to use for the request and extracts any function result contents
     /// that need to be submitted as tool results.
     /// </summary>
-    private async ValueTask<(RunCreationOptions RunOptions, List<FunctionResultContent>? ToolResults)> CreateRunOptionsAsync(
+    private async ValueTask<(RunCreationOptions RunOptions, ToolResources? Resources, List<FunctionResultContent>? ToolResults)> CreateRunOptionsAsync(
         IEnumerable<ChatMessage> messages, ChatOptions? options, CancellationToken cancellationToken)
     {
         // Create the options instance to populate, either a fresh or using one the caller provides.
         RunCreationOptions runOptions =
             options?.RawRepresentationFactory?.Invoke(this) as RunCreationOptions ??
             new();
+
+        ToolResources? resources = null;
 
         // Populate the run options from the ChatOptions, if provided.
         if (options is not null)
@@ -375,51 +415,42 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
                             runOptions.ToolsOverride.Add(ToOpenAIAssistantsFunctionToolDefinition(aiFunction, options));
                             break;
 
-                        case NewHostedCodeInterpreterTool codeTool:
-                            var codeInterpreterToolDefinition = new CodeInterpreterToolDefinition();
-                            runOptions.ToolsOverride.Add(codeInterpreterToolDefinition);
+                        case HostedCodeInterpreterTool codeInterpreterTool:
+                            var interpreterToolDef = ToolDefinition.CreateCodeInterpreter();
+                            runOptions.ToolsOverride.Add(interpreterToolDef);
 
-                            if (codeTool.Inputs is { Count: > 0 })
+                            if (codeInterpreterTool.Inputs?.Count is > 0)
                             {
-                                var threadInitializationMessage = new ThreadInitializationMessage(OpenAI.Assistants.MessageRole.User, [OpenAI.Assistants.MessageContent.FromText("attachments")]);
-
-                                foreach (var input in codeTool.Inputs)
+                                ThreadInitializationMessage? threadInitializationMessage = null;
+                                foreach (var input in codeInterpreterTool.Inputs)
                                 {
-                                    switch (input)
+                                    if (input is HostedFileContent hostedFile)
                                     {
-                                        case HostedFileContent fileContent:
-                                            // Use the file ID from the HostedFileContent.
-                                            threadInitializationMessage.Attachments.Add(new(fileContent.FileId, [codeInterpreterToolDefinition]));
-                                            break;
+                                        threadInitializationMessage ??= new(MessageRole.User, [MessageContent.FromText("attachments")]);
+                                        threadInitializationMessage.Attachments.Add(new(hostedFile.FileId, [interpreterToolDef]));
                                     }
                                 }
 
-                                runOptions.AdditionalMessages.Add(threadInitializationMessage);
+                                if (threadInitializationMessage is not null)
+                                {
+                                    runOptions.AdditionalMessages.Add(threadInitializationMessage);
+                                }
                             }
 
                             break;
 
-                        case NewHostedFileSearchTool fileSearchTool:
-                            var fileSearchToolDefinition = new FileSearchToolDefinition();
-                            runOptions.ToolsOverride.Add(fileSearchToolDefinition);
-
-                            // Handle file IDs for file search tool
-                            if (fileSearchTool.Inputs is { Count: > 0 })
+                        case HostedFileSearchTool fileSearchTool:
+                            runOptions.ToolsOverride.Add(ToolDefinition.CreateFileSearch(fileSearchTool.MaximumResultCount));
+                            if (fileSearchTool.Inputs is { Count: > 0 } fileSearchInputs)
                             {
-                                var threadInitializationMessage = new ThreadInitializationMessage(OpenAI.Assistants.MessageRole.User, [OpenAI.Assistants.MessageContent.FromText("file search attachments")]);
-
-                                foreach (var input in fileSearchTool.Inputs)
+                                foreach (var input in fileSearchInputs)
                                 {
-                                    switch (input)
+                                    if (input is HostedVectorStoreContent file)
                                     {
-                                        case HostedFileContent fileContent:
-                                            // Use the file ID from the HostedFileContent.
-                                            threadInitializationMessage.Attachments.Add(new(fileContent.FileId, [fileSearchToolDefinition]));
-                                            break;
+                                        (resources ??= new()).FileSearch ??= new();
+                                        resources.FileSearch.VectorStoreIds.Add(file.VectorStoreId);
                                     }
                                 }
-
-                                runOptions.AdditionalMessages.Add(threadInitializationMessage);
                             }
 
                             break;
@@ -522,6 +553,10 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
             {
                 switch (content)
                 {
+                    case AIContent when content.RawRepresentation is MessageContent rawRep:
+                        messageContents.Add(rawRep);
+                        break;
+
                     case TextContent text:
                         messageContents.Add(MessageContent.FromText(text.Text));
                         break;
@@ -530,17 +565,8 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
                         messageContents.Add(MessageContent.FromImageUri(image.Uri));
                         break;
 
-                    // Assistants doesn't support data URIs.
-                    //case DataContent image when image.HasTopLevelMediaType("image"):
-                    //    messageContents.Add(MessageContent.FromImageUri(new Uri(image.Uri)));
-                    //    break;
-
                     case FunctionResultContent result:
                         (functionResults ??= []).Add(result);
-                        break;
-
-                    case AIContent when content.RawRepresentation is MessageContent rawRep:
-                        messageContents.Add(rawRep);
                         break;
                 }
             }
@@ -555,7 +581,7 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
 
         runOptions.AdditionalInstructions = instructions?.ToString();
 
-        return (runOptions, functionResults);
+        return (runOptions, resources, functionResults);
     }
 
     /// <summary>Convert <see cref="FunctionResultContent"/> instances to <see cref="ToolOutput"/> instances.</summary>
@@ -612,6 +638,28 @@ internal static class OpenAIClientExtensions2
 
     /// <summary>Gets a <see cref="ChatRole"/> for "developer".</summary>
     internal static ChatRole ChatRoleDeveloper { get; } = new ChatRole("developer");
+
+    /// <summary>Creates a new instance of <see cref="FunctionCallContent"/> parsing arguments using a specified encoding and parser.</summary>
+    /// <param name="json">The input arguments to be parsed.</param>
+    /// <param name="callId">The function call ID.</param>
+    /// <param name="name">The function name.</param>
+    /// <returns>A new instance of <see cref="FunctionCallContent"/> containing the parse result.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="callId"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="name"/> is <see langword="null"/>.</exception>
+    internal static FunctionCallContent ParseCallContent(string json, string callId, string name) =>
+        FunctionCallContent.CreateFromParsedArguments(json, callId, name,
+            static json => JsonSerializer.Deserialize(json, OpenAIJsonContext.Default.IDictionaryStringObject)!);
+
+    /// <summary>Creates a new instance of <see cref="FunctionCallContent"/> parsing arguments using a specified encoding and parser.</summary>
+    /// <param name="utf8json">The input arguments to be parsed.</param>
+    /// <param name="callId">The function call ID.</param>
+    /// <param name="name">The function name.</param>
+    /// <returns>A new instance of <see cref="FunctionCallContent"/> containing the parse result.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="callId"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="name"/> is <see langword="null"/>.</exception>
+    internal static FunctionCallContent ParseCallContent(BinaryData utf8json, string callId, string name) =>
+        FunctionCallContent.CreateFromParsedArguments(utf8json, callId, name,
+            static utf8json => JsonSerializer.Deserialize(utf8json, OpenAIJsonContext.Default.IDictionaryStringObject)!);
 
     /// <summary>
     /// Gets the JSON schema transformer cache conforming to OpenAI <b>strict</b> / structured output restrictions per
@@ -707,31 +755,4 @@ internal static class OpenAIClientExtensions2
 
         return functionParameters;
     }
-
-    /// <summary>Used to create the JSON payload for an OpenAI tool description.</summary>
-    internal sealed class ToolJson
-    {
-        [JsonPropertyName("type")]
-        public string Type { get; set; } = "object";
-
-        [JsonPropertyName("required")]
-        public HashSet<string> Required { get; set; } = [];
-
-        [JsonPropertyName("properties")]
-        public Dictionary<string, JsonElement> Properties { get; set; } = [];
-
-        [JsonPropertyName("additionalProperties")]
-        public bool AdditionalProperties { get; set; }
-    }
 }
-
-/// <summary>Source-generated JSON type information for use by all OpenAI implementations.</summary>
-[JsonSourceGenerationOptions(JsonSerializerDefaults.Web,
-    UseStringEnumConverter = true,
-    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    WriteIndented = true)]
-[JsonSerializable(typeof(OpenAIClientExtensions2.ToolJson))]
-[JsonSerializable(typeof(IDictionary<string, object?>))]
-[JsonSerializable(typeof(string[]))]
-[JsonSerializable(typeof(JsonElement))]
-internal sealed partial class OpenAIJsonContext : JsonSerializerContext;

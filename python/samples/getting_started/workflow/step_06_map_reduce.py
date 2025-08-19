@@ -113,7 +113,6 @@ class Map(Executor):
             ctx: The execution context containing the shared state and other information.
         """
         # Retrieve the data to be processed from the shared state.
-        # Define a key for the shared state to store the data to be processed
         data_to_be_processed: list[str] = await ctx.get_shared_state(SHARED_STATE_DATA_KEY)
         chunk_start, chunk_end = await ctx.get_shared_state(self.id)
 

@@ -79,6 +79,7 @@ exclude_dirs = ["tests"]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
 [tool.poe.tasks]
+mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_workflow"
 test = "pytest --cov=agent_framework_workflow --cov-report=term-missing:skip-covered tests"
 
 [tool.uv.build-backend]
