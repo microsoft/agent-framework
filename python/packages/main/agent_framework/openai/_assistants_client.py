@@ -21,7 +21,7 @@ from openai.types.beta.threads.runs import RunStep
 from pydantic import Field, PrivateAttr, SecretStr, ValidationError
 
 from .._clients import ChatClientBase, use_tool_calling
-from .._tools import AIFunction, HostedCodeInterpreterTool
+from .._tools import AIFunction, HostedCodeInterpreterTool, HostedFileSearchTool
 from .._types import (
     AIContents,
     ChatMessage,
@@ -45,6 +45,7 @@ if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
 else:
     from typing_extensions import Self  # pragma: no cover
+
 
 __all__ = ["OpenAIAssistantsClient"]
 
@@ -247,6 +248,7 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
                 metadata=run_options.get("metadata"),
             )
             run_options["additional_messages"] = []
+            run_options.pop("tool_resources", None)
             return thread.id
 
         if thread_run is not None:
@@ -365,6 +367,13 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
                             tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
                         elif isinstance(tool, HostedCodeInterpreterTool):
                             tool_definitions.append({"type": "code_interpreter"})
+                        elif isinstance(tool, HostedFileSearchTool):
+                            params: dict[str, Any] = {
+                                "type": "file_search",
+                            }
+                            if tool.max_results is not None:
+                                params["max_num_results"] = tool.max_results
+                            tool_definitions.append(params)
                         elif isinstance(tool, MutableMapping):
                             tool_definitions.append(tool)
 

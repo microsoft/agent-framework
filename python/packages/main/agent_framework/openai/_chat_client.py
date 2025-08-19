@@ -19,6 +19,7 @@ from agent_framework import AIFunction, AITool, UsageContent
 
 from .._clients import ChatClientBase, use_tool_calling
 from .._logging import get_logger
+from .._tools import HostedWebSearchTool
 from .._types import (
     AIContents,
     ChatFinishReason,
@@ -125,16 +126,40 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
                 chat_tools.append(tool if isinstance(tool, dict) else dict(tool))
         return chat_tools
 
+    def _process_web_search_tool(self, tools: list[AITool | MutableMapping[str, Any]]) -> dict[str, Any] | None:
+        for tool in tools:
+            if isinstance(tool, HostedWebSearchTool):
+                # Web search tool requires special handling
+                return (
+                    {
+                        "user_location": {
+                            "approximate": tool.additional_properties.get("user_location", None),
+                            "type": "approximate",
+                        }
+                    }
+                    if tool.additional_properties and "user_location" in tool.additional_properties
+                    else {}
+                )
+
+        return None
+
     def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
+        # Preprocess web search tool if it exists
         options_dict = chat_options.to_provider_settings()
         if messages and "messages" not in options_dict:
             options_dict["messages"] = self._prepare_chat_history_for_request(messages)
         if "messages" not in options_dict:
             raise ServiceInvalidRequestError("Messages are required for chat completions")
-        if chat_options.tools is None:
-            options_dict.pop("parallel_tool_calls", None)
-        else:
+        if chat_options.tools is not None:
+            web_search_options = self._process_web_search_tool(chat_options.tools)
+            if web_search_options:
+                options_dict["web_search_options"] = web_search_options
             options_dict["tools"] = self._chat_to_tool_spec(chat_options.tools)
+        if not options_dict.get("tools", None):
+            options_dict.pop("tools", None)
+            options_dict.pop("parallel_tool_calls", None)
+            options_dict.pop("tool_choice", None)
+
         if "model" not in options_dict:
             options_dict["model"] = self.ai_model_id
         if (
