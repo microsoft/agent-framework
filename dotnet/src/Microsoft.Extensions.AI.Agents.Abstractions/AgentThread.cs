@@ -44,7 +44,7 @@ public class AgentThread
     /// </list>
     /// </para>
     /// <para>
-    /// The id may also change over time where the the id is pointing at a
+    /// The id may also change over time where the id is pointing at a
     /// agent service managed thread, and the default behavior of a service is
     /// to fork the thread with each iteration.
     /// </para>

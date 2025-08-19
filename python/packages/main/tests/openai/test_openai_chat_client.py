@@ -4,7 +4,15 @@ import os
 
 import pytest
 
-from agent_framework import ChatClient, ChatMessage, ChatResponse, ChatResponseUpdate, TextContent, ai_function
+from agent_framework import (
+    ChatClient,
+    ChatMessage,
+    ChatResponse,
+    ChatResponseUpdate,
+    HostedWebSearchTool,
+    TextContent,
+    ai_function,
+)
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai import OpenAIChatClient
 
@@ -231,3 +239,96 @@ async def test_openai_chat_client_streaming_tools() -> None:
                 full_message += content.text
 
     assert "scientists" in full_message
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_chat_client_web_search() -> None:
+    # Currently only a select few models support web search tool calls
+    openai_chat_client = OpenAIChatClient(ai_model_id="gpt-4o-search-preview")
+
+    assert isinstance(openai_chat_client, ChatClient)
+
+    # Test that the client will use the web search tool
+    response = await openai_chat_client.get_response(
+        messages=[
+            ChatMessage(
+                role="user",
+                text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
+            )
+        ],
+        tools=[HostedWebSearchTool()],
+        tool_choice="auto",
+    )
+
+    assert response is not None
+    assert isinstance(response, ChatResponse)
+    assert "Rumi" in response.text
+    assert "Mira" in response.text
+    assert "Zoey" in response.text
+
+    # Test that the client will use the web search tool with location
+    additional_properties = {
+        "user_location": {
+            "country": "US",
+            "city": "Seattle",
+        }
+    }
+    response = await openai_chat_client.get_response(
+        messages=[ChatMessage(role="user", text="What is the current weather? Do not ask for my current location.")],
+        tools=[HostedWebSearchTool(additional_properties=additional_properties)],
+        tool_choice="auto",
+    )
+    assert "Seattle" in response.text
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_chat_client_web_search_streaming() -> None:
+    openai_chat_client = OpenAIChatClient(ai_model_id="gpt-4o-search-preview")
+
+    assert isinstance(openai_chat_client, ChatClient)
+
+    # Test that the client will use the web search tool
+    response = openai_chat_client.get_streaming_response(
+        messages=[
+            ChatMessage(
+                role="user",
+                text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
+            )
+        ],
+        tools=[HostedWebSearchTool()],
+        tool_choice="auto",
+    )
+
+    assert response is not None
+    full_message: str = ""
+    async for chunk in response:
+        assert chunk is not None
+        assert isinstance(chunk, ChatResponseUpdate)
+        for content in chunk.contents:
+            if isinstance(content, TextContent) and content.text:
+                full_message += content.text
+    assert "Rumi" in full_message
+    assert "Mira" in full_message
+    assert "Zoey" in full_message
+
+    # Test that the client will use the web search tool with location
+    additional_properties = {
+        "user_location": {
+            "country": "US",
+            "city": "Seattle",
+        }
+    }
+    response = openai_chat_client.get_streaming_response(
+        messages=[ChatMessage(role="user", text="What is the current weather? Do not ask for my current location.")],
+        tools=[HostedWebSearchTool(additional_properties=additional_properties)],
+        tool_choice="auto",
+    )
+    assert response is not None
+    full_message: str = ""
+    async for chunk in response:
+        assert chunk is not None
+        assert isinstance(chunk, ChatResponseUpdate)
+        for content in chunk.contents:
+            if isinstance(content, TextContent) and content.text:
+                full_message += content.text
+    assert "Seattle" in full_message

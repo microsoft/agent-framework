@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import Mapping
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai import OpenAIAssistantsClient
@@ -9,9 +9,10 @@ from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from pydantic import SecretStr, ValidationError
 from pydantic.networks import AnyUrl
 
-from ._shared import (
-    AzureOpenAISettings,
-)
+from ._shared import AzureOpenAISettings
+
+if TYPE_CHECKING:
+    from azure.identity import ChainedTokenCredential
 
 __all__ = ["AzureAssistantsClient"]
 
@@ -20,7 +21,6 @@ class AzureAssistantsClient(OpenAIAssistantsClient):
     """Azure OpenAI Assistants client."""
 
     DEFAULT_AZURE_API_VERSION: ClassVar[str] = "2024-05-01-preview"
-    MODEL_PROVIDER_NAME: ClassVar[str] = "azure_openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     def __init__(
         self,
@@ -35,6 +35,7 @@ class AzureAssistantsClient(OpenAIAssistantsClient):
         ad_token: str | None = None,
         ad_token_provider: AsyncAzureADTokenProvider | None = None,
         token_endpoint: str | None = None,
+        ad_credential: "ChainedTokenCredential | None" = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | None = None,
         env_file_path: str | None = None,
@@ -61,6 +62,7 @@ class AzureAssistantsClient(OpenAIAssistantsClient):
             ad_token: The Azure Active Directory token. (Optional)
             ad_token_provider: The Azure Active Directory token provider. (Optional)
             token_endpoint: The token endpoint to request an Azure token. (Optional)
+            ad_credential: The Azure AD credential to use for authentication. (Optional)
             default_headers: The default headers mapping of string keys to
                 string values for HTTP requests. (Optional)
             async_client: An existing client to use. (Optional)
@@ -93,11 +95,9 @@ class AzureAssistantsClient(OpenAIAssistantsClient):
             and not ad_token
             and not ad_token_provider
             and azure_openai_settings.token_endpoint
+            and ad_credential
         ):
-            # Try to get token using Entra ID if no other auth method is provided
-            from ._entra_id_authentication import get_entra_auth_token
-
-            ad_token = get_entra_auth_token(azure_openai_settings.token_endpoint)
+            ad_token = azure_openai_settings.get_azure_auth_token(ad_credential)
 
         if not async_client and not azure_openai_settings.api_key and not ad_token and not ad_token_provider:
             raise ServiceInitializationError("The Azure OpenAI API key, ad_token, or ad_token_provider is required.")
