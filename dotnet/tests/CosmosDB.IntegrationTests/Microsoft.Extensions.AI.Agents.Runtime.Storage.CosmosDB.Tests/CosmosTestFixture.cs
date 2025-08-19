@@ -6,6 +6,7 @@ using Azure.Identity;
 using CosmosDB.Testing.AppHost;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Logging;
+using static System.Net.WebRequestMethods;
 
 #pragma warning disable CA2007, VSTHRD111, CS1591
 
@@ -49,6 +50,13 @@ public class CosmosTestFixture : IAsyncLifetime
         await this.App.StartAsync(cancellationToken).WaitAsync(cancellationToken);
 
         var cs = await this.App.GetConnectionStringAsync(CosmosDBTestConstants.TestCosmosDbName, cancellationToken);
+        if (CosmosDBTestConstants.UseEmulatorForTesting && CosmosDBTestConstants.RunningCosmosDbTestsInCICD)
+        {
+            // Use well-known emulator connection string in CI/CD to avoid issues with environment variables.
+            // https://learn.microsoft.com/en-us/azure/cosmos-db/emulator
+            cs = "AccountEndpoint=https://localhost:8081/;AccountKey=C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==;";
+        }
+
         CosmosClientOptions ccoptions = new()
         {
             UseSystemTextJsonSerializerWithOptions = new JsonSerializerOptions()
@@ -86,7 +94,14 @@ public class CosmosTestFixture : IAsyncLifetime
             PartitionKeyPaths = LazyCosmosContainer.CosmosPartitionKeyPaths
         };
 
-        this.Container = await database.CreateContainerIfNotExistsAsync(containerProperties);
+        try
+        {
+            this.Container = await database.CreateContainerIfNotExistsAsync(containerProperties);
+        }
+        catch (Exception ex)
+        {
+            throw new ArgumentException("Initialization error. Cosmos ConnectionString: " + cs, ex);
+        }
     }
 
     public async Task DisposeAsync()
