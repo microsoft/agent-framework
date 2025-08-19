@@ -1,8 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import tempfile
-from typing import Any
 from dataclasses import dataclass
+from typing import Any
 
 import pytest
 from agent_framework.workflow import (

@@ -6,7 +6,6 @@ from ._events import WorkflowEvent
 from ._runner_context import Message, RunnerContext
 from ._shared_state import SharedState
 
-
 T_Out = TypeVar("T_Out")
 
 

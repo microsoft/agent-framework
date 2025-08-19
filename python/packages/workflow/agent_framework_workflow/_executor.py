@@ -5,8 +5,8 @@ import inspect
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, ClassVar, TypeVar, overload, get_args, get_origin, Union
 from types import UnionType
+from typing import Any, ClassVar, TypeVar, Union, get_args, get_origin, overload
 
 from agent_framework import AgentRunResponse, AgentRunResponseUpdate, AgentThread, AIAgent, ChatMessage
 

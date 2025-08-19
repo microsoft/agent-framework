@@ -5,8 +5,8 @@ import logging
 from collections import defaultdict
 from collections.abc import Sequence
 from enum import Enum
-from typing import Any, Union, get_args, get_origin
 from types import UnionType
+from typing import Any, Union, get_args, get_origin
 
 from ._edge import Edge, EdgeGroup, FanInEdgeGroup
 from ._executor import Executor
@@ -83,8 +83,10 @@ class HandlerOutputAnnotationError(WorkflowValidationError):
     def __init__(self, executor_id: str, handler_name: str, reason: str):
         super().__init__(
             message=(
-                f"Invalid WorkflowContext output annotation in handler '{handler_name}' of executor '{executor_id}': {reason}. "
-                f"Handlers must annotate their third parameter as WorkflowContext[T]. Use WorkflowContext[None] if the handler emits no messages."
+                "Invalid WorkflowContext output annotation in handler "
+                f"'{handler_name}' of executor '{executor_id}': {reason}. "
+                "Handlers must annotate their third parameter as WorkflowContext[T]. "
+                "Use WorkflowContext[None] if the handler emits no messages."
             ),
             validation_type=ValidationTypeEnum.HANDLER_OUTPUT_ANNOTATION,
         )
@@ -129,9 +131,7 @@ class WorkflowGraphValidator:
         # but we do it here for completeness.
         start_executor_id = start_executor.id if isinstance(start_executor, Executor) else start_executor
         if start_executor_id not in self._executors:
-            raise GraphConnectivityError(
-                f"Start executor '{start_executor_id}' is not present in the workflow graph"
-            )
+            raise GraphConnectivityError(f"Start executor '{start_executor_id}' is not present in the workflow graph")
 
         # Run all checks
         self._validate_edge_duplication()
@@ -158,7 +158,8 @@ class WorkflowGraphValidator:
         Requirements:
         - WorkflowContext annotation must be present
         - T_Out must be provided; if no outputs, it must be None
-        - T_Out elements must be valid types (class) or typing generics (e.g., list[str]); values like int() or 123 are invalid
+                - T_Out elements must be valid types (class) or typing generics (e.g., list[str]);
+                    values like int() or 123 are invalid
         """
         from ._workflow_context import WorkflowContext  # Local import to avoid cycles
 
@@ -196,7 +197,7 @@ class WorkflowGraphValidator:
                         raise HandlerOutputAnnotationError(
                             executor_id,
                             handler_name,
-                            "T_Out is missing. Use WorkflowContext[None] for no outputs or specify concrete output types",
+                            "T_Out is missing; use WorkflowContext[None] or specify concrete types",
                         )
                 else:
                     if ctx_origin is not WorkflowContext:
@@ -210,24 +211,21 @@ class WorkflowGraphValidator:
                     raise HandlerOutputAnnotationError(
                         executor_id,
                         handler_name,
-                        "T_Out is missing. Use WorkflowContext[None] for no outputs or specify concrete output types",
+                        "T_Out is missing; use WorkflowContext[None] or specify concrete types",
                     )
 
                 t_out = type_args[0]
 
-                # Allow Any for T_Out (means unspecified outputs, validation will skip type compatibility for this executor)
+                # Allow Any for T_Out (unspecified outputs; skip compatibility)
 
                 # Allow None (no outputs)
-                if t_out is type(None):  # noqa: E721
+                if t_out is type(None):
                     continue
 
                 # If union, validate each member
                 union_origin = get_origin(t_out)
                 items: list[Any]
-                if union_origin in (Union, UnionType):
-                    items = list(get_args(t_out))
-                else:
-                    items = [t_out]
+                items = list(get_args(t_out)) if union_origin in (Union, UnionType) else [t_out]
 
                 def _is_type_like(x: Any) -> bool:
                     return isinstance(x, type) or get_origin(x) is not None
@@ -299,7 +297,7 @@ class WorkflowGraphValidator:
                 logger.warning(
                     f"Executor '{source_executor.id}' has no output type annotations. "
                     f"Type compatibility validation will be skipped for edges from this executor. "
-                    f"Consider adding generic output types via WorkflowContext[T] in handler signatures for better validation."
+                    f"Consider adding WorkflowContext[T] generics in handlers for better validation."
                 )
             if not target_input_types:
                 logger.warning(
