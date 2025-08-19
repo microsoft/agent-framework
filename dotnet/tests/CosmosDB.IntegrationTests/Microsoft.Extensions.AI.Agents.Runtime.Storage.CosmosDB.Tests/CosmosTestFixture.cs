@@ -48,12 +48,14 @@ public class CosmosTestFixture : IAsyncLifetime
         this.App = await appHost.BuildAsync(cancellationToken).WaitAsync(cancellationToken);
         await this.App.StartAsync(cancellationToken).WaitAsync(cancellationToken);
 
-        var cs = await this.App.GetConnectionStringAsync(CosmosDBTestConstants.TestCosmosDbName, cancellationToken);
-        if (CosmosDBTestConstants.UseEmulatorForTesting && CosmosDBTestConstants.RunningCosmosDbTestsInCICD)
+        var connectionString = await this.App.GetConnectionStringAsync(CosmosDBTestConstants.TestCosmosDbName, cancellationToken);
+        if (CosmosDBTestConstants.UseEmulatorInCICD)
         {
-            // Use well-known emulator connection string in CI/CD to avoid issues with environment variables.
+            // Emulator is setup in the CI/CD pipeline, so we will not use one produced by Aspire.
+            // For simplicity, we override the connection string here with the well-known emulator connection string.
             // https://learn.microsoft.com/en-us/azure/cosmos-db/emulator
-            cs = "AccountEndpoint=https://localhost:8081/;AccountKey=C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==;";
+
+            connectionString = "AccountEndpoint=https://localhost:8081/;AccountKey=C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==;";
         }
 
         CosmosClientOptions ccoptions = new()
@@ -62,31 +64,27 @@ public class CosmosTestFixture : IAsyncLifetime
             {
                 PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
                 TypeInfoResolver = CosmosActorStateJsonContext.Default
-            },
-            HttpClientFactory = () =>
-            {
-                HttpMessageHandler httpMessageHandler = new HttpClientHandler()
-                {
-                    // ignore SSL errors for testing with emulator
-                    ServerCertificateCustomValidationCallback = (req, cert, chain, errors) => true
-                };
-                return new HttpClient(httpMessageHandler);
-            },
+            }
         };
 
-        if (CosmosDBTestConstants.UseEmulatorForTesting)
+        if (CosmosDBTestConstants.UseAspireEmulatorForTesting || CosmosDBTestConstants.UseEmulatorInCICD)
         {
             ccoptions.ConnectionMode = ConnectionMode.Gateway;
             ccoptions.LimitToEndpoint = true;
-            this.CosmosClient = new CosmosClient(cs, ccoptions);
+            this.CosmosClient = new CosmosClient(connectionString, ccoptions);
         }
         else
         {
-            this.CosmosClient = new CosmosClient(cs, new DefaultAzureCredential(), ccoptions);
+            this.CosmosClient = new CosmosClient(connectionString, new DefaultAzureCredential(), ccoptions);
         }
 
         var database = this.CosmosClient.GetDatabase(CosmosDBTestConstants.TestCosmosDbDatabaseName);
-        var db = await this.CosmosClient.CreateDatabaseIfNotExistsAsync(CosmosDBTestConstants.TestCosmosDbDatabaseName, throughputProperties: ThroughputProperties.CreateAutoscaleThroughput(100000));
+
+        // raise throughput to avoid parallel test execution failures
+        var throughputProperties = ThroughputProperties.CreateAutoscaleThroughput(100000);
+
+        // Ensure database exists. It will be a no-op if it was already created before.
+        _ = await this.CosmosClient.CreateDatabaseIfNotExistsAsync(CosmosDBTestConstants.TestCosmosDbDatabaseName, throughputProperties);
 
         var containerProperties = new ContainerProperties()
         {

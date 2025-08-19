@@ -12,13 +12,13 @@ public static class CosmosDBTestConstants
     //Set to use the CosmosDB emulator for testing via environment variable.
     //Example: set COSMOSDB_TESTS_USE_EMULATOR = true in your environment.
     //Warning: Using the emulator may cause test flakiness.
-    public static bool UseEmulatorForTesting => string.Equals(
+    public static bool UseAspireEmulatorForTesting => string.Equals(
         Environment.GetEnvironmentVariable("COSMOSDB_TESTS_USE_EMULATOR"),
         "true",
         StringComparison.OrdinalIgnoreCase);
 
-    public static bool RunningCosmosDbTestsInCICD => string.Equals(
-        Environment.GetEnvironmentVariable("COSMOSDB_TESTS_CICD"),
+    public static bool UseEmulatorInCICD => string.Equals(
+        Environment.GetEnvironmentVariable("COSMOSDB_TESTS_USE_EMULATOR_CICD"),
         "true",
         StringComparison.OrdinalIgnoreCase);
 }

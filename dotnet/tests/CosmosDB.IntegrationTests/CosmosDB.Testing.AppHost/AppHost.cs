@@ -5,7 +5,11 @@ using CosmosDB.Testing.AppHost;
 var builder = DistributedApplication.CreateBuilder(args);
 var cosmosDb = builder.AddAzureCosmosDB(CosmosDBTestConstants.TestCosmosDbName);
 
-if (CosmosDBTestConstants.UseEmulatorForTesting)
+if (CosmosDBTestConstants.UseEmulatorInCICD)
+{
+    // Emulator created in the CI/CD pipeline gives more control over some settings and port-configuration today.
+}
+else if (CosmosDBTestConstants.UseAspireEmulatorForTesting)
 {
     cosmosDb.RunAsEmulator(emulator => emulator.WithLifetime(ContainerLifetime.Persistent));
 }
