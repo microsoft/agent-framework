@@ -29,8 +29,11 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        include:
+          - { targetFramework: "net9.0", os: "ubuntu-latest", configuration: Release }
+          - { targetFramework: "net9.0", os: "ubuntu-latest", configuration: Debug }
 
     services:
       cosmosdb:
