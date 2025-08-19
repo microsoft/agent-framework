@@ -1,6 +1,6 @@
 ---
 # These are optional elements. Feel free to remove any of them.
-status: proposed
+status: accepted
 contact: markwallace
 date: 2025-08-06
 deciders: markwallace-microsoft, westey-m, quibitron
