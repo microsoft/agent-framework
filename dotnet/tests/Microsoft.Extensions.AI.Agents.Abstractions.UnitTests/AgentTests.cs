@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -235,6 +236,122 @@ public class AgentTests
 
         threadMock.Protected().Verify("OnNewMessagesAsync", Times.Once(), messages, cancellationToken);
     }
+
+    #region GetService Method Tests
+
+    /// <summary>
+    /// Verify that GetService returns the agent itself when requesting the exact agent type.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingExactAgentType_ReturnsAgent()
+    {
+        // Arrange
+        var agent = new MockAgent();
+
+        // Act
+        var result = agent.GetService(typeof(MockAgent));
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Same(agent, result);
+    }
+
+    /// <summary>
+    /// Verify that GetService returns the agent itself when requesting the base AIAgent type.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingAIAgentType_ReturnsAgent()
+    {
+        // Arrange
+        var agent = new MockAgent();
+
+        // Act
+        var result = agent.GetService(typeof(AIAgent));
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Same(agent, result);
+    }
+
+    /// <summary>
+    /// Verify that GetService returns null when requesting an unrelated type.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingUnrelatedType_ReturnsNull()
+    {
+        // Arrange
+        var agent = new MockAgent();
+
+        // Act
+        var result = agent.GetService(typeof(string));
+
+        // Assert
+        Assert.Null(result);
+    }
+
+    /// <summary>
+    /// Verify that GetService returns null when a service key is provided, even for matching types.
+    /// </summary>
+    [Fact]
+    public void GetService_WithServiceKey_ReturnsNull()
+    {
+        // Arrange
+        var agent = new MockAgent();
+
+        // Act
+        var result = agent.GetService(typeof(MockAgent), "some-key");
+
+        // Assert
+        Assert.Null(result);
+    }
+
+    /// <summary>
+    /// Verify that GetService throws ArgumentNullException when serviceType is null.
+    /// </summary>
+    [Fact]
+    public void GetService_WithNullServiceType_ThrowsArgumentNullException()
+    {
+        // Arrange
+        var agent = new MockAgent();
+
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() => agent.GetService(null!));
+    }
+
+    /// <summary>
+    /// Verify that GetService generic method works correctly.
+    /// </summary>
+    [Fact]
+    public void GetService_Generic_ReturnsCorrectType()
+    {
+        // Arrange
+        var agent = new MockAgent();
+
+        // Act
+        var result = agent.GetService<MockAgent>();
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Same(agent, result);
+    }
+
+    /// <summary>
+    /// Verify that GetService generic method returns null for unrelated types.
+    /// </summary>
+    [Fact]
+    public void GetService_Generic_ReturnsNullForUnrelatedType()
+    {
+        // Arrange
+        var agent = new MockAgent();
+
+        // Act
+        var result = agent.GetService<string>();
+
+        // Assert
+        Assert.Null(result);
+    }
+
+    #endregion
 
     /// <summary>
     /// Typed mock thread.

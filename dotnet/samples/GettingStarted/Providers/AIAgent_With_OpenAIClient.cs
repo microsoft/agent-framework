@@ -18,7 +18,7 @@ public sealed class AIAgent_With_OpenAIClient(ITestOutputHelper output) : AgentS
     [Fact]
     public async Task RunWithChatCompletion()
     {
-        // Get the agent directly from OpenAIClient.
+        // Create the agent using the OpenAI ChatClient.
         AIAgent agent = new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
             .GetChatClient(TestConfiguration.OpenAI.ChatModelId)
             .CreateAIAgent(JokerInstructions, JokerName);

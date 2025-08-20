@@ -8,6 +8,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Diagnostics;
 using Microsoft.Shared.Samples;
+using OpenAI;
 using OpenAI.Assistants;
 using OpenAI.Chat;
 using OpenAI.Responses;
@@ -110,13 +111,13 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
 
     private IChatClient GetOpenAIResponsesClient()
         => new OpenAIResponseClient(TestConfiguration.OpenAI.ChatModelId, TestConfiguration.OpenAI.ApiKey)
-            .AsIChatClient();
+        .AsNewIChatClient();
 
     private NewPersistentAgentsChatClient GetAzureAIAgentPersistentClient(ChatClientAgentOptions options)
         => new(new PersistentAgentsClient(TestConfiguration.AzureAI.Endpoint, new AzureCliCredential()), options.Id!);
 
     private NewOpenAIAssistantChatClient GetOpenAIAssistantChatClient(ChatClientAgentOptions options)
-        => new(new(TestConfiguration.OpenAI.ApiKey), options.Id!, null);
+        => new(new AssistantClient(TestConfiguration.OpenAI.ApiKey), options.Id!);
 
     #endregion
 

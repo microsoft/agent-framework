@@ -3,10 +3,10 @@
 import asyncio
 import logging
 from collections import defaultdict
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Sequence
 from typing import Any
 
-from ._edge import Edge
+from ._edge import EdgeGroup
 from ._events import WorkflowEvent
 from ._executor import Executor
 from ._runner_context import Message, RunnerContext
@@ -20,22 +20,22 @@ class Runner:
 
     def __init__(
         self,
-        edges: list[Edge],
+        edge_groups: Sequence[EdgeGroup],
         shared_state: SharedState,
         ctx: RunnerContext,
         max_iterations: int = 100,
         workflow_id: str | None = None,
-    ):
+    ) -> None:
         """Initialize the runner with edges, shared state, and context.
 
         Args:
-            edges: The edges of the workflow.
+            edge_groups: The edge groups of the workflow.
             shared_state: The shared state for the workflow.
             ctx: The runner context for the workflow.
             max_iterations: The maximum number of iterations to run.
             workflow_id: The workflow ID for checkpointing.
         """
-        self._edge_map = self._parse_edges(edges)
+        self._edge_group_map = self._parse_edge_groups(edge_groups)
         self._ctx = ctx
         self._iteration = 0
         self._max_iterations = max_iterations
@@ -123,18 +123,9 @@ class Runner:
         finally:
             self._running = False
 
-    async def _run_iteration(self):
+    async def _run_iteration(self) -> None:
         async def _deliver_messages(source_executor_id: str, messages: list[Message]) -> None:
-            async def _deliver_messages_inner(
-                edge: Edge,
-                messages: list[Message],
-            ) -> None:
-                for message in messages:
-                    if message.target_id is not None and message.target_id != edge.target_id:
-                        continue
-                    if not edge.can_handle(message.data):
-                        continue
-                    await edge.send_message(message, self._shared_state, self._ctx)
+            """Outer loop to concurrently deliver messages from all sources to their targets."""
 
             # Special handling for SubWorkflowRequestInfo messages
             async def _deliver_sub_workflow_requests(messages: list[Message]) -> None:
@@ -157,9 +148,10 @@ class Runner:
                     # Find executor that can intercept the wrapped type
                     interceptor_found = False
                     all_executors = set()
-                    for edges in self._edge_map.values():
-                        for edge in edges:
-                            all_executors.add(edge.target)
+                    for edge_groups in self._edge_group_map.values():
+                        for edge_group in edge_groups:
+                            for edge in edge_group.edges:
+                                all_executors.add(edge.target)
 
                     for executor in all_executors:
                         if (
@@ -180,7 +172,9 @@ class Runner:
                         if request_info_executor:
                             await request_info_executor.execute(sub_request, self._ctx)
 
-            associated_edges = self._edge_map.get(source_executor_id, [])
+            async def _deliver_message_inner(edge_group: EdgeGroup, message: Message) -> bool:
+                """Inner loop to deliver a single message through an edge group."""
+                return await edge_group.send_message(message, self._shared_state, self._ctx)
 
             # Handle SubWorkflowRequestInfo messages specially
             await _deliver_sub_workflow_requests(messages)
@@ -202,19 +196,20 @@ class Runner:
 
                 non_sub_workflow_messages.append(msg)
 
-            # Handle other messages normally
-            tasks = [
-                asyncio.create_task(_deliver_messages_inner(edge, non_sub_workflow_messages))
-                for edge in associated_edges
-            ]
-            await asyncio.gather(*tasks)
+            # Handle other messages normally using edge groups
+            associated_edge_groups = self._edge_group_map.get(source_executor_id, [])
+            for message in non_sub_workflow_messages:
+                # Deliver a message through all edge groups associated with the source executor concurrently.
+                tasks = [_deliver_message_inner(edge_group, message) for edge_group in associated_edge_groups]
+                results = await asyncio.gather(*tasks)
+                if not any(results):
+                    logger.warning(
+                        f"Message {message} could not be delivered. "
+                        "This may be due to type incompatibility or no matching targets."
+                    )
 
         messages = await self._ctx.drain_messages()
-
-        tasks = [
-            asyncio.create_task(_deliver_messages(source_executor_id, messages))
-            for source_executor_id, messages in messages.items()
-        ]
+        tasks = [_deliver_messages(source_executor_id, messages) for source_executor_id, messages in messages.items()]
         await asyncio.gather(*tasks)
 
     async def _create_checkpoint_if_enabled(self, checkpoint_type: str) -> str | None:
@@ -247,10 +242,11 @@ class Runner:
         Only JSON-serializable dicts should be provided by executors.
         """
         executors: dict[str, Executor] = {}
-        for edge_list in self._edge_map.values():
-            for edge in edge_list:
-                executors[edge.source.id] = edge.source
-                executors[edge.target.id] = edge.target
+        for edge_groups in self._edge_group_map.values():
+            for edge_group in edge_groups:
+                for edge in edge_group.edges:
+                    executors[edge.source.id] = edge.source
+                    executors[edge.target.id] = edge.target
         for exec_id, executor in executors.items():
             state_dict: dict[str, Any] | None = None
             snapshot = getattr(executor, "snapshot_state", None)
@@ -338,18 +334,20 @@ class Runner:
         except Exception as e:
             logger.warning(f"Failed to restore shared state from context: {e}")
 
-    def _parse_edges(self, edges: list[Edge]) -> dict[str, list[Edge]]:
-        """Parse the edges of the workflow into a more convenient format.
+    def _parse_edge_groups(self, edge_groups: Sequence[EdgeGroup]) -> dict[str, list[EdgeGroup]]:
+        """Parse the edge groups of the workflow into a mapping where each source executor ID maps to its edge groups.
 
         Args:
-            edges: A list of edges in the workflow.
+            edge_groups: A list of edge groups in the workflow.
 
         Returns:
-            A dictionary mapping each source executor ID to a list of target executor IDs.
+            A dictionary mapping each source executor ID to a list of edge groups.
         """
-        parsed: defaultdict[str, list[Edge]] = defaultdict(list)
-        for edge in edges:
-            parsed[edge.source_id].append(edge)
+        parsed: defaultdict[str, list[EdgeGroup]] = defaultdict(list)
+        for group in edge_groups:
+            for source_executor in group.source_executors:
+                parsed[source_executor.id].append(group)
+
         return parsed
 
     def _find_request_info_executor(self) -> "RequestInfoExecutor | None":
@@ -360,10 +358,11 @@ class Runner:
         """
         from ._executor import RequestInfoExecutor
 
-        for edges in self._edge_map.values():
-            for edge in edges:
-                if isinstance(edge.target, RequestInfoExecutor):
-                    return edge.target
+        for edge_groups in self._edge_group_map.values():
+            for edge_group in edge_groups:
+                for edge in edge_group.edges:
+                    if isinstance(edge.target, RequestInfoExecutor):
+                        return edge.target
         return None
 
     def _is_message_to_request_info_executor(self, msg: "Message") -> bool:
@@ -381,8 +380,9 @@ class Runner:
             return False
 
         # Check all executors to see if target_id matches a RequestInfoExecutor
-        for edges in self._edge_map.values():
-            for edge in edges:
-                if edge.target.id == msg.target_id and isinstance(edge.target, RequestInfoExecutor):
-                    return True
+        for edge_groups in self._edge_group_map.values():
+            for edge_group in edge_groups:
+                for edge in edge_group.edges:
+                    if edge.target.id == msg.target_id and isinstance(edge.target, RequestInfoExecutor):
+                        return True
         return False
