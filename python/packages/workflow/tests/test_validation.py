@@ -18,6 +18,7 @@ from agent_framework_workflow import (
     validate_workflow_graph,
 )
 from agent_framework_workflow._edge import SingleEdgeGroup
+from agent_framework_workflow._validation import HandlerOutputAnnotationError
 
 
 class StringExecutor(Executor):
@@ -306,7 +307,7 @@ def test_logging_for_missing_output_types(caplog: Any) -> None:
 
     assert workflow is not None
     assert "has no output type annotations" in caplog.text
-    assert "Consider adding generic output types via WorkflowContext[T]" in caplog.text
+    assert "Consider adding WorkflowContext[T] generics" in caplog.text
 
 
 def test_logging_for_missing_input_types(caplog: Any) -> None:
@@ -556,3 +557,83 @@ def test_validation_enum_usage() -> None:
     # Test enum string representation
     assert str(ValidationTypeEnum.EDGE_DUPLICATION) == "ValidationTypeEnum.EDGE_DUPLICATION"
     assert ValidationTypeEnum.EDGE_DUPLICATION.value == "EDGE_DUPLICATION"
+
+
+def test_handler_ctx_missing_annotation_raises() -> None:
+    class BadExecutor(Executor):
+        @handler
+        async def handle(self, message: str, ctx) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+    start = StringExecutor(id="s")
+    bad = BadExecutor(id="b")
+
+    with pytest.raises(HandlerOutputAnnotationError) as exc:
+        WorkflowBuilder().add_edge(start, bad).set_start_executor(start).build()
+
+    assert exc.value.validation_type == ValidationTypeEnum.HANDLER_OUTPUT_ANNOTATION
+    assert "missing type annotation" in str(exc.value)
+
+
+def test_handler_ctx_unsubscripted_workflow_context_raises() -> None:
+    class BadExecutor(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext) -> None:  # missing T
+            pass
+
+    start = StringExecutor(id="s")
+    bad = BadExecutor(id="b")
+
+    with pytest.raises(HandlerOutputAnnotationError) as exc:
+        WorkflowBuilder().add_edge(start, bad).set_start_executor(start).build()
+
+    assert exc.value.validation_type == ValidationTypeEnum.HANDLER_OUTPUT_ANNOTATION
+    # Message should mention missing T or WorkflowContext[None]
+    assert "WorkflowContext[None]" in str(exc.value) or "missing" in str(exc.value).lower()
+
+
+def test_handler_ctx_invalid_t_out_entries_raises() -> None:
+    class BadExecutor(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext[123]) -> None:  # type: ignore[valid-type]
+            pass
+
+    start = StringExecutor(id="s")
+    bad = BadExecutor(id="b")
+
+    with pytest.raises(HandlerOutputAnnotationError) as exc:
+        WorkflowBuilder().add_edge(start, bad).set_start_executor(start).build()
+
+    assert exc.value.validation_type == ValidationTypeEnum.HANDLER_OUTPUT_ANNOTATION
+    assert "invalid entries" in str(exc.value)
+
+
+def test_handler_ctx_none_is_allowed() -> None:
+    class NoneExecutor(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext[None]) -> None:
+            # does not emit
+            return None
+
+    start = StringExecutor(id="s")
+    none_exec = NoneExecutor(id="n")
+
+    # Should build successfully
+    wf = WorkflowBuilder().add_edge(start, none_exec).set_start_executor(start).build()
+    assert wf is not None
+
+
+def test_handler_ctx_any_is_allowed_but_skips_type_checks(caplog: Any) -> None:
+    caplog.set_level(logging.WARNING)
+
+    class AnyOutExecutor(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext[Any]) -> None:
+            return None
+
+    start = StringExecutor(id="s")
+    any_out = AnyOutExecutor(id="a")
+
+    # Builds; later edges from this executor will skip type compatibility when outputs are unspecified
+    wf = WorkflowBuilder().add_edge(start, any_out).set_start_executor(start).build()
+    assert wf is not None

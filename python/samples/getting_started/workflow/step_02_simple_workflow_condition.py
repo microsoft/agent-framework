@@ -52,7 +52,7 @@ class SendResponse(Executor):
     async def handle_detector_response(
         self,
         spam_detector_response: SpamDetectorResponse,
-        ctx: WorkflowContext,
+        ctx: WorkflowContext[None],
     ) -> None:
         """Respond with a message based on whether the input is spam."""
         if spam_detector_response.is_spam:
@@ -72,7 +72,7 @@ class RemoveSpam(Executor):
     async def handle_detector_response(
         self,
         spam_detector_response: SpamDetectorResponse,
-        ctx: WorkflowContext,
+        ctx: WorkflowContext[None],
     ) -> None:
         """Remove the spam message."""
         if spam_detector_response.is_spam is False:

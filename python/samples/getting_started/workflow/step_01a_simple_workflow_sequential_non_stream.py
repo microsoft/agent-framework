@@ -27,7 +27,7 @@ class ReverseTextExecutor(Executor):
     """An executor that reverses text."""
 
     @handler
-    async def reverse_text(self, text: str, ctx: WorkflowContext) -> None:
+    async def reverse_text(self, text: str, ctx: WorkflowContext[str]) -> None:
         """Execute the task by reversing the input string."""
         result = text[::-1]
 

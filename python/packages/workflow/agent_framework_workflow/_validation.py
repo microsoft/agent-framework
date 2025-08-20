@@ -163,36 +163,47 @@ class WorkflowGraphValidator:
         """
         from ._workflow_context import WorkflowContext  # Local import to avoid cycles
 
+        # Iterate over all registered executors in the workflow graph
         for executor_id, executor in self._executors.items():
             for attr_name in dir(executor):
-                attr = getattr(executor, attr_name)
+                # Retrieve attributes without binding (so the first parameter remains 'self').
+                # This ensures inspect.signature sees all three parameters: (self, message, ctx).
+                attr = None
+                from contextlib import suppress
+
+                with suppress(Exception):
+                    attr = inspect.getattr_static(executor, attr_name)
+                if attr is None:
+                    continue
+                # Consider only callables that were decorated with @handler
                 if not callable(attr) or not hasattr(attr, "_handler_spec"):
                     continue
 
-                handler_spec = attr._handler_spec  # type: ignore
+                handler_spec = attr._handler_spec  # type: ignore[attr-defined]
                 handler_name = handler_spec.get("name", attr_name)
 
                 try:
+                    # Inspect the function signature of the unbound function
                     sig = inspect.signature(attr)
                 except (TypeError, ValueError):
                     continue
 
                 params = list(sig.parameters.values())
-                # Must be self, message, ctx
+                # Handlers must have exactly three parameters: (self, message, ctx)
                 if len(params) != 3:
                     continue
 
                 ctx_param = params[2]
                 ctx_ann = ctx_param.annotation
 
-                # Missing annotation
+                # If ctx lacks an annotation entirely, fail fast with a clear message
                 if ctx_ann is inspect.Parameter.empty:
                     raise HandlerOutputAnnotationError(executor_id, handler_name, "missing type annotation for ctx")
 
-                # Unsubscripted WorkflowContext or wrong base
+                # Validate that the ctx annotation is WorkflowContext[...] and is properly parameterized
                 ctx_origin = get_origin(ctx_ann)
                 if ctx_origin is None:
-                    # If it's the class itself, this is missing T_Out
+                    # If it's exactly the WorkflowContext class, T_Out is missing (e.g., WorkflowContext)
                     if ctx_ann is WorkflowContext:
                         raise HandlerOutputAnnotationError(
                             executor_id,
@@ -200,12 +211,13 @@ class WorkflowGraphValidator:
                             "T_Out is missing; use WorkflowContext[None] or specify concrete types",
                         )
                 else:
+                    # The annotation is parameterized, but must be for WorkflowContext
                     if ctx_origin is not WorkflowContext:
                         raise HandlerOutputAnnotationError(
                             executor_id, handler_name, f"ctx must be WorkflowContext[T], got {ctx_ann}"
                         )
 
-                # Extract T_Out
+                # Extract and validate T_Out
                 type_args = get_args(ctx_ann)
                 if not type_args:
                     raise HandlerOutputAnnotationError(
@@ -216,18 +228,23 @@ class WorkflowGraphValidator:
 
                 t_out = type_args[0]
 
-                # Allow Any for T_Out (unspecified outputs; skip compatibility)
+                # Allow Any for T_Out (unspecified outputs). We accept this here and
+                # skip type compatibility later, but still enforce shape validity elsewhere.
+                if t_out is Any:
+                    continue
 
-                # Allow None (no outputs)
+                # Allow None (no outputs) explicitly declared
                 if t_out is type(None):
                     continue
 
-                # If union, validate each member
+                # If T_Out is a union, validate each member (e.g., str | int)
                 union_origin = get_origin(t_out)
                 items: list[Any]
                 items = list(get_args(t_out)) if union_origin in (Union, UnionType) else [t_out]
 
                 def _is_type_like(x: Any) -> bool:
+                    # A "type-like" entry is either a class/type or a typing alias
+                    # (e.g., list[str] has an origin and args)
                     return isinstance(x, type) or get_origin(x) is not None
 
                 invalid = [x for x in items if not _is_type_like(x) and x is not type(None)]

@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import contextlib
 import functools
 import inspect
 import uuid
@@ -215,6 +216,10 @@ def handler(
             """Wrapper function to call the handler."""
             return await func(self, message, ctx)
 
+        # Preserve the original function signature for introspection during validation
+        with contextlib.suppress(Exception):
+            wrapper.__signature__ = sig  # type: ignore[attr-defined]
+
         wrapper._handler_spec = {  # type: ignore
             "name": func.__name__,
             "message_type": message_type,
@@ -348,7 +353,7 @@ class RequestInfoExecutor(Executor):
         self._request_events: dict[str, RequestInfoEvent] = {}
 
     @handler
-    async def run(self, message: RequestInfoMessage, ctx: WorkflowContext[Any]) -> None:
+    async def run(self, message: RequestInfoMessage, ctx: WorkflowContext[None]) -> None:
         """Run the RequestInfoExecutor with the given message."""
         source_executor_id = ctx.get_source_executor_id()
 
@@ -365,7 +370,7 @@ class RequestInfoExecutor(Executor):
         self,
         response_data: Any,
         request_id: str,
-        ctx: WorkflowContext,
+        ctx: WorkflowContext[Any],
     ) -> None:
         """Handle a response to a request.
 

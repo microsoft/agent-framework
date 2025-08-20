@@ -54,7 +54,9 @@ class RoundRobinGroupChatManager(Executor):
         )
 
     @handler
-    async def handle_agent_response(self, response: AgentExecutorResponse, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
+    async def handle_agent_response(
+        self, response: AgentExecutorResponse, ctx: WorkflowContext[AgentExecutorRequest]
+    ) -> None:
         """Execute the task by sending messages to the next executor in the round-robin sequence."""
         # Send the response to the other members
         await asyncio.gather(*[

@@ -286,7 +286,7 @@ async def test_fan_in():
 def simple_executor() -> Executor:
     class SimpleExecutor(Executor):
         @handler
-        async def handle_message(self, message: Message, context: WorkflowContext) -> None:
+        async def handle_message(self, message: Message, context: WorkflowContext[None]) -> None:
             pass
 
     return SimpleExecutor("test_executor")

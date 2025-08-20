@@ -3,7 +3,6 @@
 import asyncio
 
 from agent_framework import ChatMessage, ChatRole
-from typing import Any
 from agent_framework.azure import AzureChatClient
 from agent_framework.workflow import (
     AgentExecutor,
@@ -42,7 +41,13 @@ class CriticGroupChatManager(Executor):
         initial_message = ChatMessage(ChatRole.USER, text=task)
 
         # Send the initial message to the members
-        await self._broadcast_message([initial_message], ctx)
+        await asyncio.gather(*[
+            ctx.send_message(
+                AgentExecutorRequest(messages=[initial_message], should_respond=False),
+                target_id=member_id,
+            )
+            for member_id in self._members
+        ])
 
         # Invoke the first member to start the round-robin chat
         await ctx.send_message(
@@ -57,14 +62,21 @@ class CriticGroupChatManager(Executor):
     async def handle_agent_response(
         self,
         response: AgentExecutorResponse,
-        ctx: WorkflowContext[Any],
+        ctx: WorkflowContext[RequestInfoMessage | AgentExecutorRequest],
     ) -> None:
         """Handler that processes the response from the agent."""
         # Update the chat history with the response
         self._chat_history.extend(response.agent_run_response.messages)
 
         # Send the response to the other members
-        await self._broadcast_message(response.agent_run_response.messages, ctx, exclude_id=response.executor_id)
+        await asyncio.gather(*[
+            ctx.send_message(
+                AgentExecutorRequest(messages=response.agent_run_response.messages, should_respond=False),
+                target_id=member_id,
+            )
+            for member_id in self._members
+            if member_id != response.executor_id
+        ])
 
         # Check if we need to request additional information
         if self._should_request_info():
@@ -81,13 +93,21 @@ class CriticGroupChatManager(Executor):
         await ctx.send_message(AgentExecutorRequest(messages=[], should_respond=True), target_id=selection)
 
     @handler
-    async def handle_request_response(self, response: list[ChatMessage], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
+    async def handle_request_response(
+        self, response: list[ChatMessage], ctx: WorkflowContext[AgentExecutorRequest]
+    ) -> None:
         """Handler that processes the response from the RequestInfoExecutor."""
         # Update the chat history with the response
         self._chat_history.extend(response)
 
         # Send the response to the other members
-        await self._broadcast_message(response, ctx)
+        await asyncio.gather(*[
+            ctx.send_message(
+                AgentExecutorRequest(messages=response, should_respond=False),
+                target_id=member_id,
+            )
+            for member_id in self._members
+        ])
 
         # Check for termination condition
         if self._should_terminate():
@@ -97,22 +117,6 @@ class CriticGroupChatManager(Executor):
         # Request the next member to respond
         selection = self._get_next_member()
         await ctx.send_message(AgentExecutorRequest(messages=[], should_respond=True), target_id=selection)
-
-    async def _broadcast_message(
-        self,
-        messages: list[ChatMessage],
-    ctx: WorkflowContext[AgentExecutorRequest],
-        exclude_id: str | None = None,
-    ) -> None:
-        """Broadcast messages to all members."""
-        await asyncio.gather(*[
-            ctx.send_message(
-                AgentExecutorRequest(messages=messages, should_respond=False),
-                target_id=member_id,
-            )
-            for member_id in self._members
-            if member_id != exclude_id
-        ])
 
     def _should_terminate(self) -> bool:
         """Determine if the group chat should terminate based on the last message."""
