@@ -301,7 +301,7 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
 
             if (modeAndMessages.ShouldTerminate)
             {
-                responseMessages = [.. allPreInvocationCallMessages ?? [], .. modeAndMessages.MessagesAdded];
+                responseMessages = [.. augmentedPreInvocationHistory];
                 return new ChatResponse(responseMessages);
             }
         }
@@ -1307,24 +1307,40 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
     {
         if (resultWithRequestMessages is not null)
         {
+            ChatMessage? currentMessage = null;
             Dictionary<string, ChatMessage>? messagesById = null;
 
             foreach (var resultWithRequestMessage in resultWithRequestMessages)
             {
-                messagesById ??= new();
-
-                if (messagesById.TryGetValue(resultWithRequestMessage.RequestMessage?.MessageId ?? string.Empty, out var message))
+                if (currentMessage is not null && messagesById is null && currentMessage.MessageId != resultWithRequestMessage.RequestMessage?.MessageId)
                 {
-                    message.Contents.Add(resultWithRequestMessage.Response.FunctionCall);
+                    // The majority of the time, all FCC would be part of a single message, so no need to create a dictionary for this case.
+                    // If we are dealing with multiple messages though, we need to keep track of them by their message ID.
+                    messagesById ??= new();
+                    messagesById[currentMessage.MessageId ?? string.Empty] = currentMessage;
+                }
+
+                if (messagesById is not null)
+                {
+                    messagesById.TryGetValue(resultWithRequestMessage.RequestMessage?.MessageId ?? string.Empty, out currentMessage);
+                }
+
+                if (currentMessage is null)
+                {
+                    currentMessage = ConvertToFunctionCallContentMessage(resultWithRequestMessage, fallbackMessageId);
                 }
                 else
                 {
-                    var functionCallMessage = ConvertToFunctionCallContentMessage(resultWithRequestMessage, fallbackMessageId);
-                    messagesById[functionCallMessage.MessageId ?? string.Empty] = functionCallMessage;
+                    currentMessage.Contents.Add(resultWithRequestMessage.Response.FunctionCall);
+                }
+
+                if (messagesById is not null)
+                {
+                    messagesById[currentMessage.MessageId ?? string.Empty] = currentMessage;
                 }
             }
 
-            return messagesById?.Values;
+            return messagesById?.Values as ICollection<ChatMessage> ?? (currentMessage != null ? [currentMessage!] : null);
         }
 
         return null;
