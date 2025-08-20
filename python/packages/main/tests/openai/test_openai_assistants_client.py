@@ -102,7 +102,6 @@ def mock_async_openai() -> MagicMock:
     mock_client.beta.threads.runs.retrieve = AsyncMock()
     mock_client.beta.threads.runs.submit_tool_outputs = AsyncMock()
     mock_client.beta.threads.runs.cancel = AsyncMock()  # Add this line
-    mock_client.beta.threads.runs.cancel = AsyncMock()  # Add this line
 
     # Mock beta.threads.messages
     mock_client.beta.threads.messages.create = AsyncMock()
