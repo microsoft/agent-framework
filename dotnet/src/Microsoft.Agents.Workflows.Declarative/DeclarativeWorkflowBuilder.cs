@@ -31,10 +31,11 @@ public static class DeclarativeWorkflowBuilder
         return walker.GetWorkflow<TInput>();
     }
 
-    private static string GetWorkflowId(BotElement element) => // %%% CPS - WORKFLOW TYPE
+    private static string? GetWorkflowId(BotElement element) => // %%% CPS - WORKFLOW TYPE
         element switch
         {
-            AdaptiveDialog adaptiveDialog => adaptiveDialog.BeginDialog?.Id.Value ?? throw new UnknownActionException("Undefined dialog"),
+            AdaptiveDialog adaptiveDialog => adaptiveDialog.BeginDialog?.Id.Value,
+            DialogAction actionDialog => actionDialog.Id.Value,
             _ => throw new UnknownActionException($"Unsupported root element: {element.GetType().Name}."),
         };
 }
