@@ -56,7 +56,6 @@ class Executor:
         Returns:
             An awaitable that resolves to the result of the execution.
         """
-
         # Lazy registration for SubWorkflowRequestInfo if we have interceptors
         if self._request_interceptors and message.__class__.__name__ == "SubWorkflowRequestInfo":
             # Directly handle SubWorkflowRequestInfo
@@ -93,7 +92,6 @@ class Executor:
                     message_type = handler_spec["message_type"]
 
                     # Handle generic types by using the origin type for isinstance checks
-                    # This allows RequestResponse[DomainCheckRequest, bool] to work at runtime
                     from typing import get_origin
 
                     origin_type = get_origin(message_type)
@@ -182,8 +180,6 @@ class Executor:
                             request.data = correlated_response.forward_request
 
                         # Send the inner request to RequestInfoExecutor to create external request
-                        # This will forward the original request (e.g., DomainCheckRequest) to RequestInfoExecutor
-                        # Send to known RequestInfoExecutor ID in the main workflow
                         from ._runner_context import Message
 
                         forward_message = Message(
@@ -203,8 +199,8 @@ class Executor:
                 return
 
         # No interceptor found - forward inner request to RequestInfoExecutor
-        # This sends the original request (e.g., DomainCheckRequest) to RequestInfoExecutor
-        await ctx.send_message(request.data)  # Send directly without wrapping in Message
+        # This sends the original request to RequestInfoExecutor
+        await ctx.send_message(request.data)
 
     def can_handle(self, message: Any) -> bool:
         """Check if the executor can handle a given message type.
@@ -762,7 +758,6 @@ class WorkflowExecutor(Executor):
             response: The response to a previous request.
             ctx: The workflow context.
         """
-
         # Check if we have this pending request
         pending_requests = getattr(self, "_pending_requests", {})
         if response.request_id not in pending_requests:
@@ -784,7 +779,6 @@ class WorkflowExecutor(Executor):
                 await ctx.send_message(event.data)
                 self._active_executions -= 1
                 return
-
 
 
 # endregion: Workflow Executor

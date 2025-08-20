@@ -105,6 +105,8 @@ class WorkflowGraphValidator:
         self._edges = edges
         self._executors = self._build_executor_map(edges)
 
+        # If only the start executor exists, add it to the executor map
+        # This allows us to support single executor workflows without edges.
         if not self._executors and start_executor:
             self._executors[start_executor.id] = start_executor
 

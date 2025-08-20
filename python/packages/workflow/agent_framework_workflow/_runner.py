@@ -131,12 +131,9 @@ class Runner:
             ) -> None:
                 for message in messages:
                     if message.target_id is not None and message.target_id != edge.target_id:
-                        # print(f"DEBUG: Skipping message to {message.target_id}, edge targets {edge.target_id}")
                         continue
                     if not edge.can_handle(message.data):
-                        # print(f"DEBUG: Edge {edge.source_id}->{edge.target_id} cannot handle {type(message.data).__name__}")
                         continue
-                    # print(f"DEBUG: Delivering {type(message.data).__name__} via edge {edge.source_id}->{edge.target_id}")
                     await edge.send_message(message, self._shared_state, self._ctx)
 
             # Special handling for SubWorkflowRequestInfo messages

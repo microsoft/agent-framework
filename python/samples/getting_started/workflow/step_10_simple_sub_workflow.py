@@ -70,7 +70,7 @@ class ParentOrchestrator(Executor):
         """Send texts to sub-workflow for processing."""
         print(f"Parent starting processing of {len(texts)} texts")
         for text in texts:
-            await ctx.send_message(text)
+            await ctx.send_message(text, target_id="text_workflow")
 
     @handler(output_types=[])
     async def collect_result(self, result: str, ctx: WorkflowContext) -> None:
