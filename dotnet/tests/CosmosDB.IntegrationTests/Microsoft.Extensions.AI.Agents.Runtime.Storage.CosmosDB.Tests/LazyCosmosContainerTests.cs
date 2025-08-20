@@ -53,7 +53,7 @@ public class LazyCosmosContainerTests
         Assert.Same(this._fixture.Container, result1);
     }
 
-    [Fact]
+    [SkipOnEmulatorFact]
     public async Task GetContainerAsync_WithCosmosClient_ShouldInitializeAndWorkCorrectlyAsync()
     {
         // Arrange
@@ -212,7 +212,7 @@ public class LazyCosmosContainerTests
         Assert.Throws<ArgumentNullException>(() => new LazyCosmosContainer(this._fixture.CosmosClient, "test-db", null!));
     }
 
-    [Fact]
+    [SkipOnEmulatorFact]
     public async Task LazyCosmosContainer_WithInternalConstructor_ShouldWorkWithCosmosActorStateStorageAsync()
     {
         // Arrange
