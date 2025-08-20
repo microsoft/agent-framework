@@ -3,7 +3,13 @@
 import asyncio
 from typing import Any
 
-from agent_framework.workflow import Executor, WorkflowBuilder, WorkflowCompletedEvent, WorkflowContext, handler
+from agent_framework.workflow import (
+    Executor,
+    WorkflowBuilder,
+    WorkflowCompletedEvent,
+    WorkflowContext,
+    handler,
+)
 
 """
 The following sample demonstrates a basic workflow with two executors
