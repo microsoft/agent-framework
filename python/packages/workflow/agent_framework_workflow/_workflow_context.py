@@ -47,7 +47,6 @@ class WorkflowContext:
             target_id: The ID of the target executor to send the message to.
                        If None, the message will be sent to all target executors.
         """
-        print(f"DEBUG: {self._executor_id} sending {type(message).__name__} to target_id={target_id}")
         await self._runner_context.send_message(
             Message(
                 data=message,

@@ -87,7 +87,7 @@ class Runner:
                 else:
                     logger.info("Skipping 'after_initial_execution' checkpoint because we resumed from a checkpoint")
 
-            # Initialize context with starting iteration state the workflow
+            # Initialize context with starting iteration state
             await self._update_context_with_shared_state()
 
             while self._iteration < self._max_iterations:
