@@ -4,7 +4,6 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Samples;
 using OpenAI;
-using OpenAI.Responses;
 
 namespace Providers;
 
@@ -60,13 +59,7 @@ public sealed class AIAgent_With_OpenAIResponseClient(ITestOutputHelper output) 
             {
                 Name = JokerName,
                 Instructions = JokerInstructions,
-                ChatOptions = new ChatOptions
-                {
-                    // We can use the RawRepresentationFactory to provide Response service specific
-                    // options. Here we can indicate that we do not want the service to store the
-                    // conversation in a service managed thread.
-                    RawRepresentationFactory = (_) => new ResponseCreationOptions() { StoredOutputEnabled = false }
-                }
+                ChatOptions = new ChatOptions().WithResponseStoredOutputDisabled()
             });
 
         // Start a new thread for the agent conversation based on the type.
