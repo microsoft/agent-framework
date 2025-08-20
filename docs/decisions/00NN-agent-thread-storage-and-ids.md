@@ -291,3 +291,60 @@ public class AgentThread
 #### Option 2.1 - Variation on Option 2: Reuse AgentThread id for messages store
 
 Same variation as Option 1.1, applied to option 2.
+
+## Appendices
+
+### Sequence Diagram: ChatClientAgent over A2A with new thread
+
+```mermaid
+---
+title: ChatClientAgent over A2A with new thread
+---
+
+sequenceDiagram
+    ClientApp->>+A2AAgent: GetNewThread()
+    note right of ClientApp: Agent generates a new context<br/>id and sets it on the thread
+    A2AAgent->>-ClientApp: AgentThread(ContextId=C1)
+    ClientApp->>+A2AAgent: RunAsync<br/>Message("Hello")<br/>AgentThread(ContextId=C1)
+    A2AAgent->>+Service: CallService<br/>Message("Hello")<br/>(ContextId=C1)
+    Service->>+DB: LoadThreadState(C1)
+    DB->>-Service: ThreadState not found
+    Service->>+ChatClientAgent: GetNewThread()
+    ChatClientAgent->>-Service: AgentThread
+    note right of Service: Service updates<br/>AgentThread.Id with context id
+    Service->>+ChatClientAgent: RunAsync<br/>Message("Hello")<br/>AgentThread(Id=C1)
+    note right of DB: ChatClientAgent sets<br/>its response id on the thread<br/>AgentThread(Id=C1, ResponseId=R1)
+    ChatClientAgent->>-Service: Message("How can I help you")
+    Service->>+DB: SaveThreadState({"Id":"C1", "ResponseId":"R1"})
+    DB->>-Service: ThreadState saved
+    Service->>-A2AAgent: Message("How can I help you")<br/>(ContextId=C1)
+    A2AAgent->>-ClientApp: AgentResponse("How can I help you")
+```
+
+### Sequence Diagram: ChatClientAgent over A2A with existing thread
+
+```mermaid
+---
+title: ChatClientAgent over A2A with existing thread
+---
+
+sequenceDiagram
+    ClientApp->>+A2AAgent: DeserializeThread({"ContextId":"C1"})
+    A2AAgent->>-ClientApp: AgentThread(ContextId=C1)
+    ClientApp->>+A2AAgent: RunAsync<br/>Message("How are you?")<br/>AgentThread(ContextId=C1)
+    A2AAgent->>+Service: CallService<br/>Message("How are you?")<br/>(ContextId=C1)
+    Service->>+DB: LoadThreadState(C1)
+    DB->>-Service: {"Id":"C1", "ResponseId":"R1"}
+    Service->>+ChatClientAgent: DeserializeThread({"Id":"C1", "ResponseId":"R1"})
+    ChatClientAgent->>-Service: AgentThread(Id=C1, ResponseId=R1)
+    Service->>+ChatClientAgent: RunAsync<br/>Message("How are you?")<br/>AgentThread(Id=C1, ResponseId=R1)
+    ChatClientAgent->>-Service: Message("I am fine thankyou")
+    Service->>+DB: SaveThreadState({"Id":"C1", "ResponseId":"R1"})
+    DB->>-Service: ThreadState saved
+    Service->>-A2AAgent: Message("I am fine thankyou")<br/>(ContextId=C1)
+    A2AAgent->>-ClientApp: AgentResponse("I am fine thankyou")
+```
+
+### Sequence Diagram: ChatClientAgent over A2A with existing thread with 3rd Party Storage
+
+To be added.
