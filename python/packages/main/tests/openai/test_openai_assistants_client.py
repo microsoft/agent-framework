@@ -1043,3 +1043,54 @@ async def test_openai_assistants_client_with_existing_assistant() -> None:
             assert response is not None
             assert isinstance(response, ChatResponse)
             assert len(response.text) > 0
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_assistants_client_file_search() -> None:
+    """Test OpenAI Assistants Client response."""
+    async with OpenAIAssistantsClient() as openai_assistants_client:
+        assert isinstance(openai_assistants_client, ChatClient)
+
+        messages: list[ChatMessage] = []
+        messages.append(ChatMessage(role="user", text="What's the weather like today?"))
+
+        file_id, vector_store = await create_vector_store(openai_assistants_client)
+        response = await openai_assistants_client.get_response(
+            messages=messages,
+            tools=[HostedFileSearchTool()],
+            tool_resources={"file_search": {"vector_store_ids": [vector_store.vector_store_id]}},
+        )
+        await delete_vector_store(openai_assistants_client, file_id, vector_store.vector_store_id)
+
+        assert response is not None
+        assert isinstance(response, ChatResponse)
+        assert any(word in response.text.lower() for word in ["sunny", "25", "weather"])
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_assistants_client_file_search_streaming() -> None:
+    """Test OpenAI Assistants Client response."""
+    async with OpenAIAssistantsClient() as openai_assistants_client:
+        assert isinstance(openai_assistants_client, ChatClient)
+
+        messages: list[ChatMessage] = []
+        messages.append(ChatMessage(role="user", text="What's the weather like today?"))
+
+        file_id, vector_store = await create_vector_store(openai_assistants_client)
+        response = openai_assistants_client.get_streaming_response(
+            messages=messages,
+            tools=[HostedFileSearchTool()],
+            tool_resources={"file_search": {"vector_store_ids": [vector_store.vector_store_id]}},
+        )
+
+        assert response is not None
+        full_message: str = ""
+        async for chunk in response:
+            assert chunk is not None
+            assert isinstance(chunk, ChatResponseUpdate)
+            for content in chunk.contents:
+                if isinstance(content, TextContent) and content.text:
+                    full_message += content.text
+        await delete_vector_store(openai_assistants_client, file_id, vector_store.vector_store_id)
+
+        assert any(word in full_message.lower() for word in ["sunny", "25", "weather"])

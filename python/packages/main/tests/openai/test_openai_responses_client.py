@@ -1029,3 +1029,37 @@ async def test_openai_responses_client_file_search() -> None:
     await delete_vector_store(openai_responses_client, file_id, vector_store.vector_store_id)
     assert "sunny" in response.text.lower()
     assert "75" in response.text
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_streaming_file_search() -> None:
+    openai_responses_client = OpenAIResponsesClient()
+
+    assert isinstance(openai_responses_client, ChatClient)
+
+    file_id, vector_store = await create_vector_store(openai_responses_client)
+    # Test that the client will use the web search tool
+    response = openai_responses_client.get_streaming_response(
+        messages=[
+            ChatMessage(
+                role="user",
+                text="What is the weather today? Do a file search to find the answer.",
+            )
+        ],
+        tools=[HostedFileSearchTool(inputs=vector_store)],
+        tool_choice="auto",
+    )
+
+    assert response is not None
+    full_message: str = ""
+    async for chunk in response:
+        assert chunk is not None
+        assert isinstance(chunk, ChatResponseUpdate)
+        for content in chunk.contents:
+            if isinstance(content, TextContent) and content.text:
+                full_message += content.text
+
+    await delete_vector_store(openai_responses_client, file_id, vector_store.vector_store_id)
+
+    assert "sunny" in full_message.lower()
+    assert "75" in full_message
