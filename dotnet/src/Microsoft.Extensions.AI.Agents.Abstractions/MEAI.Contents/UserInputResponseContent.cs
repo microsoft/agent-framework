@@ -10,7 +10,7 @@ namespace Microsoft.Extensions.AI;
 public abstract class UserInputResponseContent : AIContent
 {
     /// <summary>
-    /// Initializes a new instance of the <see cref="UserInputRequestContent"/> class.
+    /// Initializes a new instance of the <see cref="UserInputResponseContent"/> class.
     /// </summary>
     /// <param name="id">The ID to uniquely identify the user input request/response pair.</param>
     protected UserInputResponseContent(string id)

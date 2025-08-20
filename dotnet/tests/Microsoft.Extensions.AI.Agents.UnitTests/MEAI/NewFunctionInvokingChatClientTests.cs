@@ -543,7 +543,7 @@ public class NewFunctionInvokingChatClientTests
             new ChatMessage(ChatRole.Assistant, "world"),
         ];
 
-        //await InvokeAndAssertAsync(options, input, downstreamClientOutput, output, expectedDownstreamClientInput);
+        await InvokeAndAssertAsync(options, input, downstreamClientOutput, output, expectedDownstreamClientInput);
 
         await InvokeAndAssertStreamingAsync(options, input, downstreamClientOutput, output, expectedDownstreamClientInput);
     }
