@@ -35,7 +35,7 @@ class Executor:
         """
         self._id = id or f"{self.__class__.__name__}/{uuid.uuid4()}"
 
-        self._handlers: dict[type, Callable[[Any, WorkflowContext], Any]] = {}
+        self._handlers: dict[type, Callable[[Any, WorkflowContext[Any]], Any]] = {}
         self._discover_handlers()
 
         if not self._handlers:
@@ -44,7 +44,7 @@ class Executor:
                 "Please define at least one handler using the @handler decorator."
             )
 
-    async def execute(self, message: Any, context: WorkflowContext) -> None:
+    async def execute(self, message: Any, context: WorkflowContext[Any]) -> None:
         """Execute the executor with a given message and context.
 
         Args:
@@ -54,7 +54,7 @@ class Executor:
         Returns:
             An awaitable that resolves to the result of the execution.
         """
-        handler: Callable[[Any, WorkflowContext], Any] | None = None
+        handler: Callable[[Any, WorkflowContext[Any]], Any] | None = None
         for message_type in self._handlers:
             if is_instance_of(message, message_type):
                 handler = self._handlers[message_type]
