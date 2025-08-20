@@ -506,16 +506,9 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
                         for (; lastYieldedUpdateIndex < updates.Count; lastYieldedUpdateIndex++)
                         {
                             var updateToYield = updates[lastYieldedUpdateIndex];
-                            if (updateToYield.Contents is { Count: > 0 })
+                            if (TryReplaceFunctionCallsWithApprovalRequests(updateToYield.Contents, out var updatedContents))
                             {
-                                for (int i = 0; i < updateToYield.Contents.Count; i++)
-                                {
-                                    if (updateToYield.Contents[i] is FunctionCallContent fcc)
-                                    {
-                                        var approvalRequest = new FunctionApprovalRequestContent(fcc.CallId, fcc);
-                                        updateToYield.Contents[i] = approvalRequest;
-                                    }
-                                }
+                                updateToYield.Contents = updatedContents;
                             }
                             yield return updateToYield;
                             Activity.Current = activity; // workaround for https://github.com/dotnet/runtime/issues/47802
@@ -695,25 +688,6 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
         }
 
         return any;
-    }
-
-    private static async Task<(bool hasApprovalRequiringFcc, int lastApprovalCheckedFCCIndex)> CheckForApprovalRequiringFCCAsync(
-        List<FunctionCallContent>? functionCallContents,
-        ApprovalRequiredAIFunction[] approvalRequiredFunctions,
-        bool hasApprovalRequiringFcc,
-        int lastApprovalCheckedFCCIndex)
-    {
-        for (; lastApprovalCheckedFCCIndex < (functionCallContents?.Count ?? 0); lastApprovalCheckedFCCIndex++)
-        {
-            var fcc = functionCallContents![lastApprovalCheckedFCCIndex];
-            if (approvalRequiredFunctions.FirstOrDefault(y => y.Name == fcc.Name) is ApprovalRequiredAIFunction approvalFunction &&
-                await approvalFunction.RequiresApprovalCallback(new(fcc)))
-            {
-                hasApprovalRequiringFcc |= true;
-            }
-        }
-
-        return (hasApprovalRequiringFcc, lastApprovalCheckedFCCIndex);
     }
 
     private static void UpdateOptionsForNextIteration(ref ChatOptions? options, string? conversationId)
@@ -1368,6 +1342,49 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
         }
 
         return new ChatMessage(ChatRole.Assistant, [resultWithRequestMessage.Response.FunctionCall]) { MessageId = fallbackMessageId };
+    }
+
+    private static async Task<(bool hasApprovalRequiringFcc, int lastApprovalCheckedFCCIndex)> CheckForApprovalRequiringFCCAsync(
+        List<FunctionCallContent>? functionCallContents,
+        ApprovalRequiredAIFunction[] approvalRequiredFunctions,
+        bool hasApprovalRequiringFcc,
+        int lastApprovalCheckedFCCIndex)
+    {
+        for (; lastApprovalCheckedFCCIndex < (functionCallContents?.Count ?? 0); lastApprovalCheckedFCCIndex++)
+        {
+            var fcc = functionCallContents![lastApprovalCheckedFCCIndex];
+            if (approvalRequiredFunctions.FirstOrDefault(y => y.Name == fcc.Name) is ApprovalRequiredAIFunction approvalFunction &&
+                await approvalFunction.RequiresApprovalCallback(new(fcc)))
+            {
+                hasApprovalRequiringFcc |= true;
+            }
+        }
+
+        return (hasApprovalRequiringFcc, lastApprovalCheckedFCCIndex);
+    }
+
+    /// <summary>
+    /// Replaces all <see cref="FunctionCallContent"/> with <see cref="FunctionApprovalRequestContent"/> and ouputs a new list if any of them were replaced.
+    /// </summary>
+    /// <returns>true if any <see cref="FunctionCallContent"/> was replaced, false otherwise.</returns>
+    private static bool TryReplaceFunctionCallsWithApprovalRequests(IList<AIContent> content, out IList<AIContent>? updatedContent)
+    {
+        updatedContent = null;
+
+        if (content is { Count: > 0 })
+        {
+            for (int i = 0; i < content.Count; i++)
+            {
+                if (content[i] is FunctionCallContent fcc)
+                {
+                    updatedContent ??= [.. content]; // Clone the list if we haven't already
+                    var approvalRequest = new FunctionApprovalRequestContent(fcc.CallId, fcc);
+                    updatedContent[i] = approvalRequest;
+                }
+            }
+        }
+
+        return updatedContent is not null;
     }
 
     /// <summary>
