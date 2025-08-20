@@ -258,8 +258,6 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
         bool lastIterationHadConversationId = false; // whether the last iteration's response had a ConversationId set
         int consecutiveErrorCount = 0;
 
-        // ** Approvals additions on top of FICC - start **//
-
         // Process approval requests (remove from originalMessages) and rejected approval responses (re-create FCC and create failed FRC).
         var (augmentedPreInvocationHistory, notExecutedApprovals) = ProcessPreInvocationFunctionApprovalResponses(originalMessages, toolResponseId: null, functionCallContentFallbackMessageId: null);
 
@@ -279,8 +277,6 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
             return new ChatResponse(augmentedPreInvocationHistory);
         }
 
-        // ** Approvals additions on top of FICC - end **//
-
         for (int iteration = 0; ; iteration++)
         {
             functionCallContents?.Clear();
@@ -292,13 +288,9 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
                 Throw.InvalidOperationException($"The inner {nameof(IChatClient)} returned a null {nameof(ChatResponse)}.");
             }
 
-            // ** Approvals additions on top of FICC - start **//
-
             // Before we do any function execution, make sure that any functions that require approval, have been turned into approval requests
             // so that they don't get executed here.
             response.Messages = await ReplaceFunctionCallsWithApprovalRequests(response.Messages, options?.Tools, AdditionalTools);
-
-            // ** Approvals additions on top of FICC - end **//
 
             // Any function call work to do? If yes, ensure we're tracking that work in functionCallContents.
             bool requiresFunctionInvocation =
@@ -310,14 +302,10 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
             // fast path out by just returning the original response.
             if (iteration == 0 && !requiresFunctionInvocation)
             {
-                // ** Approvals additions on top of FICC - start **//
-
                 // Insert any pre-invocation FCC and FRC that were converted from approval responses into the response here,
                 // so they are returned to the caller.
                 response.Messages = UpdateResponseMessagesWithPreInvocationHistory(response.Messages, augmentedPreInvocationHistory);
                 augmentedPreInvocationHistory = null;
-
-                // ** Approvals additions on top of FICC - end **//
 
                 return response;
             }
@@ -393,8 +381,6 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
         List<ChatResponseUpdate> updates = []; // updates from the current response
         int consecutiveErrorCount = 0;
 
-        // ** Approvals additions on top of FICC - start **//
-
         // This is a synthetic ID since we're generating the tool messages instead of getting them from
         // the underlying provider. When emitting the streamed chunks, it's perfectly valid for us to
         // use the same message ID for all of them within a given iteration, as this is a single logical
@@ -439,20 +425,14 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
             }
         }
 
-        // ** Approvals additions on top of FICC - end **//
-
         for (int iteration = 0; ; iteration++)
         {
             updates.Clear();
             functionCallContents?.Clear();
 
-            // ** Approvals additions on top of FICC - start **//
-
             bool hasApprovalRequiringFcc = false;
             int lastApprovalCheckedFCCIndex = 0;
             int lastYieldedUpdateIndex = 0;
-
-            // ** Approvals additions on top of FICC - end **//
 
             await foreach (var update in base.GetStreamingResponseAsync(messages, options, cancellationToken))
             {
@@ -478,7 +458,6 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
                     }
                 }
 
-                // ** Approvals modifications - start **//
                 if (functionCallContents?.Count is not > 0 || !hasApprovalRequiringFunctions)
                 {
                     // If there are no function calls to make yet, or if none of the functions require approval at all,
@@ -520,7 +499,6 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
                         // when we reach the end of the updates stream.
                     }
                 }
-                // ** Approvals modifications - end **//
 
                 Activity.Current = activity; // workaround for https://github.com/dotnet/runtime/issues/47802
             }
@@ -545,17 +523,6 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
             var modeAndMessages = await ProcessFunctionCallsAsync(augmentedHistory, options, functionCallContents, iteration, consecutiveErrorCount, isStreaming: true, cancellationToken);
             responseMessages.AddRange(modeAndMessages.MessagesAdded);
             consecutiveErrorCount = modeAndMessages.NewConsecutiveErrorCount;
-
-            // ** Approvals removal - start **//
-
-            // This is a synthetic ID since we're generating the tool messages instead of getting them from
-            // the underlying provider. When emitting the streamed chunks, it's perfectly valid for us to
-            // use the same message ID for all of them within a given iteration, as this is a single logical
-            // message with multiple content items. We could also use different message IDs per tool content,
-            // but there's no benefit to doing so.
-            //string toolResponseId = Guid.NewGuid().ToString("N");
-
-            // ** Approvals removal - end **//
 
             // Stream any generated function results. This mirrors what's done for GetResponseAsync, where the returned messages
             // includes all activities, including generated function results.
