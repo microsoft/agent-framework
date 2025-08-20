@@ -48,7 +48,7 @@ internal static class Program
         DeclarativeWorkflowOptions workflowContext =
             new()
             {
-                HttpClient = customClient,
+                //HttpClient = customClient, // Uncomment to use custom HTTP client
                 LoggerFactory = NullLoggerFactory.Instance,
                 ProjectEndpoint = Throw.IfNull(config["AzureAI:Endpoint"]),
                 ProjectCredentials = new AzureCliCredential(),
@@ -93,7 +93,9 @@ internal static class Program
                     if (messageId is not null)
                     {
                         Console.ForegroundColor = ConsoleColor.Cyan;
-                        Console.WriteLine($"#{messageId}:");
+                        Console.Write("RESPONSE:");
+                        Console.ForegroundColor = ConsoleColor.DarkGray;
+                        Console.WriteLine($" [{messageId}]");
                     }
                 }
                 try
@@ -113,6 +115,8 @@ internal static class Program
                     Console.WriteLine();
                     if (messageEvent.Data.MessageId is null)
                     {
+                        Console.ForegroundColor = ConsoleColor.Cyan;
+                        Console.WriteLine("ACTIVITY:");
                         Console.ForegroundColor = ConsoleColor.Yellow;
                         Console.WriteLine(messageEvent.Data?.Text.Trim());
                     }

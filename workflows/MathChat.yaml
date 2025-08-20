@@ -42,10 +42,25 @@ beginDialog:
     - kind: ConditionGroup
       id: check_completion
       conditions:
-        - condition: =Topic.TurnCount < 4
+
+        - condition: =!IsBlank(Find("congratulations", Lower(System.LastMessage.Text)))
+          id: check_turn_done
+          actions:
+
+            - kind: SendActivity
+              id: sendActivity_done
+              activity: GOLD STAR!
+    
+        - condition: =Topic.TurnCount < 8
           id: check_turn_count
           actions:
     
             - kind: GotoAction
               id: goto_student_agent
               actionId: asst_jCrWfBd1XrfVXMtpbfyVoIHC
+
+      elseActions:
+    
+        - kind: SendActivity
+          id: sendActivity_tired
+          activity: Let's try again later...

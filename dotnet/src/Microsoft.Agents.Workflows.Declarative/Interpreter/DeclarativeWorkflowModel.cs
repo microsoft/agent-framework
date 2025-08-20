@@ -104,7 +104,7 @@ internal sealed class DeclarativeWorkflowModel
     {
         ModelNode stepNode = new(executor, parentNode, executorType, completionHandler);
 
-        this.Nodes[stepNode.Id] = stepNode;
+        this.Nodes.Add(stepNode.Id, stepNode);
 
         return stepNode;
     }

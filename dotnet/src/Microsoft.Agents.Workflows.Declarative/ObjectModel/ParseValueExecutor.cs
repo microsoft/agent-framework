@@ -25,7 +25,11 @@ internal sealed class ParseValueExecutor(ParseValue model) :
 
         FormulaValue? parsedResult = null;
 
-        if (expressionResult.Value is StringDataValue stringValue)
+        if (expressionResult.Value is RecordDataValue recordValue)
+        {
+            parsedResult = recordValue.ToFormulaValue();
+        }
+        else if (expressionResult.Value is StringDataValue stringValue) // %%% NEEDED ???
         {
             if (string.IsNullOrWhiteSpace(stringValue.Value))
             {

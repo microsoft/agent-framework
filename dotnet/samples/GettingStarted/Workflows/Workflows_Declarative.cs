@@ -51,15 +51,7 @@ public class Workflows_Declarative(ITestOutputHelper output) : OrchestrationSamp
         StreamingRun run = await InProcessExecution.StreamAsync(workflow, "<placeholder>");
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
-            if (evt is ExecutorInvokeEvent executorInvoked)
-            {
-                Console.WriteLine($"!!! ENTER #{executorInvoked.ExecutorId}");
-            }
-            else if (evt is ExecutorCompleteEvent executorComplete)
-            {
-                Console.WriteLine($"!!! EXIT #{executorComplete.ExecutorId}");
-            }
-            else if (evt is DeclarativeWorkflowMessageEvent messageEvent)
+            if (evt is DeclarativeWorkflowMessageEvent messageEvent)
             {
                 if (messageEvent.Data.MessageId is null)
                 {

@@ -57,7 +57,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
         List<AgentRunResponseUpdate> agentResponseUpdates = [];
         await foreach (AgentRunResponseUpdate update in agentUpdates.ConfigureAwait(false))
         {
-            if (messageId is null)
+            if (messageId is null && this.Model.AutoSend) // %%% HAXX - EVENTING
             {
                 Console.ForegroundColor = ConsoleColor.Red;
                 Console.WriteLine("STREAM: BEGIN");
@@ -67,17 +67,27 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
             agentResponseUpdates.Add(update);
             conversationId ??= ((ChatResponseUpdate)update.RawRepresentation!).ConversationId;
             messageId ??= update.MessageId;
-            await context.AddEventAsync(new DeclarativeWorkflowStreamEvent(update)).ConfigureAwait(false);
+            if (this.Model.AutoSend)
+            {
+                await context.AddEventAsync(new DeclarativeWorkflowStreamEvent(update)).ConfigureAwait(false);
+            }
         }
 
-        Console.ForegroundColor = ConsoleColor.Red;
-        Console.WriteLine("STREAM: COMPLETE");
-        Console.ResetColor();
+        if (this.Model.AutoSend) // %%% HAXX - EVENTING
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine("STREAM: COMPLETE");
+            Console.ResetColor();
+        }
 
         AgentRunResponse agentResponse = agentResponseUpdates.ToAgentRunResponse();
 
         ChatMessage response = agentResponse.Messages.Last(); // %%% DECISION: Is last sufficient? (probably not)
-        await context.AddEventAsync(new DeclarativeWorkflowMessageEvent(response, agentResponse.Usage)).ConfigureAwait(false);
+        this.State.Set(VariableScopeNames.System, "LastMessage", response.ToRecordValue());
+        if (this.Model.AutoSend)
+        {
+            await context.AddEventAsync(new DeclarativeWorkflowMessageEvent(response, agentResponse.Usage)).ConfigureAwait(false);
+        }
 
         this.AssignTarget(PropertyPath.FromSegments(VariableScopeNames.System, "ConversationId"), FormulaValue.New(conversationId)); // %%% HAXX: SYSTEM THREAD
 

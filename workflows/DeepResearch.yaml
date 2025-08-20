@@ -2,44 +2,31 @@ kind: AdaptiveDialog
 beginDialog:
   kind: OnActivity
   id: activity_xyz123
-  condition: =Global.OrchestratorRunning <> true
   type: Message
   actions:
     - kind: SetVariable
       id: setVariable_aASlmF
       displayName: List all available agents for this orchestrator
-      variable: Topic.AgentToSchemaMapping
+      variable: Topic.AvailableAgents
       value: |-
         =[
             {
                 name: "WeatherAgent", 
                 description: "Able to retrieve weather information",
-                schema: "cr36e_agentRd2yAT.topic.Deterministic"
+                agentid: "// %%% TODO"
             },
             {
                 name: "WebAgent", 
                 description: "Able to perform generic websearches",
-                schema: "cr36e_agentRd2yAT.topic.WebSearch"
+                agentid: "// %%% TODO"
             }
         ]
-
-    - kind: SetVariable
-      id: setVariable_u4cBtN
-      displayName: Get all names
-      variable: Topic.AvailableAgents
-      value: =DropColumns(Topic.AgentToSchemaMapping, description, schema)
 
     - kind: SetVariable
       id: setVariable_V6yEbo
       displayName: Get a summary of all the agents for use in prompts
       variable: Topic.TeamDescription
-      value: "=Concat(ForAll(Topic.AgentToSchemaMapping, name & $\": \" & description), Value, \".\\n\\n\")"
-
-    - kind: SetVariable
-      id: setVariable_eLmgKQ
-      displayName: Toggle Orchestration Enabled Flag
-      variable: Global.OrchestratorRunning
-      value: =true
+      value: "=Concat(ForAll(Topic.AvailableAgents, $\"- \" & name & $\": \" & description), Value, \"\n\")"
 
     - kind: SetVariable
       id: setVariable_NZ2u0l
@@ -57,13 +44,6 @@ beginDialog:
       displayName: Initialize Stall Count
       variable: Topic.StallCount
       value: =0
-
-    - kind: SendActivity
-      id: sendActivity_yFsbRz
-      activity: |-
-        Creating a Task Ledger, defining a plan, based on the following ask:
-
-        {Topic.NewTask}
 
     - kind: SetVariable
       id: setVariable_s8hR6q
@@ -91,8 +71,12 @@ beginDialog:
 
         DO NOT include any other headings or sections in your response. DO NOT list next steps or plans until asked to do so."]
 
+    - kind: SendActivity
+      id: sendActivity_yFsbRy
+      activity: Analyzing facts...
+
     - kind: AnswerQuestionWithAI
-      id: question_wEJ123
+      id: asst_UDoMUw9SuPCq33HqH95YPT69
       displayName: Get Facts Prompt
       autoSend: false
       variable: Topic.TaskFacts
@@ -106,8 +90,12 @@ beginDialog:
         kind: AddItemOperation
         value: =Topic.TaskFacts
 
+    - kind: SendActivity
+      id: sendActivity_yFsbRz
+      activity: Creating a plan...
+
     - kind: AnswerQuestionWithAI
-      id: question_wEJ456
+      id: asst_DsBaJUelt99csnZV4fcE0Qos
       displayName: Create a Plan Prompt
       autoSend: false
       variable: Topic.Plan
@@ -117,7 +105,6 @@ beginDialog:
         " & Topic.TeamDescription & "
 
         Based on the team composition, and known and unknown facts, please devise a short bullet-point plan for addressing the original request. Remember, there is no requirement to involve all team members -- a team member's particular expertise may not be needed for this task."
-      additionalInstructions: =Concat(Topic.ContextHistory, Value, \".\\n\\n\")
 
     - kind: SetVariable
       id: setVariable_Kk2LDL
@@ -138,13 +125,12 @@ beginDialog:
 
         Here is an initial fact sheet to consider:
 
-        " & Topic.TaskFacts &"
+        " & Topic.TaskFacts.Text &"
 
         Here is the plan to follow as best as possible:
   
         "
-        & Topic.Plan
-
+        & Topic.Plan.Text
         ]
 
     - kind: SendActivity
@@ -152,10 +138,10 @@ beginDialog:
       activity: "{First(Topic.ContextHistory).Value}"
 
     - kind: AnswerQuestionWithAI
-      id: sendActivity_YhpNE8
+      id: asst_o3BQkfUzEGXMNzVY5X54yHhq
       displayName: Progress Ledger Prompt
       autoSend: false
-      variable: Topic.ProgressLedgerUpdateString
+      variable: Topic.ProgressLedgerUpdate
       userInput: |-
         ="
         Recall we are working on the following request:
@@ -199,10 +185,9 @@ beginDialog:
                 }}
             }}
         "
-      additionalInstructions: =Concat(Topic.ContextHistory, Value, ".\\n\\n")
 
     - kind: ParseValue
-      id: rNZtlV
+      id: parse_rNZtlV
       displayName: Parse ledger response
       variable: Topic.TypedProgressLedger
       valueType:
@@ -243,13 +228,13 @@ beginDialog:
                 answer: String
                 reason: String
 
-      value: =Topic.ProgressLedgerUpdateString
+      value: =Topic.ProgressLedgerUpdate.Text
 
     - kind: SendActivity
       id: sendActivity_1GMmNq
       activity: |-
         Progress Ledger response:
-        {Topic.ProgressLedgerUpdateString}
+        {Topic.ProgressLedgerUpdate.Text}
 
     - kind: ConditionGroup
       id: conditionGroup_mVIecC
@@ -259,7 +244,7 @@ beginDialog:
           displayName: If Done
           actions:
             - kind: AnswerQuestionWithAI
-              id: sendActivity_Pkkmpq
+              id: asst_Of5U92uEjhiB5CsaUDW5LIX6
               displayName: Generate Response
               variable: Topic.FinalResponse
               userInput: |-
@@ -274,19 +259,13 @@ beginDialog:
                 Based on the information gathered, provide the final answer to the original request.
                 The answer should be phrased as if you were speaking to the user.
                 "
-              additionalInstructions: =Concat(Topic.ContextHistory, Value, \".\\n\\n\")
 
             - kind: SendActivity
               id: sendActivity_fpaNL9
               activity: Done with Task!
 
-            - kind: SetVariable
-              id: setVariable_H2GWZ4
-              variable: Global.OrchestratorRunning
-              value: =false
-
             - kind: EndConversation
-              id: SVoNSV
+              id: end_SVoNSV
 
         - id: conditionItem_yiqund
           condition: =Topic.TypedProgressLedger.is_in_loop.answer || Not(Topic.TypedProgressLedger.is_progress_being_made.answer)
@@ -316,7 +295,7 @@ beginDialog:
                               activity: We tried to re-task 3 times. Short-Circuiting
 
                             - kind: EndConversation
-                              id: GHVrFh
+                              id: end_GHVrFh
 
                     - kind: AnswerQuestionWithAI
                       id: question_wFJ123
@@ -333,7 +312,6 @@ beginDialog:
                         Here is the old fact sheet:
 
                         " & Topic.TaskFacts
-                      additionalInstructions: =Concat(Topic.ContextHistory, Value, ".\\n\\n")
 
                     - kind: AnswerQuestionWithAI
                       id: question_uEJ456
@@ -344,7 +322,6 @@ beginDialog:
                         ="Please briefly explain what went wrong on this last run (the root cause of the failure), and then come up with a new plan that takes steps and/or includes hints to overcome prior challenges and especially avoids repeating the same mistakes. As before, the new plan should be concise, be expressed in bullet-point form, and consider the following team composition (do not involve any other outside people since we cannot contact anyone else):
 
                         " & Topic.TeamDescription
-                      additionalInstructions: =Concat(Topic.ContextHistory, Value, ".\\n\\n")
 
                     - kind: EditTableV2
                       id: editTableV2_jW7tmM
@@ -394,8 +371,8 @@ beginDialog:
                         {Last(Topic.ContextHistory).Value}
 
                     - kind: GotoAction
-                      id: LzfJ8u
-                      actionId: sendActivity_YhpNE8
+                      id: goto_LzfJ8u
+                      actionId: asst_o3BQkfUzEGXMNzVY5X54yHhq
 
       elseActions:
         - kind: SetVariable
@@ -410,64 +387,21 @@ beginDialog:
           condition: =CountRows(Search(Topic.AvailableAgents, Topic.TypedProgressLedger.next_speaker.answer, name)) > 0
           displayName: If next Agent tool Exists
           actions:
-            - kind: SetVariable
-              id: setVariable_TdKfOn
-              displayName: Set Current Goal for Sub-Agent
-              variable: Global.AgentGoal
-              value: =Topic.TypedProgressLedger.instruction_or_question.answer
 
-            - kind: SetVariable
-              id: setVariable_C2AoCu
-              displayName: Reset Output
-              variable: Global.AgentResponse
-              value: "\"\""
-
-            - kind: BeginDialog
-              id: fqLWPt
-              displayName: Invoke Agent
-              input: {}
-              dialog: =First(Search(Topic.AgentToSchemaMapping, Topic.TypedProgressLedger.next_speaker.answer, name)).schema
-              output: {}
-
-            - kind: EditTableV2
-              id: editTableV2_fhfYJi
-              displayName: Add agent response to context
-              itemsVariable: Topic.ContextHistory
-              changeType:
-                kind: AddItemOperation
-                value: |-
-                  ="Agent: " & Topic.TypedProgressLedger.next_speaker.answer & "
-
-                  Question or Instruction: 
-
-                  "
-                  & Topic.TypedProgressLedger.instruction_or_question.answer &
-                  "
-
-                  Agent Response:
-
-                  "
-                  & Global.AgentResponse
-
-            - kind: SendActivity
-              id: sendActivity_MjWETC
-              activity: |-
-                Agent invoked:
-                {Last(Topic.ContextHistory).Value}
+            - kind: AnswerQuestionWithAI
+              id: asst_orsBf06Bxz9B1hjVjiiQoPqf
+              displayName: Get agent response
+              variable: Topic.AgentResponse
+              userInput: =Topic.TypedProgressLedger.instruction_or_question.answer
 
             - kind: GotoAction
-              id: 76Hne8
-              actionId: sendActivity_YhpNE8
+              id: goto_76Hne8
+              actionId: asst_o3BQkfUzEGXMNzVY5X54yHhq
 
       elseActions:
         - kind: SendActivity
           id: sendActivity_BhcsI7
           activity: Redirecting to unknown agent
 
-        - kind: SetVariable
-          id: setVariable_H2GW44
-          variable: Global.OrchestratorRunning
-          value: =false
-
         - kind: EndConversation
-          id: 8nXE8H
+          id: end_8nXE8H

@@ -18,7 +18,7 @@
     },
     "Research": {
       "commandName": "Project",
-      "commandLineArgs": "\"DeepResearch.yaml\" \"What is the closest bus-stop to Ishoni grill in Seattle?\""
+      "commandLineArgs": "\"DeepResearch.yaml\" \"What is the closest bus-stop to ISHONI YAKINIKU in Seattle?\""
     }
   }
 }
