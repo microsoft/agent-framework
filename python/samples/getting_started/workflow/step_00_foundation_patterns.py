@@ -64,7 +64,7 @@ class AggregateResultExecutor(Executor):
     """An executor that receives results and prints them."""
 
     @handler
-    async def aggregate_results(self, results: Any, ctx: WorkflowContext) -> None:
+    async def aggregate_results(self, results: Any, ctx: WorkflowContext[None]) -> None:
         """Print whatever results are received."""
         print("Aggregating results:", results)
 
