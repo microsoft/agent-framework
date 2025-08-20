@@ -29,7 +29,7 @@ public sealed class Step07_ChatClientAgent_UsingFileSearchTools(ITestOutputHelpe
         var vectorStoreId = await CreateVectorStoreAsync([fileId], provider);
 
         // Create a file search tool that can access the vector store.
-        var fileSearchTool = new NewHostedFileSearchTool()
+        var fileSearchTool = new HostedFileSearchTool()
         {
             Inputs = [new HostedVectorStoreContent(vectorStoreId)],
         };
