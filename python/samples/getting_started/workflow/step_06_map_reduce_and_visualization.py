@@ -12,6 +12,7 @@ from agent_framework.workflow import (
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
+    WorkflowViz,
     handler,
 )
 
@@ -23,6 +24,8 @@ to a final count per word.
 
 Intermediate results are stored in a temporary directory, and the
 final results are written to a file in the same directory.
+
+This sample also shows how you can visualize a workflow using `WorkflowViz`.
 """
 
 # Define the temporary directory for storing intermediate results
@@ -113,7 +116,6 @@ class Map(Executor):
             ctx: The execution context containing the shared state and other information.
         """
         # Retrieve the data to be processed from the shared state.
-        # Define a key for the shared state to store the data to be processed
         data_to_be_processed: list[str] = await ctx.get_shared_state(SHARED_STATE_DATA_KEY)
         chunk_start, chunk_end = await ctx.get_shared_state(self.id)
 
@@ -286,6 +288,24 @@ async def main():
         .add_fan_in_edges(reduce_operations, completion_executor)
         .build()
     )
+
+    # Step 2.5: Visualize the workflow (optional)
+    print("🎨 Generating workflow visualization...")
+    viz = WorkflowViz(workflow)
+    # Print out the mermaid string.
+    print("🧜 Mermaid string: \n=======")
+    print(viz.to_mermaid())
+    print("=======")
+    # Print out the DiGraph string.
+    print("📊 DiGraph string: \n=======")
+    print(viz.to_digraph())
+    print("=======")
+    try:
+        # Export the DiGraph visualization as SVG.
+        svg_file = viz.export(format="svg")
+        print(f"🖼️  SVG file saved to: {svg_file}")
+    except ImportError:
+        print("💡 Tip: Install 'viz' extra to export workflow visualization: pip install agent-framework-workflow[viz]")
 
     # Step 3: Open the text file and read its content.
     async with aiofiles.open(os.path.join(DIR, "resources", "long_text.txt"), "r") as f:

@@ -25,8 +25,8 @@ internal sealed class LazyCosmosContainer
     private readonly string? _containerName;
     private readonly Lazy<Task<Container>> _lazyContainer;
 
-    private readonly CosmosActorStateStorageOptions _options = new();
-    private CosmosActorStateStorageOptions.RetryOptions RetryOptions => this._options.Retry;
+    // internal for testing
+    internal readonly static string[] CosmosPartitionKeyPaths = ["/actorType", "/actorKey"];
 
     /// <summary>
     /// LazyCosmosContainer constructor that initializes the container lazily.
@@ -75,23 +75,24 @@ internal sealed class LazyCosmosContainer
                 // Create database if it doesn't exist
                 var database = await this._cosmosClient!.CreateDatabaseIfNotExistsAsync(this._databaseName!).ConfigureAwait(false);
 
-                var containerProperties = new ContainerProperties(this._containerName!, "/actorId")
-                {
-                    Id = this._containerName!,
-                    IndexingPolicy = new IndexingPolicy
-                    {
-                        IndexingMode = IndexingMode.Consistent,
-                        Automatic = true
-                    },
-                    PartitionKeyPaths = ["/actorId"]
-                };
+        var containerProperties = new ContainerProperties(this._containerName!, CosmosPartitionKeyPaths)
+        {
+            Id = this._containerName!,
+            IndexingPolicy = new IndexingPolicy
+            {
+                IndexingMode = IndexingMode.Consistent,
+                Automatic = true
+            },
+            PartitionKeyPaths = CosmosPartitionKeyPaths
+        };
 
-                // Add composite index for efficient queries
-                containerProperties.IndexingPolicy.CompositeIndexes.Add(new Collection<CompositePath>
-                {
-                    new() { Path = "/actorId", Order = CompositePathSortOrder.Ascending },
-                    new() { Path = "/key", Order = CompositePathSortOrder.Ascending }
-                });
+        // Add composite index for efficient queries
+        containerProperties.IndexingPolicy.CompositeIndexes.Add(new Collection<CompositePath>
+        {
+            new() { Path = "/actorType", Order = CompositePathSortOrder.Ascending },
+            new() { Path = "/actorKey", Order = CompositePathSortOrder.Ascending },
+            new() { Path = "/key", Order = CompositePathSortOrder.Ascending }
+        });
 
                 var container = await database.Database.CreateContainerIfNotExistsAsync(containerProperties).ConfigureAwait(false);
                 return container.Container;

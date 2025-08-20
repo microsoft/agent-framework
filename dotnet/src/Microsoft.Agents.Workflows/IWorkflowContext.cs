@@ -21,8 +21,11 @@ public interface IWorkflowContext
     /// Queues a message to be sent to connected executors. The message will be sent during the next SuperStep.
     /// </summary>
     /// <param name="message">The message to be sent.</param>
+    /// <param name="targetId">An optional identifier of the target executor. If null, the message is sent to all connected
+    /// executors. If the target executor is not connected from this executor via an edge, it will still not receive the
+    /// message.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
-    ValueTask SendMessageAsync(object message);
+    ValueTask SendMessageAsync(object message, string? targetId = null);
 
     /// <summary>
     /// Reads a state value from the workflow's state store. If no scope is provided, the executor's private
