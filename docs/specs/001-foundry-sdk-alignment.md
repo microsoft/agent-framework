@@ -86,6 +86,37 @@ The proposed solution is to add helper methods which allow developers to either 
         IReadOnlyDictionary<string, string>? metadata = null,
         CancellationToken cancellationToken = default)
     ```
+- Additional overload using the M.E.AI types:
+    ```csharp
+    /// <summary>
+    /// Creates a new server side agent using the provided <see cref="PersistentAgentsClient"/>.
+    /// </summary>
+    /// <param name="persistentAgentsClient">The <see cref="PersistentAgentsClient"/> to create the agent with.</param>
+    /// <param name="model">The model to be used by the agent.</param>
+    /// <param name="name">The name of the agent.</param>
+    /// <param name="description">The description of the agent.</param>
+    /// <param name="instructions">The instructions for the agent.</param>
+    /// <param name="tools">The tools to be used by the agent.</param>
+    /// <param name="temperature">The temperature setting for the agent.</param>
+    /// <param name="topP">The top-p setting for the agent.</param>
+    /// <param name="responseFormat">The response format for the agent.</param>
+    /// <param name="metadata">The metadata for the agent.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the newly created agent.</returns>
+    public static async Task<ChatClientAgent> CreateAIAgentAsync(
+        this PersistentAgentsClient persistentAgentsClient,
+        string model,
+        string? name = null,
+        string? description = null,
+        string? instructions = null,
+        IEnumerable<AITool>? tools = null,
+        float? temperature = null,
+        float? topP = null,
+        BinaryData? responseFormat = null,
+        IReadOnlyDictionary<string, string>? metadata = null,
+        CancellationToken cancellationToken = default)
+    ```
+
 
 ## E2E Code Samples
 
