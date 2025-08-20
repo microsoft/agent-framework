@@ -93,11 +93,20 @@ class Executor:
                 # Discover @handler methods
                 if hasattr(attr, "_handler_spec"):
                     handler_spec = attr._handler_spec  # type: ignore
-                    if self._handlers.get(handler_spec["message_type"]) is not None:
-                        raise ValueError(
-                            f"Duplicate handler for type {handler_spec['message_type']} in {self.__class__.__name__}"
-                        )
-                    self._handlers[handler_spec["message_type"]] = attr
+                    message_type = handler_spec["message_type"]
+
+                    # Handle generic types by using the origin type for isinstance checks
+                    # This allows RequestResponse[DomainCheckRequest, bool] to work at runtime
+                    from typing import get_origin
+
+                    origin_type = get_origin(message_type)
+                    if origin_type is not None:
+                        # Use the base generic type (e.g., RequestResponse instead of RequestResponse[T, U])
+                        message_type = origin_type
+
+                    if self._handlers.get(message_type) is not None:
+                        raise ValueError(f"Duplicate handler for type {message_type} in {self.__class__.__name__}")
+                    self._handlers[message_type] = attr
 
                 # Discover @intercepts_request methods
                 if hasattr(attr, "_intercepts_request"):
@@ -153,7 +162,10 @@ class Executor:
 
                 # Check if interceptor handled it or needs to forward
                 if isinstance(response, RequestResponse):
-                    if response.handled:
+                    # Add automatic correlation info to the response
+                    correlated_response = RequestResponse._with_correlation(response, request.data, request.request_id)
+
+                    if correlated_response.handled:
                         print(f"DEBUG: Request {request.data} was handled, sending response")
                         # Send response back to sub-workflow
                         from ._runner_context import Message
@@ -163,7 +175,7 @@ class Executor:
                             target_id=request.sub_workflow_id,
                             data=SubWorkflowResponse(
                                 request_id=request.request_id,
-                                data=response.data,
+                                data=correlated_response.data,
                             ),
                         )
                         print(f"DEBUG: Sending response to target_id: {request.sub_workflow_id}")
@@ -172,8 +184,8 @@ class Executor:
                         print(f"DEBUG: Request {request.data} being forwarded as external request")
                         # Forward WITH CONTEXT PRESERVED
                         # Update the data if interceptor provided a modified request
-                        if response.forward_request:
-                            request.data = response.forward_request
+                        if correlated_response.forward_request:
+                            request.data = correlated_response.forward_request
 
                         # Send the inner request to RequestInfoExecutor to create external request
                         # This will forward the original request (e.g., DomainCheckRequest) to RequestInfoExecutor
@@ -501,27 +513,56 @@ class SubWorkflowResponse:
     data: Any  # The actual response data
 
 
+from typing import Generic, TypeVar
+
+TRequest = TypeVar("TRequest", bound="RequestInfoMessage")
+TResponse = TypeVar("TResponse")
+
+
 @dataclass
-class RequestResponse:
-    """Response from @intercepts_request methods.
+class RequestResponse(Generic[TRequest, TResponse]):
+    """Response from @intercepts_request methods with automatic correlation support.
 
     This type allows intercepting executors to indicate whether they handled
-    a request or whether it should be forwarded to external sources.
+    a request or whether it should be forwarded to external sources. When handled,
+    the framework automatically adds correlation info to link responses to requests.
     """
 
     handled: bool
-    data: Any = None
-    forward_request: Any = None
+    data: TResponse | None = None
+    forward_request: TRequest | None = None
+    original_request: TRequest | None = None  # Added for automatic correlation
+    request_id: str | None = None  # Added for tracking
 
     @staticmethod
-    def handled(data: Any) -> "RequestResponse":
-        """Create a response indicating the request was handled."""
+    def handled(data: TResponse) -> "RequestResponse[Any, TResponse]":
+        """Create a response indicating the request was handled.
+
+        Correlation info (original_request, request_id) will be added automatically
+        by the framework when processing intercepted requests.
+        """
         return RequestResponse(handled=True, data=data)
 
     @staticmethod
-    def forward(modified_request: Any = None) -> "RequestResponse":
+    def forward(modified_request: Any = None) -> "RequestResponse[Any, Any]":
         """Create a response indicating the request should be forwarded."""
         return RequestResponse(handled=False, forward_request=modified_request)
+
+    @staticmethod
+    def _with_correlation(
+        original_response: "RequestResponse[Any, TResponse]", original_request: TRequest, request_id: str
+    ) -> "RequestResponse[TRequest, TResponse]":
+        """Internal method to add correlation info to a response.
+
+        This is called automatically by the framework and should not be used directly.
+        """
+        return RequestResponse(
+            handled=original_response.handled,
+            data=original_response.data,
+            forward_request=original_response.forward_request,
+            original_request=original_request,
+            request_id=request_id,
+        )
 
 
 class RequestInfoExecutor(Executor):
@@ -623,10 +664,11 @@ class RequestInfoExecutor(Executor):
             )
         else:
             # Regular response - send directly back to source
+            # Create a correlated response that includes both the response data and original request
+            correlated_response = RequestResponse.handled(response_data)
+            correlated_response = RequestResponse._with_correlation(correlated_response, event.data, request_id)
 
-            # This is where we sent the handled request back to the executor. We should also sent a message containing
-            # the more metadata about the request so that the response can be associated with the request.
-            await ctx.send_message(response_data, target_id=event.source_executor_id)
+            await ctx.send_message(correlated_response, target_id=event.source_executor_id)
 
 
 # endregion: Request Info Executor

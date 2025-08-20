@@ -100,7 +100,6 @@ class EmailValidator(Executor):
     async def validate(self, request: EmailValidationRequest, ctx: WorkflowContext) -> None:
         """Validate an email address."""
         print(f"Validating email: {request.email}")
-        self._pending_email = request.email
 
         # Extract domain
         domain = request.email.split("@")[1] if "@" in request.email else ""
@@ -116,14 +115,16 @@ class EmailValidator(Executor):
         await ctx.send_message(domain_check)
 
     @handler(output_types=[ValidationResult])
-    async def handle_domain_response(self, approved: bool, ctx: WorkflowContext) -> None:
-        """Handle domain check response."""
-        print(f"Domain check result: {approved}")
+    async def handle_domain_response(
+        self, response: RequestResponse[DomainCheckRequest, bool], ctx: WorkflowContext
+    ) -> None:
+        """Handle domain check response with correlation."""
+        print(f"Domain check result: {response.original_request.domain} - {response.data}")
 
         result = ValidationResult(
-            email=self._pending_email,
-            is_valid=approved,
-            reason="Domain approved" if approved else "Domain not approved",
+            email=response.original_request.domain,
+            is_valid=response.data or False,
+            reason="Domain approved" if response.data else "Domain not approved",
         )
         await ctx.add_event(WorkflowCompletedEvent(data=result))
 
@@ -237,11 +238,11 @@ async def main():
                     print(f"   Workflow finished: {event}")
                     running = False
                     continue
-                
+
                 # Only process RequestInfoEvent types
-                if hasattr(event, 'data') and event.data is not None:
+                if hasattr(event, "data") and event.data is not None:
                     print(f"   Request: {event.data}")
-                    
+
                     # For this demo, approve unknown.org from external service
                     if hasattr(event.data, "domain"):
                         domain = event.data.domain
