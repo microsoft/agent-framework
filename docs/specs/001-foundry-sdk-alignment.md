@@ -104,7 +104,7 @@ var persistentAgentsClient = new PersistentAgentsClient(
     TestConfiguration.AzureAI.Endpoint, new AzureCliCredential());
 
 // Create a persistent agent.
-var persistentAgent = await persistentAgentsClient.Administration.CreateAgentAsync(
+var persistentAgentMetadata = await persistentAgentsClient.Administration.CreateAgentAsync(
     model: TestConfiguration.AzureAI.DeploymentName!,
     name: JokerName,
     instructions: JokerInstructions);
