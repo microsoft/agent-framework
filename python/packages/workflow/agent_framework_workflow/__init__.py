@@ -77,8 +77,6 @@ __all__ = [
     "InProcRunnerContext",
     "Message",
     "RequestInfoEvent",
-    "RequestInfoEvent",
-    "RequestInfoExecutor",
     "RequestInfoExecutor",
     "RequestInfoMessage",
     "RequestResponse",

@@ -56,7 +56,6 @@ class Executor:
         Returns:
             An awaitable that resolves to the result of the execution.
         """
-        # print(f"DEBUG: Executor {self.id} received message of type {type(message).__name__}")
 
         # Lazy registration for SubWorkflowRequestInfo if we have interceptors
         if self._request_interceptors and message.__class__.__name__ == "SubWorkflowRequestInfo":
@@ -70,11 +69,9 @@ class Executor:
         for message_type in self._handlers:
             if is_instance_of(message, message_type):
                 handler = self._handlers[message_type]
-                # print(f"DEBUG: Found handler for {type(message).__name__}: {handler.__name__}")
                 break
 
         if handler is None:
-            print(f"Executor DEBUG: Available handlers in {self.__class__.__name__}: {list(self._handlers.keys())}")
             raise RuntimeError(f"Executor {self.__class__.__name__} cannot handle message of type {type(message)}.")
         await context.add_event(ExecutorInvokeEvent(self.id))
         await handler(message, context)
@@ -166,7 +163,6 @@ class Executor:
                     correlated_response = RequestResponse._with_correlation(response, request.data, request.request_id)
 
                     if correlated_response.handled:
-                        print(f"DEBUG: Request {request.data} was handled, sending response")
                         # Send response back to sub-workflow
                         from ._runner_context import Message
 
@@ -178,10 +174,8 @@ class Executor:
                                 data=correlated_response.data,
                             ),
                         )
-                        print(f"DEBUG: Sending response to target_id: {request.sub_workflow_id}")
                         await ctx.send_message(response_message)
                     else:
-                        print(f"DEBUG: Request {request.data} being forwarded as external request")
                         # Forward WITH CONTEXT PRESERVED
                         # Update the data if interceptor provided a modified request
                         if correlated_response.forward_request:
@@ -189,7 +183,6 @@ class Executor:
 
                         # Send the inner request to RequestInfoExecutor to create external request
                         # This will forward the original request (e.g., DomainCheckRequest) to RequestInfoExecutor
-                        print(f"DEBUG: Forwarding {type(request.data).__name__} to RequestInfoExecutor")
                         # Send to known RequestInfoExecutor ID in the main workflow
                         from ._runner_context import Message
 
@@ -589,7 +582,6 @@ class RequestInfoExecutor(Executor):
     @handler
     async def run(self, message: RequestInfoMessage, ctx: WorkflowContext) -> None:
         """Run the RequestInfoExecutor with the given message."""
-        print(f"DEBUG: RequestInfoExecutor {self.id} received {type(message).__name__}: {message}")
         source_executor_id = ctx.get_source_executor_id()
 
         event = RequestInfoEvent(
@@ -717,9 +709,6 @@ class WorkflowExecutor(Executor):
 
         # Track this execution
         self._active_executions += 1
-        print(
-            f"DEBUG: WorkflowExecutor {self.id} starting execution #{self._active_executions} with input: {type(input_data).__name__}"
-        )
 
         try:
             # Run the sub-workflow and collect all events
@@ -731,16 +720,12 @@ class WorkflowExecutor(Executor):
                     # Sub-workflow completed normally - send result to parent
                     await ctx.send_message(event.data)
                     self._active_executions -= 1
-                    print(
-                        f"DEBUG: WorkflowExecutor {self.id} completed execution, remaining: {self._active_executions}"
-                    )
                     return  # Exit after completion
 
                 if isinstance(event, RequestInfoEvent):
                     # Sub-workflow needs external information
                     # Track the pending request
                     self._pending_requests[event.request_id] = event.data
-                    print(f"DEBUG: WorkflowExecutor {self.id} tracking external request {event.request_id}")
 
                     # Wrap request with routing context and send to parent
                     wrapped_request = SubWorkflowRequestInfo(
@@ -760,7 +745,6 @@ class WorkflowExecutor(Executor):
             error_event = ExecutorEvent(executor_id=self.id, data={"error": str(e), "type": "sub_workflow_error"})
             await ctx.add_event(error_event)
             self._active_executions -= 1
-            print(f"DEBUG: WorkflowExecutor {self.id} failed execution, remaining: {self._active_executions}")
             raise
 
     @handler
@@ -778,39 +762,29 @@ class WorkflowExecutor(Executor):
             response: The response to a previous request.
             ctx: The workflow context.
         """
-        print(f"DEBUG: WorkflowExecutor {self.id} handle_response called for request {response.request_id}")
 
         # Check if we have this pending request
         pending_requests = getattr(self, "_pending_requests", {})
         if response.request_id not in pending_requests:
-            print(f"DEBUG: WorkflowExecutor {self.id} received response for unknown request - ignoring")
             return
 
         # Remove the request from pending list
         pending_requests.pop(response.request_id, None)
-        print(f"DEBUG: WorkflowExecutor {self.id} processing response, remaining pending: {len(pending_requests)}")
 
         from ._events import WorkflowCompletedEvent
 
         # Send responses to the sub-workflow and continue execution until completion
-        print(f"DEBUG: WorkflowExecutor {self.id} calling send_responses_streaming")
         result_events = [
             event async for event in self._workflow.send_responses_streaming({response.request_id: response.data})
         ]
-        print(f"DEBUG: WorkflowExecutor {self.id} got {len(result_events)} events from send_responses_streaming")
 
         # Find the completion event and send result to parent
         for event in result_events:
             if isinstance(event, WorkflowCompletedEvent):
-                print(f"DEBUG: WorkflowExecutor {self.id} found completion event with data: {event.data}")
                 await ctx.send_message(event.data)
                 self._active_executions -= 1
-                print(
-                    f"DEBUG: WorkflowExecutor {self.id} sent result to parent, remaining executions: {self._active_executions}"
-                )
                 return
 
-        print(f"DEBUG: WorkflowExecutor {self.id} no completion event found in {len(result_events)} events")
 
 
 # endregion: Workflow Executor
