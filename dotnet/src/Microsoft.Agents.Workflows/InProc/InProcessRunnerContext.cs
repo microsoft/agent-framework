@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Execution;
@@ -44,11 +43,19 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
         return executor;
     }
 
-    public ValueTask AddExternalMessageAsync([NotNull] object message)
+    public ValueTask AddExternalMessageUntypedAsync(object message)
     {
         Throw.IfNull(message);
 
-        this._nextStep.MessagesFor(ExecutorIdentity.None).Add(message);
+        this._nextStep.MessagesFor(ExecutorIdentity.None).Add(new MessageEnvelope(message));
+        return default;
+    }
+
+    public ValueTask AddExternalMessageAsync<T>(T message)
+    {
+        Throw.IfNull(message);
+
+        this._nextStep.MessagesFor(ExecutorIdentity.None).Add(new MessageEnvelope(message, declaredType: typeof(T)));
         return default;
     }
 
@@ -66,9 +73,9 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
         return default;
     }
 
-    public ValueTask SendMessageAsync(string executorId, object message)
+    public ValueTask SendMessageAsync(string sourceId, object message, string? targetId = null)
     {
-        this._nextStep.MessagesFor(executorId).Add(message);
+        this._nextStep.MessagesFor(sourceId).Add(new MessageEnvelope(message, targetId: targetId));
         return default;
     }
 
@@ -92,7 +99,7 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
     private class BoundContext(InProcessRunnerContext<TExternalInput> RunnerContext, string ExecutorId) : IWorkflowContext
     {
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent) => RunnerContext.AddEventAsync(workflowEvent);
-        public ValueTask SendMessageAsync(object message) => RunnerContext.SendMessageAsync(ExecutorId, message);
+        public ValueTask SendMessageAsync(object message, string? targetId = null) => RunnerContext.SendMessageAsync(ExecutorId, message, targetId);
 
         public ValueTask QueueStateUpdateAsync<T>(string key, T? value, string? scopeName = null)
             => RunnerContext.StateManager.WriteStateAsync(ExecutorId, scopeName, key, value);

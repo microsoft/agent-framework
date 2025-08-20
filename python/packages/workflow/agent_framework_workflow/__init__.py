@@ -45,6 +45,7 @@ from ._validation import (
     WorkflowValidationError,
     validate_workflow_graph,
 )
+from ._viz import WorkflowViz
 from ._workflow import Workflow, WorkflowBuilder, WorkflowRunResult
 from ._workflow_context import WorkflowContext
 
@@ -91,6 +92,7 @@ __all__ = [
     "WorkflowRunResult",
     "WorkflowStartedEvent",
     "WorkflowValidationError",
+    "WorkflowViz",
     "__version__",
     "handler",
     "validate_workflow_graph",

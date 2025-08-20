@@ -127,6 +127,28 @@ public class Run
 
         return await this.RunToNextHaltAsync(cancellation).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Resume execution of the workflow with the provided external responses.
+    /// </summary>
+    /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the workflow execution.</param>
+    /// <param name="messages">An array of messages to send to the workflow. Messages will only be sent if they are valid
+    /// input types to the starting executor or a <see cref="ExternalResponse"/>.</param>
+    /// <returns><c>true</c> if the workflow had any output events, <c>false</c> otherwise.</returns>
+    public async ValueTask<bool> ResumeAsync<T>(CancellationToken cancellation = default, params T[] messages)
+    {
+        if (messages is ExternalResponse[] responses)
+        {
+            return await this.ResumeAsync(cancellation, responses).ConfigureAwait(false);
+        }
+
+        foreach (T message in messages)
+        {
+            await this._streamingRun.TrySendMessageAsync(message).ConfigureAwait(false);
+        }
+
+        return await this.RunToNextHaltAsync(cancellation).ConfigureAwait(false);
+    }
 }
 
 /// <summary>
