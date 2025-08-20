@@ -209,8 +209,11 @@ async def main():
     test_emails = [
         "user@example.com",  # Should be intercepted and approved
         "admin@company.com",  # Should be intercepted and approved
-        "guest@unknown.org",  # Should be forwarded externally
+        "guest@partner.com",  # Should be forwarded externally and approved
+        "guest@unknown.com",  # Should be forwarded externally and denied
     ]
+
+    manually_approved_domains = ["partner.com"]
 
     print(f"\nTesting with emails: {test_emails}")
     print("=" * 60)
@@ -241,7 +244,7 @@ async def main():
                     # For this demo, approve unknown.org from external service
                     if hasattr(event.data, "domain"):
                         domain = event.data.domain
-                        approved = domain == "unknown.org"  # External service approves this
+                        approved = domain in manually_approved_domains
                         external_responses[event.request_id] = approved
                         print(f"   External check for {domain}: {approved}")
                 else:
