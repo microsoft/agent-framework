@@ -627,7 +627,6 @@ class RequestInfoExecutor(Executor):
             # This is where we sent the handled request back to the executor. We should also sent a message containing
             # the more metadata about the request so that the response can be associated with the request.
             await ctx.send_message(response_data, target_id=event.source_executor_id)
-            await ctx.send_message(response_data, target_id=event.source_executor_id)
 
 
 # endregion: Request Info Executor
