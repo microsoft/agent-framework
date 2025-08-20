@@ -32,7 +32,7 @@ public sealed class NewOpenAIResponsesChatClient : IChatClient
     /// <summary>The underlying <see cref="OpenAIResponseClient" />.</summary>
     private readonly OpenAIResponseClient _responseClient;
 
-    /// <summary>Initializes a new instance of the <see cref="OpenAIResponsesChatClient"/> class for the specified <see cref="OpenAIResponseClient"/>.</summary>
+    /// <summary>Initializes a new instance of the <see cref="NewOpenAIResponsesChatClient"/> class for the specified <see cref="OpenAIResponseClient"/>.</summary>
     /// <param name="responseClient">The underlying client.</param>
     /// <exception cref="ArgumentNullException"><paramref name="responseClient"/> is <see langword="null"/>.</exception>
     public NewOpenAIResponsesChatClient(OpenAIResponseClient responseClient)
