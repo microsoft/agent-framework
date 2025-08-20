@@ -2,9 +2,7 @@
 
 using System.Text.Json;
 using Microsoft.Azure.Cosmos;
-using Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Options;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
 
 namespace Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB;
 
@@ -51,8 +49,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<LazyCosmosContainer>(serviceProvider =>
         {
             var cosmosClient = serviceProvider.GetRequiredService<CosmosClient>();
-            var options = serviceProvider.GetService<IOptions<CosmosActorStateStorageOptions>>();
-            return new LazyCosmosContainer(cosmosClient, databaseName, containerName, options);
+            return new LazyCosmosContainer(cosmosClient, databaseName, containerName);
         });
 
         // Register the storage implementation
@@ -81,8 +78,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<LazyCosmosContainer>(serviceProvider =>
         {
             var cosmosClient = serviceProvider.GetRequiredService<CosmosClient>();
-            var options = serviceProvider.GetService<IOptions<CosmosActorStateStorageOptions>>();
-            return new LazyCosmosContainer(cosmosClient, databaseName, containerName, options);
+            return new LazyCosmosContainer(cosmosClient, databaseName, containerName);
         });
 
         // Register the storage implementation

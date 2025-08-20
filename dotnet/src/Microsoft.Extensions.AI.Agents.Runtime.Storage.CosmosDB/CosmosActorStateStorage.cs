@@ -11,7 +11,7 @@ namespace Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB;
 /// <summary>
 /// Cosmos DB implementation of actor state storage.
 /// </summary>
-public class CosmosActorStateStorage : IActorStateStorage
+public class CosmosActorStateStorage : IActorStateStorage, IAsyncDisposable
 {
     private readonly LazyCosmosContainer _lazyContainer;
     private const string InitialEtag = "0"; // Initial ETag value when no state exists
@@ -251,5 +251,14 @@ public class CosmosActorStateStorage : IActorStateStorage
             // No root document means no actor state exists - return initial ETag
             return InitialEtag;
         }
+    }
+
+    /// <summary>
+    /// Disposes the Cosmos DB container asynchronously.
+    /// </summary>
+    public async ValueTask DisposeAsync()
+    {
+        await this._lazyContainer.DisposeAsync().ConfigureAwait(false);
+        GC.SuppressFinalize(this);
     }
 }
