@@ -69,9 +69,8 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
         string instructions = "You are a helpful assistant.",
         IList<AITool>? aiTools = null)
     {
-#pragma warning disable CA2000 // Dispose objects before losing scope
         return Task.FromResult(new ChatClientAgent(
-            new NewOpenAIResponsesChatClient(this._openAIResponseClient),
+            this._openAIResponseClient.AsNewIChatClient(),
             options: new()
             {
                 Name = name,
@@ -82,7 +81,6 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
                     RawRepresentationFactory = new Func<IChatClient, object>((_) => new ResponseCreationOptions() { StoredOutputEnabled = store })
                 },
             }));
-#pragma warning restore CA2000 // Dispose objects before losing scope
     }
 
     public Task DeleteAgentAsync(ChatClientAgent agent)

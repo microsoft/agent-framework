@@ -61,9 +61,16 @@ public static class OpenAIResponseClientExtensions
         Throw.IfNull(options);
 
 #pragma warning disable CA2000 // Dispose objects before losing scope
-        var chatClient = new NewOpenAIResponsesChatClient(client);
+        var chatClient = client.AsNewIChatClient();
 #pragma warning restore CA2000 // Dispose objects before losing scope
         ChatClientAgent agent = new(chatClient, options, loggerFactory);
         return agent;
     }
+
+    /// <summary>Gets an <see cref="IChatClient"/> for use with this <see cref="OpenAIResponseClient"/>.</summary>
+    /// <param name="responseClient">The client.</param>
+    /// <returns>An <see cref="IChatClient"/> that can be used to converse via the <see cref="OpenAIResponseClient"/>.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="responseClient"/> is <see langword="null"/>.</exception>
+    public static IChatClient AsNewIChatClient(this OpenAIResponseClient responseClient) =>
+        new NewOpenAIResponsesChatClient(responseClient);
 }

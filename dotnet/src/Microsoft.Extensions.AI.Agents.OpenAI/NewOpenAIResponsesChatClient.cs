@@ -24,7 +24,7 @@ using OpenAI.Responses;
 namespace Microsoft.Extensions.AI;
 
 /// <summary>Represents an <see cref="IChatClient"/> for an <see cref="OpenAIResponseClient"/>.</summary>
-public sealed class NewOpenAIResponsesChatClient : IChatClient
+internal sealed class NewOpenAIResponsesChatClient : IChatClient
 {
     /// <summary>Metadata about the client.</summary>
     private readonly ChatClientMetadata _metadata;
