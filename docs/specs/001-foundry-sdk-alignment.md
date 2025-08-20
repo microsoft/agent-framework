@@ -133,7 +133,7 @@ await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
 var persistentAgentsClient = new PersistentAgentsClient(
     TestConfiguration.AzureAI.Endpoint, new AzureCliCredential());
 
-// Create an Agent Framework agent.
+// Create a persistent agent and expose it as an Agent Framework agent.
 AIAgent agent = await persistentAgentsClient.CreateAIAgentAsync(
     model: TestConfiguration.AzureAI.DeploymentName!,
     name: JokerName,
