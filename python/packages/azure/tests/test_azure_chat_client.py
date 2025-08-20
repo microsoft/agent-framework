@@ -2,11 +2,13 @@
 
 import json
 import os
+from asyncio import CancelledError
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import openai
 import pytest
 from agent_framework import (
+    CancellationToken,
     ChatClient,
     ChatClientBase,
     ChatMessage,
@@ -702,3 +704,24 @@ async def test_azure_openai_chat_client_streaming_tools() -> None:
                 full_message += content.text
 
     assert "scientists" in full_message
+
+
+@skip_if_azure_integration_tests_disabled
+async def test_azure_openai_chat_completion_cancellation() -> None:
+    """Test OpenAI chat completion cancellation."""
+    azure_chat_client = AzureChatClient(ad_credential=DefaultAzureCredential())
+    cancellation_token = CancellationToken()
+
+    assert isinstance(azure_chat_client, ChatClient)
+
+    messages: list[ChatMessage] = []
+    messages.append(ChatMessage(role="user", text="Tell me a long story about AI."))
+
+    # Test that the client can be used to get a response
+    response = azure_chat_client.get_response(
+        messages=messages,
+        cancellation_token=cancellation_token,
+    )
+    cancellation_token.cancel()
+    with pytest.raises(CancelledError):
+        await response

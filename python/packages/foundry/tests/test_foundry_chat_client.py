@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import os
+from asyncio import CancelledError
 from typing import Annotated
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -638,7 +639,7 @@ async def test_foundry_chat_client_get_response() -> None:
         messages.append(ChatMessage(role="user", text="What's the weather like today?"))
 
         # Test that the client can be used to get a response
-        response = await foundry_chat_client.get_response(messages=messages, cancellation_token=CancellationToken())
+        response = await foundry_chat_client.get_response(messages=messages)
 
         assert response is not None
         assert isinstance(response, ChatResponse)
@@ -720,3 +721,21 @@ async def test_foundry_chat_client_streaming_tools() -> None:
                     full_message += content.text
 
         assert any(word in full_message.lower() for word in ["sunny", "25"])
+
+
+@skip_if_foundry_integration_tests_disabled
+async def test_foundry_chat_client_cancellation() -> None:
+    """Test Foundry Chat Client cancellation."""
+    async with FoundryChatClient(async_ad_credential=DefaultAzureCredential()) as foundry_chat_client:
+        assert isinstance(foundry_chat_client, ChatClient)
+        cancellation_token = CancellationToken()
+
+        messages: list[ChatMessage] = []
+        messages.append(ChatMessage(role="user", text="Tell me a long story about AI."))
+
+        # Test that the client can be used to get a response
+        response = foundry_chat_client.get_response(messages=messages, cancellation_token=cancellation_token)
+        cancellation_token.cancel()
+
+        with pytest.raises(CancelledError):
+            await response

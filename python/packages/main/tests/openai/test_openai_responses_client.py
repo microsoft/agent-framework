@@ -1,12 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import os
+from asyncio import CancelledError
 from typing import Annotated
 
 import pytest
 from pydantic import BaseModel
 
 from agent_framework import (
+    CancellationToken,
     ChatClient,
     ChatMessage,
     ChatResponse,
@@ -492,3 +494,24 @@ async def test_openai_responses_client_streaming_file_search() -> None:
 
     assert "sunny" in full_message.lower()
     assert "75" in full_message
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_cancellation() -> None:
+    """Test OpenAI chat completion cancellation."""
+    openai_responses_client = OpenAIResponsesClient()
+    cancellation_token = CancellationToken()
+
+    assert isinstance(openai_responses_client, ChatClient)
+
+    messages: list[ChatMessage] = []
+    messages.append(ChatMessage(role="user", text="Tell me a long story about AI."))
+
+    # Test that the client can be used to get a response
+    response = openai_responses_client.get_response(
+        messages=messages,
+        cancellation_token=cancellation_token,
+    )
+    cancellation_token.cancel()
+    with pytest.raises(CancelledError):
+        await response

@@ -1,10 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import os
+from asyncio import CancelledError
 
 import pytest
 
 from agent_framework import (
+    CancellationToken,
     ChatClient,
     ChatMessage,
     ChatResponse,
@@ -332,3 +334,24 @@ async def test_openai_chat_client_web_search_streaming() -> None:
             if isinstance(content, TextContent) and content.text:
                 full_message += content.text
     assert "Seattle" in full_message
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_chat_completion_cancellation() -> None:
+    """Test OpenAI chat completion cancellation."""
+    openai_chat_client = OpenAIChatClient()
+    cancellation_token = CancellationToken()
+
+    assert isinstance(openai_chat_client, ChatClient)
+
+    messages: list[ChatMessage] = []
+    messages.append(ChatMessage(role="user", text="Tell me a long story about AI."))
+
+    # Test that the client can be used to get a response
+    response = openai_chat_client.get_response(
+        messages=messages,
+        cancellation_token=cancellation_token,
+    )
+    cancellation_token.cancel()
+    with pytest.raises(CancelledError):
+        await response

@@ -9,6 +9,7 @@ from pydantic import Field
 from pytest import fixture
 
 from agent_framework import (
+    CancellationToken,
     ChatClient,
     ChatClientBase,
     ChatMessage,
@@ -37,6 +38,7 @@ class MockChatClient:
     async def get_response(
         self,
         messages: ChatMessage | Sequence[ChatMessage],
+        cancellation_token: CancellationToken | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         # Implement the method
@@ -46,6 +48,7 @@ class MockChatClient:
     async def get_streaming_response(
         self,
         messages: ChatMessage | Sequence[ChatMessage],
+        cancellation_token: CancellationToken | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         # Implement the method
@@ -66,6 +69,7 @@ class MockChatClientBase(ChatClientBase):
         *,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions,
+        cancellation_token: CancellationToken | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         """Send a chat request to the AI service.
@@ -88,6 +92,7 @@ class MockChatClientBase(ChatClientBase):
         *,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions,
+        cancellation_token: CancellationToken | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         if not self.streaming_responses or chat_options.tool_choice == "none":

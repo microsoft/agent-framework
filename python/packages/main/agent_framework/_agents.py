@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, PrivateAttr
 
+from ._cancellation_token import CancellationToken
 from ._clients import ChatClient
 from ._mcp import McpTool
 from ._pydantic import AFBaseModel
@@ -349,6 +350,7 @@ class ChatClientAgent(AgentBase):
         top_p: float | None = None,
         user: str | None = None,
         additional_properties: dict[str, Any] | None = None,
+        cancellation_token: CancellationToken | None = None,
         **kwargs: Any,
     ) -> AgentRunResponse:
         """Run the agent with the given messages and options.
@@ -378,6 +380,7 @@ class ChatClientAgent(AgentBase):
             top_p: the nucleus sampling probability to use.
             user: the user to associate with the request.
             additional_properties: additional properties to include in the request.
+            cancellation_token: a cancellation token to cancel the request.
             kwargs: Additional keyword arguments for the agent.
                 will only be passed to functions that are called.
         """
@@ -420,6 +423,7 @@ class ChatClientAgent(AgentBase):
                 user=user,
                 additional_properties=additional_properties or {},
             ),
+            cancellation_token=cancellation_token,
             **kwargs,
         )
 
@@ -471,6 +475,7 @@ class ChatClientAgent(AgentBase):
         top_p: float | None = None,
         user: str | None = None,
         additional_properties: dict[str, Any] | None = None,
+        cancellation_token: CancellationToken | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentRunResponseUpdate]:
         """Stream the agent with the given messages and options.
@@ -500,6 +505,7 @@ class ChatClientAgent(AgentBase):
             top_p: the nucleus sampling probability to use.
             user: the user to associate with the request.
             additional_properties: additional properties to include in the request.
+            cancellation_token: a cancellation token to cancel the request.
             kwargs: any additional keyword arguments.
                 will only be passed to functions that are called.
 
@@ -544,6 +550,7 @@ class ChatClientAgent(AgentBase):
                 user=user,
                 additional_properties=additional_properties or {},
             ),
+            cancellation_token=cancellation_token,
             **kwargs,
         ):
             response_updates.append(update)

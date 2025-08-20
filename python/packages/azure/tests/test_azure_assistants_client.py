@@ -1,11 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import os
+from asyncio import CancelledError
 from typing import Annotated
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import (
+    CancellationToken,
     ChatClient,
     ChatMessage,
     ChatResponse,
@@ -564,3 +566,23 @@ def test_azure_assistants_client_azure_endpoint_configuration() -> None:
 
         assert client is not None
         assert isinstance(client, AzureAssistantsClient)
+
+
+@skip_if_azure_integration_tests_disabled
+async def test_azure_assistants_client_cancellation() -> None:
+    """Test Azure Assistants Client cancellation."""
+    async with AzureAssistantsClient(ad_credential=DefaultAzureCredential()) as azure_assistants_client:
+        assert isinstance(azure_assistants_client, ChatClient)
+        cancellation_token = CancellationToken()
+
+        messages: list[ChatMessage] = []
+        messages.append(ChatMessage(role="user", text="Tell me a long story about AI."))
+
+        # Test that the client can be used to get a response
+        response = azure_assistants_client.get_response(
+            messages=messages,
+            cancellation_token=cancellation_token,
+        )
+        cancellation_token.cancel()
+        with pytest.raises(CancelledError):
+            await response

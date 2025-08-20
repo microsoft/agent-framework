@@ -11,6 +11,7 @@ from agent_framework import (
     AgentRunResponseUpdate,
     AgentThread,
     AIAgent,
+    CancellationToken,
     ChatClient,
     ChatClientAgent,
     ChatClientBase,
@@ -55,6 +56,7 @@ class MockAgent(AIAgent):
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
+        cancellation_token: CancellationToken | None = None,
         **kwargs: Any,
     ) -> AgentRunResponse:
         return AgentRunResponse(messages=[ChatMessage(role=ChatRole.ASSISTANT, contents=[TextContent("Response")])])
@@ -64,6 +66,7 @@ class MockAgent(AIAgent):
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
+        cancellation_token: CancellationToken | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentRunResponseUpdate]:
         yield AgentRunResponseUpdate(contents=[TextContent("Response")])
@@ -84,6 +87,7 @@ class MockChatClient(ChatClientBase):
         *,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions,
+        cancellation_token: CancellationToken | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         return (
@@ -97,6 +101,7 @@ class MockChatClient(ChatClientBase):
         *,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions,
+        cancellation_token: CancellationToken | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         yield ChatResponseUpdate(role=ChatRole.ASSISTANT, text=TextContent(text="test streaming response"))

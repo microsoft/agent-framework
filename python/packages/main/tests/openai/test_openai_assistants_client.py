@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import os
+from asyncio import CancelledError
 from typing import Annotated
 from unittest.mock import AsyncMock, MagicMock
 
@@ -8,6 +9,7 @@ import pytest
 from pydantic import Field
 
 from agent_framework import (
+    CancellationToken,
     ChatClient,
     ChatMessage,
     ChatResponse,
@@ -462,3 +464,23 @@ async def test_openai_assistants_client_file_search_streaming() -> None:
         await delete_vector_store(openai_assistants_client, file_id, vector_store.vector_store_id)
 
         assert any(word in full_message.lower() for word in ["sunny", "25", "weather"])
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_assistants_cancellation() -> None:
+    """Test OpenAI chat completion cancellation."""
+    async with OpenAIAssistantsClient() as openai_assistants_client:
+        assert isinstance(openai_assistants_client, ChatClient)
+        cancellation_token = CancellationToken()
+
+        messages: list[ChatMessage] = []
+        messages.append(ChatMessage(role="user", text="Tell me a long story about AI."))
+
+        # Test that the client can be used to get a response
+        response = openai_assistants_client.get_response(
+            messages=messages,
+            cancellation_token=cancellation_token,
+        )
+        cancellation_token.cancel()
+        with pytest.raises(CancelledError):
+            await response
