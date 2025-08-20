@@ -37,13 +37,35 @@ public class StreamingRun
     /// </summary>
     /// <remarks>The response will be queued for processing for the next superstep.</remarks>
     /// <param name="response">The <see cref="ExternalResponse"/> to send. Must not be <c>null</c>.</param>
-    /// <returns>A <see cref="ValueTask"/> that represents the asynchronous send operation. The task completes when the response
-    /// has been enqueued for processing, but will not wait for processing to complete.</returns>
+    /// <returns>A <see cref="ValueTask"/> that represents the asynchronous send operation.</returns>
     public ValueTask SendResponseAsync(ExternalResponse response)
     {
         this._waitForResponseSource?.TrySetResult(new());
 
-        return this._stepRunner.EnqueueMessageAsync(response);
+        return this._stepRunner.EnqueueResponseAsync(response);
+    }
+
+    /// <summary>
+    /// Attempts to send the specified message asynchronously and returns a value indicating whether the operation was
+    /// successful.
+    /// </summary>
+    /// <typeparam name="TMessage">The type of the message to send. Must be compatible with the expected message types for
+    /// the starting executor, or receiving port.</typeparam>
+    /// <param name="message">The message instance to send. Cannot be null.</param>
+    /// <returns>A <see cref="ValueTask{Boolean}"/> that represents the asynchronous send operation. It's
+    /// <see cref="ValueTask{Boolean}.Result"/> is <see langword="true"/> if the message was sent
+    /// successfully; otherwise, <see langword="false"/>.</returns>
+    public async ValueTask<bool> TrySendMessageAsync<TMessage>(TMessage message)
+    {
+        Throw.IfNull(message);
+
+        if (message is ExternalResponse response)
+        {
+            await this.SendResponseAsync(response).ConfigureAwait(false);
+            return true;
+        }
+
+        return await this._stepRunner.EnqueueMessageAsync(message).ConfigureAwait(false);
     }
 
     /// <summary>
