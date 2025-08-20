@@ -23,9 +23,11 @@ internal class MessageRouter
     {
         this._typedHandlers = Throw.IfNull(handlers);
         this._hasCatchall = this._typedHandlers.ContainsKey(typeof(object));
+
+        this.IncomingTypes = [.. this._typedHandlers.Keys];
     }
 
-    public HashSet<Type> IncomingTypes => [.. this._typedHandlers.Keys];
+    public HashSet<Type> IncomingTypes { get; }
 
     public bool CanHandle(object message) => this.CanHandle(Throw.IfNull(message).GetType());
 

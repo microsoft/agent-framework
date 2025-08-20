@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Sample;
+using Microsoft.Agents.Workflows.UnitTests.Sample;
 
 namespace Microsoft.Agents.Workflows.UnitTests;
 
@@ -89,10 +90,15 @@ public class SampleSmokeTest
     {
         using StringWriter writer = new();
 
-        await Step6Switch.RunAsync(writer);
+        await Step6EntryPoint.RunAsync(writer);
 
         string result = writer.ToString();
-        Assert.Contains("#exit: ResultExecutor2", result);
+        string[] lines = result.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries);
+
+        Assert.Collection(lines,
+            line => Assert.Contains($"{HelloAgent.DefaultId}: {HelloAgent.Greeting}", line),
+            line => Assert.Contains($"{EchoAgent.DefaultId}: {EchoAgent.Prefix}{HelloAgent.Greeting}", line)
+        );
     }
 }
 
