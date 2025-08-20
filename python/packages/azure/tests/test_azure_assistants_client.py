@@ -155,7 +155,7 @@ async def test_azure_assistants_client_get_assistant_id_or_create_existing_assis
     """Test _get_assistant_id_or_create when assistant_id is already provided."""
     chat_client = create_test_azure_assistants_client(mock_async_azure_openai, assistant_id="existing-assistant-id")
 
-    assistant_id = await chat_client._get_assistant_id_or_create()  # type: ignore
+    assistant_id = await chat_client._get_assistant_id_or_create(cancellation_token=None)  # type: ignore
 
     assert assistant_id == "existing-assistant-id"
     assert not chat_client._should_delete_assistant  # type: ignore
@@ -170,7 +170,7 @@ async def test_azure_assistants_client_get_assistant_id_or_create_create_new(
         mock_async_azure_openai, deployment_name="test_chat_deployment", assistant_name="TestAssistant"
     )
 
-    assistant_id = await chat_client._get_assistant_id_or_create()  # type: ignore
+    assistant_id = await chat_client._get_assistant_id_or_create(cancellation_token=None)  # type: ignore
 
     assert assistant_id == "test-assistant-id"
     assert chat_client._should_delete_assistant  # type: ignore

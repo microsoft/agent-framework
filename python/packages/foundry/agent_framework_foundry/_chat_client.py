@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import contextlib
 import json
 import sys
@@ -9,6 +10,7 @@ from typing import Any, ClassVar, TypeVar
 from agent_framework import (
     AIContents,
     AIFunction,
+    CancellationToken,
     ChatClientBase,
     ChatMessage,
     ChatOptions,
@@ -215,10 +217,13 @@ class FoundryChatClient(ChatClientBase):
         *,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions,
+        cancellation_token: CancellationToken | None,
         **kwargs: Any,
     ) -> ChatResponse:
         return await ChatResponse.from_chat_response_generator(
-            updates=self._inner_get_streaming_response(messages=messages, chat_options=chat_options, **kwargs)
+            updates=self._inner_get_streaming_response(
+                messages=messages, chat_options=chat_options, cancellation_token=cancellation_token, **kwargs
+            )
         )
 
     async def _inner_get_streaming_response(
@@ -226,6 +231,7 @@ class FoundryChatClient(ChatClientBase):
         *,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions,
+        cancellation_token: CancellationToken | None,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         # Extract necessary state from messages and options
@@ -240,16 +246,20 @@ class FoundryChatClient(ChatClientBase):
             raise ValueError("No thread ID was provided, but chat messages includes tool results.")
 
         # Determine which agent to use and create if needed
-        agent_id = await self._get_agent_id_or_create(run_options)
+        agent_id = await self._get_agent_id_or_create(run_options, cancellation_token)
 
         # Create the streaming response
-        stream, thread_id = await self._create_agent_stream(thread_id, agent_id, run_options, tool_results)
+        stream, thread_id = await self._create_agent_stream(
+            thread_id, agent_id, run_options, tool_results, cancellation_token
+        )
 
         # Process and yield each update from the stream
-        async for update in self._process_stream_events(stream, thread_id):
+        async for update in self._process_stream_events(stream, thread_id, cancellation_token):
             yield update
 
-    async def _get_agent_id_or_create(self, run_options: dict[str, Any] | None = None) -> str:
+    async def _get_agent_id_or_create(
+        self, run_options: dict[str, Any] | None = None, cancellation_token: CancellationToken | None = None
+    ) -> str:
         """Determine which agent to use and create if needed.
 
         Returns:
@@ -269,7 +279,10 @@ class FoundryChatClient(ChatClientBase):
                     args["instructions"] = run_options["instructions"]
                 if "response_format" in run_options:
                     args["response_format"] = run_options["response_format"]
-            created_agent = await self.client.agents.create_agent(**args)  # type: ignore[arg-type]
+            created_agent_future = asyncio.ensure_future(self.client.agents.create_agent(**args))  # type: ignore[arg-type]
+            if cancellation_token:
+                cancellation_token.link_future(created_agent_future)
+            created_agent = await created_agent_future
             self.agent_id = created_agent.id
             self._should_delete_agent = True
 
@@ -281,6 +294,7 @@ class FoundryChatClient(ChatClientBase):
         agent_id: str,
         run_options: dict[str, Any],
         tool_results: list[FunctionResultContent] | None,
+        cancellation_token: CancellationToken | None,
     ) -> tuple[AsyncAgentRunStream[AsyncAgentEventHandler[Any]] | AsyncAgentEventHandler[Any], str]:
         """Create the agent stream for processing.
 
@@ -288,7 +302,7 @@ class FoundryChatClient(ChatClientBase):
             tuple: (stream, final_thread_id)
         """
         # Get any active run for this thread
-        thread_run = await self._get_active_thread_run(thread_id)
+        thread_run = await self._get_active_thread_run(thread_id, cancellation_token)
 
         stream: AsyncAgentRunStream[AsyncAgentEventHandler[Any]] | AsyncAgentEventHandler[Any]
         handler: AsyncAgentEventHandler[Any] = AsyncAgentEventHandler()
@@ -296,55 +310,86 @@ class FoundryChatClient(ChatClientBase):
 
         if thread_run is not None and tool_run_id is not None and tool_run_id == thread_run.id and tool_outputs:
             # There's an active run and we have tool results to submit, so submit the results.
-            await self.client.agents.runs.submit_tool_outputs_stream(  # type: ignore[reportUnknownMemberType]
-                thread_run.thread_id, tool_run_id, tool_outputs=tool_outputs, event_handler=handler
+            future = asyncio.ensure_future(
+                self.client.agents.runs.submit_tool_outputs_stream(  # type: ignore[reportUnknownMemberType]
+                    thread_run.thread_id, tool_run_id, tool_outputs=tool_outputs, event_handler=handler
+                )
             )
+            if cancellation_token:
+                cancellation_token.link_future(future)
+            await future
             # Pass the handler to the stream to continue processing
             stream = handler  # type: ignore
             final_thread_id = thread_run.thread_id
         else:
             # Handle thread creation or cancellation
-            final_thread_id = await self._prepare_thread(thread_id, thread_run, run_options)
+            final_thread_id = await self._prepare_thread(thread_id, thread_run, run_options, cancellation_token)
 
             # Now create a new run and stream the results.
-            stream = await self.client.agents.runs.stream(  # type: ignore[reportUnknownMemberType]
-                final_thread_id,
-                agent_id=agent_id,
-                **run_options,
+            stream_future = asyncio.ensure_future(
+                self.client.agents.runs.stream(  # type: ignore[reportUnknownMemberType]
+                    final_thread_id,
+                    agent_id=agent_id,
+                    **run_options,
+                )
             )
+            if cancellation_token:
+                cancellation_token.link_future(stream_future)  # type: ignore[reportUnknownMemberType]
+            stream = await stream_future  # type: ignore[reportUnknownMemberType]
 
         return stream, final_thread_id
 
-    async def _get_active_thread_run(self, thread_id: str | None) -> ThreadRun | None:
+    async def _get_active_thread_run(
+        self, thread_id: str | None, cancellation_token: CancellationToken | None
+    ) -> ThreadRun | None:
         """Get any active run for the given thread."""
         if thread_id is None:
             return None
 
-        async for run in self.client.agents.runs.list(thread_id=thread_id, limit=1, order=ListSortOrder.DESCENDING):
-            if run.status not in [
-                RunStatus.COMPLETED,
-                RunStatus.CANCELLED,
-                RunStatus.FAILED,
-                RunStatus.EXPIRED,
-            ]:
-                return run
+        runs = self.client.agents.runs.list(thread_id=thread_id, limit=1, order=ListSortOrder.DESCENDING)
+        while True:
+            try:
+                run_future = asyncio.ensure_future(anext(runs))
+                if cancellation_token:
+                    cancellation_token.link_future(run_future)
+                run = await run_future
+
+                if run.status not in [
+                    RunStatus.COMPLETED,
+                    RunStatus.CANCELLED,
+                    RunStatus.FAILED,
+                    RunStatus.EXPIRED,
+                ]:
+                    return run
+            except StopAsyncIteration:
+                break
         return None
 
     async def _prepare_thread(
-        self, thread_id: str | None, thread_run: ThreadRun | None, run_options: dict[str, Any]
+        self,
+        thread_id: str | None,
+        thread_run: ThreadRun | None,
+        run_options: dict[str, Any],
+        cancellation_token: CancellationToken | None,
     ) -> str:
         """Prepare the thread for a new run, creating or cleaning up as needed."""
         if thread_id is None:
             # No thread ID was provided, so create a new thread.
-            thread = await self.client.agents.threads.create(
-                messages=run_options["additional_messages"],
-                tool_resources=run_options.get("tool_resources"),
-                metadata=run_options.get("metadata"),
+            thread_future = asyncio.ensure_future(
+                self.client.agents.threads.create(
+                    messages=run_options["additional_messages"],
+                    tool_resources=run_options.get("tool_resources"),
+                    metadata=run_options.get("metadata"),
+                )
             )
+            if cancellation_token:
+                cancellation_token.link_future(thread_future)
+            thread = await thread_future
             run_options["additional_messages"] = []
             return thread.id
 
         if thread_run is not None:
+            # Does this need to be cancellable?
             # There was an active run; we need to cancel it before starting a new run.
             await self.client.agents.runs.cancel(thread_id, thread_run.id)
 
@@ -354,95 +399,105 @@ class FoundryChatClient(ChatClientBase):
         self,
         stream: AsyncAgentRunStream[AsyncAgentEventHandler[Any]] | AsyncAgentEventHandler[Any],
         thread_id: str,
+        cancellation_token: CancellationToken | None = None,
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Process events from the agent stream and yield ChatResponseUpdate objects."""
         # Use 'async with' only if the stream supports async context management (main agent stream).
         # Tool output handlers only support async iteration, not context management.
         if isinstance(stream, contextlib.AbstractAsyncContextManager):
             async with stream as response_stream:  # type: ignore
-                async for update in self._process_stream_events_from_iterator(response_stream, thread_id):
+                async for update in self._process_stream_events_from_iterator(
+                    response_stream, thread_id, cancellation_token
+                ):
                     yield update
         else:
-            async for update in self._process_stream_events_from_iterator(stream, thread_id):
+            async for update in self._process_stream_events_from_iterator(stream, thread_id, cancellation_token):
                 yield update
 
     async def _process_stream_events_from_iterator(
-        self, stream_iter: Any, thread_id: str
+        self, stream_iter: Any, thread_id: str, cancellation_token: CancellationToken | None
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Process events from the stream iterator and yield ChatResponseUpdate objects."""
         response_id: str | None = None
-        async for event_type, event_data, _ in stream_iter:  # type: ignore
-            if event_type == AgentStreamEvent.THREAD_RUN_CREATED and isinstance(event_data, ThreadRun):
-                yield ChatResponseUpdate(
-                    contents=[],
-                    conversation_id=event_data.thread_id,
-                    message_id=response_id,
-                    raw_representation=event_data,
-                    response_id=response_id,
-                    role=ChatRole.ASSISTANT,
-                )
-            elif event_type == AgentStreamEvent.THREAD_RUN_STEP_CREATED and isinstance(event_data, RunStep):
-                response_id = event_data.run_id
-            elif event_type == AgentStreamEvent.THREAD_MESSAGE_DELTA and isinstance(event_data, MessageDeltaChunk):
-                role = ChatRole.USER if event_data.delta.role == MessageRole.USER else ChatRole.ASSISTANT
-                yield ChatResponseUpdate(
-                    role=role,
-                    text=event_data.text,
-                    conversation_id=thread_id,
-                    message_id=response_id,
-                    raw_representation=event_data,
-                    response_id=response_id,
-                )
-            elif (
-                event_type == AgentStreamEvent.THREAD_RUN_REQUIRES_ACTION
-                and isinstance(event_data, ThreadRun)
-                and isinstance(event_data.required_action, SubmitToolOutputsAction)
-            ):
-                contents = self._create_function_call_contents(event_data, response_id)
-                if contents:
+        while True:
+            try:
+                tuple_future = asyncio.ensure_future(anext(stream_iter))
+                if cancellation_token:
+                    cancellation_token.link_future(tuple_future)
+                event_type, event_data, _ = await tuple_future
+                if event_type == AgentStreamEvent.THREAD_RUN_CREATED and isinstance(event_data, ThreadRun):
                     yield ChatResponseUpdate(
+                        contents=[],
+                        conversation_id=event_data.thread_id,
+                        message_id=response_id,
+                        raw_representation=event_data,
+                        response_id=response_id,
                         role=ChatRole.ASSISTANT,
-                        contents=contents,
+                    )
+                elif event_type == AgentStreamEvent.THREAD_RUN_STEP_CREATED and isinstance(event_data, RunStep):
+                    response_id = event_data.run_id
+                elif event_type == AgentStreamEvent.THREAD_MESSAGE_DELTA and isinstance(event_data, MessageDeltaChunk):
+                    role = ChatRole.USER if event_data.delta.role == MessageRole.USER else ChatRole.ASSISTANT
+                    yield ChatResponseUpdate(
+                        role=role,
+                        text=event_data.text,
                         conversation_id=thread_id,
                         message_id=response_id,
                         raw_representation=event_data,
                         response_id=response_id,
                     )
-            elif (
-                event_type == AgentStreamEvent.THREAD_RUN_COMPLETED
-                and isinstance(event_data, RunStep)
-                and event_data.usage is not None
-            ):
-                usage_content = UsageContent(
-                    UsageDetails(
-                        input_token_count=event_data.usage.prompt_tokens,
-                        output_token_count=event_data.usage.completion_tokens,
-                        total_token_count=event_data.usage.total_tokens,
+                elif (
+                    event_type == AgentStreamEvent.THREAD_RUN_REQUIRES_ACTION
+                    and isinstance(event_data, ThreadRun)
+                    and isinstance(event_data.required_action, SubmitToolOutputsAction)
+                ):
+                    contents = self._create_function_call_contents(event_data, response_id)
+                    if contents:
+                        yield ChatResponseUpdate(
+                            role=ChatRole.ASSISTANT,
+                            contents=contents,
+                            conversation_id=thread_id,
+                            message_id=response_id,
+                            raw_representation=event_data,
+                            response_id=response_id,
+                        )
+                elif (
+                    event_type == AgentStreamEvent.THREAD_RUN_COMPLETED
+                    and isinstance(event_data, RunStep)
+                    and event_data.usage is not None
+                ):
+                    usage_content = UsageContent(
+                        UsageDetails(
+                            input_token_count=event_data.usage.prompt_tokens,
+                            output_token_count=event_data.usage.completion_tokens,
+                            total_token_count=event_data.usage.total_tokens,
+                        )
                     )
-                )
-                yield ChatResponseUpdate(
-                    role=ChatRole.ASSISTANT,
-                    contents=[usage_content],
-                    conversation_id=thread_id,
-                    message_id=response_id,
-                    raw_representation=event_data,
-                    response_id=response_id,
-                )
-            elif (
-                event_type == AgentStreamEvent.THREAD_RUN_FAILED
-                and isinstance(event_data, ThreadRun)
-                and isinstance(event_data.last_error, RunError)
-            ):
-                raise ServiceResponseException(event_data.last_error.message)
-            else:
-                yield ChatResponseUpdate(
-                    contents=[],
-                    conversation_id=thread_id,
-                    message_id=response_id,
-                    raw_representation=event_data,  # type: ignore
-                    response_id=response_id,
-                    role=ChatRole.ASSISTANT,
-                )
+                    yield ChatResponseUpdate(
+                        role=ChatRole.ASSISTANT,
+                        contents=[usage_content],
+                        conversation_id=thread_id,
+                        message_id=response_id,
+                        raw_representation=event_data,
+                        response_id=response_id,
+                    )
+                elif (
+                    event_type == AgentStreamEvent.THREAD_RUN_FAILED
+                    and isinstance(event_data, ThreadRun)
+                    and isinstance(event_data.last_error, RunError)
+                ):
+                    raise ServiceResponseException(event_data.last_error.message)
+                else:
+                    yield ChatResponseUpdate(
+                        contents=[],
+                        conversation_id=thread_id,
+                        message_id=response_id,
+                        raw_representation=event_data,  # type: ignore
+                        response_id=response_id,
+                        role=ChatRole.ASSISTANT,
+                    )
+            except StopAsyncIteration:
+                break
 
     def _create_function_call_contents(self, event_data: ThreadRun, response_id: str | None) -> list[AIContents]:
         """Create function call contents from a tool action event."""

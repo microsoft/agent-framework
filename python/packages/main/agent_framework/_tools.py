@@ -252,6 +252,7 @@ class HostedFileSearchTool(AIToolBase):
         super().__init__(**args, **kwargs)
 
 
+# TODO(peterychang): Conditionally pass a CancellationToken into function call if the signature has the parameter
 class AIFunction(AIToolBase, Generic[ArgsT, ReturnT]):
     """A AITool that is callable as code.
 

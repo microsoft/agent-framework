@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import (
+    CancellationToken,
     ChatClient,
     ChatMessage,
     ChatOptions,
@@ -483,7 +484,9 @@ async def test_foundry_chat_client_inner_get_response(mock_ai_project_client: Ma
         mock_response = ChatResponse(role=ChatRole.ASSISTANT, text="Hello back")
         mock_from_generator.return_value = mock_response
 
-        result = await chat_client._inner_get_response(messages=messages, chat_options=chat_options)  # type: ignore
+        result = await chat_client._inner_get_response(
+            messages=messages, chat_options=chat_options, cancellation_token=None
+        )  # type: ignore
 
         assert result is mock_response
         mock_from_generator.assert_called_once()
@@ -532,7 +535,9 @@ async def test_foundry_chat_client_create_agent_stream_with_tool_results(mock_ai
         mock_ai_project_client.agents.runs.submit_tool_outputs_stream = AsyncMock(return_value=None)
 
         with patch("agent_framework_foundry._chat_client.AsyncAgentEventHandler", return_value=mock_handler):
-            stream, thread_id = await chat_client._create_agent_stream("test-thread", "test-agent", {}, tool_results)  # type: ignore
+            stream, thread_id = await chat_client._create_agent_stream(
+                "test-thread", "test-agent", {}, tool_results, cancellation_token=None
+            )  # type: ignore
 
             assert stream is mock_handler
             assert thread_id == "test-thread"
@@ -549,7 +554,7 @@ async def test_foundry_chat_client_prepare_thread_cancels_active_run(mock_ai_pro
 
     run_options = {"additional_messages": []}  # type: ignore
 
-    result = await chat_client._prepare_thread("test-thread", mock_thread_run, run_options)  # type: ignore
+    result = await chat_client._prepare_thread("test-thread", mock_thread_run, run_options, cancellation_token=None)  # type: ignore
 
     assert result == "test-thread"
     mock_ai_project_client.agents.runs.cancel.assert_called_once_with("test-thread", "run_123")
@@ -633,7 +638,7 @@ async def test_foundry_chat_client_get_response() -> None:
         messages.append(ChatMessage(role="user", text="What's the weather like today?"))
 
         # Test that the client can be used to get a response
-        response = await foundry_chat_client.get_response(messages=messages)
+        response = await foundry_chat_client.get_response(messages=messages, cancellation_token=CancellationToken())
 
         assert response is not None
         assert isinstance(response, ChatResponse)

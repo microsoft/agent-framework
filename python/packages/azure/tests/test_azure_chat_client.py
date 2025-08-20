@@ -170,6 +170,7 @@ def mock_streaming_chat_completion_response() -> AsyncStream[ChatCompletionChunk
     )
     stream = MagicMock(spec=AsyncStream)
     stream.__aiter__.return_value = [content]
+    stream.__anext__ = AsyncMock(side_effect=[content, StopAsyncIteration])
     return stream
 
 

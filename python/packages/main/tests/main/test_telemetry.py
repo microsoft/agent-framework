@@ -9,6 +9,7 @@ import pytest
 from opentelemetry.trace import StatusCode
 
 from agent_framework import (
+    CancellationToken,
     ChatMessage,
     ChatOptions,
     ChatResponse,
@@ -307,10 +308,10 @@ def test_decorator_with_valid_class():
     class MockChatClient:
         MODEL_PROVIDER_NAME = "test_provider"
 
-        async def _inner_get_response(self, *, messages, chat_options, **kwargs):
+        async def _inner_get_response(self, *, messages, chat_options, cancellation_token, **kwargs):
             return Mock()
 
-        async def _inner_get_streaming_response(self, *, messages, chat_options, **kwargs):
+        async def _inner_get_streaming_response(self, *, messages, chat_options, cancellation_token, **kwargs):
             async def gen():
                 yield Mock()
 
@@ -343,7 +344,7 @@ def test_decorator_with_partial_methods():
     class MockChatClient:
         MODEL_PROVIDER_NAME = "test_provider"
 
-        async def _inner_get_response(self, *, messages, chat_options, **kwargs):
+        async def _inner_get_response(self, *, messages, chat_options, cancellation_token, **kwargs):
             return Mock()
 
     decorated_class = use_telemetry(MockChatClient)
@@ -370,7 +371,12 @@ def mock_chat_client():
             return "https://test.example.com"
 
         async def _inner_get_response(
-            self, *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+            self,
+            *,
+            messages: MutableSequence[ChatMessage],
+            chat_options: ChatOptions,
+            cancellation_token: CancellationToken,
+            **kwargs: Any,
         ):
             return ChatResponse(
                 messages=[ChatMessage(role=ChatRole.ASSISTANT, text="Test response")],
@@ -379,7 +385,12 @@ def mock_chat_client():
             )
 
         async def _inner_get_streaming_response(
-            self, *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+            self,
+            *,
+            messages: MutableSequence[ChatMessage],
+            chat_options: ChatOptions,
+            cancellation_token: CancellationToken,
+            **kwargs: Any,
         ):
             yield ChatResponseUpdate(text="Hello", role=ChatRole.ASSISTANT)
             yield ChatResponseUpdate(text=" world", role=ChatRole.ASSISTANT)
@@ -401,7 +412,9 @@ async def test_telemetry_disabled_bypasses_instrumentation(mock_chat_client, mod
         patch("agent_framework.telemetry.use_span") as mock_use_span,
     ):
         # This should not create any spans
-        response = await client._inner_get_response(messages=messages, chat_options=chat_options)
+        response = await client._inner_get_response(
+            messages=messages, chat_options=chat_options, cancellation_token=None
+        )
         assert response is not None
         mock_use_span.assert_not_called()
 
@@ -420,7 +433,9 @@ async def test_instrumentation_enabled(mock_chat_client, model_diagnostic_settin
         patch("agent_framework.telemetry.use_span") as mock_use_span,
         patch("agent_framework.telemetry.logger") as mock_logger,
     ):
-        response = await client._inner_get_response(messages=messages, chat_options=chat_options)
+        response = await client._inner_get_response(
+            messages=messages, chat_options=chat_options, cancellation_token=None
+        )
         assert response is not None
         mock_use_span.assert_called_once()
         # Check that logger.info was called (telemetry logs input/output)
@@ -451,7 +466,9 @@ async def test_streaming_response_with_diagnostics_enabled_via_decorator(mock_ch
 
         # Collect all yielded updates
         updates = []
-        async for update in client._inner_get_streaming_response(messages=messages, chat_options=chat_options):
+        async for update in client._inner_get_streaming_response(
+            messages=messages, chat_options=chat_options, cancellation_token=None
+        ):
             updates.append(update)
 
         # Verify we got the expected updates
@@ -468,7 +485,12 @@ async def test_streaming_response_with_exception_via_decorator(mock_chat_client,
     """Test streaming telemetry exception handling through decorator."""
 
     async def _inner_get_streaming_response(
-        self, *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+        self,
+        *,
+        messages: MutableSequence[ChatMessage],
+        chat_options: ChatOptions,
+        cancellation_token: CancellationToken,
+        **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         yield ChatResponseUpdate(text="Partial", role=ChatRole.ASSISTANT)
         raise ValueError("Test streaming error")
@@ -494,7 +516,9 @@ async def test_streaming_response_with_exception_via_decorator(mock_chat_client,
 
         # Should raise the exception and call error handler
         with pytest.raises(ValueError, match="Test streaming error"):
-            async for _ in client._inner_get_streaming_response(messages=messages, chat_options=chat_options):
+            async for _ in client._inner_get_streaming_response(
+                messages=messages, chat_options=chat_options, cancellation_token=None
+            ):
                 pass
 
         # Verify error was recorded
@@ -511,7 +535,12 @@ async def test_streaming_response_diagnostics_disabled_via_decorator(model_diagn
         MODEL_PROVIDER_NAME = "test_provider"
 
         async def _inner_get_streaming_response(
-            self, *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+            self,
+            *,
+            messages: MutableSequence[ChatMessage],
+            chat_options: ChatOptions,
+            cancellation_token: CancellationToken,
+            **kwargs: Any,
         ) -> AsyncIterable[ChatResponseUpdate]:
             yield ChatResponseUpdate(text="Test", role=ChatRole.ASSISTANT)
 
@@ -527,7 +556,9 @@ async def test_streaming_response_diagnostics_disabled_via_decorator(model_diagn
     ):
         # Should not create spans when diagnostics are disabled
         updates = []
-        async for update in client._inner_get_streaming_response(messages=messages, chat_options=chat_options):
+        async for update in client._inner_get_streaming_response(
+            messages=messages, chat_options=chat_options, cancellation_token=None
+        ):
             updates.append(update)
 
         assert len(updates) == 1
@@ -552,7 +583,12 @@ async def test_empty_streaming_response_via_decorator(model_diagnostic_settings)
             return "https://test.com"
 
         async def _inner_get_streaming_response(
-            self, *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+            self,
+            *,
+            messages: MutableSequence[ChatMessage],
+            chat_options: ChatOptions,
+            cancellation_token: CancellationToken,
+            **kwargs: Any,
         ) -> AsyncIterable[ChatResponseUpdate]:
             # Return empty stream
             return
@@ -577,7 +613,9 @@ async def test_empty_streaming_response_via_decorator(model_diagnostic_settings)
 
         # Should handle empty stream gracefully
         updates = []
-        async for update in client._inner_get_streaming_response(messages=messages, chat_options=chat_options):
+        async for update in client._inner_get_streaming_response(
+            messages=messages, chat_options=chat_options, cancellation_token=None
+        ):
             updates.append(update)
 
         assert len(updates) == 0

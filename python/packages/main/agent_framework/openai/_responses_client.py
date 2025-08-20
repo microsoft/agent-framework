@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import sys
 from collections.abc import AsyncIterable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
 from datetime import datetime
@@ -33,6 +34,7 @@ from pydantic import BaseModel, SecretStr, ValidationError
 
 from agent_framework import DataContent, TextReasoningContent, UriContent, UsageContent
 
+from .._cancellation_token import CancellationToken
 from .._clients import ChatClientBase, use_tool_calling
 from .._logging import get_logger
 from .._tools import AIFunction, AITool, HostedCodeInterpreterTool, HostedFileSearchTool, HostedWebSearchTool
@@ -120,6 +122,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         truncation: str | None = None,
         timeout: float | None = None,
         additional_properties: dict[str, Any] | None = None,
+        cancellation_token: CancellationToken | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         """Get a response from the OpenAI API.
@@ -145,6 +148,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
             truncation: the truncation strategy to use.
             timeout: the timeout for the request.
             additional_properties: additional properties to include in the request.
+            cancellation_token: a cancellation token to cancel the request.
             kwargs: any additional keyword arguments,
                 will only be passed to functions that are called.
 
@@ -182,6 +186,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         return await super().get_response(
             messages=messages,
             chat_options=chat_options,
+            cancellation_token=cancellation_token,
             **kwargs,
         )
 
@@ -216,6 +221,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         truncation: str | None = None,
         timeout: float | None = None,
         additional_properties: dict[str, Any] | None = None,
+        cancellation_token: CancellationToken | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Get a streaming response from the OpenAI API.
@@ -241,6 +247,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
             truncation: the truncation strategy to use.
             timeout: the timeout for the request.
             additional_properties: additional properties to include in the request.
+            cancellation_token: a cancellation token to cancel the request.
             kwargs: any additional keyword arguments,
                 will only be passed to functions that are called.
 
@@ -278,6 +285,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         async for update in super().get_streaming_response(
             messages=messages,
             chat_options=chat_options,
+            cancellation_token=cancellation_token,
             **kwargs,
         ):
             yield update
@@ -289,24 +297,35 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         *,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions,
+        cancellation_token: CancellationToken | None,
         **kwargs: Any,
     ) -> ChatResponse:
         options_dict = self._prepare_options(messages, chat_options)
         try:
             if not chat_options.response_format:
-                response = await self.client.responses.create(
-                    stream=False,
-                    **options_dict,
+                response_future = asyncio.ensure_future(
+                    self.client.responses.create(
+                        stream=False,
+                        **options_dict,
+                    )
                 )
+                if cancellation_token:
+                    cancellation_token.link_future(response_future)
+                response = await response_future
                 chat_options.conversation_id = response.id if chat_options.store is True else None
                 return self._create_response_content(response, chat_options=chat_options)
             # create call does not support response_format, so we need to handle it via parse call
             resp_format = chat_options.response_format
-            parsed_response: ParsedResponse[BaseModel] = await self.client.responses.parse(
-                text_format=resp_format,
-                stream=False,
-                **options_dict,
+            response_future = asyncio.ensure_future(
+                self.client.responses.parse(
+                    text_format=resp_format,
+                    stream=False,
+                    **options_dict,
+                )
             )
+            if cancellation_token:
+                cancellation_token.link_future(response_future)
+            parsed_response: ParsedResponse[BaseModel] = await response_future
             chat_options.conversation_id = parsed_response.id if chat_options.store is True else None
             return self._create_response_content(parsed_response, chat_options=chat_options)
         except BadRequestError as ex:
@@ -319,6 +338,8 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                 f"{type(self)} service failed to complete the prompt",
                 inner_exception=ex,
             ) from ex
+        except asyncio.CancelledError:
+            raise
         except Exception as ex:
             raise ServiceResponseException(
                 f"{type(self)} service failed to complete the prompt, with exception: {ex}",
@@ -330,32 +351,51 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         *,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions,
+        cancellation_token: CancellationToken | None,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         options_dict = self._prepare_options(messages, chat_options)
         function_call_ids: dict[int, tuple[str, str]] = {}  # output_index: (call_id, name)
         try:
             if not chat_options.response_format:
-                response = await self.client.responses.create(
-                    stream=True,
-                    **options_dict,
-                )
-                async for chunk in response:
-                    update = self._create_streaming_response_content(
-                        chunk, chat_options=chat_options, function_call_ids=function_call_ids
+                response_future = asyncio.ensure_future(
+                    self.client.responses.create(
+                        stream=True,
+                        **options_dict,
                     )
-                    yield update
+                )
+                if cancellation_token:
+                    cancellation_token.link_future(response_future)
+                response = await response_future
+                while True:
+                    try:
+                        chunk_future = asyncio.ensure_future(anext(response))
+                        if cancellation_token is not None:
+                            cancellation_token.link_future(chunk_future)
+                        chunk = await chunk_future
+                        yield self._create_streaming_response_content(
+                            chunk, chat_options=chat_options, function_call_ids=function_call_ids
+                        )
+                    except StopAsyncIteration:
+                        break
                 return
             # create call does not support response_format, so we need to handle it via stream call
             async with self.client.responses.stream(
                 text_format=chat_options.response_format,
                 **options_dict,
             ) as response:
-                async for chunk in response:
-                    update = self._create_streaming_response_content(
-                        chunk, chat_options=chat_options, function_call_ids=function_call_ids
-                    )
-                    yield update
+                while True:
+                    try:
+                        chunk_future = asyncio.ensure_future(anext(response))
+                        if cancellation_token:
+                            cancellation_token.link_future(chunk_future)
+                        chunk = await chunk_future
+                        yield self._create_streaming_response_content(
+                            chunk, chat_options=chat_options, function_call_ids=function_call_ids
+                        )
+                    except StopAsyncIteration:
+                        break
+
         except BadRequestError as ex:
             if ex.code == "content_filter":
                 raise OpenAIContentFilterException(
@@ -366,6 +406,8 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                 f"{type(self)} service failed to complete the prompt",
                 inner_exception=ex,
             ) from ex
+        except asyncio.CancelledError:
+            raise
         except Exception as ex:
             raise ServiceResponseException(
                 f"{type(self)} service failed to complete the prompt",

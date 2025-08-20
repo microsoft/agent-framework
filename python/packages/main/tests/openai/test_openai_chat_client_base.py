@@ -54,6 +54,7 @@ def mock_streaming_chat_completion_response() -> AsyncStream[ChatCompletionChunk
     )
     stream = MagicMock(spec=AsyncStream)
     stream.__aiter__.return_value = [content]
+    stream.__anext__ = AsyncMock(side_effect=[content, StopAsyncIteration])
     return stream
 
 
@@ -212,6 +213,8 @@ async def test_get_streaming(
     )
     stream = MagicMock(spec=AsyncStream)
     stream.__aiter__.return_value = [content1, content2]
+    stream.__anext__ = AsyncMock(side_effect=[content1, content2, StopAsyncIteration])
+
     mock_create.return_value = stream
     chat_history.append(ChatMessage(role="user", text="hello world"))
     orig_chat_history = deepcopy(chat_history)
@@ -251,6 +254,8 @@ async def test_get_streaming_singular(
     )
     stream = MagicMock(spec=AsyncStream)
     stream.__aiter__.return_value = [content1, content2]
+    stream.__anext__ = AsyncMock(side_effect=[content1, content2, StopAsyncIteration])
+
     mock_create.return_value = stream
     chat_history.append(ChatMessage(role="user", text="hello world"))
     orig_chat_history = deepcopy(chat_history)
@@ -290,6 +295,7 @@ async def test_get_streaming_structured_output_no_fcc(
     )
     stream = MagicMock(spec=AsyncStream)
     stream.__aiter__.return_value = [content1, content2]
+    stream.__anext__ = AsyncMock(side_effect=[content1, content2, StopAsyncIteration])
     mock_create.return_value = stream
     chat_history.append(ChatMessage(role="user", text="hello world"))
 

@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import json
 import sys
 from collections.abc import AsyncIterable, Mapping, MutableMapping, MutableSequence
@@ -20,6 +21,7 @@ from openai.types.beta.threads.run_submit_tool_outputs_params import ToolOutput
 from openai.types.beta.threads.runs import RunStep
 from pydantic import Field, PrivateAttr, SecretStr, ValidationError
 
+from .._cancellation_token import CancellationToken
 from .._clients import ChatClientBase, use_tool_calling
 from .._tools import AIFunction, HostedCodeInterpreterTool, HostedFileSearchTool
 from .._types import (
@@ -142,10 +144,13 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
         *,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions,
+        cancellation_token: CancellationToken | None,
         **kwargs: Any,
     ) -> ChatResponse:
         return await ChatResponse.from_chat_response_generator(
-            updates=self._inner_get_streaming_response(messages=messages, chat_options=chat_options, **kwargs),
+            updates=self._inner_get_streaming_response(
+                messages=messages, chat_options=chat_options, cancellation_token=cancellation_token, **kwargs
+            ),
             output_format_type=chat_options.response_format,
         )
 
@@ -154,6 +159,7 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
         *,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions,
+        cancellation_token: CancellationToken | None,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         # Extract necessary state from messages and options
@@ -168,16 +174,22 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
             raise ValueError("No thread ID was provided, but chat messages includes tool results.")
 
         # Determine which assistant to use and create if needed
-        assistant_id = await self._get_assistant_id_or_create()
+        assistant_id = await self._get_assistant_id_or_create(cancellation_token)
 
         # Create the streaming response
-        stream, thread_id = await self._create_assistant_stream(thread_id, assistant_id, run_options, tool_results)
+        stream, thread_id = await self._create_assistant_stream(
+            thread_id,
+            assistant_id,
+            run_options,
+            tool_results,
+            cancellation_token,
+        )
 
         # Process and yield each update from the stream
-        async for update in self._process_stream_events(stream, thread_id):
+        async for update in self._process_stream_events(stream, thread_id, cancellation_token):
             yield update
 
-    async def _get_assistant_id_or_create(self) -> str:
+    async def _get_assistant_id_or_create(self, cancellation_token: CancellationToken | None) -> str:
         """Determine which assistant to use and create if needed.
 
         Returns:
@@ -185,9 +197,12 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
         """
         # If no assistant is provided, create a temporary assistant
         if self.assistant_id is None:
-            created_assistant = await self.client.beta.assistants.create(
-                name=self.assistant_name, model=self.ai_model_id
+            future = asyncio.ensure_future(
+                self.client.beta.assistants.create(name=self.assistant_name, model=self.ai_model_id)
             )
+            if cancellation_token:
+                cancellation_token.link_future(future)
+            created_assistant = await future
 
             self.assistant_id = created_assistant.id
             self._should_delete_assistant = True
@@ -200,6 +215,7 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
         assistant_id: str,
         run_options: dict[str, Any],
         tool_results: list[FunctionResultContent] | None,
+        cancellation_token: CancellationToken | None,
     ) -> tuple[Any, str]:
         """Create the assistant stream for processing.
 
@@ -207,7 +223,7 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
             tuple: (stream, final_thread_id)
         """
         # Get any active run for this thread
-        thread_run = await self._get_active_thread_run(thread_id)
+        thread_run = await self._get_active_thread_run(thread_id, cancellation_token)
 
         tool_run_id, tool_outputs = self._convert_function_results_to_tool_output(tool_results)
 
@@ -219,115 +235,151 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
             final_thread_id = thread_run.thread_id
         else:
             # Handle thread creation or cancellation
-            final_thread_id = await self._prepare_thread(thread_id, thread_run, run_options)
+            final_thread_id = await self._prepare_thread(thread_id, thread_run, run_options, cancellation_token)
 
             # Now create a new run and stream the results.
             stream = self.client.beta.threads.runs.stream(  # type: ignore[reportDeprecated]
                 assistant_id=assistant_id, thread_id=final_thread_id, **run_options
             )
-
         return stream, final_thread_id
 
-    async def _get_active_thread_run(self, thread_id: str | None) -> Run | None:
+    async def _get_active_thread_run(
+        self, thread_id: str | None, cancellation_token: CancellationToken | None
+    ) -> Run | None:
         """Get any active run for the given thread."""
         if thread_id is None:
             return None
 
-        async for run in self.client.beta.threads.runs.list(thread_id=thread_id, limit=1, order="desc"):  # type: ignore[reportDeprecated]
-            if run.status not in ["completed", "cancelled", "failed", "expired"]:
-                return run
-        return None
+        stream_future = asyncio.ensure_future(
+            self.client.beta.threads.runs.list(thread_id=thread_id, limit=1, order="desc")
+        )
+        if cancellation_token:
+            cancellation_token.link_future(stream_future)
+        stream = await stream_future
+        while True:
+            try:
+                # A little bit of a hack to make this cancellable
+                run_future = asyncio.ensure_future(anext(aiter(stream)))
+                if cancellation_token is not None:
+                    cancellation_token.link_future(run_future)
+                run: Run = await run_future
+                if run.status not in ["completed", "cancelled", "failed", "expired"]:
+                    return run
+            except StopAsyncIteration:
+                return None
 
-    async def _prepare_thread(self, thread_id: str | None, thread_run: Run | None, run_options: dict[str, Any]) -> str:
+    async def _prepare_thread(
+        self,
+        thread_id: str | None,
+        thread_run: Run | None,
+        run_options: dict[str, Any],
+        cancellation_token: CancellationToken | None,
+    ) -> str:
         """Prepare the thread for a new run, creating or cleaning up as needed."""
         if thread_id is None:
             # No thread ID was provided, so create a new thread.
-            thread = await self.client.beta.threads.create(  # type: ignore[reportDeprecated]
-                messages=run_options["additional_messages"],
-                tool_resources=run_options.get("tool_resources"),
-                metadata=run_options.get("metadata"),
+            thread_future = asyncio.ensure_future(
+                self.client.beta.threads.create(  # type: ignore[reportDeprecated]
+                    messages=run_options["additional_messages"],
+                    tool_resources=run_options.get("tool_resources"),
+                    metadata=run_options.get("metadata"),
+                )
             )
+            if cancellation_token:
+                cancellation_token.link_future(thread_future)
+            thread = await thread_future
             run_options["additional_messages"] = []
             run_options.pop("tool_resources", None)
             return thread.id
 
         if thread_run is not None:
+            # Does this need to be cancellable?
             # There was an active run; we need to cancel it before starting a new run.
             await self.client.beta.threads.runs.cancel(run_id=thread_run.id, thread_id=thread_id)  # type: ignore[reportDeprecated]
 
         return thread_id
 
-    async def _process_stream_events(self, stream: Any, thread_id: str) -> AsyncIterable[ChatResponseUpdate]:
+    async def _process_stream_events(
+        self, stream: Any, thread_id: str, cancellation_token: CancellationToken | None
+    ) -> AsyncIterable[ChatResponseUpdate]:
         response_id: str | None = None
 
         async with stream as response_stream:
-            async for response in response_stream:
-                if response.event == "thread.run.created":
-                    yield ChatResponseUpdate(
-                        contents=[],
-                        conversation_id=thread_id,
-                        message_id=response_id,
-                        raw_representation=response.data,
-                        response_id=response_id,
-                        role=ChatRole.ASSISTANT,
-                    )
-                elif response.event == "thread.run.step.created" and isinstance(response.data, RunStep):
-                    response_id = response.data.run_id
-                elif response.event == "thread.message.delta" and isinstance(response.data, MessageDeltaEvent):
-                    delta = response.data.delta
-                    role = ChatRole.USER if delta.role == "user" else ChatRole.ASSISTANT
+            while True:
+                try:
+                    response_future = asyncio.ensure_future(anext(response_stream))
+                    if cancellation_token:
+                        cancellation_token.link_future(response_future)
+                    response = await response_future
 
-                    for delta_block in delta.content or []:
-                        if isinstance(delta_block, TextDeltaBlock) and delta_block.text and delta_block.text.value:
+                    if response.event == "thread.run.created":
+                        yield ChatResponseUpdate(
+                            contents=[],
+                            conversation_id=thread_id,
+                            message_id=response_id,
+                            raw_representation=response.data,
+                            response_id=response_id,
+                            role=ChatRole.ASSISTANT,
+                        )
+                    elif response.event == "thread.run.step.created" and isinstance(response.data, RunStep):
+                        response_id = response.data.run_id
+                    elif response.event == "thread.message.delta" and isinstance(response.data, MessageDeltaEvent):
+                        delta = response.data.delta
+                        role = ChatRole.USER if delta.role == "user" else ChatRole.ASSISTANT
+
+                        for delta_block in delta.content or []:
+                            if isinstance(delta_block, TextDeltaBlock) and delta_block.text and delta_block.text.value:
+                                yield ChatResponseUpdate(
+                                    role=role,
+                                    text=delta_block.text.value,
+                                    conversation_id=thread_id,
+                                    message_id=response_id,
+                                    raw_representation=response.data,
+                                    response_id=response_id,
+                                )
+                    elif response.event == "thread.run.requires_action" and isinstance(response.data, Run):
+                        contents = self._create_function_call_contents(response.data, response_id)
+                        if contents:
                             yield ChatResponseUpdate(
-                                role=role,
-                                text=delta_block.text.value,
+                                role=ChatRole.ASSISTANT,
+                                contents=contents,
                                 conversation_id=thread_id,
                                 message_id=response_id,
                                 raw_representation=response.data,
                                 response_id=response_id,
                             )
-                elif response.event == "thread.run.requires_action" and isinstance(response.data, Run):
-                    contents = self._create_function_call_contents(response.data, response_id)
-                    if contents:
+                    elif (
+                        response.event == "thread.run.completed"
+                        and isinstance(response.data, Run)
+                        and response.data.usage is not None
+                    ):
+                        usage = response.data.usage
+                        usage_content = UsageContent(
+                            UsageDetails(
+                                input_token_count=usage.prompt_tokens,
+                                output_token_count=usage.completion_tokens,
+                                total_token_count=usage.total_tokens,
+                            )
+                        )
                         yield ChatResponseUpdate(
                             role=ChatRole.ASSISTANT,
-                            contents=contents,
+                            contents=[usage_content],
                             conversation_id=thread_id,
                             message_id=response_id,
                             raw_representation=response.data,
                             response_id=response_id,
                         )
-                elif (
-                    response.event == "thread.run.completed"
-                    and isinstance(response.data, Run)
-                    and response.data.usage is not None
-                ):
-                    usage = response.data.usage
-                    usage_content = UsageContent(
-                        UsageDetails(
-                            input_token_count=usage.prompt_tokens,
-                            output_token_count=usage.completion_tokens,
-                            total_token_count=usage.total_tokens,
+                    else:
+                        yield ChatResponseUpdate(
+                            contents=[],
+                            conversation_id=thread_id,
+                            message_id=response_id,
+                            raw_representation=response.data,
+                            response_id=response_id,
+                            role=ChatRole.ASSISTANT,
                         )
-                    )
-                    yield ChatResponseUpdate(
-                        role=ChatRole.ASSISTANT,
-                        contents=[usage_content],
-                        conversation_id=thread_id,
-                        message_id=response_id,
-                        raw_representation=response.data,
-                        response_id=response_id,
-                    )
-                else:
-                    yield ChatResponseUpdate(
-                        contents=[],
-                        conversation_id=thread_id,
-                        message_id=response_id,
-                        raw_representation=response.data,
-                        response_id=response_id,
-                        role=ChatRole.ASSISTANT,
-                    )
+                except StopAsyncIteration:
+                    break
 
     def _create_function_call_contents(self, event_data: Run, response_id: str | None) -> list[AIContents]:
         """Create function call contents from a tool action event."""

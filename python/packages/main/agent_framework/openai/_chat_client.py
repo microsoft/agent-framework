@@ -79,6 +79,8 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
                 f"{type(self)} service failed to complete the prompt",
                 ex,
             ) from ex
+        except asyncio.CancelledError:
+            raise
         except Exception as ex:
             raise ServiceResponseException(
                 f"{type(self)} service failed to complete the prompt",
@@ -106,6 +108,8 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
                     if cancellation_token is not None:
                         cancellation_token.link_future(chunk_future)
                     chunk = await chunk_future
+                    if len(chunk.choices) == 0 and chunk.usage is None:
+                        continue
                     yield self._create_chat_response_update(chunk)
                 except StopAsyncIteration:
                     break
@@ -119,6 +123,8 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
                 f"{type(self)} service failed to complete the prompt",
                 ex,
             ) from ex
+        except asyncio.CancelledError:
+            raise
         except Exception as ex:
             raise ServiceResponseException(
                 f"{type(self)} service failed to complete the prompt",
