@@ -109,7 +109,7 @@ var persistentAgentMetadata = await persistentAgentsClient.Administration.Create
     name: JokerName,
     instructions: JokerInstructions);
 
-// Get a server side agent.
+// Get the persistent agent we created in the previous step and expose it as an Agent Framework agent.
 AIAgent agent = await persistentAgentsClient.GetAIAgentAsync(persistentAgent.Value.Id);
 
 // Respond to user input.
