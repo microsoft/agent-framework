@@ -53,7 +53,6 @@ public sealed class AIAgent_With_OpenAIResponseClient(ITestOutputHelper output) 
     public async Task RunWithResponsesAndStoreOutputDisabled()
     {
         // Get the agent directly from OpenAIClient.
-        // Get the agent directly from OpenAIClient.
         AIAgent agent = new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
             .GetOpenAIResponseClient(TestConfiguration.OpenAI.ChatModelId)
             .CreateAIAgent(options: new()
