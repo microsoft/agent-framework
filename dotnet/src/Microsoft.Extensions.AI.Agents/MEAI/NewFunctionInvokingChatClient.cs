@@ -489,13 +489,10 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
                 }
                 else
                 {
-                    if (!hasApprovalRequiringFcc)
-                    {
-                        // Check if any of the function call contents in this update requires approval.
-                        // We only do this until we find the first one that requires approval.
-                        (hasApprovalRequiringFcc, lastApprovalCheckedFCCIndex) = await CheckForApprovalRequiringFCCAsync(
-                            functionCallContents, approvalRequiredFunctions, hasApprovalRequiringFcc, lastApprovalCheckedFCCIndex);
-                    }
+                    // Check if any of the function call contents in this update requires approval.
+                    // Once we find the first one that requires approval, this method becomes a no-op.
+                    (hasApprovalRequiringFcc, lastApprovalCheckedFCCIndex) = await CheckForApprovalRequiringFCCAsync(
+                        functionCallContents, approvalRequiredFunctions, hasApprovalRequiringFcc, lastApprovalCheckedFCCIndex);
 
                     // We've encountered a function call content that requires approval (either in this update or ealier)
                     // so we need to ask for approval for all functions, since we cannot mix and match.
@@ -1080,10 +1077,10 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
 
         // Wrap the function call content in message(s).
         ICollection<ChatMessage>? allPreInvocationCallMessages = ConvertToFunctionCallContentMessages(
-            [.. notExecutedResponses.rejections ?? [], .. notExecutedResponses.approvals ?? []], null);
+            [.. notExecutedResponses.rejections ?? [], .. notExecutedResponses.approvals ?? []], functionCallContentFallbackMessageId);
 
         // Generate failed function result contents for any rejected requests and wrap it in a message.
-        List<AIContent>? rejectedFunctionCallResults = GenerateRejectedFunctionResults(notExecutedResponses.rejections, toolResponseId, functionCallContentFallbackMessageId);
+        List<AIContent>? rejectedFunctionCallResults = GenerateRejectedFunctionResults(notExecutedResponses.rejections, toolResponseId);
         ChatMessage? rejectedPreInvocationResultsMessage = rejectedFunctionCallResults != null ?
             new ChatMessage(ChatRole.Tool, rejectedFunctionCallResults) { MessageId = toolResponseId } :
             null;
@@ -1262,12 +1259,10 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
     /// </summary>
     /// <param name="rejections">Any rejected approval responses.</param>
     /// <param name="toolResponseId">The message id to use for the tool response.</param>
-    /// <param name="fallbackMessageId">Optional message id to use if no original approval request message is availble to copy from.</param>
     /// <returns>The <see cref="AIContent"/> for the rejected function calls.</returns>
     private static List<AIContent>? GenerateRejectedFunctionResults(
         List<ApprovalResultWithRequestMessage>? rejections,
-        string? toolResponseId,
-        string? fallbackMessageId)
+        string? toolResponseId)
     {
         List<AIContent>? functionResultContent = null;
 
@@ -1286,6 +1281,11 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
         return functionResultContent;
     }
 
+    /// <summary>
+    /// Extracts the <see cref="FunctionCallContent"/> from the provided <see cref="FunctionApprovalResponseContent"/> to recreate the original function call messages.
+    /// The output messages tries to mimic the original messages that contained the <see cref="FunctionCallContent"/>, e.g. if the <see cref="FunctionCallContent"/> had been split into separate messages,
+    /// this method will recreate similarly split messages, each with their own <see cref="FunctionCallContent"/>.
+    /// </summary>
 #pragma warning disable CA1859 // Use concrete types when possible for improved performance
     private static ICollection<ChatMessage>? ConvertToFunctionCallContentMessages(IEnumerable<ApprovalResultWithRequestMessage>? resultWithRequestMessages, string? fallbackMessageId)
 #pragma warning restore CA1859 // Use concrete types when possible for improved performance
@@ -1297,7 +1297,9 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
 
             foreach (var resultWithRequestMessage in resultWithRequestMessages)
             {
-                if (currentMessage is not null && messagesById is null && currentMessage.MessageId != resultWithRequestMessage.RequestMessage?.MessageId)
+                if (currentMessage is not null && messagesById is null // Don't need to create a dictionary on the first iteration or if we alrady have one.
+                    && !(resultWithRequestMessage.RequestMessage is null && currentMessage.MessageId == fallbackMessageId) // Everywhere we have no RequestMessage we use the fallbackMessageId, so in this case there is only one message.
+                    && (resultWithRequestMessage.RequestMessage is not null && currentMessage.MessageId != resultWithRequestMessage.RequestMessage?.MessageId)) // Where we do have a RequestMessage, we can check if its message id differs from the current one.
                 {
                     // The majority of the time, all FCC would be part of a single message, so no need to create a dictionary for this case.
                     // If we are dealing with multiple messages though, we need to keep track of them by their message ID.
@@ -1331,6 +1333,10 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
         return null;
     }
 
+    /// <summary>
+    /// Takes the <see cref="FunctionCallContent"/> from the <paramref name="resultWithRequestMessage"/> and wraps it in a <see cref="ChatMessage"/>
+    /// using the same message id that the <see cref="FunctionCallContent"/> was originally returned with from the downstream <see cref="IChatClient"/>.
+    /// </summary>
     private static ChatMessage ConvertToFunctionCallContentMessage(ApprovalResultWithRequestMessage resultWithRequestMessage, string? fallbackMessageId)
     {
         if (resultWithRequestMessage.RequestMessage is not null)
@@ -1344,12 +1350,23 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
         return new ChatMessage(ChatRole.Assistant, [resultWithRequestMessage.Response.FunctionCall]) { MessageId = fallbackMessageId };
     }
 
+    /// <summary>
+    /// Check if any of the provided <paramref name="functionCallContents"/> require approval.
+    /// Supports checking from a provided index up to the end of the list, to allow efficient incremental checking
+    /// when streaming.
+    /// </summary>
     private static async Task<(bool hasApprovalRequiringFcc, int lastApprovalCheckedFCCIndex)> CheckForApprovalRequiringFCCAsync(
         List<FunctionCallContent>? functionCallContents,
         ApprovalRequiredAIFunction[] approvalRequiredFunctions,
         bool hasApprovalRequiringFcc,
         int lastApprovalCheckedFCCIndex)
     {
+        // If we already found an approval requiring FCC, we can skip checking the rest.
+        if (hasApprovalRequiringFcc)
+        {
+            return (true, functionCallContents?.Count ?? 0);
+        }
+
         for (; lastApprovalCheckedFCCIndex < (functionCallContents?.Count ?? 0); lastApprovalCheckedFCCIndex++)
         {
             var fcc = functionCallContents![lastApprovalCheckedFCCIndex];

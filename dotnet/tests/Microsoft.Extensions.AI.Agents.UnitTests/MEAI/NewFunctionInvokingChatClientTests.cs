@@ -472,6 +472,82 @@ public class NewFunctionInvokingChatClientTests
         await InvokeAndAssertStreamingAsync(options, input, downstreamClientOutput, output, expectedDownstreamClientInput);
     }
 
+    [Fact]
+    public async Task ApprovalRequestWithoutApprovalResponseThrowsAsync()
+    {
+        var options = new ChatOptions
+        {
+            Tools =
+            [
+                new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => "Result 1", "Func1")),
+                AIFunctionFactory.Create((int i) => $"Result 2: {i}", "Func2"),
+            ]
+        };
+
+        List<ChatMessage> input =
+        [
+            new ChatMessage(ChatRole.User, "hello"),
+            new ChatMessage(ChatRole.Assistant,
+            [
+                new FunctionApprovalRequestContent("callId1", new FunctionCallContent("callId1", "Func1")),
+            ]) { MessageId = "resp1" },
+        ];
+
+        var invokeException = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await InvokeAndAssertAsync(options, input, [], [], []));
+        Assert.Equal("FunctionApprovalRequestContent found with FunctionCall.CallId(s) 'callId1' that have no matching FunctionApprovalResponseContent.", invokeException.Message);
+
+        var invokeStreamingException = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await InvokeAndAssertStreamingAsync(options, input, [], [], []));
+        Assert.Equal("FunctionApprovalRequestContent found with FunctionCall.CallId(s) 'callId1' that have no matching FunctionApprovalResponseContent.", invokeStreamingException.Message);
+    }
+
+    [Fact]
+    public async Task ApprovedApprovalResponsesWithoutApprovalRequestAreExecutedAsync()
+    {
+        var options = new ChatOptions
+        {
+            Tools =
+            [
+                new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => "Result 1", "Func1")),
+                AIFunctionFactory.Create((int i) => $"Result 2: {i}", "Func2"),
+            ]
+        };
+
+        List<ChatMessage> input =
+        [
+            new ChatMessage(ChatRole.User, "hello"),
+            new ChatMessage(ChatRole.User,
+            [
+                new FunctionApprovalResponseContent("callId1", true, new FunctionCallContent("callId1", "Func1")),
+                new FunctionApprovalResponseContent("callId2", true, new FunctionCallContent("callId2", "Func2", arguments: new Dictionary<string, object?> { { "i", 42 } }))
+            ]),
+        ];
+
+        List<ChatMessage> expectedDownstreamClientInput =
+        [
+            new ChatMessage(ChatRole.User, "hello"),
+            new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("callId1", "Func1"), new FunctionCallContent("callId2", "Func2", arguments: new Dictionary<string, object?> { { "i", 42 } })]),
+            new ChatMessage(ChatRole.Tool, [new FunctionResultContent("callId1", result: "Result 1"), new FunctionResultContent("callId2", result: "Result 2: 42")]),
+        ];
+
+        List<ChatMessage> downstreamClientOutput =
+        [
+            new ChatMessage(ChatRole.Assistant, "world"),
+        ];
+
+        List<ChatMessage> output =
+        [
+            new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("callId1", "Func1"), new FunctionCallContent("callId2", "Func2", arguments: new Dictionary<string, object?> { { "i", 42 } })]),
+            new ChatMessage(ChatRole.Tool, [new FunctionResultContent("callId1", result: "Result 1"), new FunctionResultContent("callId2", result: "Result 2: 42")]),
+            new ChatMessage(ChatRole.Assistant, "world"),
+        ];
+
+        //await InvokeAndAssertAsync(options, input, downstreamClientOutput, output, expectedDownstreamClientInput);
+
+        await InvokeAndAssertStreamingAsync(options, input, downstreamClientOutput, output, expectedDownstreamClientInput);
+    }
+
     /// <summary>
     /// Since we do not have a way of supporting both functions that require approval and those that do not
     /// in one invocation, we always require all function calls to be approved if any require approval.
