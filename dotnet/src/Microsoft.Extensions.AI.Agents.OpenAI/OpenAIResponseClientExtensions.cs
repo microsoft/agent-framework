@@ -60,7 +60,9 @@ public static class OpenAIResponseClientExtensions
         Throw.IfNull(client);
         Throw.IfNull(options);
 
-        var chatClient = client.AsIChatClient();
+#pragma warning disable CA2000 // Dispose objects before losing scope
+        var chatClient = new NewOpenAIResponsesChatClient(client);
+#pragma warning restore CA2000 // Dispose objects before losing scope
         ChatClientAgent agent = new(chatClient, options, loggerFactory);
         return agent;
     }

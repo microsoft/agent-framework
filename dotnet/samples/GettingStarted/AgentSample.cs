@@ -108,9 +108,10 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
                 .GetChatClient(TestConfiguration.AzureOpenAI.DeploymentName)
                 .AsIChatClient();
 
+#pragma warning disable CA1859 // Use concrete types when possible for improved performance
     private IChatClient GetOpenAIResponsesClient()
-        => new OpenAIResponseClient(TestConfiguration.OpenAI.ChatModelId, TestConfiguration.OpenAI.ApiKey)
-            .AsIChatClient();
+#pragma warning restore CA1859 // Use concrete types when possible for improved performance
+        => new NewOpenAIResponsesChatClient(new OpenAIResponseClient(TestConfiguration.OpenAI.ChatModelId, TestConfiguration.OpenAI.ApiKey));
 
     private NewPersistentAgentsChatClient GetAzureAIAgentPersistentClient(ChatClientAgentOptions options)
         => new(new PersistentAgentsClient(TestConfiguration.AzureAI.Endpoint, new AzureCliCredential()), options.Id!);
