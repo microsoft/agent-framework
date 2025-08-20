@@ -108,7 +108,10 @@ class WorkflowGraphValidator:
         self._edge_groups = edge_groups
 
         # If only the start executor exists, add it to the executor map
-        # This allows us to support single executor workflows without edges.
+        # Handle the special case where the workflow consists of only a single executor and no edges.
+        # In this scenario, the executor map will be empty because there are no edge groups to reference executors.
+        # Adding the start executor to the map ensures that single-executor workflows (without any edges) are supported,
+        # allowing validation and execution to proceed for workflows that do not require inter-executor communication.
         if not self._executors and start_executor:
             self._executors[start_executor.id] = start_executor
 
