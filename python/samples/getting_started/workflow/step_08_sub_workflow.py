@@ -150,13 +150,15 @@ class SmartEmailOrchestrator(Executor):
             await ctx.send_message(request, target_id="email_validator_workflow")
 
     @intercepts_request(DomainCheckRequest)
-    async def check_domain(self, request: DomainCheckRequest, ctx: WorkflowContext) -> RequestResponse:
+    async def check_domain(
+        self, request: DomainCheckRequest, ctx: WorkflowContext
+    ) -> RequestResponse[DomainCheckRequest, bool]:
         """Intercept domain check requests from sub-workflows."""
         print(f"Intercepted domain check for: {request.domain}")
 
         if request.domain in self.approved_domains:
             print(f"Domain {request.domain} is pre-approved!")
-            return RequestResponse.handled(True)
+            return RequestResponse[DomainCheckRequest, bool].handled(True)
         print(f"Domain {request.domain} unknown, forwarding to external check")
         return RequestResponse.forward()
 
@@ -168,13 +170,6 @@ class SmartEmailOrchestrator(Executor):
         if len(self.results) == self.expected_result_count:
             print("All results collected, workflow completed!")
             await ctx.add_event(WorkflowFinished())
-
-    # Remove the placeholder handler - the base Executor class will handle it automatically
-    # @handler(output_types=[])
-    # async def handle_sub_workflow_request(self, request: SubWorkflowRequestInfo, ctx: WorkflowContext) -> None:
-    #     """Handle sub-workflow requests - enables the interception mechanism."""
-    #     # This handler ensures SubWorkflowRequestInfo messages are routed to the @intercepts_request methods
-    #     pass
 
 
 async def main():

@@ -195,7 +195,6 @@ class Executor:
 
                         forward_message = Message(
                             source_id=self.id,
-                            target_id="main_request_info",  # Hardcode the main RequestInfoExecutor ID
                             data=request,
                         )
                         await ctx.send_message(forward_message)

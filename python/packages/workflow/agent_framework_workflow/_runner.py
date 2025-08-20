@@ -141,7 +141,7 @@ class Runner:
 
             # Special handling for SubWorkflowRequestInfo messages
             async def _deliver_sub_workflow_requests(messages: list[Message]) -> None:
-                from ._executor import RequestInfoExecutor, SubWorkflowRequestInfo
+                from ._executor import SubWorkflowRequestInfo
 
                 # Handle SubWorkflowRequestInfo messages - only process those not already targeted
                 sub_workflow_messages = []
@@ -149,7 +149,7 @@ class Runner:
                     # Skip messages sent directly to RequestInfoExecutor - they are already forwarded
                     if self._is_message_to_request_info_executor(msg):
                         continue
-                        
+
                     if isinstance(msg.data, SubWorkflowRequestInfo):
                         sub_workflow_messages.append(msg)
 
@@ -168,6 +168,7 @@ class Runner:
                         if (
                             hasattr(executor, "_request_interceptors")
                             and wrapped_type in executor._request_interceptors
+                            and executor._id != message.source_id
                         ):
                             # Send directly to the intercepting executor
                             await executor.execute(sub_request, self._ctx)
@@ -178,7 +179,7 @@ class Runner:
                         # No interceptor found - send directly to RequestInfoExecutor
                         # Find the RequestInfoExecutor instance
                         request_info_executor = self._find_request_info_executor()
-                        
+
                         if request_info_executor:
                             await request_info_executor.execute(sub_request, self._ctx)
 
@@ -189,7 +190,7 @@ class Runner:
 
             # Filter out SubWorkflowRequestInfo messages from normal edge routing
             # since they were handled specially
-            from ._executor import RequestInfoExecutor, SubWorkflowRequestInfo
+            from ._executor import SubWorkflowRequestInfo
 
             non_sub_workflow_messages = []
             for msg in messages:
@@ -201,7 +202,7 @@ class Runner:
                 # Skip SubWorkflowRequestInfo messages (handled by special routing)
                 if isinstance(msg.data, SubWorkflowRequestInfo):
                     continue
-                    
+
                 non_sub_workflow_messages.append(msg)
 
             # Handle other messages normally
@@ -356,11 +357,12 @@ class Runner:
 
     def _find_request_info_executor(self) -> "RequestInfoExecutor | None":
         """Find the RequestInfoExecutor instance in this workflow.
-        
+
         Returns:
             The RequestInfoExecutor instance if found, None otherwise.
         """
         from ._executor import RequestInfoExecutor
+
         for edges in self._edge_map.values():
             for edge in edges:
                 if isinstance(edge.target, RequestInfoExecutor):
@@ -369,17 +371,18 @@ class Runner:
 
     def _is_message_to_request_info_executor(self, msg: "Message") -> bool:
         """Check if message targets any RequestInfoExecutor in this workflow.
-        
+
         Args:
             msg: The message to check.
-            
+
         Returns:
             True if the message targets a RequestInfoExecutor, False otherwise.
         """
         from ._executor import RequestInfoExecutor
+
         if not msg.target_id:
             return False
-        
+
         # Check all executors to see if target_id matches a RequestInfoExecutor
         for edges in self._edge_map.values():
             for edge in edges:
