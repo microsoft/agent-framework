@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics;
 using System.Threading.Tasks;
 using Microsoft.Shared.Diagnostics;
 
@@ -23,16 +24,17 @@ internal class InputEdgeRunner(IRunnerContext runContext, string sinkId)
         return await this.RunContext.EnsureExecutorAsync(this.EdgeData).ConfigureAwait(false);
     }
 
-    public async ValueTask<object?> ChaseAsync(object message)
+    public async ValueTask<object?> ChaseAsync(MessageEnvelope envelope)
     {
         Executor target = await this.FindExecutorAsync().ConfigureAwait(false);
-        if (target.CanHandle(message.GetType()))
+        if (target.CanHandle(envelope.MessageType))
         {
-            return await target.ExecuteAsync(message, this.WorkflowContext)
+            return await target.ExecuteAsync(envelope.Message, envelope.MessageType, this.WorkflowContext)
                                .ConfigureAwait(false);
         }
 
-        // TODO: Throw instead?
+        // TODO: Throw instead? / Log
+        Debug.WriteLine($"Executor {target.Id} cannot handle message of type {envelope.MessageType.FullName}. Dropping.");
 
         return null;
     }
