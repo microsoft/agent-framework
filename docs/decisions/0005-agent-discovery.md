@@ -3,7 +3,7 @@
 status: proposed
 contact: dmkorolev
 date: 2025-08-20
-deciders: adityam, Reuben.Bond, sergeymenshykh, markwallace, rbarreto, dmytrostruk, westey-m, eavanvalkenburg, stephentoub
+deciders: adityam, reubenbond, sergeymenshykh, markwallace, rbarreto, dmytrostruk, westey-m, eavanvalkenburg, stephentoub
 consulted: 
 informed: 
 ---
