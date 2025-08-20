@@ -40,7 +40,7 @@ internal class EdgeMap
         this._inputRunner = new InputEdgeRunner(runContext, startExecutorId);
     }
 
-    public async ValueTask<IEnumerable<object?>> InvokeEdgeAsync(Edge edge, string sourceId, object message)
+    public async ValueTask<IEnumerable<object?>> InvokeEdgeAsync(Edge edge, string sourceId, MessageEnvelope message)
     {
         if (!this._edgeRunners.TryGetValue(edge, out object? edgeRunner))
         {
@@ -87,9 +87,9 @@ internal class EdgeMap
     }
 
     // TODO: Should we promote Input to a true "FlowEdge" type?
-    public async ValueTask<IEnumerable<object?>> InvokeInputAsync(object inputMessage)
+    public async ValueTask<IEnumerable<object?>> InvokeInputAsync(MessageEnvelope envelope)
     {
-        return [await this._inputRunner.ChaseAsync(inputMessage).ConfigureAwait(false)];
+        return [await this._inputRunner.ChaseAsync(envelope).ConfigureAwait(false)];
     }
 
     public async ValueTask<IEnumerable<object?>> InvokeResponseAsync(ExternalResponse response)
@@ -99,6 +99,6 @@ internal class EdgeMap
             throw new InvalidOperationException($"Port {response.Port.Id} not found in the edge map.");
         }
 
-        return [await portRunner.ChaseAsync(response).ConfigureAwait(false)];
+        return [await portRunner.ChaseAsync(new MessageEnvelope(response)).ConfigureAwait(false)];
     }
 }

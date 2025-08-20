@@ -7,16 +7,15 @@ namespace Microsoft.Agents.Workflows.Execution;
 
 internal class StepContext
 {
-    public Dictionary<ExecutorIdentity, List<object>> QueuedMessages { get; } = new();
+    public Dictionary<ExecutorIdentity, List<MessageEnvelope>> QueuedMessages { get; } = new();
 
     public bool HasMessages => this.QueuedMessages.Values.Any(messageList => messageList.Count > 0);
 
-    public List<object> MessagesFor(string? executorId)
+    public List<MessageEnvelope> MessagesFor(string? executorId)
     {
         if (!this.QueuedMessages.TryGetValue(executorId, out var messages))
         {
-            messages = new List<object>();
-            this.QueuedMessages[executorId] = messages;
+            this.QueuedMessages[executorId] = messages = new();
         }
 
         return messages;
