@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass
+from typing import Any
 
 from agent_framework.workflow import (
     Executor,
@@ -17,8 +18,7 @@ from agent_framework.workflow import (
 try:
     from agent_framework_workflow import (
         RequestResponse,
-        SubWorkflowRequestInfo,
-        SubWorkflowResponse,
+        WorkflowEvent,
         WorkflowExecutor,
         intercepts_request,
     )
@@ -82,13 +82,19 @@ class ValidationResult:
     reason: str
 
 
+class WorkflowFinished(WorkflowEvent):
+    """Event triggered when a workflow completes."""
+
+    def __init__(self, data: Any = None):
+        super().__init__(data)
+
+
 # Sub-workflow executor (completely standard)
 class EmailValidator(Executor):
     """Validates email addresses - doesn't know it's in a sub-workflow."""
 
     def __init__(self):
         super().__init__(id="email_validator")
-        self._pending_email = None
 
     @handler(output_types=[DomainCheckRequest, ValidationResult])
     async def validate(self, request: EmailValidationRequest, ctx: WorkflowContext) -> None:
@@ -113,14 +119,13 @@ class EmailValidator(Executor):
     async def handle_domain_response(self, approved: bool, ctx: WorkflowContext) -> None:
         """Handle domain check response."""
         print(f"Domain check result: {approved}")
-        if self._pending_email:
-            result = ValidationResult(
-                email=self._pending_email,
-                is_valid=approved,
-                reason="Domain approved" if approved else "Domain not approved",
-            )
-            await ctx.add_event(WorkflowCompletedEvent(data=result))
-            self._pending_email = None
+
+        result = ValidationResult(
+            email=self._pending_email,
+            is_valid=approved,
+            reason="Domain approved" if approved else "Domain not approved",
+        )
+        await ctx.add_event(WorkflowCompletedEvent(data=result))
 
 
 # Parent workflow with request interception
@@ -131,6 +136,7 @@ class SmartEmailOrchestrator(Executor):
         super().__init__(id="email_orchestrator")
         self.approved_domains = approved_domains or {"example.com", "test.org", "company.com"}
         self.results: list[ValidationResult] = []
+        self.expected_result_count: int
         print(f"Orchestrator knows about domains: {self.approved_domains}")
 
     @handler(output_types=[EmailValidationRequest])
@@ -139,6 +145,7 @@ class SmartEmailOrchestrator(Executor):
         print(f"Starting validation of {len(emails)} emails")
         for email in emails:
             request = EmailValidationRequest(email=email)
+            self.expected_result_count = len(emails)
             await ctx.send_message(request, target_id="email_validator_workflow")
 
     @intercepts_request(DomainCheckRequest)
@@ -157,6 +164,9 @@ class SmartEmailOrchestrator(Executor):
         """Collect validation results."""
         print(f"Collected result: {result.email} -> {result.is_valid} ({result.reason})")
         self.results.append(result)
+        if len(self.results) == self.expected_result_count:
+            print("All results collected, workflow completed!")
+            await ctx.add_event(WorkflowFinished())
 
     # Remove the placeholder handler - the base Executor class will handle it automatically
     # @handler(output_types=[])
@@ -214,23 +224,36 @@ async def main():
 
     # Step 5: Handle any external requests
     request_events = result.get_request_info_events()
+    running = True
+
     if request_events:
-        print(f"\nGot {len(request_events)} external request(s)")
-        for event in request_events:
-            print(f"   Request: {event.data}")
+        while running and request_events:
+            print(f"\nGot {len(request_events)} external request(s)")
 
-        # Handle external requests (simulate external services)
-        external_responses = {}
-        for event in request_events:
-            # For this demo, approve unknown.org from external service
-            if hasattr(event.data, "domain"):
-                domain = event.data.domain
-                approved = domain == "unknown.org"  # External service approves this
-                external_responses[event.request_id] = approved
-                print(f"   External check for {domain}: {approved}")
+            # Handle events (simulate external services)
+            external_responses = {}
+            for event in request_events:
+                if isinstance(event, WorkflowFinished):
+                    print(f"   Workflow finished: {event}")
+                    running = False
+                    continue
+                
+                # Only process RequestInfoEvent types
+                if hasattr(event, 'data') and event.data is not None:
+                    print(f"   Request: {event.data}")
+                    
+                    # For this demo, approve unknown.org from external service
+                    if hasattr(event.data, "domain"):
+                        domain = event.data.domain
+                        approved = domain == "unknown.org"  # External service approves this
+                        external_responses[event.request_id] = approved
+                        print(f"   External check for {domain}: {approved}")
+                else:
+                    print(f"   Event without data: {event}")
 
-        # Send responses back
-        await main_workflow.send_responses(external_responses)
+            # Send responses back
+            request_events = await main_workflow.send_responses(external_responses)
+            print("\nResponses sent back to the workflow!")
     else:
         print("\nAll requests were intercepted and handled internally!")
 
