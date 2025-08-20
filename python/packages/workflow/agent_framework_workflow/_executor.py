@@ -86,7 +86,7 @@ class Executor:
         for attr_name in dir(self):
             attr = getattr(self, attr_name)
             if callable(attr):
-                # Discover @handler methods
+                # Discover @handler methods and @intercepts_request methods
                 if hasattr(attr, "_handler_spec"):
                     handler_spec = attr._handler_spec  # type: ignore
                     message_type = handler_spec["message_type"]
