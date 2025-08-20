@@ -105,6 +105,9 @@ class WorkflowGraphValidator:
         self._edges = edges
         self._executors = self._build_executor_map(edges)
 
+        if not self._executors and start_executor:
+            self._executors[start_executor.id] = start_executor
+
         # Validate that start_executor exists in the graph
         # It should because we check for it in the WorkflowBuilder
         # but we do it here for completeness.
@@ -234,7 +237,7 @@ class WorkflowGraphValidator:
 
         # Also include intercepted request types as potential outputs
         # since @intercepts_request methods can forward requests
-        if hasattr(executor, '_request_interceptors'):
+        if hasattr(executor, "_request_interceptors"):
             for request_type in executor._request_interceptors.keys():
                 if isinstance(request_type, type):
                     output_types.append(request_type)
