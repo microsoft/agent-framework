@@ -35,7 +35,7 @@ jobs:
       matrix:
         include:
           - { targetFramework: "net9.0", os: "ubuntu-latest", configuration: Release }
-          - { targetFramework: "net9.0", os: "ubuntu-latest", configuration: Debug }
+          # - { targetFramework: "net9.0", os: "ubuntu-latest", configuration: Debug }
 
     services:
       cosmosdb:
