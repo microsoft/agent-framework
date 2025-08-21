@@ -12,7 +12,7 @@ using Microsoft.Extensions.AI.Agents.Runtime;
 
 namespace AgentWebChat.Web;
 
-public class A2AActorClient : IActorClient
+internal sealed class A2AActorClient : IActorClient
 {
     private readonly ILogger _logger;
     private readonly Uri _uri;

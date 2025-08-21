@@ -100,7 +100,9 @@ app.AttachA2AMessaging(agentName: "knights-and-knaves", path: "/a2a/knights-and-
     Name = "Knights and Knaves",
     Description = "An agent that helps you solve the knights and knaves puzzle.",
     Version = "1.0",
-    Url = "http://localhost:5390/a2a/knights-and-knaves"
+
+    // Url can be not set, and SDK will help assign it.
+    // Url = "http://localhost:5390/a2a/knights-and-knaves"
 });
 
 // Map the agents HTTP endpoints

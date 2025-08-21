@@ -58,7 +58,17 @@ public static class AIAgentExtensions
     {
         taskManager = agent.AttachA2AMessaging(actorClient, taskManager, loggerFactory);
 
-        taskManager.OnAgentCardQuery += (context, query) => Task.FromResult(agentCard);
+        taskManager.OnAgentCardQuery += (context, query) =>
+        {
+            if (agentCard.Url is null)
+            {
+                // A2A SDK assigns the url on its own
+                // we can help user if they did not set Url explicitly.
+                agentCard.Url = context;
+            }
+
+            return Task.FromResult(agentCard);
+        };
         return taskManager;
     }
 }
