@@ -37,7 +37,7 @@ class Executor:
         self._id = id or f"{self.__class__.__name__}/{uuid.uuid4()}"
 
         self._handlers: dict[type, Callable[[Any, WorkflowContext], Any]] = {}
-        self._request_interceptors: dict[type | str, dict] = {}
+        self._request_interceptors: dict[type | str, list[dict[str, Any]]] = {}
         self._discover_handlers()
 
         if not self._handlers:
@@ -115,7 +115,9 @@ class Executor:
                         "condition": getattr(attr, "_intercept_condition", None),
                     }
                     request_type = attr._intercepts_request  # type: ignore
-                    self._request_interceptors[request_type] = interceptor_info
+                    if request_type not in self._request_interceptors:
+                        self._request_interceptors[request_type] = []
+                    self._request_interceptors[request_type].append(interceptor_info)
 
     def _register_sub_workflow_handler(self) -> None:
         """Register automatic handler for SubWorkflowRequestInfo messages."""
@@ -133,7 +135,7 @@ class Executor:
         This is only active for executors that have @intercepts_request methods.
         """
         # Try to match against registered interceptors
-        for request_type, interceptor_info in self._request_interceptors.items():
+        for request_type, interceptor_list in self._request_interceptors.items():
             matched = False
 
             # Check type matching
@@ -148,62 +150,66 @@ class Executor:
                 matched = True
 
             if matched:
-                # Check workflow scope if specified
-                from_workflow = interceptor_info["from_workflow"]
-                if from_workflow and request.sub_workflow_id != from_workflow:
-                    continue  # Skip this interceptor, wrong workflow
+                # Check each interceptor in the list for this request type
+                for interceptor_info in interceptor_list:
+                    # Check workflow scope if specified
+                    from_workflow = interceptor_info["from_workflow"]
+                    if from_workflow and request.sub_workflow_id != from_workflow:
+                        continue  # Skip this interceptor, wrong workflow
 
-                # Check additional condition
-                condition = interceptor_info["condition"]
-                if condition and not condition(request):
-                    continue
+                    # Check additional condition
+                    condition = interceptor_info["condition"]
+                    if condition and not condition(request):
+                        continue
 
-                # Call the interceptor method
-                method = interceptor_info["method"]
-                response = await method(request.data, ctx)
+                    # Call the interceptor method
+                    method = interceptor_info["method"]
+                    response = await method(request.data, ctx)
 
-                # Check if interceptor handled it or needs to forward
-                if isinstance(response, RequestResponse):
-                    # Add automatic correlation info to the response
-                    correlated_response = RequestResponse._with_correlation(response, request.data, request.request_id)
-
-                    if correlated_response.is_handled:
-                        # Send response back to sub-workflow
-                        from ._runner_context import Message
-
-                        response_message = Message(
-                            source_id=self.id,
-                            target_id=request.sub_workflow_id,
-                            data=SubWorkflowResponse(
-                                request_id=request.request_id,
-                                data=correlated_response.data,
-                            ),
+                    # Check if interceptor handled it or needs to forward
+                    if isinstance(response, RequestResponse):
+                        # Add automatic correlation info to the response
+                        correlated_response = RequestResponse._with_correlation(
+                            response, request.data, request.request_id
                         )
-                        await ctx.send_message(response_message)
+
+                        if correlated_response.is_handled:
+                            # Send response back to sub-workflow
+                            from ._runner_context import Message
+
+                            response_message = Message(
+                                source_id=self.id,
+                                target_id=request.sub_workflow_id,
+                                data=SubWorkflowResponse(
+                                    request_id=request.request_id,
+                                    data=correlated_response.data,
+                                ),
+                            )
+                            await ctx.send_message(response_message)
+                        else:
+                            # Forward WITH CONTEXT PRESERVED
+                            # Update the data if interceptor provided a modified request
+                            if correlated_response.forward_request:
+                                request.data = correlated_response.forward_request
+
+                            # Send the inner request to RequestInfoExecutor to create external request
+                            from ._runner_context import Message
+
+                            forward_message = Message(
+                                source_id=self.id,
+                                data=request,
+                            )
+                            await ctx.send_message(forward_message)
                     else:
-                        # Forward WITH CONTEXT PRESERVED
-                        # Update the data if interceptor provided a modified request
-                        if correlated_response.forward_request:
-                            request.data = correlated_response.forward_request
-
-                        # Send the inner request to RequestInfoExecutor to create external request
-                        from ._runner_context import Message
-
-                        forward_message = Message(
-                            source_id=self.id,
-                            data=request,
+                        # Legacy support: direct return means handled
+                        await ctx.send_message(
+                            SubWorkflowResponse(
+                                request_id=request.request_id,
+                                data=response,
+                            ),
+                            target_id=request.sub_workflow_id,
                         )
-                        await ctx.send_message(forward_message)
-                else:
-                    # Legacy support: direct return means handled
-                    await ctx.send_message(
-                        SubWorkflowResponse(
-                            request_id=request.request_id,
-                            data=response,
-                        ),
-                        target_id=request.sub_workflow_id,
-                    )
-                return
+                    return
 
         # No interceptor found - forward inner request to RequestInfoExecutor
         # This sends the original request to RequestInfoExecutor

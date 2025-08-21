@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv run poe:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

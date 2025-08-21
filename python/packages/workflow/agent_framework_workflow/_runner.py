@@ -164,7 +164,7 @@ class Runner:
                             and executor._id != message.source_id
                         ):
                             # Send directly to the intercepting executor
-                            await executor.execute(sub_request, self._ctx)
+                            await executor.execute(sub_request, self._ctx)  # type: ignore[arg-type]
                             interceptor_found = True
                             break
 
