@@ -16,14 +16,14 @@ namespace Microsoft.Extensions.AI.Agents.Abstractions.UnitTests;
 public class InMemoryChatMessageStoreTests
 {
     [Fact]
-    public void Contructor_Throws_ForNullReducer()
+    public void Constructor_Throws_ForNullReducer()
     {
         // Arrange & Act & Assert
         Assert.Throws<ArgumentNullException>(() => new InMemoryChatMessageStore(null!));
     }
 
     [Fact]
-    public void Contructor_DefaultsToBeforeMessageRetrieval_ForNotProvidedTriggerEvent()
+    public void Constructor_DefaultsToBeforeMessageRetrieval_ForNotProvidedTriggerEvent()
     {
         // Arrange & Act
         var reducerMock = new Mock<IChatReducer>();
@@ -34,7 +34,7 @@ public class InMemoryChatMessageStoreTests
     }
 
     [Fact]
-    public void Contructor_Arguments_SetOnPropertiesCorrectly()
+    public void Constructor_Arguments_SetOnPropertiesCorrectly()
     {
         // Arrange & Act
         var reducerMock = new Mock<IChatReducer>();
