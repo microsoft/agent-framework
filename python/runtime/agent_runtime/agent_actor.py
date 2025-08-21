@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Union
 
 # Framework agent types
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../packages/main"))
@@ -52,20 +52,16 @@ class RequestStatus(Enum):
 
 
 @dataclass
-class ActorMessage:
-    """Base class for all actor system messages.
-
-    NOTE: timestamp must use default_factory to avoid all instances sharing the
-    same datetime value at import time (bug fix for initial implementation).
-    """
+class _ActorMessage:
+    """Base class for all actor system messages (not intended for direct use)."""
 
     message_id: str
     message_type: ActorMessageType
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(datetime.timezone.utc))
 
 
 @dataclass
-class ActorRequestMessage(ActorMessage):
+class ActorRequestMessage(_ActorMessage):
     """Request message sent to an actor"""
 
     method: str = ""
@@ -76,7 +72,7 @@ class ActorRequestMessage(ActorMessage):
 
 
 @dataclass
-class ActorResponseMessage(ActorMessage):
+class ActorResponseMessage(_ActorMessage):
     """Response message from an actor"""
 
     sender_id: ActorId | None = None
@@ -85,6 +81,10 @@ class ActorResponseMessage(ActorMessage):
 
     def __post_init__(self):
         self.message_type = ActorMessageType.RESPONSE
+
+
+# Type alias for the union of message types (public API)
+ActorMessage = Union[ActorRequestMessage, ActorResponseMessage]
 
 
 class ActorRuntimeContext(ABC):
