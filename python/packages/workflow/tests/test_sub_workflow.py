@@ -51,8 +51,10 @@ class EmailValidator(Executor):
     def __init__(self):
         super().__init__(id="email_validator")
 
-    @handler(output_types=[RequestInfoMessage, ValidationResult])
-    async def validate(self, request: EmailValidationRequest, ctx: WorkflowContext) -> None:
+    @handler
+    async def validate(
+        self, request: EmailValidationRequest, ctx: WorkflowContext[RequestInfoMessage | ValidationResult]
+    ) -> None:
         """Validate an email address."""
         # Extract domain and check if it's approved
         domain = request.email.split("@")[1] if "@" in request.email else ""
@@ -66,9 +68,9 @@ class EmailValidator(Executor):
         domain_check = DomainCheckRequest(domain=domain, email=request.email)
         await ctx.send_message(domain_check)
 
-    @handler(output_types=[ValidationResult])
+    @handler
     async def handle_domain_response(
-        self, response: RequestResponse[DomainCheckRequest, bool], ctx: WorkflowContext
+        self, response: RequestResponse[DomainCheckRequest, bool], ctx: WorkflowContext[ValidationResult]
     ) -> None:
         """Handle domain check response with correlation."""
         # Use the original email from the correlated response
@@ -89,7 +91,7 @@ class ParentOrchestrator(Executor):
         self.results: list[ValidationResult] = []
 
     @handler
-    async def start(self, emails: list[str], ctx: WorkflowContext) -> None:
+    async def start(self, emails: list[str], ctx: WorkflowContext[None]) -> None:
         """Start processing emails."""
         for email in emails:
             request = EmailValidationRequest(email=email)
@@ -108,7 +110,7 @@ class ParentOrchestrator(Executor):
         return RequestResponse[DomainCheckRequest, bool].forward()
 
     @handler
-    async def collect_result(self, result: ValidationResult, ctx: WorkflowContext) -> None:
+    async def collect_result(self, result: ValidationResult, ctx: WorkflowContext[None]) -> None:
         """Collect validation results."""
         self.results.append(result)
 
@@ -135,12 +137,12 @@ async def test_basic_sub_workflow():
             self.result = None
 
         @handler
-        async def start(self, email: str, ctx: WorkflowContext) -> None:
+        async def start(self, email: str, ctx: WorkflowContext[None]) -> None:
             request = EmailValidationRequest(email=email)
             await ctx.send_message(request, target_id="email_workflow")
 
         @handler
-        async def collect(self, result: ValidationResult, ctx: WorkflowContext) -> None:
+        async def collect(self, result: ValidationResult, ctx: WorkflowContext[None]) -> None:
             self.result = result
 
     parent = SimpleParent()
@@ -253,7 +255,7 @@ async def test_conditional_forwarding():
             self.result = None
 
         @handler
-        async def start(self, email: str, ctx: WorkflowContext) -> None:
+        async def start(self, email: str, ctx: WorkflowContext[None]) -> None:
             request = EmailValidationRequest(email=email)
             await ctx.send_message(request, target_id="email_workflow")
 
@@ -270,7 +272,7 @@ async def test_conditional_forwarding():
             return RequestResponse[DomainCheckRequest, bool].forward()
 
         @handler
-        async def collect(self, result: ValidationResult, ctx: WorkflowContext) -> None:
+        async def collect(self, result: ValidationResult, ctx: WorkflowContext[None]) -> None:
             self.result = result
 
     # Setup workflows
@@ -327,7 +329,7 @@ async def test_workflow_scoped_interception():
             self.results = {}
 
         @handler
-        async def start(self, data: dict[str, str], ctx: WorkflowContext) -> None:
+        async def start(self, data: dict[str, str], ctx: WorkflowContext[None]) -> None:
             # Send to different sub-workflows
             await ctx.send_message(EmailValidationRequest(email=data["email1"]), target_id="workflow_a")
             await ctx.send_message(EmailValidationRequest(email=data["email2"]), target_id="workflow_b")
@@ -351,7 +353,7 @@ async def test_workflow_scoped_interception():
             return RequestResponse[DomainCheckRequest, bool].forward()
 
         @handler
-        async def collect(self, result: ValidationResult, ctx: WorkflowContext) -> None:
+        async def collect(self, result: ValidationResult, ctx: WorkflowContext[None]) -> None:
             self.results[result.email] = result
 
     # Create two identical sub-workflows

@@ -174,7 +174,7 @@ class Runner:
                         request_info_executor = self._find_request_info_executor()
 
                         if request_info_executor:
-                            workflow_ctx = WorkflowContext(
+                            workflow_ctx: WorkflowContext[None] = WorkflowContext(
                                 request_info_executor.id,
                                 ["Runner"],
                                 self._shared_state,

@@ -81,8 +81,8 @@ class EmailValidator(Executor):
     def __init__(self):
         super().__init__(id="email_validator")
 
-    @handler(output_types=[DomainCheckRequest, ValidationResult])
-    async def validate(self, request: EmailValidationRequest, ctx: WorkflowContext) -> None:
+    @handler
+    async def validate(self, request: EmailValidationRequest, ctx: WorkflowContext[DomainCheckRequest | ValidationResult]) -> None:
         """Validate an email address."""
         print(f"Validating email: {request.email}")
 
@@ -99,9 +99,9 @@ class EmailValidator(Executor):
         domain_check = DomainCheckRequest(domain=domain)
         await ctx.send_message(domain_check)
 
-    @handler(output_types=[ValidationResult])
+    @handler
     async def handle_domain_response(
-        self, response: RequestResponse[DomainCheckRequest, bool], ctx: WorkflowContext
+        self, response: RequestResponse[DomainCheckRequest, bool], ctx: WorkflowContext[ValidationResult]
     ) -> None:
         """Handle domain check response with correlation."""
         if response.original_request:
@@ -131,8 +131,8 @@ class SmartEmailOrchestrator(Executor):
         self.expected_result_count: int
         print(f"Orchestrator knows about domains: {self.approved_domains}")
 
-    @handler(output_types=[EmailValidationRequest])
-    async def start_validation(self, emails: list[str], ctx: WorkflowContext) -> None:
+    @handler
+    async def start_validation(self, emails: list[str], ctx: WorkflowContext[EmailValidationRequest]) -> None:
         """Start validating a batch of emails."""
         print(f"Starting validation of {len(emails)} emails")
         for email in emails:
@@ -142,7 +142,7 @@ class SmartEmailOrchestrator(Executor):
 
     @intercepts_request(DomainCheckRequest)
     async def check_domain(
-        self, request: DomainCheckRequest, ctx: WorkflowContext
+        self, request: DomainCheckRequest, ctx: WorkflowContext[Any]
     ) -> RequestResponse[DomainCheckRequest, bool]:
         """Intercept domain check requests from sub-workflows."""
         print(f"Intercepted domain check for: {request.domain}")
@@ -153,8 +153,8 @@ class SmartEmailOrchestrator(Executor):
         print(f"Domain {request.domain} unknown, forwarding to external check")
         return RequestResponse.forward()
 
-    @handler(output_types=[])
-    async def collect_result(self, result: ValidationResult, ctx: WorkflowContext) -> None:
+    @handler
+    async def collect_result(self, result: ValidationResult, ctx: WorkflowContext[None]) -> None:
         """Collect validation results."""
         print(f"Collected result: {result.email} -> {result.is_valid} ({result.reason})")
         self.results.append(result)

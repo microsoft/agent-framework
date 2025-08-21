@@ -34,8 +34,8 @@ class SimpleSubExecutor(Executor):
     def __init__(self):
         super().__init__(id="simple_sub")
 
-    @handler(output_types=[])
-    async def process(self, request: SimpleRequest, ctx: WorkflowContext) -> None:
+    @handler
+    async def process(self, request: SimpleRequest, ctx: WorkflowContext[None]) -> None:
         """Process a simple request."""
         from agent_framework_workflow import WorkflowCompletedEvent
 
@@ -51,14 +51,14 @@ class SimpleParent(Executor):
         super().__init__(id="simple_parent")
         self.result = None
 
-    @handler(output_types=[SimpleRequest])
-    async def start(self, text: str, ctx: WorkflowContext) -> None:
+    @handler
+    async def start(self, text: str, ctx: WorkflowContext[None]) -> None:
         """Start the process."""
         request = SimpleRequest(text=text)
         await ctx.send_message(request, target_id="sub_workflow")
 
-    @handler(output_types=[])
-    async def collect(self, response: SimpleResponse, ctx: WorkflowContext) -> None:
+    @handler
+    async def collect(self, response: SimpleResponse, ctx: WorkflowContext[None]) -> None:
         """Collect the result."""
         self.result = response
 
@@ -73,8 +73,8 @@ async def test_simple_sub_workflow():
         def __init__(self):
             super().__init__(id="dummy")
 
-        @handler(output_types=[])
-        async def process(self, message: object, ctx: WorkflowContext) -> None:
+        @handler
+        async def process(self, message: object, ctx: WorkflowContext[None]) -> None:
             pass  # Do nothing
 
     dummy = DummyExecutor()

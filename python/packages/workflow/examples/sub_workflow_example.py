@@ -11,6 +11,7 @@ This example shows:
 
 import asyncio
 from dataclasses import dataclass
+from typing import Any
 
 from agent_framework_workflow import (
     Executor,
@@ -59,8 +60,10 @@ class EmailValidator(Executor):
         super().__init__(id="email_validator")
         self._pending_email = None
 
-    @handler(output_types=[DomainCheckRequest, ValidationResult])
-    async def validate(self, request: EmailValidationRequest, ctx: WorkflowContext) -> None:
+    @handler
+    async def validate(
+        self, request: EmailValidationRequest, ctx: WorkflowContext[DomainCheckRequest | ValidationResult]
+    ) -> None:
         """Validate an email address."""
         self._pending_email = request.email
 
@@ -76,8 +79,8 @@ class EmailValidator(Executor):
         domain_check = DomainCheckRequest(domain=domain)
         await ctx.send_message(domain_check, target_id="email_request_info")
 
-    @handler(output_types=[ValidationResult])
-    async def handle_domain_response(self, approved: bool, ctx: WorkflowContext) -> None:
+    @handler
+    async def handle_domain_response(self, approved: bool, ctx: WorkflowContext[ValidationResult]) -> None:
         """Handle domain check response."""
         if self._pending_email:
             result = ValidationResult(
@@ -103,22 +106,22 @@ class SmartEmailOrchestrator(Executor):
         self.approved_domains = approved_domains or {"example.com", "test.org", "company.com"}
         self.results = []
 
-    @handler(output_types=[EmailValidationRequest])
-    async def start_validation(self, emails: list[str], ctx: WorkflowContext) -> None:
+    @handler
+    async def start_validation(self, emails: list[str], ctx: WorkflowContext[EmailValidationRequest]) -> None:
         """Start validating a batch of emails."""
         for email in emails:
             request = EmailValidationRequest(email=email)
             await ctx.send_message(request, target_id="email_validator_workflow")
 
     @intercepts_request(DomainCheckRequest)
-    async def check_domain(self, request: DomainCheckRequest, ctx: WorkflowContext) -> RequestResponse:
+    async def check_domain(self, request: DomainCheckRequest, ctx: WorkflowContext[Any]) -> RequestResponse:
         """Intercept domain check requests from sub-workflows."""
         if request.domain in self.approved_domains:
             return RequestResponse.handled(True)
         return RequestResponse.forward()
 
-    @handler(output_types=[])
-    async def collect_result(self, result: ValidationResult, ctx: WorkflowContext) -> None:
+    @handler
+    async def collect_result(self, result: ValidationResult, ctx: WorkflowContext[None]) -> None:
         """Collect validation results."""
         self.results.append(result)
 

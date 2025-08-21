@@ -47,8 +47,8 @@ class TextProcessor(Executor):
     def __init__(self):
         super().__init__(id="text_processor")
 
-    @handler(output_types=[])
-    async def process_text(self, text: str, ctx: WorkflowContext) -> None:
+    @handler
+    async def process_text(self, text: str, ctx: WorkflowContext[None]) -> None:
         """Process text by converting to uppercase."""
         print(f"Sub-workflow processing: '{text}'")
         processed = text.upper()
@@ -65,15 +65,15 @@ class ParentOrchestrator(Executor):
         super().__init__(id="orchestrator")
         self.results: list[str] = []
 
-    @handler(output_types=[str])
-    async def start(self, texts: list[str], ctx: WorkflowContext) -> None:
+    @handler
+    async def start(self, texts: list[str], ctx: WorkflowContext[str]) -> None:
         """Send texts to sub-workflow for processing."""
         print(f"Parent starting processing of {len(texts)} texts")
         for text in texts:
             await ctx.send_message(text, target_id="text_workflow")
 
-    @handler(output_types=[])
-    async def collect_result(self, result: str, ctx: WorkflowContext) -> None:
+    @handler
+    async def collect_result(self, result: str, ctx: WorkflowContext[None]) -> None:
         """Collect results from sub-workflow."""
         print(f"Parent collected result: '{result}'")
         self.results.append(result)
