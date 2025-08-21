@@ -46,7 +46,7 @@ internal static class Program
         PersistentAgentsClient client = new(Throw.IfNull(config["AzureAI:Endpoint"]), new AzureCliCredential());
 
         // Read and parse the declarative workflow.
-        Notify($"WORKFLOW: Parsing {workflowFile}");
+        Notify($"WORKFLOW: Parsing {Path.GetFullPath(workflowFile)}");
 
         Stopwatch timer = Stopwatch.StartNew();
         using StreamReader yamlReader = File.OpenText(workflowFile);
