@@ -37,8 +37,8 @@ class SpamDetector(Executor):
         super().__init__(id=id)
         self._spam_keywords = spam_keywords
 
-    @handler(output_types=[SpamDetectorResponse])
-    async def handle_email(self, email: str, ctx: WorkflowContext) -> None:
+    @handler
+    async def handle_email(self, email: str, ctx: WorkflowContext[SpamDetectorResponse]) -> None:
         """Determine if the input string is spam."""
         result = any(keyword in email.lower() for keyword in self._spam_keywords)
 
@@ -52,7 +52,7 @@ class SendResponse(Executor):
     async def handle_detector_response(
         self,
         spam_detector_response: SpamDetectorResponse,
-        ctx: WorkflowContext,
+        ctx: WorkflowContext[None],
     ) -> None:
         """Respond with a message based on whether the input is spam."""
         if spam_detector_response.is_spam:
@@ -72,7 +72,7 @@ class RemoveSpam(Executor):
     async def handle_detector_response(
         self,
         spam_detector_response: SpamDetectorResponse,
-        ctx: WorkflowContext,
+        ctx: WorkflowContext[None],
     ) -> None:
         """Remove the spam message."""
         if spam_detector_response.is_spam is False:

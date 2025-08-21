@@ -9,8 +9,8 @@ from agent_framework.workflow import Executor, WorkflowBuilder, WorkflowContext,
 class MockExecutor(Executor):
     """A mock executor for testing purposes."""
 
-    @handler(output_types=[str])
-    async def mock_handler(self, message: str, ctx: WorkflowContext) -> None:
+    @handler
+    async def mock_handler(self, message: str, ctx: WorkflowContext[None]) -> None:
         """A mock handler that does nothing."""
         pass
 
@@ -19,7 +19,7 @@ class ListStrTargetExecutor(Executor):
     """A mock executor that accepts a list of strings (for fan-in targets)."""
 
     @handler
-    async def handle(self, message: list[str], ctx: WorkflowContext) -> None:  # type: ignore[type-arg]
+    async def handle(self, message: list[str], ctx: WorkflowContext[None]) -> None:  # type: ignore[type-arg]
         pass
 
 

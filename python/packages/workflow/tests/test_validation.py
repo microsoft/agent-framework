@@ -18,48 +18,49 @@ from agent_framework_workflow import (
     validate_workflow_graph,
 )
 from agent_framework_workflow._edge import SingleEdgeGroup
+from agent_framework_workflow._validation import HandlerOutputAnnotationError
 
 
 class StringExecutor(Executor):
-    @handler(output_types=[str])
-    async def handle_string(self, message: str, ctx: WorkflowContext) -> None:
+    @handler
+    async def handle_string(self, message: str, ctx: WorkflowContext[str]) -> None:
         await ctx.send_message(message.upper())
 
 
 class StringAggregator(Executor):
     """A mock executor that aggregates results from multiple executors."""
 
-    @handler(output_types=[str])
-    async def mock_handler(self, messages: list[str], ctx: WorkflowContext) -> None:
+    @handler
+    async def mock_handler(self, messages: list[str], ctx: WorkflowContext[str]) -> None:
         # This mock simply returns the data incremented by 1
         await ctx.send_message("Aggregated: " + ", ".join(messages))
 
 
 class IntExecutor(Executor):
-    @handler(output_types=[int])
-    async def handle_int(self, message: int, ctx: WorkflowContext) -> None:
+    @handler
+    async def handle_int(self, message: int, ctx: WorkflowContext[int]) -> None:
         await ctx.send_message(message * 2)
 
 
 class AnyExecutor(Executor):
     @handler
-    async def handle_any(self, message: Any, ctx: WorkflowContext) -> None:
+    async def handle_any(self, message: Any, ctx: WorkflowContext[Any]) -> None:
         await ctx.send_message(f"Processed: {message}")
 
 
 class NoOutputTypesExecutor(Executor):
     @handler
-    async def handle_message(self, message: str, ctx: WorkflowContext) -> None:
+    async def handle_message(self, message: str, ctx: WorkflowContext[Any]) -> None:
         await ctx.send_message("processed")
 
 
 class MultiTypeExecutor(Executor):
-    @handler(output_types=[str])
-    async def handle_string(self, message: str, ctx: WorkflowContext) -> None:
+    @handler
+    async def handle_string(self, message: str, ctx: WorkflowContext[str]) -> None:
         await ctx.send_message(f"String: {message}")
 
-    @handler(output_types=[int])
-    async def handle_int(self, message: int, ctx: WorkflowContext) -> None:
+    @handler
+    async def handle_int(self, message: int, ctx: WorkflowContext[str]) -> None:
         await ctx.send_message(f"Int: {message}")
 
 
@@ -221,13 +222,13 @@ def test_complex_workflow_validation():
 
 def test_type_compatibility_inheritance():
     class BaseExecutor(Executor):
-        @handler(output_types=[str])
-        async def handle_base(self, message: str, ctx: WorkflowContext) -> None:
+        @handler
+        async def handle_base(self, message: str, ctx: WorkflowContext[str]) -> None:
             await ctx.send_message("base")
 
     class DerivedExecutor(Executor):
-        @handler(output_types=[str])
-        async def handle_derived(self, message: str, ctx: WorkflowContext) -> None:
+        @handler
+        async def handle_derived(self, message: str, ctx: WorkflowContext[str]) -> None:
             await ctx.send_message("derived")
 
     base_executor = BaseExecutor(id="base")
@@ -306,7 +307,7 @@ def test_logging_for_missing_output_types(caplog: Any) -> None:
 
     assert workflow is not None
     assert "has no output type annotations" in caplog.text
-    assert "Consider adding output_types to @handler decorators" in caplog.text
+    assert "Consider adding WorkflowContext[T] generics" in caplog.text
 
 
 def test_logging_for_missing_input_types(caplog: Any) -> None:
@@ -504,13 +505,13 @@ def test_enhanced_type_compatibility_error_details():
 
 def test_union_type_compatibility_validation() -> None:
     class UnionOutputExecutor(Executor):
-        @handler(output_types=[str, int])
-        async def handle_message(self, message: str, ctx: WorkflowContext) -> None:
+        @handler
+        async def handle_message(self, message: str, ctx: WorkflowContext[str | int]) -> None:
             await ctx.send_message("output")
 
     class UnionInputExecutor(Executor):
-        @handler(output_types=[str])
-        async def handle_message(self, message: str, ctx: WorkflowContext) -> None:
+        @handler
+        async def handle_message(self, message: str, ctx: WorkflowContext[str]) -> None:
             await ctx.send_message("processed")
 
     union_output = UnionOutputExecutor(id="union_output")
@@ -524,13 +525,13 @@ def test_union_type_compatibility_validation() -> None:
 
 def test_generic_type_compatibility() -> None:
     class ListOutputExecutor(Executor):
-        @handler(output_types=[list[str]])
-        async def handle_message(self, message: str, ctx: WorkflowContext) -> None:
+        @handler
+        async def handle_message(self, message: str, ctx: WorkflowContext[list[str]]) -> None:
             await ctx.send_message(["output"])
 
     class ListInputExecutor(Executor):
-        @handler(output_types=[str])
-        async def handle_message(self, message: list[str], ctx: WorkflowContext) -> None:
+        @handler
+        async def handle_message(self, message: list[str], ctx: WorkflowContext[str]) -> None:
             await ctx.send_message("processed")
 
     list_output = ListOutputExecutor(id="list_output")
@@ -556,3 +557,83 @@ def test_validation_enum_usage() -> None:
     # Test enum string representation
     assert str(ValidationTypeEnum.EDGE_DUPLICATION) == "ValidationTypeEnum.EDGE_DUPLICATION"
     assert ValidationTypeEnum.EDGE_DUPLICATION.value == "EDGE_DUPLICATION"
+
+
+def test_handler_ctx_missing_annotation_raises() -> None:
+    class BadExecutor(Executor):
+        @handler
+        async def handle(self, message: str, ctx) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+    start = StringExecutor(id="s")
+    bad = BadExecutor(id="b")
+
+    with pytest.raises(HandlerOutputAnnotationError) as exc:
+        WorkflowBuilder().add_edge(start, bad).set_start_executor(start).build()
+
+    assert exc.value.validation_type == ValidationTypeEnum.HANDLER_OUTPUT_ANNOTATION
+    assert "missing type annotation" in str(exc.value)
+
+
+def test_handler_ctx_unsubscripted_workflow_context_raises() -> None:
+    class BadExecutor(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext) -> None:  # missing T
+            pass
+
+    start = StringExecutor(id="s")
+    bad = BadExecutor(id="b")
+
+    with pytest.raises(HandlerOutputAnnotationError) as exc:
+        WorkflowBuilder().add_edge(start, bad).set_start_executor(start).build()
+
+    assert exc.value.validation_type == ValidationTypeEnum.HANDLER_OUTPUT_ANNOTATION
+    # Message should mention missing T or WorkflowContext[None]
+    assert "WorkflowContext[None]" in str(exc.value) or "missing" in str(exc.value).lower()
+
+
+def test_handler_ctx_invalid_t_out_entries_raises() -> None:
+    class BadExecutor(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext[123]) -> None:  # type: ignore[valid-type]
+            pass
+
+    start = StringExecutor(id="s")
+    bad = BadExecutor(id="b")
+
+    with pytest.raises(HandlerOutputAnnotationError) as exc:
+        WorkflowBuilder().add_edge(start, bad).set_start_executor(start).build()
+
+    assert exc.value.validation_type == ValidationTypeEnum.HANDLER_OUTPUT_ANNOTATION
+    assert "invalid entries" in str(exc.value)
+
+
+def test_handler_ctx_none_is_allowed() -> None:
+    class NoneExecutor(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext[None]) -> None:
+            # does not emit
+            return None
+
+    start = StringExecutor(id="s")
+    none_exec = NoneExecutor(id="n")
+
+    # Should build successfully
+    wf = WorkflowBuilder().add_edge(start, none_exec).set_start_executor(start).build()
+    assert wf is not None
+
+
+def test_handler_ctx_any_is_allowed_but_skips_type_checks(caplog: Any) -> None:
+    caplog.set_level(logging.WARNING)
+
+    class AnyOutExecutor(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext[Any]) -> None:
+            return None
+
+    start = StringExecutor(id="s")
+    any_out = AnyOutExecutor(id="a")
+
+    # Builds; later edges from this executor will skip type compatibility when outputs are unspecified
+    wf = WorkflowBuilder().add_edge(start, any_out).set_start_executor(start).build()
+    assert wf is not None
