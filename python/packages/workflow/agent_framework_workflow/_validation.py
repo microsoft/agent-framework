@@ -112,7 +112,7 @@ class WorkflowGraphValidator:
         # In this scenario, the executor map will be empty because there are no edge groups to reference executors.
         # Adding the start executor to the map ensures that single-executor workflows (without any edges) are supported,
         # allowing validation and execution to proceed for workflows that do not require inter-executor communication.
-        if not self._executors and start_executor:
+        if not self._executors and start_executor and isinstance(start_executor, Executor):
             self._executors[start_executor.id] = start_executor
 
         # Validate that start_executor exists in the graph
@@ -262,7 +262,7 @@ class WorkflowGraphValidator:
         # Also include intercepted request types as potential outputs
         # since @intercepts_request methods can forward requests
         if hasattr(executor, "_request_interceptors"):
-            for request_type in executor._request_interceptors.keys():
+            for request_type in executor._request_interceptors:
                 if isinstance(request_type, type):
                     output_types.append(request_type)
 

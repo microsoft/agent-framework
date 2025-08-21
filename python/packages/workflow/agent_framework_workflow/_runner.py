@@ -4,13 +4,17 @@ import asyncio
 import logging
 from collections import defaultdict
 from collections.abc import AsyncIterable, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ._executor import RequestInfoExecutor
 
 from ._edge import EdgeGroup
 from ._events import WorkflowEvent
 from ._executor import Executor
 from ._runner_context import Message, RunnerContext
 from ._shared_state import SharedState
+from ._workflow_context import WorkflowContext
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +174,13 @@ class Runner:
                         request_info_executor = self._find_request_info_executor()
 
                         if request_info_executor:
-                            await request_info_executor.execute(sub_request, self._ctx)
+                            workflow_ctx = WorkflowContext(
+                                request_info_executor.id,
+                                ["Runner"],
+                                self._shared_state,
+                                self._ctx,
+                            )
+                            await request_info_executor.execute(sub_request, workflow_ctx)
 
             async def _deliver_message_inner(edge_group: EdgeGroup, message: Message) -> bool:
                 """Inner loop to deliver a single message through an edge group."""

@@ -7,42 +7,38 @@ import pytest
 
 from agent_framework_workflow import (
     Executor,
-    RequestInfoExecutor,
-    RequestInfoMessage,
-    RequestResponse,
-    SubWorkflowRequestInfo,
-    SubWorkflowResponse,
-    Workflow,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowExecutor,
     handler,
-    intercepts_request,
 )
 
 
 @dataclass
 class SimpleRequest:
     """Simple request for testing."""
+
     text: str
 
 
 @dataclass
 class SimpleResponse:
     """Simple response for testing."""
+
     result: str
 
 
 class SimpleSubExecutor(Executor):
     """Simple executor for sub-workflow."""
-    
+
     def __init__(self):
         super().__init__(id="simple_sub")
-    
+
     @handler(output_types=[])
     async def process(self, request: SimpleRequest, ctx: WorkflowContext) -> None:
         """Process a simple request."""
         from agent_framework_workflow import WorkflowCompletedEvent
+
         # Just echo back with prefix and complete
         response = SimpleResponse(result=f"processed: {request.text}")
         await ctx.add_event(WorkflowCompletedEvent(data=response))
@@ -50,17 +46,17 @@ class SimpleSubExecutor(Executor):
 
 class SimpleParent(Executor):
     """Simple parent executor."""
-    
+
     def __init__(self):
         super().__init__(id="simple_parent")
         self.result = None
-    
+
     @handler(output_types=[SimpleRequest])
     async def start(self, text: str, ctx: WorkflowContext) -> None:
         """Start the process."""
         request = SimpleRequest(text=text)
         await ctx.send_message(request, target_id="sub_workflow")
-    
+
     @handler(output_types=[])
     async def collect(self, response: SimpleResponse, ctx: WorkflowContext) -> None:
         """Collect the result."""
@@ -72,14 +68,15 @@ async def test_simple_sub_workflow():
     """Test the simplest possible sub-workflow."""
     # Create sub-workflow with dummy executor to satisfy validation
     sub_executor = SimpleSubExecutor()
-    
+
     class DummyExecutor(Executor):
         def __init__(self):
             super().__init__(id="dummy")
+
         @handler(output_types=[])
         async def process(self, message: object, ctx: WorkflowContext) -> None:
             pass  # Do nothing
-    
+
     dummy = DummyExecutor()
     sub_workflow = (
         WorkflowBuilder()
@@ -87,11 +84,11 @@ async def test_simple_sub_workflow():
         .add_edge(sub_executor, dummy)  # Add edge to satisfy validation
         .build()
     )
-    
+
     # Create parent workflow
     parent = SimpleParent()
     workflow_executor = WorkflowExecutor(sub_workflow, id="sub_workflow")
-    
+
     main_workflow = (
         WorkflowBuilder()
         .set_start_executor(parent)
@@ -99,10 +96,10 @@ async def test_simple_sub_workflow():
         .add_edge(workflow_executor, parent)
         .build()
     )
-    
+
     # Run the workflow
-    result = await main_workflow.run("hello world")
-    
+    await main_workflow.run("hello world")
+
     # Check result
     assert parent.result is not None
     assert parent.result.result == "processed: hello world"
@@ -111,4 +108,3 @@ async def test_simple_sub_workflow():
 if __name__ == "__main__":
     # Run the simple test
     asyncio.run(test_simple_sub_workflow())
-    print("Simple test passed!")

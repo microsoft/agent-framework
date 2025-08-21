@@ -5,7 +5,7 @@ import inspect
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, TypeVar, overload
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, overload
 
 if TYPE_CHECKING:
     from ._workflow import Workflow
@@ -91,12 +91,16 @@ class Executor:
                     handler_spec = attr._handler_spec  # type: ignore
                     message_type = handler_spec["message_type"]
 
-                    # Handle generic types by using the origin type for isinstance checks
+                    # Handle generic RequestResponse types by using the origin type for isinstance checks
                     from typing import get_origin
 
                     origin_type = get_origin(message_type)
-                    if origin_type is not None:
-                        # Use the base generic type (e.g., RequestResponse instead of RequestResponse[T, U])
+                    if (
+                        origin_type is not None
+                        and hasattr(origin_type, "__name__")
+                        and origin_type.__name__ == "RequestResponse"
+                    ):
+                        # Use the base RequestResponse type instead of RequestResponse[T, U] for compatibility
                         message_type = origin_type
 
                     if self._handlers.get(message_type) is not None:
@@ -135,10 +139,13 @@ class Executor:
             # Check type matching
             if isinstance(request_type, type) and isinstance(request.data, request_type):
                 matched = True
-            elif isinstance(request_type, str):
+            elif (
+                isinstance(request_type, str)
+                and hasattr(request.data, "__class__")
+                and request.data.__class__.__name__ == request_type
+            ):
                 # String matching - could check against type name or other attributes
-                if hasattr(request.data, "__class__") and request.data.__class__.__name__ == request_type:
-                    matched = True
+                matched = True
 
             if matched:
                 # Check workflow scope if specified
@@ -160,7 +167,7 @@ class Executor:
                     # Add automatic correlation info to the response
                     correlated_response = RequestResponse._with_correlation(response, request.data, request.request_id)
 
-                    if correlated_response.handled:
+                    if correlated_response.is_handled:
                         # Send response back to sub-workflow
                         from ._runner_context import Message
 
@@ -200,7 +207,10 @@ class Executor:
 
         # No interceptor found - forward inner request to RequestInfoExecutor
         # This sends the original request to RequestInfoExecutor
-        await ctx.send_message(request.data)
+        from ._runner_context import Message
+
+        passthrough_message = Message(source_id=self.id, data=request.data)
+        await ctx.send_message(passthrough_message)
 
     def can_handle(self, message: Any) -> bool:
         """Check if the executor can handle a given message type.
@@ -303,6 +313,85 @@ def handler(
 
 # endregion: Handler Decorator
 
+# region Request/Response Types
+
+TRequest = TypeVar("TRequest", bound="RequestInfoMessage")
+TResponse = TypeVar("TResponse")
+
+
+@dataclass
+class RequestResponse(Generic[TRequest, TResponse]):
+    """Response from @intercepts_request methods with automatic correlation support.
+
+    This type allows intercepting executors to indicate whether they handled
+    a request or whether it should be forwarded to external sources. When handled,
+    the framework automatically adds correlation info to link responses to requests.
+    """
+
+    is_handled: bool
+    data: TResponse | None = None
+    forward_request: TRequest | None = None
+    original_request: TRequest | None = None  # Added for automatic correlation
+    request_id: str | None = None  # Added for tracking
+
+    @classmethod
+    def handled(cls, data: TResponse) -> "RequestResponse[Any, TResponse]":
+        """Create a response indicating the request was handled.
+
+        Correlation info (original_request, request_id) will be added automatically
+        by the framework when processing intercepted requests.
+        """
+        return cls(is_handled=True, data=data)
+
+    @classmethod
+    def forward(cls, modified_request: Any = None) -> "RequestResponse[Any, Any]":
+        """Create a response indicating the request should be forwarded."""
+        return cls(is_handled=False, forward_request=modified_request)
+
+    @staticmethod
+    def _with_correlation(
+        original_response: "RequestResponse[Any, TResponse]", original_request: TRequest, request_id: str
+    ) -> "RequestResponse[TRequest, TResponse]":
+        """Internal method to add correlation info to a response.
+
+        This is called automatically by the framework and should not be used directly.
+        """
+        return RequestResponse(
+            is_handled=original_response.is_handled,
+            data=original_response.data,
+            forward_request=original_response.forward_request,
+            original_request=original_request,
+            request_id=request_id,
+        )
+
+
+@dataclass
+class SubWorkflowRequestInfo:
+    """Routes requests from sub-workflows to parent workflows.
+
+    This message type wraps requests from sub-workflows to add routing context,
+    allowing parent workflows to intercept and potentially handle the request.
+    """
+
+    request_id: str  # Original request ID from sub-workflow
+    sub_workflow_id: str  # ID of the WorkflowExecutor that sent this
+    data: Any  # The actual request data
+
+
+@dataclass
+class SubWorkflowResponse:
+    """Routes responses back to sub-workflows.
+
+    This message type is used to send responses back to sub-workflows that
+    made requests, ensuring the response reaches the correct sub-workflow.
+    """
+
+    request_id: str  # Matches the original request ID
+    data: Any  # The actual response data
+
+
+# endregion: Request/Response Types
+
 # region Intercepts Request Decorator
 
 
@@ -310,8 +399,8 @@ def handler(
 def intercepts_request(
     request_type: type | str,
 ) -> Callable[
-    [Callable[[ExecutorT, Any, WorkflowContext], Awaitable["RequestResponse"]]],
-    Callable[[ExecutorT, Any, WorkflowContext], Awaitable["RequestResponse"]],
+    [Callable[[ExecutorT, Any, WorkflowContext], Awaitable[RequestResponse[Any, Any]]]],
+    Callable[[ExecutorT, Any, WorkflowContext], Awaitable[RequestResponse[Any, Any]]],
 ]: ...
 
 
@@ -322,8 +411,8 @@ def intercepts_request(
     from_workflow: str | None = None,
     condition: Callable[[Any], bool] | None = None,
 ) -> Callable[
-    [Callable[[ExecutorT, Any, WorkflowContext], Awaitable["RequestResponse"]]],
-    Callable[[ExecutorT, Any, WorkflowContext], Awaitable["RequestResponse"]],
+    [Callable[[ExecutorT, Any, WorkflowContext], Awaitable[RequestResponse[Any, Any]]]],
+    Callable[[ExecutorT, Any, WorkflowContext], Awaitable[RequestResponse[Any, Any]]],
 ]: ...
 
 
@@ -333,8 +422,8 @@ def intercepts_request(
     from_workflow: str | None = None,
     condition: Callable[[Any], bool] | None = None,
 ) -> Callable[
-    [Callable[[ExecutorT, Any, WorkflowContext], Awaitable["RequestResponse"]]],
-    Callable[[ExecutorT, Any, WorkflowContext], Awaitable["RequestResponse"]],
+    [Callable[[ExecutorT, Any, WorkflowContext], Awaitable[RequestResponse[Any, Any]]]],
+    Callable[[ExecutorT, Any, WorkflowContext], Awaitable[RequestResponse[Any, Any]]],
 ]:
     """Decorator to mark methods that intercept sub-workflow requests.
 
@@ -358,10 +447,10 @@ def intercepts_request(
     """
 
     def decorator(
-        func: Callable[[ExecutorT, Any, WorkflowContext], Awaitable["RequestResponse"]],
-    ) -> Callable[[ExecutorT, Any, WorkflowContext], Awaitable["RequestResponse"]]:
+        func: Callable[[ExecutorT, Any, WorkflowContext], Awaitable[RequestResponse[Any, Any]]],
+    ) -> Callable[[ExecutorT, Any, WorkflowContext], Awaitable[RequestResponse[Any, Any]]]:
         @functools.wraps(func)
-        async def wrapper(self: ExecutorT, request: Any, ctx: WorkflowContext) -> "RequestResponse":
+        async def wrapper(self: ExecutorT, request: Any, ctx: WorkflowContext) -> RequestResponse[Any, Any]:
             return await func(self, request, ctx)
 
         # Add metadata for discovery
@@ -476,81 +565,8 @@ class RequestInfoMessage:
     request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
 
-@dataclass
-class SubWorkflowRequestInfo:
-    """Routes requests from sub-workflows to parent workflows.
-
-    This message type wraps requests from sub-workflows to add routing context,
-    allowing parent workflows to intercept and potentially handle the request.
-    """
-
-    request_id: str  # Original request ID from sub-workflow
-    sub_workflow_id: str  # ID of the WorkflowExecutor that sent this
-    data: Any  # The actual request data
-
-
-@dataclass
-class SubWorkflowResponse:
-    """Routes responses back to sub-workflows.
-
-    This message type is used to send responses back to sub-workflows that
-    made requests, ensuring the response reaches the correct sub-workflow.
-    """
-
-    request_id: str  # Matches the original request ID
-    data: Any  # The actual response data
-
-
-from typing import Generic, TypeVar
-
-TRequest = TypeVar("TRequest", bound="RequestInfoMessage")
-TResponse = TypeVar("TResponse")
-
-
-@dataclass
-class RequestResponse(Generic[TRequest, TResponse]):
-    """Response from @intercepts_request methods with automatic correlation support.
-
-    This type allows intercepting executors to indicate whether they handled
-    a request or whether it should be forwarded to external sources. When handled,
-    the framework automatically adds correlation info to link responses to requests.
-    """
-
-    handled: bool
-    data: TResponse | None = None
-    forward_request: TRequest | None = None
-    original_request: TRequest | None = None  # Added for automatic correlation
-    request_id: str | None = None  # Added for tracking
-
-    @staticmethod
-    def handled(data: TResponse) -> "RequestResponse[Any, TResponse]":
-        """Create a response indicating the request was handled.
-
-        Correlation info (original_request, request_id) will be added automatically
-        by the framework when processing intercepted requests.
-        """
-        return RequestResponse(handled=True, data=data)
-
-    @staticmethod
-    def forward(modified_request: Any = None) -> "RequestResponse[Any, Any]":
-        """Create a response indicating the request should be forwarded."""
-        return RequestResponse(handled=False, forward_request=modified_request)
-
-    @staticmethod
-    def _with_correlation(
-        original_response: "RequestResponse[Any, TResponse]", original_request: TRequest, request_id: str
-    ) -> "RequestResponse[TRequest, TResponse]":
-        """Internal method to add correlation info to a response.
-
-        This is called automatically by the framework and should not be used directly.
-        """
-        return RequestResponse(
-            handled=original_response.handled,
-            data=original_response.data,
-            forward_request=original_response.forward_request,
-            original_request=original_request,
-            request_id=request_id,
-        )
+# Note: SubWorkflowRequestInfo, SubWorkflowResponse, and RequestResponse
+# have been moved before intercepts_request decorator
 
 
 class RequestInfoExecutor(Executor):

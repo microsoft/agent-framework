@@ -6,33 +6,18 @@ from typing import Any
 
 from agent_framework.workflow import (
     Executor,
+    RequestInfoEvent,
     RequestInfoExecutor,
     RequestInfoMessage,
+    RequestResponse,
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
+    WorkflowEvent,
+    WorkflowExecutor,
     handler,
+    intercepts_request,
 )
-
-# Import the new sub-workflow types directly from the implementation package
-try:
-    from agent_framework_workflow import (
-        RequestResponse,
-        WorkflowEvent,
-        WorkflowExecutor,
-        intercepts_request,
-    )
-except ImportError:
-    # For development/testing when agent_framework_workflow is not installed
-    import os
-    import sys
-
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "packages", "workflow"))
-    from agent_framework_workflow import (
-        RequestResponse,
-        WorkflowExecutor,
-        intercepts_request,
-    )
 
 """
 The following sample demonstrates advanced sub-workflows with request interception.
@@ -119,10 +104,16 @@ class EmailValidator(Executor):
         self, response: RequestResponse[DomainCheckRequest, bool], ctx: WorkflowContext
     ) -> None:
         """Handle domain check response with correlation."""
-        print(f"Domain check result: {response.original_request.domain} - {response.data}")
+        if response.original_request:
+            print(f"Domain check result: {response.original_request.domain} - {response.data}")
+            # Use domain as email since this sample doesn't store the original email
+            email = response.original_request.domain
+        else:
+            print(f"Domain check result: {response.data}")
+            email = "unknown"
 
         result = ValidationResult(
-            email=response.original_request.domain,
+            email=email,
             is_valid=response.data or False,
             reason="Domain approved" if response.data else "Domain not approved",
         )
@@ -230,7 +221,7 @@ async def main():
             print(f"\nGot {len(request_events)} external request(s)")
 
             # Handle events (simulate external services)
-            external_responses = {}
+            external_responses: dict[str, bool] = {}
             for event in request_events:
                 if isinstance(event, WorkflowFinished):
                     print(f"   Workflow finished: {event}")
@@ -238,11 +229,11 @@ async def main():
                     continue
 
                 # Only process RequestInfoEvent types
-                if hasattr(event, "data") and event.data is not None:
+                if isinstance(event, RequestInfoEvent):
                     print(f"   Request: {event.data}")
 
                     # For this demo, approve unknown.org from external service
-                    if hasattr(event.data, "domain"):
+                    if event.data and hasattr(event.data, "domain"):
                         domain = event.data.domain
                         approved = domain in manually_approved_domains
                         external_responses[event.request_id] = approved

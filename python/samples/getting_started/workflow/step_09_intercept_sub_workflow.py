@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from agent_framework.workflow import (
     Executor,
+    RequestInfoEvent,
     RequestInfoExecutor,
     WorkflowBuilder,
     WorkflowCompletedEvent,
@@ -97,7 +98,10 @@ class EmailValidator(Executor):
         self, response: RequestResponse[DomainCheckRequest, bool], ctx: WorkflowContext
     ) -> None:
         """Handle domain check response with correlation."""
-        print(f"Domain check result: {response.original_request.domain} -> {response.data}")
+        if response.original_request:
+            print(f"Domain check result: {response.original_request.domain} -> {response.data}")
+        else:
+            print(f"Domain check result: {response.data}")
 
         if self._pending_email:
             result = ValidationResult(
@@ -195,13 +199,14 @@ async def main():
         print(f"\nGot {len(request_events)} external request(s) to handle")
 
         # Simulate external service responses
-        external_responses = {}
+        external_responses: dict[str, bool] = {}
         for event in request_events:
-            print(f"External request for domain: {event.data.domain}")
-            # For demo purposes, approve external.com
-            approved = event.data.domain == "external.com"
-            external_responses[event.request_id] = approved
-            print(f"External service response: {approved}")
+            if isinstance(event, RequestInfoEvent) and event.data and hasattr(event.data, "domain"):
+                print(f"External request for domain: {event.data.domain}")
+                # For demo purposes, approve external.com
+                approved = event.data.domain == "external.com"
+                external_responses[event.request_id] = approved
+                print(f"External service response: {approved}")
 
         # Send responses back to the workflow
         await main_workflow.send_responses(external_responses)

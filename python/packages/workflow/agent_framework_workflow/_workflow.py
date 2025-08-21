@@ -309,11 +309,12 @@ class Workflow:
 
     def _find_request_info_executor(self) -> "RequestInfoExecutor | None":
         """Find the RequestInfoExecutor instance in this workflow.
-        
+
         Returns:
             The RequestInfoExecutor instance if found, None otherwise.
         """
         from ._executor import RequestInfoExecutor
+
         for executor in self._executors.values():
             if isinstance(executor, RequestInfoExecutor):
                 return executor

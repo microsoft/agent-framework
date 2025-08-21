@@ -109,7 +109,7 @@ async def main():
     print("=" * 50)
 
     # Run the workflow
-    result = await main_workflow.run(test_texts)
+    await main_workflow.run(test_texts)
 
     print("\nFinal Results:")
     print("=" * 50)
