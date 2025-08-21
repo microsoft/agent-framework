@@ -74,13 +74,13 @@ def test_executor_handlers_with_output_types():
     class MockExecutorWithOutputTypes(Executor):  # type: ignore
         """A mock executor with handlers that specify output types."""
 
-        @handler(output_types=[str])
-        async def handle_string(self, text: str, ctx: WorkflowContext) -> None:  # type: ignore
+        @handler
+        async def handle_string(self, text: str, ctx: WorkflowContext[str]) -> None:  # type: ignore
             """A mock handler that outputs a string."""
             pass
 
-        @handler(output_types=[int])
-        async def handle_integer(self, number: int, ctx: WorkflowContext) -> None:  # type: ignore
+        @handler
+        async def handle_integer(self, number: int, ctx: WorkflowContext[int]) -> None:  # type: ignore
             """A mock handler that outputs an integer."""
             pass
 
