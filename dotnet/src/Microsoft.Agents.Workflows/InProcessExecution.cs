@@ -55,7 +55,7 @@ public static class InProcessExecution
         InProcessRunner<TInput> runner = new(workflow, checkpointManager);
         StreamingRun result = await runner.StreamAsync(input, cancellation).ConfigureAwait(false);
 
-        await runner.CheckpointAsync().ConfigureAwait(false);
+        await runner.CheckpointAsync(cancellation).ConfigureAwait(false);
 
         return new(result, runner);
     }
@@ -202,7 +202,7 @@ public static class InProcessExecution
         InProcessRunner<TInput> runner = new(workflow, checkpointManager);
         Run result = await runner.RunAsync(input, cancellation).ConfigureAwait(false);
 
-        await runner.CheckpointAsync().ConfigureAwait(false);
+        await runner.CheckpointAsync(cancellation).ConfigureAwait(false);
 
         return new(result, runner);
     }

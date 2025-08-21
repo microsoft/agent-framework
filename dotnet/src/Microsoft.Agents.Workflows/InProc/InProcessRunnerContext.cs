@@ -111,6 +111,16 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
             => RunnerContext.StateManager.ReadStateAsync<T>(ExecutorId, scopeName, key);
     }
 
+    internal Task PrepareForCheckpointAsync(CancellationToken cancellation = default)
+    {
+        return Task.WhenAll(this._executors.Values.Select(executor => executor.OnCheckpointingAsync(this.Bind(executor.Id), cancellation).AsTask()));
+    }
+
+    internal Task NotifyCheckpointLoadedAsync(CancellationToken cancellationToken = default)
+    {
+        return Task.WhenAll(this._executors.Values.Select(executor => executor.OnCheckpointRestoredAsync(this.Bind(executor.Id), cancellationToken).AsTask()));
+    }
+
     internal ValueTask<RunnerStateData> ExportStateAsync()
     {
         if (this.QueuedEvents.Count > 0)

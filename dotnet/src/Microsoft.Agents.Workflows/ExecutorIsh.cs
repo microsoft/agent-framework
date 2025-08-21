@@ -114,7 +114,7 @@ public sealed class ExecutorIsh :
     {
         Type.Unbound => throw new InvalidOperationException($"ExecutorIsh with ID '{this.Id}' is unbound."),
         Type.Executor => this._executorValue!.GetType(),
-        Type.InputPort => typeof(RequestInputExecutor),
+        Type.InputPort => typeof(RequestInfoExecutor),
         Type.Agent => typeof(AIAgentHostExecutor),
         _ => throw new InvalidOperationException($"Unknown ExecutorIsh type: {this.ExecutorType}")
     };
