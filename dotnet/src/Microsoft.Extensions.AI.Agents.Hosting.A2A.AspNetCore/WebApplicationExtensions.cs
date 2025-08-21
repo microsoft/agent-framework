@@ -7,7 +7,7 @@ using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
-namespace Microsoft.Extensions.AI.Agents.A2A.AspNetCore;
+namespace Microsoft.Extensions.AI.Agents.Hosting.A2A.AspNetCore;
 
 /// <summary>
 /// Provides extension methods for configuring A2A (Agent-to-Agent) communication in a host application builder.

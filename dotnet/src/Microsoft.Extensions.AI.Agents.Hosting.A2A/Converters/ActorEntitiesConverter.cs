@@ -3,10 +3,9 @@
 using System;
 using System.Text.Json;
 using A2A;
-using Microsoft.Extensions.AI.Agents.Hosting;
 using Microsoft.Extensions.AI.Agents.Runtime;
 
-namespace Microsoft.Extensions.AI.Agents.A2A.Converters;
+namespace Microsoft.Extensions.AI.Agents.Hosting.A2A.Converters;
 
 internal static class ActorEntitiesConverter
 {

@@ -5,9 +5,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using A2A;
-using Microsoft.Extensions.AI.Agents.A2A.Converters;
+using Microsoft.Extensions.AI.Agents.Hosting.A2A.Converters;
 
-namespace Microsoft.Extensions.AI.Agents.A2A.Tests.Converters;
+namespace Microsoft.Extensions.AI.Agents.Hosting.A2A.Tests.Converters;
 
 public class MessageConverterTests
 {

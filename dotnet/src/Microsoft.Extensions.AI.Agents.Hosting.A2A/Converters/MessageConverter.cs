@@ -5,7 +5,7 @@ using System.Collections.Generic;
 using System.Text.Json;
 using A2A;
 
-namespace Microsoft.Extensions.AI.Agents.A2A.Converters;
+namespace Microsoft.Extensions.AI.Agents.Hosting.A2A.Converters;
 
 internal static class MessageConverter
 {

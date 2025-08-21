@@ -6,7 +6,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using A2A;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents.A2A.Converters;
+using Microsoft.Extensions.AI.Agents.Hosting.A2A.Converters;
 using Microsoft.Extensions.AI.Agents.Hosting;
 using Microsoft.Extensions.AI.Agents.Runtime;
 

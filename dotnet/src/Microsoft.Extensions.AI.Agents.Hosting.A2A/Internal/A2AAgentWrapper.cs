@@ -5,13 +5,12 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using A2A;
-using Microsoft.Extensions.AI.Agents.A2A.Converters;
-using Microsoft.Extensions.AI.Agents.Hosting;
+using Microsoft.Extensions.AI.Agents.Hosting.A2A.Converters;
 using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace Microsoft.Extensions.AI.Agents.A2A.Internal;
+namespace Microsoft.Extensions.AI.Agents.Hosting.A2A.Internal;
 
 /// <summary>
 /// A2A agent that wraps an existing AIAgent and provides A2A-specific thread wrapping.

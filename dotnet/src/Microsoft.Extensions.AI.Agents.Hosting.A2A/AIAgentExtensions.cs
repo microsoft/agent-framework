@@ -3,11 +3,11 @@
 using System;
 using System.Threading.Tasks;
 using A2A;
-using Microsoft.Extensions.AI.Agents.A2A.Internal;
+using Microsoft.Extensions.AI.Agents.Hosting.A2A.Internal;
 using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
 
-namespace Microsoft.Extensions.AI.Agents.A2A;
+namespace Microsoft.Extensions.AI.Agents.Hosting.A2A;
 
 /// <summary>
 /// Provides extension methods for attaching A2A (Agent-to-Agent) messaging capabilities to an <see cref="AIAgent"/>.
