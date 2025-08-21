@@ -18,13 +18,13 @@ Below are the basics for each language implementation. For more details on pytho
 - [Getting Started with Agents](./python/samples/getting_started/agents): basic agent creation and tool usage
 - [Chat Client Examples](./python/samples/getting_started/chat_client): direct chat client usage patterns
 - [Azure Integration](./python/packages/azure): Azure OpenAI and AI Foundry integration
-- [Getting Started with Workflows](./python/samples/getting_started/workflows): basic workflow creation and integration with agents
+- [Getting Started with Workflows](./python/samples/getting_started/workflow): basic workflow creation and integration with agents
 
 ### .Net
 - [Getting Started with Agents](./dotnet/samples/GettingStarted/Steps): basic agent creation and tool usage
 - [Agent Provider Samples](./dotnet/samples/GettingStarted/Providers): samples showing different agent providers
 - [Orchestration Samples](./dotnet/samples/GettingStarted/Orchestration): advanced multi-agent patterns
-- [Getting Started with Workflows](./dotnet/samples/GettingStarted/Workflows): (Coming soon) basic workflow creation and integration with agents
+- [Getting Started with Workflows](./dotnet/samples/GettingStarted/Workflow): (Coming soon) basic workflow creation and integration with agents
 
 ## Agent Framework Documentation
 
