@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import datetime
 import os
 from typing import Annotated
 
@@ -43,8 +42,6 @@ async def test_openai_responses_client_response() -> None:
     messages.append(ChatMessage(role="user", text="The weather in New York is sunny"))
     messages.append(ChatMessage(role="user", text="What is the weather in New York?"))
 
-    start = datetime.datetime.now()
-    print("Starting test at:", start)  # noqa
     # Test that the client can be used to get a response
     response = await openai_responses_client.get_response(
         background=True,
@@ -52,8 +49,6 @@ async def test_openai_responses_client_response() -> None:
         messages=messages,
         response_format=OutputStruct,
     )
-    response_time = datetime.datetime.now()
-    print("Response received at:", response_time)  # noqa
 
     assert response is not None
     assert isinstance(response, ChatResponse)
@@ -64,10 +59,6 @@ async def test_openai_responses_client_response() -> None:
         # background=True,
         response_format=OutputStruct,
     )
-    print(final_response)
-    end = datetime.datetime.now()
-    print("response received at: ", end)  # noqa
-    print("Time taken for processing:", end - response_time)  # noqa
     output = OutputStruct.model_validate_json(final_response.messages[0].text)
     assert "New York" in output.location
     assert "sunny" in output.weather

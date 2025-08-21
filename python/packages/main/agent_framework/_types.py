@@ -1429,6 +1429,7 @@ class ChatResponse(AFBaseModel):
             response_format: Optional response format for the chat response.
             messages: List of ChatMessage objects to include in the response.
             additional_properties: Optional additional properties associated with the chat response.
+            status: Optional status of the chat response.
             raw_representation: Optional raw representation of the chat response from an underlying implementation.
             **kwargs: Any additional keyword arguments.
         """
@@ -1464,6 +1465,7 @@ class ChatResponse(AFBaseModel):
             value: Optional value of the structured output.
             response_format: Optional response format for the chat response.
             additional_properties: Optional additional properties associated with the chat response.
+            status: Optional status of the chat response.
             raw_representation: Optional raw representation of the chat response from an underlying implementation.
             **kwargs: Any additional keyword arguments.
 
@@ -1483,8 +1485,8 @@ class ChatResponse(AFBaseModel):
         value: Any | None = None,
         response_format: type[BaseModel] | None = None,
         additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
         status: ResponseStatus | ResponseStatusStr | None = None,
+        raw_representation: Any | None = None,
         **kwargs: Any,
     ) -> None:
         """Initializes a ChatResponse with the provided parameters."""

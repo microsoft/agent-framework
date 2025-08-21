@@ -5,6 +5,7 @@ import asyncio
 import os
 from collections import defaultdict
 from dataclasses import dataclass
+from typing import Any
 
 import aiofiles
 from agent_framework.workflow import (
@@ -12,6 +13,7 @@ from agent_framework.workflow import (
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
+    WorkflowViz,
     handler,
 )
 
@@ -23,6 +25,8 @@ to a final count per word.
 
 Intermediate results are stored in a temporary directory, and the
 final results are written to a file in the same directory.
+
+This sample also shows how you can visualize a workflow using `WorkflowViz`.
 """
 
 # Define the temporary directory for storing intermediate results
@@ -49,8 +53,8 @@ class Split(Executor):
         super().__init__(id)
         self._map_executor_ids = map_executor_ids
 
-    @handler(output_types=[SplitCompleted])
-    async def split(self, data: str, ctx: WorkflowContext) -> None:
+    @handler
+    async def split(self, data: str, ctx: WorkflowContext[SplitCompleted]) -> None:
         """Execute the task by splitting the data into chunks.
 
         Args:
@@ -104,8 +108,8 @@ class MapCompleted:
 class Map(Executor):
     """An executor that applies a function to each item in the data and save the result to a file."""
 
-    @handler(output_types=[MapCompleted])
-    async def map(self, _: SplitCompleted, ctx: WorkflowContext) -> None:
+    @handler
+    async def map(self, _: SplitCompleted, ctx: WorkflowContext[MapCompleted]) -> None:
         """Execute the task by applying a function to each item and same result to a file.
 
         Args:
@@ -141,8 +145,8 @@ class Shuffle(Executor):
         super().__init__(id)
         self._reducer_ids = reducer_ids
 
-    @handler(output_types=[ShuffleCompleted])
-    async def shuffle(self, data: list[MapCompleted], ctx: WorkflowContext) -> None:
+    @handler
+    async def shuffle(self, data: list[MapCompleted], ctx: WorkflowContext[ShuffleCompleted]) -> None:
         """Execute the task by aggregating the results.
 
         Args:
@@ -216,8 +220,8 @@ class ReduceCompleted:
 class Reduce(Executor):
     """An executor that reduces the results from the ShuffleExecutor."""
 
-    @handler(output_types=[ReduceCompleted])
-    async def _execute(self, data: ShuffleCompleted, ctx: WorkflowContext) -> None:
+    @handler
+    async def _execute(self, data: ShuffleCompleted, ctx: WorkflowContext[ReduceCompleted]) -> None:
         """Execute the task by reducing the results.
 
         Args:
@@ -250,7 +254,7 @@ class CompletionExecutor(Executor):
     """An executor that completes the workflow by aggregating the results from the ReduceExecutors."""
 
     @handler
-    async def complete(self, data: list[ReduceCompleted], ctx: WorkflowContext) -> None:
+    async def complete(self, data: list[ReduceCompleted], ctx: WorkflowContext[Any]) -> None:
         """Execute the task by aggregating the results.
 
         Args:
@@ -285,6 +289,24 @@ async def main():
         .add_fan_in_edges(reduce_operations, completion_executor)
         .build()
     )
+
+    # Step 2.5: Visualize the workflow (optional)
+    print("🎨 Generating workflow visualization...")
+    viz = WorkflowViz(workflow)
+    # Print out the mermaid string.
+    print("🧜 Mermaid string: \n=======")
+    print(viz.to_mermaid())
+    print("=======")
+    # Print out the DiGraph string.
+    print("📊 DiGraph string: \n=======")
+    print(viz.to_digraph())
+    print("=======")
+    try:
+        # Export the DiGraph visualization as SVG.
+        svg_file = viz.export(format="svg")
+        print(f"🖼️  SVG file saved to: {svg_file}")
+    except ImportError:
+        print("💡 Tip: Install 'viz' extra to export workflow visualization: pip install agent-framework-workflow[viz]")
 
     # Step 3: Open the text file and read its content.
     async with aiofiles.open(os.path.join(DIR, "resources", "long_text.txt"), "r") as f:

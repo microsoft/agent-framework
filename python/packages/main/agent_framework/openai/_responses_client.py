@@ -131,7 +131,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
             messages: the message or messages to send to the model
             background: whether to run the response in the background.
             include: additional output data to include in the model response.
-            instruction: a system (or developer) message inserted into the model's context.
+            instructions: a system (or developer) message inserted into the model's context.
             max_tokens: The maximum number of tokens to generate.
             parallel_tool_calls: Whether to enable parallel tool calls.
             model: The model to use for the agent.
@@ -149,6 +149,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
             truncation: the truncation strategy to use.
             timeout: the timeout for the request.
             additional_properties: additional properties to include in the request.
+            long_running_message_id: the ID of the long-running message.
             kwargs: any additional keyword arguments,
                 will only be passed to functions that are called.
 
@@ -233,7 +234,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
             messages: the message or messages to send to the model
             background: whether to run the response in the background.
             include: additional output data to include in the model response.
-            instruction: a system (or developer) message inserted into the model's context.
+            instructions: a system (or developer) message inserted into the model's context.
             max_tokens: The maximum number of tokens to generate.
             parallel_tool_calls: Whether to enable parallel tool calls.
             model: The model to use for the agent.
@@ -251,6 +252,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
             truncation: the truncation strategy to use.
             timeout: the timeout for the request.
             additional_properties: additional properties to include in the request.
+            long_running_message_id: the ID of the long-running message.
             kwargs: any additional keyword arguments,
                 will only be passed to functions that are called.
 
@@ -305,7 +307,6 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         long_running_message_id: str | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
-        print(long_running_message_id)
         options_dict = self._prepare_options(messages, chat_options)
         try:
             if not long_running_message_id:
@@ -318,7 +319,6 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                     return self._create_response_content(response, chat_options=chat_options)
                 # create call does not support response_format, so we need to handle it via parse call
                 resp_format = chat_options.response_format
-                print(options_dict)
                 response = await self.client.responses.parse(
                     text_format=resp_format,
                     stream=False,

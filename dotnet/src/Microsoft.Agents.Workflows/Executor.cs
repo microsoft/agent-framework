@@ -54,11 +54,13 @@ public abstract class Executor : IIdentified
     /// Process an incoming message using the registered handlers.
     /// </summary>
     /// <param name="message">The message to be processed by the executor.</param>
+    /// <param name="messageType">The "declared" type of the message (captured when it was being sent). This is
+    /// used to enable routing messages as their base types, in absence of true polymorphic type routing.</param>
     /// <param name="context">The workflow context in which the executor executes.</param>
     /// <returns>A ValueTask representing the asynchronous operation, wrapping the output from the executor.</returns>
     /// <exception cref="NotSupportedException">No handler found for the message type.</exception>
     /// <exception cref="TargetInvocationException">An exception is generated while handling the message.</exception>
-    public async ValueTask<object?> ExecuteAsync(object message, IWorkflowContext context)
+    public async ValueTask<object?> ExecuteAsync(object message, Type messageType, IWorkflowContext context)
     {
         await context.AddEventAsync(new ExecutorInvokeEvent(this.Id, message)).ConfigureAwait(false);
 
