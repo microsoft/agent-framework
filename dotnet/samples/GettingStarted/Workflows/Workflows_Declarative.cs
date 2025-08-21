@@ -33,10 +33,9 @@ public class Workflows_Declarative(ITestOutputHelper output) : OrchestrationSamp
         // DeclarativeWorkflowContext provides the components for workflow execution.
         //
         DeclarativeWorkflowOptions workflowContext =
-            new()
+            new(Throw.IfNull(TestConfiguration.AzureAI.Endpoint))
             {
                 LoggerFactory = this.LoggerFactory,
-                ProjectEndpoint = Throw.IfNull(TestConfiguration.AzureAI.Endpoint),
                 ProjectCredentials = new AzureCliCredential(),
             };
         //

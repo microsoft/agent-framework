@@ -11,26 +11,13 @@ namespace Microsoft.Agents.Workflows.Declarative.UnitTests;
 public class DeclarativeWorkflowContextTests
 {
     [Fact]
-    public void DefaultHasExpectedValues()
-    {
-        // Assert
-        DeclarativeWorkflowOptions context = DeclarativeWorkflowOptions.Default;
-        Assert.Equal(string.Empty, context.ProjectEndpoint);
-        Assert.IsType<DefaultAzureCredential>(context.ProjectCredentials);
-        Assert.Null(context.MaximumCallDepth);
-        Assert.Null(context.MaximumExpressionLength);
-        Assert.Null(context.HttpClient);
-        Assert.Same(NullLoggerFactory.Instance, context.LoggerFactory);
-    }
-
-    [Fact]
     public void InitializeDefaultValues()
     {
         // Act
-        DeclarativeWorkflowOptions context = new();
+        DeclarativeWorkflowOptions context = new("http://test");
 
         // Assert
-        Assert.Equal(string.Empty, context.ProjectEndpoint);
+        Assert.Equal("http://test", context.ProjectEndpoint);
         Assert.IsType<DefaultAzureCredential>(context.ProjectCredentials);
         Assert.Null(context.MaximumCallDepth);
         Assert.Null(context.MaximumExpressionLength);
@@ -50,9 +37,8 @@ public class DeclarativeWorkflowContextTests
         ILoggerFactory loggerFactory = LoggerFactory.Create(builder => { });
 
         // Act
-        DeclarativeWorkflowOptions context = new()
+        DeclarativeWorkflowOptions context = new(projectEndpoint)
         {
-            ProjectEndpoint = projectEndpoint,
             ProjectCredentials = credentials,
             MaximumCallDepth = maxCallDepth,
             MaximumExpressionLength = maxExpressionLength,

@@ -16,26 +16,25 @@ public static class DeclarativeWorkflowBuilder
     /// Builds a process from the provided YAML definition of a CPS Topic ObjectModel.
     /// </summary>
     /// <param name="yamlReader">The reader that provides the workflow object model YAML.</param>
-    /// <param name="context">The execution context for the workflow.</param>
+    /// <param name="options">The execution context for the workflow.</param>
     /// <returns>The <see cref="Workflow"/> that corresponds with the YAML object model.</returns>
-    public static Workflow<TInput> Build<TInput>(TextReader yamlReader, DeclarativeWorkflowOptions context) where TInput : notnull
+    public static Workflow<TInput> Build<TInput>(TextReader yamlReader, DeclarativeWorkflowOptions options) where TInput : notnull
     {
         BotElement rootElement = YamlSerializer.Deserialize<BotElement>(yamlReader) ?? throw new UnknownActionException("Unable to parse workflow.");
         string rootId = WorkflowActionVisitor.RootId(GetWorkflowId(rootElement));
 
         DeclarativeWorkflowExecutor<TInput> rootExecutor = new(rootId);
 
-        WorkflowActionVisitor visitor = new(rootExecutor, context);
+        WorkflowActionVisitor visitor = new(rootExecutor, options);
         WorkflowElementWalker walker = new(rootElement, visitor);
 
         return walker.GetWorkflow<TInput>();
     }
 
-    private static string? GetWorkflowId(BotElement element) => // %%% CPS - WORKFLOW TYPE
+    private static string GetWorkflowId(BotElement element) => // %%% CPS - WORKFLOW TYPE
         element switch
         {
-            AdaptiveDialog adaptiveDialog => adaptiveDialog.BeginDialog?.Id.Value,
-            DialogAction actionDialog => actionDialog.Id.Value,
+            AdaptiveDialog adaptiveDialog => adaptiveDialog.BeginDialog?.Id.Value ?? throw new UnknownActionException("Undefined dialog"),
             _ => throw new UnknownActionException($"Unsupported root element: {element.GetType().Name}."),
         };
 }

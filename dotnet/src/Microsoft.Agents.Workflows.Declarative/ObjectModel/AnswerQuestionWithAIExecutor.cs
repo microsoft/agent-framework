@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -23,7 +22,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
     {
         StringExpression userInputExpression = Throw.IfNull(this.Model.UserInput, $"{nameof(this.Model)}.{nameof(this.Model.UserInput)}");
 
-        using NewPersistentAgentsChatClient chatClient = new(client, this.Id); // %%% HAXX - AGENT ID
+        using NewPersistentAgentsChatClient chatClient = new(client, Throw.IfNull(this.Model.DisplayName)); // %%% HAXX - AGENT ID in "DisplayName"
         ChatClientAgent agent = new(chatClient);
 
         string? userInput = null;
@@ -40,44 +39,36 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
                     Instructions = this.State.Format(this.Model.AdditionalInstructions) ?? string.Empty,
                 });
 
-        AgentThread? thread = null;
-        FormulaValue conversationValue = this.State.Get(VariableScopeNames.System, "ConversationId"); // %%% HAXX: SYSTEM THREAD
+        FormulaValue conversationValue = this.State.Get(VariableScopeNames.System, this.Model.AutoSend ? "ConversationId" : "InternalId");
+        string conversationId;
         if (conversationValue is StringValue stringValue)
         {
-            thread = new AgentThread() { ConversationId = stringValue.Value };
+            conversationId = stringValue.Value;
+        }
+        else
+        {
+            PersistentAgentThread thread = await client.Threads.CreateThreadAsync(cancellationToken: default).ConfigureAwait(false);
+            conversationId = thread.Id;
         }
 
-        IAsyncEnumerable<AgentRunResponseUpdate> agentUpdates =
-            !string.IsNullOrWhiteSpace(userInput) ?
-                agent.RunStreamingAsync(userInput, thread, options, cancellationToken) :
-                agent.RunStreamingAsync(thread, options, cancellationToken);
+        await context.AddEventAsync(new DeclarativeWorkflowInvokeEvent(conversationId)).ConfigureAwait(false);
 
-        string? conversationId = null;
+        AgentThread agentThread = new() { ConversationId = conversationId };
+        IAsyncEnumerable<AgentRunResponseUpdate> agentUpdates =
+                !string.IsNullOrWhiteSpace(userInput) ?
+                    agent.RunStreamingAsync(userInput, agentThread, options, cancellationToken) :
+                    agent.RunStreamingAsync(agentThread, options, cancellationToken);
+
         string? messageId = null;
         List<AgentRunResponseUpdate> agentResponseUpdates = [];
         await foreach (AgentRunResponseUpdate update in agentUpdates.ConfigureAwait(false))
         {
-            if (messageId is null && this.Model.AutoSend) // %%% HAXX - EVENTING
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("STREAM: BEGIN");
-                Console.ResetColor();
-            }
-
             agentResponseUpdates.Add(update);
-            conversationId ??= ((ChatResponseUpdate)update.RawRepresentation!).ConversationId;
             messageId ??= update.MessageId;
             if (this.Model.AutoSend)
             {
                 await context.AddEventAsync(new DeclarativeWorkflowStreamEvent(update)).ConfigureAwait(false);
             }
-        }
-
-        if (this.Model.AutoSend) // %%% HAXX - EVENTING
-        {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine("STREAM: COMPLETE");
-            Console.ResetColor();
         }
 
         AgentRunResponse agentResponse = agentResponseUpdates.ToAgentRunResponse();
@@ -89,7 +80,10 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
             await context.AddEventAsync(new DeclarativeWorkflowMessageEvent(response, agentResponse.Usage)).ConfigureAwait(false);
         }
 
-        this.AssignTarget(PropertyPath.FromSegments(VariableScopeNames.System, "ConversationId"), FormulaValue.New(conversationId)); // %%% HAXX: SYSTEM THREAD
+        if (conversationValue is not StringValue)
+        {
+            this.AssignTarget(PropertyPath.FromSegments(VariableScopeNames.System, this.Model.AutoSend ? "ConversationId" : "InternalId"), FormulaValue.New(conversationId)); // %%% HAXX: INTERNAL THREAD
+        }
 
         PropertyPath? variablePath = this.Model.Variable?.Path;
         if (variablePath is not null)

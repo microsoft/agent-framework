@@ -9,10 +9,14 @@ beginDialog:
     - kind: SetVariable
       id: setVariable_list
       variable: Topic.TestList
+        # =[
+        #    { key: 1 },
+        #    { key: 2 }
+        #  ]
       value: |-
         =[
-           { key: 1 },
-           { key: 2 }
+           { key: "a" },
+           { key: "b" }
          ]
 
     - kind: SendActivity
@@ -22,7 +26,8 @@ beginDialog:
     - kind: SetVariable
       id: setVariable_result
       variable: Topic.TestResult
-      value: =CountIf(Topic.TestList, key > 1)
+      #value: =CountIf(Topic.TestList, key > 1)
+      value: =CountIf(Topic.TestList, key = "b")
       
     - kind: SendActivity
       id: sendActivity_result

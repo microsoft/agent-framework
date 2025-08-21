@@ -20,8 +20,8 @@ internal sealed class ResetVariableExecutor(ResetVariable model) :
         this.State.Clear(this.Model.Variable);
         Debug.WriteLine(
             $"""
-            !!! CLEAR {this.GetType().Name} [{this.Id}]
-                NAME: {this.Model.Variable!.Format()}
+            STATE: {this.GetType().Name} [{this.Id}]
+             NAME: {this.Model.Variable!.Format()}
             """);
 
         return default;

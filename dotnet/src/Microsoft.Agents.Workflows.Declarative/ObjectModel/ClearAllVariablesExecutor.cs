@@ -52,8 +52,8 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : Decla
             state.Clear(scope);
             Debug.WriteLine(
                 $"""
-                 !!! CLEAR {this.GetType().Name} [{executorId}]
-                     SCOPE: {scope}
+                 STATE: {this.GetType().Name} [{executorId}]
+                 SCOPE: {scope}
                  """);
         }
     }

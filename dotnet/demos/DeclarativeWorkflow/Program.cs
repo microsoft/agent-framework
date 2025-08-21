@@ -1,21 +1,32 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Reflection;
 using System.Threading.Tasks;
+using Azure.AI.Agents.Persistent;
 using Azure.Identity;
+using DeclarativeWorkflow;
 using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Declarative;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.Diagnostics;
 
 namespace Demo.DeclarativeWorkflow;
 
+/// <summary>
+/// HOW TO: Create a workflow from a declartive (yaml based) definition.
+/// </summary>
+/// <remarks>
+/// Provide the path to the workflow definition file as the first argument.
+/// All other arguments are intepreted as a queue of inputs.
+/// When no input is queued, interactive input is requested from the console.
+/// </remarks>
 internal static class Program
 {
     private const string DefaultWorkflow = "HelloWorld.yaml";
@@ -30,57 +41,62 @@ internal static class Program
 
         // Create custom HTTP client with intercept handler
         await using StreamWriter eventWriter = new(HttpEventFileName, append: false);
-        using HttpClient customClient = new(new HttpInterceptHandler() { OnIntercept = OnHttpIntercept, CheckCertificateRevocationList = true }, disposeHandler: true);
+        HttpInterceptor interceptor = new(eventWriter);
+        using HttpClient customClient = new(new HttpInterceptHandler() { OnIntercept = interceptor.OnResponseAsync, CheckCertificateRevocationList = true }, disposeHandler: true);
+        PersistentAgentsClient client = new(Throw.IfNull(config["AzureAI:Endpoint"]), new AzureCliCredential());
 
         // Read and parse the declarative workflow.
         Notify("PROCESS INIT");
 
         Stopwatch timer = Stopwatch.StartNew();
-
-        //////////////////////////////////////////////////////
-        //
-        // HOW TO: Create a workflow from a YAML file.
-        //
         using StreamReader yamlReader = File.OpenText(workflowFile);
-        //
+
         // DeclarativeWorkflowContext provides the components for workflow execution.
-        //
         DeclarativeWorkflowOptions workflowContext =
-            new()
+            new(projectEndpoint: Throw.IfNull(config["AzureAI:Endpoint"]))
             {
-                //HttpClient = customClient, // Uncomment to use custom HTTP client
-                LoggerFactory = NullLoggerFactory.Instance,
-                ProjectEndpoint = Throw.IfNull(config["AzureAI:Endpoint"]),
+                HttpClient = customClient, // Uncomment to use custom HTTP client
                 ProjectCredentials = new AzureCliCredential(),
             };
-        //
+
         // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
-        //
         Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>(yamlReader, workflowContext);
-        //
-        //////////////////////////////////////////////////////
 
         Notify($"\nPROCESS DEFINED: {timer.Elapsed}");
 
         Notify("\nPROCESS INVOKE");
 
-        //////////////////////////////////////////////
         // Run the workflow, just like any other workflow
+        string input = GetWorkflowInput(args);
+        StreamingRun run = await InProcessExecution.StreamAsync(workflow, input);
+        await MonitorWorkflowRunAsync(run, client);
+
+        Notify("\nPROCESS DONE");
+    }
+
+    private readonly static Dictionary<string, string> s_nameCache = [];
+
+    private static async Task MonitorWorkflowRunAsync(StreamingRun run, PersistentAgentsClient client)
+    {
         string? messageId = null;
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, GetWorkflowInput(args));
+
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
             if (evt is ExecutorInvokeEvent executorInvoked)
             {
-                Debug.WriteLine($"!!! ENTER #{executorInvoked.ExecutorId}");
+                Debug.WriteLine($"STEP ENTER #{executorInvoked.ExecutorId}");
             }
             else if (evt is ExecutorCompleteEvent executorComplete)
             {
-                Debug.WriteLine($"!!! EXIT #{executorComplete.ExecutorId}");
+                Debug.WriteLine($"STEP EXIT #{executorComplete.ExecutorId}");
             }
             else if (evt is ExecutorFailureEvent executorFailure)
             {
-                Debug.WriteLine($"!!! ERROR #{executorFailure.ExecutorId}: {executorFailure.Data?.Message ?? "Unknown"}");
+                Debug.WriteLine($"STEP ERROR #{executorFailure.ExecutorId}: {executorFailure.Data?.Message ?? "Unknown"}");
+            }
+            else if (evt is DeclarativeWorkflowInvokeEvent invokeEvent)
+            {
+                Debug.WriteLine($"CONVERSATION: {invokeEvent.Data}");
             }
             else if (evt is DeclarativeWorkflowStreamEvent streamEvent)
             {
@@ -88,12 +104,22 @@ internal static class Program
                 {
                     messageId = streamEvent.Data.MessageId;
 
-                    Console.WriteLine();
-
                     if (messageId is not null)
                     {
+                        string? agentId = streamEvent.Data.AuthorName;
+                        if (agentId is not null)
+                        {
+                            if (!s_nameCache.TryGetValue(agentId, out string? realName))
+                            {
+                                PersistentAgent agent = await client.Administration.GetAgentAsync(agentId);
+                                s_nameCache[agentId] = agent.Name;
+                                realName = agent.Name;
+                            }
+                            agentId = realName;
+                        }
+                        agentId ??= nameof(ChatRole.Assistant);
                         Console.ForegroundColor = ConsoleColor.Cyan;
-                        Console.Write("RESPONSE:");
+                        Console.Write($"\n{agentId.ToUpperInvariant()}:");
                         Console.ForegroundColor = ConsoleColor.DarkGray;
                         Console.WriteLine($" [{messageId}]");
                     }
@@ -135,56 +161,12 @@ internal static class Program
                 }
             }
         }
-        //////////////////////////////////////////////
-
-        Notify("\nPROCESS DONE");
-
-        string GetWorkflowInput(string[] args)
-        {
-            string? input = GetWorkflowInputs(args).FirstOrDefault();
-
-            try
-            {
-                Console.ForegroundColor = ConsoleColor.DarkGreen;
-
-                Console.Write("\nINPUT: ");
-
-                Console.ForegroundColor = ConsoleColor.White;
-
-                if (!string.IsNullOrWhiteSpace(input))
-                {
-                    Console.WriteLine(input);
-                    return input;
-                }
-                while (string.IsNullOrWhiteSpace(input))
-                {
-                    input = Console.ReadLine();
-                }
-
-                Console.WriteLine();
-
-                return input.Trim();
-            }
-            finally
-            {
-                Console.ResetColor();
-            }
-        }
-
-        ValueTask OnHttpIntercept(HttpResponseIntercept intercept)
-        {
-            eventWriter.WriteLine($"{intercept.RequestMethod} {intercept.RequestUri}");
-            if (intercept.ResponseContent is not null)
-            {
-                eventWriter.WriteLine($"API:{Environment.NewLine}" + intercept.ResponseContent);
-            }
-            return default;
-        }
     }
 
     private static string GetWorkflowFile(string[] args)
     {
         string workflowFile = args.FirstOrDefault() ?? DefaultWorkflow;
+
         if (!File.Exists(workflowFile) && !Path.IsPathFullyQualified(workflowFile))
         {
             workflowFile = Path.Combine(@"..\..\..\..\..\..\Workflows", workflowFile);
@@ -196,6 +178,36 @@ internal static class Program
         }
 
         return workflowFile;
+    }
+
+    private static string GetWorkflowInput(string[] args)
+    {
+        string? input = GetWorkflowInputs(args).FirstOrDefault();
+
+        try
+        {
+            Console.ForegroundColor = ConsoleColor.DarkGreen;
+
+            Console.Write("\nINPUT: ");
+
+            Console.ForegroundColor = ConsoleColor.White;
+
+            if (!string.IsNullOrWhiteSpace(input))
+            {
+                Console.WriteLine(input);
+                return input;
+            }
+            while (string.IsNullOrWhiteSpace(input))
+            {
+                input = Console.ReadLine();
+            }
+
+            return input.Trim();
+        }
+        finally
+        {
+            Console.ResetColor();
+        }
     }
 
     private static string[] GetWorkflowInputs(string[] args)

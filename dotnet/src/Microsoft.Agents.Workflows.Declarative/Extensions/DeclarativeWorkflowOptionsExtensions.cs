@@ -7,12 +7,12 @@ using Microsoft.PowerFx;
 
 namespace Microsoft.Agents.Workflows.Declarative.Extensions;
 
-internal static class DeclarativeWorkflowContextExtensions
+internal static class DeclarativeWorkflowOptionsExtensions
 {
     private const int DefaultMaximumExpressionLength = 10000;
 
-    public static RecalcEngine CreateRecalcEngine(this DeclarativeWorkflowOptions context) =>
-        RecalcEngineFactory.Create(context.MaximumExpressionLength ?? DefaultMaximumExpressionLength, context.MaximumCallDepth);
+    public static RecalcEngine CreateRecalcEngine(this DeclarativeWorkflowOptions? context) =>
+        RecalcEngineFactory.Create(context?.MaximumExpressionLength ?? DefaultMaximumExpressionLength, context?.MaximumCallDepth);
 
     public static PersistentAgentsClient CreateClient(this DeclarativeWorkflowOptions context)
     {

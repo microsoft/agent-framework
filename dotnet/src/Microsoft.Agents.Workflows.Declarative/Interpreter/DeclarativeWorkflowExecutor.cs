@@ -31,6 +31,7 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(string workflowId) :
         WorkflowScopes scopes = await context.GetScopedStateAsync(default).ConfigureAwait(false);
 
         scopes.Set("LastMessage", VariableScopeNames.System, input.ToRecordValue());
+        scopes.Set("Activity", VariableScopeNames.System, new ChatMessage(ChatRole.User, string.Empty).ToRecordValue());
 
         await context.SetScopedStateAsync(scopes, default).ConfigureAwait(false);
         await context.SendMessageAsync(new ExecutionResultMessage(this.Id)).ConfigureAwait(false);

@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "Default": {
+      "commandName": "Project",
+      "commandLineArgs": "thread_eX1ZSWvK10TdAT9m0ag9SqMW"
+    },
+    "Interactive": {
+      "commandName": "Project",
+      "commandLineArgs": ""
+    }
+  }
+}

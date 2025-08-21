@@ -8,6 +8,7 @@
     <Project Path="demos/AgentOpenTelemetry/AgentOpenTelemetry.csproj" />
     <Project Path="demos/DeclarativeWorkflow/DeclarativeWorkflow.csproj" />
     <Project Path="demos/MinimalConsole/MinimalConsole.csproj" />
+    <Project Path="demos/QueryWorkflow/QueryWorkflow.csproj" />
   </Folder>
   <Folder Name="/Samples/">
     <Project Path="samples/GettingStarted/GettingStarted.csproj" />

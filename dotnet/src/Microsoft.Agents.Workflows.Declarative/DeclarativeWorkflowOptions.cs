@@ -11,14 +11,17 @@ namespace Microsoft.Agents.Workflows.Declarative;
 /// <summary>
 /// Configuration options for workflow execution.
 /// </summary>
-public sealed class DeclarativeWorkflowOptions
+public sealed class DeclarativeWorkflowOptions(string projectEndpoint)
 {
-    internal static DeclarativeWorkflowOptions Default { get; } = new();
+    /// <summary>
+    /// Optionally identifies a continued workflow conversation.
+    /// </summary>
+    public string? ConversationId { get; init; }
 
     /// <summary>
     /// Defines the endpoint for the Foundry project.
     /// </summary>
-    public string ProjectEndpoint { get; init; } = string.Empty;
+    public string ProjectEndpoint { get; } = projectEndpoint;
 
     /// <summary>
     /// Defines the credentials that authorize access to the Foundry project.

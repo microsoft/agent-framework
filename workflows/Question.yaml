@@ -12,6 +12,7 @@ beginDialog:
       
       # Use AI to answer the question
     - kind: AnswerQuestionWithAI
-      id: asst_orsBf06Bxz9B1hjVjiiQoPqf
+      id: question_demo
+      displayName: asst_orsBf06Bxz9B1hjVjiiQoPqf
       variable: Topic.Answer
       userInput: =System.LastMessage.Text

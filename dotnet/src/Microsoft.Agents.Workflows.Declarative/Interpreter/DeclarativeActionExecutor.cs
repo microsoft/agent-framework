@@ -49,7 +49,7 @@ internal abstract class WorkflowActionExecutor :
 
     internal ILogger Logger { get; set; } = NullLogger<WorkflowActionExecutor>.Instance;
 
-    internal DeclarativeWorkflowOptions Options { get; set; } = DeclarativeWorkflowOptions.Default;
+    internal DeclarativeWorkflowOptions? Options { get; set; }
 
     protected DeclarativeWorkflowState State
     {
@@ -62,7 +62,7 @@ internal abstract class WorkflowActionExecutor :
     {
         if (this.Model.Disabled)
         {
-            Debug.WriteLine($"!!! DISABLED {this.GetType().Name} [{this.Id}]");
+            Debug.WriteLine($"DISABLED {this.GetType().Name} [{this.Id}]");
             return;
         }
 
@@ -76,14 +76,14 @@ internal abstract class WorkflowActionExecutor :
             await context.SetScopedStateAsync(scopes, default).ConfigureAwait(false);
             await context.SendMessageAsync(new ExecutionResultMessage(this.Id, result)).ConfigureAwait(false);
         }
-        catch (WorkflowExecutionException)
+        catch (WorkflowExecutionException exception)
         {
-            Debug.WriteLine($"*** STEP [{this.Id}] ERROR - Action failure");
+            Debug.WriteLine($"ERROR [{this.Id}] {exception.GetType().Name}\n{exception.Message}");
             throw;
         }
         catch (Exception exception)
         {
-            Debug.WriteLine($"*** STEP [{this.Id}] ERROR - {exception.GetType().Name}\n{exception.Message}");
+            Debug.WriteLine($"ERROR [{this.Id}] {exception.GetType().Name}\n{exception.Message}");
             throw new WorkflowExecutionException($"Unhandled workflow failure - #{this.Id} ({this.Model.GetType().Name})", exception);
         }
     }
@@ -99,9 +99,9 @@ internal abstract class WorkflowActionExecutor :
         string valuePosition = (resultValue?.IndexOf('\n') ?? -1) >= 0 ? Environment.NewLine : " ";
         Debug.WriteLine(
             $"""
-            !!! ASSIGN {this.GetType().Name} [{this.Id}]
-                NAME: {targetPath.Format()}
-                VALUE:{valuePosition}{result.Format()} ({result.GetType().Name})
+            STATE: {this.GetType().Name} [{this.Id}]
+             NAME: {targetPath.Format()}
+            VALUE:{valuePosition}{result.Format()} ({result.GetType().Name})
             """);
 #endif
     }

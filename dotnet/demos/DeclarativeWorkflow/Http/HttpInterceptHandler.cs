@@ -4,8 +4,10 @@
 
 using System;
 using System.Net.Http;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using DeclarativeWorkflow;
 
 namespace Demo.DeclarativeWorkflow;
 
@@ -21,21 +23,23 @@ internal sealed class HttpInterceptHandler : HttpClientHandler
         HttpResponseMessage response = await base.SendAsync(request, cancellationToken);
 
         // Intercept and modify the response
-        string? responseContent = null;
         if (response.Content != null)
         {
-            responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
-
-            response.Content = new StringContent(responseContent);
-        }
-
-        if (this.OnIntercept is not null)
-        {
-            // Invoke the intercept callback if it is set
-            await this.OnIntercept(new HttpResponseIntercept(request.Method, request.RequestUri, responseContent)).ConfigureAwait(false);
+            response.Content = new StreamContent(new InterceptStream(await response.Content.ReadAsStreamAsync(cancellationToken), OnResponse));
         }
 
         return response;
+
+        void OnResponse(byte[] buffer, int offset, int length)
+        {
+            if (this.OnIntercept is not null)
+            {
+                Encoding.UTF8.GetString(buffer, 0, length);
+                string responseContent = Encoding.UTF8.GetString(buffer, offset, length);
+                // Invoke the intercept callback if it is set
+                ValueTask task = this.OnIntercept(new HttpResponseIntercept(request.Method, request.RequestUri, responseContent)); // %%% HAXX: CHANNEL (Lighter)
+            }
+        }
     }
 }
 
