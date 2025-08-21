@@ -486,7 +486,7 @@ def intercepts_request(
 ]:
     """Decorator to mark methods that intercept sub-workflow requests.
 
-    This decorator allows parent workflows to intercept and handle requests from
+    This decorator allows the executor in the parent workflows to intercept and handle requests from
     sub-workflows before they are sent to external sources.
 
     Args:
