@@ -113,8 +113,10 @@ class SmartEmailOrchestrator(Executor):
             request = EmailValidationRequest(email=email)
             await ctx.send_message(request, target_id="email_validator_workflow")
 
-    @intercepts_request(DomainCheckRequest)
-    async def check_domain(self, request: DomainCheckRequest, ctx: WorkflowContext[Any]) -> RequestResponse:
+    @intercepts_request
+    async def check_domain(
+        self, request: DomainCheckRequest, ctx: WorkflowContext[Any]
+    ) -> RequestResponse[DomainCheckRequest, bool]:
         """Intercept domain check requests from sub-workflows."""
         if request.domain in self.approved_domains:
             return RequestResponse.handled(True)

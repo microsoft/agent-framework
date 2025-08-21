@@ -128,7 +128,7 @@ class SmartEmailOrchestrator(Executor):
         for email in emails:
             await ctx.send_message(email, target_id="email_workflow")
 
-    @intercepts_request(DomainCheckRequest)
+    @intercepts_request
     async def check_domain(
         self, request: DomainCheckRequest, ctx: WorkflowContext[Any]
     ) -> RequestResponse[DomainCheckRequest, bool]:

@@ -32,7 +32,7 @@ The example simulates an email validation system where:
 - Parent workflows can intercept domain check requests for optimization
 - Known domains are approved locally, unknown domains would be forwarded externally
 
-Note: This is an advanced example. For basic sub-workflow functionality, 
+Note: This is an advanced example. For basic sub-workflow functionality,
 see step_08a_simple_sub_workflow.py first.
 
 Key concepts demonstrated:
@@ -82,7 +82,9 @@ class EmailValidator(Executor):
         super().__init__(id="email_validator")
 
     @handler
-    async def validate(self, request: EmailValidationRequest, ctx: WorkflowContext[DomainCheckRequest | ValidationResult]) -> None:
+    async def validate(
+        self, request: EmailValidationRequest, ctx: WorkflowContext[DomainCheckRequest | ValidationResult]
+    ) -> None:
         """Validate an email address."""
         print(f"Validating email: {request.email}")
 
@@ -140,7 +142,7 @@ class SmartEmailOrchestrator(Executor):
             self.expected_result_count = len(emails)
             await ctx.send_message(request, target_id="email_validator_workflow")
 
-    @intercepts_request(DomainCheckRequest)
+    @intercepts_request
     async def check_domain(
         self, request: DomainCheckRequest, ctx: WorkflowContext[Any]
     ) -> RequestResponse[DomainCheckRequest, bool]:

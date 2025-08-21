@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass
+from typing import Any
 
 import pytest
 
@@ -97,9 +98,9 @@ class ParentOrchestrator(Executor):
             request = EmailValidationRequest(email=email)
             await ctx.send_message(request, target_id="email_workflow")
 
-    @intercepts_request(DomainCheckRequest)
+    @intercepts_request
     async def check_domain(
-        self, request: DomainCheckRequest, ctx: WorkflowContext
+        self, request: DomainCheckRequest, ctx: WorkflowContext[Any]
     ) -> RequestResponse[DomainCheckRequest, bool]:
         """Intercept domain check requests from sub-workflows."""
         # Check if we know this domain
@@ -259,9 +260,9 @@ async def test_conditional_forwarding():
             request = EmailValidationRequest(email=email)
             await ctx.send_message(request, target_id="email_workflow")
 
-        @intercepts_request(DomainCheckRequest)
+        @intercepts_request
         async def check_domain(
-            self, request: DomainCheckRequest, ctx: WorkflowContext
+            self, request: DomainCheckRequest, ctx: WorkflowContext[Any]
         ) -> RequestResponse[DomainCheckRequest, bool]:
             """Check cache first, then forward if not found."""
             if request.domain in self.cache:
@@ -334,18 +335,18 @@ async def test_workflow_scoped_interception():
             await ctx.send_message(EmailValidationRequest(email=data["email1"]), target_id="workflow_a")
             await ctx.send_message(EmailValidationRequest(email=data["email2"]), target_id="workflow_b")
 
-        @intercepts_request(DomainCheckRequest, from_workflow="workflow_a")
+        @intercepts_request(from_workflow="workflow_a")
         async def check_domain_a(
-            self, request: DomainCheckRequest, ctx: WorkflowContext
+            self, request: DomainCheckRequest, ctx: WorkflowContext[Any]
         ) -> RequestResponse[DomainCheckRequest, bool]:
             """Strict rules for workflow A."""
             if request.domain == "strict.com":
                 return RequestResponse[DomainCheckRequest, bool].handled(True)
             return RequestResponse[DomainCheckRequest, bool].forward()
 
-        @intercepts_request(DomainCheckRequest, from_workflow="workflow_b")
+        @intercepts_request(from_workflow="workflow_b")
         async def check_domain_b(
-            self, request: DomainCheckRequest, ctx: WorkflowContext
+            self, request: DomainCheckRequest, ctx: WorkflowContext[Any]
         ) -> RequestResponse[DomainCheckRequest, bool]:
             """Lenient rules for workflow B."""
             if request.domain.endswith(".com"):

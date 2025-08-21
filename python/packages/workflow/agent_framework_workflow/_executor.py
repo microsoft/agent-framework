@@ -453,44 +453,45 @@ class SubWorkflowResponse:
 
 # region Intercepts Request Decorator
 
+# TypeVar for request type that must be a RequestInfoMessage subclass
+RequestInfoMessageT = TypeVar("RequestInfoMessageT", bound="RequestInfoMessage")
+
+# Type alias for interceptor functions
+InterceptorFunc = Callable[
+    [Any, RequestInfoMessageT, WorkflowContext[Any]], Awaitable[RequestResponse[RequestInfoMessageT, Any]]
+]
+
 
 @overload
 def intercepts_request(
-    request_type: type | str,
-) -> Callable[
-    [Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[RequestResponse[Any, Any]]]],
-    Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[RequestResponse[Any, Any]]],
-]: ...
+    func: Callable[..., Any],
+) -> Callable[..., Any]: ...
 
 
 @overload
 def intercepts_request(
-    request_type: type | str,
     *,
     from_workflow: str | None = None,
     condition: Callable[[Any], bool] | None = None,
-) -> Callable[
-    [Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[RequestResponse[Any, Any]]]],
-    Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[RequestResponse[Any, Any]]],
-]: ...
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]: ...
 
 
 def intercepts_request(
-    request_type: type | str,
+    func: Callable[..., Any] | None = None,
     *,
     from_workflow: str | None = None,
     condition: Callable[[Any], bool] | None = None,
-) -> Callable[
-    [Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[RequestResponse[Any, Any]]]],
-    Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[RequestResponse[Any, Any]]],
-]:
+) -> Callable[..., Any]:
     """Decorator to mark methods that intercept sub-workflow requests.
 
-    This decorator allows parent workflows to intercept and handle requests from
+    The request type is automatically inferred from the method's second parameter type hint.
+    The type must be a subclass of RequestInfoMessage.
+
+    This decorator allows executors in parent workflows to intercept and handle requests from
     sub-workflows before they are sent to external sources.
 
     Args:
-        request_type: The type of request to intercept (can be a class or string).
+        func: The function being decorated (automatically passed when used without parentheses).
         from_workflow: Optional ID of specific sub-workflow to intercept from.
         condition: Optional callable that must return True for interception.
 
@@ -498,27 +499,80 @@ def intercepts_request(
         The decorated function with interception metadata.
 
     Example:
-        @intercepts_request(DomainCheckRequest)
-        async def check_domain(self, request: DomainCheckRequest, ctx: WorkflowContext) -> RequestResponse:
+        @intercepts_request
+        async def check_domain(
+            self, request: DomainCheckRequest, ctx: WorkflowContext[Any]
+        ) -> RequestResponse[DomainCheckRequest, bool]:
+            # Type automatically inferred as DomainCheckRequest from parameter annotation
             if request.domain in self.approved_domains:
                 return RequestResponse.handled(True)
             return RequestResponse.forward()
+
+        @intercepts_request(from_workflow="email_validator")
+        async def handle_specific(
+            self, request: EmailRequest, ctx: WorkflowContext[Any]
+        ) -> RequestResponse[EmailRequest, str]:
+            # Only intercepts EmailRequest from the "email_validator" workflow
+            return RequestResponse.handled("handled by parent")
     """
 
-    def decorator(
-        func: Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[RequestResponse[Any, Any]]],
-    ) -> Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[RequestResponse[Any, Any]]]:
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        # Extract request type from method signature
+        sig = inspect.signature(func)
+        params = list(sig.parameters.values())
+
+        if len(params) < 2:
+            raise ValueError(f"Interceptor method '{func.__name__}' must have at least 2 parameters (self, request)")
+
+        request_param = params[1]  # Second parameter (after self)
+        request_type = request_param.annotation
+
+        if request_type is inspect.Parameter.empty:
+            raise ValueError(f"Interceptor method '{func.__name__}' request parameter must have a type annotation")
+
+        # Runtime validation that it's a RequestInfoMessage subclass
+        if isinstance(request_type, type):
+            # We need to check if RequestInfoMessage is defined yet, since this runs at import time
+            try:
+                # Try to get RequestInfoMessage from the current module's globals
+                request_info_message_class = None
+                func_module = inspect.getmodule(func)
+                if func_module and hasattr(func_module, "RequestInfoMessage"):
+                    request_info_message_class = func_module.RequestInfoMessage
+                else:
+                    # Look in the current module (where this decorator is defined)
+                    import sys
+
+                    current_module = sys.modules[__name__]
+                    if hasattr(current_module, "RequestInfoMessage"):
+                        request_info_message_class = current_module.RequestInfoMessage
+
+                if request_info_message_class and not issubclass(request_type, request_info_message_class):
+                    raise TypeError(
+                        f"Interceptor method '{func.__name__}' can only handle RequestInfoMessage subclasses, "
+                        f"got {request_type}. Make sure your request type inherits from RequestInfoMessage."
+                    )
+            except (AttributeError, NameError):
+                # RequestInfoMessage might not be defined yet at import time, skip validation
+                # This will be caught later when the interceptor is actually called
+                pass
+
         @functools.wraps(func)
-        async def wrapper(self: ExecutorT, request: Any, ctx: WorkflowContext[Any]) -> RequestResponse[Any, Any]:
+        async def wrapper(self: Any, request: Any, ctx: WorkflowContext[Any]) -> Any:
             return await func(self, request, ctx)
 
-        # Add metadata for discovery
+        # Add metadata for discovery - store the inferred type
         wrapper._intercepts_request = request_type  # type: ignore
         wrapper._from_workflow = from_workflow  # type: ignore
         wrapper._intercept_condition = condition  # type: ignore
 
         return wrapper
 
+    # If func is provided, we're being called without parentheses: @intercepts_request
+    if func is not None:
+        return decorator(func)
+
+    # Otherwise, we're being called with parentheses: @intercepts_request(from_workflow="...")
     return decorator
 
 
