@@ -5,6 +5,7 @@ import logging
 from collections import defaultdict
 from collections.abc import Sequence
 from enum import Enum
+from types import UnionType
 from typing import Any, Union, get_args, get_origin
 
 from ._edge import Edge, EdgeGroup, FanInEdgeGroup
@@ -20,6 +21,7 @@ class ValidationTypeEnum(Enum):
     EDGE_DUPLICATION = "EDGE_DUPLICATION"
     TYPE_COMPATIBILITY = "TYPE_COMPATIBILITY"
     GRAPH_CONNECTIVITY = "GRAPH_CONNECTIVITY"
+    HANDLER_OUTPUT_ANNOTATION = "HANDLER_OUTPUT_ANNOTATION"
 
 
 class WorkflowValidationError(Exception):
@@ -75,6 +77,23 @@ class GraphConnectivityError(WorkflowValidationError):
         super().__init__(message, validation_type=ValidationTypeEnum.GRAPH_CONNECTIVITY)
 
 
+class HandlerOutputAnnotationError(WorkflowValidationError):
+    """Exception raised when a handler's WorkflowContext output annotation is invalid or missing."""
+
+    def __init__(self, executor_id: str, handler_name: str, reason: str):
+        super().__init__(
+            message=(
+                "Invalid WorkflowContext output annotation in handler "
+                f"'{handler_name}' of executor '{executor_id}': {reason}. "
+                "Handlers must annotate their third parameter as WorkflowContext[T]. "
+                "Use WorkflowContext[None] if the handler emits no messages."
+            ),
+            validation_type=ValidationTypeEnum.HANDLER_OUTPUT_ANNOTATION,
+        )
+        self.executor_id = executor_id
+        self.handler_name = handler_name
+
+
 # endregion
 
 
@@ -116,6 +135,7 @@ class WorkflowGraphValidator:
 
         # Run all checks
         self._validate_edge_duplication()
+        self._validate_handler_output_annotations()
         self._validate_type_compatibility()
         self._validate_graph_connectivity(start_executor_id)
         self._validate_self_loops()
@@ -131,6 +151,109 @@ class WorkflowGraphValidator:
                 executors[executor.id] = executor
 
         return executors
+
+    def _validate_handler_output_annotations(self) -> None:
+        """Validate that each handler's ctx parameter is annotated with WorkflowContext[T].
+
+        Requirements:
+        - WorkflowContext annotation must be present
+        - T_Out must be provided; if no outputs, it must be None
+                - T_Out elements must be valid types (class) or typing generics (e.g., list[str]);
+                    values like int() or 123 are invalid
+        """
+        from ._workflow_context import WorkflowContext  # Local import to avoid cycles
+
+        # Iterate over all registered executors in the workflow graph
+        for executor_id, executor in self._executors.items():
+            for attr_name in dir(executor):
+                # Retrieve attributes without binding (so the first parameter remains 'self').
+                # This ensures inspect.signature sees all three parameters: (self, message, ctx).
+                attr = None
+                from contextlib import suppress
+
+                with suppress(Exception):
+                    attr = inspect.getattr_static(executor, attr_name)
+                if attr is None:
+                    continue
+                # Consider only callables that were decorated with @handler
+                if not callable(attr) or not hasattr(attr, "_handler_spec"):
+                    continue
+
+                handler_spec = attr._handler_spec  # type: ignore[attr-defined]
+                handler_name = handler_spec.get("name", attr_name)
+
+                try:
+                    # Inspect the function signature of the unbound function
+                    sig = inspect.signature(attr)
+                except (TypeError, ValueError):
+                    continue
+
+                params = list(sig.parameters.values())
+                # Handlers must have exactly three parameters: (self, message, ctx)
+                if len(params) != 3:
+                    continue
+
+                ctx_param = params[2]
+                ctx_ann = ctx_param.annotation
+
+                # If ctx lacks an annotation entirely, fail fast with a clear message
+                if ctx_ann is inspect.Parameter.empty:
+                    raise HandlerOutputAnnotationError(executor_id, handler_name, "missing type annotation for ctx")
+
+                # Validate that the ctx annotation is WorkflowContext[...] and is properly parameterized
+                ctx_origin = get_origin(ctx_ann)
+                if ctx_origin is None:
+                    # If it's exactly the WorkflowContext class, T_Out is missing (e.g., WorkflowContext)
+                    if ctx_ann is WorkflowContext:
+                        raise HandlerOutputAnnotationError(
+                            executor_id,
+                            handler_name,
+                            "T_Out is missing; use WorkflowContext[None] or specify concrete types",
+                        )
+                else:
+                    # The annotation is parameterized, but must be for WorkflowContext
+                    if ctx_origin is not WorkflowContext:
+                        raise HandlerOutputAnnotationError(
+                            executor_id, handler_name, f"ctx must be WorkflowContext[T], got {ctx_ann}"
+                        )
+
+                # Extract and validate T_Out
+                type_args = get_args(ctx_ann)
+                if not type_args:
+                    raise HandlerOutputAnnotationError(
+                        executor_id,
+                        handler_name,
+                        "T_Out is missing; use WorkflowContext[None] or specify concrete types",
+                    )
+
+                t_out = type_args[0]
+
+                # Allow Any for T_Out (unspecified outputs). We accept this here and
+                # skip type compatibility later, but still enforce shape validity elsewhere.
+                if t_out is Any:
+                    continue
+
+                # Allow None (no outputs) explicitly declared
+                if t_out is type(None):
+                    continue
+
+                # If T_Out is a union, validate each member (e.g., str | int)
+                union_origin = get_origin(t_out)
+                items: list[Any]
+                items = list(get_args(t_out)) if union_origin in (Union, UnionType) else [t_out]
+
+                def _is_type_like(x: Any) -> bool:
+                    # A "type-like" entry is either a class/type or a typing alias
+                    # (e.g., list[str] has an origin and args)
+                    return isinstance(x, type) or get_origin(x) is not None
+
+                invalid = [x for x in items if not _is_type_like(x) and x is not type(None)]
+                if invalid:
+                    raise HandlerOutputAnnotationError(
+                        executor_id,
+                        handler_name,
+                        f"T_Out contains invalid entries: {invalid}. Use proper types or typing generics",
+                    )
 
     # endregion
 
@@ -191,7 +314,7 @@ class WorkflowGraphValidator:
                 logger.warning(
                     f"Executor '{source_executor.id}' has no output type annotations. "
                     f"Type compatibility validation will be skipped for edges from this executor. "
-                    f"Consider adding output_types to @handler decorators for better validation."
+                    f"Consider adding WorkflowContext[T] generics in handlers for better validation."
                 )
             if not target_input_types:
                 logger.warning(
@@ -472,11 +595,11 @@ class WorkflowGraphValidator:
         source_origin = get_origin(source_type)
         target_origin = get_origin(target_type)
 
-        if target_origin is Union:
+        if target_origin in (Union, UnionType):
             target_args = get_args(target_type)
             return any(WorkflowGraphValidator._is_type_compatible(source_type, arg) for arg in target_args)
 
-        if source_origin is Union:
+        if source_origin in (Union, UnionType):
             source_args = get_args(source_type)
             return all(WorkflowGraphValidator._is_type_compatible(arg, target_type) for arg in source_args)
 

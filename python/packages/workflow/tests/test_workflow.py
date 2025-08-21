@@ -2,6 +2,7 @@
 
 import tempfile
 from dataclasses import dataclass
+from typing import Any
 
 import pytest
 from agent_framework.workflow import (
@@ -35,8 +36,8 @@ class MockExecutor(Executor):
         super().__init__(id=id)
         self.limit = limit
 
-    @handler(output_types=[MockMessage])
-    async def mock_handler(self, message: MockMessage, ctx: WorkflowContext) -> None:
+    @handler
+    async def mock_handler(self, message: MockMessage, ctx: WorkflowContext[MockMessage]) -> None:
         if message.data < self.limit:
             await ctx.send_message(MockMessage(data=message.data + 1))
         else:
@@ -47,7 +48,7 @@ class MockAggregator(Executor):
     """A mock executor that aggregates results from multiple executors."""
 
     @handler
-    async def mock_handler(self, messages: list[MockMessage], ctx: WorkflowContext) -> None:
+    async def mock_handler(self, messages: list[MockMessage], ctx: WorkflowContext[Any]) -> None:
         # This mock simply returns the data incremented by 1
         await ctx.add_event(WorkflowCompletedEvent(data=sum(msg.data for msg in messages)))
 
@@ -62,14 +63,14 @@ class ApprovalMessage:
 class MockExecutorRequestApproval(Executor):
     """A mock executor that simulates a request for approval."""
 
-    @handler(output_types=[RequestInfoMessage])
-    async def mock_handler_a(self, message: MockMessage, ctx: WorkflowContext) -> None:
+    @handler
+    async def mock_handler_a(self, message: MockMessage, ctx: WorkflowContext[RequestInfoMessage]) -> None:
         """A mock handler that requests approval."""
         await ctx.set_shared_state(self.id, message.data)
         await ctx.send_message(RequestInfoMessage())
 
-    @handler(output_types=[MockMessage])
-    async def mock_handler_b(self, message: ApprovalMessage, ctx: WorkflowContext) -> None:
+    @handler
+    async def mock_handler_b(self, message: ApprovalMessage, ctx: WorkflowContext[MockMessage]) -> None:
         """A mock handler that processes the approval response."""
         data = await ctx.get_shared_state(self.id)
         if message.approved:
@@ -285,7 +286,7 @@ async def test_fan_in():
 def simple_executor() -> Executor:
     class SimpleExecutor(Executor):
         @handler
-        async def handle_message(self, message: Message, context: WorkflowContext) -> None:
+        async def handle_message(self, message: Message, context: WorkflowContext[None]) -> None:
             pass
 
     return SimpleExecutor("test_executor")
@@ -494,8 +495,8 @@ class StateTrackingMessage:
 class StateTrackingExecutor(Executor):
     """An executor that tracks state in shared state to test context reset behavior."""
 
-    @handler(output_types=[])
-    async def handle_message(self, message: StateTrackingMessage, ctx: WorkflowContext) -> None:
+    @handler
+    async def handle_message(self, message: StateTrackingMessage, ctx: WorkflowContext[Any]) -> None:
         """Handle the message and track it in shared state."""
         # Get existing messages from shared state
         try:
