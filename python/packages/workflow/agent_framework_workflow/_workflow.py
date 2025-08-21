@@ -17,6 +17,8 @@ from ._edge import (
     FanOutEdgeGroup,
     SingleEdgeGroup,
     SwitchCaseEdgeGroup,
+    SwitchCaseEdgeGroupCase,
+    SwitchCaseEdgeGroupDefault,
 )
 from ._events import RequestInfoEvent, WorkflowCompletedEvent, WorkflowEvent
 from ._executor import Executor, RequestInfoExecutor
@@ -484,7 +486,15 @@ class WorkflowBuilder:
             cases: A list of case objects that determine the target executor for each message.
         """
         source_id = self._add_executor(source)
-        self._edge_groups.append(SwitchCaseEdgeGroup(source_id, cases))
+        # Convert case data types to internal types that only uses target_id.
+        internal_cases: list[SwitchCaseEdgeGroupCase | SwitchCaseEdgeGroupDefault] = []
+        for case in cases:
+            self._add_executor(case.target)
+            if isinstance(case, Default):
+                internal_cases.append(SwitchCaseEdgeGroupDefault(target_id=case.target.id))
+            else:
+                internal_cases.append(SwitchCaseEdgeGroupCase(condition=case.condition, target_id=case.target.id))
+        self._edge_groups.append(SwitchCaseEdgeGroup(source_id, internal_cases))
 
         return self
 

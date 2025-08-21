@@ -643,7 +643,7 @@ def test_switch_case_edge_group() -> None:
     edge_group = SwitchCaseEdgeGroup(
         source_id=source.id,
         cases=[
-            Case(condition=lambda x: x.data < 0, target_id=target1.id),
+            Case(condition=lambda x: x.data < 0, target=target1.id),
             Default(target_id=target2.id),
         ],
     )
@@ -672,7 +672,7 @@ def test_switch_case_edge_group_invalid_number_of_cases():
         SwitchCaseEdgeGroup(
             source_id=source.id,
             cases=[
-                Case(condition=lambda x: x.data < 0, target_id=target.id),
+                Case(condition=lambda x: x.data < 0, target=target.id),
             ],
         )
 
@@ -680,8 +680,8 @@ def test_switch_case_edge_group_invalid_number_of_cases():
         SwitchCaseEdgeGroup(
             source_id=source.id,
             cases=[
-                Case(condition=lambda x: x.data < 0, target_id=target.id),
-                Case(condition=lambda x: x.data >= 0, target_id=target.id),
+                Case(condition=lambda x: x.data < 0, target=target.id),
+                Case(condition=lambda x: x.data >= 0, target=target.id),
             ],
         )
 
@@ -696,7 +696,7 @@ def test_switch_case_edge_group_invalid_number_of_default_cases():
         SwitchCaseEdgeGroup(
             source_id=source.id,
             cases=[
-                Case(condition=lambda x: x.data < 0, target_id=target1.id),
+                Case(condition=lambda x: x.data < 0, target=target1.id),
                 Default(target_id=target2.id),
                 Default(target_id=target2.id),
             ],
@@ -712,7 +712,7 @@ async def test_switch_case_edge_group_send_message() -> None:
     edge_group = SwitchCaseEdgeGroup(
         source_id=source.id,
         cases=[
-            Case(condition=lambda x: x.data < 0, target_id=target1.id),
+            Case(condition=lambda x: x.data < 0, target=target1.id),
             Default(target_id=target2.id),
         ],
     )
@@ -750,7 +750,7 @@ async def test_switch_case_edge_group_send_message_with_invalid_target() -> None
     edge_group = SwitchCaseEdgeGroup(
         source_id=source.id,
         cases=[
-            Case(condition=lambda x: x.data < 0, target_id=target1.id),
+            Case(condition=lambda x: x.data < 0, target=target1.id),
             Default(target_id=target2.id),
         ],
     )
@@ -777,7 +777,7 @@ async def test_switch_case_edge_group_send_message_with_valid_target() -> None:
     edge_group = SwitchCaseEdgeGroup(
         source_id=source.id,
         cases=[
-            Case(condition=lambda x: x.data < 0, target_id=target1.id),
+            Case(condition=lambda x: x.data < 0, target=target1.id),
             Default(target_id=target2.id),
         ],
     )
@@ -809,7 +809,7 @@ async def test_switch_case_edge_group_send_message_with_invalid_data() -> None:
     edge_group = SwitchCaseEdgeGroup(
         source_id=source.id,
         cases=[
-            Case(condition=lambda x: x.data < 0, target_id=target1.id),
+            Case(condition=lambda x: x.data < 0, target=target1.id),
             Default(target_id=target2.id),
         ],
     )

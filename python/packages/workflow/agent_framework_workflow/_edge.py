@@ -7,6 +7,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
+from agent_framework_workflow._executor import Executor
+
 from ._runner_context import Message
 
 logger = logging.getLogger(__name__)
@@ -226,24 +228,39 @@ class FanInEdgeGroup(EdgeGroup):
 
 @dataclass
 class Case:
-    """Represents a single case in the conditional edge group.
+    """Represents a single case in the switch-case edge group.
 
     Args:
         condition (Callable[[Any], bool]): The condition function for the case.
-        target_id (str): The target executor ID for the case.
+        target (Executor): The target executor for the case.
     """
+
+    condition: Callable[[Any], bool]
+    target: Executor
+
+
+@dataclass
+class Default:
+    """Represents the default case in the switch-case edge group.
+
+    Args:
+        target (Executor): The target executor for the default case.
+    """
+
+    target: Executor
+
+
+@dataclass
+class SwitchCaseEdgeGroupCase:
+    """A single case in the SwitchCaseEdgeGroup. This is used internally."""
 
     condition: Callable[[Any], bool]
     target_id: str
 
 
 @dataclass
-class Default:
-    """Represents the default case in the conditional edge group.
-
-    Args:
-        target_id (str): The target executor ID for the default case.
-    """
+class SwitchCaseEdgeGroupDefault:
+    """The default case in the SwitchCaseEdgeGroup. This is used internally."""
 
     target_id: str
 
@@ -274,34 +291,34 @@ class SwitchCaseEdgeGroup(FanOutEdgeGroup):
     def __init__(
         self,
         source_id: str,
-        cases: Sequence[Case | Default],
+        cases: Sequence[SwitchCaseEdgeGroupCase | SwitchCaseEdgeGroupDefault],
     ) -> None:
-        """Initialize the conditional edge group with a list of edges.
+        """Initialize the switch-case edge group with a list of edges.
 
         Args:
             source_id (str): The source executor ID.
-            cases (Sequence[Case | Default]): A list of cases for the conditional edge group.
+            cases (Sequence[Case | Default]): A list of cases for the switch-case edge group.
                 There should be exactly one default case.
         """
         if len(cases) < 2:
             raise ValueError("SwitchCaseEdgeGroup must contain at least two cases (including the default case).")
 
-        default_case = [isinstance(case, Default) for case in cases]
+        default_case = [isinstance(case, SwitchCaseEdgeGroupDefault) for case in cases]
         if sum(default_case) != 1:
             raise ValueError("SwitchCaseEdgeGroup must contain exactly one default case.")
 
-        if not isinstance(cases[-1], Default):
+        if not isinstance(cases[-1], SwitchCaseEdgeGroupDefault):
             logger.warning(
-                "Default case in the conditional edge group is not the last case. "
+                "Default case in the switch-case edge group is not the last case. "
                 "This will result in unexpected behavior."
             )
 
         def selection_func(data: Any, targets: list[str]) -> list[str]:
             """Select the target executor based on the conditions."""
             for index, case in enumerate(cases):
-                if isinstance(case, Default):
+                if isinstance(case, SwitchCaseEdgeGroupDefault):
                     return [case.target_id]
-                if isinstance(case, Case):
+                if isinstance(case, SwitchCaseEdgeGroupCase):
                     try:
                         if case.condition(data):
                             return [case.target_id]
@@ -315,6 +332,6 @@ class SwitchCaseEdgeGroup(FanOutEdgeGroup):
         self._cases = cases
 
     @property
-    def cases(self) -> Sequence[Case | Default]:
+    def cases(self) -> Sequence[SwitchCaseEdgeGroupCase | SwitchCaseEdgeGroupDefault]:
         """Get the cases for this switch-case group."""
         return self._cases
