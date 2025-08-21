@@ -235,8 +235,8 @@ class WorkflowViz:
         result: list[tuple[str, list[str], str]] = []
         for group in self._workflow.edge_groups:
             if isinstance(group, FanInEdgeGroup):
-                target = group.target_executors[0].id
-                sources = [src.id for src in group.source_executors]
+                target = group.target_executor_ids[0]
+                sources = list(group.source_executor_ids)
                 digest = self._fan_in_digest(target, sources)
                 node_id = f"fan_in::{target}::{digest}"
                 result.append((node_id, sorted(sources), target))

@@ -76,6 +76,7 @@ class Workflow:
     def __init__(
         self,
         edge_groups: list[EdgeGroup],
+        executors: dict[str, Executor],
         start_executor: Executor | str,
         runner_context: RunnerContext,
         max_iterations: int,
@@ -84,18 +85,20 @@ class Workflow:
 
         Args:
             edge_groups: A list of EdgeGroup instances that define the workflow edges.
+            executors: A dictionary mapping executor IDs to Executor instances.
             start_executor: The starting executor for the workflow, which can be an Executor instance or its ID.
             runner_context: The RunnerContext instance to be used during workflow execution.
             max_iterations: The maximum number of iterations the workflow will run for convergence.
         """
         self._edge_groups = edge_groups
-        self._executors = self._build_executor_map(edge_groups)
+        self._executors = executors
         self._start_executor = start_executor
 
         self._shared_state = SharedState()
         workflow_id = str(uuid.uuid4())
         self._runner = Runner(
             self._edge_groups,
+            self._executors,
             self._shared_state,
             runner_context,
             max_iterations=max_iterations,
@@ -307,22 +310,6 @@ class Workflow:
             raise ValueError(f"Executor with ID {executor_id} not found.")
         return self._executors[executor_id]
 
-    def _build_executor_map(self, edge_groups: list[EdgeGroup]) -> dict[str, Executor]:
-        """Build the executor map from edge groups.
-
-        Args:
-            edge_groups: A list of EdgeGroup instances.
-
-        Returns:
-            A dictionary mapping executor IDs to Executor instances.
-        """
-        executors: dict[str, Executor] = {}
-        for group in edge_groups:
-            for executor in group.source_executors + group.target_executors:
-                executors[executor.id] = executor
-
-        return executors
-
     async def _restore_from_external_checkpoint(
         self, checkpoint_id: str, checkpoint_storage: CheckpointStorage
     ) -> bool:
@@ -431,9 +418,15 @@ class WorkflowBuilder:
     def __init__(self, max_iterations: int = DEFAULT_MAX_ITERATIONS):
         """Initialize the WorkflowBuilder with an empty list of edges and no starting executor."""
         self._edge_groups: list[EdgeGroup] = []
+        self._executors: dict[str, Executor] = {}
         self._start_executor: Executor | str | None = None
         self._checkpoint_storage: CheckpointStorage | None = None
         self._max_iterations: int = max_iterations
+
+    def _add_executor(self, executor: Executor) -> str:
+        """Add an executor to the map and return its ID."""
+        self._executors[executor.id] = executor
+        return executor.id
 
     def add_edge(
         self,
@@ -452,7 +445,9 @@ class WorkflowBuilder:
                        should be traversed based on the message type.
         """
         # TODO(@taochen): Support executor factories for lazy initialization
-        self._edge_groups.append(SingleEdgeGroup(source, target, condition))
+        source_id = self._add_executor(source)
+        target_id = self._add_executor(target)
+        self._edge_groups.append(SingleEdgeGroup(source_id, target_id, condition))
         return self
 
     def add_fan_out_edges(self, source: Executor, targets: Sequence[Executor]) -> "Self":
@@ -464,7 +459,9 @@ class WorkflowBuilder:
             source: The source executor of the edges.
             targets: A list of target executors for the edges.
         """
-        self._edge_groups.append(FanOutEdgeGroup(source, targets))
+        source_id = self._add_executor(source)
+        target_ids = [self._add_executor(target) for target in targets]
+        self._edge_groups.append(FanOutEdgeGroup(source_id, target_ids))
 
         return self
 
@@ -486,7 +483,8 @@ class WorkflowBuilder:
             source: The source executor of the edges.
             cases: A list of case objects that determine the target executor for each message.
         """
-        self._edge_groups.append(SwitchCaseEdgeGroup(source, cases))
+        source_id = self._add_executor(source)
+        self._edge_groups.append(SwitchCaseEdgeGroup(source_id, cases))
 
         return self
 
@@ -510,7 +508,9 @@ class WorkflowBuilder:
             targets: A list of target executors for the edges.
             selection_func: A function that selects target executors for messages.
         """
-        self._edge_groups.append(FanOutEdgeGroup(source, targets, selection_func))
+        source_id = self._add_executor(source)
+        target_ids = [self._add_executor(target) for target in targets]
+        self._edge_groups.append(FanOutEdgeGroup(source_id, target_ids, selection_func))
 
         return self
 
@@ -548,7 +548,9 @@ class WorkflowBuilder:
             sources: A list of source executors for the edges.
             target: The target executor for the edges.
         """
-        self._edge_groups.append(FanInEdgeGroup(sources, target))
+        source_ids = [self._add_executor(source) for source in sources]
+        target_id = self._add_executor(target)
+        self._edge_groups.append(FanInEdgeGroup(source_ids, target_id))
 
         return self
 
@@ -608,13 +610,13 @@ class WorkflowBuilder:
                 TypeCompatibilityError, and GraphConnectivityError subclasses).
         """
         if not self._start_executor:
-            raise ValueError("Starting executor must be set before building the workflow.")
+            raise ValueError("Starting executor must be set using set_start_executor before building the workflow.")
 
-        validate_workflow_graph(self._edge_groups, self._start_executor)
+        validate_workflow_graph(self._edge_groups, self._executors, self._start_executor)
 
         context = InProcRunnerContext(self._checkpoint_storage)
 
-        return Workflow(self._edge_groups, self._start_executor, context, self._max_iterations)
+        return Workflow(self._edge_groups, self._executors, self._start_executor, context, self._max_iterations)
 
 
 # endregion
