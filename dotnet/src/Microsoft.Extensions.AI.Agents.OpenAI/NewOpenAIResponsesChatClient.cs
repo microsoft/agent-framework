@@ -24,7 +24,7 @@ using OpenAI.Responses;
 namespace Microsoft.Extensions.AI;
 
 /// <summary>Represents an <see cref="IChatClient"/> for an <see cref="OpenAIResponseClient"/>.</summary>
-internal sealed class NewOpenAIResponsesChatClient : IChatClient
+internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
 {
     /// <summary>Metadata about the client.</summary>
     private readonly ChatClientMetadata _metadata;
@@ -32,14 +32,19 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient
     /// <summary>The underlying <see cref="OpenAIResponseClient" />.</summary>
     private readonly OpenAIResponseClient _responseClient;
 
+    /// <summary>Specifies whether the client should await the run result or not.</summary>
+    private readonly bool? _awaitRun;
+
     /// <summary>Initializes a new instance of the <see cref="NewOpenAIResponsesChatClient"/> class for the specified <see cref="OpenAIResponseClient"/>.</summary>
     /// <param name="responseClient">The underlying client.</param>
+    /// <param name="awaitRun">Specifies whether the client should await the run result or not.</param>
     /// <exception cref="ArgumentNullException"><paramref name="responseClient"/> is <see langword="null"/>.</exception>
-    public NewOpenAIResponsesChatClient(OpenAIResponseClient responseClient)
+    public NewOpenAIResponsesChatClient(OpenAIResponseClient responseClient, bool? awaitRun = null)
     {
         _ = Throw.IfNull(responseClient);
 
         _responseClient = responseClient;
+        _awaitRun ??= awaitRun;
 
         // https://github.com/openai/openai-dotnet/issues/215
         // The endpoint and model aren't currently exposed, so use reflection to get at them, temporarily. Once packages
@@ -76,11 +81,45 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient
         var openAIResponseItems = ToOpenAIResponseItems(messages, options);
         var openAIOptions = ToOpenAIResponseCreationOptions(options);
 
-        // Make the call to the OpenAIResponseClient.
-        var openAIResponse = (await _responseClient.CreateResponseAsync(openAIResponseItems, openAIOptions, cancellationToken).ConfigureAwait(false)).Value;
+        OpenAIResponse openAIResponse;
+
+        // If conversation id is provided and background mode is enabled, retrieve status or/and result of the response running in the background.
+        if (options?.ConversationId is { } conversationId && RunInBackground(options))
+        {
+            openAIResponse = (await _responseClient.GetResponseAsync(conversationId, cancellationToken).ConfigureAwait(false)).Value;
+        }
+        else
+        {
+            openAIResponse = (await _responseClient.CreateResponseAsync(openAIResponseItems, openAIOptions, cancellationToken).ConfigureAwait(false)).Value;
+        }
 
         // Convert the response to a ChatResponse.
         return FromOpenAIResponse(openAIResponse, openAIOptions);
+    }
+
+    /// <inheritdoc />
+    public async Task<ChatResponse> CancelRunAsync(string runId, CancellationToken cancellationToken = default)
+    {
+        _ = Throw.IfNullOrEmpty(runId);
+
+        var openAIResponse = await _responseClient.CancelResponseAsync(runId, cancellationToken).ConfigureAwait(false);
+
+        // Convert the response to a ChatResponse.
+        return FromOpenAIResponse(openAIResponse, openAIOptions: null);
+    }
+
+    /// <inheritdoc />
+    public async Task<ChatResponse> DeleteRunAsync(string runId, CancellationToken cancellationToken = default)
+    {
+        _ = Throw.IfNullOrEmpty(runId);
+
+        var openAIResponse = (await _responseClient.DeleteResponseAsync(runId, cancellationToken).ConfigureAwait(false)).Value;
+
+        return new()
+        {
+            ResponseId = openAIResponse.Id,
+            RawRepresentation = openAIResponse,
+        };
     }
 
     internal static ChatResponse FromOpenAIResponse(OpenAIResponse openAIResponse, ResponseCreationOptions? openAIOptions)
@@ -119,6 +158,34 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient
             foreach (var message in response.Messages)
             {
                 message.CreatedAt ??= openAIResponse.CreatedAt;
+            }
+        }
+
+        if (openAIResponse.Status is not null)
+        {
+            switch (openAIResponse.Status)
+            {
+                case ResponseStatus.InProgress:
+                    response.SetResponseStatus(NewResponseStatus.InProgress);
+                    break;
+                case ResponseStatus.Completed:
+                    response.SetResponseStatus(NewResponseStatus.Completed);
+                    break;
+                case ResponseStatus.Incomplete:
+                    response.SetResponseStatus(NewResponseStatus.Incomplete);
+                    break;
+                case ResponseStatus.Cancelled:
+                    response.SetResponseStatus(NewResponseStatus.Canceled);
+                    break;
+                case ResponseStatus.Queued:
+                    response.SetResponseStatus(NewResponseStatus.Queued);
+                    break;
+                case ResponseStatus.Failed:
+                    response.SetResponseStatus(NewResponseStatus.Failed);
+                    break;
+                default:
+                    // No finish reason set.
+                    break;
             }
         }
 
@@ -391,6 +458,8 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient
                 instructions :
                 $"{result.Instructions}{Environment.NewLine}{instructions}";
         }
+
+        result.Background = RunInBackground(options);
 
         // Populate tools if there are any.
         if (options.Tools is { Count: > 0 } tools)
@@ -731,6 +800,18 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient
         }
 
         return parts;
+    }
+
+    private bool RunInBackground(ChatOptions? options)
+    {
+        // If specified in options, use that.
+        if (options?.GetAwaitRunResult() is { } awaitRun)
+        {
+            return !awaitRun;
+        }
+
+        // Otherwise, use the value specified at initialization
+        return !_awaitRun ?? false;
     }
 
     /// <summary>POCO representing function calling info.</summary>
