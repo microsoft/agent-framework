@@ -46,7 +46,7 @@ internal static class Program
         PersistentAgentsClient client = new(Throw.IfNull(config["AzureAI:Endpoint"]), new AzureCliCredential());
 
         // Read and parse the declarative workflow.
-        Notify("PROCESS INIT");
+        Notify($"WORKFLOW: Parsing {workflowFile}");
 
         Stopwatch timer = Stopwatch.StartNew();
         using StreamReader yamlReader = File.OpenText(workflowFile);
@@ -62,16 +62,16 @@ internal static class Program
         // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
         Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>(yamlReader, workflowContext);
 
-        Notify($"\nPROCESS DEFINED: {timer.Elapsed}");
+        Notify($"\nWORKFLOW: Defined {timer.Elapsed}");
 
-        Notify("\nPROCESS INVOKE");
+        Notify("\nWORKFLOW: Starting...");
 
         // Run the workflow, just like any other workflow
         string input = GetWorkflowInput(args);
         StreamingRun run = await InProcessExecution.StreamAsync(workflow, input);
         await MonitorWorkflowRunAsync(run, client);
 
-        Notify("\nPROCESS DONE");
+        Notify("\nWORKFLOW: Done!");
     }
 
     private readonly static Dictionary<string, string> s_nameCache = [];
