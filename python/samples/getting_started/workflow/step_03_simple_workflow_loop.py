@@ -41,8 +41,8 @@ class GuessNumberExecutor(Executor):
         self._lower = bound[0]
         self._upper = bound[1]
 
-    @handler(output_types=[int])
-    async def guess_number(self, feedback: NumberSignal, ctx: WorkflowContext) -> None:
+    @handler
+    async def guess_number(self, feedback: NumberSignal, ctx: WorkflowContext[int]) -> None:
         """Execute the task by guessing a number."""
         if feedback == NumberSignal.INIT:
             self._guess = (self._lower + self._upper) // 2
@@ -74,8 +74,8 @@ class JudgeExecutor(Executor):
         super().__init__(id=id)
         self._target = target
 
-    @handler(output_types=[NumberSignal])
-    async def judge(self, number: int, ctx: WorkflowContext) -> None:
+    @handler
+    async def judge(self, number: int, ctx: WorkflowContext[NumberSignal]) -> None:
         """Judge the guessed number."""
         if number == self._target:
             result = NumberSignal.MATCHED

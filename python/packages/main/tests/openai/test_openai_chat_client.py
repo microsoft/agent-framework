@@ -1,12 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import os
+from unittest.mock import MagicMock, patch
 
 import pytest
+from openai import BadRequestError
 
 from agent_framework import (
+    AITool,
     ChatClient,
     ChatMessage,
+    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     HostedWebSearchTool,
@@ -15,6 +19,7 @@ from agent_framework import (
 )
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai import OpenAIChatClient
+from agent_framework.openai._exceptions import OpenAIContentFilterException
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
@@ -119,6 +124,44 @@ def test_serialize_with_org_id(openai_unit_test_env: dict[str, str]) -> None:
     assert dumped_settings["org_id"] == openai_unit_test_env["OPENAI_ORG_ID"]
     # Assert that the 'User-Agent' header is not present in the dumped_settings default headers
     assert "User-Agent" not in dumped_settings["default_headers"]
+
+
+async def test_content_filter_exception_handling(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that content filter errors are properly handled."""
+    client = OpenAIChatClient()
+    messages = [ChatMessage(role="user", text="test message")]
+
+    # Create a mock BadRequestError with content_filter code
+    mock_response = MagicMock()
+    mock_error = BadRequestError(
+        message="Content filter error", response=mock_response, body={"error": {"code": "content_filter"}}
+    )
+    mock_error.code = "content_filter"
+
+    # Mock the client to raise the content filter error
+    with (
+        patch.object(client.client.chat.completions, "create", side_effect=mock_error),
+        pytest.raises(OpenAIContentFilterException),
+    ):
+        await client._inner_get_response(messages=messages, chat_options=ChatOptions())  # type: ignore
+
+
+def test_unsupported_tool_handling(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that unsupported tool types are handled correctly."""
+    client = OpenAIChatClient()
+
+    # Create a mock AITool that's not an AIFunction
+    unsupported_tool = MagicMock(spec=AITool)
+    unsupported_tool.__class__.__name__ = "UnsupportedAITool"
+
+    # This should ignore the unsupported AITool and return empty list
+    result = client._chat_to_tool_spec([unsupported_tool])  # type: ignore
+    assert result == []
+
+    # Also test with a non-AITool that should be converted to dict
+    dict_tool = {"type": "function", "name": "test"}
+    result = client._chat_to_tool_spec([dict_tool])  # type: ignore
+    assert result == [dict_tool]
 
 
 @ai_function

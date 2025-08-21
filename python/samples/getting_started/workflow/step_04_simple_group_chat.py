@@ -33,8 +33,8 @@ class RoundRobinGroupChatManager(Executor):
         self._max_round = max_round
         self._current_round = 0
 
-    @handler(output_types=[AgentExecutorRequest])
-    async def start(self, task: str, ctx: WorkflowContext) -> None:
+    @handler
+    async def start(self, task: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
         """Execute the task by sending messages to the next executor in the round-robin sequence."""
         initial_message = ChatMessage(ChatRole.USER, text=task)
 
@@ -53,8 +53,10 @@ class RoundRobinGroupChatManager(Executor):
             target_id=self._get_next_member(),
         )
 
-    @handler(output_types=[AgentExecutorRequest])
-    async def handle_agent_response(self, response: AgentExecutorResponse, ctx: WorkflowContext) -> None:
+    @handler
+    async def handle_agent_response(
+        self, response: AgentExecutorResponse, ctx: WorkflowContext[AgentExecutorRequest]
+    ) -> None:
         """Execute the task by sending messages to the next executor in the round-robin sequence."""
         # Send the response to the other members
         await asyncio.gather(*[

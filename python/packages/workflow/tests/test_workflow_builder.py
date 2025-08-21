@@ -17,8 +17,8 @@ class MockMessage:
 class MockExecutor(Executor):
     """A mock executor for testing purposes."""
 
-    @handler(output_types=[MockMessage])
-    async def mock_handler(self, message: MockMessage, ctx: WorkflowContext) -> None:
+    @handler
+    async def mock_handler(self, message: MockMessage, ctx: WorkflowContext[MockMessage]) -> None:
         """A mock handler that does nothing."""
         pass
 
@@ -26,8 +26,8 @@ class MockExecutor(Executor):
 class MockAggregator(Executor):
     """A mock executor that aggregates results from multiple executors."""
 
-    @handler(output_types=[MockMessage])
-    async def mock_handler(self, messages: list[MockMessage], ctx: WorkflowContext) -> None:
+    @handler
+    async def mock_handler(self, messages: list[MockMessage], ctx: WorkflowContext[MockMessage]) -> None:
         # This mock simply returns the data incremented by 1
         pass
 

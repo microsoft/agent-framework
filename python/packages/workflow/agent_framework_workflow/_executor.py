@@ -1,11 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import contextlib
 import functools
 import inspect
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, ClassVar, TypeVar, overload
+from types import UnionType
+from typing import Any, ClassVar, TypeVar, Union, get_args, get_origin, overload
 
 from agent_framework import AgentRunResponse, AgentRunResponseUpdate, AgentThread, AIAgent, ChatMessage
 
@@ -33,7 +35,7 @@ class Executor:
         """
         self._id = id or f"{self.__class__.__name__}/{uuid.uuid4()}"
 
-        self._handlers: dict[type, Callable[[Any, WorkflowContext], Any]] = {}
+        self._handlers: dict[type, Callable[[Any, WorkflowContext[Any]], Any]] = {}
         self._discover_handlers()
 
         if not self._handlers:
@@ -42,7 +44,7 @@ class Executor:
                 "Please define at least one handler using the @handler decorator."
             )
 
-    async def execute(self, message: Any, context: WorkflowContext) -> None:
+    async def execute(self, message: Any, context: WorkflowContext[Any]) -> None:
         """Execute the executor with a given message and context.
 
         Args:
@@ -52,7 +54,7 @@ class Executor:
         Returns:
             An awaitable that resolves to the result of the execution.
         """
-        handler: Callable[[Any, WorkflowContext], Any] | None = None
+        handler: Callable[[Any, WorkflowContext[Any]], Any] | None = None
         for message_type in self._handlers:
             if is_instance_of(message, message_type):
                 handler = self._handlers[message_type]
@@ -104,54 +106,93 @@ ExecutorT = TypeVar("ExecutorT", bound="Executor")
 
 @overload
 def handler(
-    func: Callable[[ExecutorT, Any, WorkflowContext], Awaitable[Any]],
-) -> Callable[[ExecutorT, Any, WorkflowContext], Awaitable[Any]]: ...
+    func: Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]],
+) -> Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]]: ...
 
 
 @overload
 def handler(
     func: None = None,
-    *,
-    output_types: list[type] | None = None,
 ) -> Callable[
-    [Callable[[ExecutorT, Any, WorkflowContext], Awaitable[Any]]],
-    Callable[[ExecutorT, Any, WorkflowContext], Awaitable[Any]],
+    [Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]]],
+    Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]],
 ]: ...
 
 
 def handler(
-    func: Callable[[ExecutorT, Any, WorkflowContext], Awaitable[Any]] | None = None,
-    *,
-    output_types: list[type] | None = None,
+    func: Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]] | None = None,
 ) -> (
-    Callable[[ExecutorT, Any, WorkflowContext], Awaitable[Any]]
+    Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]]
     | Callable[
-        [Callable[[ExecutorT, Any, WorkflowContext], Awaitable[Any]]],
-        Callable[[ExecutorT, Any, WorkflowContext], Awaitable[Any]],
+        [Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]]],
+        Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]],
     ]
 ):
     """Decorator to register a handler for an executor.
 
     Args:
-        func: The function to decorate. Can be None when using with parameters.
-        output_types: Optional list of message types this handler can emit.
+        func: The function to decorate. Can be None when used without parameters.
 
     Returns:
         The decorated function with handler metadata.
 
     Example:
         @handler
-        async def handle_string(self, message: str, ctx: WorkflowContext) -> None:
+        async def handle_string(self, message: str, ctx: WorkflowContext[str]) -> None:
             ...
 
-        @handler(output_types=[str, int])
-        async def handle_data(self, message: dict, ctx: WorkflowContext) -> None:
+        @handler
+        async def handle_data(self, message: dict, ctx: WorkflowContext[str | int]) -> None:
             ...
     """
 
+    def _infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> list[type[Any]]:
+        """Infer output types list from the WorkflowContext generic parameter.
+
+        Examples:
+        - WorkflowContext[str] -> [str]
+        - WorkflowContext[str | int] -> [str, int]
+        - WorkflowContext[Union[str, int]] -> [str, int]
+        - WorkflowContext -> [] (unknown)
+        """
+        # If no annotation or not parameterized, return empty list
+        try:
+            origin = get_origin(ctx_annotation)
+        except Exception:
+            origin = None
+
+        # If annotation is unsubscripted WorkflowContext, nothing to infer
+        if origin is None:
+            # Might be the class itself or Any; try simple check by name to avoid import cycles
+            return []
+
+        # Expecting WorkflowContext[T]
+        if origin is not WorkflowContext:
+            return []
+
+        args = get_args(ctx_annotation)
+        if not args:
+            return []
+
+        t = args[0]
+        # If t is a Union, flatten it
+        t_origin = get_origin(t)
+        # If Any, treat as unknown -> no output types inferred
+        if t is Any:
+            return []
+
+        if t_origin in (Union, UnionType):
+            # Return all union args as-is (may include generic aliases like list[str])
+            return [arg for arg in get_args(t) if arg is not Any and arg is not type(None)]
+
+        # Single concrete or generic alias type (e.g., str, int, list[str])
+        if t is Any or t is type(None):
+            return []
+        return [t]
+
     def decorator(
-        func: Callable[[ExecutorT, Any, WorkflowContext], Awaitable[Any]],
-    ) -> Callable[[ExecutorT, Any, WorkflowContext], Awaitable[Any]]:
+        func: Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]],
+    ) -> Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]]:
         # Extract the message type from a handler function.
         sig = inspect.signature(func)
         params = list(sig.parameters.values())
@@ -163,15 +204,27 @@ def handler(
         if message_type is inspect.Parameter.empty:
             raise ValueError("Handler's second parameter must have a type annotation")
 
+        ctx_annotation = params[2].annotation
+        if ctx_annotation is inspect.Parameter.empty:
+            # Allow missing ctx annotation, but we can't infer outputs
+            inferred_output_types: list[type[Any]] = []
+        else:
+            inferred_output_types = _infer_output_types_from_ctx_annotation(ctx_annotation)
+
         @functools.wraps(func)
-        async def wrapper(self: ExecutorT, message: Any, ctx: WorkflowContext) -> Any:
+        async def wrapper(self: ExecutorT, message: Any, ctx: WorkflowContext[Any]) -> Any:
             """Wrapper function to call the handler."""
             return await func(self, message, ctx)
+
+        # Preserve the original function signature for introspection during validation
+        with contextlib.suppress(Exception):
+            wrapper.__signature__ = sig  # type: ignore[attr-defined]
 
         wrapper._handler_spec = {  # type: ignore
             "name": func.__name__,
             "message_type": message_type,
-            "output_types": output_types or [],
+            # Keep output_types in spec for validators, inferred from WorkflowContext[T]
+            "output_types": inferred_output_types,
         }
 
         return wrapper
@@ -239,8 +292,8 @@ class AgentExecutor(Executor):
         self._streaming = streaming
         self._cache: list[ChatMessage] = []
 
-    @handler(output_types=[AgentExecutorResponse])
-    async def run(self, request: AgentExecutorRequest, ctx: WorkflowContext) -> None:
+    @handler
+    async def run(self, request: AgentExecutorRequest, ctx: WorkflowContext[AgentExecutorResponse]) -> None:
         """Run the agent executor with the given request."""
         self._cache.extend(request.messages)
 
@@ -300,7 +353,7 @@ class RequestInfoExecutor(Executor):
         self._request_events: dict[str, RequestInfoEvent] = {}
 
     @handler
-    async def run(self, message: RequestInfoMessage, ctx: WorkflowContext) -> None:
+    async def run(self, message: RequestInfoMessage, ctx: WorkflowContext[None]) -> None:
         """Run the RequestInfoExecutor with the given message."""
         source_executor_id = ctx.get_source_executor_id()
 
@@ -317,7 +370,7 @@ class RequestInfoExecutor(Executor):
         self,
         response_data: Any,
         request_id: str,
-        ctx: WorkflowContext,
+        ctx: WorkflowContext[Any],
     ) -> None:
         """Handle a response to a request.
 
