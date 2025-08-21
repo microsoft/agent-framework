@@ -22,8 +22,8 @@ class MockMessage:
 class MockExecutor(Executor):
     """A mock executor for testing purposes."""
 
-    @handler(output_types=[MockMessage])
-    async def mock_handler(self, message: MockMessage, ctx: WorkflowContext) -> None:
+    @handler
+    async def mock_handler(self, message: MockMessage, ctx: WorkflowContext[MockMessage]) -> None:
         if message.data < 10:
             await ctx.send_message(MockMessage(data=message.data + 1))
         else:
