@@ -1,10 +1,9 @@
 kind: AdaptiveDialog
 beginDialog:
-
   kind: OnActivity
-  id: workflow_demo
+  id: activity_xyz123
+  type: Message
   actions:
-
     - kind: SetVariable
       id: setVariable_aASlmF
       displayName: List all available agents for this orchestrator
@@ -32,7 +31,7 @@ beginDialog:
     - kind: SetVariable
       id: setVariable_NZ2u0l
       displayName: Set Task
-      variable: Topic.NewTask
+      variable: Topic.InputTask
       value: =System.LastMessage.Text
 
     - kind: SetVariable
@@ -46,15 +45,21 @@ beginDialog:
       variable: Topic.StallCount
       value: =0
 
-    - kind: SetVariable
-      id: setVariable_s8hR6q
-      variable: Topic.ContextHistory
-      value: |-
-        =["Below I will present you a request. Before we begin addressing the request, please answer the following pre-survey to the best of your ability. Keep in mind that you are Ken Jennings-level with trivia, and Mensa-level with puzzles, so there should be a deep well to draw from.
+    - kind: SendActivity
+      id: sendActivity_yFsbRy
+      activity: Analyzing facts...
+
+    - kind: AnswerQuestionWithAI
+      id: question_UDoMUw
+      displayName: asst_UDoMUw9SuPCq33HqH95YPT69
+      autoSend: false
+      variable: Topic.TaskFacts
+      userInput: |-
+        ="Below I will present you a request. Before we begin addressing the request, please answer the following pre-survey to the best of your ability. Keep in mind that you are Ken Jennings-level with trivia, and Mensa-level with puzzles, so there should be a deep well to draw from.
 
         Here is the request:
 
-        " & Topic.NewTask & "
+        " & Topic.InputTask & "
 
         Here is the pre-survey:
 
@@ -70,34 +75,15 @@ beginDialog:
             3. FACTS TO DERIVE
             4. EDUCATED GUESSES
 
-        DO NOT include any other headings or sections in your response. DO NOT list next steps or plans until asked to do so."]
-
-    - kind: SendActivity
-      id: sendActivity_yFsbRy
-      activity: Analyzing facts...
-
-    - kind: AnswerQuestionWithAI
-      id: asst_UDoMUw9SuPCq33HqH95YPT69
-      displayName: Get Facts Prompt
-      autoSend: false
-      variable: Topic.TaskFacts
-      userInput: =First(Topic.ContextHistory).Value
-      
-    - kind: EditTableV2
-      id: editTableV2_Pry8em
-      displayName: Add Fact Response to Context
-      itemsVariable: Topic.ContextHistory
-      changeType:
-        kind: AddItemOperation
-        value: =Topic.TaskFacts
+        DO NOT include any other headings or sections in your response. DO NOT list next steps or plans until asked to do so."
 
     - kind: SendActivity
       id: sendActivity_yFsbRz
       activity: Creating a plan...
 
     - kind: AnswerQuestionWithAI
-      id: asst_DsBaJUelt99csnZV4fcE0Qos
-      displayName: Create a Plan Prompt
+      id: question_DsBaJU
+      displayName: asst_DsBaJUelt99csnZV4fcE0Qos
       autoSend: false
       variable: Topic.Plan
       userInput: |-
@@ -109,14 +95,13 @@ beginDialog:
 
     - kind: SetVariable
       id: setVariable_Kk2LDL
-      displayName: Set Plan as Context
-      variable: Topic.ContextHistory
+      displayName: Define instructions
+      variable: Topic.TaskInstructions
       value: |-
-        =["
-
+        ="
         We are working to address the following user request:
 
-        " & Topic.NewTask &"
+        " & Topic.InputTask &"
 
 
         To answer this request we have assembled the following team:
@@ -132,22 +117,21 @@ beginDialog:
   
         "
         & Topic.Plan.Text
-        ]
 
     - kind: SendActivity
       id: sendActivity_bwNZiM
-      activity: "{First(Topic.ContextHistory).Value}"
+      activity: "{Topic.TaskInstructions}"
 
     - kind: AnswerQuestionWithAI
-      id: asst_o3BQkfUzEGXMNzVY5X54yHhq
-      displayName: Progress Ledger Prompt
+      id: question_o3BQkf
+      displayName: asst_DsBaJUelt99csnZV4fcE0Qos
       autoSend: false
       variable: Topic.ProgressLedgerUpdate
       userInput: |-
         ="
         Recall we are working on the following request:
 
-        " & Topic.NewTask & "
+        " & Topic.InputTask & "
 
         And we have assembled the following team:
 
@@ -251,7 +235,7 @@ beginDialog:
               userInput: |-
                 ="
                 We are working on the following task:
-                " & Topic.NewTask & "
+                " & Topic.InputTask & "
 
                 We have completed the task.
 
@@ -306,7 +290,7 @@ beginDialog:
                       userInput: |-
                         ="As a reminder, we are working to solve the following task:
 
-                        " & Topic.NewTask & "
+                        " & Topic.InputTask & "
 
                         It's clear we aren't making as much progress as we would like, but we may have learned something new. Please rewrite the following fact sheet, updating it to include anything new we have learned that may be helpful. Example edits can include (but are not limited to) adding new guesses, moving educated guesses to verified facts if appropriate, etc. Updates may be made to any section of the fact sheet, and more than one section of the fact sheet can be edited. This is an especially good time to update educated guesses, so please at least add or update one educated guess or hunch, and explain your reasoning.
 
@@ -324,18 +308,15 @@ beginDialog:
 
                         " & Topic.TeamDescription
 
-                    - kind: EditTableV2
-                      id: editTableV2_jW7tmM
-                      displayName: Add new plan to history
-                      itemsVariable: Topic.ContextHistory
-                      changeType:
-                        kind: AddItemOperation
-                        value: |
-                          ="
-
+                    - kind: SetVariable
+                      id: setVariable_jW7tmM
+                      displayName: Set Plan as Context
+                      variable: Topic.TaskInstructions
+                      value: |-
+                        ="
                           We are working to address the following user request:
 
-                          " & Topic.NewTask & "
+                          " & Topic.InputTask & "
 
 
                           To answer this request we have assembled the following team:
@@ -366,10 +347,7 @@ beginDialog:
 
                     - kind: SendActivity
                       id: sendActivity_cwNZiM
-                      activity: |-
-                        We have Stalled - Adjusting plan:
-
-                        {Last(Topic.ContextHistory).Value}
+                      activity: We have stalled...revaluating plan...
 
                     - kind: GotoAction
                       id: goto_LzfJ8u

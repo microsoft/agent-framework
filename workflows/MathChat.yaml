@@ -10,29 +10,29 @@ beginDialog:
       variable: Topic.Project
       value: =System.LastMessage.Text
 
-    - kind: SetVariable # // %%% HAXX
+    - kind: SetVariable # HAXX
       id: set_count_0
       variable: Topic.TurnCount
       value: 0
 
     - kind: AnswerQuestionWithAI
-      id: asst_jCrWfBd1XrfVXMtpbfyVoIHC # // %%% HAXX
-      displayName: Student
+      id: question_student
+      displayName: asst_jCrWfBd1XrfVXMtpbfyVoIHC
       userInput: =Topic.Project
 
     # - kind: ResetVariable
     #   id: reset_project
     #   variable: Topic.Project
 
-    - kind: SetVariable # // %%% HAXX
+    - kind: SetVariable # HAXX
       id: reset_project
       variable: Topic.Project
       value: =Blank()
 
     - kind: AnswerQuestionWithAI
-      id: asst_aArB2g4tFWOTcgmUua062wjM # // %%% HAXX
-      displayName: Teacher
-      userInput: ="" # // %%% HAXX
+      id: question_teacher
+      displayName: asst_aArB2g4tFWOTcgmUua062wjM
+      userInput: =""
 
     - kind: SetVariable
       id: set_count_increment
@@ -57,7 +57,7 @@ beginDialog:
     
             - kind: GotoAction
               id: goto_student_agent
-              actionId: asst_jCrWfBd1XrfVXMtpbfyVoIHC
+              actionId: question_student
 
       elseActions:
     
