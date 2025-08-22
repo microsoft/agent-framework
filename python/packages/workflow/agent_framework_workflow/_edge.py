@@ -14,6 +14,25 @@ from agent_framework_workflow._executor import Executor
 logger = logging.getLogger(__name__)
 
 
+def _extract_function_name(func: Callable[..., Any]) -> str:
+    """Extract the name of any callable function for serialization.
+
+    Args:
+        func: The function to extract the name from.
+
+    Returns:
+        The name of the function, or a placeholder for lambda functions.
+    """
+    if hasattr(func, "__name__"):
+        name = func.__name__
+        # Check if it's a lambda function
+        if name == "<lambda>":
+            return "<lambda>"
+        return name
+    # Fallback for other callable objects
+    return "<callable>"
+
+
 class Edge(AFBaseModel):
     """Represents a directed edge in a graph."""
 
@@ -42,29 +61,10 @@ class Edge(AFBaseModel):
                 Defaults to None.
             kwargs: Additional keyword arguments. Unused in this implementation.
         """
-        condition_name = self._extract_condition_name(condition) if condition is not None else None
+        condition_name = _extract_function_name(condition) if condition is not None else None
         kwargs.update({"source_id": source_id, "target_id": target_id, "condition_name": condition_name})
         super().__init__(**kwargs)
         self._condition = condition
-
-    @staticmethod
-    def _extract_condition_name(condition: Callable[[Any], bool]) -> str:
-        """Extract the name of a condition function for serialization.
-
-        Args:
-            condition: The condition function to extract the name from.
-
-        Returns:
-            The name of the function, or a placeholder for lambda functions.
-        """
-        if hasattr(condition, "__name__"):
-            name = condition.__name__
-            # Check if it's a lambda function
-            if name == "<lambda>":
-                return "<lambda>"
-            return name
-        # Fallback for other callable objects
-        return "<callable>"
 
     @property
     def id(self) -> str:
@@ -150,6 +150,10 @@ class FanOutEdgeGroup(EdgeGroup):
     and send messages to their respective target executors.
     """
 
+    selection_func_name: Optional[str] = Field(
+        default=None, description="The name of the selection function for serialization"
+    )
+
     def __init__(
         self,
         source_id: str,
@@ -170,8 +174,13 @@ class FanOutEdgeGroup(EdgeGroup):
         if len(target_ids) <= 1:
             raise ValueError("FanOutEdgeGroup must contain at least two targets.")
 
+        # Extract selection function name for serialization
+        selection_func_name = None
+        if selection_func is not None:
+            selection_func_name = _extract_function_name(selection_func)
+
         edges = [Edge(source_id=source_id, target_id=target_id) for target_id in target_ids]
-        kwargs["edges"] = edges
+        kwargs.update({"edges": edges, "selection_func_name": selection_func_name})
         super().__init__(**kwargs)
 
         self._target_ids = list(target_ids)
@@ -235,19 +244,39 @@ class Default:
     target: Executor
 
 
-@dataclass
-class SwitchCaseEdgeGroupCase:
+class SwitchCaseEdgeGroupCase(AFBaseModel):
     """A single case in the SwitchCaseEdgeGroup. This is used internally."""
 
-    condition: Callable[[Any], bool]
-    target_id: str
+    target_id: str = Field(description="The target executor ID for this case")
+    condition_name: Optional[str] = Field(
+        default=None, description="The name of the condition function for serialization"
+    )
+    type: str = Field(default="Case", description="The type of the case")
+
+    def __init__(self, condition: Callable[[Any], bool], target_id: str, **kwargs: Any) -> None:
+        """Initialize the switch case with a condition and target.
+
+        Args:
+            condition: The condition function for the case.
+            target_id: The target executor ID for this case.
+            kwargs: Additional keyword arguments.
+        """
+        condition_name = _extract_function_name(condition)
+        kwargs.update({"target_id": target_id, "condition_name": condition_name})
+        super().__init__(**kwargs)
+        self._condition = condition
+
+    @property
+    def condition(self) -> Callable[[Any], bool]:
+        """Get the condition function for this case."""
+        return self._condition
 
 
-@dataclass
-class SwitchCaseEdgeGroupDefault:
+class SwitchCaseEdgeGroupDefault(AFBaseModel):
     """The default case in the SwitchCaseEdgeGroup. This is used internally."""
 
-    target_id: str
+    target_id: str = Field(description="The target executor ID for the default case")
+    type: str = Field(default="Default", description="The type of the case")
 
 
 class SwitchCaseEdgeGroup(FanOutEdgeGroup):
@@ -272,6 +301,10 @@ class SwitchCaseEdgeGroup(FanOutEdgeGroup):
         else:
             edge_4
     """
+
+    cases: list[SwitchCaseEdgeGroupCase | SwitchCaseEdgeGroupDefault] = Field(
+        default_factory=list, description="List of conditional cases for this switch-case group"
+    )
 
     def __init__(
         self,
@@ -315,10 +348,6 @@ class SwitchCaseEdgeGroup(FanOutEdgeGroup):
             raise RuntimeError("No matching case found in SwitchCaseEdgeGroup.")
 
         target_ids = [case.target_id for case in cases]
-        super().__init__(source_id, target_ids, selection_func=selection_func, **kwargs)
-        self._cases = cases
 
-    @property
-    def cases(self) -> Sequence[SwitchCaseEdgeGroupCase | SwitchCaseEdgeGroupDefault]:
-        """Get the cases for this switch-case group."""
-        return self._cases
+        kwargs.update({"cases": cases})
+        super().__init__(source_id, target_ids, selection_func=selection_func, **kwargs)

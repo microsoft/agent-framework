@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
+from typing import Any
 
 import pytest
 from agent_framework.workflow import Executor, WorkflowBuilder, WorkflowContext, handler
@@ -167,6 +168,12 @@ class TestSerializationWorkflowClasses:
         assert "type" in data, "FanOutEdgeGroup should have 'type' field"
         assert data["type"] == "FanOutEdgeGroup", f"Expected type 'FanOutEdgeGroup', got {data['type']}"
 
+        # Test selection_func_name field (should be None when no selection function is provided)
+        assert "selection_func_name" in data, "FanOutEdgeGroup should have 'selection_func_name' field"
+        assert data["selection_func_name"] is None, (
+            "selection_func_name should be None when no selection function is provided"
+        )
+
         # Verify edges field is present and contains the correct edges
         assert "edges" in data, "FanOutEdgeGroup should have 'edges' field"
         assert len(data["edges"]) == 2, "FanOutEdgeGroup should have exactly two edges"
@@ -188,6 +195,12 @@ class TestSerializationWorkflowClasses:
         assert "type" in parsed, "JSON should have 'type' field"
         assert parsed["type"] == "FanOutEdgeGroup", "JSON should preserve type field"
 
+        # Test selection_func_name field in JSON
+        assert "selection_func_name" in parsed, "JSON should have 'selection_func_name' field"
+        assert parsed["selection_func_name"] is None, (
+            "JSON selection_func_name should be None when no selection function is provided"
+        )
+
         # Verify edges are preserved in JSON
         assert "edges" in parsed, "JSON should have 'edges' field"
         assert len(parsed["edges"]) == 2, "JSON should have exactly two edges"
@@ -197,6 +210,49 @@ class TestSerializationWorkflowClasses:
 
         assert all(source == "source" for source in json_sources), "JSON should preserve edge sources"
         assert set(json_targets) == {"target1", "target2"}, "JSON should preserve edge targets"
+
+    def test_fan_out_edge_group_serialization_with_selection_func(self) -> None:
+        """Test that FanOutEdgeGroup with named selection function serializes selection_func_name correctly."""
+
+        def custom_selector(data: Any, targets: list[str]) -> list[str]:
+            """Custom selection function for testing."""
+            return targets[:1]  # Select only the first target
+
+        edge_group = FanOutEdgeGroup(
+            source_id="source", target_ids=["target1", "target2"], selection_func=custom_selector
+        )
+
+        # Test model_dump
+        data = edge_group.model_dump()
+        assert "selection_func_name" in data, "FanOutEdgeGroup should have 'selection_func_name' field"
+        assert data["selection_func_name"] == "custom_selector", (
+            f"Expected selection_func_name 'custom_selector', got {data['selection_func_name']}"
+        )
+
+        # Test model_dump_json
+        json_str = edge_group.model_dump_json()
+        parsed = json.loads(json_str)
+        assert "selection_func_name" in parsed, "JSON should have 'selection_func_name' field"
+        assert parsed["selection_func_name"] == "custom_selector", "JSON should preserve selection_func_name"
+
+    def test_fan_out_edge_group_serialization_with_lambda_selection_func(self) -> None:
+        """Test that FanOutEdgeGroup with lambda selection function serializes selection_func_name as '<lambda>'."""
+        edge_group = FanOutEdgeGroup(
+            source_id="source", target_ids=["target1", "target2"], selection_func=lambda data, targets: targets[:1]
+        )
+
+        # Test model_dump
+        data = edge_group.model_dump()
+        assert "selection_func_name" in data, "FanOutEdgeGroup should have 'selection_func_name' field"
+        assert data["selection_func_name"] == "<lambda>", (
+            f"Expected selection_func_name '<lambda>', got {data['selection_func_name']}"
+        )
+
+        # Test model_dump_json
+        json_str = edge_group.model_dump_json()
+        parsed = json.loads(json_str)
+        assert "selection_func_name" in parsed, "JSON should have 'selection_func_name' field"
+        assert parsed["selection_func_name"] == "<lambda>", "JSON should preserve selection_func_name as '<lambda>'"
 
     def test_fan_in_edge_group_serialization(self) -> None:
         """Test that FanInEdgeGroup can be serialized and has correct fields, including edges and type."""
@@ -259,6 +315,29 @@ class TestSerializationWorkflowClasses:
         assert "type" in data, "SwitchCaseEdgeGroup should have 'type' field"
         assert data["type"] == "SwitchCaseEdgeGroup", f"Expected type 'SwitchCaseEdgeGroup', got {data['type']}"
 
+        # Test cases field
+        assert "cases" in data, "SwitchCaseEdgeGroup should have 'cases' field"
+        assert len(data["cases"]) == 2, "SwitchCaseEdgeGroup should have exactly two cases"
+
+        cases_data = data["cases"]
+        # Check first case (SwitchCaseEdgeGroupCase)
+        case_obj = cases_data[0]
+        assert "target_id" in case_obj, "SwitchCaseEdgeGroupCase should have 'target_id' field"
+        assert "condition_name" in case_obj, "SwitchCaseEdgeGroupCase should have 'condition_name' field"
+        assert "type" in case_obj, "SwitchCaseEdgeGroupCase should have 'type' field"
+        assert case_obj["target_id"] == "positive", f"Expected target_id 'positive', got {case_obj['target_id']}"
+        assert case_obj["condition_name"] == "<lambda>", (
+            f"Expected condition_name '<lambda>', got {case_obj['condition_name']}"
+        )
+        assert case_obj["type"] == "Case", f"Expected type 'Case', got {case_obj['type']}"
+
+        # Check default case (SwitchCaseEdgeGroupDefault)
+        default_obj = cases_data[1]
+        assert "target_id" in default_obj, "SwitchCaseEdgeGroupDefault should have 'target_id' field"
+        assert "type" in default_obj, "SwitchCaseEdgeGroupDefault should have 'type' field"
+        assert default_obj["target_id"] == "default", f"Expected target_id 'default', got {default_obj['target_id']}"
+        assert default_obj["type"] == "Default", f"Expected type 'Default', got {default_obj['type']}"
+
         # Verify edges field is present and contains the correct edges
         assert "edges" in data, "SwitchCaseEdgeGroup should have 'edges' field"
         assert len(data["edges"]) == 2, "SwitchCaseEdgeGroup should have exactly two edges"
@@ -289,6 +368,20 @@ class TestSerializationWorkflowClasses:
         assert "type" in parsed, "JSON should have 'type' field"
         assert parsed["type"] == "SwitchCaseEdgeGroup", "JSON should preserve type field"
 
+        # Test cases field in JSON
+        assert "cases" in parsed, "JSON should have 'cases' field"
+        assert len(parsed["cases"]) == 2, "JSON should have exactly two cases"
+
+        json_cases = parsed["cases"]
+        json_case_obj = json_cases[0]
+        assert json_case_obj["target_id"] == "positive", "JSON should preserve case target_id"
+        assert json_case_obj["condition_name"] == "<lambda>", "JSON should preserve case condition_name"
+        assert json_case_obj["type"] == "Case", "JSON should preserve case type"
+
+        json_default_obj = json_cases[1]
+        assert json_default_obj["target_id"] == "default", "JSON should preserve default target_id"
+        assert json_default_obj["type"] == "Default", "JSON should preserve default type"
+
         # Verify edges are preserved in JSON
         assert "edges" in parsed, "JSON should have 'edges' field"
         assert len(parsed["edges"]) == 2, "JSON should have exactly two edges"
@@ -304,6 +397,35 @@ class TestSerializationWorkflowClasses:
         assert all(name is None for name in json_condition_names), (
             "JSON SwitchCaseEdgeGroup edges should not have condition_name"
         )
+
+    def test_switch_case_edge_group_serialization_with_named_condition(self) -> None:
+        """Test that SwitchCaseEdgeGroup with named condition function serializes condition_name correctly."""
+
+        def is_positive(x: int) -> bool:
+            return x > 0
+
+        cases = [
+            SwitchCaseEdgeGroupCase(condition=is_positive, target_id="positive"),
+            SwitchCaseEdgeGroupDefault(target_id="default"),
+        ]
+        edge_group = SwitchCaseEdgeGroup(source_id="source", cases=cases)
+
+        # Test model_dump
+        data = edge_group.model_dump()
+        assert "cases" in data, "SwitchCaseEdgeGroup should have 'cases' field"
+
+        cases_data = data["cases"]
+        case_obj = cases_data[0]
+        assert case_obj["condition_name"] == "is_positive", (
+            f"Expected condition_name 'is_positive', got {case_obj['condition_name']}"
+        )
+
+        # Test model_dump_json
+        json_str = edge_group.model_dump_json()
+        parsed = json.loads(json_str)
+        json_cases = parsed["cases"]
+        json_case_obj = json_cases[0]
+        assert json_case_obj["condition_name"] == "is_positive", "JSON should preserve named condition_name"
 
     def test_workflow_serialization(self) -> None:
         """Test that Workflow can be serialized and has correct fields, including edges."""
