@@ -66,7 +66,7 @@ class TestSerializationWorkflowClasses:
         data = edge_group.model_dump()
         assert "id" in data
         assert data["id"].startswith("SingleEdgeGroup/")
-        
+
         # Verify edges field is present and contains the edge
         assert "edges" in data, "SingleEdgeGroup should have 'edges' field"
         assert len(data["edges"]) == 1, "SingleEdgeGroup should have exactly one edge"
@@ -81,7 +81,7 @@ class TestSerializationWorkflowClasses:
         parsed = json.loads(json_str)
         assert "id" in parsed
         assert parsed["id"].startswith("SingleEdgeGroup/")
-        
+
         # Verify edges are preserved in JSON
         assert "edges" in parsed, "JSON should have 'edges' field"
         assert len(parsed["edges"]) == 1, "JSON should have exactly one edge"
@@ -97,15 +97,15 @@ class TestSerializationWorkflowClasses:
         data = edge_group.model_dump()
         assert "id" in data
         assert data["id"].startswith("FanOutEdgeGroup/")
-        
+
         # Verify edges field is present and contains the correct edges
         assert "edges" in data, "FanOutEdgeGroup should have 'edges' field"
         assert len(data["edges"]) == 2, "FanOutEdgeGroup should have exactly two edges"
-        
+
         edges = data["edges"]
         sources = [edge["source_id"] for edge in edges]
         targets = [edge["target_id"] for edge in edges]
-        
+
         assert all(source == "source" for source in sources), f"All edges should have source 'source', got {sources}"
         assert set(targets) == {"target1", "target2"}, f"Expected targets {{'target1', 'target2'}}, got {set(targets)}"
 
@@ -114,14 +114,14 @@ class TestSerializationWorkflowClasses:
         parsed = json.loads(json_str)
         assert "id" in parsed
         assert parsed["id"].startswith("FanOutEdgeGroup/")
-        
+
         # Verify edges are preserved in JSON
         assert "edges" in parsed, "JSON should have 'edges' field"
         assert len(parsed["edges"]) == 2, "JSON should have exactly two edges"
         json_edges = parsed["edges"]
         json_sources = [edge["source_id"] for edge in json_edges]
         json_targets = [edge["target_id"] for edge in json_edges]
-        
+
         assert all(source == "source" for source in json_sources), "JSON should preserve edge sources"
         assert set(json_targets) == {"target1", "target2"}, "JSON should preserve edge targets"
 
@@ -150,7 +150,7 @@ class TestSerializationWorkflowClasses:
         edge_group = edge_groups[0]
         assert "edges" in edge_group, "Edge group should contain 'edges' field"
         assert len(edge_group["edges"]) == 1, "Should have exactly one edge"
-        
+
         edge = edge_group["edges"][0]
         assert "source_id" in edge, "Edge should have source_id"
         assert "target_id" in edge, "Edge should have target_id"
@@ -163,7 +163,7 @@ class TestSerializationWorkflowClasses:
         assert parsed["start_executor_id"] == "executor1"
         assert "executor1" in parsed["executors"]
         assert "executor2" in parsed["executors"]
-        
+
         # Verify edges are preserved in JSON serialization
         json_edge_groups = parsed["edge_groups"]
         assert len(json_edge_groups) == 1, "JSON should have exactly one edge group"
@@ -316,7 +316,7 @@ def test_comprehensive_edge_groups_workflow_serialization() -> None:
             assert "edges" in group, f"{group_type} should have 'edges' field"
             assert isinstance(group["edges"], list), f"{group_type} 'edges' should be a list"
             assert len(group["edges"]) > 0, f"{group_type} should have at least one edge"
-            
+
             # Verify each edge has required fields
             for edge in group["edges"]:
                 assert "source_id" in edge, f"{group_type} edge should have 'source_id'"
@@ -332,4 +332,3 @@ def test_comprehensive_edge_groups_workflow_serialization() -> None:
     assert len(fan_in_groups[0]["edges"]) == 2, "FanInEdgeGroup should have 2 edges (from parallel_1 and parallel_2)"
     for single_group in single_groups:
         assert len(single_group["edges"]) == 1, "Each SingleEdgeGroup should have exactly 1 edge"
-
