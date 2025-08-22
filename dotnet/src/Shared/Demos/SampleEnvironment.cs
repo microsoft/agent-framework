@@ -13,8 +13,8 @@ internal static class SampleEnvironment
     public static string? GetEnvironmentVariable(string key)
     {
         // Allows for a demo mode, where all values are hidden for security reasons.
-        var hideAllSampleValues = SystemEnvironment.GetEnvironmentVariable("AF_HIDE_ALL_DEMO_SETTING_VALUES");
-        var shouldHideValue = hideAllSampleValues?.ToUpperInvariant() == "Y" || key.ToUpperInvariant().EndsWith("KEY", StringComparison.InvariantCulture);
+        var showAllSampleValues = SystemEnvironment.GetEnvironmentVariable("AF_SHOW_ALL_DEMO_SETTING_VALUES");
+        var shouldShowValue = showAllSampleValues?.ToUpperInvariant() == "Y";
 
         var value = SystemEnvironment.GetEnvironmentVariable(key);
         if (string.IsNullOrWhiteSpace(value))
@@ -36,8 +36,10 @@ internal static class SampleEnvironment
             Console.ForegroundColor = color;
             value = Console.ReadLine();
             value = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+            Console.WriteLine();
         }
-        else
+        else if (shouldShowValue)
         {
             var color = Console.ForegroundColor;
             Console.ForegroundColor = ConsoleColor.Green;
@@ -51,13 +53,13 @@ internal static class SampleEnvironment
             Console.ForegroundColor = ConsoleColor.Green;
             Console.Write("', Value='");
             Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.Write(shouldHideValue ? "*****" : value);
+            Console.Write(value);
             Console.ForegroundColor = ConsoleColor.Green;
             Console.WriteLine("'");
             Console.ForegroundColor = color;
-        }
 
-        Console.WriteLine();
+            Console.WriteLine();
+        }
 
         return value;
     }
