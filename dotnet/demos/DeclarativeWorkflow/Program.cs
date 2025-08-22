@@ -5,12 +5,10 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Net.Http;
 using System.Reflection;
 using System.Threading.Tasks;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
-using DeclarativeWorkflow;
 using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Declarative;
 using Microsoft.Extensions.AI;
@@ -30,7 +28,7 @@ namespace Demo.DeclarativeWorkflow;
 internal static class Program
 {
     private const string DefaultWorkflow = "HelloWorld.yaml";
-    private const string HttpEventFileName = "http.log";
+    //private const string HttpEventFileName = "http.log";
 
     public static async Task Main(string[] args)
     {
@@ -40,9 +38,9 @@ internal static class Program
         IConfiguration config = InitializeConfig();
 
         // Create custom HTTP client with intercept handler
-        await using StreamWriter eventWriter = new(HttpEventFileName, append: false);
-        HttpInterceptor interceptor = new(eventWriter);
-        using HttpClient customClient = new(new HttpInterceptHandler() { OnIntercept = interceptor.OnResponseAsync, CheckCertificateRevocationList = true }, disposeHandler: true);
+        //await using StreamWriter eventWriter = new(HttpEventFileName, append: false);
+        //HttpInterceptor interceptor = new(eventWriter);
+        //using HttpClient customClient = new(new HttpInterceptHandler() { OnIntercept = interceptor.OnResponseAsync, CheckCertificateRevocationList = true }, disposeHandler: true);
         PersistentAgentsClient client = new(Throw.IfNull(config["AzureAI:Endpoint"]), new AzureCliCredential());
 
         // Read and parse the declarative workflow.
@@ -55,7 +53,7 @@ internal static class Program
         DeclarativeWorkflowOptions workflowContext =
             new(projectEndpoint: Throw.IfNull(config["AzureAI:Endpoint"]))
             {
-                HttpClient = customClient, // Uncomment to use custom HTTP client
+                //HttpClient = customClient, // Uncomment to use custom HTTP client
                 ProjectCredentials = new AzureCliCredential(),
             };
 
@@ -74,7 +72,7 @@ internal static class Program
         Notify("\nWORKFLOW: Done!");
     }
 
-    private readonly static Dictionary<string, string> s_nameCache = [];
+    private static readonly Dictionary<string, string> s_nameCache = [];
 
     private static async Task MonitorWorkflowRunAsync(StreamingRun run, PersistentAgentsClient client)
     {

@@ -3,7 +3,7 @@
 using System;
 using System.IO;
 
-namespace DeclarativeWorkflow;
+namespace Demo.DeclarativeWorkflow;
 
 internal sealed class InterceptStream(Stream source, Action<byte[], int, int> callback) : Stream
 {

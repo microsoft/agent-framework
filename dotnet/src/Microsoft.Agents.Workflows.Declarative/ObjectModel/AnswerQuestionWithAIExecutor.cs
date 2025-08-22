@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -22,7 +23,21 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
     {
         StringExpression userInputExpression = Throw.IfNull(this.Model.UserInput, $"{nameof(this.Model)}.{nameof(this.Model.UserInput)}");
 
-        using NewPersistentAgentsChatClient chatClient = new(client, Throw.IfNull(this.Model.DisplayName)); // %%% HAXX - AGENT ID in "DisplayName"
+        string agentInstructions = this.State.Format(this.Model.AdditionalInstructions) ?? string.Empty;
+        // %%% HAXX - AGENT ID in "AdditionalInstructions"
+        string agentId;
+        string? additionalInstructions = null;
+        int delimiterIndex = agentInstructions.IndexOf(',');
+        if (delimiterIndex < 0)
+        {
+            agentId = agentInstructions.Trim();
+        }
+        else
+        {
+            agentId = agentInstructions.Substring(0, delimiterIndex).Trim();
+            additionalInstructions = agentInstructions.Substring(delimiterIndex + 1).Trim();
+        }
+        using NewPersistentAgentsChatClient chatClient = new(client, agentId);
         ChatClientAgent agent = new(chatClient);
 
         string? userInput = null;
@@ -36,7 +51,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
             new(
                 new ChatOptions()
                 {
-                    Instructions = this.State.Format(this.Model.AdditionalInstructions) ?? string.Empty,
+                    Instructions = additionalInstructions,
                 });
 
         FormulaValue conversationValue = this.State.Get(VariableScopeNames.System, this.Model.AutoSend ? "ConversationId" : "InternalId");
@@ -49,9 +64,8 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
         {
             PersistentAgentThread thread = await client.Threads.CreateThreadAsync(cancellationToken: default).ConfigureAwait(false);
             conversationId = thread.Id;
+            await context.AddEventAsync(new DeclarativeWorkflowInvokeEvent(conversationId)).ConfigureAwait(false);
         }
-
-        await context.AddEventAsync(new DeclarativeWorkflowInvokeEvent(conversationId)).ConfigureAwait(false);
 
         AgentThread agentThread = new() { ConversationId = conversationId };
         IAsyncEnumerable<AgentRunResponseUpdate> agentUpdates =

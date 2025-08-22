@@ -3,9 +3,8 @@
 using System;
 using System.IO;
 using System.Threading.Tasks;
-using Demo.DeclarativeWorkflow;
 
-namespace DeclarativeWorkflow;
+namespace Demo.DeclarativeWorkflow;
 
 internal sealed class HttpInterceptor(StreamWriter eventWriter)
 {
