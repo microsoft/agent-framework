@@ -8,7 +8,7 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.Workflows;
 
 /// <summary>
-/// .
+/// An in-memory implementation of <see cref="ICheckpointManager"/> that stores checkpoints in a dictionary.
 /// </summary>
 public sealed class CheckpointManager : ICheckpointManager
 {

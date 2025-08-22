@@ -9,9 +9,13 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.Workflows;
 
 /// <summary>
-/// .
+/// Represents a workflow run that supports checkpointing.
 /// </summary>
-/// <typeparam name="TRun"></typeparam>
+/// <typeparam name="TRun">The type of the underlying workflow run handle</typeparam>
+/// <seealso cref="Run"/>
+/// <seealso cref="Run{TResult}"/>
+/// <seealso cref="StreamingRun"/>
+/// <seealso cref="StreamingRun{TResult}"/>
 public class Checkpointed<TRun>
 {
     internal Checkpointed(TRun run, ICheckpointingRunner runner)
@@ -23,8 +27,12 @@ public class Checkpointed<TRun>
     private readonly ICheckpointingRunner _runner;
 
     /// <summary>
-    /// .
+    /// Gets the workflow run associated with this <see cref="Checkpointed{TRun}"/> instance.
     /// </summary>
+    /// <seealso cref="Run"/>
+    /// <seealso cref="Run{TResult}"/>
+    /// <seealso cref="StreamingRun"/>
+    /// <seealso cref="StreamingRun{TResult}"/>
     public TRun Run { get; }
 
     /// <inheritdoc cref="ICheckpointingRunner.Checkpoints"/>
