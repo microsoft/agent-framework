@@ -193,15 +193,17 @@ class InProcessActorContext(ActorRuntimeContext):
         logger.debug(f"Message {message.message_id} enqueued for actor {self._actor_id}")
 
     def send_request(self, request: ActorRequestMessage) -> "InProcessResponseHandle":
-        if request.message_id in self._inbox:
+        try:
             return InProcessResponseHandle(self._inbox[request.message_id])
-        entry = RequestEntry(request)
-        self._inbox[request.message_id] = entry
-        self.enqueue_message(request)
-        return InProcessResponseHandle(entry)
+        except KeyError:
+            # Message ID not in inbox, create new entry
+            entry = RequestEntry(request)
+            self._inbox[request.message_id] = entry
+            self.enqueue_message(request)
+            return InProcessResponseHandle(entry)
 
     def complete_request(self, message_id: str, response: ActorResponseMessage) -> None:
-        if message_id in self._inbox:
+        try:
             entry = self._inbox[message_id]
             entry.set_response(response)
             if message_id not in self._completed_order:
@@ -211,10 +213,16 @@ class InProcessActorContext(ActorRuntimeContext):
                 if oldest != message_id:
                     self._inbox.pop(oldest, None)
             logger.debug(f"Request {message_id} completed for actor {self._actor_id}")
+        except KeyError:
+            # Message ID not found in inbox
+            pass
 
     def on_progress_update(self, message_id: str, sequence_number: int, data: Any) -> None:
-        if message_id in self._inbox:
+        try:
             self._inbox[message_id].add_progress_update(sequence_number, data)
+        except KeyError:
+            # Message ID not found in inbox
+            pass
 
 
 class InProcessActorRuntime:
