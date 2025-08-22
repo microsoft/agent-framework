@@ -3,21 +3,15 @@
 using System.IO;
 using System.Threading.Tasks;
 
+using static Microsoft.Agents.Workflows.Sample.Step1EntryPoint;
+
 namespace Microsoft.Agents.Workflows.Sample;
 
 internal static class Step1aEntryPoint
 {
     public static async ValueTask RunAsync(TextWriter writer)
     {
-        UppercaseExecutor uppercase = new();
-        ReverseTextExecutor reverse = new();
-
-        WorkflowBuilder builder = new(uppercase);
-        builder.AddEdge(uppercase, reverse);
-
-        Workflow<string> workflow = builder.Build<string>();
-
-        Run run = await InProcessExecution.RunAsync(workflow, "Hello, World!").ConfigureAwait(false);
+        Run run = await InProcessExecution.RunAsync(WorkflowInstance, "Hello, World!").ConfigureAwait(false);
 
         Assert.Equal(RunStatus.Completed, run.Status);
 

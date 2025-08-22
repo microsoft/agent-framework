@@ -8,16 +8,23 @@ namespace Microsoft.Agents.Workflows.Sample;
 
 internal static class Step5EntryPoint
 {
+    public static Workflow<NumberSignal, string> WorkflowInstance
+    {
+        get
+        {
+            InputPort guessNumber = InputPort.Create<NumberSignal, int>("GuessNumber");
+            JudgeExecutor judge = new(42); // Let's say the target number is 42
+
+            return new WorkflowBuilder(guessNumber)
+                .AddEdge(guessNumber, judge)
+                .AddEdge(judge, guessNumber, (message) => message is NumberSignal signal && signal != NumberSignal.Matched)
+            .BuildWithOutput<NumberSignal, string>(judge, ComputeStreamingOutput, (NumberSignal s, string? _) => s == NumberSignal.Matched);
+        }
+    }
+
     public static async ValueTask<string> RunAsync(TextWriter writer, Func<string, int> userGuessCallback)
     {
-        InputPort guessNumber = InputPort.Create<NumberSignal, int>("GuessNumber");
-        JudgeExecutor judge = new(42); // Let's say the target number is 42
-
-        Workflow<NumberSignal, string> workflow = new WorkflowBuilder(guessNumber)
-            .AddEdge(guessNumber, judge)
-            .AddEdge(judge, guessNumber, (message) => message is NumberSignal signal && signal != NumberSignal.Matched)
-            .BuildWithOutput<NumberSignal, string>(judge, ComputeStreamingOutput, (NumberSignal s, string? _) => s == NumberSignal.Matched);
-
+        Workflow<NumberSignal, string> workflow = WorkflowInstance;
         StreamingRun<string> handle = await InProcessExecution.StreamAsync(workflow, NumberSignal.Init).ConfigureAwait(false);
 
         await foreach (WorkflowEvent evt in handle.WatchStreamAsync().ConfigureAwait(false))

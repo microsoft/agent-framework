@@ -5,7 +5,6 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Sample;
-using Microsoft.Agents.Workflows.UnitTests.Sample;
 
 namespace Microsoft.Agents.Workflows.UnitTests;
 

@@ -130,5 +130,15 @@ public static class StreamingAggregators
     /// <returns>A StreamingAggregator that, when applied to multiple input sequences, returns an IEnumerable containing the
     /// union of all elements from those sequences.</returns>
     public static StreamingAggregator<TInput, IEnumerable<TInput>> Union<TInput>()
-        => Union<TInput, TInput>(input => input);
+    {
+        List<TInput> results = new();
+
+        return Aggregate;
+
+        IEnumerable<TInput> Aggregate(TInput input, IEnumerable<TInput>? runningResult)
+        {
+            results.Add(input);
+            return results;
+        }
+    }
 }

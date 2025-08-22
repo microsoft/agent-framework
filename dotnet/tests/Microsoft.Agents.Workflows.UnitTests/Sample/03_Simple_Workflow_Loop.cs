@@ -9,17 +9,23 @@ namespace Microsoft.Agents.Workflows.Sample;
 
 internal static class Step3EntryPoint
 {
+    public static Workflow<NumberSignal> WorkflowInstance
+    {
+        get
+        {
+            GuessNumberExecutor guessNumber = new(1, 100);
+            JudgeExecutor judge = new(42); // Let's say the target number is 42
+
+            return new WorkflowBuilder(guessNumber)
+                .AddEdge(guessNumber, judge)
+                .AddEdge(judge, guessNumber)
+                .Build<NumberSignal>();
+        }
+    }
+
     public static async ValueTask<string> RunAsync(TextWriter writer)
     {
-        GuessNumberExecutor guessNumber = new(1, 100);
-        JudgeExecutor judge = new(42); // Let's say the target number is 42
-
-        Workflow<NumberSignal> workflow = new WorkflowBuilder(guessNumber)
-            .AddEdge(guessNumber, judge)
-            .AddEdge(judge, guessNumber)
-            .Build<NumberSignal>();
-
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, NumberSignal.Init).ConfigureAwait(false);
+        StreamingRun run = await InProcessExecution.StreamAsync(WorkflowInstance, NumberSignal.Init).ConfigureAwait(false);
 
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
