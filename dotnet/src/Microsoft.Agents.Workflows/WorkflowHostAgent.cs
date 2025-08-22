@@ -40,7 +40,7 @@ internal class WorkflowHostAgent : AIAgent
         do
         {
             result = Guid.NewGuid().ToString("N");
-        } while (this._assignedRunIds.TryAdd(result, result));
+        } while (!this._assignedRunIds.TryAdd(result, result));
 
         return result;
     }
