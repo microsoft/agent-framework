@@ -1,234 +1,323 @@
 ---
 status: proposed
 contact: rogerbarreto
-date: 2025-08-14
-deciders: stephentoub, markwallace-microsoft, rogerbarreto, westey-m
+date: 2025-08-22
+deciders: markwallace-microsoft, rogerbarreto, westey-m, dmytrostruk, sergeymenshykh
 informed: {}
 ---
 
-# Agent Processor Middleware Architecture
+# Agent Filtering Middleware Design
 
 ## Context and Problem Statement
 
-The current Agent Framework lacks a standardized, extensible mechanism for intercepting and processing agent execution. Developers need the ability to add custom filters/middleware to intercept and modify agent behavior at various stages of the execution pipeline. While the framework has basic agent abstractions with `RunAsync` and `RunStreamingAsync` methods, and standards like approval workflows, there is no middleware-like pipeline that allows for composable, reusable processing components that can be applied to different agent execution contexts.
+The current Agent Framework lacks a standardized, extensible mechanism for intercepting and processing agent execution. Developers need the ability to add custom filters/middleware to intercept and modify agent behavior at various stages of the execution pipeline. While the framework has basic agent abstractions with `RunAsync` and `RunStreamingAsync` methods, and standards like approval workflows, there is no middleware that allows developers to intercept and modify agent behavior at different agent execution contexts.
 
 The challenge is to design an architecture that supports:
 - Multiple execution contexts (invocation, function calls, approval requests, error handling)
 - Support for both streaming and non-streaming scenarios
-- Composable middleware-like behavior with proper chaining
 - Dependency injection friendly setup
 
 ## Decision Drivers
 
-- **Extensibility**: Enable developers to add custom processing logic without modifying core agent implementations
-- **Composability**: Support chaining multiple processors in a pipeline with proper middleware semantics
-- **Context Awareness**: Different processors should handle specific execution contexts (pre-invocation, function calls, etc.)
-- **Streaming Support**: Architecture must work seamlessly with both `RunAsync` and `RunStreamingAsync` scenarios
-- **Self-Registration**: Processors should declare their supported contexts to reduce configuration errors
-- **Middleware Semantics**: Post-`next()` code should execute after core agent logic, not before
-- **Flexibility**: Support both manual configuration and dependency injection patterns
-- **Performance**: Minimal overhead when processors are not registered for specific contexts
-- **Immutability**: Maintain clear data flow with explicit context mutations
-- **Testability**: Enable easy unit testing of individual processors and processor chains
+- Agents should be able to intercept and modify agent behavior at various stages of the execution pipeline.
+- The design should be simple and intuitive for developers to understand and use.
+- The design should be extensible to support new execution contexts and scenarios.
+- The design should support both manual and dependency injection configuration.
+- The design should allow flexible custom behaviors provided by enough context information.
+- The design should be exception friendly and allow clear error handling and recovery mechanisms.
 
 ## Considered Options
 
-### Option 1: Event-Based Architecture
-Implement an event-driven system where agents raise events at different execution stages, and handlers subscribe to specific event types.
+### Option 1: Semantic Kernel Approach
 
-#### Pros
-- Loose coupling between agents and processors
-- Easy to add new event types
-- Familiar pattern for many developers
-- Natural support for multiple handlers per event
+Similar to the Semantic Kernel kernel filters this option involves exposing different interface and properties for each specialized filter.
 
-#### Cons
-- Events are fire-and-forget, making it difficult to modify execution flow
-- No natural way to short-circuit execution or return modified contexts
-- Complex error handling and rollback scenarios
-- Difficult to maintain execution order and dependencies
-- Does not provide true middleware semantics
-
-### Option 2: Decorator Pattern with Agent Wrappers
-Create decorator classes that wrap agents and intercept method calls, similar to the OpenTelemetryAgent pattern.
-
-#### Pros
-- Clean separation of concerns
-- Follows established patterns in the framework
-- Easy to compose multiple decorators
-- Non-intrusive to existing agent implementations
-
-#### Cons
-- Limited to agent-level interception only
-- Cannot intercept fine-grained execution contexts (function calls, approval requests)
-- Requires creating multiple wrapper classes for different concerns
-- Does not support context-specific processing
-- Difficult to share processors across different agent types
-
-### Option 3: Processor Middleware Architecture (Recommended)
-Implement a middleware-like pipeline using processor interfaces that handle specific execution contexts, with a dispatcher that manages processor chains and supports both manual and DI configuration.
-
-#### Pros
-- True middleware semantics with proper pre/post execution logic
-- Context-specific processing with self-registering processors
-- Supports both streaming and non-streaming scenarios
-- Composable and reusable processor components
-- Clean separation between processor logic and agent implementation
-- Flexible configuration options (manual and DI)
-- Explicit context mutations with immutable data flow
-- Easy to test individual processors and chains
-
-#### Cons
-- More complex initial setup compared to simple event handlers
-- Requires understanding of middleware concepts
-- Additional abstraction layer between agents and processing logic
-
-## Decision Outcome
-
-Chosen option: "Processor Middleware Architecture", because it provides the best balance of flexibility, composability, and middleware semantics while supporting all required execution contexts and scenarios. This approach enables true middleware behavior where processors can execute logic both before and after core agent operations, supports self-registering processors to reduce configuration errors, and works seamlessly with both streaming and non-streaming agent execution.
-
-### Implementation Overview
-
-The architecture consists of:
-
-1. **AgentContext Hierarchy**: Base context class with specialized contexts for different execution stages
-2. **IAgentContextProcessor Interface**: Processors that declare supported contexts and implement middleware logic
-3. **AgentMiddlewareProcessor Dispatcher**: Manages processor registration and chain execution
-4. **AIAgent Integration**: Modified base agent class that integrates with the processor pipeline
-
-### Key Components
-
-#### Context Types and Classes
 ```csharp
-public abstract class AgentContext
+
+var services = new ServiceCollection();
+services.AddSingleton<IAgentRunFilter, MyAgentRunFilter>();
+services.AddSingleton<IAgentFunctionCallFilter, MyAgentFunctionCallFilter>();
+
+// Using DI
+var agent = new MyAgent(services.BuildServiceProvider());
+
+// Manual
+var agent = new MyAgent();
+agent.RunFilters.Add(new MyAgentRunFilter());
+agent.FunctionCallFilters.Add(new MyAgentFunctionCallFilter());
+
+public class MyAgentRunFilter : IAgentRunFilter
 {
-    public AgentContextType ContextType { get; }
-    public bool IsStreaming { get; }
-}
-
-public sealed class RunAgentContext : AgentContext
-{
-    public AgentRunOptions Options { get; }
-    public AgentThread? Thread { get; }
-}
-```
-
-#### Processor Interface
-```csharp
-public interface IAgentMiddleware
-{
-    bool CanProcess(Type contextType);
-    Task<AgentContext> ProcessAsync(AgentContext context, AgentContextProcessorDelegate next);
-}
-```
-
-#### Middleware Processor
-```csharp
-public class AgentMiddlewareProcessor
-{
-    // Keep processors organized by context type
-    Dictionary<string, AgentContext> _contextByType = new();
-
-    // Register processors via ctor/DI
-    public AgentMiddlewareProcessor(IEnumerable<IAgentMiddleware> middlewares) { } 
-
-    // Manual registration for non-DI scenarios
-    public void Register(IAgentMiddleware middleware) 
-    { 
-        _contextByType.CanProcess(typeof(RunAgentContext)).Add(nameof(RunAgentContext),middleware);
-    }
-
-    // Execute the processor chain
-    public Task<AgentContext> ProcessChainAsync(AgentContext context, Func<AgentContext, Task<AgentContext>> next) 
+    public Task OnRunAsync(AgentRunContext context, Func<AgentRunContext, Task> next)
     {
-        // Iterate through processors registered for the given context type
-        foreach (var middleware in _contextByType[context.GetType().Name])
-        {
-            context = await middleware.ProcessAsync(context, next).ConfigureAwait(false);
-        }
-        return context;
+        // Pre-run logic
+        
+        await next(context);
+        
+        // Post-run logic
+
+        return Task.CompletedTask;
     }
 }
-```
 
-#### AIAgent Middleware Wrapper
-```csharp
+public interface IAgentRunFilter
+{
+    Task OnRunAsync(AgentRunContext context, Func<AgentRunContext, Task> next);
+}
+
+public interface IAgentFunctionCallFilter
+{
+    Task OnFunctionCallAsync(AgentFunctionCallContext context, Func<AgentFunctionCallContext, Task> next);
+}
+
 public class AIAgent
 {
-    public AIAgent(AgentMiddlewareProcessor? processor = null) { }
+    private List<IAgentRunFilter> _runFilters = [];
+    private List<IAgentFunctionCallFilter> _functionCallFilters = [];
+
+    public AIAgent(IServiceProvider serviceProvider)
+    {
+        // Resolve filters from DI
+        _runFilters ??= serviceProvider.GetServices<IAgentRunFilter>()?.ToList();
+        _functionCallFilters ??= serviceProvider.GetServices<IAgentFunctionCallFilter>()?.ToList();
+    }
 
     public virtual Task<AgentResponse> RunAsync(AgentRunOptions options, AgentThread? thread = null)
     {
-        // Wrap core logic in middleware pipeline
-        return _processor.ProcessChainAsync(new RunAgentContext(options, thread), context =>
+        var context = new AgentRunContext(options, thread);
+
+        // Wrap core logic in filter pipeline
+        return _filters.OnRunAsync(runContext, ctx =>
         {
             // Core agent logic
-            return Task.FromResult(context);
+            return Task.FromResult(ctx);
+        });
+    }
+}
+
+```
+#### Pros
+- Clean separation of concerns
+- Follows established patterns in Semantic Kernel and easy migration path
+- No resistance or complaints from the community when used in Semantic Kernel
+
+#### Cons
+- Adding more filters may require adding more properties to the agent class.
+- Filters are not always used, and adding this responsibility to the `AIAgent` abstraction level, may be an overkill.
+
+### Option 2: Agent Filter Decorator Pattern
+
+Similar to the `OpenTelemetryAgent` and the `DelegatingChatClient` in `Microsoft.Extensions.AI`, this option involves creating a `FilteredAgent` class that wraps agents and allows interception of method calls providing a collection of Filters to manage the wrapped agent.
+
+```csharp
+var services = new ServiceCollection();
+services.AddSingleton<IAgentRunFilter, MyAgentRunFilter>();
+services.AddSingleton<IAgentFunctionCallFilter, MyAgentFunctionCallFilter>();
+
+// Using DI
+var agent = new MyAgent();
+var filteredAgent = new FilteringAIAgent(agent, services.BuildServiceProvider());
+
+// Manual
+var agent = new MyAgent();
+var filteredAgent = new FilteringAIAgent(agent, 
+    runFilters: [new MyAgentRunFilter()], 
+    functionCallFilters: [new MyAgentFunctionCallFilter()]);
+
+public class FilteringAIAgent
+{
+    private List<IAgentRunFilter> _runFilters = [];
+    private List<IAgentFunctionCallFilter> _functionCallFilters = [];
+
+    public FilteringAIAgent(AIAgent agent, IServiceProvider serviceProvider)
+    {
+        _innerAgent = agent;
+
+        // Resolve filters from DI
+        _runFilters ??= serviceProvider.GetServices<IAgentRunFilter>()?.ToList();
+        _functionCallFilters ??= serviceProvider.GetServices<IAgentFunctionCallFilter>()?.ToList();
+    }
+
+    public virtual Task<AgentResponse> RunAsync(AgentRunOptions options, AgentThread? thread = null, CancellationToken cancellationToken = default)
+    {
+        var context = new AgentRunContext(options, thread);
+
+        // Wrap core logic in filter pipeline
+        return _runFilters.OnRunAsync(runContext, ctx =>
+        {
+            // Core agent logic
+            return _innerAgent.RunAsync(ctx.Messages, ctx.Options, cancellationToken);
         });
     }
 }
 ```
 
-### Consequences
+#### Pros
+- Clean separation of concerns
+- Follows established patterns in `Microsoft.Extensions.AI`
+- Non-intrusive to existing agent implementations
+- Supports both manual and DI configuration
+- Context-specific processing with self-registering filters
+- Composable and reusable filter components
 
-- **Good**: Provides comprehensive middleware pipeline for agent execution with proper semantics
-- **Good**: Self-registering processors reduce configuration errors and improve developer experience
-- **Good**: Supports both manual setup and dependency injection patterns
-- **Good**: Context-specific processing enables fine-grained control over agent execution
-- **Good**: Immutable context updates provide clear data flow and easier debugging
-- **Good**: Composable architecture allows mixing and matching processors for different scenarios
-- **Good**: Streaming and non-streaming scenarios handled uniformly
-- **Neutral**: Requires understanding of middleware concepts and processor patterns
-- **Neutral**: Additional abstraction layer adds some complexity to simple agent scenarios
-- **Bad**: Initial setup is more complex than simple event-based approaches
+#### Cons
+- Additional wrapper class adds complexity
+- Requires explicit wrapping of agents
+- Only viable for `ChatClientAgents` as other agents implementation will not have visibility/knowledge of the function call filters.
 
-## Validation
+### Option 3: Dedicated Component for Filtering
 
-The implementation will be validated through:
+This approach involves creating a dedicated `AgentFilterProcessor` that manages multiple collections of `IAgent_XYZ_Filter` instances.
+Each agent can be provided with the processor or automatically have one injected from DI.
 
-1. **Unit Tests**: Comprehensive test suite covering individual processors, chain execution, and edge cases
-2. **Integration Tests**: End-to-end scenarios with real agents and multiple processors
-3. **Performance Tests**: Benchmarks to ensure minimal overhead when processors are not registered
-4. **Sample Applications**: Demonstration of common use cases including logging, validation, caching, and rate limiting
-5. **Documentation**: Complete API documentation and usage examples for both manual and DI scenarios
-
-## More Information
-
-### Usage Examples
-
-#### Manual Setup
 ```csharp
-var processor = new AgentMiddlewareProcessor();
-processor.Register([new AgentOptionsProcessor(), new ValidationProcessor(), new ContentSafetyProcessor()]);
+var services = new ServiceCollection();
+services.AddSingleton<IAgentRunFilter, MyAgentRunFilter>();
+services.AddSingleton<IAgentFunctionCallFilter, MyAgentFunctionCallFilter>();
+services.AddSingleton<AgentFilterProcessor>();
 
-AIAgent agent = GetAgent().WithMiddleware(processor);
-var response = await agent.RunAsync(messages);
+// Using DI
+var provider = services.BuildServiceProvider();
+
+// Filters are auto-registered with the processor from DI
+var processor = provider.GetRequiredService<AgentFilterProcessor>();
+
+// Manual
+var processor = new AgentFilterProcessor();
+processor.AddFilter(new MyAgentRunFilter());
+processor.AddFilter(new MyAgentFunctionCallFilter());
+
+// Agent takes processor in ctor or via DI
+var agent = new MyAgent(processor);
+
 ```
 
-#### Dependency Injection Setup
+## Filter Middleware Design Options
+
+### 1. Semantic Kernel Style
+
+Has the benefit of clear separation of concerns, but this approach requires developers 
+to manage and maintain separate collections for each filter type, increasing code complexity and maintenance overhead.
+
 ```csharp
-builder.Services.AddSingleton<IAgentMiddleware, AgentOptionsProcessor>();
-builder.Services.AddSingleton<IAgentMiddleware, ValidationProcessor>();
-builder.Services.AddSingleton<IAgentMiddleware, ContentSafetyProcessor>();
-builder.Services.AddSingleton<AgentMiddlewareProcessor>();
-builder.Services.AddSingleton<AIAgent>(sp => {
-    var agent = GetAgent();
-    agent.AddMiddleware(sp.GetRequiredService<AgentMiddlewareProcessor>());
-    return agent;
-});
+// Use Case
+var agent = new MyAgent();
+agent.RunFilters.Add(new MyAgentRunFilter());
+agent.RunFilters.Add(new MyMultipleFilterImplementation());
+agent.FunctionCallFilters.Add(new MyAgentFunctionCallFilter());
+agent.FunctionCallFilters.Add(new MyMultipleFilterImplementation());
+agent.AYZFilters.Add(new MyAgentAYZFilter());
+agent.AYZFilters.Add(new MyMultipleFilterImplementation());
+
+// Impl
+interface IAgentRunFilter  
+{ 
+    Task OnRunAsync(AgentRunContext context, Func<AgentRunContext, Task> next); 
+}
+interface IAgentFunctionCallFilter  
+{
+    Task OnFunctionCallAsync(AgentFunctionCallContext context, Func<AgentFunctionCallContext, Task> next); 
+}
 ```
 
-### Relationship to Existing Architecture
+#### Pros
+- Clean separation of concerns
+- Follows established patterns in Semantic Kernel and easy migration path
+- No resistance or complaints from the community when used in Semantic Kernel
 
-This middleware architecture complements the existing agent framework by:
-- Building on the established `AIAgent` abstract class
-- Working with existing `RunAsync` and `RunStreamingAsync` patterns
-- Integrating with the OpenTelemetry instrumentation (ADR-0002)
-- Providing the foundation for the agent filters functionality (ADR-0003)
+#### Cons
+- Adding more filters may require adding more properties to the agent/processor class.
+- Adding more filters requires bigger code changes downstream to callers.
 
-### Future Considerations
+### 2. Generic Style
 
-- Integration with actor runtime for distributed scenarios
-- Support for async processor registration and dynamic processor loading
-- Enhanced error handling and recovery mechanisms
-- Performance optimizations for high-throughput scenarios
+In a more generic approach, filters can be grouped in the same bucket and processed based on the context.
+One generic interface for all filters, with context-specific implementations. 
+Allow simple grouping of filters in the same list and adding new filter types with low code-changes.
+
+```csharp
+// Use Case
+var agent = new MyAgent();
+agent.Filters.Add(new MyAgentRunFilter());
+agent.Filters.Add(new MyAgentFunctionCallFilter());
+agent.Filters.Add(new MyAgentAYZFilter());
+agent.Filters.Add(new MyMultipleFilterImplementation());
+
+// Impl
+interface IAgentFilter  
+{ 
+    bool CanProcess(AgentContext context);
+    Task OnProcessAsync(AgentContext context, Func<AgentContext, Task> next); 
+}
+
+interface IAgentFilter<T> : IAgentFilter where T : AgentContext
+{
+    Task OnProcessAsync(T context, Func<T, Task> next);
+}
+
+class MySingleFilterImplementation : IAgentFilter<RunAgentContext>
+{
+    public bool CanProcess(AgentContext context) 
+        => context is RunAgentContext;
+
+    public Task OnProcessAsync(AgentContext context, Func<AgentContext, Task> next)
+    {
+        Func<RunAgentContext, Task> wrappedNext = ctx => next(ctx);
+        return OnProcessAsync((RunAgentContext)context, wrappedNext);
+    }
+
+    public Task OnProcessAsync(RunAgentContext context, Func<RunAgentContext, Task> next) 
+    {
+        // Pre-run logic
+        await next(context);
+        // Post-run logic
+        return Task.CompletedTask;
+    }
+}
+
+class MyMultipleFilterImplementation : IAgentFilter<RunAgentContext>, IAgentFilter<FunctionCallAgentContext>
+{
+    public bool CanProcess(AgentContext context) 
+        => context is RunAgentContext or FunctionCallAgentContext;
+
+    public Task OnProcessAsync(AgentContext context, Func<AgentContext, Task> next)
+    {
+        if (context is RunAgentContext runContext)
+        {
+            Func<RunAgentContext, Task> wrappedNext = ctx => next(ctx);
+            return OnProcessAsync(runContext, wrappedNext);
+        }
+        
+        if (context is FunctionCallAgentContext callContext)
+        {
+            Func<FunctionCallAgentContext, Task> wrappedNext = ctx => next(ctx);
+            return OnProcessAsync(callContext, wrappedNext);
+        }
+    }
+
+    public Task OnProcessAsync(RunAgentContext context, Func<RunAgentContext, Task> next) 
+    {
+        // Pre-run logic
+        await next(context);
+        // Post-run logic
+        return Task.CompletedTask;
+    }
+
+    public Task OnProcessAsync(FunctionCallAgentContext context, Func<FunctionCallAgentContext, Task> next) 
+    {
+        // Pre-function call logic
+        await next(context);
+        // Post-function call logic
+        return Task.CompletedTask;
+    }
+}
+```
+
+#### Pros
+- Simple grouping of filters in the same list, help with DI registration and filtering iteration
+- Lower maintenance and learning curve when adding new filter types
+- Can be combined with other patterns like the `AgentFilterProcessor`
+
+#### Cons
+- Less clear separation of concerns compared to dedicated filter types
+- Requires extra runtime type checking and casting for context-specific processing
