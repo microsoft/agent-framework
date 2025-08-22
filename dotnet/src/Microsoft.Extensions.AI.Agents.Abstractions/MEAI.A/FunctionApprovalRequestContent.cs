@@ -26,20 +26,10 @@ public sealed class FunctionApprovalRequestContent : UserInputRequestContent
     public FunctionCallContent FunctionCall { get; }
 
     /// <summary>
-    /// Creates a <see cref="FunctionApprovalResponseContent"/> representing an approval response.
+    /// Creates a <see cref="FunctionApprovalResponseContent"/> to indicate whether the function call is approved or rejected based on the value of <paramref name="approved"/>.
     /// </summary>
+    /// <param name="approved"><see langword="true"/> if the function call is approved; otherwise, <see langword="false"/>.</param>
     /// <returns>The <see cref="FunctionApprovalResponseContent"/> representing the approval response.</returns>
-    public FunctionApprovalResponseContent CreateApproval()
-    {
-        return new FunctionApprovalResponseContent(this.Id, true, this.FunctionCall);
-    }
-
-    /// <summary>
-    /// Creates a <see cref="FunctionApprovalResponseContent"/> representing a rejection response.
-    /// </summary>
-    /// <returns>The <see cref="FunctionApprovalResponseContent"/> representing the rejection response.</returns>
-    public FunctionApprovalResponseContent CreateRejection()
-    {
-        return new FunctionApprovalResponseContent(this.Id, false, this.FunctionCall);
-    }
+    public FunctionApprovalResponseContent CreateResponse(bool approved)
+        => new(this.Id, approved, this.FunctionCall);
 }
