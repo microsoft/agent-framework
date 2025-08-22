@@ -29,13 +29,20 @@ from ._workflow_context import WorkflowContext
 class Executor(AFBaseModel):
     """An executor is a component that processes messages in a workflow."""
 
-    id: str = Field(min_length=1, description="Unique identifier for the executor")
+    # Provide a default so static analyzers (e.g., pyright) don't require passing `id`.
+    # Runtime still sets a concrete value in __init__.
+    id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        min_length=1,
+        description="Unique identifier for the executor",
+    )
 
     def __init__(self, id: str | None = None, **kwargs: Any) -> None:
         """Initialize the executor with a unique identifier.
 
         Args:
-            id: A unique identifier for the executor. If None, a new UUID will be generated.
+            id: A unique identifier for the executor. If None, a new ID will be generated
+                following the format <class_name>/<uuid>.
             kwargs: Additional keyword arguments. Unused in this implementation.
         """
         executor_id = f"{self.__class__.__name__}/{uuid.uuid4()}" if id is None else id
