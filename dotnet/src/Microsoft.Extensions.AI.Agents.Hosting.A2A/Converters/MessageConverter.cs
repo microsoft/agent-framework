@@ -64,9 +64,8 @@ internal static class MessageConverter
     }
 
     /// <summary>
-    /// Converts A2A MessageSendParams to a collection of Microsoft.Extensions.AI ChatMessage objects.
+    /// Converts collection of A2A <see cref="Message"/> to a collection of <see cref="ChatMessage"/> objects.
     /// </summary>
-    /// <param name="messages"></param>
     /// <returns>A read-only collection of ChatMessage objects.</returns>
     public static IReadOnlyCollection<ChatMessage> ToChatMessages(this ICollection<Message> messages)
     {
