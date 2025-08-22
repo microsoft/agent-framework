@@ -88,9 +88,9 @@ public sealed class Step10_ChatClientAgent_UsingFunctionToolsWithApprovals(ITest
                 List<ChatMessage> nextIterationMessages = userInputRequests?.Select((request) => request switch
                 {
                     FunctionApprovalRequestContent functionApprovalRequest when functionApprovalRequest.FunctionCall.Name == "GetSpecials" || functionApprovalRequest.FunctionCall.Name == "add" || functionApprovalRequest.FunctionCall.Name == "search_tiktoken_documentation" =>
-                        new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateApproval()]),
+                        new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(approved: true)]),
                     FunctionApprovalRequestContent functionApprovalRequest =>
-                        new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateRejection()]),
+                        new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(approved: false)]),
                     _ => throw new NotSupportedException($"Unsupported request type: {request.GetType().Name}")
                 })?.ToList() ?? [];
 
@@ -180,9 +180,9 @@ public sealed class Step10_ChatClientAgent_UsingFunctionToolsWithApprovals(ITest
                 List<ChatMessage> nextIterationMessages = userInputRequests?.Select((request) => request switch
                 {
                     FunctionApprovalRequestContent functionApprovalRequest when functionApprovalRequest.FunctionCall.Name == "GetSpecials" || functionApprovalRequest.FunctionCall.Name == "add" || functionApprovalRequest.FunctionCall.Name == "search_tiktoken_documentation" =>
-                        new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateApproval()]),
+                        new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(approved: true)]),
                     FunctionApprovalRequestContent functionApprovalRequest =>
-                        new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateRejection()]),
+                        new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(approved: false)]),
                     _ => throw new NotSupportedException($"Unsupported request type: {request.GetType().Name}")
                 })?.ToList() ?? [];
 
