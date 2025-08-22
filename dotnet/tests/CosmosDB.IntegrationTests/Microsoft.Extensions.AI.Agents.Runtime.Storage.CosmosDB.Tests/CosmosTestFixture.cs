@@ -3,6 +3,7 @@
 using System.Text.Json;
 using Aspire.Hosting;
 using Azure.Identity;
+using CosmosDB.Testing.AppHost;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Logging;
 
@@ -30,7 +31,7 @@ public class CosmosTestFixture : IAsyncLifetime
         var cancellationToken = cts.Token;
 
         var appHost = await DistributedApplicationTestingBuilder
-            .CreateAsync<Projects.Microsoft_Extensions_AI_Agents_Runtime_Storage_CosmosDB_Tests_AppHost>(cancellationToken);
+            .CreateAsync<Projects.CosmosDB_Testing_AppHost>(cancellationToken);
 
         appHost.Services.AddLogging(logging =>
         {
@@ -47,7 +48,16 @@ public class CosmosTestFixture : IAsyncLifetime
         this.App = await appHost.BuildAsync(cancellationToken).WaitAsync(cancellationToken);
         await this.App.StartAsync(cancellationToken).WaitAsync(cancellationToken);
 
-        var cs = await this.App.GetConnectionStringAsync(CosmosDBTestConstants.TestCosmosDbName, cancellationToken);
+        var connectionString = await this.App.GetConnectionStringAsync(CosmosDBTestConstants.TestCosmosDbName, cancellationToken);
+        if (CosmosDBTestConstants.UseEmulatorInCICD)
+        {
+            // Emulator is setup in the CI/CD pipeline, so we will not use one produced by Aspire.
+            // For simplicity, we override the connection string here with the well-known emulator connection string.
+            // https://learn.microsoft.com/en-us/azure/cosmos-db/emulator
+
+            connectionString = "AccountEndpoint=https://localhost:8081/;AccountKey=C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==;";
+        }
+
         CosmosClientOptions ccoptions = new()
         {
             UseSystemTextJsonSerializerWithOptions = new JsonSerializerOptions()
@@ -57,23 +67,29 @@ public class CosmosTestFixture : IAsyncLifetime
             }
         };
 
-        if (CosmosDBTestConstants.UseEmulatorForTesting)
+        if (CosmosDBTestConstants.UseAspireEmulatorForTesting || CosmosDBTestConstants.UseEmulatorInCICD)
         {
             ccoptions.ConnectionMode = ConnectionMode.Gateway;
             ccoptions.LimitToEndpoint = true;
-            this.CosmosClient = new CosmosClient(cs, ccoptions);
+            this.CosmosClient = new CosmosClient(connectionString, ccoptions);
         }
         else
         {
-            this.CosmosClient = new CosmosClient(cs, new DefaultAzureCredential(), ccoptions);
+            this.CosmosClient = new CosmosClient(connectionString, new DefaultAzureCredential(), ccoptions);
         }
 
         var database = this.CosmosClient.GetDatabase(CosmosDBTestConstants.TestCosmosDbDatabaseName);
 
+        // raise throughput to avoid parallel test execution failures
+        var throughputProperties = ThroughputProperties.CreateAutoscaleThroughput(100000);
+
+        // Ensure database exists. It will be a no-op if it was already created before.
+        _ = await this.CosmosClient.CreateDatabaseIfNotExistsAsync(CosmosDBTestConstants.TestCosmosDbDatabaseName, throughputProperties);
+
         var containerProperties = new ContainerProperties()
         {
             Id = "CosmosActorStateStorageTests",
-            PartitionKeyPath = "/actorId"
+            PartitionKeyPaths = LazyCosmosContainer.CosmosPartitionKeyPaths
         };
 
         this.Container = await database.CreateContainerIfNotExistsAsync(containerProperties);
