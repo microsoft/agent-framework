@@ -41,15 +41,9 @@ public class Checkpointed<TRun>
     /// <summary>
     /// Gets the most recent checkpoint information.
     /// </summary>
-    public CheckpointInfo? LastCheckpoint => this.Checkpoints[this.Checkpoints.Count];
+    public CheckpointInfo? LastCheckpoint => this.Checkpoints.Count > 0 ? this.Checkpoints[this.Checkpoints.Count - 1] : null;
 
     /// <inheritdoc cref="ICheckpointingRunner.RestoreCheckpointAsync"/>
     public ValueTask RestoreCheckpointAsync(CheckpointInfo checkpointInfo, CancellationToken cancellation = default)
         => this._runner.RestoreCheckpointAsync(checkpointInfo, cancellation);
 }
-
-//internal interface ISerializer
-//{
-//    ValueTask<Checkpoint> DeserializeAsync(Stream stream);
-//    ValueTask SerializeAsync(Stream stream, Checkpoint checkpoint);
-//}

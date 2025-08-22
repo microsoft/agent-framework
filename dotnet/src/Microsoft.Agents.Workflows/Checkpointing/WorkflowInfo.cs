@@ -25,12 +25,12 @@ internal class WorkflowInfo
         this.InputType = Throw.IfNull(inputType);
         this.StartExecutorId = Throw.IfNullOrEmpty(startExecutorId);
 
-        if (this.OutputType != null && this.OutputCollectorId != null)
+        if (outputType != null && outputCollectorId != null)
         {
             this.OutputType = outputType;
             this.OutputCollectorId = outputCollectorId;
         }
-        else if (this.OutputCollectorId != null)
+        else if (outputCollectorId != null)
         {
             throw new InvalidOperationException(
                 $"Either both or none of OutputType and OutputCollectorId must be set. ({nameof(outputType)}: {outputType} vs. {nameof(outputCollectorId)}: {outputCollectorId})"

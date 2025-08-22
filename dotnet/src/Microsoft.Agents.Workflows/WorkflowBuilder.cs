@@ -41,15 +41,12 @@ public class WorkflowBuilder
 
     private ExecutorIsh Track(ExecutorIsh executorish)
     {
-        //ExecutorRegistration registration = executorish.Registration;
-
         // If the executor is unbound, create an entry for it, unless it already exists.
         // Otherwise, update the entry for it, and remove the unbound tag
         if (executorish.IsUnbound && !this._executors.ContainsKey(executorish.Id))
         {
             // If this is an unbound executor, we need to track it separately
             this._unboundExecutors.Add(executorish.Id);
-            //this._executors[executorish.Id] = executorish;
         }
         else if (!executorish.IsUnbound)
         {

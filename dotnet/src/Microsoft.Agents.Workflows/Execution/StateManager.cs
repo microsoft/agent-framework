@@ -88,8 +88,12 @@ internal class StateManager
                 scopeUpdates[key.Key] = stateUpdates = new();
             }
 
-            tracer?.TraceStatePublished();
             stateUpdates.Add(this._queuedUpdates[key]);
+        }
+
+        if (updatesByScope.Count > 0 && tracer != null)
+        {
+            tracer.TraceStatePublished();
         }
 
         foreach (ScopeId scope in updatesByScope.Keys)
