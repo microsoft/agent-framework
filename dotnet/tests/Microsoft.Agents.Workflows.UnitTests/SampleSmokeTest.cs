@@ -100,6 +100,22 @@ public class SampleSmokeTest
             line => Assert.Contains($"{EchoAgent.DefaultId}: {EchoAgent.Prefix}{HelloAgent.Greeting}", line)
         );
     }
+
+    [Fact]
+    public async Task Test_RunSample_Step7Async()
+    {
+        using StringWriter writer = new();
+
+        await Step7EntryPoint.RunAsync(writer);
+
+        string result = writer.ToString();
+        string[] lines = result.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries);
+
+        Assert.Collection(lines,
+            line => Assert.Contains($"{HelloAgent.DefaultId}: {HelloAgent.Greeting}", line),
+            line => Assert.Contains($"{EchoAgent.DefaultId}: {EchoAgent.Prefix}{HelloAgent.Greeting}", line)
+        );
+    }
 }
 
 internal sealed class VerifyingPlaybackResponder<TInput, TResponse>
