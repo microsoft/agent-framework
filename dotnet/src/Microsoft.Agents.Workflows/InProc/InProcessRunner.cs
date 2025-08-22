@@ -152,6 +152,7 @@ internal class InProcessRunner<TInput> : ISuperStepRunner, ICheckpointingRunner 
     bool ISuperStepRunner.HasUnprocessedMessages => this.RunContext.NextStepHasActions;
 
     public IReadOnlyList<CheckpointInfo> Checkpoints => this._checkpoints;
+    private CheckpointInfo? LastCheckpoint => this.Checkpoints[this.Checkpoints.Count - 1];
 
     async ValueTask<bool> ISuperStepRunner.RunSuperStepAsync(CancellationToken cancellation)
     {
@@ -195,15 +196,14 @@ internal class InProcessRunner<TInput> : ISuperStepRunner, ICheckpointingRunner 
         // that we would need to avoid firing the tasks when we call InvokeEdgeAsync, or RouteExternalMessageAsync.
         IEnumerable<object?> results = (await Task.WhenAll(edgeTasks).ConfigureAwait(false)).SelectMany(r => r);
 
-        await this.CheckpointAsync().ConfigureAwait(false);
-
         // After the message handler invocations, we may have some events to deliver
         foreach (WorkflowEvent @event in this.RunContext.QueuedEvents)
         {
             this.RaiseWorkflowEvent(@event);
         }
-
         this.RunContext.QueuedEvents.Clear();
+
+        await this.CheckpointAsync().ConfigureAwait(false);
 
         this.RaiseWorkflowEvent(this.StepTracer.Complete(this.RunContext.NextStepHasActions, this.RunContext.HasUnservicedRequests));
     }
@@ -261,8 +261,11 @@ internal class InProcessRunner<TInput> : ISuperStepRunner, ICheckpointingRunner 
         await this.RunContext.StateManager.ImportStateAsync(checkpoint).ConfigureAwait(false);
         Task executorNotifyTask = this.RunContext.NotifyCheckpointLoadedAsync(cancellation);
 
+        await this.RunContext.ImportStateAsync(checkpoint).ConfigureAwait(false);
+        ValueTask republishRequestsTask = this.RunContext.RepublishUnservicedRequestsAsync(cancellation);
+
         await this.EdgeMap.ImportStateAsync(checkpoint).ConfigureAwait(false);
-        await executorNotifyTask.ConfigureAwait(false);
+        await Task.WhenAll(executorNotifyTask, republishRequestsTask.AsTask()).ConfigureAwait(false);
 
         this.StepTracer.Reload(this.StepTracer.StepNumber);
     }

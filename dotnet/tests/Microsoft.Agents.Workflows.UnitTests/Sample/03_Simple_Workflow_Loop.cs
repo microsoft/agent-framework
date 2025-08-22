@@ -2,6 +2,7 @@
 
 using System;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Reflection;
 
@@ -94,6 +95,8 @@ internal sealed class JudgeExecutor : ReflectingExecutor<JudgeExecutor>, IMessag
 {
     private readonly int _targetNumber;
 
+    internal int? Tries { get; private set; }
+
     public JudgeExecutor(int targetNumber)
     {
         this._targetNumber = targetNumber;
@@ -101,6 +104,15 @@ internal sealed class JudgeExecutor : ReflectingExecutor<JudgeExecutor>, IMessag
 
     public async ValueTask<NumberSignal> HandleAsync(int message, IWorkflowContext context)
     {
+        if (!this.Tries.HasValue)
+        {
+            this.Tries = 1;
+        }
+        else
+        {
+            this.Tries++;
+        }
+
         NumberSignal result;
         if (message == this._targetNumber)
         {
@@ -116,5 +128,15 @@ internal sealed class JudgeExecutor : ReflectingExecutor<JudgeExecutor>, IMessag
         }
 
         return result;
+    }
+
+    protected internal override ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellation = default)
+    {
+        return context.QueueStateUpdateAsync("TryCount", this.Tries);
+    }
+
+    protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellation = default)
+    {
+        this.Tries = await context.ReadStateAsync<int>("TryCount").ConfigureAwait(false);
     }
 }

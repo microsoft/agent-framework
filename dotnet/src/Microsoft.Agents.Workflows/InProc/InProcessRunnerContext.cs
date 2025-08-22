@@ -129,15 +129,23 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
             throw new InvalidOperationException("Cannot export state when there are queued events. Please process or clear the events before exporting state.");
         }
 
-        Dictionary<ExecutorIdentity, List<ExportedState>> queuedMessages = new();
-        foreach (ExecutorIdentity identity in this._nextStep.QueuedMessages.Keys)
-        {
-            queuedMessages[identity] = this._nextStep.QueuedMessages.Values.Select(message => new ExportedState(message)).ToList();
-        }
+        Dictionary<ExecutorIdentity, List<ExportedState>> queuedMessages = this._nextStep.ExportMessages();
 
         RunnerStateData result = new(queuedMessages, this._externalRequests.Values.ToList());
 
         return new(result);
+    }
+
+    internal async ValueTask RepublishUnservicedRequestsAsync(CancellationToken cancellation = default)
+    {
+        if (this.HasUnservicedRequests)
+        {
+            foreach (string requestId in this._externalRequests.Keys)
+            {
+                await this.AddEventAsync(new RequestInfoEvent(this._externalRequests[requestId]))
+                          .ConfigureAwait(false);
+            }
+        }
     }
 
     internal ValueTask ImportStateAsync(Checkpoint checkpoint)

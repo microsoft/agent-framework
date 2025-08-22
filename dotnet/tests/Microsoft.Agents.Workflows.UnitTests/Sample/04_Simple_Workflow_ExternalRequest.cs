@@ -6,19 +6,24 @@ using System.Threading.Tasks;
 
 namespace Microsoft.Agents.Workflows.Sample;
 
-internal static class Step5EntryPoint
+internal static class Step4EntryPoint
 {
+    public static Workflow<NumberSignal, string> CreateWorkflowInstance(out JudgeExecutor judge)
+    {
+        InputPort guessNumber = InputPort.Create<NumberSignal, int>("GuessNumber");
+        judge = new(42); // Let's say the target number is 42
+
+        return new WorkflowBuilder(guessNumber)
+            .AddEdge(guessNumber, judge)
+            .AddEdge(judge, guessNumber, (message) => message is NumberSignal signal && signal != NumberSignal.Matched)
+            .BuildWithOutput<NumberSignal, string>(judge, ComputeStreamingOutput, (NumberSignal s, string? _) => s == NumberSignal.Matched);
+    }
+
     public static Workflow<NumberSignal, string> WorkflowInstance
     {
         get
         {
-            InputPort guessNumber = InputPort.Create<NumberSignal, int>("GuessNumber");
-            JudgeExecutor judge = new(42); // Let's say the target number is 42
-
-            return new WorkflowBuilder(guessNumber)
-                .AddEdge(guessNumber, judge)
-                .AddEdge(judge, guessNumber, (message) => message is NumberSignal signal && signal != NumberSignal.Matched)
-            .BuildWithOutput<NumberSignal, string>(judge, ComputeStreamingOutput, (NumberSignal s, string? _) => s == NumberSignal.Matched);
+            return CreateWorkflowInstance(out _);
         }
     }
 

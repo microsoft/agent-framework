@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Checkpointing;
 using Microsoft.Shared.Diagnostics;
@@ -35,8 +36,8 @@ public class Checkpointed<TRun>
     public CheckpointInfo? LastCheckpoint => this.Checkpoints[this.Checkpoints.Count];
 
     /// <inheritdoc cref="ICheckpointingRunner.RestoreCheckpointAsync"/>
-    public ValueTask RestoreCheckpointAsync(CheckpointInfo checkpointInfo)
-        => this._runner.RestoreCheckpointAsync(checkpointInfo);
+    public ValueTask RestoreCheckpointAsync(CheckpointInfo checkpointInfo, CancellationToken cancellation = default)
+        => this._runner.RestoreCheckpointAsync(checkpointInfo, cancellation);
 }
 
 //internal interface ISerializer

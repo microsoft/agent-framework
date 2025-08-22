@@ -162,8 +162,10 @@ public class RepresentationTests
         RunWorkflowInfoMatchTest(Step1EntryPoint.WorkflowInstance);
         RunWorkflowInfoMatchTest(Step2EntryPoint.WorkflowInstance);
         RunWorkflowInfoMatchTest(Step3EntryPoint.WorkflowInstance);
-        RunWorkflowInfoMatchTest(Step5EntryPoint.WorkflowInstance);
+        RunWorkflowInfoMatchTest(Step4EntryPoint.WorkflowInstance);
+        // Step 5 reuses the workflow from Step 4, so we don't need to test it separately.
         RunWorkflowInfoMatchTest(Step6EntryPoint.CreateWorkflow(2));
+        // Step 7 reuses the workflow from Step 6, so we don't need to test it separately.
 
         RunWorkflowInfoMatchTest(Step1EntryPoint.WorkflowInstance, Step2EntryPoint.WorkflowInstance, expect: false);
 
