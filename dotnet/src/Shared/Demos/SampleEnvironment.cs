@@ -12,7 +12,7 @@ internal static class SampleEnvironment
 {
     public static string? GetEnvironmentVariable(string key)
     {
-        // Allows for a demo mode, where all values are hidden for security reasons.
+        // Allows for opting into showing all setting values in the console output, so that it is easy to troubleshoot sample setup issues.
         var showAllSampleValues = SystemEnvironment.GetEnvironmentVariable("AF_SHOW_ALL_DEMO_SETTING_VALUES");
         var shouldShowValue = showAllSampleValues?.ToUpperInvariant() == "Y";
 
