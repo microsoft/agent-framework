@@ -2,6 +2,7 @@
 
 using System;
 using System.Threading.Tasks;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI;
 
@@ -14,7 +15,7 @@ public sealed class ApprovalRequiredAIFunction(AIFunction function) : Delegating
     /// <summary>
     /// An optional callback that can be used to determine if the function call requires approval, instead of the default behavior, which is to always require approval.
     /// </summary>
-    public Func<ApprovalContext, ValueTask<bool>> RequiresApprovalCallback { get; set; } = delegate { return new ValueTask<bool>(true); };
+    public Func<ApprovalContext, ValueTask<bool>> RequiresApprovalCallback { get; set; } = _ => new(true);
 
     /// <summary>
     /// Context object that provides information about the function call that requires approval.
@@ -25,10 +26,10 @@ public sealed class ApprovalRequiredAIFunction(AIFunction function) : Delegating
         /// Initializes a new instance of the <see cref="ApprovalContext"/> class.
         /// </summary>
         /// <param name="functionCall">The <see cref="FunctionCallContent"/> containing the details of the invocation.</param>
-        /// <exception cref="ArgumentNullException"></exception>
+        /// <exception cref="ArgumentNullException"><paramref name="functionCall"/> is null.</exception>
         public ApprovalContext(FunctionCallContent functionCall)
         {
-            this.FunctionCall = functionCall ?? throw new ArgumentNullException(nameof(functionCall));
+            this.FunctionCall = Throw.IfNull(functionCall);
         }
 
         /// <summary>
