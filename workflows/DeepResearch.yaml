@@ -130,7 +130,7 @@ beginDialog:
         # FACTS
         Consider this initial fact sheet:
 
-        " & Topic.TaskFacts.Text & "
+        " & Trim(Topic.TaskFacts.Text) & "
 
 
         # PLAN
