@@ -40,9 +40,7 @@ class Edge(AFBaseModel):
 
     source_id: str = Field(min_length=1, description="The ID of the source executor of the edge")
     target_id: str = Field(min_length=1, description="The ID of the target executor of the edge")
-    condition_name: str | None = Field(
-        default=None, description="The name of the condition function for serialization"
-    )
+    condition_name: str | None = Field(default=None, description="The name of the condition function for serialization")
 
     def __init__(
         self,
@@ -248,9 +246,7 @@ class SwitchCaseEdgeGroupCase(AFBaseModel):
     """A single case in the SwitchCaseEdgeGroup. This is used internally."""
 
     target_id: str = Field(description="The target executor ID for this case")
-    condition_name: str | None = Field(
-        default=None, description="The name of the condition function for serialization"
-    )
+    condition_name: str | None = Field(default=None, description="The name of the condition function for serialization")
     type: str = Field(default="Case", description="The type of the case")
 
     def __init__(self, condition: Callable[[Any], bool], target_id: str, **kwargs: Any) -> None:
