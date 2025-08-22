@@ -38,12 +38,6 @@ public sealed class Step01_ChatClientAgent_Running(ITestOutputHelper output) : A
         // Define the agent
         AIAgent agent = new ChatClientAgent(chatClient, ParrotInstructions);
 
-        new FilteredAIAgent(agent)
-        {
-            // Add a filter to the agent to ensure it only responds with text.
-            Filters = { new TextResponseFilter() }
-        };
-
         // Invoke the agent and output the text result.
         Console.WriteLine(await agent.RunAsync("Fortune favors the bold."));
     }
