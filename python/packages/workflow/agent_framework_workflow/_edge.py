@@ -4,7 +4,7 @@ import logging
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Optional
 
 from agent_framework._pydantic import AFBaseModel
 from pydantic import Field
@@ -21,6 +21,9 @@ class Edge(AFBaseModel):
 
     source_id: str = Field(min_length=1, description="The ID of the source executor of the edge")
     target_id: str = Field(min_length=1, description="The ID of the target executor of the edge")
+    condition_name: Optional[str] = Field(
+        default=None, description="The name of the condition function for serialization"
+    )
 
     def __init__(
         self,
@@ -39,9 +42,29 @@ class Edge(AFBaseModel):
                 Defaults to None.
             kwargs: Additional keyword arguments. Unused in this implementation.
         """
-        kwargs.update({"source_id": source_id, "target_id": target_id})
+        condition_name = self._extract_condition_name(condition) if condition is not None else None
+        kwargs.update({"source_id": source_id, "target_id": target_id, "condition_name": condition_name})
         super().__init__(**kwargs)
         self._condition = condition
+
+    @staticmethod
+    def _extract_condition_name(condition: Callable[[Any], bool]) -> str:
+        """Extract the name of a condition function for serialization.
+
+        Args:
+            condition: The condition function to extract the name from.
+
+        Returns:
+            The name of the function, or a placeholder for lambda functions.
+        """
+        if hasattr(condition, "__name__"):
+            name = condition.__name__
+            # Check if it's a lambda function
+            if name == "<lambda>":
+                return "<lambda>"
+            return name
+        # Fallback for other callable objects
+        return "<callable>"
 
     @property
     def id(self) -> str:

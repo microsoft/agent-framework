@@ -61,18 +61,59 @@ class TestSerializationWorkflowClasses:
 
     def test_edge_serialization(self) -> None:
         """Test that Edge can be serialized and has correct fields."""
+        # Test edge without condition
         edge = Edge(source_id="source", target_id="target")
 
         # Test model_dump
         data = edge.model_dump()
         assert data["source_id"] == "source"
         assert data["target_id"] == "target"
+        assert "condition_name" not in data or data["condition_name"] is None
 
         # Test model_dump_json
         json_str = edge.model_dump_json()
         parsed = json.loads(json_str)
         assert parsed["source_id"] == "source"
         assert parsed["target_id"] == "target"
+        assert "condition_name" not in parsed or parsed["condition_name"] is None
+
+    def test_edge_serialization_with_named_condition(self) -> None:
+        """Test that Edge with named function condition serializes condition_name correctly."""
+
+        def is_positive(x: int) -> bool:
+            return x > 0
+
+        edge = Edge(source_id="source", target_id="target", condition=is_positive)
+
+        # Test model_dump
+        data = edge.model_dump()
+        assert data["source_id"] == "source"
+        assert data["target_id"] == "target"
+        assert data["condition_name"] == "is_positive"
+
+        # Test model_dump_json
+        json_str = edge.model_dump_json()
+        parsed = json.loads(json_str)
+        assert parsed["source_id"] == "source"
+        assert parsed["target_id"] == "target"
+        assert parsed["condition_name"] == "is_positive"
+
+    def test_edge_serialization_with_lambda_condition(self) -> None:
+        """Test that Edge with lambda condition serializes condition_name as '<lambda>'."""
+        edge = Edge(source_id="source", target_id="target", condition=lambda x: x > 0)
+
+        # Test model_dump
+        data = edge.model_dump()
+        assert data["source_id"] == "source"
+        assert data["target_id"] == "target"
+        assert data["condition_name"] == "<lambda>"
+
+        # Test model_dump_json
+        json_str = edge.model_dump_json()
+        parsed = json.loads(json_str)
+        assert parsed["source_id"] == "source"
+        assert parsed["target_id"] == "target"
+        assert parsed["condition_name"] == "<lambda>"
 
     def test_single_edge_group_serialization(self) -> None:
         """Test that SingleEdgeGroup can be serialized and has correct fields, including edges and type."""
@@ -231,6 +272,13 @@ class TestSerializationWorkflowClasses:
             f"Expected targets {{'positive', 'default'}}, got {set(targets)}"
         )
 
+        # Check condition_name field in edges - SwitchCaseEdgeGroup edges don't have conditions
+        # because the conditional logic is implemented in the selection_func at the group level
+        condition_names = [edge.get("condition_name") for edge in edges]
+        assert all(name is None for name in condition_names), (
+            "SwitchCaseEdgeGroup edges should not have condition_name since conditions are handled at group level"
+        )
+
         # Test model_dump_json
         json_str = edge_group.model_dump_json()
         parsed = json.loads(json_str)
@@ -250,6 +298,12 @@ class TestSerializationWorkflowClasses:
 
         assert all(source == "source" for source in json_sources), "JSON should preserve edge sources"
         assert set(json_targets) == {"positive", "default"}, "JSON should preserve edge targets"
+
+        # Check condition_name field in JSON edges - should be None for SwitchCaseEdgeGroup
+        json_condition_names = [edge.get("condition_name") for edge in json_edges]
+        assert all(name is None for name in json_condition_names), (
+            "JSON SwitchCaseEdgeGroup edges should not have condition_name"
+        )
 
     def test_workflow_serialization(self) -> None:
         """Test that Workflow can be serialized and has correct fields, including edges."""
