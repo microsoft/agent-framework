@@ -90,7 +90,7 @@ class InMemoryStateStorage(ActorStateStorage):
             return True
 
 
-@dataclass
+@dataclass(kwonly=True)
 class RequestEntry:
     """Tracks a request, its response, and progress updates."""
 

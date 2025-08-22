@@ -24,7 +24,7 @@ class AgentRunRequest(BaseModel):
     messages: list[ChatMessage]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kwonly=True)
 class ActorId:
     """Unique identifier for an actor instance"""
 
@@ -61,7 +61,7 @@ class _ActorMessage:
 
 
 @dataclass
-class ActorRequestMessage(_ActorMessage):
+class ActorRequestMessage(_ActorMessage, kwonly=True):
     """Request message sent to an actor"""
 
     method: str = ""
@@ -72,7 +72,7 @@ class ActorRequestMessage(_ActorMessage):
 
 
 @dataclass
-class ActorResponseMessage(_ActorMessage):
+class ActorResponseMessage(_ActorMessage, kwonly=True):
     """Response message from an actor"""
 
     sender_id: ActorId | None = None
