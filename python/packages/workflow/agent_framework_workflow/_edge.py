@@ -62,12 +62,15 @@ class EdgeGroup(AFBaseModel):
     id: str = Field(
         default_factory=lambda: f"EdgeGroup/{uuid.uuid4()}", description="Unique identifier for the edge group"
     )
+    type: str = Field(description="The type of edge group, corresponding to the class name")
     edges: list[Edge] = Field(default_factory=list, description="List of edges in this group")
 
     def __init__(self, **kwargs: Any) -> None:
         """Initialize the edge group."""
         if "id" not in kwargs:
             kwargs["id"] = f"{self.__class__.__name__}/{uuid.uuid4()}"
+        if "type" not in kwargs:
+            kwargs["type"] = self.__class__.__name__
         super().__init__(**kwargs)
 
     @property

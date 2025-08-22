@@ -36,6 +36,7 @@ class Executor(AFBaseModel):
         min_length=1,
         description="Unique identifier for the executor",
     )
+    type: str = Field(default="", description="The type of executor, corresponding to the class name")
 
     def __init__(self, id: str | None = None, **kwargs: Any) -> None:
         """Initialize the executor with a unique identifier.
@@ -48,6 +49,8 @@ class Executor(AFBaseModel):
         executor_id = f"{self.__class__.__name__}/{uuid.uuid4()}" if id is None else id
 
         kwargs.update({"id": executor_id})
+        if "type" not in kwargs:
+            kwargs["type"] = self.__class__.__name__
 
         super().__init__(**kwargs)
 
