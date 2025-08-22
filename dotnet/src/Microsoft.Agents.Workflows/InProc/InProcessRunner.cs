@@ -30,7 +30,7 @@ internal class InProcessRunner<TInput> : ISuperStepRunner, ICheckpointingRunner 
 
         // Initialize the runners for each of the edges, along with the state for edges that
         // need it.
-        this.EdgeMap = new EdgeMap(this.RunContext, this.Workflow.Edges, this.Workflow.Ports.Values, this.Workflow.StartExecutorId);
+        this.EdgeMap = new EdgeMap(this.RunContext, this.Workflow.Edges, this.Workflow.Ports.Values, this.Workflow.StartExecutorId, this.StepTracer);
     }
 
     public async ValueTask<bool> IsValidInputAsync<TMessage>(TMessage message)
@@ -45,7 +45,7 @@ internal class InProcessRunner<TInput> : ISuperStepRunner, ICheckpointingRunner 
             return true;
         }
 
-        Executor startingExecutor = await this.RunContext.EnsureExecutorAsync(this.Workflow.StartExecutorId).ConfigureAwait(false);
+        Executor startingExecutor = await this.RunContext.EnsureExecutorAsync(this.Workflow.StartExecutorId, tracer: null).ConfigureAwait(false);
         return startingExecutor.CanHandle(type);
     }
 
@@ -67,6 +67,7 @@ internal class InProcessRunner<TInput> : ISuperStepRunner, ICheckpointingRunner 
         return this.RunContext.AddExternalMessageAsync(response);
     }
 
+    private InProcStepTracer StepTracer { get; } = new();
     private Dictionary<string, string> PendingCalls { get; } = new();
     private Workflow<TInput> Workflow { get; init; }
     private InProcessRunnerContext<TInput> RunContext { get; init; }
@@ -169,6 +170,8 @@ internal class InProcessRunner<TInput> : ISuperStepRunner, ICheckpointingRunner 
 
     private async ValueTask RunSuperstepAsync(StepContext currentStep)
     {
+        this.RaiseWorkflowEvent(this.StepTracer.Advance(currentStep));
+
         // Deliver the messages and queue the next step
         List<Task<IEnumerable<object?>>> edgeTasks = new();
         foreach (ExecutorIdentity sender in currentStep.QueuedMessages.Keys)
@@ -201,6 +204,8 @@ internal class InProcessRunner<TInput> : ISuperStepRunner, ICheckpointingRunner 
         }
 
         this.RunContext.QueuedEvents.Clear();
+
+        this.RaiseWorkflowEvent(this.StepTracer.Complete(this.RunContext.NextStepHasActions, this.RunContext.HasUnservicedRequests));
     }
 
     private WorkflowInfo? _workflowInfoCache = null;
@@ -225,12 +230,13 @@ internal class InProcessRunner<TInput> : ISuperStepRunner, ICheckpointingRunner 
         Dictionary<EdgeConnection, ExportedState> edgeData = await this.EdgeMap.ExportStateAsync().ConfigureAwait(false);
 
         await prepareTask.ConfigureAwait(false);
-        await this.RunContext.StateManager.PublishUpdatesAsync().ConfigureAwait(false);
+        await this.RunContext.StateManager.PublishUpdatesAsync(this.StepTracer).ConfigureAwait(false);
 
         Dictionary<ScopeKey, ExportedState> stateData = await this.RunContext.StateManager.ExportStateAsync().ConfigureAwait(false);
 
-        Checkpoint checkpoint = new(this._workflowInfoCache, runnerData, stateData, edgeData);
+        Checkpoint checkpoint = new(this.StepTracer.StepNumber, this._workflowInfoCache, runnerData, stateData, edgeData);
         CheckpointInfo checkpointInfo = await this.CheckpointManager.CommitCheckpointAsync(checkpoint).ConfigureAwait(false);
+        this.StepTracer.TraceCheckpointCreated(checkpointInfo);
         this._checkpoints.Add(checkpointInfo);
     }
 
@@ -257,6 +263,8 @@ internal class InProcessRunner<TInput> : ISuperStepRunner, ICheckpointingRunner 
 
         await this.EdgeMap.ImportStateAsync(checkpoint).ConfigureAwait(false);
         await executorNotifyTask.ConfigureAwait(false);
+
+        this.StepTracer.Reload(this.StepTracer.StepNumber);
     }
 
     protected virtual bool CheckWorkflowMatch(Checkpoint checkpoint)

@@ -71,7 +71,7 @@ internal class StateManager
         return default;
     }
 
-    public async ValueTask PublishUpdatesAsync()
+    public async ValueTask PublishUpdatesAsync(IStepTracer? tracer)
     {
         Dictionary<ScopeId, Dictionary<string, List<StateUpdate>>> updatesByScope = new();
 
@@ -88,6 +88,7 @@ internal class StateManager
                 scopeUpdates[key.Key] = stateUpdates = new();
             }
 
+            tracer?.TraceStatePublished();
             stateUpdates.Add(this._queuedUpdates[key]);
         }
 

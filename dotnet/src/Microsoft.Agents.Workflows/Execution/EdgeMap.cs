@@ -14,11 +14,13 @@ internal class EdgeMap
     private readonly Dictionary<EdgeConnection, FanInEdgeState> _fanInState = new();
     private readonly Dictionary<string, InputEdgeRunner> _portEdgeRunners;
     private readonly InputEdgeRunner _inputRunner;
+    private readonly IStepTracer? _stepTracer;
 
     public EdgeMap(IRunnerContext runContext,
                    Dictionary<string, HashSet<Edge>> workflowEdges,
                    IEnumerable<InputPort> workflowPorts,
-                   string startExecutorId)
+                   string startExecutorId,
+                   IStepTracer? stepTracer = null)
     {
         foreach (Edge edge in workflowEdges.Values.SelectMany(e => e))
         {
@@ -39,6 +41,7 @@ internal class EdgeMap
             );
 
         this._inputRunner = new InputEdgeRunner(runContext, startExecutorId);
+        this._stepTracer = stepTracer;
     }
 
     public async ValueTask<IEnumerable<object?>> InvokeEdgeAsync(Edge edge, string sourceId, MessageEnvelope message)
@@ -61,14 +64,14 @@ internal class EdgeMap
             case Edge.Type.Direct:
             {
                 DirectEdgeRunner runner = (DirectEdgeRunner)this._edgeRunners[connection];
-                edgeResults = await runner.ChaseAsync(message).ConfigureAwait(false);
+                edgeResults = await runner.ChaseAsync(message, this._stepTracer).ConfigureAwait(false);
                 break;
             }
 
             case Edge.Type.FanOut:
             {
                 FanOutEdgeRunner runner = (FanOutEdgeRunner)this._edgeRunners[connection];
-                edgeResults = await runner.ChaseAsync(message).ConfigureAwait(false);
+                edgeResults = await runner.ChaseAsync(message, this._stepTracer).ConfigureAwait(false);
                 break;
             }
 
@@ -76,7 +79,7 @@ internal class EdgeMap
             {
                 FanInEdgeState state = this._fanInState[connection];
                 FanInEdgeRunner runner = (FanInEdgeRunner)this._edgeRunners[connection];
-                edgeResults = [await runner.ChaseAsync(sourceId, message, state).ConfigureAwait(false)];
+                edgeResults = [await runner.ChaseAsync(sourceId, message, state, this._stepTracer).ConfigureAwait(false)];
                 break;
             }
 
@@ -91,7 +94,7 @@ internal class EdgeMap
     // TODO: Should we promote Input to a true "FlowEdge" type?
     public async ValueTask<IEnumerable<object?>> InvokeInputAsync(MessageEnvelope envelope)
     {
-        return [await this._inputRunner.ChaseAsync(envelope).ConfigureAwait(false)];
+        return [await this._inputRunner.ChaseAsync(envelope, this._stepTracer).ConfigureAwait(false)];
     }
 
     public async ValueTask<IEnumerable<object?>> InvokeResponseAsync(ExternalResponse response)
@@ -101,7 +104,7 @@ internal class EdgeMap
             throw new InvalidOperationException($"Port {response.Port.Id} not found in the edge map.");
         }
 
-        return [await portRunner.ChaseAsync(new MessageEnvelope(response)).ConfigureAwait(false)];
+        return [await portRunner.ChaseAsync(new MessageEnvelope(response), this._stepTracer).ConfigureAwait(false)];
     }
 
     internal ValueTask<Dictionary<EdgeConnection, ExportedState>> ExportStateAsync()

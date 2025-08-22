@@ -26,7 +26,7 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
         this._executorRegistrations = Throw.IfNull(workflow).Registrations;
     }
 
-    public async ValueTask<Executor> EnsureExecutorAsync(string executorId)
+    public async ValueTask<Executor> EnsureExecutorAsync(string executorId, IStepTracer? tracer)
     {
         if (!this._executors.TryGetValue(executorId, out var executor))
         {
@@ -36,6 +36,7 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
             }
 
             this._executors[executorId] = executor = registration.Provider();
+            tracer?.TraceActivated(executorId);
 
             if (executor is RequestInfoExecutor requestInputExecutor)
             {
