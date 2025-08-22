@@ -1,12 +1,20 @@
 ﻿<Project>
 
-  <Import Project="../Directory.Build.props" />
-
   <PropertyGroup>
-    <IsPackable>false</IsPackable>
-    <IsAotCompatible>false</IsAotCompatible>
-    <ProjectsTargetFrameworks>net472;net9.0</ProjectsTargetFrameworks>
-    <UserSecretsId>5ee045b0-aea3-4f08-8d31-32d1a6f8fed0</UserSecretsId>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisMode>AllEnabledByDefault</AnalysisMode>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Configurations>Debug;Release;Publish</Configurations>
+    <NoWarn>$(NoWarn);NU5104</NoWarn>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="SampleHelpers.SampleEnvironment" Alias="Environment" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)\..\src\Shared\Demos\*.cs" LinkBase="" Visible="false" />
+  </ItemGroup>
 
 </Project>
