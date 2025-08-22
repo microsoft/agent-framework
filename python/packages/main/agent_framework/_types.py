@@ -100,6 +100,7 @@ __all__ = [
     "GeneratedEmbeddings",
     "HostedFileContent",
     "HostedVectorStoreContent",
+    "ResponseStatus",
     "SpeechToTextOptions",
     "TextContent",
     "TextReasoningContent",
@@ -1609,6 +1610,10 @@ class ChatResponseUpdate(AFBaseModel):
 
     additional_properties: dict[str, Any] | None = None
     """Any additional properties associated with the chat response update."""
+
+    sequence_number: int | None = None
+    """The sequence number of the response update. Only available for long running requests."""
+
     raw_representation: Any | None = None
     """The raw representation of the chat response update from an underlying implementation."""
 
@@ -1626,6 +1631,7 @@ class ChatResponseUpdate(AFBaseModel):
         created_at: CreatedAtT | None = None,
         finish_reason: ChatFinishReason | None = None,
         additional_properties: dict[str, Any] | None = None,
+        sequence_number: int | None = None,
         raw_representation: Any | None = None,
     ) -> None:
         """Initializes a ChatResponseUpdate with the provided parameters."""
@@ -1644,6 +1650,7 @@ class ChatResponseUpdate(AFBaseModel):
         created_at: CreatedAtT | None = None,
         finish_reason: ChatFinishReason | None = None,
         additional_properties: dict[str, Any] | None = None,
+        sequence_number: int | None = None,
         raw_representation: Any | None = None,
     ) -> None:
         """Initializes a ChatResponseUpdate with the provided parameters."""
@@ -1662,6 +1669,7 @@ class ChatResponseUpdate(AFBaseModel):
         created_at: CreatedAtT | None = None,
         finish_reason: ChatFinishReason | None = None,
         additional_properties: dict[str, Any] | None = None,
+        sequence_number: int | None = None,
         raw_representation: Any | None = None,
     ) -> None:
         """Initializes a ChatResponseUpdate with the provided parameters."""
@@ -1685,6 +1693,7 @@ class ChatResponseUpdate(AFBaseModel):
             raw_representation=raw_representation,  # type: ignore[reportCallIssue]
             response_id=response_id,  # type: ignore[reportCallIssue]
             role=role,  # type: ignore[reportCallIssue]
+            sequence_number=sequence_number,  # type: ignore[reportCallIssue]
         )
 
     @property

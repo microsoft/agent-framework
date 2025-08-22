@@ -37,6 +37,7 @@ __all__ = [
     "ChatClient",
     "ChatClientBase",
     "EmbeddingGenerator",
+    "RunnableChatClient",
     "use_tool_calling",
 ]
 
@@ -675,6 +676,26 @@ class ChatClientBase(AFBaseModel, ABC):
             chat_message_store_factory=chat_message_store_factory,
             **kwargs,
         )
+
+
+class RunnableChatClient(ChatClientBase):
+    """A chat client with long-running request capabilities."""
+
+    @abstractmethod
+    async def cancel_long_running(self, request_id: str) -> None:
+        """Cancel a long-running request by its ID.
+
+        Args:
+            request_id: The ID of the request to cancel.
+        """
+
+    @abstractmethod
+    async def delete_long_running(self, request_id: str) -> None:
+        """Delete a long-running request on the host by its ID.
+
+        Args:
+            request_id: The ID of the request to delete.
+        """
 
 
 # region Embedding Client

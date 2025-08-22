@@ -16,6 +16,7 @@ from openai.types.responses.parsed_response import (
 from openai.types.responses.response import Response as OpenAIResponse
 from openai.types.responses.response_completed_event import ResponseCompletedEvent
 from openai.types.responses.response_content_part_added_event import ResponseContentPartAddedEvent
+from openai.types.responses.response_created_event import ResponseCreatedEvent
 from openai.types.responses.response_function_call_arguments_delta_event import ResponseFunctionCallArgumentsDeltaEvent
 from openai.types.responses.response_output_item_added_event import ResponseOutputItemAddedEvent
 from openai.types.responses.response_output_refusal import ResponseOutputRefusal
@@ -34,7 +35,7 @@ from pydantic import BaseModel, SecretStr, ValidationError
 
 from agent_framework import DataContent, TextReasoningContent, UriContent, UsageContent
 
-from .._clients import ChatClientBase, use_tool_calling
+from .._clients import RunnableChatClient, use_tool_calling
 from .._logging import get_logger
 from .._tools import AIFunction, AITool, HostedCodeInterpreterTool, HostedFileSearchTool, HostedWebSearchTool
 from .._types import (
@@ -80,7 +81,7 @@ __all__ = ["OpenAIResponsesClient"]
 # region ResponsesClient
 
 
-class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
+class OpenAIResponsesClientBase(OpenAIHandler, RunnableChatClient):
     """Base class for all OpenAI Responses based API's."""
 
     FILE_SEARCH_MAX_RESULTS: int = 50
@@ -225,7 +226,8 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         truncation: str | None = None,
         timeout: float | None = None,
         additional_properties: dict[str, Any] | None = None,
-        long_running_message_id: str | None = None,
+        long_running_conversation_id: str | None = None,
+        long_running_sequence_number: int | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Get a streaming response from the OpenAI API.
@@ -252,14 +254,15 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
             truncation: the truncation strategy to use.
             timeout: the timeout for the request.
             additional_properties: additional properties to include in the request.
-            long_running_message_id: the ID of the long-running message.
+            long_running_conversation_id: the ID of the long-running message.
+            long_running_sequence_number: the sequence number to retrieve of the long-running message stream.
             kwargs: any additional keyword arguments,
                 will only be passed to functions that are called.
 
         Returns:
             A stream representing the response(s) from the LLM.
         """
-        if background and not (store or long_running_message_id):
+        if background and not (store or long_running_conversation_id):
             raise ValueError("Background responses must be stored.")
         additional_properties = additional_properties or {}
         additional_properties.update(
@@ -292,7 +295,8 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         async for update in super().get_streaming_response(
             messages=messages,
             chat_options=chat_options,
-            long_running_message_id=long_running_message_id,
+            long_running_conversation_id=long_running_conversation_id,
+            long_running_sequence_number=long_running_sequence_number,
             **kwargs,
         ):
             yield update
@@ -307,7 +311,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         long_running_message_id: str | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
-        options_dict = self._prepare_options(messages, chat_options)
+        options_dict = self._prepare_options(messages, chat_options, long_running_message_id is not None)
         try:
             if not long_running_message_id:
                 if not chat_options.response_format:
@@ -315,19 +319,19 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                         stream=False,
                         **options_dict,
                     )
-                    chat_options.conversation_id = response.id if chat_options.store is True else None
-                    return self._create_response_content(response, chat_options=chat_options)
-                # create call does not support response_format, so we need to handle it via parse call
-                resp_format = chat_options.response_format
-                response = await self.client.responses.parse(
-                    text_format=resp_format,
-                    stream=False,
-                    **options_dict,
-                )
+                else:
+                    # create call does not support response_format, so we need to handle it via parse call
+                    resp_format = chat_options.response_format
+                    response = await self.client.responses.parse(
+                        text_format=resp_format,
+                        stream=False,
+                        **options_dict,
+                    )
                 chat_options.conversation_id = response.id if chat_options.store is True else None
             else:
                 response = await self.client.responses.retrieve(long_running_message_id)
                 # Is this a reasonable thing to do?
+                # If background is True, treat this as a polling call. Otherwise wait until we have the response
                 if not chat_options.additional_properties.get("background", False):
                     while response.status in {"queued", "in_progress"}:
                         await asyncio.sleep(2)
@@ -362,11 +366,31 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         *,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions,
+        long_running_conversation_id: str | None = None,
+        long_running_sequence_number: int | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
-        options_dict = self._prepare_options(messages, chat_options)
+        options_dict = self._prepare_options(messages, chat_options, long_running_conversation_id is not None)
         function_call_ids: dict[int, tuple[str, str]] = {}  # output_index: (call_id, name)
         try:
+            if long_running_conversation_id:
+                chat_options.additional_properties["background"] = True
+                args: dict[str, Any] = {
+                    "response_id": long_running_conversation_id,
+                }
+                if long_running_sequence_number is not None:
+                    args["starting_after"] = long_running_sequence_number
+                if chat_options.response_format:
+                    args["text_format"] = chat_options.response_format
+                if chat_options.tools:
+                    args["tools"] = options_dict.get("tools", None)
+                async with self.client.responses.stream(**args) as response:
+                    async for chunk in response:
+                        update = self._create_streaming_response_content(
+                            chunk, chat_options=chat_options, function_call_ids=function_call_ids
+                        )
+                        yield update
+                return
             if not chat_options.response_format:
                 response = await self.client.responses.create(
                     stream=True,
@@ -483,12 +507,17 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                 response_tools.append(tool if isinstance(tool, dict) else dict(tool))
         return response_tools
 
-    def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
+    def _prepare_options(
+        self,
+        messages: MutableSequence[ChatMessage],
+        chat_options: ChatOptions,
+        is_long_running: bool = False,
+    ) -> dict[str, Any]:
         """Take ChatOptions and create the specific options for Responses."""
         options_dict = chat_options.to_provider_settings(exclude={"response_format"})
         # messages
         request_input = self._prepare_chat_messages_for_request(messages)
-        if not request_input:
+        if not request_input and not is_long_running:
             raise ServiceInvalidRequestError("Messages are required for chat completions")
         options_dict["input"] = request_input
         # tools
@@ -699,6 +728,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
             "model_id": response.model,
             "additional_properties": metadata,
             "raw_representation": response,
+            "status": "completed",
         }
         if chat_options.store:
             args["conversation_id"] = response.id
@@ -723,6 +753,11 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         model = self.ai_model_id
         # TODO(peterychang): Add support for other content types
         match event:
+            case ResponseCreatedEvent():
+                # This will create a ChatResponseUpdate with no contents.
+                # This is necessary to pass back the conversation id in the case of long running requests
+                conversation_id = event.response.id if chat_options.store is True else None
+                model = event.response.model
             case ResponseContentPartAddedEvent():
                 match event.part:
                     case ResponseOutputText():
@@ -758,12 +793,14 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
             case _:
                 logger.debug("Unparsed event: %s", event)
 
+        is_background = chat_options.additional_properties.get("background", False)
         return ChatResponseUpdate(
             contents=items,
             conversation_id=conversation_id,
             role=ChatRole.ASSISTANT,
             ai_model_id=model,
             additional_properties=metadata,
+            sequence_number=event.sequence_number if is_background else None,
             raw_representation=event,
         )
 
@@ -850,6 +887,12 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                 "logprobs": logprobs,
             }
         return {}
+
+    async def cancel_long_running(self, request_id: str) -> None:
+        await self.client.responses.cancel(request_id)
+
+    async def delete_long_running(self, request_id: str) -> None:
+        await self.client.responses.delete(request_id)
 
 
 TOpenAIResponsesClient = TypeVar("TOpenAIResponsesClient", bound="OpenAIResponsesClient")
