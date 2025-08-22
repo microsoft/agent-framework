@@ -2,10 +2,11 @@
 
 import functools
 import inspect
+import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, ClassVar, TypeVar, overload
+from typing import Any, ClassVar, TypeVar, get_type_hints, overload
 
 from agent_framework import AgentRunResponse, AgentRunResponseUpdate, AgentThread, AIAgent, ChatMessage
 
@@ -159,9 +160,27 @@ def handler(
         if len(params) != 3:  # self, message, ctx
             raise ValueError(f"Handler must have exactly 3 parameters, got {len(params)}")
 
-        message_type = params[1].annotation
+        # Resolve the handler message type, supporting forward references (from __future__ import annotations)
+        message_param = params[1]
+        message_type = message_param.annotation
         if message_type is inspect.Parameter.empty:
             raise ValueError("Handler's second parameter must have a type annotation")
+
+        # If the annotation is a string (forward ref), try to resolve it to an actual type
+        if isinstance(message_type, str):
+            try:
+                hints = get_type_hints(func, globalns=func.__globals__, localns=None)
+                resolved = hints.get(message_param.name)
+                if resolved is not None:
+                    message_type = resolved
+            except Exception as exc:
+                # If resolution fails, keep the original annotation but log at debug
+                logging.debug(
+                    "Handler annotation resolution failed for %s.%s: %s",
+                    func.__qualname__,
+                    message_param.name,
+                    exc,
+                )
 
         @functools.wraps(func)
         async def wrapper(self: ExecutorT, message: Any, ctx: WorkflowContext) -> Any:
