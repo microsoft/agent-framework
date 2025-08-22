@@ -14,6 +14,7 @@ from ._events import WorkflowEvent
 from ._executor import Executor
 from ._runner_context import Message, RunnerContext
 from ._shared_state import SharedState
+from ._typing_utils import is_instance_of
 from ._workflow_context import WorkflowContext
 
 logger = logging.getLogger(__name__)
@@ -147,7 +148,6 @@ class Runner:
 
                 for message in sub_workflow_messages:
                     sub_request = message.data
-                    wrapped_type = type(sub_request.data)
 
                     # Find executor that can intercept the wrapped type
                     interceptor_found = False
@@ -158,15 +158,16 @@ class Runner:
                                 all_executors.add(edge.target)
 
                     for executor in all_executors:
-                        if (
-                            hasattr(executor, "_request_interceptors")
-                            and wrapped_type in executor._request_interceptors
-                            and executor._id != message.source_id
-                        ):
-                            # Send directly to the intercepting executor
-                            await executor.execute(sub_request, self._ctx)  # type: ignore[arg-type]
-                            interceptor_found = True
-                            break
+                        if hasattr(executor, "_request_interceptors") and executor._id != message.source_id:
+                            # Check if any registered interceptor can handle this request type
+                            for registered_type in executor._request_interceptors:
+                                if is_instance_of(sub_request.data, registered_type):
+                                    # Send directly to the intercepting executor
+                                    await executor.execute(sub_request, self._ctx)  # type: ignore[arg-type]
+                                    interceptor_found = True
+                                    break
+                            if interceptor_found:
+                                break
 
                     if not interceptor_found:
                         # No interceptor found - send directly to RequestInfoExecutor

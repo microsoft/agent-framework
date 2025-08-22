@@ -22,6 +22,7 @@ class ValidationTypeEnum(Enum):
     TYPE_COMPATIBILITY = "TYPE_COMPATIBILITY"
     GRAPH_CONNECTIVITY = "GRAPH_CONNECTIVITY"
     HANDLER_OUTPUT_ANNOTATION = "HANDLER_OUTPUT_ANNOTATION"
+    INTERCEPTOR_CONFLICT = "INTERCEPTOR_CONFLICT"
 
 
 class WorkflowValidationError(Exception):
@@ -94,6 +95,13 @@ class HandlerOutputAnnotationError(WorkflowValidationError):
         self.handler_name = handler_name
 
 
+class InterceptorConflictError(WorkflowValidationError):
+    """Exception raised when multiple executors intercept the same request type from the same sub-workflow."""
+
+    def __init__(self, message: str):
+        super().__init__(message, validation_type=ValidationTypeEnum.INTERCEPTOR_CONFLICT)
+
+
 # endregion
 
 
@@ -150,6 +158,7 @@ class WorkflowGraphValidator:
         self._validate_handler_ambiguity()
         self._validate_dead_ends()
         self._validate_cycles()
+        self._validate_interceptor_uniqueness()
 
     def _build_executor_map(self, edge_groups: Sequence[EdgeGroup]) -> dict[str, Executor]:
         """Build a map of executor IDs to executor instances."""
@@ -583,6 +592,54 @@ class WorkflowGraphValidator:
                 "Cycle detected in the workflow graph. "
                 "Ensure proper termination conditions exist to prevent infinite loops."
             )
+
+    def _validate_interceptor_uniqueness(self) -> None:
+        """Validate that only one executor intercepts a given request type from a specific sub-workflow.
+
+        This prevents non-deterministic behavior where multiple executors could intercept
+        the same request type from the same sub-workflow.
+        """
+        from ._executor import WorkflowExecutor
+
+        # Find all WorkflowExecutor instances in the workflow
+        workflow_executors: dict[str, WorkflowExecutor] = {}
+        for executor_id, executor in self._executors.items():
+            if isinstance(executor, WorkflowExecutor):
+                workflow_executors[executor_id] = executor
+
+        # For each WorkflowExecutor, check which executors can intercept its requests
+        for workflow_id, _workflow_executor in workflow_executors.items():
+            # Map of request_type -> list of intercepting executor IDs
+            interceptors_by_type: dict[type | str, list[str]] = {}
+
+            # Find all executors that have edges from this WorkflowExecutor
+            # These are potential interceptors
+            for edge in self._edges:
+                if edge.source_id == workflow_id:
+                    target_executor = self._executors.get(edge.target_id)
+                    if target_executor and hasattr(target_executor, "_request_interceptors"):
+                        # Check what request types this executor intercepts
+                        for request_type, interceptor_list in target_executor._request_interceptors.items():
+                            # Check if any interceptor is scoped to this workflow or unscoped
+                            for interceptor_info in interceptor_list:
+                                from_workflow = interceptor_info.get("from_workflow")
+                                # If unscoped or specifically scoped to this workflow
+                                if from_workflow is None or from_workflow == workflow_id:
+                                    if request_type not in interceptors_by_type:
+                                        interceptors_by_type[request_type] = []
+                                    interceptors_by_type[request_type].append(edge.target_id)
+
+            # Check for duplicates
+            for request_type, executor_ids in interceptors_by_type.items():
+                unique_executors = list(set(executor_ids))  # Remove duplicates from same executor
+                if len(unique_executors) > 1:
+                    type_name = request_type.__name__ if isinstance(request_type, type) else str(request_type)
+                    raise InterceptorConflictError(
+                        f"Multiple executors intercept the same request type '{type_name}' "
+                        f"from sub-workflow '{workflow_id}': {', '.join(unique_executors)}. "
+                        f"Only one executor should intercept a given request type from a specific sub-workflow "
+                        f"to ensure deterministic behavior."
+                    )
 
     # endregion
 

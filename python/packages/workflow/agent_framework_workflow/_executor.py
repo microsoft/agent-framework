@@ -42,10 +42,11 @@ class Executor:
         self._request_interceptors: dict[type | str, list[dict[str, Any]]] = {}
         self._discover_handlers()
 
-        if not self._handlers:
+        if not self._handlers and not self._request_interceptors:
             raise ValueError(
                 f"Executor {self.__class__.__name__} has no handlers defined. "
-                "Please define at least one handler using the @handler decorator."
+                "Please define at least one handler using the @handler decorator "
+                "or @intercepts_request decorator."
             )
 
     async def execute(self, message: Any, context: WorkflowContext[Any]) -> None:
@@ -93,17 +94,8 @@ class Executor:
                     handler_spec = attr._handler_spec  # type: ignore
                     message_type = handler_spec["message_type"]
 
-                    # Handle generic RequestResponse types by using the origin type for isinstance checks
-                    from typing import get_origin
-
-                    origin_type = get_origin(message_type)
-                    if (
-                        origin_type is not None
-                        and hasattr(origin_type, "__name__")
-                        and origin_type.__name__ == "RequestResponse"
-                    ):
-                        # Use the base RequestResponse type instead of RequestResponse[T, U] for compatibility
-                        message_type = origin_type
+                    # Keep full generic types for handler registration to avoid conflicts
+                    # Different RequestResponse[T, U] specializations are distinct handler types
 
                     if self._handlers.get(message_type) is not None:
                         raise ValueError(f"Duplicate handler for type {message_type} in {self.__class__.__name__}")
@@ -141,7 +133,7 @@ class Executor:
             matched = False
 
             # Check type matching
-            if isinstance(request_type, type) and isinstance(request.data, request_type):
+            if isinstance(request_type, type) and is_instance_of(request.data, request_type):
                 matched = True
             elif (
                 isinstance(request_type, str)
@@ -814,6 +806,9 @@ class WorkflowExecutor(Executor):
         # Track workflow state for proper resumption - support multiple concurrent requests
         self._pending_requests: dict[str, Any] = {}  # request_id -> original request data
         self._active_executions: int = 0  # Count of active sub-workflow executions
+        # Response accumulation for multiple concurrent responses
+        self._collected_responses: dict[str, Any] = {}  # Accumulate responses
+        self._expected_response_count: int = 0  # Track how many responses we're waiting for
 
     @handler  # No output_types - can send any completion data type
     async def process_workflow(self, input_data: object, ctx: WorkflowContext[Any]) -> None:
@@ -839,6 +834,22 @@ class WorkflowExecutor(Executor):
             # Run the sub-workflow and collect all events
             events = [event async for event in self._workflow.run_streaming(input_data)]
 
+            # Count requests and initialize response tracking
+            request_count = 0
+            for event in events:
+                if isinstance(event, RequestInfoEvent):
+                    request_count += 1
+
+            # Initialize response accumulation for this execution
+            # For sequential workflows (like step_08), expect only current requests
+            # For parallel workflows (like step_09), expect all requests at once
+            self._expected_response_count = request_count
+            self._collected_responses = {}
+
+            # If no requests in initial run, handle completion immediately
+            if request_count == 0:
+                self._expected_response_count = 0
+
             # Process events to check for completion or requests
             for event in events:
                 if isinstance(event, WorkflowCompletedEvent):
@@ -860,8 +871,7 @@ class WorkflowExecutor(Executor):
                     )
 
                     await ctx.send_message(wrapped_request)
-                    # Exit and wait for response - sub-workflow is paused
-                    return
+                    # Continue processing remaining events (no return)
 
         except Exception as e:
             from ._events import ExecutorEvent
@@ -880,8 +890,8 @@ class WorkflowExecutor(Executor):
     ) -> None:
         """Handle response from parent for a forwarded request.
 
-        This handler receives responses and sends them to the sub-workflow,
-        then continues the sub-workflow execution to completion.
+        This handler accumulates responses and only resumes the sub-workflow
+        when all expected responses have been received.
 
         Args:
             response: The response to a previous request.
@@ -895,19 +905,42 @@ class WorkflowExecutor(Executor):
         # Remove the request from pending list
         pending_requests.pop(response.request_id, None)
 
-        from ._events import WorkflowCompletedEvent
+        # Accumulate the response
+        self._collected_responses[response.request_id] = response.data
 
-        # Send responses to the sub-workflow and continue execution until completion
-        result_events = [
-            event async for event in self._workflow.send_responses_streaming({response.request_id: response.data})
-        ]
+        # Check if we have all expected responses for current batch
+        if len(self._collected_responses) >= self._expected_response_count:
+            from ._events import RequestInfoEvent, WorkflowCompletedEvent
 
-        # Find the completion event and send result to parent
-        for event in result_events:
-            if isinstance(event, WorkflowCompletedEvent):
-                await ctx.send_message(event.data)
-                self._active_executions -= 1
-                return
+            # Send all collected responses to the sub-workflow
+            responses_to_send = dict(self._collected_responses)
+            self._collected_responses.clear()  # Clear for next batch
+
+            result_events = [event async for event in self._workflow.send_responses_streaming(responses_to_send)]
+
+            # Process the result events
+            new_request_count = 0
+            for event in result_events:
+                if isinstance(event, WorkflowCompletedEvent):
+                    # Sub-workflow completed - send result to parent
+                    await ctx.send_message(event.data)
+                    self._active_executions -= 1
+                    return
+                if isinstance(event, RequestInfoEvent):
+                    # Sub-workflow sent more requests - prepare for next batch
+                    new_request_count += 1
+                    self._pending_requests[event.request_id] = event.data
+
+                    # Send the new request to parent
+                    wrapped_request = SubWorkflowRequestInfo(
+                        request_id=event.request_id,
+                        sub_workflow_id=self.id,
+                        data=event.data,
+                    )
+                    await ctx.send_message(wrapped_request)
+
+            # Update expected count for next batch of requests
+            self._expected_response_count = new_request_count
 
 
 # endregion: Workflow Executor
