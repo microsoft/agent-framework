@@ -4,7 +4,7 @@ import logging
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar, Optional
+from typing import Any, ClassVar
 
 from agent_framework._pydantic import AFBaseModel
 from pydantic import Field
@@ -40,7 +40,7 @@ class Edge(AFBaseModel):
 
     source_id: str = Field(min_length=1, description="The ID of the source executor of the edge")
     target_id: str = Field(min_length=1, description="The ID of the target executor of the edge")
-    condition_name: Optional[str] = Field(
+    condition_name: str | None = Field(
         default=None, description="The name of the condition function for serialization"
     )
 
@@ -150,7 +150,7 @@ class FanOutEdgeGroup(EdgeGroup):
     and send messages to their respective target executors.
     """
 
-    selection_func_name: Optional[str] = Field(
+    selection_func_name: str | None = Field(
         default=None, description="The name of the selection function for serialization"
     )
 
@@ -248,7 +248,7 @@ class SwitchCaseEdgeGroupCase(AFBaseModel):
     """A single case in the SwitchCaseEdgeGroup. This is used internally."""
 
     target_id: str = Field(description="The target executor ID for this case")
-    condition_name: Optional[str] = Field(
+    condition_name: str | None = Field(
         default=None, description="The name of the condition function for serialization"
     )
     type: str = Field(default="Case", description="The type of the case")
