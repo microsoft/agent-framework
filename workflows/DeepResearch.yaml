@@ -115,22 +115,25 @@ beginDialog:
       displayName: Define instructions
       variable: Topic.TaskInstructions
       value: |-
-        ="# Task
+        ="# TASK
         Address the following user request:
 
         " & Topic.InputTask & "
 
-        # Team
+
+        # TEAM
         Use the following team to answer this request:
 
         " & Topic.TeamDescription & "
 
-        # Facts
+
+        # FACTS
         Consider this initial fact sheet:
 
         " & Topic.TaskFacts.Text & "
 
-        # Plan
+
+        # PLAN
         Here is the plan to follow as best as possible:
   
         " & Topic.Plan.Text
@@ -363,22 +366,25 @@ beginDialog:
                       displayName: Set Plan as Context
                       variable: Topic.TaskInstructions
                       value: |-
-                        ="# Task
+                        ="# TASK
                         Address the following user request:
 
                         " & Topic.InputTask & "
 
-                        # Team
+
+                        # TEAM
                         Use the following team to answer this request:
 
                         " & Topic.TeamDescription & "
+                        
 
-                        # Facts
+                        # FACTS
                         Consider this initial fact sheet:
 
                         " & Topic.TaskFacts.Text & "
 
-                        # Plan
+
+                        # PLAN
                         Here is the plan to follow as best as possible:
   
                         " & Topic.Plan.Text
