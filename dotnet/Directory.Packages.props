@@ -5,14 +5,18 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
+  <PropertyGroup>
+    <!-- Aspire -->
+    <AspireAppHostSdkVersion>9.4.1</AspireAppHostSdkVersion>
+  </PropertyGroup>
   <ItemGroup>
     <!-- Azure.* -->
-    <PackageVersion Include="Aspire.Azure.AI.OpenAI" Version="9.3.1-preview.1.25305.6" />
-    <PackageVersion Include="Aspire.Hosting.AppHost" Version="9.4.0" />
-    <PackageVersion Include="Aspire.Hosting.Azure.CognitiveServices" Version="9.4.0" />
-    <PackageVersion Include="Aspire.Hosting.Azure.CosmosDB" Version="9.4.0" />
-    <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="9.3.1" />
-    <PackageVersion Include="Aspire.Hosting.Testing" Version="9.3.1" />
+    <PackageVersion Include="Aspire.Azure.AI.OpenAI" Version="9.4.1-preview.1.25408.4" />
+    <PackageVersion Include="Aspire.Hosting.AppHost" Version="9.4.1" />
+    <PackageVersion Include="Aspire.Hosting.Azure.CognitiveServices" Version="9.4.1" />
+    <PackageVersion Include="Aspire.Hosting.Azure.CosmosDB" Version="9.4.1" />
+    <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="9.4.1" />
+    <PackageVersion Include="Aspire.Hosting.Testing" Version="9.4.1" />
     <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.1" />
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.3.0-beta.1" />
     <PackageVersion Include="Azure.Identity" Version="1.14.2" />
@@ -61,6 +65,7 @@
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.8" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="9.0.8" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Testing" Version="9.0.8" />
+    <PackageVersion Include="Microsoft.Extensions.Options" Version="9.0.8" />
     <!-- Vector Stores -->
     <PackageVersion Include="Microsoft.SemanticKernel.Connectors.InMemory" Version="1.61.0-preview" />
     <!-- Agent SDKs -->
