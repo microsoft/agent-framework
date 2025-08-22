@@ -149,8 +149,8 @@ var filteredAgent = new FilteringAIAgent(agent,
 
 public class FilteringAIAgent
 {
-    private List<IAgentRunFilter> _runFilters = [];
-    private List<IAgentFunctionCallFilter> _functionCallFilters = [];
+    private List<IAgentRunFilter>? _runFilters;
+    private List<IAgentFunctionCallFilter>? _functionCallFilters;
 
     public FilteringAIAgent(AIAgent agent, IServiceProvider serviceProvider)
     {
@@ -291,21 +291,20 @@ public abstract class AgentContext
 
     public AgentRunOptions? Options { get; set; } // Options are allowed to be set by filters
 
-    protected AgentContext(AIAgent agent, AgentThread? thread, AgentRunOptions? options)
+    protected AgentContext(AIAgent agent, AgentRunOptions? options)
     {
         Agent = agent;
-        Thread = thread;
         Options = options;
     }
 }
 
 public class AgentRunContext : AgentContext
 {
-    public IList<ChatMessage> Messages { get; set;}
+    public IList<ChatMessage> Messages { get; set; }
 
     public AgentThread? Thread { get; } 
 
-    public AgentRunContext(AIAgent agent,IList<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options)
+    public AgentRunContext(AIAgent agent, IList<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options)
         : base(agent, options)
     {
         Messages = messages;
@@ -319,7 +318,7 @@ public class AgentFunctionInvocationContext : AgentContext
     public AIFunction Function { get; set; }
     public AIFunctionArguments Arguments { get; set; }
     public FunctionCallContent CallContent { get; set; }
-    public IList<ChatMessage> Messages { get; set;}
+    public IList<ChatMessage> Messages { get; set; }
     public ChatOptions? Options { get; set; }
     public int Iteration { get; set; }
     public int FunctionCallIndex { get; set; }
