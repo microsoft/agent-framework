@@ -7,7 +7,6 @@ from agent_framework.workflow import Executor, WorkflowBuilder, WorkflowContext,
 
 from agent_framework_workflow._edge import (
     Edge,
-    EdgeGroup,
     FanInEdgeGroup,
     FanOutEdgeGroup,
     SingleEdgeGroup,
@@ -46,7 +45,7 @@ class TestSerializationWorkflowClasses:
         # Test model_dump
         data = executor.model_dump()
         assert data["id"] == "test-executor"
-        
+
         # Test type field
         assert "type" in data, "Executor should have 'type' field"
         assert data["type"] == "SampleExecutor", f"Expected type 'SampleExecutor', got {data['type']}"
@@ -55,7 +54,7 @@ class TestSerializationWorkflowClasses:
         json_str = executor.model_dump_json()
         parsed = json.loads(json_str)
         assert parsed["id"] == "test-executor"
-        
+
         # Test type field in JSON
         assert "type" in parsed, "JSON should have 'type' field"
         assert parsed["type"] == "SampleExecutor", "JSON should preserve type field"
@@ -83,7 +82,7 @@ class TestSerializationWorkflowClasses:
         data = edge_group.model_dump()
         assert "id" in data
         assert data["id"].startswith("SingleEdgeGroup/")
-        
+
         # Test type field
         assert "type" in data, "SingleEdgeGroup should have 'type' field"
         assert data["type"] == "SingleEdgeGroup", f"Expected type 'SingleEdgeGroup', got {data['type']}"
@@ -102,7 +101,7 @@ class TestSerializationWorkflowClasses:
         parsed = json.loads(json_str)
         assert "id" in parsed
         assert parsed["id"].startswith("SingleEdgeGroup/")
-        
+
         # Test type field in JSON
         assert "type" in parsed, "JSON should have 'type' field"
         assert parsed["type"] == "SingleEdgeGroup", "JSON should preserve type field"
@@ -122,7 +121,7 @@ class TestSerializationWorkflowClasses:
         data = edge_group.model_dump()
         assert "id" in data
         assert data["id"].startswith("FanOutEdgeGroup/")
-        
+
         # Test type field
         assert "type" in data, "FanOutEdgeGroup should have 'type' field"
         assert data["type"] == "FanOutEdgeGroup", f"Expected type 'FanOutEdgeGroup', got {data['type']}"
@@ -143,7 +142,7 @@ class TestSerializationWorkflowClasses:
         parsed = json.loads(json_str)
         assert "id" in parsed
         assert parsed["id"].startswith("FanOutEdgeGroup/")
-        
+
         # Test type field in JSON
         assert "type" in parsed, "JSON should have 'type' field"
         assert parsed["type"] == "FanOutEdgeGroup", "JSON should preserve type field"
@@ -166,7 +165,7 @@ class TestSerializationWorkflowClasses:
         data = edge_group.model_dump()
         assert "id" in data
         assert data["id"].startswith("FanInEdgeGroup/")
-        
+
         # Test type field
         assert "type" in data, "FanInEdgeGroup should have 'type' field"
         assert data["type"] == "FanInEdgeGroup", f"Expected type 'FanInEdgeGroup', got {data['type']}"
@@ -187,7 +186,7 @@ class TestSerializationWorkflowClasses:
         parsed = json.loads(json_str)
         assert "id" in parsed
         assert parsed["id"].startswith("FanInEdgeGroup/")
-        
+
         # Test type field in JSON
         assert "type" in parsed, "JSON should have 'type' field"
         assert parsed["type"] == "FanInEdgeGroup", "JSON should preserve type field"
@@ -214,7 +213,7 @@ class TestSerializationWorkflowClasses:
         data = edge_group.model_dump()
         assert "id" in data
         assert data["id"].startswith("SwitchCaseEdgeGroup/")
-        
+
         # Test type field
         assert "type" in data, "SwitchCaseEdgeGroup should have 'type' field"
         assert data["type"] == "SwitchCaseEdgeGroup", f"Expected type 'SwitchCaseEdgeGroup', got {data['type']}"
@@ -228,14 +227,16 @@ class TestSerializationWorkflowClasses:
         targets = [edge["target_id"] for edge in edges]
 
         assert all(source == "source" for source in sources), f"All edges should have source 'source', got {sources}"
-        assert set(targets) == {"positive", "default"}, f"Expected targets {{'positive', 'default'}}, got {set(targets)}"
+        assert set(targets) == {"positive", "default"}, (
+            f"Expected targets {{'positive', 'default'}}, got {set(targets)}"
+        )
 
         # Test model_dump_json
         json_str = edge_group.model_dump_json()
         parsed = json.loads(json_str)
         assert "id" in parsed
         assert parsed["id"].startswith("SwitchCaseEdgeGroup/")
-        
+
         # Test type field in JSON
         assert "type" in parsed, "JSON should have 'type' field"
         assert parsed["type"] == "SwitchCaseEdgeGroup", "JSON should preserve type field"
