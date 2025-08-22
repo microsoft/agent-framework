@@ -94,8 +94,8 @@ app.UseExceptionHandler();
 app.MapActors();
 
 // attach a2a with simple message communication
-app.AttachA2AMessaging(agentName: "pirate", path: "/a2a/pirate");
-app.AttachA2AMessaging(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves", agentCard: new()
+app.AttachA2A(agentName: "pirate", path: "/a2a/pirate");
+app.AttachA2A(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves", agentCard: new()
 {
     Name = "Knights and Knaves",
     Description = "An agent that helps you solve the knights and knaves puzzle.",

@@ -20,13 +20,13 @@ public static class WebApplicationExtensions
     /// <param name="app">The web application used to configure the pipeline and routes.</param>
     /// <param name="agentName">The name of the agent to use for A2A protocol integration.</param>
     /// <param name="path">The route group to use for A2A endpoints.</param>
-    public static void AttachA2AMessaging(this WebApplication app, string agentName, string path)
+    public static void AttachA2A(this WebApplication app, string agentName, string path)
     {
         var agent = app.Services.GetRequiredKeyedService<AIAgent>(agentName);
         var loggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
         var actorClient = app.Services.GetRequiredService<IActorClient>();
 
-        var taskManager = agent.AttachA2AMessaging(actorClient, loggerFactory: loggerFactory);
+        var taskManager = agent.AttachA2A(actorClient, loggerFactory: loggerFactory);
         app.AttachA2A(taskManager, path);
     }
 
@@ -37,7 +37,7 @@ public static class WebApplicationExtensions
     /// <param name="agentName">The name of the agent to use for A2A protocol integration.</param>
     /// <param name="path">The route group to use for A2A endpoints.</param>
     /// <param name="agentCard">Agent card info to return on query.</param>
-    public static void AttachA2AMessaging(
+    public static void AttachA2A(
         this WebApplication app,
         string agentName,
         string path,
@@ -47,7 +47,7 @@ public static class WebApplicationExtensions
         var loggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
         var actorClient = app.Services.GetRequiredService<IActorClient>();
 
-        var taskManager = agent.AttachA2AMessaging(actorClient, agentCard: agentCard, loggerFactory: loggerFactory);
+        var taskManager = agent.AttachA2A(actorClient, agentCard: agentCard, loggerFactory: loggerFactory);
         app.AttachA2A(taskManager, path);
     }
 
@@ -60,7 +60,11 @@ public static class WebApplicationExtensions
     /// <param name="path">The route group to use for A2A endpoints.</param>
     public static void AttachA2A(this WebApplication app, TaskManager taskManager, string path)
     {
+        // note: current SDK version registers multiple `.well-known/agent.json` handlers here.
+        // it makes app return HTTP 500, but will be fixed once new A2A SDK is released.
+        // see https://github.com/microsoft/agent-framework/issues/476 for details
         app.MapA2A(taskManager, path);
+
         app.MapHttpA2A(taskManager, path);
     }
 }
