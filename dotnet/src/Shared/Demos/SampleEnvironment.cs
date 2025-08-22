@@ -12,7 +12,10 @@ internal static class SampleEnvironment
 {
     public static string? GetEnvironmentVariable(string key)
     {
-        var hideSampleValues = SystemEnvironment.GetEnvironmentVariable("AF_HIDE_SAMPLE_VALUES");
+        // Allows for a demo mode, where all values are hidden for security reasons.
+        var hideAllSampleValues = SystemEnvironment.GetEnvironmentVariable("AF_HIDE_ALL_DEMO_SETTING_VALUES");
+        var shouldHideValue = hideAllSampleValues?.ToUpperInvariant() == "Y" || key.ToUpperInvariant().EndsWith("KEY", StringComparison.InvariantCulture);
+
         var value = SystemEnvironment.GetEnvironmentVariable(key);
         if (string.IsNullOrWhiteSpace(value))
         {
@@ -24,17 +27,15 @@ internal static class SampleEnvironment
             Console.ForegroundColor = ConsoleColor.Green;
             Console.WriteLine("' is not set in environment variables.");
 
-            while (string.IsNullOrWhiteSpace(value))
-            {
-                Console.ForegroundColor = ConsoleColor.Green;
-                Console.Write("Please provide the setting for '");
-                Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.Write(key);
-                Console.ForegroundColor = ConsoleColor.Green;
-                Console.Write("'> ");
-                Console.ForegroundColor = color;
-                value = Console.ReadLine() ?? string.Empty;
-            }
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.Write("Please provide the setting for '");
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.Write(key);
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.Write("'> ");
+            Console.ForegroundColor = color;
+            value = Console.ReadLine();
+            value = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
         }
         else
         {
@@ -50,7 +51,7 @@ internal static class SampleEnvironment
             Console.ForegroundColor = ConsoleColor.Green;
             Console.Write("', Value='");
             Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.Write(hideSampleValues?.ToUpperInvariant() == "Y" || key.ToUpperInvariant().EndsWith("KEY", StringComparison.InvariantCulture) ? "*****" : value);
+            Console.Write(shouldHideValue ? "*****" : value);
             Console.ForegroundColor = ConsoleColor.Green;
             Console.WriteLine("'");
             Console.ForegroundColor = color;
