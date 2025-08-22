@@ -159,14 +159,16 @@ class WorkflowGraphValidator:
 
         # Iterate over all registered executors in the workflow graph
         for executor_id, executor in self._executors.items():
-            for attr_name in dir(executor):
+            for attr_name in dir(executor.__class__):
+                if attr_name.startswith("_"):
+                    continue
                 # Retrieve attributes without binding (so the first parameter remains 'self').
                 # This ensures inspect.signature sees all three parameters: (self, message, ctx).
                 attr = None
                 from contextlib import suppress
 
                 with suppress(Exception):
-                    attr = inspect.getattr_static(executor, attr_name)
+                    attr = inspect.getattr_static(executor.__class__, attr_name)
                 if attr is None:
                     continue
                 # Consider only callables that were decorated with @handler
@@ -361,12 +363,18 @@ class WorkflowGraphValidator:
         """
         output_types: list[type[Any]] = []
 
-        for attr_name in dir(executor):
-            attr = getattr(executor, attr_name)
-            if callable(attr) and hasattr(attr, "_handler_spec"):
-                handler_spec = attr._handler_spec  # type: ignore
-                handler_output_types = handler_spec.get("output_types", [])
-                output_types.extend(handler_output_types)
+        for attr_name in dir(executor.__class__):
+            if attr_name.startswith("_"):
+                continue
+            try:
+                attr = getattr(executor.__class__, attr_name)
+                if callable(attr) and hasattr(attr, "_handler_spec"):
+                    handler_spec = attr._handler_spec  # type: ignore
+                    handler_output_types = handler_spec.get("output_types", [])
+                    output_types.extend(handler_output_types)
+            except AttributeError:
+                # Skip attributes that may not be accessible
+                continue
 
         return output_types
 

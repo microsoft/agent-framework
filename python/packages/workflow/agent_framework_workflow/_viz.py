@@ -36,13 +36,13 @@ class WorkflowViz:
         lines.append("")
 
         # Add start executor with special styling
-        start_executor = self._workflow.start_executor
-        lines.append(f'  "{start_executor.id}" [fillcolor=lightgreen, label="{start_executor.id}\\n(Start)"];')
+        start_executor_id = self._workflow.start_executor_id
+        lines.append(f'  "{start_executor_id}" [fillcolor=lightgreen, label="{start_executor_id}\\n(Start)"];')
 
         # Add all other executors
-        for executor in self._workflow.executors:
-            if executor.id != start_executor.id:
-                lines.append(f'  "{executor.id}" [label="{executor.id}"];')
+        for executor_id in self._workflow.executors:
+            if executor_id != start_executor_id:
+                lines.append(f'  "{executor_id}" [label="{executor_id}"];')
 
         # Build shared structures
         fan_in_nodes = self._compute_fan_in_descriptors()  # (node_id, sources, target)
@@ -179,16 +179,16 @@ class WorkflowViz:
         lines: list[str] = ["flowchart TD"]
 
         # Nodes
-        start_executor = self._workflow.start_executor
-        start_id = _san(start_executor.id)
+        start_executor_id = self._workflow.start_executor_id
+        start_id = _san(start_executor_id)
         # End statements with semicolons for better compatibility and quote labels for special chars
-        lines.append(f'  {start_id}["{start_executor.id} (Start)"];')
+        lines.append(f'  {start_id}["{start_executor_id} (Start)"];')
 
-        for executor in self._workflow.executors:
-            if executor.id == start_executor.id:
+        for executor_id in self._workflow.executors:
+            if executor_id == start_executor_id:
                 continue
-            eid = _san(executor.id)
-            lines.append(f'  {eid}["{executor.id}"];')
+            eid = _san(executor_id)
+            lines.append(f'  {eid}["{executor_id}"];')
 
         # Build shared structures
         fan_in_nodes_dot = self._compute_fan_in_descriptors()  # uses DOT node ids

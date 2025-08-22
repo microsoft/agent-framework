@@ -22,33 +22,31 @@ from agent_framework_workflow import Message
 
 
 @dataclass
-class MockMessage:
+class NumberMessage:
     """A mock message for testing purposes."""
 
     data: int
 
 
-class MockExecutor(Executor):
-    """A mock executor for testing purposes."""
+class IncrementExecutor(Executor):
+    """An executor that increments message data by a specified amount for testing purposes."""
 
-    def __init__(self, id: str, limit: int = 10):
-        """Initialize the mock executor with a limit."""
-        super().__init__(id=id)
-        self.limit = limit
+    limit: int = 10
+    increment: int = 1
 
     @handler
-    async def mock_handler(self, message: MockMessage, ctx: WorkflowContext[MockMessage]) -> None:
+    async def mock_handler(self, message: NumberMessage, ctx: WorkflowContext[NumberMessage]) -> None:
         if message.data < self.limit:
-            await ctx.send_message(MockMessage(data=message.data + 1))
+            await ctx.send_message(NumberMessage(data=message.data + self.increment))
         else:
             await ctx.add_event(WorkflowCompletedEvent(data=message.data))
 
 
-class MockAggregator(Executor):
+class AggregatorExecutor(Executor):
     """A mock executor that aggregates results from multiple executors."""
 
     @handler
-    async def mock_handler(self, messages: list[MockMessage], ctx: WorkflowContext[Any]) -> None:
+    async def mock_handler(self, messages: list[NumberMessage], ctx: WorkflowContext[Any]) -> None:
         # This mock simply returns the data incremented by 1
         await ctx.add_event(WorkflowCompletedEvent(data=sum(msg.data for msg in messages)))
 
@@ -64,25 +62,25 @@ class MockExecutorRequestApproval(Executor):
     """A mock executor that simulates a request for approval."""
 
     @handler
-    async def mock_handler_a(self, message: MockMessage, ctx: WorkflowContext[RequestInfoMessage]) -> None:
+    async def mock_handler_a(self, message: NumberMessage, ctx: WorkflowContext[RequestInfoMessage]) -> None:
         """A mock handler that requests approval."""
         await ctx.set_shared_state(self.id, message.data)
         await ctx.send_message(RequestInfoMessage())
 
     @handler
-    async def mock_handler_b(self, message: ApprovalMessage, ctx: WorkflowContext[MockMessage]) -> None:
+    async def mock_handler_b(self, message: ApprovalMessage, ctx: WorkflowContext[NumberMessage]) -> None:
         """A mock handler that processes the approval response."""
         data = await ctx.get_shared_state(self.id)
         if message.approved:
             await ctx.add_event(WorkflowCompletedEvent(data=data))
         else:
-            await ctx.send_message(MockMessage(data=data))
+            await ctx.send_message(NumberMessage(data=data))
 
 
 async def test_workflow_run_streaming():
     """Test the workflow run stream."""
-    executor_a = MockExecutor(id="executor_a")
-    executor_b = MockExecutor(id="executor_b")
+    executor_a = IncrementExecutor(id="executor_a")
+    executor_b = IncrementExecutor(id="executor_b")
 
     workflow = (
         WorkflowBuilder()
@@ -93,7 +91,7 @@ async def test_workflow_run_streaming():
     )
 
     result: int | None = None
-    async for event in workflow.run_streaming(MockMessage(data=0)):
+    async for event in workflow.run_streaming(NumberMessage(data=0)):
         assert isinstance(event, WorkflowEvent)
         if isinstance(event, WorkflowCompletedEvent):
             result = event.data
@@ -103,8 +101,8 @@ async def test_workflow_run_streaming():
 
 async def test_workflow_run_stream_not_completed():
     """Test the workflow run stream."""
-    executor_a = MockExecutor(id="executor_a")
-    executor_b = MockExecutor(id="executor_b")
+    executor_a = IncrementExecutor(id="executor_a")
+    executor_b = IncrementExecutor(id="executor_b")
 
     workflow = (
         WorkflowBuilder()
@@ -116,14 +114,14 @@ async def test_workflow_run_stream_not_completed():
     )
 
     with pytest.raises(RuntimeError):
-        async for _ in workflow.run_streaming(MockMessage(data=0)):
+        async for _ in workflow.run_streaming(NumberMessage(data=0)):
             pass
 
 
 async def test_workflow_run():
     """Test the workflow run."""
-    executor_a = MockExecutor(id="executor_a")
-    executor_b = MockExecutor(id="executor_b")
+    executor_a = IncrementExecutor(id="executor_a")
+    executor_b = IncrementExecutor(id="executor_b")
 
     workflow = (
         WorkflowBuilder()
@@ -133,7 +131,7 @@ async def test_workflow_run():
         .build()
     )
 
-    events = await workflow.run(MockMessage(data=0))
+    events = await workflow.run(NumberMessage(data=0))
     completed_event = events.get_completed_event()
     assert isinstance(completed_event, WorkflowCompletedEvent)
     assert completed_event.data == 10
@@ -141,8 +139,8 @@ async def test_workflow_run():
 
 async def test_workflow_run_not_completed():
     """Test the workflow run."""
-    executor_a = MockExecutor(id="executor_a")
-    executor_b = MockExecutor(id="executor_b")
+    executor_a = IncrementExecutor(id="executor_a")
+    executor_b = IncrementExecutor(id="executor_b")
 
     workflow = (
         WorkflowBuilder()
@@ -154,12 +152,12 @@ async def test_workflow_run_not_completed():
     )
 
     with pytest.raises(RuntimeError):
-        await workflow.run(MockMessage(data=0))
+        await workflow.run(NumberMessage(data=0))
 
 
 async def test_workflow_send_responses_streaming():
     """Test the workflow run with approval."""
-    executor_a = MockExecutor(id="executor_a")
+    executor_a = IncrementExecutor(id="executor_a")
     executor_b = MockExecutorRequestApproval(id="executor_b")
     request_info_executor = RequestInfoExecutor()
 
@@ -174,7 +172,7 @@ async def test_workflow_send_responses_streaming():
     )
 
     request_info_event: RequestInfoEvent | None = None
-    async for event in workflow.run_streaming(MockMessage(data=0)):
+    async for event in workflow.run_streaming(NumberMessage(data=0)):
         if isinstance(event, RequestInfoEvent):
             request_info_event = event
 
@@ -191,7 +189,7 @@ async def test_workflow_send_responses_streaming():
 
 async def test_workflow_send_responses():
     """Test the workflow run with approval."""
-    executor_a = MockExecutor(id="executor_a")
+    executor_a = IncrementExecutor(id="executor_a")
     executor_b = MockExecutorRequestApproval(id="executor_b")
     request_info_executor = RequestInfoExecutor()
 
@@ -205,7 +203,7 @@ async def test_workflow_send_responses():
         .build()
     )
 
-    events = await workflow.run(MockMessage(data=0))
+    events = await workflow.run(NumberMessage(data=0))
     request_info_events = events.get_request_info_events()
 
     assert len(request_info_events) == 1
@@ -219,15 +217,15 @@ async def test_workflow_send_responses():
 
 async def test_fan_out():
     """Test a fan-out workflow."""
-    executor_a = MockExecutor(id="executor_a")
-    executor_b = MockExecutor(id="executor_b", limit=1)
-    executor_c = MockExecutor(id="executor_c", limit=2)  # This executor will not complete the workflow
+    executor_a = IncrementExecutor(id="executor_a")
+    executor_b = IncrementExecutor(id="executor_b", limit=1)
+    executor_c = IncrementExecutor(id="executor_c", limit=2)  # This executor will not complete the workflow
 
     workflow = (
         WorkflowBuilder().set_start_executor(executor_a).add_fan_out_edges(executor_a, [executor_b, executor_c]).build()
     )
 
-    events = await workflow.run(MockMessage(data=0))
+    events = await workflow.run(NumberMessage(data=0))
 
     # Each executor will emit two events: ExecutorInvokeEvent and ExecutorCompletedEvent
     # executor_b will also emit a WorkflowCompletedEvent
@@ -239,15 +237,15 @@ async def test_fan_out():
 
 async def test_fan_out_multiple_completed_events():
     """Test a fan-out workflow with multiple completed events."""
-    executor_a = MockExecutor(id="executor_a")
-    executor_b = MockExecutor(id="executor_b", limit=1)
-    executor_c = MockExecutor(id="executor_c", limit=1)
+    executor_a = IncrementExecutor(id="executor_a")
+    executor_b = IncrementExecutor(id="executor_b", limit=1)
+    executor_c = IncrementExecutor(id="executor_c", limit=1)
 
     workflow = (
         WorkflowBuilder().set_start_executor(executor_a).add_fan_out_edges(executor_a, [executor_b, executor_c]).build()
     )
 
-    events = await workflow.run(MockMessage(data=0))
+    events = await workflow.run(NumberMessage(data=0))
 
     # Each executor will emit two events: ExecutorInvokeEvent and ExecutorCompletedEvent
     # executor_a and executor_b will also emit a WorkflowCompletedEvent
@@ -259,10 +257,10 @@ async def test_fan_out_multiple_completed_events():
 
 async def test_fan_in():
     """Test a fan-in workflow."""
-    executor_a = MockExecutor(id="executor_a")
-    executor_b = MockExecutor(id="executor_b")
-    executor_c = MockExecutor(id="executor_c")
-    aggregator = MockAggregator(id="aggregator")
+    executor_a = IncrementExecutor(id="executor_a")
+    executor_b = IncrementExecutor(id="executor_b")
+    executor_c = IncrementExecutor(id="executor_c")
+    aggregator = AggregatorExecutor(id="aggregator")
 
     workflow = (
         WorkflowBuilder()
@@ -272,7 +270,7 @@ async def test_fan_in():
         .build()
     )
 
-    events = await workflow.run(MockMessage(data=0))
+    events = await workflow.run(NumberMessage(data=0))
 
     # Each executor will emit two events: ExecutorInvokeEvent and ExecutorCompletedEvent
     # aggregator will also emit a WorkflowCompletedEvent
@@ -289,7 +287,7 @@ def simple_executor() -> Executor:
         async def handle_message(self, message: Message, context: WorkflowContext[None]) -> None:
             pass
 
-    return SimpleExecutor("test_executor")
+    return SimpleExecutor(id="test_executor")
 
 
 async def test_workflow_with_checkpointing_enabled(simple_executor: Executor):
@@ -521,7 +519,7 @@ async def test_workflow_multiple_runs_no_state_collision():
         storage = FileCheckpointStorage(temp_dir)
 
         # Create executor that tracks state in shared state
-        state_executor = StateTrackingExecutor("state_executor")
+        state_executor = StateTrackingExecutor(id="state_executor")
 
         # Build workflow with checkpointing
         workflow = (
@@ -555,3 +553,123 @@ async def test_workflow_multiple_runs_no_state_collision():
         assert completed1.data != completed2.data
         assert completed2.data != completed3.data
         assert completed1.data != completed3.data
+
+
+async def test_comprehensive_edge_groups_workflow():
+    """Test a workflow that uses SwitchCaseEdgeGroup, FanOutEdgeGroup, and FanInEdgeGroup."""
+    from agent_framework_workflow._edge import Case, Default
+
+    # Create 6 executors for different roles with different increment values
+    router = IncrementExecutor(id="router", limit=1000, increment=1)  # Increment by 1
+    processor_a = IncrementExecutor(id="proc_a", limit=1000, increment=1)  # Increment by 1
+    processor_b = IncrementExecutor(id="proc_b", limit=1000, increment=2)  # Increment by 2 (different from proc_a)
+    fanout_hub = IncrementExecutor(id="fanout_hub", limit=1000, increment=1)  # Increment by 1
+    parallel_1 = IncrementExecutor(id="parallel_1", limit=1000, increment=3)  # Increment by 3
+    parallel_2 = IncrementExecutor(
+        id="parallel_2", limit=1000, increment=5
+    )  # Increment by 5 (different from parallel_1)
+    aggregator = AggregatorExecutor(id="aggregator")  # Combines results from parallel processors
+
+    # Build workflow with different edge group types:
+    # 1. SwitchCase: router -> (proc_a if data < 5, else proc_b)
+    # 2. Direct edge: proc_a -> fanout_hub, proc_b -> fanout_hub
+    # 3. FanOut: fanout_hub -> [parallel_1, parallel_2]
+    # 4. FanIn: [parallel_1, parallel_2] -> aggregator
+    workflow = (
+        WorkflowBuilder()
+        .set_start_executor(router)
+        # Switch-case routing based on message data
+        .add_switch_case_edge_group(
+            router,
+            [
+                Case(condition=lambda msg: msg.data < 5, target=processor_a),
+                Default(target=processor_b),
+            ],
+        )
+        # Both processors send to fanout hub
+        .add_edge(processor_a, fanout_hub)
+        .add_edge(processor_b, fanout_hub)
+        # Fan out to parallel processors
+        .add_fan_out_edges(fanout_hub, [parallel_1, parallel_2])
+        # Fan in to aggregator
+        .add_fan_in_edges([parallel_1, parallel_2], aggregator)
+        .build()
+    )
+
+    # Test with small number (should go through processor_a)
+    # router(2->3) -> switch routes to proc_a -> proc_a(3->4) -> fanout_hub(4->5)
+    # -> [parallel_1(5->8), parallel_2(5->10)] -> aggregator(8+10=18)
+    events_small = await workflow.run(NumberMessage(data=2))
+    completed_small = events_small.get_completed_event()
+    assert completed_small is not None
+    assert completed_small.data == 18  # Exact expected result: 8+10 from parallel processors
+
+    # Test with large number (should go through processor_b)
+    # router(8->9) -> switch routes to proc_b -> proc_b(9->11) -> fanout_hub(11->12)
+    # -> [parallel_1(12->15), parallel_2(12->17)] -> aggregator(15+17=32)
+    events_large = await workflow.run(NumberMessage(data=8))
+    completed_large = events_large.get_completed_event()
+    assert completed_large is not None
+    assert completed_large.data == 32  # Exact expected result: 15+17 from parallel processors
+
+    # The key verification is that we successfully executed a workflow using all three edge group types
+    # and that both switch-case paths work (small vs large numbers)
+
+    # Verify we had multiple events indicating complex execution path
+    assert len(events_small) >= 6  # Should have multiple executors involved
+    assert len(events_large) >= 6
+
+    # Verify different paths were taken by checking exact results
+    assert completed_small.data == 18, f"Small number path should result in 18, got {completed_small.data}"
+    assert completed_large.data == 32, f"Large number path should result in 32, got {completed_large.data}"
+    assert completed_small.data != completed_large.data, "Different paths should produce different results"
+
+    # Both tests should complete successfully, proving all edge group types work
+
+    # Additional verification: check that the workflow contains the expected edge group types
+    edge_groups = workflow.edge_groups
+    has_switch_case = any(edge_group.__class__.__name__ == "SwitchCaseEdgeGroup" for edge_group in edge_groups)
+    has_fan_out = any(edge_group.__class__.__name__ == "FanOutEdgeGroup" for edge_group in edge_groups)
+    has_fan_in = any(edge_group.__class__.__name__ == "FanInEdgeGroup" for edge_group in edge_groups)
+
+    assert has_switch_case, "Workflow should contain SwitchCaseEdgeGroup"
+    assert has_fan_out, "Workflow should contain FanOutEdgeGroup"
+    assert has_fan_in, "Workflow should contain FanInEdgeGroup"
+
+
+async def test_workflow_with_simple_cycle_and_exit_condition():
+    """Test a simpler workflow with a cycle that has a clear exit condition."""
+
+    # Create a simple cycle: A -> B -> A, with A having an exit condition
+    executor_a = IncrementExecutor(id="exec_a", limit=6, increment=2)  # Exit when data >= 6
+    executor_b = IncrementExecutor(id="exec_b", limit=1000, increment=1)  # Never exit, just increment
+
+    # Simple cycle: A -> B -> A, A exits when limit reached
+    workflow = (
+        WorkflowBuilder()
+        .set_start_executor(executor_a)
+        .add_edge(executor_a, executor_b)  # A -> B
+        .add_edge(executor_b, executor_a)  # B -> A (creates cycle)
+        .build()
+    )
+
+    # Test the cycle
+    # Expected: exec_a(2->4) -> exec_b(4->5) -> exec_a(5->7, completes because 7 >= 6)
+    events = await workflow.run(NumberMessage(data=2))
+    completed_event = events.get_completed_event()
+    assert completed_event is not None
+    assert (
+        completed_event.data is not None and completed_event.data >= 6
+    )  # Should complete when executor_a reaches its limit
+
+    # Verify cycling occurred (should have events from both executors)
+    # Check for ExecutorInvokeEvent and ExecutorCompletedEvent types that have executor_id
+    from agent_framework_workflow._events import ExecutorCompletedEvent, ExecutorInvokeEvent
+
+    executor_events = [e for e in events if isinstance(e, (ExecutorInvokeEvent, ExecutorCompletedEvent))]
+    executor_ids = {e.executor_id for e in executor_events}
+    assert "exec_a" in executor_ids, "Should have events from executor A"
+    assert "exec_b" in executor_ids, "Should have events from executor B"
+
+    # Should have multiple events due to cycling
+    assert len(events) >= 4, f"Expected at least 4 events due to cycling, got {len(events)}"

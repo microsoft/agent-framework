@@ -2,28 +2,32 @@
 
 import logging
 import uuid
-from collections import defaultdict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
-from agent_framework_workflow._executor import Executor
+from agent_framework._pydantic import AFBaseModel
+from pydantic import Field
 
-from ._runner_context import Message
+from agent_framework_workflow._executor import Executor
 
 logger = logging.getLogger(__name__)
 
 
-class Edge:
+class Edge(AFBaseModel):
     """Represents a directed edge in a graph."""
 
     ID_SEPARATOR: ClassVar[str] = "->"
+
+    source_id: str = Field(min_length=1, description="The ID of the source executor of the edge")
+    target_id: str = Field(min_length=1, description="The ID of the target executor of the edge")
 
     def __init__(
         self,
         source_id: str,
         target_id: str,
         condition: Callable[[Any], bool] | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initialize the edge with a source and target node.
 
@@ -33,9 +37,10 @@ class Edge:
             condition (Callable[[Any], bool], optional): A condition function that determines
                 if the edge can handle the data. If None, the edge can handle any data type.
                 Defaults to None.
+            kwargs: Additional keyword arguments. Unused in this implementation.
         """
-        self.source_id = source_id
-        self.target_id = target_id
+        kwargs.update({"source_id": source_id, "target_id": target_id})
+        super().__init__(**kwargs)
         self._condition = condition
 
     @property
@@ -51,32 +56,41 @@ class Edge:
         return self._condition(data)
 
 
-class EdgeGroup:
+class EdgeGroup(AFBaseModel):
     """Represents a group of edges that share some common properties and can be triggered together."""
 
-    def __init__(self) -> None:
-        """Initialize the edge group."""
-        self._id = f"{self.__class__.__name__}/{uuid.uuid4()}"
+    id: str = Field(
+        default_factory=lambda: f"EdgeGroup/{uuid.uuid4()}", description="Unique identifier for the edge group"
+    )
+    edges: list[Edge] = Field(default_factory=list, description="List of edges in this group")
 
-    @property
-    def id(self) -> str:
-        """Get the unique ID of the edge group."""
-        return self._id
+    def __init__(self, **kwargs: Any) -> None:
+        """Initialize the edge group."""
+        if "id" not in kwargs:
+            kwargs["id"] = f"{self.__class__.__name__}/{uuid.uuid4()}"
+        super().__init__(**kwargs)
 
     @property
     def source_executor_ids(self) -> list[str]:
         """Get the source executor IDs of the edges in the group."""
-        raise NotImplementedError
+        seen = set()
+        result = []
+        for edge in self.edges:
+            if edge.source_id not in seen:
+                result.append(edge.source_id)
+                seen.add(edge.source_id)
+        return result
 
     @property
     def target_executor_ids(self) -> list[str]:
         """Get the target executor IDs of the edges in the group."""
-        raise NotImplementedError
-
-    @property
-    def edges(self) -> list[Edge]:
-        """Get the edges in the group."""
-        raise NotImplementedError
+        seen = set()
+        result = []
+        for edge in self.edges:
+            if edge.target_id not in seen:
+                result.append(edge.target_id)
+                seen.add(edge.target_id)
+        return result
 
 
 class SingleEdgeGroup(EdgeGroup):
@@ -85,7 +99,9 @@ class SingleEdgeGroup(EdgeGroup):
     A concrete implementation of EdgeGroup that represent a group containing exactly one edge.
     """
 
-    def __init__(self, source_id: str, target_id: str, condition: Callable[[Any], bool] | None = None) -> None:
+    def __init__(
+        self, source_id: str, target_id: str, condition: Callable[[Any], bool] | None = None, **kwargs: Any
+    ) -> None:
         """Initialize the single edge group with an edge.
 
         Args:
@@ -94,24 +110,11 @@ class SingleEdgeGroup(EdgeGroup):
             condition (Callable[[Any], bool], optional): A condition function that determines
                 if the edge will pass the data to the target executor. If None, the edge will
                 always pass the data to the target executor.
+            kwargs: Additional keyword arguments. Unused in this implementation.
         """
-        super().__init__()
-        self._edge = Edge(source_id=source_id, target_id=target_id, condition=condition)
-
-    @property
-    def source_executor_ids(self) -> list[str]:
-        """Get the source executor ID of the edge."""
-        return [self._edge.source_id]
-
-    @property
-    def target_executor_ids(self) -> list[str]:
-        """Get the target executor ID of the edge."""
-        return [self._edge.target_id]
-
-    @property
-    def edges(self) -> list[Edge]:
-        """Get the edges in the group."""
-        return [self._edge]
+        edge = Edge(source_id=source_id, target_id=target_id, condition=condition)
+        kwargs["edges"] = [edge]
+        super().__init__(**kwargs)
 
 
 class FanOutEdgeGroup(EdgeGroup):
@@ -126,6 +129,7 @@ class FanOutEdgeGroup(EdgeGroup):
         source_id: str,
         target_ids: Sequence[str],
         selection_func: Callable[[Any, list[str]], list[str]] | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initialize the fan-out edge group with a list of edges.
 
@@ -135,24 +139,17 @@ class FanOutEdgeGroup(EdgeGroup):
             selection_func (Callable[[Any, list[str]], list[str]], optional): A function that selects which target
                 executors to send messages to. The function takes in the message data and a list of target executor
                 IDs, and returns a list of selected target executor IDs.
+            kwargs: Additional keyword arguments. Unused in this implementation.
         """
         if len(target_ids) <= 1:
             raise ValueError("FanOutEdgeGroup must contain at least two targets.")
-        super().__init__()
-        self._edges = [Edge(source_id=source_id, target_id=target_id) for target_id in target_ids]
+
+        edges = [Edge(source_id=source_id, target_id=target_id) for target_id in target_ids]
+        kwargs["edges"] = edges
+        super().__init__(**kwargs)
+
         self._target_ids = list(target_ids)
-        self._target_map = {edge.target_id: edge for edge in self._edges}
         self._selection_func = selection_func
-
-    @property
-    def source_executor_ids(self) -> list[str]:
-        """Get the source executor ID of the edges in the group."""
-        return [self._edges[0].source_id]
-
-    @property
-    def target_executor_ids(self) -> list[str]:
-        """Get the target executor IDs of the edges in the group."""
-        return [edge.target_id for edge in self._edges]
 
     @property
     def target_ids(self) -> list[str]:
@@ -164,20 +161,6 @@ class FanOutEdgeGroup(EdgeGroup):
         """Get the selection function for this fan-out group."""
         return self._selection_func
 
-    @property
-    def target_map(self) -> dict[str, Edge]:
-        """Get the target ID to edge mapping."""
-        return self._target_map
-
-    @property
-    def edges(self) -> list[Edge]:
-        """Get the edges in the group."""
-        return self._edges
-
-    def _validate_selection_result(self, selection_results: list[str]) -> bool:
-        """Validate the selection results to ensure all IDs are valid target executor IDs."""
-        return all(result in self._target_ids for result in selection_results)
-
 
 class FanInEdgeGroup(EdgeGroup):
     """Represents a group of edges that share the same target executor.
@@ -186,44 +169,20 @@ class FanInEdgeGroup(EdgeGroup):
     Messages are buffered until all edges in the group have data to send.
     """
 
-    def __init__(self, source_ids: Sequence[str], target_id: str) -> None:
+    def __init__(self, source_ids: Sequence[str], target_id: str, **kwargs: Any) -> None:
         """Initialize the fan-in edge group with a list of edges.
 
         Args:
             source_ids (Sequence[str]): A list of source executor IDs that can send messages to the target executor.
             target_id (str): The target executor ID that receives a list of messages aggregated from all sources.
+            kwargs: Additional keyword arguments. Unused in this implementation.
         """
         if len(source_ids) <= 1:
             raise ValueError("FanInEdgeGroup must contain at least two sources.")
-        super().__init__()
-        self._edges = [Edge(source_id=source_id, target_id=target_id) for source_id in source_ids]
-        # Buffer to hold messages before sending them to the target executor
-        # Key is the source executor ID, value is a list of messages
-        self._buffer: dict[str, list[Message]] = defaultdict(list)
 
-    def _is_ready_to_send(self) -> bool:
-        """Check if all edges in the group have data to send."""
-        return all(self._buffer[edge.source_id] for edge in self._edges)
-
-    @property
-    def source_executor_ids(self) -> list[str]:
-        """Get the source executor IDs of the edges in the group."""
-        return [edge.source_id for edge in self._edges]
-
-    @property
-    def target_executor_ids(self) -> list[str]:
-        """Get the target executor ID of the edges in the group."""
-        return [self._edges[0].target_id]
-
-    @property
-    def buffer(self) -> dict[str, list[Message]]:
-        """Get the message buffer for fan-in aggregation."""
-        return self._buffer
-
-    @property
-    def edges(self) -> list[Edge]:
-        """Get the edges in the group."""
-        return self._edges
+        edges = [Edge(source_id=source_id, target_id=target_id) for source_id in source_ids]
+        kwargs["edges"] = edges
+        super().__init__(**kwargs)
 
 
 @dataclass
@@ -292,6 +251,7 @@ class SwitchCaseEdgeGroup(FanOutEdgeGroup):
         self,
         source_id: str,
         cases: Sequence[SwitchCaseEdgeGroupCase | SwitchCaseEdgeGroupDefault],
+        **kwargs: Any,
     ) -> None:
         """Initialize the switch-case edge group with a list of edges.
 
@@ -299,6 +259,7 @@ class SwitchCaseEdgeGroup(FanOutEdgeGroup):
             source_id (str): The source executor ID.
             cases (Sequence[Case | Default]): A list of cases for the switch-case edge group.
                 There should be exactly one default case.
+            kwargs: Additional keyword arguments. Unused in this implementation.
         """
         if len(cases) < 2:
             raise ValueError("SwitchCaseEdgeGroup must contain at least two cases (including the default case).")
@@ -328,7 +289,7 @@ class SwitchCaseEdgeGroup(FanOutEdgeGroup):
             raise RuntimeError("No matching case found in SwitchCaseEdgeGroup.")
 
         target_ids = [case.target_id for case in cases]
-        super().__init__(source_id, target_ids, selection_func=selection_func)
+        super().__init__(source_id, target_ids, selection_func=selection_func, **kwargs)
         self._cases = cases
 
     @property

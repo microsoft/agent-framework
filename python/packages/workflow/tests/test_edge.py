@@ -8,13 +8,13 @@ import pytest
 from agent_framework.workflow import Executor, WorkflowContext, handler
 
 from agent_framework_workflow._edge import (
-    Case,
-    Default,
     Edge,
     FanInEdgeGroup,
     FanOutEdgeGroup,
     SingleEdgeGroup,
     SwitchCaseEdgeGroup,
+    SwitchCaseEdgeGroupCase,
+    SwitchCaseEdgeGroupDefault,
 )
 from agent_framework_workflow._edge_runner import create_edge_runner
 from agent_framework_workflow._runner_context import InProcRunnerContext, Message
@@ -38,28 +38,40 @@ class MockMessageSecondary:
 class MockExecutor(Executor):
     """A mock executor for testing purposes."""
 
+    call_count: int = 0
+    last_message: Any = None
+
     @handler
     async def mock_handler(self, message: MockMessage, ctx: WorkflowContext) -> None:
         """A mock handler that does nothing."""
-        pass
+        self.call_count += 1
+        self.last_message = message
 
 
 class MockExecutorSecondary(Executor):
     """A secondary mock executor for testing purposes."""
 
+    call_count: int = 0
+    last_message: Any = None
+
     @handler
     async def mock_handler_secondary(self, message: MockMessageSecondary, ctx: WorkflowContext) -> None:
         """A secondary mock handler that does nothing."""
-        pass
+        self.call_count += 1
+        self.last_message = message
 
 
 class MockAggregator(Executor):
     """A mock aggregator for testing purposes."""
 
+    call_count: int = 0
+    last_message: Any = None
+
     @handler
     async def mock_aggregator_handler(self, message: list[MockMessage], ctx: WorkflowContext) -> None:
         """A mock aggregator handler that does nothing."""
-        pass
+        self.call_count += 1
+        self.last_message = message
 
 
 # region Edge
@@ -243,12 +255,11 @@ async def test_source_edge_group_send_message() -> None:
     data = MockMessage(data="test")
     message = Message(data=data, source_id=source.id)
 
-    with patch.object(target1, "execute") as mock_execute1, patch.object(target2, "execute") as mock_execute2:
-        success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, shared_state, ctx)
 
-        assert success is True
-        assert mock_execute1.call_count == 1
-        assert mock_execute2.call_count == 1
+    assert success is True
+    assert target1.call_count == 1
+    assert target2.call_count == 1
 
 
 async def test_source_edge_group_send_message_with_target() -> None:
@@ -267,12 +278,11 @@ async def test_source_edge_group_send_message_with_target() -> None:
     data = MockMessage(data="test")
     message = Message(data=data, source_id=source.id, target_id=target1.id)
 
-    with patch.object(target1, "execute") as mock_execute1, patch.object(target2, "execute") as mock_execute2:
-        success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, shared_state, ctx)
 
-        assert success is True
-        assert mock_execute1.call_count == 1
-        assert mock_execute2.call_count == 0  # target2 should not be called since message targets target1
+    assert success is True
+    assert target1.call_count == 1
+    assert target2.call_count == 0  # target2 should not be called since message targets target1
 
 
 async def test_source_edge_group_send_message_with_invalid_target() -> None:
@@ -331,12 +341,11 @@ async def test_source_edge_group_send_message_only_one_successful_send() -> None
     data = MockMessage(data="test")
     message = Message(data=data, source_id=source.id)
 
-    with patch.object(target1, "execute") as mock_execute1, patch.object(target2, "execute") as mock_execute2:
-        success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, shared_state, ctx)
 
-        assert success is True
-        assert mock_execute1.call_count == 1  # target1 can handle MockMessage
-        assert mock_execute2.call_count == 0  # target2 (MockExecutorSecondary) cannot handle MockMessage
+    assert success is True
+    assert target1.call_count == 1  # target1 can handle MockMessage
+    assert target2.call_count == 0  # target2 (MockExecutorSecondary) cannot handle MockMessage
 
 
 def test_source_edge_group_with_selection_func():
@@ -573,7 +582,7 @@ async def test_target_edge_group_send_message_buffer() -> None:
 
         assert success is True
         assert mock_send.call_count == 0  # The message should be buffered and wait for the second source
-        assert len(edge_group._buffer[source1.id]) == 1  # type: ignore
+        assert len(edge_runner._buffer[source1.id]) == 1  # type: ignore
 
         success = await edge_runner.send_message(
             Message(data=data, source_id=source2.id),
@@ -584,7 +593,7 @@ async def test_target_edge_group_send_message_buffer() -> None:
         assert mock_send.call_count == 1  # The message should be sent now that both sources have sent their messages
 
         # Buffer should be cleared after sending
-        assert not edge_group._buffer  # type: ignore
+        assert not edge_runner._buffer  # type: ignore
 
 
 async def test_target_edge_group_send_message_with_invalid_target() -> None:
@@ -643,8 +652,8 @@ def test_switch_case_edge_group() -> None:
     edge_group = SwitchCaseEdgeGroup(
         source_id=source.id,
         cases=[
-            Case(condition=lambda x: x.data < 0, target=target1.id),
-            Default(target_id=target2.id),
+            SwitchCaseEdgeGroupCase(condition=lambda x: x.data < 0, target_id=target1.id),
+            SwitchCaseEdgeGroupDefault(target_id=target2.id),
         ],
     )
 
@@ -672,7 +681,7 @@ def test_switch_case_edge_group_invalid_number_of_cases():
         SwitchCaseEdgeGroup(
             source_id=source.id,
             cases=[
-                Case(condition=lambda x: x.data < 0, target=target.id),
+                SwitchCaseEdgeGroupCase(condition=lambda x: x.data < 0, target_id=target.id),
             ],
         )
 
@@ -680,8 +689,8 @@ def test_switch_case_edge_group_invalid_number_of_cases():
         SwitchCaseEdgeGroup(
             source_id=source.id,
             cases=[
-                Case(condition=lambda x: x.data < 0, target=target.id),
-                Case(condition=lambda x: x.data >= 0, target=target.id),
+                SwitchCaseEdgeGroupCase(condition=lambda x: x.data < 0, target_id=target.id),
+                SwitchCaseEdgeGroupCase(condition=lambda x: x.data >= 0, target_id=target.id),
             ],
         )
 
@@ -696,9 +705,9 @@ def test_switch_case_edge_group_invalid_number_of_default_cases():
         SwitchCaseEdgeGroup(
             source_id=source.id,
             cases=[
-                Case(condition=lambda x: x.data < 0, target=target1.id),
-                Default(target_id=target2.id),
-                Default(target_id=target2.id),
+                SwitchCaseEdgeGroupCase(condition=lambda x: x.data < 0, target_id=target1.id),
+                SwitchCaseEdgeGroupDefault(target_id=target2.id),
+                SwitchCaseEdgeGroupDefault(target_id=target2.id),
             ],
         )
 
@@ -712,8 +721,8 @@ async def test_switch_case_edge_group_send_message() -> None:
     edge_group = SwitchCaseEdgeGroup(
         source_id=source.id,
         cases=[
-            Case(condition=lambda x: x.data < 0, target=target1.id),
-            Default(target_id=target2.id),
+            SwitchCaseEdgeGroupCase(condition=lambda x: x.data < 0, target_id=target1.id),
+            SwitchCaseEdgeGroupDefault(target_id=target2.id),
         ],
     )
     executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
@@ -750,8 +759,8 @@ async def test_switch_case_edge_group_send_message_with_invalid_target() -> None
     edge_group = SwitchCaseEdgeGroup(
         source_id=source.id,
         cases=[
-            Case(condition=lambda x: x.data < 0, target=target1.id),
-            Default(target_id=target2.id),
+            SwitchCaseEdgeGroupCase(condition=lambda x: x.data < 0, target_id=target1.id),
+            SwitchCaseEdgeGroupDefault(target_id=target2.id),
         ],
     )
 
@@ -777,8 +786,8 @@ async def test_switch_case_edge_group_send_message_with_valid_target() -> None:
     edge_group = SwitchCaseEdgeGroup(
         source_id=source.id,
         cases=[
-            Case(condition=lambda x: x.data < 0, target=target1.id),
-            Default(target_id=target2.id),
+            SwitchCaseEdgeGroupCase(condition=lambda x: x.data < 0, target_id=target1.id),
+            SwitchCaseEdgeGroupDefault(target_id=target2.id),
         ],
     )
 
@@ -809,8 +818,8 @@ async def test_switch_case_edge_group_send_message_with_invalid_data() -> None:
     edge_group = SwitchCaseEdgeGroup(
         source_id=source.id,
         cases=[
-            Case(condition=lambda x: x.data < 0, target=target1.id),
-            Default(target_id=target2.id),
+            SwitchCaseEdgeGroupCase(condition=lambda x: x.data < 0, target_id=target1.id),
+            SwitchCaseEdgeGroupDefault(target_id=target2.id),
         ],
     )
 

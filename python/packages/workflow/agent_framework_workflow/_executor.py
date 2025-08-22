@@ -10,6 +10,8 @@ from types import UnionType
 from typing import Any, ClassVar, TypeVar, Union, get_args, get_origin, overload
 
 from agent_framework import AgentRunResponse, AgentRunResponseUpdate, AgentThread, AIAgent, ChatMessage
+from agent_framework._pydantic import AFBaseModel
+from pydantic import Field
 
 from ._events import (
     AgentRunEvent,
@@ -24,16 +26,23 @@ from ._workflow_context import WorkflowContext
 # region Executor
 
 
-class Executor:
+class Executor(AFBaseModel):
     """An executor is a component that processes messages in a workflow."""
 
-    def __init__(self, id: str | None = None) -> None:
+    id: str = Field(min_length=1, description="Unique identifier for the executor")
+
+    def __init__(self, id: str | None = None, **kwargs: Any) -> None:
         """Initialize the executor with a unique identifier.
 
         Args:
             id: A unique identifier for the executor. If None, a new UUID will be generated.
+            kwargs: Additional keyword arguments. Unused in this implementation.
         """
-        self._id = id or f"{self.__class__.__name__}/{uuid.uuid4()}"
+        executor_id = f"{self.__class__.__name__}/{uuid.uuid4()}" if id is None else id
+
+        kwargs.update({"id": executor_id})
+
+        super().__init__(**kwargs)
 
         self._handlers: dict[type, Callable[[Any, WorkflowContext[Any]], Any]] = {}
         self._discover_handlers()
@@ -67,22 +76,24 @@ class Executor:
         await handler(message, context)
         await context.add_event(ExecutorCompletedEvent(self.id))
 
-    @property
-    def id(self) -> str:
-        """Get the unique identifier of the executor."""
-        return self._id
-
     def _discover_handlers(self) -> None:
         """Discover message handlers in the executor class."""
-        for attr_name in dir(self):
-            attr = getattr(self, attr_name)
-            if callable(attr) and hasattr(attr, "_handler_spec"):
-                handler_spec = attr._handler_spec  # type: ignore
-                if self._handlers.get(handler_spec["message_type"]) is not None:
-                    raise ValueError(
-                        f"Duplicate handler for type {handler_spec['message_type']} in {self.__class__.__name__}"
-                    )
-                self._handlers[handler_spec["message_type"]] = attr
+        # Use __class__.__dict__ to avoid accessing pydantic's dynamic attributes
+        for attr_name in dir(self.__class__):
+            try:
+                attr = getattr(self.__class__, attr_name)
+                if callable(attr) and hasattr(attr, "_handler_spec"):
+                    handler_spec = attr._handler_spec  # type: ignore
+                    if self._handlers.get(handler_spec["message_type"]) is not None:
+                        raise ValueError(
+                            f"Duplicate handler for type {handler_spec['message_type']} in {self.__class__.__name__}"
+                        )
+                    # Get the bound method
+                    bound_method = getattr(self, attr_name)
+                    self._handlers[handler_spec["message_type"]] = bound_method
+            except AttributeError:
+                # Skip attributes that may not be accessible
+                continue
 
     def can_handle(self, message: Any) -> bool:
         """Check if the executor can handle a given message type.

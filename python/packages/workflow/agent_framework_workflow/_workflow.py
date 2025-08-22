@@ -7,6 +7,9 @@ import uuid
 from collections.abc import AsyncIterable, Callable, Sequence
 from typing import Any
 
+from agent_framework._pydantic import AFBaseModel
+from pydantic import Field
+
 from ._checkpoint import CheckpointStorage
 from ._const import DEFAULT_MAX_ITERATIONS
 from ._edge import (
@@ -68,12 +71,26 @@ class WorkflowRunResult(list[WorkflowEvent]):
 # region Workflow
 
 
-class Workflow:
+class Workflow(AFBaseModel):
     """A class representing a workflow that can be executed.
 
     This class is a placeholder for the workflow logic and does not implement any specific functionality.
     It serves as a base class for more complex workflows that can be defined in subclasses.
     """
+
+    edge_groups: list[EdgeGroup] = Field(
+        default_factory=list, description="List of edge groups that define the workflow edges"
+    )
+    executors: dict[str, Executor] = Field(
+        default_factory=dict, description="Dictionary mapping executor IDs to Executor instances"
+    )
+    start_executor_id: str = Field(min_length=1, description="The ID of the starting executor for the workflow")
+    max_iterations: int = Field(
+        default=DEFAULT_MAX_ITERATIONS, description="Maximum number of iterations the workflow will run"
+    )
+    workflow_id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()), description="Unique identifier for this workflow instance"
+    )
 
     def __init__(
         self,
@@ -81,7 +98,8 @@ class Workflow:
         executors: dict[str, Executor],
         start_executor: Executor | str,
         runner_context: RunnerContext,
-        max_iterations: int,
+        max_iterations: int = DEFAULT_MAX_ITERATIONS,
+        **kwargs: Any,
     ):
         """Initialize the workflow with a list of edges.
 
@@ -91,42 +109,46 @@ class Workflow:
             start_executor: The starting executor for the workflow, which can be an Executor instance or its ID.
             runner_context: The RunnerContext instance to be used during workflow execution.
             max_iterations: The maximum number of iterations the workflow will run for convergence.
+            kwargs: Additional keyword arguments. Unused in this implementation.
         """
-        self._edge_groups = edge_groups
-        self._executors = executors
-        self._start_executor = start_executor
+        # Convert start_executor to string ID if it's an Executor instance
+        start_executor_id = start_executor.id if isinstance(start_executor, Executor) else start_executor
 
-        self._shared_state = SharedState()
         workflow_id = str(uuid.uuid4())
+
+        kwargs.update({
+            "edge_groups": edge_groups,
+            "executors": executors,
+            "start_executor_id": start_executor_id,
+            "max_iterations": max_iterations,
+            "workflow_id": workflow_id,
+        })
+
+        super().__init__(**kwargs)
+
+        # Store non-serializable runtime objects as private attributes
+        self._runner_context = runner_context
+        self._shared_state = SharedState()
         self._runner = Runner(
-            self._edge_groups,
-            self._executors,
+            self.edge_groups,
+            self.executors,
             self._shared_state,
             runner_context,
             max_iterations=max_iterations,
             workflow_id=workflow_id,
         )
 
-    @property
-    def edge_groups(self) -> list[EdgeGroup]:
-        """Get the list of edge groups in the workflow."""
-        return self._edge_groups
-
-    @property
-    def start_executor(self) -> Executor:
+    def get_start_executor(self) -> Executor:
         """Get the starting executor of the workflow.
 
         Returns:
-            The starting executor, which can be an Executor instance or its ID.
+            The starting executor instance.
         """
-        if isinstance(self._start_executor, str):
-            return self._get_executor_by_id(self._start_executor)
-        return self._start_executor
+        return self.executors[self.start_executor_id]
 
-    @property
-    def executors(self) -> list[Executor]:
+    def get_executors_list(self) -> list[Executor]:
         """Get the list of executors in the workflow."""
-        return list(self._executors.values())
+        return list(self.executors.values())
 
     async def run_streaming(self, message: Any) -> AsyncIterable[WorkflowEvent]:
         """Run the workflow with a starting message and stream events.
@@ -140,9 +162,7 @@ class Workflow:
         # Reset context for a new run if supported
         self._runner.context.reset_for_new_run(self._shared_state)
 
-        executor = self._start_executor
-        if isinstance(executor, str):
-            executor = self._get_executor_by_id(executor)
+        executor = self.get_start_executor()
 
         await executor.execute(
             message,
@@ -308,9 +328,9 @@ class Workflow:
         Returns:
             The Executor instance corresponding to the given ID.
         """
-        if executor_id not in self._executors:
+        if executor_id not in self.executors:
             raise ValueError(f"Executor with ID {executor_id} not found.")
-        return self._executors[executor_id]
+        return self.executors[executor_id]
 
     async def _restore_from_external_checkpoint(
         self, checkpoint_id: str, checkpoint_storage: CheckpointStorage

@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from typing import Any
 
 from ._edge import Edge, EdgeGroup, FanInEdgeGroup, FanOutEdgeGroup, SingleEdgeGroup, SwitchCaseEdgeGroup
@@ -135,7 +136,9 @@ class FanInEdgeRunner(EdgeRunner):
     def __init__(self, edge_group: FanInEdgeGroup, executors: dict[str, Executor]) -> None:
         super().__init__(edge_group, executors)
         self._edges = edge_group.edges
-        self._buffer = edge_group.buffer
+        # Buffer to hold messages before sending them to the target executor
+        # Key is the source executor ID, value is a list of messages
+        self._buffer: dict[str, list[Message]] = defaultdict(list)
 
     async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
         """Send a message through all edges in the fan-in edge group."""
