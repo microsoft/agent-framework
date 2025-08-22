@@ -7,7 +7,7 @@ using Microsoft.Extensions.AI.Agents;
 namespace Microsoft.Agents.Workflows;
 
 /// <summary>
-/// Provides extension methods for treating workfows as <see cref="AIAgent"/>
+/// Provides extension methods for treating workflows as <see cref="AIAgent"/>
 /// </summary>
 public static class WorkflowHostingExtensions
 {
