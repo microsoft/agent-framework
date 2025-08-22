@@ -161,7 +161,19 @@ class Runner:
                         if hasattr(executor, "_request_interceptors") and executor._id != message.source_id:
                             # Check if any registered interceptor can handle this request type
                             for registered_type in executor._request_interceptors:
-                                if is_instance_of(sub_request.data, registered_type):
+                                # Check type matching - handle both type and string cases
+                                matched = False
+                                if (
+                                    isinstance(registered_type, type)
+                                    and is_instance_of(sub_request.data, registered_type)
+                                ) or (
+                                    isinstance(registered_type, str)
+                                    and hasattr(sub_request.data, "__class__")
+                                    and sub_request.data.__class__.__name__ == registered_type
+                                ):
+                                    matched = True
+
+                                if matched:
                                     # Send directly to the intercepting executor
                                     await executor.execute(sub_request, self._ctx)  # type: ignore[arg-type]
                                     interceptor_found = True
