@@ -61,7 +61,7 @@ class EmailValidator(Executor):
         self._pending_email = None
 
     @handler
-    async def validate(
+    async def validate_request(
         self, request: EmailValidationRequest, ctx: WorkflowContext[DomainCheckRequest | ValidationResult]
     ) -> None:
         """Validate an email address."""
@@ -95,6 +95,7 @@ class EmailValidator(Executor):
 # Parent workflow with request interception
 class SmartEmailOrchestrator(Executor):
     """Parent orchestrator that can intercept domain checks."""
+    approved_domains: set[str] = set()
 
     def __init__(self, approved_domains: set[str] | None = None):
         """Initialize the SmartEmailOrchestrator with approved domains.
@@ -102,9 +103,8 @@ class SmartEmailOrchestrator(Executor):
         Args:
             approved_domains: Set of pre-approved domains, defaults to example.com, test.org, company.com
         """
-        super().__init__(id="email_orchestrator")
-        self.approved_domains = approved_domains or {"example.com", "test.org", "company.com"}
-        self.results = []
+        super().__init__(id="email_orchestrator", approved_domains=approved_domains)
+        self._results: list[ValidationResult] = []
 
     @handler
     async def start_validation(self, emails: list[str], ctx: WorkflowContext[EmailValidationRequest]) -> None:
@@ -119,16 +119,21 @@ class SmartEmailOrchestrator(Executor):
     ) -> RequestResponse[DomainCheckRequest, bool]:
         """Intercept domain check requests from sub-workflows."""
         if request.domain in self.approved_domains:
-            return RequestResponse.handled(True)
+            return RequestResponse[DomainCheckRequest, bool].handled(True)
         return RequestResponse.forward()
 
     @handler
     async def collect_result(self, result: ValidationResult, ctx: WorkflowContext[None]) -> None:
         """Collect validation results."""
-        self.results.append(result)
+        self._results.append(result)
+
+    @property
+    def results(self) -> list[ValidationResult]:
+        """Get the collected validation results."""
+        return self._results
 
 
-async def run_example():
+async def run_example() -> None:
     """Run the sub-workflow example."""
     # Create the email validation sub-workflow
     email_validator = EmailValidator()
@@ -173,7 +178,7 @@ async def run_example():
             pass  # Process external requests
 
         # Simulate external responses
-        external_responses = {}
+        external_responses: dict[str, bool] = {}
         for event in request_events:
             # Simulate external domain checking
             if event.data and hasattr(event.data, "domain"):

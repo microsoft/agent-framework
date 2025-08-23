@@ -120,17 +120,20 @@ class WorkflowGraphValidator:
         self._executors: dict[str, Executor] = {}
 
     # region Core Validation Methods
-    def validate_workflow(self, edge_groups: Sequence[EdgeGroup], start_executor: Executor | str) -> None:
+    def validate_workflow(
+        self, edge_groups: Sequence[EdgeGroup], executors: dict[str, Executor], start_executor: Executor | str
+    ) -> None:
         """Validate the entire workflow graph.
 
         Args:
             edge_groups: list of edge groups in the workflow
+            executors: Map of executor IDs to executor instances
             start_executor: The starting executor (can be instance or ID)
 
         Raises:
             WorkflowValidationError: If any validation fails
         """
-        self._executors = self._build_executor_map(edge_groups)
+        self._executors = executors
         self._edges = [edge for group in edge_groups for edge in group.edges]
         self._edge_groups = edge_groups
 
@@ -160,15 +163,6 @@ class WorkflowGraphValidator:
         self._validate_cycles()
         self._validate_interceptor_uniqueness()
 
-    def _build_executor_map(self, edge_groups: Sequence[EdgeGroup]) -> dict[str, Executor]:
-        """Build a map of executor IDs to executor instances."""
-        executors: dict[str, Executor] = {}
-        for group in edge_groups:
-            for executor in group.source_executors + group.target_executors:
-                executors[executor.id] = executor
-
-        return executors
-
     def _validate_handler_output_annotations(self) -> None:
         """Validate that each handler's ctx parameter is annotated with WorkflowContext[T].
 
@@ -182,14 +176,16 @@ class WorkflowGraphValidator:
 
         # Iterate over all registered executors in the workflow graph
         for executor_id, executor in self._executors.items():
-            for attr_name in dir(executor):
+            for attr_name in dir(executor.__class__):
+                if attr_name.startswith("_"):
+                    continue
                 # Retrieve attributes without binding (so the first parameter remains 'self').
                 # This ensures inspect.signature sees all three parameters: (self, message, ctx).
                 attr = None
                 from contextlib import suppress
 
                 with suppress(Exception):
-                    attr = inspect.getattr_static(executor, attr_name)
+                    attr = inspect.getattr_static(executor.__class__, attr_name)
                 if attr is None:
                     continue
                 # Consider only callables that were decorated with @handler
@@ -315,8 +311,8 @@ class WorkflowGraphValidator:
         Raises:
             TypeCompatibilityError: If type incompatibility is detected
         """
-        source_executor = edge.source
-        target_executor = edge.target
+        source_executor = self._executors[edge.source_id]
+        target_executor = self._executors[edge.target_id]
 
         # Get output types from source executor
         source_output_types = self._get_executor_output_types(source_executor)
@@ -384,12 +380,18 @@ class WorkflowGraphValidator:
         """
         output_types: list[type[Any]] = []
 
-        for attr_name in dir(executor):
-            attr = getattr(executor, attr_name)
-            if callable(attr) and hasattr(attr, "_handler_spec"):
-                handler_spec = attr._handler_spec  # type: ignore
-                handler_output_types = handler_spec.get("output_types", [])
-                output_types.extend(handler_output_types)
+        for attr_name in dir(executor.__class__):
+            if attr_name.startswith("_"):
+                continue
+            try:
+                attr = getattr(executor.__class__, attr_name)
+                if callable(attr) and hasattr(attr, "_handler_spec"):
+                    handler_spec = attr._handler_spec  # type: ignore
+                    handler_output_types = handler_spec.get("output_types", [])
+                    output_types.extend(handler_output_types)
+            except AttributeError:
+                # Skip attributes that may not be accessible
+                continue
 
         # Also include intercepted request types as potential outputs
         # since @intercepts_request methods can forward requests
@@ -693,15 +695,18 @@ class WorkflowGraphValidator:
 # endregion
 
 
-def validate_workflow_graph(edge_groups: Sequence[EdgeGroup], start_executor: Executor | str) -> None:
+def validate_workflow_graph(
+    edge_groups: Sequence[EdgeGroup], executors: dict[str, Executor], start_executor: Executor | str
+) -> None:
     """Convenience function to validate a workflow graph.
 
     Args:
         edge_groups: list of edge groups in the workflow
+        executors: Map of executor IDs to executor instances
         start_executor: The starting executor (can be instance or ID)
 
     Raises:
         WorkflowValidationError: If any validation fails
     """
     validator = WorkflowGraphValidator()
-    validator.validate_workflow(edge_groups, start_executor)
+    validator.validate_workflow(edge_groups, executors, start_executor)

@@ -47,12 +47,13 @@ class SimpleSubExecutor(Executor):
 class SimpleParent(Executor):
     """Simple parent executor."""
 
+    result: SimpleResponse | None = None
+
     def __init__(self):
         super().__init__(id="simple_parent")
-        self.result = None
 
     @handler
-    async def start(self, text: str, ctx: WorkflowContext[None]) -> None:
+    async def start(self, text: str, ctx: WorkflowContext[SimpleRequest]) -> None:
         """Start the process."""
         request = SimpleRequest(text=text)
         await ctx.send_message(request, target_id="sub_workflow")

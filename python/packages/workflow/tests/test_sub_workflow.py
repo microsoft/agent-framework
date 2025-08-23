@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
+from pydantic import Field
 
 from agent_framework_workflow import (
     Executor,
@@ -53,7 +54,7 @@ class EmailValidator(Executor):
         super().__init__(id="email_validator")
 
     @handler
-    async def validate(
+    async def validate_request(
         self, request: EmailValidationRequest, ctx: WorkflowContext[RequestInfoMessage | ValidationResult]
     ) -> None:
         """Validate an email address."""
@@ -86,13 +87,16 @@ class EmailValidator(Executor):
 class ParentOrchestrator(Executor):
     """Parent workflow orchestrator with domain knowledge."""
 
-    def __init__(self, approved_domains: set[str] | None = None):
-        super().__init__(id="parent_orchestrator")
-        self.approved_domains = approved_domains or {"example.com", "test.org"}
-        self.results: list[ValidationResult] = []
+    approved_domains: set[str] = Field(default_factory=lambda: {"example.com", "test.org"})
+    results: list[ValidationResult] = Field(default_factory=list)
+
+    def __init__(self, approved_domains: set[str] | None = None, **kwargs: Any):
+        if approved_domains is not None:
+            kwargs["approved_domains"] = approved_domains
+        super().__init__(id="parent_orchestrator", **kwargs)
 
     @handler
-    async def start(self, emails: list[str], ctx: WorkflowContext[None]) -> None:
+    async def start(self, emails: list[str], ctx: WorkflowContext[EmailValidationRequest]) -> None:
         """Start processing emails."""
         for email in emails:
             request = EmailValidationRequest(email=email)
@@ -117,7 +121,7 @@ class ParentOrchestrator(Executor):
 
 
 @pytest.mark.asyncio
-async def test_basic_sub_workflow():
+async def test_basic_sub_workflow() -> None:
     """Test basic sub-workflow execution without interception."""
     # Create sub-workflow
     email_validator = EmailValidator()
@@ -133,12 +137,13 @@ async def test_basic_sub_workflow():
 
     # Create parent workflow without interception
     class SimpleParent(Executor):
-        def __init__(self):
-            super().__init__(id="simple_parent")
-            self.result = None
+        result: ValidationResult | None = Field(default=None)
+
+        def __init__(self, **kwargs: Any):
+            super().__init__(id="simple_parent", **kwargs)
 
         @handler
-        async def start(self, email: str, ctx: WorkflowContext[None]) -> None:
+        async def start(self, email: str, ctx: WorkflowContext[EmailValidationRequest]) -> None:
             request = EmailValidationRequest(email=email)
             await ctx.send_message(request, target_id="email_workflow")
 
@@ -155,7 +160,8 @@ async def test_basic_sub_workflow():
         .set_start_executor(parent)
         .add_edge(parent, workflow_executor)
         .add_edge(workflow_executor, parent)
-        .add_edge(parent, main_request_info)  # For forwarded external requests
+        .add_edge(workflow_executor, main_request_info)
+        # .add_edge(parent, main_request_info)  # For forwarded external requests
         .add_edge(main_request_info, workflow_executor)  # CRITICAL: For SubWorkflowResponse routing
         .build()
     )
@@ -244,19 +250,20 @@ async def test_sub_workflow_with_interception():
 
 
 @pytest.mark.asyncio
-async def test_conditional_forwarding():
+async def test_conditional_forwarding() -> None:
     """Test conditional forwarding with RequestResponse.forward()."""
 
     class ConditionalParent(Executor):
         """Parent that conditionally handles requests."""
 
-        def __init__(self):
-            super().__init__(id="conditional_parent")
-            self.cache = {"cached.com": True}
-            self.result = None
+        cache: dict[str, bool] = Field(default_factory=lambda: {"cached.com": True})
+        result: ValidationResult | None = Field(default=None)
+
+        def __init__(self, **kwargs: Any):
+            super().__init__(id="conditional_parent", **kwargs)
 
         @handler
-        async def start(self, email: str, ctx: WorkflowContext[None]) -> None:
+        async def start(self, email: str, ctx: WorkflowContext[EmailValidationRequest]) -> None:
             request = EmailValidationRequest(email=email)
             await ctx.send_message(request, target_id="email_workflow")
 
@@ -306,6 +313,7 @@ async def test_conditional_forwarding():
     result = await main_workflow.run("user@cached.com")
     request_events = result.get_request_info_events()
     assert len(request_events) == 0  # Handled from cache
+    assert parent.result is not None
     assert parent.result.is_valid is True
 
     # Test uncached domain
@@ -315,22 +323,24 @@ async def test_conditional_forwarding():
     assert len(request_events) == 1  # Forwarded to external
 
     await main_workflow.send_responses({request_events[0].request_id: True})
+    assert parent.result is not None
     assert parent.result.is_valid is True
 
 
 @pytest.mark.asyncio
-async def test_workflow_scoped_interception():
+async def test_workflow_scoped_interception() -> None:
     """Test interception scoped to specific sub-workflows."""
 
     class MultiWorkflowParent(Executor):
         """Parent handling multiple sub-workflows."""
 
-        def __init__(self):
-            super().__init__(id="multi_parent")
-            self.results = {}
+        results: dict[str, ValidationResult] = Field(default_factory=dict)
+
+        def __init__(self, **kwargs: Any):
+            super().__init__(id="multi_parent", **kwargs)
 
         @handler
-        async def start(self, data: dict[str, str], ctx: WorkflowContext[None]) -> None:
+        async def start(self, data: dict[str, str], ctx: WorkflowContext[EmailValidationRequest]) -> None:
             # Send to different sub-workflows
             await ctx.send_message(EmailValidationRequest(email=data["email1"]), target_id="workflow_a")
             await ctx.send_message(EmailValidationRequest(email=data["email2"]), target_id="workflow_b")

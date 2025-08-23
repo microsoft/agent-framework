@@ -82,7 +82,7 @@ class EmailValidator(Executor):
         super().__init__(id="email_validator")
 
     @handler
-    async def validate(
+    async def validate_request(
         self, request: EmailValidationRequest, ctx: WorkflowContext[DomainCheckRequest | ValidationResult]
     ) -> None:
         """Validate an email address."""

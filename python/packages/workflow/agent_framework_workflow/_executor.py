@@ -13,6 +13,8 @@ if TYPE_CHECKING:
     from ._workflow import Workflow
 
 from agent_framework import AgentRunResponse, AgentRunResponseUpdate, AgentThread, AIAgent, ChatMessage
+from agent_framework._pydantic import AFBaseModel
+from pydantic import Field
 
 from ._events import (
     AgentRunEvent,
@@ -27,16 +29,33 @@ from ._workflow_context import WorkflowContext
 # region Executor
 
 
-class Executor:
+class Executor(AFBaseModel):
     """An executor is a component that processes messages in a workflow."""
 
-    def __init__(self, id: str | None = None) -> None:
+    # Provide a default so static analyzers (e.g., pyright) don't require passing `id`.
+    # Runtime still sets a concrete value in __init__.
+    id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        min_length=1,
+        description="Unique identifier for the executor",
+    )
+    type: str = Field(default="", description="The type of executor, corresponding to the class name")
+
+    def __init__(self, id: str | None = None, **kwargs: Any) -> None:
         """Initialize the executor with a unique identifier.
 
         Args:
-            id: A unique identifier for the executor. If None, a new UUID will be generated.
+            id: A unique identifier for the executor. If None, a new ID will be generated
+                following the format <class_name>/<uuid>.
+            kwargs: Additional keyword arguments. Unused in this implementation.
         """
-        self._id = id or f"{self.__class__.__name__}/{uuid.uuid4()}"
+        executor_id = f"{self.__class__.__name__}/{uuid.uuid4()}" if id is None else id
+
+        kwargs.update({"id": executor_id})
+        if "type" not in kwargs:
+            kwargs["type"] = self.__class__.__name__
+
+        super().__init__(**kwargs)
 
         self._handlers: dict[type, Callable[[Any, WorkflowContext[Any]], Any]] = {}
         self._request_interceptors: dict[type | str, list[dict[str, Any]]] = {}
@@ -59,6 +78,8 @@ class Executor:
         Returns:
             An awaitable that resolves to the result of the execution.
         """
+        # Handle case where Message wrapper is passed instead of raw data
+
         # Lazy registration for SubWorkflowRequestInfo if we have interceptors
         if self._request_interceptors and message.__class__.__name__ == "SubWorkflowRequestInfo":
             # Directly handle SubWorkflowRequestInfo
@@ -79,39 +100,43 @@ class Executor:
         await handler(message, context)
         await context.add_event(ExecutorCompletedEvent(self.id))
 
-    @property
-    def id(self) -> str:
-        """Get the unique identifier of the executor."""
-        return self._id
-
     def _discover_handlers(self) -> None:
         """Discover message handlers and request interceptors in the executor class."""
-        for attr_name in dir(self):
-            attr = getattr(self, attr_name)
-            if callable(attr):
-                # Discover @handler methods and @intercepts_request methods
-                if hasattr(attr, "_handler_spec"):
-                    handler_spec = attr._handler_spec  # type: ignore
-                    message_type = handler_spec["message_type"]
+        # Use __class__.__dict__ to avoid accessing pydantic's dynamic attributes
+        for attr_name in dir(self.__class__):
+            try:
+                attr = getattr(self.__class__, attr_name)
+                if callable(attr):
+                    # Discover @handler methods
+                    if hasattr(attr, "_handler_spec"):
+                        handler_spec = attr._handler_spec  # type: ignore
+                        message_type = handler_spec["message_type"]
 
-                    # Keep full generic types for handler registration to avoid conflicts
-                    # Different RequestResponse[T, U] specializations are distinct handler types
+                        # Keep full generic types for handler registration to avoid conflicts
+                        # Different RequestResponse[T, U] specializations are distinct handler types
 
-                    if self._handlers.get(message_type) is not None:
-                        raise ValueError(f"Duplicate handler for type {message_type} in {self.__class__.__name__}")
-                    self._handlers[message_type] = attr
+                        if self._handlers.get(message_type) is not None:
+                            raise ValueError(f"Duplicate handler for type {message_type} in {self.__class__.__name__}")
+                        # Get the bound method
+                        bound_method = getattr(self, attr_name)
+                        self._handlers[message_type] = bound_method
 
-                # Discover @intercepts_request methods
-                if hasattr(attr, "_intercepts_request"):
-                    interceptor_info = {
-                        "method": attr,
-                        "from_workflow": getattr(attr, "_from_workflow", None),
-                        "condition": getattr(attr, "_intercept_condition", None),
-                    }
-                    request_type = attr._intercepts_request  # type: ignore
-                    if request_type not in self._request_interceptors:
-                        self._request_interceptors[request_type] = []
-                    self._request_interceptors[request_type].append(interceptor_info)
+                    # Discover @intercepts_request methods
+                    if hasattr(attr, "_intercepts_request"):
+                        # Get the bound method for interceptors
+                        bound_method = getattr(self, attr_name)
+                        interceptor_info = {
+                            "method": bound_method,
+                            "from_workflow": getattr(attr, "_from_workflow", None),
+                            "condition": getattr(attr, "_intercept_condition", None),
+                        }
+                        request_type = attr._intercepts_request  # type: ignore
+                        if request_type not in self._request_interceptors:
+                            self._request_interceptors[request_type] = []
+                        self._request_interceptors[request_type].append(interceptor_info)
+            except AttributeError:
+                # Skip attributes that may not be accessible
+                continue
 
     def _register_sub_workflow_handler(self) -> None:
         """Register automatic handler for SubWorkflowRequestInfo messages."""
