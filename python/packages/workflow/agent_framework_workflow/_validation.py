@@ -323,13 +323,21 @@ class WorkflowGraphValidator:
         # If either executor has no type information, log warning and skip validation
         # This allows for dynamic typing scenarios but warns about reduced validation coverage
         if not source_output_types or not target_input_types:
-            if not source_output_types:
+            # Suppress warnings for built-in workflow components where dynamic typing is expected
+            try:
+                from ._executor import RequestInfoExecutor, WorkflowExecutor  # local import to avoid cycles
+
+                builtin_types = (RequestInfoExecutor, WorkflowExecutor)
+            except Exception:
+                builtin_types = tuple()  # type: ignore[assignment]
+
+            if not source_output_types and not isinstance(source_executor, builtin_types):
                 logger.warning(
                     f"Executor '{source_executor.id}' has no output type annotations. "
                     f"Type compatibility validation will be skipped for edges from this executor. "
                     f"Consider adding WorkflowContext[T] generics in handlers for better validation."
                 )
-            if not target_input_types:
+            if not target_input_types and not isinstance(target_executor, builtin_types):
                 logger.warning(
                     f"Executor '{target_executor.id}' has no input type annotations. "
                     f"Type compatibility validation will be skipped for edges to this executor. "
