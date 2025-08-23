@@ -161,7 +161,6 @@ async def test_basic_sub_workflow() -> None:
         .add_edge(parent, workflow_executor)
         .add_edge(workflow_executor, parent)
         .add_edge(workflow_executor, main_request_info)
-        # .add_edge(parent, main_request_info)  # For forwarded external requests
         .add_edge(main_request_info, workflow_executor)  # CRITICAL: For SubWorkflowResponse routing
         .build()
     )

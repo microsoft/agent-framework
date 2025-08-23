@@ -182,6 +182,14 @@ class Runner:
 
                     if not interceptor_found:
                         # No interceptor found - send directly to RequestInfoExecutor
+                        # Warn that the sub-workflow request is not being handled by parent workflow
+                        logger.info(
+                            f"Sub-workflow request of type '{sub_request.data.__class__.__name__}' "
+                            f"from sub-workflow '{sub_request.sub_workflow_id}' was not intercepted by "
+                            f"any parent workflow executor. The request will be forwarded as an external "
+                            f"request."
+                        )
+
                         # Find the RequestInfoExecutor instance
                         request_info_executor = self._find_request_info_executor()
 
@@ -193,6 +201,13 @@ class Runner:
                                 self._ctx,
                             )
                             await request_info_executor.execute(sub_request, workflow_ctx)
+                        else:
+                            logger.warning(
+                                f"Sub-workflow request of type '{sub_request.data.__class__.__name__}' "
+                                f"from sub-workflow '{sub_request.sub_workflow_id}' could not be handled: "
+                                f"no RequestInfoExecutor found in the workflow. Add a RequestInfoExecutor "
+                                f"to handle external requests or add an @intercepts_request handler."
+                            )
 
             async def _deliver_message_inner(edge_runner: EdgeRunner, message: Message) -> bool:
                 """Inner loop to deliver a single message through an edge runner."""
