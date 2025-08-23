@@ -174,6 +174,11 @@ class Runner:
 
                                 if matched:
                                     # Send directly to the intercepting executor
+                                    logger.info(
+                                        f"Sending sub-workflow request of type '{sub_request.data.__class__.__name__}' "
+                                        f"from sub-workflow '{sub_request.sub_workflow_id}' "
+                                        f"to executor '{executor.id}' for interception."
+                                    )
                                     await executor.execute(sub_request, self._ctx)  # type: ignore[arg-type]
                                     interceptor_found = True
                                     break
@@ -181,14 +186,7 @@ class Runner:
                                 break
 
                     if not interceptor_found:
-                        # No interceptor found - send directly to RequestInfoExecutor
-                        # Warn that the sub-workflow request is not being handled by parent workflow
-                        logger.info(
-                            f"Sub-workflow request of type '{sub_request.data.__class__.__name__}' "
-                            f"from sub-workflow '{sub_request.sub_workflow_id}' was not intercepted by "
-                            f"any parent workflow executor. The request will be forwarded as an external "
-                            f"request."
-                        )
+                        # No interceptor found - send directly to RequestInfoExecutor if available.
 
                         # Find the RequestInfoExecutor instance
                         request_info_executor = self._find_request_info_executor()
@@ -199,6 +197,11 @@ class Runner:
                                 ["Runner"],
                                 self._shared_state,
                                 self._ctx,
+                            )
+                            logger.info(
+                                f"Sending sub-workflow request of type '{sub_request.data.__class__.__name__}' "
+                                f"from sub-workflow '{sub_request.sub_workflow_id}' to RequestInfoExecutor "
+                                f"'{request_info_executor.id}'"
                             )
                             await request_info_executor.execute(sub_request, workflow_ctx)
                         else:
