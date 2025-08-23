@@ -17,7 +17,7 @@ from agent_framework import (
     TextContent,
     ai_function,
 )
-from agent_framework.exceptions import ServiceInitializationError
+from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.openai._exceptions import OpenAIContentFilterException
 
@@ -375,3 +375,28 @@ async def test_openai_chat_client_web_search_streaming() -> None:
             if isinstance(content, TextContent) and content.text:
                 full_message += content.text
     assert "Seattle" in full_message
+
+
+async def test_exception_message_includes_original_error_details() -> None:
+    """Test that exception messages include original error details in the new format."""
+    client = OpenAIChatClient(ai_model_id="test-model", api_key="test-key")
+    messages = [ChatMessage(role="user", text="test message")]
+
+    mock_response = MagicMock()
+    original_error_message = "Invalid API request format"
+    mock_error = BadRequestError(
+        message=original_error_message,
+        response=mock_response,
+        body={"error": {"code": "invalid_request", "message": original_error_message}},
+    )
+    mock_error.code = "invalid_request"
+
+    with (
+        patch.object(client.client.chat.completions, "create", side_effect=mock_error),
+        pytest.raises(ServiceResponseException) as exc_info,
+    ):
+        await client._inner_get_response(messages=messages, chat_options=ChatOptions())  # type: ignore
+
+    exception_message = str(exc_info.value)
+    assert "service failed to complete the prompt:" in exception_message
+    assert original_error_message in exception_message
