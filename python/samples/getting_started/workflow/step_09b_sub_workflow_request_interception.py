@@ -1,12 +1,27 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-# !/usr/bin/env python3
-"""Example demonstrating sub-workflow feature with request interception.
+"""
+The following sample demonstrates sub-workflows with request interception and conditional forwarding.
 
-This example shows:
-1. A parent workflow that can intercept requests from sub-workflows
-2. Sub-workflows that work normally without knowing they're nested
-3. Request forwarding when parent can't handle requests
+This sample shows how to:
+1. Create workflows that execute other workflows as sub-workflows
+2. Intercept requests from sub-workflows in parent workflows using @intercepts_request
+3. Conditionally handle or forward requests using RequestResponse.handled() and RequestResponse.forward()
+4. Handle external requests that are forwarded by the parent workflow
+
+The example simulates an email validation system where:
+- Sub-workflows validate email addresses and request domain checks
+- Parent workflows can intercept domain check requests for optimization
+- Known domains are approved locally, unknown domains are forwarded externally
+- External domain check requests are processed and responses sent back
+
+Key concepts demonstrated:
+- WorkflowExecutor: Wraps a workflow to make it behave as an executor
+- @intercepts_request: Decorator for parent workflows to handle sub-workflow requests
+- RequestResponse: Enables conditional handling vs forwarding of requests
+- Conditional logic: Known domains handled locally, unknown domains forwarded
+- Sub-workflow isolation: Sub-workflows work normally without knowing they're nested
+- External request handling: Processing forwarded requests and sending responses back
 """
 
 import asyncio
