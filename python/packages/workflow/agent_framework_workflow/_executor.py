@@ -211,17 +211,13 @@ class Executor(AFBaseModel):
 
                         if correlated_response.is_handled:
                             # Send response back to sub-workflow
-                            from ._runner_context import Message
-
-                            response_message = Message(
-                                source_id=self.id,
-                                target_id=request.sub_workflow_id,
-                                data=SubWorkflowResponse(
+                            await ctx.send_message(
+                                SubWorkflowResponse(
                                     request_id=request.request_id,
                                     data=correlated_response.data,
                                 ),
+                                target_id=request.sub_workflow_id,
                             )
-                            await ctx.send_message(response_message)
                         else:
                             # Forward WITH CONTEXT PRESERVED
                             # Update the data if interceptor provided a modified request
@@ -229,13 +225,7 @@ class Executor(AFBaseModel):
                                 request.data = correlated_response.forward_request
 
                             # Send the inner request to RequestInfoExecutor to create external request
-                            from ._runner_context import Message
-
-                            forward_message = Message(
-                                source_id=self.id,
-                                data=request,
-                            )
-                            await ctx.send_message(forward_message)
+                            await ctx.send_message(request)
                     else:
                         # Legacy support: direct return means handled
                         await ctx.send_message(
@@ -249,10 +239,7 @@ class Executor(AFBaseModel):
 
         # No interceptor found - forward inner request to RequestInfoExecutor
         # This sends the original request to RequestInfoExecutor
-        from ._runner_context import Message
-
-        passthrough_message = Message(source_id=self.id, data=request.data)
-        await ctx.send_message(passthrough_message)
+        await ctx.send_message(request.data)
 
     def can_handle(self, message: Any) -> bool:
         """Check if the executor can handle a given message type.

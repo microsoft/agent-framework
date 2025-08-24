@@ -182,7 +182,7 @@ class Runner:
                                     # Create WorkflowContext with trace context from message
                                     workflow_ctx: WorkflowContext[Any] = WorkflowContext(
                                         executor.id,
-                                        ["Runner"],
+                                        [message.source_id],
                                         self._shared_state,
                                         self._ctx,
                                         trace_context=message.trace_context,
@@ -203,7 +203,7 @@ class Runner:
                         if request_info_executor:
                             request_info_workflow_ctx: WorkflowContext[None] = WorkflowContext(
                                 request_info_executor.id,
-                                ["Runner"],
+                                [message.source_id],
                                 self._shared_state,
                                 self._ctx,
                                 trace_context=message.trace_context,
