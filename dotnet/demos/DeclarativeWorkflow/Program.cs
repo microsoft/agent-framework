@@ -28,7 +28,6 @@ namespace Demo.DeclarativeWorkflow;
 internal static class Program
 {
     private const string DefaultWorkflow = "HelloWorld.yaml";
-    //private const string HttpEventFileName = "http.log";
 
     public static async Task Main(string[] args)
     {
@@ -37,10 +36,6 @@ internal static class Program
         // Load configuration and create kernel with Azure OpenAI Chat Completion service
         IConfiguration config = InitializeConfig();
 
-        // Create custom HTTP client with intercept handler
-        //await using StreamWriter eventWriter = new(HttpEventFileName, append: false);
-        //HttpInterceptor interceptor = new(eventWriter);
-        //using HttpClient customClient = new(new HttpInterceptHandler() { OnIntercept = interceptor.OnResponseAsync, CheckCertificateRevocationList = true }, disposeHandler: true);
         PersistentAgentsClient client = new(Throw.IfNull(config["AzureAI:Endpoint"]), new AzureCliCredential());
 
         // Read and parse the declarative workflow.
@@ -53,7 +48,6 @@ internal static class Program
         DeclarativeWorkflowOptions workflowContext =
             new(projectEndpoint: Throw.IfNull(config["AzureAI:Endpoint"]))
             {
-                //HttpClient = customClient, // Uncomment to use custom HTTP client
                 ProjectCredentials = new AzureCliCredential(),
             };
 

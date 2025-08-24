@@ -1,24 +1,62 @@
 ﻿# Summary
 
-This demo showcases the ability to parse a YAML workflow based on Copilo Studio actions
-and produce a `KernelProcess` that can be executed in the same fashion as any other `KernelProcess`.
+This demo showcases the ability to parse a declarative Foundry Workflow file (YAML) to build a `Workflow<>`
+be executed using the same pattern as any code-based workflow.
 
-## Key Features
+## Configuration
 
-This demo illustrates the following capabilities:
+This demo requires configuration to access agents an [Azure Foundry Project](https://learn.microsoft.com/azure/ai-foundry).
 
-- Parse YAML workflow actions using `Microsoft.Bot.ObjectModel`
-- Store and retrieve variable state
-- Evaluate expressions using `Microsoft.PowerFx.Interpreter`
-- Support control flow (foreach, goto, etc...)
-- Generate response from LLM using _Semantic Kernel_
+We suggest using .NET [Secret Manager](https://learn.microsoft.com/en-us/aspnet/core/security/app-secrets) 
+to avoid the risk of leaking secrets into the repository, branches and pull requests. 
+You can also use environment variables if you prefer.
 
-## Status Details
+To set your secrets with .NET Secret Manager:
 
-- This is using a POC based on the _Process Framework_ from the _Semantic Kernel_ repo.
-  - When the redesigned _Process Framework_ is available in the _Agent Framework_ repo it must 
-    be re-implemented using the new API patterns.
-  - Capturing and restoring workflow state is not yet available in either version of the _Process Framework_.
-  - The ability to emit events from the _KernelProcess_ to the host API is not yet supported.
-- `Microsoft.Bot.ObjectModel` is not (yet) available as a dependency that may be referenced by a _GitHub_ repository.
-- The full set of CPSDL actions to be supported is not fully defined, nor are the "Pri-0" samples.
+1. From the root of the respository, navigate the console to the project folder:
+
+    ```
+    cd dotnet/demos/DeclarativeWorkflow
+    ```
+
+2. Examine existing secret definitions:
+
+    ```
+    dotnet user-secrets list
+    ```
+
+3. If needed, perform first time initialization:
+
+    ```
+    dotnet user-secrets init
+    ```
+
+4. Define setting that identifies your Azure Foundry Project (endpoint):
+
+    ```
+    dotnet user-secrets set "AzureAI:Endpoint" "https://..."
+    ```
+
+5. Use [_Azure CLI_](https://learn.microsoft.com/cli/azure/authenticate-azure-cli) to authorize access to your Azure Foundry Project:
+
+    ```
+    az login
+    az account get-access-token
+    ```
+
+## Execution
+
+Run the demo from the console by specifying a path to a declarative (YAML) workflow file.  
+The repository has example workflows available in the root [`/workflows`](../../../workflows) folder.
+
+1. From the root of the respository, navigate the console to the project folder:
+
+    ```
+    cd dotnet/demos/DeclarativeWorkflow
+    ```
+
+2. Run the demo with a path to a workflow file:
+
+    ```
+    dotnet run ../../../workflows/HelloWorld.yaml
+    ```
