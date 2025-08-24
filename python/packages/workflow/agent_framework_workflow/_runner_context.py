@@ -24,6 +24,10 @@ class Message:
     source_id: str
     target_id: str | None = None
 
+    # OpenTelemetry trace context fields for message propagation
+    trace_context: dict[str, str] | None = None  # W3C Trace Context headers
+    source_span_id: str | None = None  # Publishing span ID for linking
+
 
 class CheckpointState(TypedDict):
     messages: dict[str, list[dict[str, Any]]]
@@ -268,7 +272,14 @@ class InProcRunnerContext:
         serializable_messages: dict[str, list[dict[str, Any]]] = {}
         for source_id, message_list in self._messages.items():
             serializable_messages[source_id] = [
-                {"data": msg.data, "source_id": msg.source_id, "target_id": msg.target_id} for msg in message_list
+                {
+                    "data": msg.data,
+                    "source_id": msg.source_id,
+                    "target_id": msg.target_id,
+                    "trace_context": msg.trace_context,
+                    "source_span_id": msg.source_span_id,
+                }
+                for msg in message_list
             ]
         return {
             "messages": serializable_messages,
@@ -287,6 +298,8 @@ class InProcRunnerContext:
                     data=msg.get("data"),
                     source_id=msg.get("source_id", ""),
                     target_id=msg.get("target_id"),
+                    trace_context=msg.get("trace_context"),
+                    source_span_id=msg.get("source_span_id"),
                 )
                 for msg in message_list
             ]

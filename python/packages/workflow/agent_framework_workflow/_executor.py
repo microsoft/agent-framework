@@ -78,27 +78,44 @@ class Executor(AFBaseModel):
         Returns:
             An awaitable that resolves to the result of the execution.
         """
+        # Create processing span for tracing (gracefully handles disabled tracing)
+        from ._telemetry import workflow_tracer
+
+        source_trace_context = getattr(context, "_trace_context", None)
+        source_span_id = getattr(context, "_source_span_id", None)
+
         # Handle case where Message wrapper is passed instead of raw data
+        from ._runner_context import Message
 
-        # Lazy registration for SubWorkflowRequestInfo if we have interceptors
-        if self._request_interceptors and message.__class__.__name__ == "SubWorkflowRequestInfo":
-            # Directly handle SubWorkflowRequestInfo
+        if isinstance(message, Message):
+            message = message.data
+
+        with workflow_tracer.create_processing_span(
+            self.id,
+            self.__class__.__name__,
+            type(message).__name__,
+            source_trace_context=source_trace_context,
+            source_span_id=source_span_id,
+        ):
+            # Lazy registration for SubWorkflowRequestInfo if we have interceptors
+            if self._request_interceptors and message.__class__.__name__ == "SubWorkflowRequestInfo":
+                # Directly handle SubWorkflowRequestInfo
+                await context.add_event(ExecutorInvokeEvent(self.id))
+                await self._handle_sub_workflow_request(message, context)
+                await context.add_event(ExecutorCompletedEvent(self.id))
+                return
+
+            handler: Callable[[Any, WorkflowContext[Any]], Any] | None = None
+            for message_type in self._handlers:
+                if is_instance_of(message, message_type):
+                    handler = self._handlers[message_type]
+                    break
+
+            if handler is None:
+                raise RuntimeError(f"Executor {self.__class__.__name__} cannot handle message of type {type(message)}.")
             await context.add_event(ExecutorInvokeEvent(self.id))
-            await self._handle_sub_workflow_request(message, context)
+            await handler(message, context)
             await context.add_event(ExecutorCompletedEvent(self.id))
-            return
-
-        handler: Callable[[Any, WorkflowContext[Any]], Any] | None = None
-        for message_type in self._handlers:
-            if is_instance_of(message, message_type):
-                handler = self._handlers[message_type]
-                break
-
-        if handler is None:
-            raise RuntimeError(f"Executor {self.__class__.__name__} cannot handle message of type {type(message)}.")
-        await context.add_event(ExecutorInvokeEvent(self.id))
-        await handler(message, context)
-        await context.add_event(ExecutorCompletedEvent(self.id))
 
     def _discover_handlers(self) -> None:
         """Discover message handlers and request interceptors in the executor class."""

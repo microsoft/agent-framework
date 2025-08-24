@@ -49,14 +49,26 @@ class EdgeRunner(ABC):
         return self._executors[executor_id].can_handle(message_data)
 
     async def _execute_on_target(
-        self, target_id: str, source_id: str, message_data: Any, shared_state: SharedState, ctx: RunnerContext
+        self, target_id: str, source_id: str, message: Message, shared_state: SharedState, ctx: RunnerContext
     ) -> None:
-        """Execute a message on a target executor."""
+        """Execute a message on a target executor with trace context."""
         if target_id not in self._executors:
             raise RuntimeError(f"Target executor {target_id} not found.")
 
         target_executor = self._executors[target_id]
-        await target_executor.execute(message_data, WorkflowContext(target_id, [source_id], shared_state, ctx))
+
+        # Create WorkflowContext with trace context from message
+        workflow_context: WorkflowContext[Any] = WorkflowContext(
+            target_id,
+            [source_id],
+            shared_state,
+            ctx,
+            trace_context=message.trace_context,  # Pass trace context to WorkflowContext
+            source_span_id=message.source_span_id,  # Pass source span ID for linking
+        )
+
+        # Execute with trace context in WorkflowContext
+        await target_executor.execute(message.data, workflow_context)
 
 
 class SingleEdgeRunner(EdgeRunner):
@@ -73,9 +85,7 @@ class SingleEdgeRunner(EdgeRunner):
 
         if self._can_handle(self._edge.target_id, message.data):
             if self._edge.should_route(message.data):
-                await self._execute_on_target(
-                    self._edge.target_id, self._edge.source_id, message.data, shared_state, ctx
-                )
+                await self._execute_on_target(self._edge.target_id, self._edge.source_id, message, shared_state, ctx)
             return True
 
         return False
@@ -108,7 +118,7 @@ class FanOutEdgeRunner(EdgeRunner):
                 edge = self._target_map.get(message.target_id)
                 if edge and self._can_handle(edge.target_id, message.data):
                     if edge.should_route(message.data):
-                        await self._execute_on_target(edge.target_id, edge.source_id, message.data, shared_state, ctx)
+                        await self._execute_on_target(edge.target_id, edge.source_id, message, shared_state, ctx)
                     return True
             return False
 
@@ -117,7 +127,7 @@ class FanOutEdgeRunner(EdgeRunner):
             """Send the message to the edge."""
             if self._can_handle(edge.target_id, message.data):
                 if edge.should_route(message.data):
-                    await self._execute_on_target(edge.target_id, edge.source_id, message.data, shared_state, ctx)
+                    await self._execute_on_target(edge.target_id, edge.source_id, message, shared_state, ctx)
                 return True
             return False
 
@@ -159,8 +169,17 @@ class FanInEdgeRunner(EdgeRunner):
             self._buffer.clear()
             # Send aggregated data to target
             aggregated_data = [msg.data for msg in messages_to_send]
+            # Create a new Message object for the aggregated data
+            # Use the first message's trace context as the representative trace context
+            first_message = messages_to_send[0] if messages_to_send else None
+            aggregated_message = Message(
+                data=aggregated_data,
+                source_id=self._edge_group.__class__.__name__,
+                trace_context=first_message.trace_context if first_message else None,
+                source_span_id=first_message.source_span_id if first_message else None,
+            )
             await self._execute_on_target(
-                self._edges[0].target_id, self._edge_group.__class__.__name__, aggregated_data, shared_state, ctx
+                self._edges[0].target_id, self._edge_group.__class__.__name__, aggregated_message, shared_state, ctx
             )
 
         return True

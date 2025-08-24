@@ -2,9 +2,12 @@
 
 from typing import Any, Generic, TypeVar
 
+from opentelemetry.propagate import inject
+
 from ._events import WorkflowEvent
 from ._runner_context import Message, RunnerContext
 from ._shared_state import SharedState
+from ._telemetry import workflow_tracer
 
 T_Out = TypeVar("T_Out")
 
@@ -22,6 +25,8 @@ class WorkflowContext(Generic[T_Out]):
         source_executor_ids: list[str],
         shared_state: SharedState,
         runner_context: RunnerContext,
+        trace_context: dict[str, str] | None = None,  # OpenTelemetry trace context
+        source_span_id: str | None = None,  # Source span ID for linking
     ):
         """Initialize the executor context with the given workflow context.
 
@@ -32,11 +37,17 @@ class WorkflowContext(Generic[T_Out]):
                 messages to the same executor.
             shared_state: The shared state for the workflow.
             runner_context: The runner context that provides methods to send messages and events.
+            trace_context: Optional trace context for OpenTelemetry propagation.
+            source_span_id: Optional source span ID for linking (not for nesting).
         """
         self._executor_id = executor_id
         self._source_executor_ids = source_executor_ids
         self._runner_context = runner_context
         self._shared_state = shared_state
+
+        # Store trace context and source span ID for linking
+        self._trace_context = trace_context
+        self._source_span_id = source_span_id
 
         if not self._source_executor_ids:
             raise ValueError("source_executor_ids cannot be empty. At least one source executor ID is required.")
@@ -49,13 +60,20 @@ class WorkflowContext(Generic[T_Out]):
             target_id: The ID of the target executor to send the message to.
                        If None, the message will be sent to all target executors.
         """
-        await self._runner_context.send_message(
-            Message(
-                data=message,
-                source_id=self._executor_id,
-                target_id=target_id,
-            )
-        )
+        # Create publishing span (inherits current trace context automatically)
+        with workflow_tracer.create_publishing_span(type(message).__name__, target_id) as span:
+            # Create Message wrapper
+            msg = Message(data=message, source_id=self._executor_id, target_id=target_id)
+
+            # Inject current trace context if tracing enabled
+            if workflow_tracer.enabled and span and span.is_recording():
+                trace_context: dict[str, str] = {}
+                inject(trace_context)  # Inject current trace context for message propagation
+
+                msg.trace_context = trace_context
+                msg.source_span_id = format(span.get_span_context().span_id, "016x")
+
+            await self._runner_context.send_message(msg)
 
     async def add_event(self, event: WorkflowEvent) -> None:
         """Add an event to the workflow context."""
