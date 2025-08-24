@@ -83,11 +83,23 @@ internal sealed class WorkflowScopes : IEnumerable<WorkflowScope>
         return FormulaValue.NewBlank();
     }
 
-    public void Clear(string scopeName) => this._scopes[scopeName].Clear();
+    public void Clear(string scopeName)
+    {
+        foreach (KeyValuePair<string, FormulaValue> scopeKvp in this._scopes[scopeName])
+        {
+            this.Set(scopeKvp.Key, scopeName, FormulaValue.NewBlank(scopeKvp.Value.Type));
+        }
+    }
 
-    public void Remove(string name) => this.Remove(name, VariableScopeNames.Topic);
+    public void Reset(string name) => this.Reset(name, VariableScopeNames.Topic);
 
-    public void Remove(string name, string scopeName) => this._scopes[scopeName].Remove(name);
+    public void Reset(string name, string scopeName)
+    {
+        if (this._scopes[scopeName].TryGetValue(name, out FormulaValue? value))
+        {
+            this.Set(name, scopeName, FormulaValue.NewBlank(value.Type));
+        }
+    }
 
     public void Set(string name, FormulaValue value) => this.Set(name, VariableScopeNames.Topic, value);
 

@@ -5,7 +5,12 @@ beginDialog:
   id: workflow_demo
   actions:
 
+    - kind: SetVariable
+      id: setvar_userinput
+      variable: Topic.UserInput
+      value: =System.LastMessage.Text
+
     # Respond with input
     - kind: SendActivity
       id: sendActivity_demo
-      activity: {System.LastMessage.Text}
+      activity: {Topic.UserInput}

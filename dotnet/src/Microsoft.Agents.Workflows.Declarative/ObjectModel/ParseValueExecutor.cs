@@ -29,11 +29,11 @@ internal sealed class ParseValueExecutor(ParseValue model) :
         {
             parsedResult = recordValue.ToFormulaValue();
         }
-        else if (expressionResult.Value is StringDataValue stringValue) // %%% NEEDED ???
+        else if (expressionResult.Value is StringDataValue stringValue)
         {
             if (string.IsNullOrWhiteSpace(stringValue.Value))
             {
-                parsedResult = FormulaValue.NewBlank();
+                parsedResult = FormulaValue.NewBlank(expressionResult.Value.GetDataType().ToFormulaType());
             }
             else
             {

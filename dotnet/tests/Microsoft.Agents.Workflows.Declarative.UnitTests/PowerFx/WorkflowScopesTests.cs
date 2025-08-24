@@ -176,7 +176,7 @@ public class WorkflowScopesTests
         Assert.Equal(testValue, result);
 
         // Act
-        scopes.Remove("key1");
+        scopes.Reset("key1");
 
         // Assert
         FormulaValue resultBlank = scopes.Get("key1");

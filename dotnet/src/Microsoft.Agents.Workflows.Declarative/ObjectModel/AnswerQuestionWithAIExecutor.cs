@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -24,7 +23,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
         StringExpression userInputExpression = Throw.IfNull(this.Model.UserInput, $"{nameof(this.Model)}.{nameof(this.Model.UserInput)}");
 
         string agentInstructions = this.State.Format(this.Model.AdditionalInstructions) ?? string.Empty;
-        // %%% HAXX - AGENT ID in "AdditionalInstructions"
+        // %%% HAXX - AGENT ID in "AdditionalInstructions" (TODO: OM)
         string agentId;
         string? additionalInstructions = null;
         int delimiterIndex = agentInstructions.IndexOf(',');
@@ -87,7 +86,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
 
         AgentRunResponse agentResponse = agentResponseUpdates.ToAgentRunResponse();
 
-        ChatMessage response = agentResponse.Messages.Last(); // %%% DECISION: Is last sufficient? (probably not)
+        ChatMessage response = agentResponse.Messages.Last();
         this.State.Set(VariableScopeNames.System, "LastMessage", response.ToRecordValue());
         if (this.Model.AutoSend)
         {
@@ -96,7 +95,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
 
         if (conversationValue is not StringValue)
         {
-            this.AssignTarget(PropertyPath.FromSegments(VariableScopeNames.System, this.Model.AutoSend ? "ConversationId" : "InternalId"), FormulaValue.New(conversationId)); // %%% HAXX: INTERNAL THREAD
+            this.AssignTarget(PropertyPath.FromSegments(VariableScopeNames.System, this.Model.AutoSend ? "ConversationId" : "InternalId"), FormulaValue.New(conversationId)); // %%% HAXX: INTERNAL THREAD (TODO: OM)
         }
 
         PropertyPath? variablePath = this.Model.Variable?.Path;

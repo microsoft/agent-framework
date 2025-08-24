@@ -1,9 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.IO;
+using System.Linq;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Yaml;
+using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.Workflows.Declarative;
 
@@ -17,13 +20,24 @@ public static class DeclarativeWorkflowBuilder
     /// </summary>
     /// <param name="yamlReader">The reader that provides the workflow object model YAML.</param>
     /// <param name="options">The execution context for the workflow.</param>
+    /// <param name="inputTransform">An optional function to transform the input message into a <see cref="ChatMessage"/>.</param>
     /// <returns>The <see cref="Workflow"/> that corresponds with the YAML object model.</returns>
-    public static Workflow<TInput> Build<TInput>(TextReader yamlReader, DeclarativeWorkflowOptions options) where TInput : notnull
+    public static Workflow<TInput> Build<TInput>(
+        TextReader yamlReader,
+        DeclarativeWorkflowOptions options,
+        Func<TInput, ChatMessage>? inputTransform = null)
+        where TInput : notnull
     {
         BotElement rootElement = YamlSerializer.Deserialize<BotElement>(yamlReader) ?? throw new UnknownActionException("Unable to parse workflow.");
-        string rootId = WorkflowActionVisitor.RootId(GetWorkflowId(rootElement));
 
-        DeclarativeWorkflowExecutor<TInput> rootExecutor = new(rootId);
+        if (rootElement is not AdaptiveDialog workflowElement) // %%% CPS - WORKFLOW TYPE
+        {
+            throw new UnknownActionException($"Unsupported root element: {rootElement.GetType().Name}. Expected an {nameof(AdaptiveDialog)}.");
+        }
+
+        string rootId = WorkflowActionVisitor.RootId(workflowElement.BeginDialog?.Id.Value ?? "workflow");
+
+        DeclarativeWorkflowExecutor<TInput> rootExecutor = new(rootId, WrapWithBot(workflowElement), message => DefaultTransform(message));
 
         WorkflowActionVisitor visitor = new(rootExecutor, options);
         WorkflowElementWalker walker = new(rootElement, visitor);
@@ -31,10 +45,30 @@ public static class DeclarativeWorkflowBuilder
         return walker.GetWorkflow<TInput>();
     }
 
-    private static string GetWorkflowId(BotElement element) => // %%% CPS - WORKFLOW TYPE
-        element switch
-        {
-            AdaptiveDialog adaptiveDialog => adaptiveDialog.BeginDialog?.Id.Value ?? throw new UnknownActionException("Undefined dialog"),
-            _ => throw new UnknownActionException($"Unsupported root element: {element.GetType().Name}."),
-        };
+    private static ChatMessage DefaultTransform(object message) =>
+            message switch
+            {
+                ChatMessage chatMessage => chatMessage,
+                string stringMessage => new ChatMessage(ChatRole.User, stringMessage),
+                _ => new(ChatRole.User, $"{message}")
+            };
+
+    // Wrap with bot to ensure schema is set.
+    private static AdaptiveDialog WrapWithBot(AdaptiveDialog dialog)
+    {
+        BotDefinition bot
+            = new BotDefinition.Builder
+            {
+                Components =
+                    {
+                        new DialogComponent.Builder
+                        {
+                            SchemaName = dialog.HasSchemaName ? dialog.SchemaName : "default-schema",
+                            Dialog = new AdaptiveDialog.Builder(dialog),
+                        }
+                    }
+            }.Build();
+
+        return bot.Descendants().OfType<AdaptiveDialog>().First();
+    }
 }

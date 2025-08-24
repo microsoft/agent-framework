@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Generic;
+using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
 
@@ -8,10 +10,13 @@ namespace Microsoft.Agents.Workflows.Declarative.Extensions;
 internal static class ChatMessageExtensions
 {
     public static RecordValue ToRecordValue(this ChatMessage message) => // %%% CPS - MESSAGETYPE
-        RecordValue.NewRecordFromFields(
-            new NamedValue(nameof(ChatMessage.MessageId), message.MessageId.ToFormulaValue()),
-            new NamedValue(nameof(ChatMessage.Role), FormulaValue.New(message.Role.Value)),
-            new NamedValue(nameof(ChatMessage.AuthorName), message.AuthorName.ToFormulaValue()),
-            new NamedValue(nameof(ChatMessage.Text), message.Text.ToFormulaValue()));
-            ////new NamedValue(nameof(ChatMessage.AdditionalProperties), message.AdditionalProperties?.ToRecordValue()));
+        RecordValue.NewRecordFromFields(message.GetMessageFields());
+
+    private static IEnumerable<NamedValue> GetMessageFields(this ChatMessage message)
+    {
+        yield return new NamedValue(nameof(DialogAction.Id), message.MessageId.ToFormulaValue());
+        yield return new NamedValue(nameof(ChatMessage.Role), FormulaValue.New(message.Role.Value));
+        yield return new NamedValue(nameof(ChatMessage.AuthorName), message.AuthorName.ToFormulaValue());
+        yield return new NamedValue(nameof(ChatMessage.Text), message.Text.ToFormulaValue());
+    }
 }

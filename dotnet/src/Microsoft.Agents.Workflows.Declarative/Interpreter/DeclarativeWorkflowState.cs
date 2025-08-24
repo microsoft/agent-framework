@@ -25,10 +25,10 @@ internal sealed class DeclarativeWorkflowState
 
     public WorkflowExpressionEngine ExpressionEngine => this._expressionEngine ??= new WorkflowExpressionEngine(this._engine);
 
-    public void Clear(PropertyPath variablePath) =>
-        this.Clear(Throw.IfNull(variablePath.VariableScopeName), Throw.IfNull(variablePath.VariableName));
+    public void Reset(PropertyPath variablePath) =>
+        this.Reset(Throw.IfNull(variablePath.VariableScopeName), Throw.IfNull(variablePath.VariableName));
 
-    public void Clear(string scopeName, string? varName = null)
+    public void Reset(string scopeName, string? varName = null)
     {
         if (string.IsNullOrWhiteSpace(varName))
         {
@@ -36,7 +36,7 @@ internal sealed class DeclarativeWorkflowState
         }
         else
         {
-            this._scopes.Remove(varName, scopeName);
+            this._scopes.Reset(varName, scopeName);
         }
 
         this._scopes.Bind(this._engine, scopeName);

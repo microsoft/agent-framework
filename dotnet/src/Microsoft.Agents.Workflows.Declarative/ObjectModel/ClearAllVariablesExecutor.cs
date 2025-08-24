@@ -29,7 +29,7 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : Decla
 
         public void HandleConversationHistory()
         {
-            throw new System.NotImplementedException(); // %%% DECISION: Is this to be supported ???
+            // Not supported....
         }
 
         public void HandleConversationScopedVariables()
@@ -44,12 +44,12 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : Decla
 
         public void HandleUserScopedVariables()
         {
-            this.ClearAll(VariableScopeNames.Environment); // %%% DECISION: Is this correct?  If not, what?
+            // Not supported....
         }
 
         private void ClearAll(string scope)
         {
-            state.Clear(scope);
+            state.Reset(scope);
             Debug.WriteLine(
                 $"""
                  STATE: {this.GetType().Name} [{executorId}]

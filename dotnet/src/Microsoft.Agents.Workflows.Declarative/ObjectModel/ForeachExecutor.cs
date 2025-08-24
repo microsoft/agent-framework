@@ -78,10 +78,10 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
 
     public void Reset()
     {
-        this.State.Clear(Throw.IfNull(this.Model.Value));
+        this.State.Reset(Throw.IfNull(this.Model.Value));
         if (this.Model.Index is not null)
         {
-            this.State.Clear(this.Model.Index);
+            this.State.Reset(this.Model.Index);
         }
     }
 }

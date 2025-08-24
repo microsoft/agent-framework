@@ -10,24 +10,14 @@ beginDialog:
       variable: Topic.Project
       value: =System.LastMessage.Text
 
-    - kind: SetVariable # HAXX
-      id: set_count_0
-      variable: Topic.TurnCount
-      value: 0
-
     - kind: AnswerQuestionWithAI
       id: question_student
       userInput: =Topic.Project
       additionalInstructions: asst_jCrWfBd1XrfVXMtpbfyVoIHC
 
-    # - kind: ResetVariable
-    #   id: reset_project
-    #   variable: Topic.Project
-
-    - kind: SetVariable # HAXX
+    - kind: ResetVariable
       id: reset_project
       variable: Topic.Project
-      value: =Blank()
 
     - kind: AnswerQuestionWithAI
       id: question_teacher
