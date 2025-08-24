@@ -40,23 +40,6 @@ beginDialog:
       variable: Topic.SeedTask
       value: =Topic.InputTask
 
-    - kind: SetVariable
-      id: setVariable_a6JqXG
-      displayName: Set Task
-      variable: Topic.AgentResponseText
-      value: =""
-
-    - kind: SetVariable
-      id: setVariable_PKmRsz
-      variable: Topic.RestartCount
-      value: 0
-
-    - kind: SetVariable
-      id: setVariable_EpFEKQ
-      displayName: Initialize Stall Count
-      variable: Topic.StallCount
-      value: =0
-
     - kind: SendActivity
       id: sendActivity_yFsbRy
       activity: Analyzing facts...
@@ -444,11 +427,10 @@ beginDialog:
               variable: Topic.AgentResponseText
               value: =Topic.AgentResponse.Text
 
-            - kind: SetVariable
+            - kind: ResetVariable
               id: setVariable_8eIx2A
               displayName: Clear seed task
               variable: Topic.SeedTask
-              value: =""
 
       elseActions:
         - kind: SendActivity

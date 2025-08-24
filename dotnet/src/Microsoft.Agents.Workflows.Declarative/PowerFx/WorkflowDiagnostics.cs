@@ -1,45 +1,55 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
 using System.Linq;
-using System.Threading.Tasks;
+using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.Bot.ObjectModel.Analysis;
 using Microsoft.Bot.ObjectModel.PowerFx;
-using Microsoft.Bot.ObjectModel.Telemetry;
 using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.Workflows.Declarative.PowerFx;
 
 internal static class WorkflowDiagnostics
 {
-    public static void InitializeModel(this WorkflowScopes scopes, AdaptiveDialog workflowElement)
+    private static readonly WorkflowFeatureConfiguration s_semanticFeatureConfig = new();
+
+    public static void InitializeDefaults(this WorkflowScopes scopes, AdaptiveDialog workflowElement)
     {
-        WorkflowOperationLogger operationLogger = new();
-        WorkflowFeatureConfiguration featureConfig = new();
-        SemanticModel semanticModel = workflowElement.GetSemanticModel(new PowerFxExpressionChecker(featureConfig), featureConfig, operationLogger);
+        scopes.InitializeSemanticModel(workflowElement);
+    }
+
+    private static void InitializeSemanticModel(this WorkflowScopes scopes, AdaptiveDialog workflowElement)
+    {
+        SemanticModel semanticModel = workflowElement.GetSemanticModel(new PowerFxExpressionChecker(s_semanticFeatureConfig), s_semanticFeatureConfig);
         foreach (VariableInformationDiagnostic variableDiagnostic in semanticModel.GetVariables(workflowElement.SchemaName).Where(x => !x.IsSystemVariable).Select(v => v.ToDiagnostic()))
         {
+            Console.WriteLine($":: {variableDiagnostic?.Path?.VariableName ?? "?"}");
             if (variableDiagnostic?.Path?.VariableName is null)
             {
                 continue;
             }
 
-            scopes.Set(variableDiagnostic.Path.VariableName, variableDiagnostic.Path.VariableScopeName ?? VariableScopeNames.Topic, FormulaValue.NewBlank(variableDiagnostic.Type.ToFormulaType()));
+            FormulaValue defaultValue = ReadValue(variableDiagnostic) ?? ReadBlank(variableDiagnostic);
+
+            if (variableDiagnostic.Path.VariableScopeName?.Equals(VariableScopeNames.System, StringComparison.OrdinalIgnoreCase) ?? false)
+            {
+                // %%% TODO: Verify supported variables
+            }
+
+            scopes.Set(variableDiagnostic.Path.VariableName, variableDiagnostic.Path.VariableScopeName ?? VariableScopeNames.Topic, defaultValue);
         }
-    }
 
-    private sealed class WorkflowOperationLogger : IOperationLogger
-    {
-        public T Execute<T>(string activity, Func<T> function) => function.Invoke();
+        static FormulaValue? ReadValue(VariableInformationDiagnostic diagnostic) => diagnostic.ConstantValue?.ToFormulaValue();
 
-        public T Execute<T>(string activity, Func<T> function, IEnumerable<KeyValuePair<string, string>> dimensions) => function.Invoke();
+        //static FormulaValue? ReadValue(string variableName)
+        //{
+        //    string? variableValue = Environment.GetEnvironmentVariable(variableName); // %%% TODO: Is provided as `ConstantValue` ???
+        //    return string.IsNullOrEmpty(variableValue) ? null : FormulaValue.New(variableValue);
+        //}
 
-        public Task<T> ExecuteAsync<T>(string activity, Func<Task<T>> function) => function.Invoke();
-
-        public Task<T> ExecuteAsync<T>(string activity, Func<Task<T>> function, IEnumerable<KeyValuePair<string, string>> dimensions) => function.Invoke();
+        static FormulaValue ReadBlank(VariableInformationDiagnostic diagnostic) => diagnostic.Type.NewBlank();
     }
 
     private sealed class WorkflowFeatureConfiguration : IFeatureConfiguration

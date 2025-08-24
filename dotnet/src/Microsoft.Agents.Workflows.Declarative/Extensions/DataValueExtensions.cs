@@ -65,6 +65,8 @@ internal static class DataValueExtensions
             _ => FormulaType.Unknown,
         };
 
+    public static FormulaValue NewBlank(this DataType? type) => FormulaValue.NewBlank(type?.ToFormulaType() ?? FormulaType.Blank);
+
     public static RecordValue ToRecordValue(this RecordDataValue recordDataValue) =>
         FormulaValue.NewRecordFromFields(
             recordDataValue.Properties.Select(

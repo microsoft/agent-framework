@@ -22,7 +22,7 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(string workflowId, Ada
     {
         WorkflowScopes scopes = await context.GetScopedStateAsync(default).ConfigureAwait(false);
 
-        scopes.InitializeModel(workflowElement);
+        scopes.InitializeDefaults(workflowElement);
 
         ChatMessage input = inputTransform.Invoke(message);
 
