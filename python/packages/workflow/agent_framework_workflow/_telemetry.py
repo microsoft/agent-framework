@@ -11,12 +11,12 @@ from opentelemetry.trace.span import SpanContext
 class WorkflowDiagnosticSettings(AFBaseSettings):
     """Settings for workflow tracing diagnostics."""
 
-    env_prefix: ClassVar[str] = "AGENT_FRAMEWORK_"
-    enable_workflow_tracing: bool = False
+    env_prefix: ClassVar[str] = "AGENT_FRAMEWORK_WORKFLOW_"
+    enable_otel_diagnostics: bool = False
 
     @property
     def ENABLED(self) -> bool:
-        return self.enable_workflow_tracing
+        return self.enable_otel_diagnostics
 
 
 class WorkflowTracer:
