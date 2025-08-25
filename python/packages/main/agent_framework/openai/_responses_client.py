@@ -166,7 +166,8 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
             )
         )
 
-        chat_options = ChatOptions(
+        return await super().get_response(
+            messages=messages,
             max_tokens=max_tokens,
             response_format=response_format,
             seed=seed,
@@ -177,11 +178,6 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
             top_p=top_p,
             user=user,
             additional_properties=additional_properties,
-        )
-
-        return await super().get_response(
-            messages=messages,
-            chat_options=chat_options,
             **kwargs,
         )
 
@@ -262,7 +258,8 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
             )
         )
 
-        chat_options = ChatOptions(
+        async for update in super().get_streaming_response(
+            messages=messages,
             max_tokens=max_tokens,
             response_format=response_format,
             seed=seed,
@@ -273,11 +270,6 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
             top_p=top_p,
             user=user,
             additional_properties=additional_properties,
-        )
-
-        async for update in super().get_streaming_response(
-            messages=messages,
-            chat_options=chat_options,
             **kwargs,
         ):
             yield update

@@ -1792,11 +1792,14 @@ class ChatOptions(AFBaseModel):
         if not isinstance(other, ChatOptions):
             return self
         other_tools = other.tools
+        # tool_choice has a specialized serialize method. Save it here so we can fix it later.
+        tool_choice = other.tool_choice or self.tool_choice
         updated_values = other.model_dump(exclude_none=True, exclude={"tools"})
         logit_bias = updated_values.pop("logit_bias", {})
         metadata = updated_values.pop("metadata", {})
         additional_properties = updated_values.pop("additional_properties", {})
         combined = self.model_copy(update=updated_values)
+        combined.tool_choice = tool_choice
         combined.logit_bias = {**(combined.logit_bias or {}), **logit_bias}
         combined.metadata = {**(combined.metadata or {}), **metadata}
         combined.additional_properties = {**(combined.additional_properties or {}), **additional_properties}
