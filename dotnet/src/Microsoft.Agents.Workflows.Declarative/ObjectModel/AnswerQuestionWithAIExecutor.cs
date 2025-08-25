@@ -24,7 +24,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
         StringExpression userInputExpression = Throw.IfNull(this.Model.UserInput, $"{nameof(this.Model)}.{nameof(this.Model.UserInput)}");
 
         string agentInstructions = this.State.Format(this.Model.AdditionalInstructions) ?? string.Empty;
-        // %%% HAXX - AGENT ID in "AdditionalInstructions" (TODO: OM)
+        // ISSUE #485 - Agent identifier embedded in instructions until updated OM is available.
         string agentId;
         string? additionalInstructions = null;
         int delimiterIndex = agentInstructions.IndexOf(',');
@@ -55,7 +55,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
                 });
 
         FormulaValue conversationValue =
-            this.Model.AutoSend ? // %%% HAXX: Internal thread until updated OM is available.
+            this.Model.AutoSend ? // ISSUE #485: Conversation implicitly managed until updated OM is available.
                 this.State.GetConversationId() :
                 this.State.GetInternalConversationId();
 
@@ -100,7 +100,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
 
         if (conversationValue is not StringValue)
         {
-            if (this.Model.AutoSend) // %%% HAXX: Internal thread until updated OM is available.
+            if (this.Model.AutoSend) // ISSUE #485: Conversation implicitly managed until updated OM is available.
             {
                 this.State.SetConversationId(conversationId);
             }

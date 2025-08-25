@@ -16,6 +16,9 @@ namespace Microsoft.Agents.Workflows.Declarative.PowerFx;
 /// </summary>
 internal sealed class WorkflowScopes : IEnumerable<WorkflowScope>
 {
+    // ISSUE #488 - Update default scope for workflows to `Workflow` (instead of `Topic`)
+    public const string DefaultScopeName = VariableScopeNames.Topic;
+
     private readonly ImmutableDictionary<string, WorkflowScope> _scopes;
 
     public WorkflowScopes(Dictionary<string, WorkflowScope>? scopes = null)
@@ -76,7 +79,7 @@ internal sealed class WorkflowScopes : IEnumerable<WorkflowScope>
 
     public FormulaValue Get(string name, string? scopeName = null)
     {
-        if (this._scopes[scopeName ?? VariableScopeNames.Topic].TryGetValue(name, out FormulaValue? value))
+        if (this._scopes[scopeName ?? WorkflowScopes.DefaultScopeName].TryGetValue(name, out FormulaValue? value))
         {
             return value;
         }
@@ -93,7 +96,7 @@ internal sealed class WorkflowScopes : IEnumerable<WorkflowScope>
         }
     }
 
-    public void Reset(string name) => this.Reset(name, VariableScopeNames.Topic);
+    public void Reset(string name) => this.Reset(name, WorkflowScopes.DefaultScopeName);
 
     public void Reset(string name, string scopeName)
     {
@@ -103,7 +106,7 @@ internal sealed class WorkflowScopes : IEnumerable<WorkflowScope>
         }
     }
 
-    public void Set(string name, FormulaValue value) => this.Set(name, VariableScopeNames.Topic, value);
+    public void Set(string name, FormulaValue value) => this.Set(name, WorkflowScopes.DefaultScopeName, value);
 
     public void Set(string name, string scopeName, FormulaValue value) => this._scopes[scopeName][name] = value;
 }

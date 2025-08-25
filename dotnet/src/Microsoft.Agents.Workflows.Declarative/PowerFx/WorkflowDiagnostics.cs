@@ -54,7 +54,7 @@ internal static class WorkflowDiagnostics
                 }
             }
 
-            scopes.Set(variableDiagnostic.Path.VariableName, variableDiagnostic.Path.VariableScopeName ?? VariableScopeNames.Topic, defaultValue);
+            scopes.Set(variableDiagnostic.Path.VariableName, variableDiagnostic.Path.VariableScopeName ?? WorkflowScopes.DefaultScopeName, defaultValue);
         }
     }
 

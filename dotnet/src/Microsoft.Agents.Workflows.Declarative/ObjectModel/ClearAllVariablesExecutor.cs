@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 
@@ -34,7 +35,7 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : Decla
 
         public void HandleConversationScopedVariables()
         {
-            this.ClearAll(VariableScopeNames.Topic);
+            this.ClearAll(WorkflowScopes.DefaultScopeName);
         }
 
         public void HandleUnknownValue()

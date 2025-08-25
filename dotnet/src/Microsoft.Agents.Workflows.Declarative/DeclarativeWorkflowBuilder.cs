@@ -48,7 +48,8 @@ public static class DeclarativeWorkflowBuilder
     {
         BotElement rootElement = YamlSerializer.Deserialize<BotElement>(yamlReader) ?? throw new UnknownActionException("Unable to parse workflow.");
 
-        if (rootElement is not AdaptiveDialog workflowElement) // %%% CPS - WORKFLOW TYPE
+        // ISSUE #486 - Use "Workflow" element for Foundry specific.
+        if (rootElement is not AdaptiveDialog workflowElement)
         {
             throw new UnknownActionException($"Unsupported root element: {rootElement.GetType().Name}. Expected an {nameof(AdaptiveDialog)}.");
         }
