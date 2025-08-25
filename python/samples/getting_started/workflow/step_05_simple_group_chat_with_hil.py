@@ -12,6 +12,7 @@ from agent_framework.workflow import (
     RequestInfoEvent,
     RequestInfoExecutor,
     RequestInfoMessage,
+    RequestResponse,
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
@@ -94,16 +95,20 @@ class CriticGroupChatManager(Executor):
 
     @handler
     async def handle_request_response(
-        self, response: list[ChatMessage], ctx: WorkflowContext[AgentExecutorRequest]
+        self,
+        response: RequestResponse[RequestInfoMessage, list[ChatMessage]],
+        ctx: WorkflowContext[AgentExecutorRequest],
     ) -> None:
         """Handler that processes the response from the RequestInfoExecutor."""
+        messages: list[ChatMessage] = response.data or []
+
         # Update the chat history with the response
-        self._chat_history.extend(response)
+        self._chat_history.extend(messages)
 
         # Send the response to the other members
         await asyncio.gather(*[
             ctx.send_message(
-                AgentExecutorRequest(messages=response, should_respond=False),
+                AgentExecutorRequest(messages=messages, should_respond=False),
                 target_id=member_id,
             )
             for member_id in self._members
