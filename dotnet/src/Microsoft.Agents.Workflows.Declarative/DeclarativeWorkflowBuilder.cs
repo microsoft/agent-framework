@@ -18,6 +18,24 @@ public static class DeclarativeWorkflowBuilder
     /// <summary>
     /// Builds a process from the provided YAML definition of a CPS Topic ObjectModel.
     /// </summary>
+    /// <typeparam name="TInput">The type of the input message</typeparam>
+    /// <param name="workflowFile">The path to the workflow.</param>
+    /// <param name="options">The execution context for the workflow.</param>
+    /// <param name="inputTransform">An optional function to transform the input message into a <see cref="ChatMessage"/>.</param>
+    /// <returns></returns>
+    public static Workflow<TInput> Build<TInput>(
+        string workflowFile,
+        DeclarativeWorkflowOptions options,
+        Func<TInput, ChatMessage>? inputTransform = null)
+        where TInput : notnull
+    {
+        using StreamReader yamlReader = File.OpenText(workflowFile);
+        return Build<TInput>(yamlReader, options, inputTransform);
+    }
+    /// <summary>
+    /// Builds a process from the provided YAML definition of a CPS Topic ObjectModel.
+    /// </summary>
+    /// <typeparam name="TInput">The type of the input message</typeparam>
     /// <param name="yamlReader">The reader that provides the workflow object model YAML.</param>
     /// <param name="options">The execution context for the workflow.</param>
     /// <param name="inputTransform">An optional function to transform the input message into a <see cref="ChatMessage"/>.</param>

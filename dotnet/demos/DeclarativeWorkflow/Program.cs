@@ -42,17 +42,16 @@ internal static class Program
         Notify($"WORKFLOW: Parsing {Path.GetFullPath(workflowFile)}");
 
         Stopwatch timer = Stopwatch.StartNew();
-        using StreamReader yamlReader = File.OpenText(workflowFile);
 
         // DeclarativeWorkflowContext provides the components for workflow execution.
-        DeclarativeWorkflowOptions workflowContext =
+        DeclarativeWorkflowOptions options =
             new(foundryProjectEndpoint)
             {
                 ProjectCredentials = new AzureCliCredential(),
             };
 
         // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
-        Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>(yamlReader, workflowContext);
+        Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>(workflowFile, options);
 
         Notify($"\nWORKFLOW: Defined {timer.Elapsed}");
 
