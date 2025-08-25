@@ -237,7 +237,8 @@ beginDialog:
               additionalInstructions: |-
                 asst_o3BQkfUzEGXMNzVY5X54yHhq,
                 We have completed the task.
-                Based only on the results gathered, provide a detailed conclusion that addresses the user task.
+                Based only on the conversation and without adding any new information, synthesize the result of the conversation as a complete response to the user task.
+                The user will only every see this last response and not the entire conversation, so please ensure it is complete and self-contained.
 
             - kind: EndConversation
               id: end_SVoNSV
