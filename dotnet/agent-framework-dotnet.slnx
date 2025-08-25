@@ -25,6 +25,7 @@
     <File Path="../workflows/HelloWorld.yaml" />
     <File Path="../workflows/MathChat.yaml" />
     <File Path="../workflows/Question.yaml" />
+    <File Path="../workflows/README.md" />
   </Folder>
   <Folder Name="/Samples/GettingStartedSteps/">
     <File Path="samples/GettingStartedSteps/README.md" />
