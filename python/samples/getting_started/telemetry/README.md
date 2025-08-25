@@ -134,7 +134,11 @@ The easiest way to run the Aspire Dashboard locally is using Docker:
 
 ```bash
 # Pull and run the Aspire Dashboard container
-docker run --rm -it -p 18888:18888 -p 4317:18889 -d --name aspire-dashboard mcr.microsoft.com/dotnet/aspire-dashboard:latest
+docker run --rm -it -d \
+    -p 18888:18888 \
+    -p 4317:18889 \
+    --name aspire-dashboard \
+    mcr.microsoft.com/dotnet/aspire-dashboard:latest
 ```
 
 This will start the dashboard with:
