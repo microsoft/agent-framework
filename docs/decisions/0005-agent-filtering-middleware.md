@@ -48,26 +48,24 @@ agent.FunctionCallFilters.Add(new MyAgentFunctionCallFilter());
 
 public class MyAgentRunFilter : IAgentRunFilter
 {
-    public async Task<AgentRunContext> OnRunAsync(AgentRunContext context, Func<AgentRunContext, Task<AgentRunContext>> next, CancellationToken cancellationToken = default)
+    public async Task OnRunAsync(AgentRunContext context, Func<AgentRunContext, Task> next, CancellationToken cancellationToken = default)
     {
         // Pre-run logic
 
-        var result = await next(context);
+        await next(context);
 
         // Post-run logic
-
-        return result;
     }
 }
 
 public interface IAgentRunFilter
 {
-    Task<AgentRunContext> OnRunAsync(AgentRunContext context, Func<AgentRunContext, Task<AgentRunContext>> next, CancellationToken cancellationToken = default);
+    Task OnRunAsync(AgentRunContext context, Func<AgentRunContext, Task> next, CancellationToken cancellationToken = default);
 }
 
 public interface IAgentFunctionCallFilter
 {
-    Task<AgentFunctionCallContext> OnFunctionCallAsync(AgentFunctionCallContext context, Func<AgentFunctionCallContext, Task<AgentFunctionCallContext>> next, CancellationToken cancellationToken = default);
+    Task OnFunctionCallAsync(AgentFunctionCallContext context, Func<AgentFunctionCallContext, Task> next, CancellationToken cancellationToken = default);
 }
 
 public class AIAgent
@@ -100,15 +98,15 @@ public class AIAgent
         var context = new AgentRunContext(messages, thread, options);
 
         // Process through filter pipeline using the same pattern as Semantic Kernel
-        var resultContext = await _filterProcessor.ProcessAsync(context, async ctx =>
+        await _filterProcessor.ProcessAsync(context, async ctx =>
         {
             // Core agent logic - implement actual agent execution here
             var response = await this.ExecuteCoreLogicAsync(ctx.Messages, ctx.Thread, ctx.Options, cancellationToken);
-            return ctx.WithResponse(response);
+            ctx.Response = response;
         }, cancellationToken);
 
         // Extract the response from the context
-        return resultContext.Response ?? throw new InvalidOperationException("Agent execution did not produce a response");
+        return context.Response ?? throw new InvalidOperationException("Agent execution did not produce a response");
     }
 
     protected abstract Task<AgentRunResponse> ExecuteCoreLogicAsync(
@@ -170,15 +168,15 @@ public class FilteringAIAgent
         var context = new AgentRunContext(messages, thread, options);
 
         // Wrap core logic in filter pipeline
-        var resultContext = await _runFilters.OnRunAsync(context, async ctx =>
+        await _runFilters.OnRunAsync(context, async ctx =>
         {
             // Core agent logic
             var response = await _innerAgent.RunAsync(ctx.Messages, ctx.Thread, ctx.Options, cancellationToken);
-            return ctx.WithResponse(response);
+            ctx.Response = response;
         }, cancellationToken);
 
         // Extract the response from the context
-        return resultContext.Response ?? throw new InvalidOperationException("Agent execution did not produce a response");
+        return context.Response ?? throw new InvalidOperationException("Agent execution did not produce a response");
     }
 }
 ```
@@ -235,14 +233,14 @@ public class AgentFilterProcessor
         _filters.Add(filter);
     }
 
-    public async Task<T> ProcessAsync<T>(T context, Func<T, Task<T>> coreLogic, CancellationToken cancellationToken = default)
+    public async Task ProcessAsync<T>(T context, Func<T, Task> coreLogic, CancellationToken cancellationToken = default)
         where T : AgentContext
     {
         // Get applicable filters for this context type
         var applicableFilters = _filters.Where(f => f.CanProcess(context)).ToList();
 
         // Start the filter chain execution
-        return await this.InvokeFilterAsync(coreLogic, context, applicableFilters, cancellationToken);
+        await this.InvokeFilterAsync(coreLogic, context, applicableFilters, cancellationToken);
     }
 
     /// <summary>
@@ -252,8 +250,8 @@ public class AgentFilterProcessor
     /// Second parameter of filter is callback. It can be either filter at <paramref name="index"/> + 1 position or core logic if there are no remaining filters to execute.
     /// Core logic will always be executed as last step after all filters.
     /// </summary>
-    private async Task<T> InvokeFilterAsync<T>(
-        Func<T, Task<T>> coreLogic,
+    private async Task InvokeFilterAsync<T>(
+        Func<T, Task> coreLogic,
         T context,
         IList<IAgentFilter> applicableFilters,
         CancellationToken cancellationToken,
@@ -262,18 +260,16 @@ public class AgentFilterProcessor
         if (applicableFilters is { Count: > 0 } && index < applicableFilters.Count)
         {
             // Execute the filter at the current index
-            var result = await applicableFilters[index].OnProcessAsync(
+            await applicableFilters[index].OnProcessAsync(
                 context,
-                (ctx) => this.InvokeFilterAsync(coreLogic, (T)ctx, applicableFilters, cancellationToken, index + 1),
+                async (ctx) => await this.InvokeFilterAsync(coreLogic, (T)ctx, applicableFilters, cancellationToken, index + 1),
                 cancellationToken
             ).ConfigureAwait(false);
-
-            return (T)result;
         }
         else
         {
             // No more filters, execute core logic
-            return await coreLogic(context).ConfigureAwait(false);
+            await coreLogic(context).ConfigureAwait(false);
         }
     }
 }
@@ -301,8 +297,8 @@ public abstract class AgentContext
 public class AgentRunContext : AgentContext
 {
     public IList<ChatMessage> Messages { get; set; }
-
-    public AgentThread? Thread { get; } 
+    public AgentRunResponse? Response { get; set; }
+    public AgentThread? Thread { get; }
 
     public AgentRunContext(AIAgent agent, IList<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options)
         : base(agent, options)
@@ -312,7 +308,7 @@ public class AgentRunContext : AgentContext
     }
 }
 
-public class AgentFunctionInvocationContext : AgentContext
+public class AgentFunctionInvocationContext : AgentToolContext
 {
     // Similar to MEAI.FunctionInvocationContext
     public AIFunction Function { get; set; }
@@ -349,11 +345,11 @@ agent.AYZFilters.Add(new MyMultipleFilterImplementation());
 // Impl
 interface IAgentRunFilter
 {
-    Task<AgentRunContext> OnRunAsync(AgentRunContext context, Func<AgentRunContext, Task<AgentRunContext>> next, CancellationToken cancellationToken = default);
+    Task OnRunAsync(AgentRunContext context, Func<AgentRunContext, Task> next, CancellationToken cancellationToken = default);
 }
 interface IAgentFunctionCallFilter
 {
-    Task<AgentFunctionCallContext> OnFunctionCallAsync(AgentFunctionCallContext context, Func<AgentFunctionCallContext, Task<AgentFunctionCallContext>> next, CancellationToken cancellationToken = default);
+    Task OnFunctionCallAsync(AgentFunctionCallContext context, Func<AgentFunctionCallContext, Task> next, CancellationToken cancellationToken = default);
 }
 ```
 
@@ -384,12 +380,12 @@ agent.Filters.Add(new MyMultipleFilterImplementation());
 interface IAgentFilter
 {
     bool CanProcess(AgentContext context);
-    Task<AgentContext> OnProcessAsync(AgentContext context, Func<AgentContext, Task<AgentContext>> next, CancellationToken cancellationToken = default);
+    Task OnProcessAsync(AgentContext context, Func<AgentContext, Task> next, CancellationToken cancellationToken = default);
 }
 
 interface IAgentFilter<T> : IAgentFilter where T : AgentContext
 {
-    Task<T> OnProcessAsync(T context, Func<T, Task<T>> next, CancellationToken cancellationToken = default);
+    Task OnProcessAsync(T context, Func<T, Task> next, CancellationToken cancellationToken = default);
 }
 
 class MySingleFilterImplementation : IAgentFilter<AgentRunContext>
@@ -397,19 +393,17 @@ class MySingleFilterImplementation : IAgentFilter<AgentRunContext>
     public bool CanProcess(AgentContext context)
         => context is AgentRunContext;
 
-    public async Task<AgentContext> OnProcessAsync(AgentContext context, Func<AgentContext, Task<AgentContext>> next, CancellationToken cancellationToken = default)
+    public async Task OnProcessAsync(AgentContext context, Func<AgentContext, Task> next, CancellationToken cancellationToken = default)
     {
-        Func<AgentRunContext, Task<AgentRunContext>> wrappedNext = async ctx => (AgentRunContext)await next(ctx);
-        var result = await OnProcessAsync((AgentRunContext)context, wrappedNext, cancellationToken);
-        return result;
+        Func<AgentRunContext, Task> wrappedNext = async ctx => await next(ctx);
+        await OnProcessAsync((AgentRunContext)context, wrappedNext, cancellationToken);
     }
 
-    public async Task<AgentRunContext> OnProcessAsync(AgentRunContext context, Func<AgentRunContext, Task<AgentRunContext>> next, CancellationToken cancellationToken = default)
+    public async Task OnProcessAsync(AgentRunContext context, Func<AgentRunContext, Task> next, CancellationToken cancellationToken = default)
     {
         // Pre-run logic
-        var result = await next(context);
+        await next(context);
         // Post-run logic
-        return result;
     }
 }
 
@@ -418,37 +412,37 @@ class MyMultipleFilterImplementation : IAgentFilter<AgentRunContext>, IAgentFilt
     public bool CanProcess(AgentContext context)
         => context is AgentRunContext or FunctionCallAgentContext;
 
-    public async Task<AgentContext> OnProcessAsync(AgentContext context, Func<AgentContext, Task<AgentContext>> next, CancellationToken cancellationToken = default)
+    public async Task OnProcessAsync(AgentContext context, Func<AgentContext, Task> next, CancellationToken cancellationToken = default)
     {
         if (context is AgentRunContext runContext)
         {
-            Func<AgentRunContext, Task<AgentRunContext>> wrappedNext = async ctx => (AgentRunContext)await next(ctx);
-            return await OnProcessAsync(runContext, wrappedNext, cancellationToken);
+            Func<AgentRunContext, Task> wrappedNext = async ctx => await next(ctx);
+            await OnProcessAsync(runContext, wrappedNext, cancellationToken);
+            return;
         }
 
         if (context is FunctionCallAgentContext callContext)
         {
-            Func<FunctionCallAgentContext, Task<FunctionCallAgentContext>> wrappedNext = async ctx => (FunctionCallAgentContext)await next(ctx);
-            return await OnProcessAsync(callContext, wrappedNext, cancellationToken);
+            Func<FunctionCallAgentContext, Task> wrappedNext = async ctx => await next(ctx);
+            await OnProcessAsync(callContext, wrappedNext, cancellationToken);
+            return;
         }
 
-        return await next(context);
+        await next(context);
     }
 
-    public async Task<AgentRunContext> OnProcessAsync(AgentRunContext context, Func<AgentRunContext, Task<AgentRunContext>> next, CancellationToken cancellationToken = default)
+    public async Task OnProcessAsync(AgentRunContext context, Func<AgentRunContext, Task> next, CancellationToken cancellationToken = default)
     {
         // Pre-run logic
-        var result = await next(context);
+        await next(context);
         // Post-run logic
-        return result;
     }
 
-    public async Task<FunctionCallAgentContext> OnProcessAsync(FunctionCallAgentContext context, Func<FunctionCallAgentContext, Task<FunctionCallAgentContext>> next, CancellationToken cancellationToken = default)
+    public async Task OnProcessAsync(FunctionCallAgentContext context, Func<FunctionCallAgentContext, Task> next, CancellationToken cancellationToken = default)
     {
         // Pre-function call logic
-        var result = await next(context);
+        await next(context);
         // Post-function call logic
-        return result;
     }
 }
 ```
