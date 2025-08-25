@@ -1,6 +1,6 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <Sdk Name="Aspire.AppHost.Sdk" Version="9.3.1" />
+  <Sdk Name="Aspire.AppHost.Sdk" Version="$(AspireAppHostSdkVersion)" />
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>

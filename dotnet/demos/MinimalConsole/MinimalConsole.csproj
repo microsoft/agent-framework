@@ -2,8 +2,11 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
-    <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
+    <TargetFramework>net9.0</TargetFramework>
+    <LangVersion>12</LangVersion>
+
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
   </PropertyGroup>
 
   <ItemGroup>

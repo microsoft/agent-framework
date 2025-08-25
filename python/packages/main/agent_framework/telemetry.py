@@ -18,8 +18,9 @@ from ._pydantic import AFBaseSettings
 if TYPE_CHECKING:  # pragma: no cover
     from opentelemetry.util._decorator import _AgnosticContextManager  # type: ignore[reportPrivateUsage]
 
-    from ._agents import AgentThread, AIAgent, ChatClientAgent
+    from ._agents import AIAgent, ChatClientAgent
     from ._clients import ChatClientBase
+    from ._threads import AgentThread
     from ._tools import AIFunction
     from ._types import (
         AgentRunResponse,
@@ -650,8 +651,8 @@ def _get_agent_run_span(
         span.set_attribute(GenAIAttributes.AGENT_NAME.value, agent.name)
     if agent.description:
         span.set_attribute(GenAIAttributes.AGENT_DESCRIPTION.value, agent.description)
-    if thread and thread.id:
-        span.set_attribute(GenAIAttributes.CONVERSATION_ID.value, thread.id)
+    if thread and thread.service_thread_id:
+        span.set_attribute(GenAIAttributes.CONVERSATION_ID.value, thread.service_thread_id)
     if "model" in kwargs:
         span.set_attribute(GenAIAttributes.MODEL.value, kwargs["model"])
     if "seed" in kwargs:

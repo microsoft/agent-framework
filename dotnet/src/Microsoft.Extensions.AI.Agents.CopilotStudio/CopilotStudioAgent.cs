@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -25,6 +26,8 @@ public class CopilotStudioAgent : AIAgent
     /// </summary>
     public CopilotClient Client { get; }
 
+    private readonly static AIAgentMetadata s_agentMetadata = new("copilot-studio");
+
     /// <summary>
     /// Initializes a new instance of the <see cref="CopilotStudioAgent"/> class.
     /// </summary>
@@ -33,7 +36,6 @@ public class CopilotStudioAgent : AIAgent
     public CopilotStudioAgent(CopilotClient client, ILoggerFactory? loggerFactory = null)
     {
         this.Client = client;
-
         this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<CopilotStudioAgent>();
     }
 
@@ -124,4 +126,11 @@ public class CopilotStudioAgent : AIAgent
 
         return conversationId!;
     }
+
+    /// <inheritdoc/>
+    public override object? GetService(Type serviceType, object? serviceKey = null)
+        => base.GetService(serviceType, serviceKey)
+           ?? (serviceType == typeof(CopilotClient) ? this.Client
+            : serviceType == typeof(AIAgentMetadata) ? s_agentMetadata
+            : null);
 }

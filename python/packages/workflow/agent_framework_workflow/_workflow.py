@@ -7,9 +7,22 @@ import uuid
 from collections.abc import AsyncIterable, Callable, Sequence
 from typing import Any
 
+from agent_framework._pydantic import AFBaseModel
+from pydantic import Field
+
 from ._checkpoint import CheckpointStorage
 from ._const import DEFAULT_MAX_ITERATIONS
-from ._edge import Edge
+from ._edge import (
+    Case,
+    Default,
+    EdgeGroup,
+    FanInEdgeGroup,
+    FanOutEdgeGroup,
+    SingleEdgeGroup,
+    SwitchCaseEdgeGroup,
+    SwitchCaseEdgeGroupCase,
+    SwitchCaseEdgeGroupDefault,
+)
 from ._events import RequestInfoEvent, WorkflowCompletedEvent, WorkflowEvent
 from ._executor import Executor, RequestInfoExecutor
 from ._runner import Runner
@@ -58,61 +71,84 @@ class WorkflowRunResult(list[WorkflowEvent]):
 # region Workflow
 
 
-class Workflow:
+class Workflow(AFBaseModel):
     """A class representing a workflow that can be executed.
 
     This class is a placeholder for the workflow logic and does not implement any specific functionality.
     It serves as a base class for more complex workflows that can be defined in subclasses.
     """
 
+    edge_groups: list[EdgeGroup] = Field(
+        default_factory=list, description="List of edge groups that define the workflow edges"
+    )
+    executors: dict[str, Executor] = Field(
+        default_factory=dict, description="Dictionary mapping executor IDs to Executor instances"
+    )
+    start_executor_id: str = Field(min_length=1, description="The ID of the starting executor for the workflow")
+    max_iterations: int = Field(
+        default=DEFAULT_MAX_ITERATIONS, description="Maximum number of iterations the workflow will run"
+    )
+    workflow_id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()), description="Unique identifier for this workflow instance"
+    )
+
     def __init__(
         self,
-        edges: list[Edge],
+        edge_groups: list[EdgeGroup],
+        executors: dict[str, Executor],
         start_executor: Executor | str,
         runner_context: RunnerContext,
-        max_iterations: int,
+        max_iterations: int = DEFAULT_MAX_ITERATIONS,
+        **kwargs: Any,
     ):
         """Initialize the workflow with a list of edges.
 
         Args:
-            edges: A list of directed edges representing the connections between nodes in the workflow.
+            edge_groups: A list of EdgeGroup instances that define the workflow edges.
+            executors: A dictionary mapping executor IDs to Executor instances.
             start_executor: The starting executor for the workflow, which can be an Executor instance or its ID.
             runner_context: The RunnerContext instance to be used during workflow execution.
             max_iterations: The maximum number of iterations the workflow will run for convergence.
+            kwargs: Additional keyword arguments. Unused in this implementation.
         """
-        self._edges = edges
-        self._start_executor = start_executor
-        self._executors = {edge.source_id: edge.source for edge in edges} | {
-            edge.target_id: edge.target for edge in edges
-        }
-
-        self._shared_state = SharedState()
+        # Convert start_executor to string ID if it's an Executor instance
+        start_executor_id = start_executor.id if isinstance(start_executor, Executor) else start_executor
 
         workflow_id = str(uuid.uuid4())
+
+        kwargs.update({
+            "edge_groups": edge_groups,
+            "executors": executors,
+            "start_executor_id": start_executor_id,
+            "max_iterations": max_iterations,
+            "workflow_id": workflow_id,
+        })
+
+        super().__init__(**kwargs)
+
+        # Store non-serializable runtime objects as private attributes
+        self._runner_context = runner_context
+        self._shared_state = SharedState()
         self._runner = Runner(
-            self._edges, self._shared_state, runner_context, max_iterations=max_iterations, workflow_id=workflow_id
+            self.edge_groups,
+            self.executors,
+            self._shared_state,
+            runner_context,
+            max_iterations=max_iterations,
+            workflow_id=workflow_id,
         )
 
-    @property
-    def edges(self) -> list[Edge]:
-        """Get the list of edges in the workflow."""
-        return self._edges
-
-    @property
-    def start_executor(self) -> Executor:
+    def get_start_executor(self) -> Executor:
         """Get the starting executor of the workflow.
 
         Returns:
-            The starting executor, which can be an Executor instance or its ID.
+            The starting executor instance.
         """
-        if isinstance(self._start_executor, str):
-            return self._get_executor_by_id(self._start_executor)
-        return self._start_executor
+        return self.executors[self.start_executor_id]
 
-    @property
-    def executors(self) -> list[Executor]:
+    def get_executors_list(self) -> list[Executor]:
         """Get the list of executors in the workflow."""
-        return list(self._executors.values())
+        return list(self.executors.values())
 
     async def run_streaming(self, message: Any) -> AsyncIterable[WorkflowEvent]:
         """Run the workflow with a starting message and stream events.
@@ -126,9 +162,7 @@ class Workflow:
         # Reset context for a new run if supported
         self._runner.context.reset_for_new_run(self._shared_state)
 
-        executor = self._start_executor
-        if isinstance(executor, str):
-            executor = self._get_executor_by_id(executor)
+        executor = self.get_start_executor()
 
         await executor.execute(
             message,
@@ -185,8 +219,8 @@ class Workflow:
             raise RuntimeError(f"Failed to restore from checkpoint: {checkpoint_id}")
 
         if responses:
-            request_info_executor = self._get_executor_by_id(RequestInfoExecutor.EXECUTOR_ID)
-            if isinstance(request_info_executor, RequestInfoExecutor):
+            request_info_executor = self._find_request_info_executor()
+            if request_info_executor:
                 for request_id, response_data in responses.items():
                     await request_info_executor.handle_response(
                         response_data,
@@ -212,9 +246,9 @@ class Workflow:
         Yields:
             WorkflowEvent: The events generated during the workflow execution after sending the responses.
         """
-        request_info_executor = self._get_executor_by_id(RequestInfoExecutor.EXECUTOR_ID)
-        if not isinstance(request_info_executor, RequestInfoExecutor):
-            raise ValueError(f"Executor with ID {RequestInfoExecutor.EXECUTOR_ID} is not a RequestInfoExecutor.")
+        request_info_executor = self._find_request_info_executor()
+        if not request_info_executor:
+            raise ValueError("No RequestInfoExecutor found in workflow.")
 
         async def _handle_response(response: Any, request_id: str) -> None:
             """Handle the response from the RequestInfoExecutor."""
@@ -294,9 +328,22 @@ class Workflow:
         Returns:
             The Executor instance corresponding to the given ID.
         """
-        if executor_id not in self._executors:
+        if executor_id not in self.executors:
             raise ValueError(f"Executor with ID {executor_id} not found.")
-        return self._executors[executor_id]
+        return self.executors[executor_id]
+
+    def _find_request_info_executor(self) -> "RequestInfoExecutor | None":
+        """Find the RequestInfoExecutor instance in this workflow.
+
+        Returns:
+            The RequestInfoExecutor instance if found, None otherwise.
+        """
+        from ._executor import RequestInfoExecutor
+
+        for executor in self.executors.values():
+            if isinstance(executor, RequestInfoExecutor):
+                return executor
+        return None
 
     async def _restore_from_external_checkpoint(
         self, checkpoint_id: str, checkpoint_storage: CheckpointStorage
@@ -405,10 +452,16 @@ class WorkflowBuilder:
 
     def __init__(self, max_iterations: int = DEFAULT_MAX_ITERATIONS):
         """Initialize the WorkflowBuilder with an empty list of edges and no starting executor."""
-        self._edges: list[Edge] = []
+        self._edge_groups: list[EdgeGroup] = []
+        self._executors: dict[str, Executor] = {}
         self._start_executor: Executor | str | None = None
         self._checkpoint_storage: CheckpointStorage | None = None
         self._max_iterations: int = max_iterations
+
+    def _add_executor(self, executor: Executor) -> str:
+        """Add an executor to the map and return its ID."""
+        self._executors[executor.id] = executor
+        return executor.id
 
     def add_edge(
         self,
@@ -427,21 +480,81 @@ class WorkflowBuilder:
                        should be traversed based on the message type.
         """
         # TODO(@taochen): Support executor factories for lazy initialization
-        self._edges.append(Edge(source, target, condition))
+        source_id = self._add_executor(source)
+        target_id = self._add_executor(target)
+        self._edge_groups.append(SingleEdgeGroup(source_id, target_id, condition))
         return self
 
     def add_fan_out_edges(self, source: Executor, targets: Sequence[Executor]) -> "Self":
-        """Add multiple edges to the workflow.
+        """Add multiple edges to the workflow where messages from the source will be sent to all target.
 
         The output types of the source and the input types of the targets must be compatible.
-        Messages from the source executor will be sent to all target executors.
 
         Args:
             source: The source executor of the edges.
             targets: A list of target executors for the edges.
         """
-        for target in targets:
-            self._edges.append(Edge(source, target))
+        source_id = self._add_executor(source)
+        target_ids = [self._add_executor(target) for target in targets]
+        self._edge_groups.append(FanOutEdgeGroup(source_id, target_ids))
+
+        return self
+
+    def add_switch_case_edge_group(self, source: Executor, cases: Sequence[Case | Default]) -> "Self":
+        """Add an edge group that represents a switch-case statement.
+
+        The output types of the source and the input types of the targets must be compatible.
+        Messages from the source executor will be sent to one of the target executors based on
+        the provided conditions.
+
+        Think of this as a switch statement where each target executor corresponds to a case.
+        Each condition function will be evaluated in order, and the first one that returns True
+        will determine which target executor receives the message.
+
+        The last case (the default case) will receive messages that fall through all conditions
+        (i.e., no condition matched).
+
+        Args:
+            source: The source executor of the edges.
+            cases: A list of case objects that determine the target executor for each message.
+        """
+        source_id = self._add_executor(source)
+        # Convert case data types to internal types that only uses target_id.
+        internal_cases: list[SwitchCaseEdgeGroupCase | SwitchCaseEdgeGroupDefault] = []
+        for case in cases:
+            self._add_executor(case.target)
+            if isinstance(case, Default):
+                internal_cases.append(SwitchCaseEdgeGroupDefault(target_id=case.target.id))
+            else:
+                internal_cases.append(SwitchCaseEdgeGroupCase(condition=case.condition, target_id=case.target.id))
+        self._edge_groups.append(SwitchCaseEdgeGroup(source_id, internal_cases))
+
+        return self
+
+    def add_multi_selection_edge_group(
+        self,
+        source: Executor,
+        targets: Sequence[Executor],
+        selection_func: Callable[[Any, list[str]], list[str]],
+    ) -> "Self":
+        """Add an edge group that represents a multi-selection execution model.
+
+        The output types of the source and the input types of the targets must be compatible.
+        Messages from the source executor will be sent to multiple target executors based on
+        the provided selection function.
+
+        The selection function should take a message and the name of the target executors,
+        and return a list of indices indicating which target executors should receive the message.
+
+        Args:
+            source: The source executor of the edges.
+            targets: A list of target executors for the edges.
+            selection_func: A function that selects target executors for messages.
+        """
+        source_id = self._add_executor(source)
+        target_ids = [self._add_executor(target) for target in targets]
+        self._edge_groups.append(FanOutEdgeGroup(source_id, target_ids, selection_func))
+
         return self
 
     def add_fan_in_edges(self, sources: Sequence[Executor], target: Executor) -> "Self":
@@ -478,16 +591,9 @@ class WorkflowBuilder:
             sources: A list of source executors for the edges.
             target: The target executor for the edges.
         """
-        edges = [Edge(source, target) for source in sources]
-
-        # Set the edge groups for the edges to ensure they are processed together.
-        for i, edge in enumerate(edges):
-            group_ids: list[str] = []
-            group_ids.extend([e.id for e in edges[0:i]])
-            group_ids.extend([e.id for e in edges[i + 1 :]])
-            edge.set_edge_group(group_ids)
-
-        self._edges.extend(edges)
+        source_ids = [self._add_executor(source) for source in sources]
+        target_id = self._add_executor(target)
+        self._edge_groups.append(FanInEdgeGroup(source_ids, target_id))
 
         return self
 
@@ -547,13 +653,13 @@ class WorkflowBuilder:
                 TypeCompatibilityError, and GraphConnectivityError subclasses).
         """
         if not self._start_executor:
-            raise ValueError("Starting executor must be set before building the workflow.")
+            raise ValueError("Starting executor must be set using set_start_executor before building the workflow.")
 
-        validate_workflow_graph(self._edges, self._start_executor)
+        validate_workflow_graph(self._edge_groups, self._executors, self._start_executor)
 
         context = InProcRunnerContext(self._checkpoint_storage)
 
-        return Workflow(self._edges, self._start_executor, context, self._max_iterations)
+        return Workflow(self._edge_groups, self._executors, self._start_executor, context, self._max_iterations)
 
 
 # endregion

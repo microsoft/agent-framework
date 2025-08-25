@@ -1,154 +1,349 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import asyncio
-from collections.abc import Callable
+import logging
+import uuid
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Any, ClassVar
 
-from ._executor import Executor
-from ._runner_context import Message, RunnerContext
-from ._shared_state import SharedState
-from ._workflow_context import WorkflowContext
+from agent_framework._pydantic import AFBaseModel
+from pydantic import Field
+
+from agent_framework_workflow._executor import Executor
+
+logger = logging.getLogger(__name__)
 
 
-class Edge:
+def _extract_function_name(func: Callable[..., Any]) -> str:
+    """Extract the name of any callable function for serialization.
+
+    Args:
+        func: The function to extract the name from.
+
+    Returns:
+        The name of the function, or a placeholder for lambda functions.
+    """
+    if hasattr(func, "__name__"):
+        name = func.__name__
+        # Check if it's a lambda function
+        if name == "<lambda>":
+            return "<lambda>"
+        return name
+    # Fallback for other callable objects
+    return "<callable>"
+
+
+class Edge(AFBaseModel):
     """Represents a directed edge in a graph."""
 
     ID_SEPARATOR: ClassVar[str] = "->"
 
+    source_id: str = Field(min_length=1, description="The ID of the source executor of the edge")
+    target_id: str = Field(min_length=1, description="The ID of the target executor of the edge")
+    condition_name: str | None = Field(default=None, description="The name of the condition function for serialization")
+
     def __init__(
         self,
-        source: Executor,
-        target: Executor,
+        source_id: str,
+        target_id: str,
         condition: Callable[[Any], bool] | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initialize the edge with a source and target node.
 
         Args:
-            source (Executor): The source executor of the edge.
-            target (Executor): The target executor of the edge.
+            source_id (str): The ID of the source executor of the edge.
+            target_id (str): The ID of the target executor of the edge.
             condition (Callable[[Any], bool], optional): A condition function that determines
                 if the edge can handle the data. If None, the edge can handle any data type.
                 Defaults to None.
+            kwargs: Additional keyword arguments. Unused in this implementation.
         """
-        self.source = source
-        self.target = target
+        condition_name = _extract_function_name(condition) if condition is not None else None
+        kwargs.update({"source_id": source_id, "target_id": target_id, "condition_name": condition_name})
+        super().__init__(**kwargs)
         self._condition = condition
-
-        # Edge group is used to group edges that share the same target executor.
-        # It allows for sending messages to the target executor only when all edges in the group have data.
-        self._edge_group_ids: list[str] = []
-
-    @property
-    def source_id(self) -> str:
-        """Get the source executor ID."""
-        return self.source.id
-
-    @property
-    def target_id(self) -> str:
-        """Get the target executor ID."""
-        return self.target.id
 
     @property
     def id(self) -> str:
         """Get the unique ID of the edge."""
         return f"{self.source_id}{self.ID_SEPARATOR}{self.target_id}"
 
-    def has_edge_group(self) -> bool:
-        """Check if the edge is part of an edge group."""
-        return bool(self._edge_group_ids)
-
-    @classmethod
-    def source_and_target_from_id(cls, edge_id: str) -> tuple[str, str]:
-        """Extract the source and target IDs from the edge ID.
-
-        Args:
-            edge_id (str): The edge ID in the format "source_id->target_id".
-
-        Returns:
-            tuple[str, str]: A tuple containing the source ID and target ID.
-        """
-        if cls.ID_SEPARATOR not in edge_id:
-            raise ValueError(f"Invalid edge ID format: {edge_id}")
-        ids = edge_id.split(cls.ID_SEPARATOR)
-        if len(ids) != 2:
-            raise ValueError(f"Invalid edge ID format: {edge_id}")
-        return ids[0], ids[1]
-
-    def can_handle(self, message_data: Any) -> bool:
-        """Check if the edge can handle the given data.
-
-        Args:
-            message_data (Any): The data to check.
-
-        Returns:
-            bool: True if the edge can handle the data, False otherwise.
-        """
-        if not self._edge_group_ids:
-            return self.target.can_handle(message_data)
-
-        # If the edge is part of an edge group, the target should expect a list of the data type.
-        return self.target.can_handle([message_data])
-
-    async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> None:
-        """Send a message along this edge.
-
-        Args:
-            message (Message): The message to send.
-            shared_state (SharedState): The shared state to use for holding data.
-            ctx (RunnerContext): The context for the runner.
-        """
-        if not self.can_handle(message.data):
-            raise RuntimeError(f"Edge {self.id} cannot handle data of type {type(message.data)}.")
-
-        if not self._edge_group_ids and self._should_route(message.data):
-            await self.target.execute(
-                message.data, WorkflowContext(self.target.id, [self.source.id], shared_state, ctx)
-            )
-        elif self._edge_group_ids:
-            # Logic:
-            # 1. If not all edges in the edge group have data in the shared state,
-            #    add the data to the shared state.
-            # 2. If all edges in the edge group have data in the shared state,
-            #    copy the data to a list and send it to the target executor.
-            message_list: list[Message] = []
-            async with shared_state.hold() as held_shared_state:
-                has_data = await asyncio.gather(
-                    *(held_shared_state.has_within_hold(edge_id) for edge_id in self._edge_group_ids)
-                )
-                if not all(has_data):
-                    await held_shared_state.set_within_hold(self.id, message)
-                else:
-                    message_list = [
-                        await held_shared_state.get_within_hold(edge_id) for edge_id in self._edge_group_ids
-                    ] + [message]
-                    # Remove the data from the shared state after retrieving it
-                    await asyncio.gather(
-                        *(held_shared_state.delete_within_hold(edge_id) for edge_id in self._edge_group_ids)
-                    )
-
-            if message_list:
-                data_list = [msg.data for msg in message_list]
-                source_ids = [msg.source_id for msg in message_list]
-                await self.target.execute(data_list, WorkflowContext(self.target.id, source_ids, shared_state, ctx))
-
-    def _should_route(self, data: Any) -> bool:
-        """Determine if message should be routed through this edge."""
+    def should_route(self, data: Any) -> bool:
+        """Determine if message should be routed through this edge based on the condition."""
         if self._condition is None:
             return True
 
         return self._condition(data)
 
-    def set_edge_group(self, edge_group_ids: list[str]) -> None:
-        """Set the edge group IDs for this edge.
+
+class EdgeGroup(AFBaseModel):
+    """Represents a group of edges that share some common properties and can be triggered together."""
+
+    id: str = Field(
+        default_factory=lambda: f"EdgeGroup/{uuid.uuid4()}", description="Unique identifier for the edge group"
+    )
+    type: str = Field(description="The type of edge group, corresponding to the class name")
+    edges: list[Edge] = Field(default_factory=list, description="List of edges in this group")
+
+    def __init__(self, **kwargs: Any) -> None:
+        """Initialize the edge group."""
+        if "id" not in kwargs:
+            kwargs["id"] = f"{self.__class__.__name__}/{uuid.uuid4()}"
+        if "type" not in kwargs:
+            kwargs["type"] = self.__class__.__name__
+        super().__init__(**kwargs)
+
+    @property
+    def source_executor_ids(self) -> list[str]:
+        """Get the source executor IDs of the edges in the group."""
+        seen = set()
+        result = []
+        for edge in self.edges:
+            if edge.source_id not in seen:
+                result.append(edge.source_id)
+                seen.add(edge.source_id)
+        return result
+
+    @property
+    def target_executor_ids(self) -> list[str]:
+        """Get the target executor IDs of the edges in the group."""
+        seen = set()
+        result = []
+        for edge in self.edges:
+            if edge.target_id not in seen:
+                result.append(edge.target_id)
+                seen.add(edge.target_id)
+        return result
+
+
+class SingleEdgeGroup(EdgeGroup):
+    """Represents a single edge group that contains only one edge.
+
+    A concrete implementation of EdgeGroup that represent a group containing exactly one edge.
+    """
+
+    def __init__(
+        self, source_id: str, target_id: str, condition: Callable[[Any], bool] | None = None, **kwargs: Any
+    ) -> None:
+        """Initialize the single edge group with an edge.
 
         Args:
-            edge_group_ids (list[str]): A list of edge IDs that belong to the same edge group.
+            source_id (str): The source executor ID.
+            target_id (str): The target executor ID that the source executor can send messages to.
+            condition (Callable[[Any], bool], optional): A condition function that determines
+                if the edge will pass the data to the target executor. If None, the edge will
+                always pass the data to the target executor.
+            kwargs: Additional keyword arguments. Unused in this implementation.
         """
-        # Validate that the edges in the edge group contain the same target executor as this edge
-        # TODO(@taochen): An edge cannot be part of multiple edge groups.
-        # TODO(@taochen): Can an edge have both a condition and an edge group?
-        if edge_group_ids:
-            for edge_id in edge_group_ids:
-                if Edge.source_and_target_from_id(edge_id)[1] != self.target.id:
-                    raise ValueError("All edges in the group must have the same target executor.")
-        self._edge_group_ids = edge_group_ids
+        edge = Edge(source_id=source_id, target_id=target_id, condition=condition)
+        kwargs["edges"] = [edge]
+        super().__init__(**kwargs)
+
+
+class FanOutEdgeGroup(EdgeGroup):
+    """Represents a group of edges that share the same source executor.
+
+    Assembles a Fan-out pattern where multiple edges share the same source executor
+    and send messages to their respective target executors.
+    """
+
+    selection_func_name: str | None = Field(
+        default=None, description="The name of the selection function for serialization"
+    )
+
+    def __init__(
+        self,
+        source_id: str,
+        target_ids: Sequence[str],
+        selection_func: Callable[[Any, list[str]], list[str]] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize the fan-out edge group with a list of edges.
+
+        Args:
+            source_id (str): The source executor ID.
+            target_ids (Sequence[str]): A list of target executor IDs that the source executor can send messages to.
+            selection_func (Callable[[Any, list[str]], list[str]], optional): A function that selects which target
+                executors to send messages to. The function takes in the message data and a list of target executor
+                IDs, and returns a list of selected target executor IDs.
+            kwargs: Additional keyword arguments. Unused in this implementation.
+        """
+        if len(target_ids) <= 1:
+            raise ValueError("FanOutEdgeGroup must contain at least two targets.")
+
+        # Extract selection function name for serialization
+        selection_func_name = None
+        if selection_func is not None:
+            selection_func_name = _extract_function_name(selection_func)
+
+        edges = [Edge(source_id=source_id, target_id=target_id) for target_id in target_ids]
+        kwargs.update({"edges": edges, "selection_func_name": selection_func_name})
+        super().__init__(**kwargs)
+
+        self._target_ids = list(target_ids)
+        self._selection_func = selection_func
+
+    @property
+    def target_ids(self) -> list[str]:
+        """Get the target executor IDs for selection."""
+        return self._target_ids
+
+    @property
+    def selection_func(self) -> Callable[[Any, list[str]], list[str]] | None:
+        """Get the selection function for this fan-out group."""
+        return self._selection_func
+
+
+class FanInEdgeGroup(EdgeGroup):
+    """Represents a group of edges that share the same target executor.
+
+    Assembles a Fan-in pattern where multiple edges send messages to a single target executor.
+    Messages are buffered until all edges in the group have data to send.
+    """
+
+    def __init__(self, source_ids: Sequence[str], target_id: str, **kwargs: Any) -> None:
+        """Initialize the fan-in edge group with a list of edges.
+
+        Args:
+            source_ids (Sequence[str]): A list of source executor IDs that can send messages to the target executor.
+            target_id (str): The target executor ID that receives a list of messages aggregated from all sources.
+            kwargs: Additional keyword arguments. Unused in this implementation.
+        """
+        if len(source_ids) <= 1:
+            raise ValueError("FanInEdgeGroup must contain at least two sources.")
+
+        edges = [Edge(source_id=source_id, target_id=target_id) for source_id in source_ids]
+        kwargs["edges"] = edges
+        super().__init__(**kwargs)
+
+
+@dataclass
+class Case:
+    """Represents a single case in the switch-case edge group.
+
+    Args:
+        condition (Callable[[Any], bool]): The condition function for the case.
+        target (Executor): The target executor for the case.
+    """
+
+    condition: Callable[[Any], bool]
+    target: Executor
+
+
+@dataclass
+class Default:
+    """Represents the default case in the switch-case edge group.
+
+    Args:
+        target (Executor): The target executor for the default case.
+    """
+
+    target: Executor
+
+
+class SwitchCaseEdgeGroupCase(AFBaseModel):
+    """A single case in the SwitchCaseEdgeGroup. This is used internally."""
+
+    target_id: str = Field(description="The target executor ID for this case")
+    condition_name: str | None = Field(default=None, description="The name of the condition function for serialization")
+    type: str = Field(default="Case", description="The type of the case")
+
+    def __init__(self, condition: Callable[[Any], bool], target_id: str, **kwargs: Any) -> None:
+        """Initialize the switch case with a condition and target.
+
+        Args:
+            condition: The condition function for the case.
+            target_id: The target executor ID for this case.
+            kwargs: Additional keyword arguments.
+        """
+        condition_name = _extract_function_name(condition)
+        kwargs.update({"target_id": target_id, "condition_name": condition_name})
+        super().__init__(**kwargs)
+        self._condition = condition
+
+    @property
+    def condition(self) -> Callable[[Any], bool]:
+        """Get the condition function for this case."""
+        return self._condition
+
+
+class SwitchCaseEdgeGroupDefault(AFBaseModel):
+    """The default case in the SwitchCaseEdgeGroup. This is used internally."""
+
+    target_id: str = Field(description="The target executor ID for the default case")
+    type: str = Field(default="Default", description="The type of the case")
+
+
+class SwitchCaseEdgeGroup(FanOutEdgeGroup):
+    """Represents a group of edges that assemble a conditional routing pattern.
+
+    This is similar to a switch-case construct:
+        switch(data):
+            case condition_1:
+                edge_1
+                break
+            case condition_2:
+                edge_2
+                break
+            default:
+                edge_3
+                break
+    Or equivalently an if-elif-else construct:
+        if condition_1:
+            edge_1
+        elif condition_2:
+            edge_2
+        else:
+            edge_4
+    """
+
+    cases: list[SwitchCaseEdgeGroupCase | SwitchCaseEdgeGroupDefault] = Field(
+        default_factory=list, description="List of conditional cases for this switch-case group"
+    )
+
+    def __init__(
+        self,
+        source_id: str,
+        cases: Sequence[SwitchCaseEdgeGroupCase | SwitchCaseEdgeGroupDefault],
+        **kwargs: Any,
+    ) -> None:
+        """Initialize the switch-case edge group with a list of edges.
+
+        Args:
+            source_id (str): The source executor ID.
+            cases (Sequence[Case | Default]): A list of cases for the switch-case edge group.
+                There should be exactly one default case.
+            kwargs: Additional keyword arguments. Unused in this implementation.
+        """
+        if len(cases) < 2:
+            raise ValueError("SwitchCaseEdgeGroup must contain at least two cases (including the default case).")
+
+        default_case = [isinstance(case, SwitchCaseEdgeGroupDefault) for case in cases]
+        if sum(default_case) != 1:
+            raise ValueError("SwitchCaseEdgeGroup must contain exactly one default case.")
+
+        if not isinstance(cases[-1], SwitchCaseEdgeGroupDefault):
+            logger.warning(
+                "Default case in the switch-case edge group is not the last case. "
+                "This will result in unexpected behavior."
+            )
+
+        def selection_func(data: Any, targets: list[str]) -> list[str]:
+            """Select the target executor based on the conditions."""
+            for index, case in enumerate(cases):
+                if isinstance(case, SwitchCaseEdgeGroupDefault):
+                    return [case.target_id]
+                if isinstance(case, SwitchCaseEdgeGroupCase):
+                    try:
+                        if case.condition(data):
+                            return [case.target_id]
+                    except Exception as e:
+                        logger.warning(f"Error occurred while evaluating condition for case {index}: {e}")
+
+            raise RuntimeError("No matching case found in SwitchCaseEdgeGroup.")
+
+        target_ids = [case.target_id for case in cases]
+
+        kwargs.update({"cases": cases})
+        super().__init__(source_id, target_ids, selection_func=selection_func, **kwargs)

@@ -3,7 +3,15 @@
 import asyncio
 from dataclasses import dataclass
 
-from agent_framework.workflow import Executor, WorkflowBuilder, WorkflowCompletedEvent, WorkflowContext, handler
+from agent_framework.workflow import (
+    Case,
+    Default,
+    Executor,
+    WorkflowBuilder,
+    WorkflowCompletedEvent,
+    WorkflowContext,
+    handler,
+)
 
 """
 The following sample demonstrates a basic workflow with two executors
@@ -29,8 +37,8 @@ class SpamDetector(Executor):
         super().__init__(id=id)
         self._spam_keywords = spam_keywords
 
-    @handler(output_types=[SpamDetectorResponse])
-    async def handle_email(self, email: str, ctx: WorkflowContext) -> None:
+    @handler
+    async def handle_email(self, email: str, ctx: WorkflowContext[SpamDetectorResponse]) -> None:
         """Determine if the input string is spam."""
         result = any(keyword in email.lower() for keyword in self._spam_keywords)
 
@@ -44,7 +52,7 @@ class SendResponse(Executor):
     async def handle_detector_response(
         self,
         spam_detector_response: SpamDetectorResponse,
-        ctx: WorkflowContext,
+        ctx: WorkflowContext[None],
     ) -> None:
         """Respond with a message based on whether the input is spam."""
         if spam_detector_response.is_spam:
@@ -64,7 +72,7 @@ class RemoveSpam(Executor):
     async def handle_detector_response(
         self,
         spam_detector_response: SpamDetectorResponse,
-        ctx: WorkflowContext,
+        ctx: WorkflowContext[None],
     ) -> None:
         """Remove the spam message."""
         if spam_detector_response.is_spam is False:
@@ -91,15 +99,12 @@ async def main():
     workflow = (
         WorkflowBuilder()
         .set_start_executor(spam_detector)
-        .add_edge(
+        .add_switch_case_edge_group(
             spam_detector,
-            send_response,
-            condition=lambda x: x.is_spam is False,
-        )
-        .add_edge(
-            spam_detector,
-            remove_spam,
-            condition=lambda x: x.is_spam is True,
+            [
+                Case(condition=lambda x: x.is_spam, target=remove_spam),
+                Default(target=send_response),
+            ],
         )
         .build()
     )

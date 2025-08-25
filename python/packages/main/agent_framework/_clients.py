@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
+from ._threads import ChatMessageStore
 from ._tools import AIFunction, AITool
 from ._types import (
     AIContents,
@@ -89,7 +90,7 @@ def _tool_call_non_streaming(
         response: ChatResponse | None = None
         fcc_messages: list[ChatMessage] = []
         for attempt_idx in range(getattr(self, "__maximum_iterations_per_request", 10)):
-            response = await func(self, messages=messages, chat_options=chat_options)
+            response = await func(self, messages=messages, chat_options=chat_options, **kwargs)
             # if there are function calls, we will handle them first
             function_results = {
                 it.call_id for it in response.messages[0].contents if isinstance(it, FunctionResultContent)
@@ -140,7 +141,7 @@ def _tool_call_non_streaming(
         # Failsafe: give up on tools, ask model for plain answer
         chat_options.tool_choice = "none"
         self._prepare_tool_choice(chat_options=chat_options)  # type: ignore[reportPrivateUsage]
-        response = await func(self, messages=messages, chat_options=chat_options)
+        response = await func(self, messages=messages, chat_options=chat_options, **kwargs)
         if fcc_messages:
             for msg in reversed(fcc_messages):
                 response.messages.insert(0, msg)
@@ -166,7 +167,7 @@ def _tool_call_streaming(
         for attempt_idx in range(getattr(self, "__maximum_iterations_per_request", 10)):
             function_call_returned = False
             all_messages: list[ChatResponseUpdate] = []
-            async for update in func(self, messages=messages, chat_options=chat_options):
+            async for update in func(self, messages=messages, chat_options=chat_options, **kwargs):
                 if update.contents and any(isinstance(item, FunctionCallContent) for item in update.contents):
                     all_messages.append(update)
                     function_call_returned = True
@@ -498,6 +499,7 @@ class ChatClientBase(AFBaseModel, ABC):
         Returns:
             A chat response from the model.
         """
+        # Should we merge chat options instead of ignoring the input params?
         if "chat_options" in kwargs:
             chat_options = kwargs.pop("chat_options")
             if not isinstance(chat_options, ChatOptions):
@@ -578,6 +580,7 @@ class ChatClientBase(AFBaseModel, ABC):
         Yields:
             A stream representing the response(s) from the LLM.
         """
+        # Should we merge chat options instead of ignoring the input params?
         if "chat_options" in kwargs:
             chat_options = kwargs.pop("chat_options")
             if not isinstance(chat_options, ChatOptions):
@@ -645,6 +648,7 @@ class ChatClientBase(AFBaseModel, ABC):
         | MutableMapping[str, Any]
         | list[MutableMapping[str, Any]]
         | None = None,
+        chat_message_store_factory: Callable[[], ChatMessageStore] | None = None,
         **kwargs: Any,
     ) -> "ChatClientAgent":
         """Create an agent with the given name and instructions.
@@ -653,6 +657,8 @@ class ChatClientBase(AFBaseModel, ABC):
             name: The name of the agent.
             instructions: The instructions for the agent.
             tools: Optional list of tools to associate with the agent.
+            chat_message_store_factory: Factory function to create an instance of ChatMessageStore. If not provided,
+                the default in-memory store will be used.
             **kwargs: Additional keyword arguments to pass to the agent.
                 See ChatClientAgent for all the available options.
 
@@ -661,7 +667,14 @@ class ChatClientBase(AFBaseModel, ABC):
         """
         from ._agents import ChatClientAgent
 
-        return ChatClientAgent(chat_client=self, name=name, instructions=instructions, tools=tools, **kwargs)
+        return ChatClientAgent(
+            chat_client=self,
+            name=name,
+            instructions=instructions,
+            tools=tools,
+            chat_message_store_factory=chat_message_store_factory,
+            **kwargs,
+        )
 
 
 # region Embedding Client

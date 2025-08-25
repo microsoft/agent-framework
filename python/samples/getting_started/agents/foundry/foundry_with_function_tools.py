@@ -31,11 +31,14 @@ async def tools_on_agent_level() -> None:
 
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
-    async with ChatClientAgent(
-        chat_client=FoundryChatClient(async_ad_credential=DefaultAzureCredential()),
-        instructions="You are a helpful assistant that can provide weather and time information.",
-        tools=[get_weather, get_time],  # Tools defined at agent creation
-    ) as agent:
+    async with (
+        DefaultAzureCredential() as credential,
+        ChatClientAgent(
+            chat_client=FoundryChatClient(async_ad_credential=credential),
+            instructions="You are a helpful assistant that can provide weather and time information.",
+            tools=[get_weather, get_time],  # Tools defined at agent creation
+        ) as agent,
+    ):
         # First query - agent can use weather tool
         query1 = "What's the weather like in New York?"
         print(f"User: {query1}")
@@ -60,11 +63,14 @@ async def tools_on_run_level() -> None:
     print("=== Tools Passed to Run Method ===")
 
     # Agent created without tools
-    async with ChatClientAgent(
-        chat_client=FoundryChatClient(async_ad_credential=DefaultAzureCredential()),
-        instructions="You are a helpful assistant.",
-        # No tools defined here
-    ) as agent:
+    async with (
+        DefaultAzureCredential() as credential,
+        ChatClientAgent(
+            chat_client=FoundryChatClient(async_ad_credential=credential),
+            instructions="You are a helpful assistant.",
+            # No tools defined here
+        ) as agent,
+    ):
         # First query with weather tool
         query1 = "What's the weather like in Seattle?"
         print(f"User: {query1}")
@@ -89,11 +95,14 @@ async def mixed_tools_example() -> None:
     print("=== Mixed Tools Example (Agent + Run Method) ===")
 
     # Agent created with some base tools
-    async with ChatClientAgent(
-        chat_client=FoundryChatClient(async_ad_credential=DefaultAzureCredential()),
-        instructions="You are a comprehensive assistant that can help with various information requests.",
-        tools=[get_weather],  # Base tool available for all queries
-    ) as agent:
+    async with (
+        DefaultAzureCredential() as credential,
+        ChatClientAgent(
+            chat_client=FoundryChatClient(async_ad_credential=credential),
+            instructions="You are a comprehensive assistant that can help with various information requests.",
+            tools=[get_weather],  # Base tool available for all queries
+        ) as agent,
+    ):
         # Query using both agent tool and additional run-method tools
         query = "What's the weather in Denver and what's the current UTC time?"
         print(f"User: {query}")

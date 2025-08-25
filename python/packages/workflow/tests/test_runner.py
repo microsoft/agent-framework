@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import pytest
 from agent_framework.workflow import Executor, WorkflowCompletedEvent, WorkflowContext, WorkflowEvent, handler
 
-from agent_framework_workflow._edge import Edge
+from agent_framework_workflow._edge import SingleEdgeGroup
 from agent_framework_workflow._runner import Runner
 from agent_framework_workflow._runner_context import InProcRunnerContext, RunnerContext
 from agent_framework_workflow._shared_state import SharedState
@@ -22,8 +22,8 @@ class MockMessage:
 class MockExecutor(Executor):
     """A mock executor for testing purposes."""
 
-    @handler(output_types=[MockMessage])
-    async def mock_handler(self, message: MockMessage, ctx: WorkflowContext) -> None:
+    @handler
+    async def mock_handler(self, message: MockMessage, ctx: WorkflowContext[MockMessage]) -> None:
         if message.data < 10:
             await ctx.send_message(MockMessage(data=message.data + 1))
         else:
@@ -36,12 +36,14 @@ def test_create_runner():
     executor_b = MockExecutor(id="executor_b")
 
     # Create a loop
-    edges = [
-        Edge(source=executor_a, target=executor_b),
-        Edge(source=executor_b, target=executor_a),
+    edge_groups = [
+        SingleEdgeGroup(executor_a.id, executor_b.id),
+        SingleEdgeGroup(executor_b.id, executor_a.id),
     ]
 
-    runner = Runner(edges, shared_state=SharedState(), ctx=InProcRunnerContext())
+    executors: dict[str, Executor] = {executor_a.id: executor_a, executor_b.id: executor_b}
+
+    runner = Runner(edge_groups, executors, shared_state=SharedState(), ctx=InProcRunnerContext())
 
     assert runner.context is not None and isinstance(runner.context, RunnerContext)
 
@@ -53,14 +55,15 @@ async def test_runner_run_until_convergence():
 
     # Create a loop
     edges = [
-        Edge(source=executor_a, target=executor_b),
-        Edge(source=executor_b, target=executor_a),
+        SingleEdgeGroup(executor_a.id, executor_b.id),
+        SingleEdgeGroup(executor_b.id, executor_a.id),
     ]
 
+    executors: dict[str, Executor] = {executor_a.id: executor_a, executor_b.id: executor_b}
     shared_state = SharedState()
     ctx = InProcRunnerContext()
 
-    runner = Runner(edges, shared_state, ctx)
+    runner = Runner(edges, executors, shared_state, ctx)
 
     result: int | None = None
     await executor_a.execute(
@@ -87,14 +90,15 @@ async def test_runner_run_until_convergence_not_completed():
 
     # Create a loop
     edges = [
-        Edge(source=executor_a, target=executor_b),
-        Edge(source=executor_b, target=executor_a),
+        SingleEdgeGroup(executor_a.id, executor_b.id),
+        SingleEdgeGroup(executor_b.id, executor_a.id),
     ]
 
+    executors: dict[str, Executor] = {executor_a.id: executor_a, executor_b.id: executor_b}
     shared_state = SharedState()
     ctx = InProcRunnerContext()
 
-    runner = Runner(edges, shared_state, ctx, max_iterations=5)
+    runner = Runner(edges, executors, shared_state, ctx, max_iterations=5)
 
     await executor_a.execute(
         MockMessage(data=0),
@@ -117,14 +121,15 @@ async def test_runner_already_running():
 
     # Create a loop
     edges = [
-        Edge(source=executor_a, target=executor_b),
-        Edge(source=executor_b, target=executor_a),
+        SingleEdgeGroup(executor_a.id, executor_b.id),
+        SingleEdgeGroup(executor_b.id, executor_a.id),
     ]
 
+    executors: dict[str, Executor] = {executor_a.id: executor_a, executor_b.id: executor_b}
     shared_state = SharedState()
     ctx = InProcRunnerContext()
 
-    runner = Runner(edges, shared_state, ctx)
+    runner = Runner(edges, executors, shared_state, ctx)
 
     await executor_a.execute(
         MockMessage(data=0),
