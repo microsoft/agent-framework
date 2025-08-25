@@ -114,7 +114,7 @@ async def test_workflow_tracer_disabled_by_default() -> None:
         type(
             "MockWorkflow",
             (),
-            {"workflow_id": "test-workflow", "model_dump_json": lambda self: '{"id": "test-workflow", "type": "mock"}'},
+            {"id": "test-workflow", "model_dump_json": lambda self: '{"id": "test-workflow", "type": "mock"}'},
         )(),
     )
 
@@ -140,7 +140,7 @@ async def test_workflow_span_creation(tracing_enabled: Any, span_exporter: InMem
             "MockWorkflow",
             (),
             {
-                "workflow_id": "test-workflow-id",
+                "id": "test-workflow-id",
                 "model_dump_json": lambda self: '{"id": "test-workflow-id", "type": "mock"}',
             },
         )(),
@@ -172,7 +172,7 @@ async def test_executor_processing_span_creation(tracing_enabled: Any, span_expo
         type(
             "MockWorkflow",
             (),
-            {"workflow_id": "test-workflow", "model_dump_json": lambda self: '{"id": "test-workflow", "type": "mock"}'},
+            {"id": "test-workflow", "model_dump_json": lambda self: '{"id": "test-workflow", "type": "mock"}'},
         )(),
     )
 
@@ -204,7 +204,7 @@ async def test_message_publishing_span_creation(tracing_enabled: Any, span_expor
         type(
             "MockWorkflow",
             (),
-            {"workflow_id": "test-workflow", "model_dump_json": lambda self: '{"id": "test-workflow", "type": "mock"}'},
+            {"id": "test-workflow", "model_dump_json": lambda self: '{"id": "test-workflow", "type": "mock"}'},
         )(),
     )
 
@@ -471,7 +471,7 @@ async def test_span_attributes_completeness(tracing_enabled: Any, span_exporter:
             "MockWorkflow",
             (),
             {
-                "workflow_id": "test-workflow-123",
+                "id": "test-workflow-123",
                 "model_dump_json": lambda self: '{"id": "test-workflow-123", "type": "mock"}',
             },
         )(),
@@ -549,7 +549,7 @@ async def test_real_workflow_definition_in_span_attributes(
     workflow_span = spans[0]
     assert workflow_span.name == "workflow.run"
     assert workflow_span.attributes is not None
-    assert workflow_span.attributes.get("workflow.id") == workflow.workflow_id
+    assert workflow_span.attributes.get("workflow.id") == workflow.id
 
     # Verify the workflow definition is included and contains meaningful data
     workflow_definition = workflow_span.attributes.get("workflow.definition")
@@ -560,7 +560,7 @@ async def test_real_workflow_definition_in_span_attributes(
     definition_data = json.loads(workflow_definition)
 
     # Verify the definition contains expected workflow structure
-    assert "workflow_id" in definition_data
+    assert "id" in definition_data
     assert "start_executor_id" in definition_data
     assert "executors" in definition_data
     assert "edge_groups" in definition_data

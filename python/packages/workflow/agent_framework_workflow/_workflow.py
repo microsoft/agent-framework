@@ -88,7 +88,7 @@ class Workflow(AFBaseModel):
     max_iterations: int = Field(
         default=DEFAULT_MAX_ITERATIONS, description="Maximum number of iterations the workflow will run"
     )
-    workflow_id: str = Field(
+    id: str = Field(
         default_factory=lambda: str(uuid.uuid4()), description="Unique identifier for this workflow instance"
     )
 
@@ -114,14 +114,14 @@ class Workflow(AFBaseModel):
         # Convert start_executor to string ID if it's an Executor instance
         start_executor_id = start_executor.id if isinstance(start_executor, Executor) else start_executor
 
-        workflow_id = str(uuid.uuid4())
+        id = str(uuid.uuid4())
 
         kwargs.update({
             "edge_groups": edge_groups,
             "executors": executors,
             "start_executor_id": start_executor_id,
             "max_iterations": max_iterations,
-            "workflow_id": workflow_id,
+            "id": id,
         })
 
         super().__init__(**kwargs)
@@ -135,7 +135,7 @@ class Workflow(AFBaseModel):
             self._shared_state,
             runner_context,
             max_iterations=max_iterations,
-            workflow_id=workflow_id,
+            workflow_id=id,
         )
 
     def model_dump(self, **kwargs: Any) -> dict[str, Any]:

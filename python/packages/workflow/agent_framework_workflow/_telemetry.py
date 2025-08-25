@@ -47,7 +47,7 @@ class WorkflowTracer:
             return nullcontext()
 
         attributes = {
-            "workflow.id": workflow.workflow_id,
+            "workflow.id": workflow.id,
             "workflow.definition": workflow.model_dump_json(),
         }
 

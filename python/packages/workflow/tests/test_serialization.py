@@ -547,7 +547,7 @@ class TestSerializationWorkflowClasses:
         assert "executors" in data
         assert "start_executor_id" in data
         assert "max_iterations" in data
-        assert "workflow_id" in data
+        assert "id" in data
 
         assert data["start_executor_id"] == "executor1"
         assert "executor1" in data["executors"]
