@@ -2,16 +2,13 @@
 # type: ignore
 import asyncio
 import logging
-from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 from agent_framework.workflow import (
     Executor,
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
-    WorkflowEvent,
-    WorkflowExecutor,
     handler,
 )
 from azure.monitor.opentelemetry import configure_azure_monitor
@@ -33,6 +30,13 @@ from opentelemetry.semconv.attributes import service_attributes
 from opentelemetry.trace import SpanKind, set_tracer_provider
 from opentelemetry.trace.span import format_trace_id
 from pydantic_settings import BaseSettings
+
+"""Telemetry sample demonstrating OpenTelemetry integration with Agent Framework workflows.
+
+This sample runs a simple sequential workflow with telemetry collection,
+showing telemetry collection for workflow execution, executor processing,
+and message publishing between executors.
+"""
 
 
 class TelemetrySampleSettings(BaseSettings):
@@ -149,42 +153,16 @@ def set_up_metrics():
     set_meter_provider(meter_provider)
 
 
-# Message types for sub-workflow scenario
-@dataclass
-class TextProcessingRequest:
-    """Request to process a text string."""
-
-    text: str
-    task_id: str
-
-
-@dataclass
-class TextProcessingResult:
-    """Result of text processing."""
-
-    task_id: str
-    text: str
-    word_count: int
-    char_count: int
-
-
-class AllTasksCompleted(WorkflowEvent):
-    """Event triggered when all processing tasks are complete."""
-
-    def __init__(self, results: list[TextProcessingResult]):
-        super().__init__(results)
-
-
-# Executors for sequential workflow scenario
+# Executors for sequential workflow
 class UpperCaseExecutor(Executor):
     """An executor that converts text to uppercase."""
 
     @handler
     async def to_upper_case(self, text: str, ctx: WorkflowContext[str]) -> None:
         """Execute the task by converting the input string to uppercase."""
-        print(f"🔤 UpperCaseExecutor: Processing '{text}'")
+        print(f"UpperCaseExecutor: Processing '{text}'")
         result = text.upper()
-        print(f"🔤 UpperCaseExecutor: Result '{result}'")
+        print(f"UpperCaseExecutor: Result '{result}'")
 
         # Send the result to the next executor in the workflow.
         await ctx.send_message(result)
@@ -196,114 +174,23 @@ class ReverseTextExecutor(Executor):
     @handler
     async def reverse_text(self, text: str, ctx: WorkflowContext[Any]) -> None:
         """Execute the task by reversing the input string."""
-        print(f"🔄 ReverseTextExecutor: Processing '{text}'")
+        print(f"ReverseTextExecutor: Processing '{text}'")
         result = text[::-1]
-        print(f"🔄 ReverseTextExecutor: Result '{result}'")
+        print(f"ReverseTextExecutor: Result '{result}'")
 
         # Send the result with a workflow completion event.
         await ctx.add_event(WorkflowCompletedEvent(result))
 
 
-# Sub-workflow executor
-class TextProcessor(Executor):
-    """Processes text strings - counts words and characters."""
-
-    def __init__(self):
-        super().__init__(id="text_processor")
-
-    @handler
-    async def process_text(
-        self, request: TextProcessingRequest, ctx: WorkflowContext[TextProcessingResult]
-    ) -> None:
-        """Process a text string and return statistics."""
-        text_preview = f"'{request.text[:50]}{'...' if len(request.text) > 50 else ''}'"
-        print(f"🔍 Sub-workflow processing text (Task {request.task_id}): {text_preview}")
-
-        # Simple text processing
-        word_count = len(request.text.split()) if request.text.strip() else 0
-        char_count = len(request.text)
-
-        print(f"📊 Task {request.task_id}: {word_count} words, {char_count} characters")
-
-        # Create result
-        result = TextProcessingResult(
-            task_id=request.task_id,
-            text=request.text,
-            word_count=word_count,
-            char_count=char_count,
-        )
-
-        print(f"✅ Sub-workflow completed task {request.task_id}")
-        # Signal completion
-        await ctx.add_event(WorkflowCompletedEvent(data=result))
-
-
-# Parent workflow orchestrator
-class TextProcessingOrchestrator(Executor):
-    """Orchestrates multiple text processing tasks using sub-workflows."""
-
-    results: list[TextProcessingResult] = []
-    expected_count: int = 0
-
-    def __init__(self):
-        super().__init__(id="text_orchestrator")
-
-    @handler
-    async def start_processing(
-        self, texts: list[str], ctx: WorkflowContext[TextProcessingRequest]
-    ) -> None:
-        """Start processing multiple text strings."""
-        print(f"📄 Starting processing of {len(texts)} text strings")
-        print("=" * 60)
-
-        self.expected_count = len(texts)
-
-        # Send each text to a sub-workflow
-        for i, text in enumerate(texts):
-            task_id = f"task_{i + 1}"
-            request = TextProcessingRequest(text=text, task_id=task_id)
-            print(f"📤 Dispatching {task_id} to sub-workflow")
-            await ctx.send_message(request, target_id="text_processor_workflow")
-
-    @handler
-    async def collect_result(
-        self, result: TextProcessingResult, ctx: WorkflowContext[None]
-    ) -> None:
-        """Collect results from sub-workflows."""
-        print(f"📥 Collected result from {result.task_id}")
-        self.results.append(result)
-
-        # Check if all results are collected
-        if len(self.results) == self.expected_count:
-            print("\n🎉 All tasks completed!")
-            await ctx.add_event(AllTasksCompleted(self.results))
-
-    def get_summary(self) -> dict[str, Any]:
-        """Get a summary of all processing results."""
-        total_words = sum(result.word_count for result in self.results)
-        total_chars = sum(result.char_count for result in self.results)
-        avg_words = total_words / len(self.results) if self.results else 0
-        avg_chars = total_chars / len(self.results) if self.results else 0
-
-        return {
-            "total_texts": len(self.results),
-            "total_words": total_words,
-            "total_characters": total_chars,
-            "average_words_per_text": round(avg_words, 2),
-            "average_characters_per_text": round(avg_chars, 2),
-        }
-
-
 async def run_sequential_workflow() -> None:
-    """Run a sequential workflow with telemetry.
+    """Run a simple sequential workflow demonstrating telemetry collection.
 
-    This function runs a workflow with two executors that process a string in sequence.
-    The first executor converts the input string to uppercase, and the second executor
-    reverses the string. Telemetry will be collected for the workflow execution behind
-    the scenes, and the traces will be sent to the configured telemetry backend.
+    This workflow processes a string through two executors in sequence:
+    1. UpperCaseExecutor converts the input to uppercase
+    2. ReverseTextExecutor reverses the string and completes the workflow
 
-    The telemetry will include information about:
-    - Overall workflow execution
+    Telemetry data collected includes:
+    - Overall workflow execution spans
     - Individual executor processing spans
     - Message publishing between executors
     - Workflow completion events
@@ -346,99 +233,8 @@ async def run_sequential_workflow() -> None:
             print(f"Error running workflow: {e}")
 
 
-async def run_sub_workflow() -> None:
-    """Run a sub-workflow scenario with telemetry.
-
-    This function runs a workflow that demonstrates sub-workflows with telemetry.
-    The parent workflow orchestrates multiple text processing tasks, where each
-    task is handled by a sub-workflow. Telemetry will be collected for the
-    workflow execution behind the scenes, and the traces will be sent to the
-    configured telemetry backend.
-
-    The telemetry will include information about:
-    - Parent workflow execution spans
-    - Sub-workflow execution spans
-    - Message passing between parent and sub-workflows
-    - WorkflowExecutor spans for sub-workflow invocation
-    - Event processing across workflow boundaries
-    """
-
-    tracer = trace.get_tracer(__name__)
-    with tracer.start_as_current_span("Scenario: Sub-Workflow", kind=SpanKind.CLIENT) as current_span:
-        print("Running scenario: Sub-Workflow")
-        try:
-            # Step 1: Create the text processing sub-workflow
-            text_processor = TextProcessor()
-
-            processing_workflow = (
-                WorkflowBuilder()
-                .set_start_executor(text_processor)
-                .build()
-            )
-
-            print("🔧 Setting up parent workflow...")
-
-            # Step 2: Create the parent workflow
-            orchestrator = TextProcessingOrchestrator()
-            workflow_executor = WorkflowExecutor(processing_workflow, id="text_processor_workflow")
-
-            main_workflow = (
-                WorkflowBuilder()
-                .set_start_executor(orchestrator)
-                .add_edge(orchestrator, workflow_executor)
-                .add_edge(workflow_executor, orchestrator)
-                .build()
-            )
-
-            # Step 3: Test data - various text strings
-            test_texts = [
-                "Hello world! This is a simple test.",
-                "Python telemetry with workflows.",
-                "Short text.",
-                "This demonstrates sub-workflow telemetry in Agent Framework.",
-            ]
-
-            print(f"\n🧪 Testing with {len(test_texts)} text strings")
-            print("=" * 60)
-
-            # Step 4: Run the workflow
-            completion_event = None
-            async for event in main_workflow.run_streaming(test_texts):
-                print(f"Event: {event}")
-                if isinstance(event, AllTasksCompleted):
-                    completion_event = event
-
-            # Step 5: Display results
-            if completion_event:
-                print("\n📊 Processing Results:")
-                print("=" * 60)
-
-                # Sort results by task_id for consistent display
-                sorted_results = sorted(completion_event.data, key=lambda r: r.task_id)
-
-                for result in sorted_results:
-                    preview = result.text[:30] + "..." if len(result.text) > 30 else result.text
-                    preview = preview.replace("\n", " ").strip() or "(empty)"
-                    print(f"✅ {result.task_id}: '{preview}' -> {result.word_count} words, {result.char_count} chars")
-
-                # Step 6: Display summary
-                summary = orchestrator.get_summary()
-                print("\n📈 Summary:")
-                print("=" * 60)
-                print(f"📄 Total texts processed: {summary['total_texts']}")
-                print(f"📝 Total words: {summary['total_words']}")
-                print(f"🔤 Total characters: {summary['total_characters']}")
-                print(f"📊 Average words per text: {summary['average_words_per_text']}")
-                print(f"📏 Average characters per text: {summary['average_characters_per_text']}")
-
-                print("\n🏁 Sub-workflow processing complete!")
-
-        except Exception as e:
-            current_span.record_exception(e)
-            print(f"Error running sub-workflow: {e}")
-
-
-async def main(scenario: Literal["sequential", "sub_workflow", "all"] = "all"):
+async def main():
+    """Run the telemetry sample with a simple sequential workflow."""
     # Set up the providers
     # This must be done before any other telemetry calls
     set_up_logging()
@@ -446,31 +242,12 @@ async def main(scenario: Literal["sequential", "sub_workflow", "all"] = "all"):
     set_up_metrics()
 
     tracer = trace.get_tracer("agent_framework")
-    with tracer.start_as_current_span("Workflow Scenarios", kind=SpanKind.CLIENT) as current_span:
+    with tracer.start_as_current_span("Sequential Workflow Scenario", kind=SpanKind.CLIENT) as current_span:
         print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
 
-        # Scenarios where telemetry is collected for workflow execution
-        if scenario == "sequential" or scenario == "all":
-            await run_sequential_workflow()
-            print("\n" + "=" * 60 + "\n")
-
-        if scenario == "sub_workflow" or scenario == "all":
-            await run_sub_workflow()
+        # Run the sequential workflow scenario
+        await run_sequential_workflow()
 
 
 if __name__ == "__main__":
-    import argparse
-
-    arg_parser = argparse.ArgumentParser(
-        description="Workflow telemetry sample demonstrating OpenTelemetry integration with Agent Framework workflows."
-    )
-    arg_parser.add_argument(
-        "--scenario",
-        type=str,
-        choices=["sequential", "sub_workflow", "all"],
-        default="all",
-        help="The scenario to run. Default is all.",
-    )
-
-    args = arg_parser.parse_args()
-    asyncio.run(main(args.scenario))
+    asyncio.run(main())
