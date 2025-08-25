@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Azure.AI.Agents.Persistent;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.Extensions.AI;
@@ -53,7 +54,11 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
                     Instructions = additionalInstructions,
                 });
 
-        FormulaValue conversationValue = this.State.Get(VariableScopeNames.System, this.Model.AutoSend ? "ConversationId" : "InternalId");
+        FormulaValue conversationValue =
+            this.Model.AutoSend ? // %%% HAXX: Internal thread until updated OM is available.
+                this.State.GetConversationId() :
+                this.State.GetInternalConversationId();
+
         string conversationId;
         if (conversationValue is StringValue stringValue)
         {
@@ -87,7 +92,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
         AgentRunResponse agentResponse = agentResponseUpdates.ToAgentRunResponse();
 
         ChatMessage response = agentResponse.Messages.Last();
-        this.State.Set(VariableScopeNames.System, "LastMessage", response.ToRecordValue());
+        this.State.SetLastMessage(response);
         if (this.Model.AutoSend)
         {
             await context.AddEventAsync(new DeclarativeWorkflowMessageEvent(response, agentResponse.Usage)).ConfigureAwait(false);
@@ -95,7 +100,14 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
 
         if (conversationValue is not StringValue)
         {
-            this.AssignTarget(PropertyPath.FromSegments(VariableScopeNames.System, this.Model.AutoSend ? "ConversationId" : "InternalId"), FormulaValue.New(conversationId)); // %%% HAXX: INTERNAL THREAD (TODO: OM)
+            if (this.Model.AutoSend) // %%% HAXX: Internal thread until updated OM is available.
+            {
+                this.State.SetConversationId(conversationId);
+            }
+            else
+            {
+                this.State.SetInternalConversationId(conversationId);
+            }
         }
 
         PropertyPath? variablePath = this.Model.Variable?.Path;

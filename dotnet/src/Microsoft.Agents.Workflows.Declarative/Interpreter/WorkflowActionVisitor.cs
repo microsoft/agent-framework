@@ -6,7 +6,6 @@ using System.Linq;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.ObjectModel;
 using Microsoft.Bot.ObjectModel;
-using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
@@ -40,7 +39,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        string parentId = Throw.IfNull(item.GetParentId(), nameof(BotElement.Parent));
+        string parentId = GetParentId(item);
 
         // Handle case where root element is its own parent
         if (item.Id.Equals(parentId))
@@ -70,7 +69,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         if (conditionGroup is not null)
         {
             string stepId = ConditionGroupExecutor.Steps.Item(conditionGroup.Model, item);
-            string parentId = Throw.IfNull(item.GetParentId(), nameof(BotElement.Parent));
+            string parentId = GetParentId(item);
             this._workflowModel.AddNode(this.CreateStep(stepId), parentId, CompletionHandler);
 
             base.VisitConditionItem(item);
@@ -125,7 +124,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        string parentId = Throw.IfNull(item.GetParentId(), nameof(BotElement.Parent));
+        string parentId = GetParentId(item);
         this.ContinueWith(this.CreateStep(item.Id.Value), parentId);
         this._workflowModel.AddLink(item.Id.Value, item.ActionId.Value);
         this.RestartAfter(item.Id.Value, parentId);
@@ -160,7 +159,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         ForeachExecutor? loopExecutor = this._workflowModel.LocateParent<ForeachExecutor>(item.GetParentId());
         if (loopExecutor is not null)
         {
-            string parentId = Throw.IfNull(item.GetParentId(), nameof(BotElement.Parent));
+            string parentId = GetParentId(item);
             this.ContinueWith(this.CreateStep(item.Id.Value), parentId);
             this._workflowModel.AddLink(item.Id.Value, PostId(loopExecutor.Id));
             this.RestartAfter(item.Id.Value, parentId);
@@ -174,7 +173,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         ForeachExecutor? loopExecutor = this._workflowModel.LocateParent<ForeachExecutor>(item.GetParentId());
         if (loopExecutor is not null)
         {
-            string parentId = Throw.IfNull(item.GetParentId(), nameof(BotElement.Parent));
+            string parentId = GetParentId(item);
             this.ContinueWith(this.CreateStep(item.Id.Value), parentId);
             this._workflowModel.AddLink(item.Id.Value, ForeachExecutor.Steps.Next(loopExecutor.Id));
             this.RestartAfter(item.Id.Value, parentId);
@@ -185,7 +184,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        string parentId = Throw.IfNull(item.GetParentId(), nameof(BotElement.Parent));
+        string parentId = GetParentId(item);
         this.ContinueWith(this.CreateStep(item.Id.Value), parentId);
         this.RestartAfter(item.Id.Value, parentId);
     }
@@ -455,6 +454,18 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     public static string RootId(string? actionId) => $"root_{actionId ?? "workflow"}";
 
     private static string PostId(string actionId) => $"{actionId}_Post";
+
+    private static string GetParentId(BotElement item)
+    {
+        string? parentId = item.GetParentId();
+
+        if (parentId is null)
+        {
+            throw new UnknownActionException($"Missing parent ID for action element: {item.GetId()} [{item.GetType().Name}].");
+        }
+
+        return parentId;
+    }
 
     private string ContinuationFor(string parentId) => this.ContinuationFor(parentId, parentId);
 

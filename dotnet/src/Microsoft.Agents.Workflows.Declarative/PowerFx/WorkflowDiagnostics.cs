@@ -17,6 +17,10 @@ internal static class WorkflowDiagnostics
 
     public static void InitializeDefaults(this WorkflowScopes scopes, AdaptiveDialog workflowElement)
     {
+        foreach (string systemVariableName in SystemScope.GetNames()) // %%% HAXX - Shouldn't be needed
+        {
+            scopes.Set(systemVariableName, VariableScopeNames.System, FormulaValue.NewBlank());
+        }
         scopes.InitializeSemanticModel(workflowElement);
     }
 
@@ -25,7 +29,6 @@ internal static class WorkflowDiagnostics
         SemanticModel semanticModel = workflowElement.GetSemanticModel(new PowerFxExpressionChecker(s_semanticFeatureConfig), s_semanticFeatureConfig);
         foreach (VariableInformationDiagnostic variableDiagnostic in semanticModel.GetVariables(workflowElement.SchemaName).Where(x => !x.IsSystemVariable).Select(v => v.ToDiagnostic()))
         {
-            Console.WriteLine($":: {variableDiagnostic?.Path?.VariableName ?? "?"}");
             if (variableDiagnostic?.Path?.VariableName is null)
             {
                 continue;
@@ -35,7 +38,10 @@ internal static class WorkflowDiagnostics
 
             if (variableDiagnostic.Path.VariableScopeName?.Equals(VariableScopeNames.System, StringComparison.OrdinalIgnoreCase) ?? false)
             {
-                // %%% TODO: Verify supported variables
+                if (!SystemScope.AllNames.Contains(variableDiagnostic.Path.VariableName))
+                {
+                    throw new UnsupportedVariableException($"Variable '{variableDiagnostic.Path.VariableName}' is not a supported system variable.");
+                }
             }
 
             scopes.Set(variableDiagnostic.Path.VariableName, variableDiagnostic.Path.VariableScopeName ?? VariableScopeNames.Topic, defaultValue);

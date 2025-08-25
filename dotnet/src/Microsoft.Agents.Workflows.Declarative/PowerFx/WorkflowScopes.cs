@@ -4,6 +4,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
+using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;
@@ -85,9 +86,10 @@ internal sealed class WorkflowScopes : IEnumerable<WorkflowScope>
 
     public void Clear(string scopeName)
     {
-        foreach (KeyValuePair<string, FormulaValue> scopeKvp in this._scopes[scopeName])
+        foreach (string variableName in this._scopes[scopeName].Keys.ToArray())
         {
-            this.Set(scopeKvp.Key, scopeName, FormulaValue.NewBlank(scopeKvp.Value.Type));
+            FormulaType variableType = this._scopes[scopeName][variableName].Type;
+            this.Set(variableName, scopeName, variableType.NewBlank());
         }
     }
 

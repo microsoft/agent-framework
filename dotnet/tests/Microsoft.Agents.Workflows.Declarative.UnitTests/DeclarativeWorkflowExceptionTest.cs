@@ -13,9 +13,9 @@ public sealed class DeclarativeWorkflowExceptionTest(ITestOutputHelper output) :
     [Fact]
     public void InvalidScopeException()
     {
-        AssertDefault<InvalidScopeException>(() => throw new InvalidScopeException());
-        AssertMessage<InvalidScopeException>((message) => throw new InvalidScopeException(message));
-        AssertInner<InvalidScopeException>((message, inner) => throw new InvalidScopeException(message, inner));
+        AssertDefault<UnsupportedVariableException>(() => throw new UnsupportedVariableException());
+        AssertMessage<UnsupportedVariableException>((message) => throw new UnsupportedVariableException(message));
+        AssertInner<UnsupportedVariableException>((message, inner) => throw new UnsupportedVariableException(message, inner));
     }
 
     [Fact]

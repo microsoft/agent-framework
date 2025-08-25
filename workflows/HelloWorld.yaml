@@ -1,4 +1,5 @@
 kind: AdaptiveDialog
+
 beginDialog:
 
   kind: OnActivity
@@ -8,9 +9,16 @@ beginDialog:
     - kind: SetVariable
       id: setvar_userinput
       variable: Topic.UserInput
-      value: =System.LastMessage.Text
+      value: =System.LastMessage
+
+    - kind: SetVariable
+      id: setvar_username
+      variable: Global.UserName
+      value: =Env.USERNAME
 
     # Respond with input
     - kind: SendActivity
       id: sendActivity_demo
-      activity: {Topic.UserInput}
+      activity: |-
+        Hello {Global.UserName),
+        You said, "{Topic.UserInput}"

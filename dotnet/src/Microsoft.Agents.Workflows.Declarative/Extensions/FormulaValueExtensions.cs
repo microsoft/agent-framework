@@ -86,6 +86,8 @@ internal static class FormulaValueExtensions
             _ => $"[{value.GetType().Name}]",
         };
 
+    public static FormulaValue NewBlank(this FormulaType? type) => FormulaValue.NewBlank(type ?? FormulaType.Blank);
+
     public static BooleanDataValue ToDataValue(this BooleanValue value) => BooleanDataValue.Create(value.Value);
     public static NumberDataValue ToDataValue(this DecimalValue value) => NumberDataValue.Create(value.Value);
     public static FloatDataValue ToDataValue(this NumberValue value) => FloatDataValue.Create(value.Value);

@@ -26,7 +26,7 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(string workflowId, Ada
 
         ChatMessage input = inputTransform.Invoke(message);
 
-        scopes.Set("LastMessage", VariableScopeNames.System, input.ToRecordValue());
+        scopes.SetLastMessage(input);
 
         await context.SetScopedStateAsync(scopes, default).ConfigureAwait(false);
         await context.SendMessageAsync(new ExecutionResultMessage(this.Id)).ConfigureAwait(false);
