@@ -33,17 +33,19 @@ internal sealed class AgentActor(
             cancellationToken).ConfigureAwait(false);
 
         this._etag = response.ETag;
+        var hasExistingThread = false;
         if (response.Results[0] is GetValueResult threadResult)
         {
             if (threadResult.Value is { } threadJson)
             {
                 // Deserialize the thread state if it exists
-                await agent.DeserializeThreadAsync(threadJson, cancellationToken: cancellationToken).ConfigureAwait(false);
+                this._thread = await agent.DeserializeThreadAsync(threadJson, cancellationToken: cancellationToken).ConfigureAwait(false);
+                hasExistingThread = true;
             }
         }
 
         this._thread ??= agent.GetNewThread();
-        Log.ThreadStateRestored(logger, context.ActorId.ToString(), response.Results[0] is GetValueResult { Value: not null });
+        Log.ThreadStateRestored(logger, context.ActorId.ToString(), hasExistingThread);
 
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -120,10 +122,9 @@ internal sealed class AgentActor(
                 Log.AgentStreamingUpdate(logger, requestId, i);
             }
 
-            var serializedRunResponse = JsonSerializer.SerializeToElement(
-                updates.ToAgentRunResponse(),
-                AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentRunResponse)));
-            var updatedThread = JsonSerializer.SerializeToElement(this._thread, AgentHostingJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentThread)));
+            var serializedRunResponse = JsonSerializer.SerializeToElement(updates.ToAgentRunResponse(), AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentRunResponse)));
+            var updatedThread = await this._thread.SerializeAsync(AgentHostingJsonUtilities.DefaultOptions, cancellationToken).ConfigureAwait(false);
+
             var writeResponse = await context.WriteAsync(
                 new(this._etag,
                 [
