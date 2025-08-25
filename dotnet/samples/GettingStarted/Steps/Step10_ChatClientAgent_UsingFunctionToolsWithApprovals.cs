@@ -55,7 +55,6 @@ public sealed class Step10_ChatClientAgent_UsingFunctionToolsWithApprovals(ITest
         {
             this.WriteUserMessage(input);
             var response = await agent.RunAsync(input, thread);
-            this.WriteResponseOutput(response);
 
             // Loop until all user input requests are handled.
             var userInputRequests = response.UserInputRequests.ToList();
@@ -78,10 +77,11 @@ public sealed class Step10_ChatClientAgent_UsingFunctionToolsWithApprovals(ITest
 
                 // Pass the user input responses back to the agent for further processing.
                 response = await agent.RunAsync(nextIterationMessages, thread);
-                this.WriteResponseOutput(response);
 
                 userInputRequests = response.UserInputRequests.ToList();
             }
+
+            this.WriteResponseOutput(response);
         }
 
         // Clean up the server-side agent after use when applicable (depending on the provider).
@@ -132,7 +132,6 @@ public sealed class Step10_ChatClientAgent_UsingFunctionToolsWithApprovals(ITest
         {
             this.WriteUserMessage(input);
             var updates = await agent.RunStreamingAsync(input, thread).ToListAsync();
-            this.WriteResponseOutput(updates.ToAgentRunResponse());
 
             // Loop until all user input requests are handled.
             var userInputRequests = updates.SelectMany(x => x.UserInputRequests).ToList();
@@ -155,10 +154,11 @@ public sealed class Step10_ChatClientAgent_UsingFunctionToolsWithApprovals(ITest
 
                 // Pass the user input responses back to the agent for further processing.
                 updates = await agent.RunStreamingAsync(nextIterationMessages, thread).ToListAsync();
-                this.WriteResponseOutput(updates.ToAgentRunResponse());
 
                 userInputRequests = updates.SelectMany(x => x.UserInputRequests).ToList();
             }
+
+            this.WriteResponseOutput(updates.ToAgentRunResponse());
         }
 
         // Clean up the server-side agent after use when applicable (depending on the provider).
