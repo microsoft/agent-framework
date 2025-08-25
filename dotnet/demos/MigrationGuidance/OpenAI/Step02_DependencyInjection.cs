@@ -8,53 +8,59 @@ using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Agents;
 using OpenAI;
 
-Console.ForegroundColor = ConsoleColor.Gray;
-
-var apiKey = new ConfigurationBuilder().AddUserSecrets<Program>().Build()["OpenAI:ApiKey"]!;
-var modelId = "gpt-4o";
-var userInput = "Tell me a joke about a pirate.";
-
-Console.WriteLine($"User Input: {userInput}");
-
-await AFAgent();
-await SKAgent();
-
-Console.ForegroundColor = ConsoleColor.Gray;
-
-async Task SKAgent()
+internal sealed class OpenAIDependencyInjection
 {
-    Console.ForegroundColor = ConsoleColor.Yellow;
-    Console.WriteLine($"\n=== SK Agent ===\n");
-
-    var serviceCollection = new ServiceCollection();
-    serviceCollection.AddKernel().AddOpenAIChatClient(modelId, apiKey);
-    serviceCollection.AddTransient((sp) => new ChatCompletionAgent()
+    private static async Task Main(string[] args)
     {
-        Kernel = sp.GetRequiredService<Kernel>(),
-        Name = "Joker",
-        Instructions = "You are good at telling jokes."
-    });
+        Console.ForegroundColor = ConsoleColor.Gray;
 
-    await using ServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();
-    var agent = serviceProvider.GetRequiredService<ChatCompletionAgent>();
+        var apiKey = new ConfigurationBuilder().AddUserSecrets<OpenAIDependencyInjection>().Build()["OpenAI:ApiKey"]!;
+        var modelId = "gpt-4o";
+        var userInput = "Tell me a joke about a pirate.";
 
-    var result = await agent.InvokeAsync(userInput).FirstAsync();
-    Console.WriteLine(result.Message);
-}
+        Console.WriteLine($"User Input: {userInput}");
 
-async Task AFAgent() 
-{
-    Console.ForegroundColor = ConsoleColor.Green;
-    Console.WriteLine("\n=== AF Agent ===\n");
+        await AFAgent();
+        await SKAgent();
 
-    var serviceCollection = new ServiceCollection();
-    serviceCollection.AddTransient((sp) => new OpenAIClient(apiKey)
-        .GetChatClient(modelId)
-        .CreateAIAgent(name: "Joker", instructions: "You are good at telling jokes."));
+        Console.ForegroundColor = ConsoleColor.Gray;
 
-    await using ServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();
-    var agent = serviceProvider.GetRequiredService<AIAgent>();
+        async Task SKAgent()
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine("\n=== SK Agent ===\n");
 
-    var result = await agent.RunAsync(userInput);
-    Console.WriteLine(result);
+            var serviceCollection = new ServiceCollection();
+            serviceCollection.AddKernel().AddOpenAIChatClient(modelId, apiKey);
+            serviceCollection.AddTransient((sp) => new ChatCompletionAgent()
+            {
+                Kernel = sp.GetRequiredService<Kernel>(),
+                Name = "Joker",
+                Instructions = "You are good at telling jokes."
+            });
+
+            await using ServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();
+            var agent = serviceProvider.GetRequiredService<ChatCompletionAgent>();
+
+            var result = await agent.InvokeAsync(userInput).FirstAsync();
+            Console.WriteLine(result.Message);
+        }
+
+        async Task AFAgent()
+        {
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine("\n=== AF Agent ===\n");
+
+            var serviceCollection = new ServiceCollection();
+            serviceCollection.AddTransient((sp) => new OpenAIClient(apiKey)
+                .GetChatClient(modelId)
+                .CreateAIAgent(name: "Joker", instructions: "You are good at telling jokes."));
+
+            await using ServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();
+            var agent = serviceProvider.GetRequiredService<AIAgent>();
+
+            var result = await agent.RunAsync(userInput);
+            Console.WriteLine(result);
+        }
+    }
 }
