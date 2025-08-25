@@ -16,11 +16,7 @@
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
   </PropertyGroup>
 
-  <ItemGroup>
-    <None Include="Workflows\Workflows_Declarative.cs" />
-  </ItemGroup>
-  
-  <ItemGroup>
+   <ItemGroup>
     <PackageReference Include="Azure.AI.Agents.Persistent" />
     <PackageReference Include="Azure.AI.OpenAI" />
     <PackageReference Include="Azure.Identity" />

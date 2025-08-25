@@ -34,7 +34,7 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
 
             this._executors[executorId] = executor = provider();
 
-            if (executor is RequestInputExecutor requestInputExecutor)
+            if (executor is RequestInfoExecutor requestInputExecutor)
             {
                 requestInputExecutor.AttachRequestSink(this);
             }

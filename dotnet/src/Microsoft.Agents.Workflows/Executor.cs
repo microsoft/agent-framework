@@ -25,9 +25,15 @@ public abstract class Executor : IIdentified
     /// </summary>
     /// <param name="id">A optional unique identifier for the executor. If <c>null</c>, a type-tagged
     /// UUID will be generated.</param>
-    protected Executor(string? id = null)
+    protected Executor(string? id = null) : this(ExecutorOptions.Default, id)
+    {
+    }
+
+    private readonly ExecutorOptions _options;
+    internal Executor(ExecutorOptions options, string? id = null)
     {
         this.Id = id ?? $"{this.GetType().Name}/{Guid.NewGuid():N}";
+        this._options = options;
     }
 
     /// <summary>
@@ -96,7 +102,7 @@ public abstract class Executor : IIdentified
         }
 
         // If we had a real return type, raise it as a SendMessage; TODO: Should we have a way to disable this behaviour?
-        if (result.Result != null && ExecutorOptions.Default.AutoSendMessageHandlerResultObject)
+        if (result.Result != null && this._options.AutoSendMessageHandlerResultObject)
         {
             await context.SendMessageAsync(result.Result).ConfigureAwait(false);
         }

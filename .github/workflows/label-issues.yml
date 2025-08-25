@@ -12,6 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
+      members: read
     steps:
       - uses: actions/github-script@v7
         with:
@@ -22,7 +23,26 @@ jobs:
             let title = context.payload.issue.title
 
             // Define the labels array
-            let labels = ["triage"]
+            let labels = []
+
+            // Check if the issue author is in the agentframework-developers team
+            let isTeamMember = false
+            try {
+              const teamMembership = await github.rest.teams.getMembershipForUserInOrg({
+                org: context.repo.owner,
+                team_slug: process.env.TEAM_NAME,
+                username: context.payload.issue.user.login
+              })
+              isTeamMember = teamMembership.data.state === 'active'
+            } catch (error) {
+              // User is not in the team or team doesn't exist
+              isTeamMember = false
+            }
+
+            // Only add triage label if the author is not in the team
+            if (!isTeamMember) {
+              labels.push("triage")
+            }
 
             // Check if the body or the title contains the word 'python' (case-insensitive)
             if ((body != null && body.match(/python/i)) || (title != null && title.match(/python/i))) {
@@ -39,10 +59,14 @@ jobs:
               labels.push(".NET")
             }
 
-            // Add the labels to the issue
-            github.rest.issues.addLabels({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              labels: labels
-            });
+            // Add the labels to the issue (only if there are labels to add)
+            if (labels.length > 0) {
+              github.rest.issues.addLabels({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                labels: labels
+              });
+            }
+        env:
+          TEAM_NAME: ${{ secrets.DEVELOPER_TEAM }}
