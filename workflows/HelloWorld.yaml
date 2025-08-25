@@ -11,14 +11,7 @@ beginDialog:
       variable: Topic.UserInput
       value: =System.LastMessage
 
-    - kind: SetVariable
-      id: setvar_username
-      variable: Global.UserName
-      value: =Env.USERNAME
-
     # Respond with input
     - kind: SendActivity
       id: sendActivity_demo
-      activity: |-
-        Hello {Global.UserName),
-        You said, "{Topic.UserInput}"
+      activity: {Topic.UserInput}
