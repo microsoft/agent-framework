@@ -9,10 +9,11 @@ namespace Microsoft.Agents.Workflows;
 /// a response to accumulated <see cref="Microsoft.Extensions.AI.ChatMessage"/>.
 /// </summary>
 /// <param name="emitEvents">Whether to raise AgentRunEvents for this executor.</param>
-public class TurnToken(bool emitEvents = false)
+public class TurnToken(bool? emitEvents = null)
 {
     /// <summary>
-    /// Gets a value indicating whether events are emitted by the receiving executor.
+    /// Gets a value indicating whether events are emitted by the receiving executor. If the
+    /// value is not set, defaults to the configuration in the executor.
     /// </summary>
-    public bool EmitEvents => emitEvents;
+    public bool? EmitEvents => emitEvents;
 }

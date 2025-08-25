@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -15,17 +16,20 @@ namespace Microsoft.Agents.Workflows.UnitTests.Sample;
 
 internal static class Step6EntryPoint
 {
-    internal static int MaxSteps { get; set; }
+    public static Workflow<List<ChatMessage>> CreateWorkflow(int maxTurns)
+    {
+        GroupChatBuilder builder =
+            GroupChatBuilder.Create<RoundRobinGroupChatManager, RoundRobinGroupChatManagerOptions>
+                                (options => options.MaxTurns = maxTurns)
+                            .AddParticipant(new HelloAgent(), shouldEmitEvents: true)
+                            .AddParticipant(new EchoAgent(), shouldEmitEvents: true);
+
+        return builder.ReduceToWorkflow();
+    }
 
     public static async ValueTask RunAsync(TextWriter writer, int maxSteps = 2)
     {
-        Step6EntryPoint.MaxSteps = maxSteps;
-
-        GroupChatBuilder builder = GroupChatBuilder.Create<RoundRobinGroupChatManager>()
-            .AddParticipant(new HelloAgent(), shouldEmitEvents: true)
-            .AddParticipant(new EchoAgent(), shouldEmitEvents: true);
-
-        Workflow<List<ChatMessage>> workflow = builder.ReduceToWorkflow();
+        Workflow<List<ChatMessage>> workflow = CreateWorkflow(maxSteps);
 
         StreamingRun run = await InProcessExecution.StreamAsync(workflow, [])
                                                    .ConfigureAwait(false);
@@ -37,20 +41,34 @@ internal static class Step6EntryPoint
             {
                 Debug.WriteLine($"{executorComplete.ExecutorId}: {executorComplete.Data}");
             }
-            else if (evt is AgentRunEvent agentRun && agentRun.Data is AgentRunResponse response)
+            else if (evt is AgentRunUpdateEvent update)
             {
+                AgentRunResponse response = update.AsResponse();
+
                 foreach (ChatMessage message in response.Messages)
                 {
-                    writer.WriteLine($"{agentRun.ExecutorId}: {message.Text}");
+                    writer.WriteLine($"{update.ExecutorId}: {message.Text}");
                 }
             }
         }
     }
 
-    private sealed class RoundRobinGroupChatManager : GroupChatManager
+    private sealed class RoundRobinGroupChatManagerOptions : GroupChatManagerOptions
+    {
+        public int? MaxTurns { get; set; } = null;
+    }
+
+    private sealed class RoundRobinGroupChatManager() : GroupChatManager<RoundRobinGroupChatManagerOptions>
     {
         public int TurnCount { get; private set; } = 0;
-        public int MaxTurns { get; init; } = Step6EntryPoint.MaxSteps;
+        public int? MaxTurns { get; private set; } = null;
+
+        protected internal override void Configure(RoundRobinGroupChatManagerOptions options)
+        {
+            base.Configure(options);
+
+            this.MaxTurns = options.MaxTurns;
+        }
 
         public override int? GetNextTurnExecutor(GroupChatHistory history)
         {
@@ -75,17 +93,27 @@ internal sealed class HelloAgent(string id = nameof(HelloAgent)) : AIAgent
     public const string DefaultId = nameof(HelloAgent);
 
     public override string Id => id;
+    public override string? Name => id;
 
-    public override Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public override async Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        AgentRunResponse response = new(new ChatMessage(ChatRole.Assistant, "Hello World!"));
+        IEnumerable<AgentRunResponseUpdate> update = [
+            await this.RunStreamingAsync(messages, thread, options, cancellationToken)
+                      .SingleAsync(cancellationToken)
+                      .ConfigureAwait(false)];
 
-        return Task.FromResult(response);
+        return update.ToAgentRunResponse();
     }
 
-    public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        throw new NotImplementedException();
+        AgentRunResponseUpdate response = new(ChatRole.Assistant, "Hello World!")
+        {
+            AgentId = this.Id,
+            AuthorName = this.Name,
+        };
+
+        yield return response;
     }
 }
 
@@ -95,8 +123,19 @@ internal sealed class EchoAgent(string id = nameof(EchoAgent)) : AIAgent
     public const string DefaultId = nameof(EchoAgent);
 
     public override string Id => id;
+    public override string? Name => id;
 
-    public override Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public override async Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        IEnumerable<AgentRunResponseUpdate> update = [
+            await this.RunStreamingAsync(messages, thread, options, cancellationToken)
+                      .SingleAsync(cancellationToken)
+                      .ConfigureAwait(false)];
+
+        return update.ToAgentRunResponse();
+    }
+
+    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         if (messages.Count == 0)
         {
@@ -110,13 +149,13 @@ internal sealed class EchoAgent(string id = nameof(EchoAgent)) : AIAgent
             collectedText.AppendLine(messageText);
         }
 
-        AgentRunResponse result = new(new ChatMessage(ChatRole.Assistant, collectedText.ToString()));
-        return Task.FromResult(result);
-    }
+        AgentRunResponseUpdate result = new(ChatRole.Assistant, collectedText.ToString())
+        {
+            AgentId = this.Id,
+            AuthorName = this.Name,
+        };
 
-    public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
-    {
-        throw new NotImplementedException();
+        yield return result;
     }
 }
 
@@ -144,11 +183,20 @@ internal sealed class GroupChatHistory
     public IEnumerable<ChatMessage> NewMessagesThisTurn => this._messages.Skip(this._bookmark);
 }
 
+internal class GroupChatManagerOptions
+{
+}
+
 internal abstract class GroupChatManager
 {
     public string[] ParticipantIds { get; internal init; } = [];
 
     public abstract int? GetNextTurnExecutor(GroupChatHistory history);
+}
+
+internal abstract class GroupChatManager<TOptions> : GroupChatManager where TOptions : GroupChatManagerOptions, new()
+{
+    protected internal virtual void Configure(TOptions options) { }
 }
 
 internal sealed class GroupChatBuilder
@@ -165,6 +213,21 @@ internal sealed class GroupChatBuilder
     public static GroupChatBuilder Create<TManager>() where TManager : GroupChatManager, new()
     {
         return new GroupChatBuilder(participantIds => new TManager() { ParticipantIds = participantIds });
+    }
+
+    public static GroupChatBuilder Create<TManager, TOptions>(Action<TOptions> configure)
+        where TManager : GroupChatManager<TOptions>, new()
+        where TOptions : GroupChatManagerOptions, new()
+    {
+        TOptions options = new();
+        configure(options);
+
+        return new GroupChatBuilder(participantIds =>
+        {
+            TManager manager = new() { ParticipantIds = participantIds };
+            manager.Configure(options);
+            return manager;
+        });
     }
 
     public GroupChatBuilder AddParticipant(ExecutorIsh executor, bool shouldEmitEvents = false)
@@ -265,7 +328,7 @@ internal sealed class GroupChatBuilder
             if (this.TryEnterConversation())
             {
                 // Capture the initial turn token's EmitEvents setting
-                this._shouldHostEmitEvents = token.EmitEvents;
+                this._shouldHostEmitEvents = token.EmitEvents.HasValue ? token.EmitEvents.Value : false;
             }
 
             int? nextSpeakerIndex = this._manager.GetNextTurnExecutor(this._history);

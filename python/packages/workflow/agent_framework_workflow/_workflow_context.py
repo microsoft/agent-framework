@@ -1,13 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from typing import Any
+from typing import Any, Generic, TypeVar
 
 from ._events import WorkflowEvent
 from ._runner_context import Message, RunnerContext
 from ._shared_state import SharedState
 
+T_Out = TypeVar("T_Out")
 
-class WorkflowContext:
+
+class WorkflowContext(Generic[T_Out]):
     """Context for executors in a workflow.
 
     This class is used to provide a way for executors to interact with the workflow
@@ -39,11 +41,11 @@ class WorkflowContext:
         if not self._source_executor_ids:
             raise ValueError("source_executor_ids cannot be empty. At least one source executor ID is required.")
 
-    async def send_message(self, message: Any, target_id: str | None = None) -> None:
+    async def send_message(self, message: T_Out, target_id: str | None = None) -> None:
         """Send a message to the workflow context.
 
         Args:
-            message: The message to send. This can be any data type that the target executor can handle.
+            message: The message to send. This must conform to the output type(s) declared on this context.
             target_id: The ID of the target executor to send the message to.
                        If None, the message will be sent to all target executors.
         """
