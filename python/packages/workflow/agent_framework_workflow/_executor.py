@@ -696,10 +696,12 @@ class RequestInfoExecutor(Executor):
         else:
             # Regular response - send directly back to source
             # Create a correlated response that includes both the response data and original request
+            if not isinstance(event.data, RequestInfoMessage):
+                raise TypeError(f"Expected RequestInfoMessage, got {type(event.data)}")
             correlated_response = RequestResponse[RequestInfoMessage, Any].handled(response_data)
             correlated_response = RequestResponse[RequestInfoMessage, Any].with_correlation(
                 correlated_response,
-                event.data,  # pyright: ignore[reportArgumentType]
+                event.data,
                 request_id,
             )
 
