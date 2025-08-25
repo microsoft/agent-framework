@@ -31,6 +31,10 @@
     <File Path="../.github/workflows/dotnet-cosmosdb-integration-tests.yml" />
     <File Path="../.github/workflows/dotnet-format.yml" />
   </Folder>
+  <Folder Name="/Solution Items/demos/">
+    <File Path="demos/.editorconfig" />
+    <File Path="demos/Directory.Build.props" />
+  </Folder>
   <Folder Name="/Solution Items/docs/" />
   <Folder Name="/Solution Items/docs/decisions/">
     <File Path="../docs/decisions/0001-agent-run-response.md" />
@@ -88,6 +92,10 @@
     <File Path="src/LegacySupport/TrimAttributes/UnconditionalSuppressMessageAttribute.cs" />
   </Folder>
   <Folder Name="/Solution Items/src/Shared/" />
+  <Folder Name="/Solution Items/src/Shared/Demos/">
+    <File Path="src/Shared/Demos/README.md" />
+    <File Path="src/Shared/Demos/SampleEnvironment.cs" />
+  </Folder>
   <Folder Name="/Solution Items/src/Shared/IntegrationTests/">
     <File Path="src/Shared/IntegrationTests/AzureAIConfiguration.cs" />
     <File Path="src/Shared/IntegrationTests/OpenAIConfiguration.cs" />
