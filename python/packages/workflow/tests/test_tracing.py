@@ -2,7 +2,7 @@
 
 import os
 from collections.abc import Generator
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from opentelemetry import trace
@@ -15,6 +15,7 @@ from agent_framework_workflow._executor import Executor, handler
 from agent_framework_workflow._runner_context import InProcRunnerContext, Message
 from agent_framework_workflow._shared_state import SharedState
 from agent_framework_workflow._telemetry import WorkflowTracer, workflow_tracer
+from agent_framework_workflow._workflow import Workflow
 from agent_framework_workflow._workflow_context import WorkflowContext
 
 
@@ -107,8 +108,18 @@ async def test_workflow_tracer_disabled_by_default() -> None:
     tracer = WorkflowTracer()
     assert not tracer.enabled
 
+    # Create a mock workflow object
+    mock_workflow = cast(
+        Workflow,
+        type(
+            "MockWorkflow",
+            (),
+            {"workflow_id": "test-workflow", "model_dump_json": lambda self: '{"id": "test-workflow", "type": "mock"}'},
+        )(),
+    )
+
     # Spans should return nullcontext when disabled
-    span = tracer.create_workflow_span("test-workflow")
+    span = tracer.create_workflow_span(mock_workflow)
     assert span.__class__.__name__ == "nullcontext"
 
 
@@ -122,8 +133,21 @@ async def test_workflow_tracer_enabled(tracing_enabled: Any) -> None:
 @pytest.mark.asyncio
 async def test_workflow_span_creation(tracing_enabled: Any, span_exporter: InMemorySpanExporter) -> None:
     """Test that workflow spans are created correctly."""
+    # Create a mock workflow object
+    mock_workflow = cast(
+        Workflow,
+        type(
+            "MockWorkflow",
+            (),
+            {
+                "workflow_id": "test-workflow-id",
+                "model_dump_json": lambda self: '{"id": "test-workflow-id", "type": "mock"}',
+            },
+        )(),
+    )
+
     # Use the tracer from workflow_tracer which should be our test tracer
-    with workflow_tracer.create_workflow_span("test-workflow-id") as span:
+    with workflow_tracer.create_workflow_span(mock_workflow) as span:
         assert span is not None
         assert span.is_recording()
 
@@ -136,13 +160,24 @@ async def test_workflow_span_creation(tracing_enabled: Any, span_exporter: InMem
     assert workflow_span.kind == trace.SpanKind.INTERNAL
     assert workflow_span.attributes is not None
     assert workflow_span.attributes.get("workflow.id") == "test-workflow-id"
+    assert workflow_span.attributes.get("workflow.definition") == '{"id": "test-workflow-id", "type": "mock"}'
 
 
 @pytest.mark.asyncio
 async def test_executor_processing_span_creation(tracing_enabled: Any, span_exporter: InMemorySpanExporter) -> None:
     """Test that executor processing spans are created correctly."""
+    # Create a mock workflow object
+    mock_workflow = cast(
+        Workflow,
+        type(
+            "MockWorkflow",
+            (),
+            {"workflow_id": "test-workflow", "model_dump_json": lambda self: '{"id": "test-workflow", "type": "mock"}'},
+        )(),
+    )
+
     with (
-        workflow_tracer.create_workflow_span("test-workflow"),
+        workflow_tracer.create_workflow_span(mock_workflow),
         workflow_tracer.create_processing_span("executor-1", "MockExecutor", "str") as span,
     ):
         assert span is not None
@@ -163,8 +198,18 @@ async def test_executor_processing_span_creation(tracing_enabled: Any, span_expo
 @pytest.mark.asyncio
 async def test_message_publishing_span_creation(tracing_enabled: Any, span_exporter: InMemorySpanExporter) -> None:
     """Test that message publishing spans are created correctly."""
+    # Create a mock workflow object
+    mock_workflow = cast(
+        Workflow,
+        type(
+            "MockWorkflow",
+            (),
+            {"workflow_id": "test-workflow", "model_dump_json": lambda self: '{"id": "test-workflow", "type": "mock"}'},
+        )(),
+    )
+
     with (
-        workflow_tracer.create_workflow_span("test-workflow"),
+        workflow_tracer.create_workflow_span(mock_workflow),
         workflow_tracer.create_processing_span("executor-1", "MockExecutor", "str"),
         workflow_tracer.create_publishing_span("str", "target-executor") as span,
     ):
@@ -419,8 +464,21 @@ async def test_message_trace_context_serialization() -> None:
 @pytest.mark.asyncio
 async def test_span_attributes_completeness(tracing_enabled: Any, span_exporter: InMemorySpanExporter) -> None:
     """Test that all expected attributes are set on spans."""
+    # Create a mock workflow object
+    mock_workflow = cast(
+        Workflow,
+        type(
+            "MockWorkflow",
+            (),
+            {
+                "workflow_id": "test-workflow-123",
+                "model_dump_json": lambda self: '{"id": "test-workflow-123", "type": "mock"}',
+            },
+        )(),
+    )
+
     # Test workflow span
-    with workflow_tracer.create_workflow_span("test-workflow-123") as workflow_span:
+    with workflow_tracer.create_workflow_span(mock_workflow) as workflow_span:
         workflow_span.set_attribute("workflow.status", "running")
         workflow_span.set_attribute("workflow.max_iterations", 100)
 
@@ -453,3 +511,64 @@ async def test_span_attributes_completeness(tracing_enabled: Any, span_exporter:
     assert publishing_span.attributes is not None
     assert publishing_span.attributes.get("message.type") == "ResponseMessage"
     assert publishing_span.attributes.get("message.destination_executor_id") == "target-789"
+
+
+@pytest.mark.asyncio
+async def test_real_workflow_definition_in_span_attributes(
+    tracing_enabled: Any, span_exporter: InMemorySpanExporter
+) -> None:
+    """Test that real workflow definition is properly included in span attributes."""
+
+    class TestExecutor(Executor):
+        @handler
+        async def handle_string(self, message: str, ctx: WorkflowContext[str]) -> None:
+            """Handle string messages."""
+            pass
+
+    class SecondExecutor(Executor):
+        @handler
+        async def handle_string(self, message: str, ctx: WorkflowContext[str]) -> None:
+            """Handle string messages."""
+            pass
+
+    # Create a real workflow with multiple executors and edges
+    executor1 = TestExecutor(id="executor1")
+    executor2 = SecondExecutor(id="executor2")
+
+    workflow = WorkflowBuilder().set_start_executor(executor1).add_edge(executor1, executor2).build()
+
+    # Create workflow span
+    with workflow_tracer.create_workflow_span(workflow) as span:
+        assert span is not None
+        assert span.is_recording()
+
+    # Check exported spans
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+
+    workflow_span = spans[0]
+    assert workflow_span.name == "workflow.run"
+    assert workflow_span.attributes is not None
+    assert workflow_span.attributes.get("workflow.id") == workflow.workflow_id
+
+    # Verify the workflow definition is included and contains meaningful data
+    workflow_definition = workflow_span.attributes.get("workflow.definition")
+    assert workflow_definition is not None
+
+    import json
+
+    definition_data = json.loads(workflow_definition)
+
+    # Verify the definition contains expected workflow structure
+    assert "workflow_id" in definition_data
+    assert "start_executor_id" in definition_data
+    assert "executors" in definition_data
+    assert "edge_groups" in definition_data
+    assert "max_iterations" in definition_data
+
+    # Verify specific values
+    assert definition_data["start_executor_id"] == "executor1"
+    assert definition_data["max_iterations"] == 100
+    assert "executor1" in definition_data["executors"]
+    assert "executor2" in definition_data["executors"]
+    assert len(definition_data["edge_groups"]) == 1  # Should have one edge group for the single edge

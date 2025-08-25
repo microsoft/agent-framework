@@ -1,11 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from contextlib import nullcontext
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from agent_framework._pydantic import AFBaseSettings
 from opentelemetry.trace import Link, SpanKind, get_tracer
 from opentelemetry.trace.span import SpanContext
+
+if TYPE_CHECKING:
+    from ._workflow import Workflow
 
 
 class WorkflowDiagnosticSettings(AFBaseSettings):
@@ -38,14 +41,17 @@ class WorkflowTracer:
     def enabled(self) -> bool:
         return self.settings.ENABLED
 
-    def create_workflow_span(self, workflow_id: str) -> Any:
+    def create_workflow_span(self, workflow: "Workflow") -> Any:
         """Create a workflow execution span."""
         if not self.enabled:
             return nullcontext()
 
-        return self.tracer.start_as_current_span(
-            "workflow.run", kind=SpanKind.INTERNAL, attributes={"workflow.id": workflow_id}
-        )
+        attributes = {
+            "workflow.id": workflow.workflow_id,
+            "workflow.definition": workflow.model_dump_json(),
+        }
+
+        return self.tracer.start_as_current_span("workflow.run", kind=SpanKind.INTERNAL, attributes=attributes)
 
     def create_processing_span(
         self,

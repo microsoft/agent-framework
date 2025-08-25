@@ -374,7 +374,7 @@ def handler(
             return await func(self, message, ctx)
 
         # Preserve the original function signature for introspection during validation
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(AttributeError, TypeError):
             wrapper.__signature__ = sig  # type: ignore[attr-defined]
 
         wrapper._handler_spec = {  # type: ignore
@@ -821,15 +821,19 @@ class WorkflowExecutor(Executor):
     are intercepted by parent workflows.
     """
 
-    def __init__(self, workflow: "Workflow", id: str | None = None):
+    workflow: "Workflow" = Field(description="The workflow to execute as a sub-workflow")
+
+    def __init__(self, workflow: "Workflow", id: str | None = None, **kwargs: Any):
         """Initialize the WorkflowExecutor.
 
         Args:
             workflow: The workflow to execute as a sub-workflow.
             id: Optional unique identifier for this executor.
+            **kwargs: Additional keyword arguments passed to the parent constructor.
         """
-        super().__init__(id)
-        self._workflow = workflow
+        kwargs.update({"workflow": workflow})
+        super().__init__(id, **kwargs)
+
         # Track pending external responses by request_id
         self._pending_responses: dict[str, Any] = {}  # request_id -> response_data
         # Track workflow state for proper resumption - support multiple concurrent requests
@@ -861,7 +865,7 @@ class WorkflowExecutor(Executor):
 
         try:
             # Run the sub-workflow and collect all events
-            events = [event async for event in self._workflow.run_streaming(input_data)]
+            events = [event async for event in self.workflow.run_streaming(input_data)]
 
             # Count requests and initialize response tracking
             request_count = 0
@@ -945,7 +949,7 @@ class WorkflowExecutor(Executor):
             responses_to_send = dict(self._collected_responses)
             self._collected_responses.clear()  # Clear for next batch
 
-            result_events = [event async for event in self._workflow.send_responses_streaming(responses_to_send)]
+            result_events = [event async for event in self.workflow.send_responses_streaming(responses_to_send)]
 
             # Process the result events
             new_request_count = 0

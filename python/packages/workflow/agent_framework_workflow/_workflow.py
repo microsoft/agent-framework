@@ -169,7 +169,7 @@ class Workflow(AFBaseModel):
         from ._telemetry import workflow_tracer
 
         # Create workflow span that encompasses the entire execution
-        with workflow_tracer.create_workflow_span(self.workflow_id or "unknown-workflow") as span:
+        with workflow_tracer.create_workflow_span(self) as span:
             try:
                 if span and span.is_recording():
                     span.set_attribute("workflow.status", "running")
