@@ -121,6 +121,7 @@ public class AIAgent
 - Clean separation of concerns
 - Follows established patterns in Semantic Kernel and easy migration path
 - No resistance or complaints from the community when used in Semantic Kernel
+- Composable and reusable filter components
 
 #### Cons
 - Adding more filters may require adding more properties to the agent class.
@@ -186,7 +187,7 @@ public class FilteringAIAgent
 - Follows established patterns in `Microsoft.Extensions.AI`
 - Non-intrusive to existing agent implementations
 - Supports both manual and DI configuration
-- Context-specific processing with self-registering filters
+- Context-specific processing middleware
 - Composable and reusable filter components
 
 #### Cons
@@ -194,7 +195,7 @@ public class FilteringAIAgent
 - Requires explicit wrapping of agents
 - Only viable for `ChatClientAgents` as other agents implementation will not have visibility/knowledge of the function call filters.
 
-### Option 3: Dedicated Component for Filtering
+### Option 3: Dedicated Processor Component for Middleware
 
 This approach involves creating a dedicated `AgentFilterProcessor` that manages multiple collections of `IAgent_XYZ_Filter` instances.
 Each agent can be provided with the processor or automatically have one injected from DI.
@@ -226,56 +227,48 @@ The `AgentFilterProcessor` would manage the filter pipeline and chain execution 
 ```csharp
 public class AgentFilterProcessor
 {
-    private readonly List<IAgentFilter> _filters = new();
+    // For thread-safety when used as a Singleton
+    private readonly ConcurrentBag<IAgentFilter> _filters = new(); 
 
-    public void AddFilter(IAgentFilter filter)
+    public void AddFilter(IAgentFilter filter) 
+        => _filters.Add(filter);
+
+    public IEnumerable<IAgentFilter> GetFiltersForContext<T>() where T : AgentContext
+        => _filters.Where(f => f.CanProcess(typeof(T));
+
+    public async Task ProcessAsync<T>(T context, Func<T, Task> coreLogic, CancellationToken ct = default) where T : AgentContext
     {
-        _filters.Add(filter);
+        var applicable = GetFiltersForContext<T>().ToList(); // Sorted
+        await InvokeChainAsync(context, applicable, 0, coreLogic, ct);
     }
 
-    public async Task ProcessAsync<T>(T context, Func<T, Task> coreLogic, CancellationToken cancellationToken = default)
-        where T : AgentContext
+    private async Task InvokeChainAsync<T>(T context, IList<IAgentFilter> filters, int index, Func<T, Task> coreLogic, CancellationToken ct) where T : AgentContext
     {
-        // Get applicable filters for this context type
-        var applicableFilters = _filters.Where(f => f.CanProcess(context)).ToList();
-
-        // Start the filter chain execution
-        await this.InvokeFilterAsync(coreLogic, context, applicableFilters, cancellationToken);
-    }
-
-    /// <summary>
-    /// This method will execute filters and core logic recursively using the Semantic Kernel pattern.
-    /// If there are no registered filters, just core logic will be executed.
-    /// If there are registered filters, filter at <paramref name="index"/> position will be executed.
-    /// Second parameter of filter is callback. It can be either filter at <paramref name="index"/> + 1 position or core logic if there are no remaining filters to execute.
-    /// Core logic will always be executed as last step after all filters.
-    /// </summary>
-    private async Task InvokeFilterAsync<T>(
-        Func<T, Task> coreLogic,
-        T context,
-        IList<IAgentFilter> applicableFilters,
-        CancellationToken cancellationToken,
-        int index = 0) where T : AgentContext
-    {
-        if (applicableFilters is { Count: > 0 } && index < applicableFilters.Count)
+        if (index < filters.Count)
         {
-            // Execute the filter at the current index
-            await applicableFilters[index].OnProcessAsync(
-                context,
-                async (ctx) => await this.InvokeFilterAsync(coreLogic, (T)ctx, applicableFilters, cancellationToken, index + 1),
-                cancellationToken
-            ).ConfigureAwait(false);
+            await filters[index].OnProcessAsync(
+                context, 
+                async ctx => await InvokeChainAsync((T)ctx, filters, index + 1, coreLogic, ct), 
+                ct);
         }
         else
         {
-            // No more filters, execute core logic
-            await coreLogic(context).ConfigureAwait(false);
+            await coreLogic(context);
         }
     }
 }
 ```
 
-### Proposed Context Classes
+#### Pros
+- Flexibility: Use shared processor for multiple agents or create per-agent instances.
+- Querying: Agents can inspect/trigger filters dynamically via GetFiltersForContext.
+- Extensibility: Add new contexts/filters without changing agent or processor much (just implement IAgentFilter<TNewContext>).
+- Simplicity: No decorators; agents stay lean. Generic filters reduce interface explosion.
+
+#### Cons
+- Introducing a separate processor class creates an extra layer between the agent and its filters
+
+## APPENDIX 1: Proposed Middleware Contexts
 
 The following context classes would be needed to support the filtering architecture:
 
@@ -325,9 +318,9 @@ public class AgentFunctionInvocationContext : AgentToolContext
 
 ```
 
-## Filter Middleware Design Options
+## APPENDIX 2: Setting Up Middleware Options
 
-### 1. Semantic Kernel Style
+### 1. Semantic Kernel Setup
 
 Has the benefit of clear separation of concerns, but this approach requires developers 
 to manage and maintain separate collections for each filter type, increasing code complexity and maintenance overhead.
@@ -341,6 +334,8 @@ agent.FunctionCallFilters.Add(new MyAgentFunctionCallFilter());
 agent.FunctionCallFilters.Add(new MyMultipleFilterImplementation());
 agent.AYZFilters.Add(new MyAgentAYZFilter());
 agent.AYZFilters.Add(new MyMultipleFilterImplementation());
+
+
 
 // Impl
 interface IAgentRunFilter
@@ -362,7 +357,29 @@ interface IAgentFunctionCallFilter
 - Adding more filters may require adding more properties to the agent/processor class.
 - Adding more filters requires bigger code changes downstream to callers.
 
-### 2. Generic Style
+### 2. Setup with Generic Method
+
+Instead of properties, exposing as a method may be more appropriate while still maintaining those filters in separate buckets internally.
+
+```csharp
+// Use Case
+var agent = new MyAgent();
+agent.AddFilters<RunFilter>([new MyAgentRunFilter(), new MyMultipleFilterImplementation()]);
+agent.AddFilters<FunctionCallFilter>([new MyAgentFunctionCallFilter(), new MyMultipleFilterImplementation()]);
+agent.AddFilters<AYZFilter>([new MyAgentAYZFilter(), new MyMultipleFilterImplementation()]);
+
+```
+
+#### Pros
+- Clean separation of concerns
+- Cleaner API for adding filters compared to option 1
+- No resistance or complaints from the community when used in Semantic Kernel
+
+#### Cons
+- Adding more filters may require adding more properties to the agent/processor class.
+- Adding more filters requires bigger code changes downstream to callers.
+
+### 3. Filter Hierarchy, Fully Generic Setup
 
 In a more generic approach, filters can be grouped in the same bucket and processed based on the context.
 One generic interface for all filters, with context-specific implementations. 
