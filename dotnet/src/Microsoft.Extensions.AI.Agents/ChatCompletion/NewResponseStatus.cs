@@ -1,12 +1,14 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Microsoft.Extensions.AI;
 
 /// <summary>
 /// Represents the status of an asynchronous run.
 /// </summary>
+[ExcludeFromCodeCoverage]
 public readonly struct NewResponseStatus : IEquatable<NewResponseStatus>
 {
     /// <summary>

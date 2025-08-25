@@ -4,7 +4,9 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+using System.ClientModel;
 using System.ClientModel.Primitives;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -24,6 +26,7 @@ using OpenAI.Responses;
 namespace Microsoft.Extensions.AI;
 
 /// <summary>Represents an <see cref="IChatClient"/> for an <see cref="OpenAIResponseClient"/>.</summary>
+[ExcludeFromCodeCoverage]
 internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
 {
     /// <summary>Metadata about the client.</summary>
@@ -83,14 +86,29 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
 
         OpenAIResponse openAIResponse;
 
-        // If conversation id is provided and background mode is enabled, retrieve status or/and result of the response running in the background.
-        if (options?.ConversationId is { } conversationId && RunInBackground(options))
+        if (options?.GetPreviousResponseId() is { } prevResponseId)
         {
-            openAIResponse = (await _responseClient.GetResponseAsync(conversationId, cancellationToken).ConfigureAwait(false)).Value;
+            // If previous response id is provided, fetch the response by id.
+            openAIResponse = (await _responseClient.GetResponseAsync(prevResponseId, cancellationToken).ConfigureAwait(false)).Value;
         }
         else
         {
+            // Otherwise, create a new response.
             openAIResponse = (await _responseClient.CreateResponseAsync(openAIResponseItems, openAIOptions, cancellationToken).ConfigureAwait(false)).Value;
+        }
+
+        // Await the run result if requested. This enables scenarios where a caller requests a response
+        // in a background mode, obtains its id, and then requests the chat client to wait for the result
+        // rather than polling themselves.
+        if (AwaitRunResult(options))
+        {
+            // Do polling
+            while (openAIResponse.Status is ResponseStatus.Queued or ResponseStatus.InProgress)
+            {
+                //TBD: Use polling settings
+                await Task.Delay(1000, cancellationToken).ConfigureAwait(false);
+                openAIResponse = (await _responseClient.GetResponseAsync(openAIResponse.Id, cancellationToken).ConfigureAwait(false)).Value;
+            }
         }
 
         // Convert the response to a ChatResponse.
@@ -161,33 +179,7 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
             }
         }
 
-        if (openAIResponse.Status is not null)
-        {
-            switch (openAIResponse.Status)
-            {
-                case ResponseStatus.InProgress:
-                    response.SetResponseStatus(NewResponseStatus.InProgress);
-                    break;
-                case ResponseStatus.Completed:
-                    response.SetResponseStatus(NewResponseStatus.Completed);
-                    break;
-                case ResponseStatus.Incomplete:
-                    response.SetResponseStatus(NewResponseStatus.Incomplete);
-                    break;
-                case ResponseStatus.Cancelled:
-                    response.SetResponseStatus(NewResponseStatus.Canceled);
-                    break;
-                case ResponseStatus.Queued:
-                    response.SetResponseStatus(NewResponseStatus.Queued);
-                    break;
-                case ResponseStatus.Failed:
-                    response.SetResponseStatus(NewResponseStatus.Failed);
-                    break;
-                default:
-                    // No finish reason set.
-                    break;
-            }
-        }
+        response.SetResponseStatus(ToResponseStatus(openAIResponse.Status));
 
         return response;
     }
@@ -250,19 +242,30 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
         var openAIResponseItems = ToOpenAIResponseItems(messages, options);
         var openAIOptions = ToOpenAIResponseCreationOptions(options);
 
-        var streamingUpdates = _responseClient.CreateResponseStreamingAsync(openAIResponseItems, openAIOptions, cancellationToken);
+        AsyncCollectionResult<StreamingResponseUpdate> streamingUpdates;
+
+        if (options?.GetPreviousResponseId() is { } prevResponseId)
+        {
+            streamingUpdates = _responseClient.GetResponseStreamingAsync(prevResponseId, options?.GetStartAfter(), cancellationToken);
+        }
+        else
+        {
+            // Otherwise, create a new response.
+            streamingUpdates = _responseClient.CreateResponseStreamingAsync(openAIResponseItems, openAIOptions, cancellationToken);
+        }
 
         return FromOpenAIStreamingResponseUpdatesAsync(streamingUpdates, openAIOptions, cancellationToken);
     }
 
     internal static async IAsyncEnumerable<ChatResponseUpdate> FromOpenAIStreamingResponseUpdatesAsync(
-        IAsyncEnumerable<StreamingResponseUpdate> streamingResponseUpdates, ResponseCreationOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        IAsyncEnumerable<StreamingResponseUpdate> streamingResponseUpdates, ResponseCreationOptions options, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         DateTimeOffset? createdAt = null;
         string? responseId = null;
         string? conversationId = null;
         string? modelId = null;
         string? lastMessageId = null;
+        NewResponseStatus? responseStatus = null;
         ChatRole? lastRole = null;
         Dictionary<int, MessageResponseItem> outputIndexToMessages = [];
         Dictionary<int, FunctionCallInfo>? functionCallInfos = null;
@@ -270,8 +273,9 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
         await foreach (var streamingUpdate in streamingResponseUpdates.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             // Create an update populated with the current state of the response.
-            ChatResponseUpdate CreateUpdate(AIContent? content = null) =>
-                new(lastRole, content is not null ? [content] : null)
+            ChatResponseUpdate CreateUpdate(AIContent? content = null)
+            {
+                ChatResponseUpdate update = new(lastRole, content is not null ? [content] : null)
                 {
                     ConversationId = conversationId,
                     CreatedAt = createdAt,
@@ -281,20 +285,51 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
                     ResponseId = responseId,
                 };
 
+                update.SetResponseStatus(responseStatus);
+                update.SetSequenceNumber(streamingUpdate.SequenceNumber);
+
+                return update;
+            }
+
             switch (streamingUpdate)
             {
                 case StreamingResponseCreatedUpdate createdUpdate:
                     createdAt = createdUpdate.Response.CreatedAt;
                     responseId = createdUpdate.Response.Id;
-                    conversationId = options?.StoredOutputEnabled is false ? null : responseId;
+                    conversationId = options.StoredOutputEnabled is false ? null : responseId;
                     modelId = createdUpdate.Response.Model;
+                    responseStatus = ToResponseStatus(createdUpdate.Response.Status);
+                    goto default;
+
+                case StreamingResponseQueuedUpdate queuedUpdate:
+                    // Adapting event of response started in background mode but continued in non-background mode.
+                    // Non-background mode doesn't have `Queued` status so skipping this event.
+                    if (options.Background is false)
+                    {
+                        continue;
+                    }
+
+                    responseStatus = ToResponseStatus(queuedUpdate.Response.Status);
+                    goto default;
+
+                case StreamingResponseInProgressUpdate inProgressUpdate:
+                    responseStatus = ToResponseStatus(inProgressUpdate.Response.Status);
+                    goto default;
+
+                case StreamingResponseIncompleteUpdate incompleteUpdate:
+                    responseStatus = ToResponseStatus(incompleteUpdate.Response.Status);
+                    goto default;
+
+                case StreamingResponseFailedUpdate failedUpdate:
+                    responseStatus = ToResponseStatus(failedUpdate.Response.Status);
                     goto default;
 
                 case StreamingResponseCompletedUpdate completedUpdate:
                 {
+                    responseStatus = ToResponseStatus(completedUpdate.Response.Status);
                     var update = CreateUpdate(ToUsageDetails(completedUpdate.Response) is { } usage ? new UsageContent(usage) : null);
                     update.FinishReason =
-                        ToFinishReason(completedUpdate.Response?.IncompleteStatusDetails?.Reason) ??
+                        ToFinishReason(completedUpdate.Response.IncompleteStatusDetails?.Reason) ??
                         (functionCallInfos is not null ? ChatFinishReason.ToolCalls :
                         ChatFinishReason.Stop);
                     yield return update;
@@ -459,7 +494,7 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
                 $"{result.Instructions}{Environment.NewLine}{instructions}";
         }
 
-        result.Background = RunInBackground(options);
+        result.Background = !AwaitRunResult(options);
 
         // Populate tools if there are any.
         if (options.Tools is { Count: > 0 } tools)
@@ -802,16 +837,37 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
         return parts;
     }
 
-    private bool RunInBackground(ChatOptions? options)
+    /// <summary>Determines whether to await run result or run in background.</summary>
+    private bool AwaitRunResult(ChatOptions? options)
     {
         // If specified in options, use that.
         if (options?.GetAwaitRunResult() is { } awaitRun)
         {
-            return !awaitRun;
+            return awaitRun;
         }
 
         // Otherwise, use the value specified at initialization
-        return !_awaitRun ?? false;
+        return _awaitRun ?? false;
+    }
+
+    /// <summary>Converts a <see cref="ResponseStatus"/> to a <see cref="NewResponseStatus"/>.</summary>
+    private static NewResponseStatus? ToResponseStatus(ResponseStatus? status)
+    {
+        if (status is null)
+        {
+            return null;
+        }
+
+        return status switch
+        {
+            ResponseStatus.InProgress => (NewResponseStatus?)NewResponseStatus.InProgress,
+            ResponseStatus.Completed => (NewResponseStatus?)NewResponseStatus.Completed,
+            ResponseStatus.Incomplete => (NewResponseStatus?)NewResponseStatus.Incomplete,
+            ResponseStatus.Cancelled => (NewResponseStatus?)NewResponseStatus.Canceled,
+            ResponseStatus.Queued => (NewResponseStatus?)NewResponseStatus.Queued,
+            ResponseStatus.Failed => (NewResponseStatus?)NewResponseStatus.Failed,
+            _ => throw new ArgumentOutOfRangeException(nameof(status), status, "Unknown response status."),
+        };
     }
 
     /// <summary>POCO representing function calling info.</summary>

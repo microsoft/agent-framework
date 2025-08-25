@@ -83,8 +83,9 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
     }
 
     [Fact]
-    public async Task ItShouldReturnRunStatusAndResultByIdAsync()
+    public async Task ItShouldStartBackgroundRunAndNotPollUntilRunCompletesAsync()
     {
+        // Part 1: Start the background run.
         // Arrange
         var options = new ChatOptions();
         options.SetAwaitRunResult(false);
@@ -98,11 +99,14 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         Assert.NotNull(response.ResponseId);
         Assert.Equal(NewResponseStatus.Queued, response.GetResponseStatus());
 
-        // Now, retrieve the response by ID
+        // Part 2: Manually poll for completion.
+        // Arrange
         options.ConversationId = response.ResponseId;
+        options.SetPreviousResponseId(response.ResponseId);
 
         int attempts = 0;
 
+        // Act
         while (response.GetResponseStatus() != NewResponseStatus.Completed && ++attempts < 5)
         {
             response = await this._chatClient.GetResponseAsync([], options);
@@ -113,6 +117,40 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
                 await Task.Delay(2000);
             }
         }
+
+        // Assert
+        Assert.NotNull(response);
+        Assert.Single(response.Messages);
+        Assert.Contains("Paris", response.Text);
+        Assert.NotNull(response.ResponseId);
+        Assert.Equal(NewResponseStatus.Completed, response.GetResponseStatus());
+    }
+
+    [Fact]
+    public async Task ItShouldStartBackgroundRunAndPollUntilRunCompletesAsync()
+    {
+        // Part 1: Start a background run
+        // Arrange
+        var options = new ChatOptions();
+        options.SetAwaitRunResult(false);
+
+        // Act
+        var response = await this._chatClient.GetResponseAsync("What is the capital of France.", options);
+
+        // Assert
+        Assert.NotNull(response);
+        Assert.Empty(response.Messages);
+        Assert.NotNull(response.ResponseId);
+        Assert.Equal(NewResponseStatus.Queued, response.GetResponseStatus());
+
+        // Part 2: Wait for completion.
+        // Arrange
+        options.ConversationId = response.ResponseId;
+        options.SetPreviousResponseId(response.ResponseId);
+        options.SetAwaitRunResult(true);
+
+        // Act
+        response = await this._chatClient.GetResponseAsync([], options);
 
         // Assert
         Assert.NotNull(response);
