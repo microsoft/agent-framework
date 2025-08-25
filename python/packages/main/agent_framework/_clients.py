@@ -502,6 +502,7 @@ class ChatClientBase(AFBaseModel, ABC):
         Returns:
             A chat response from the model.
         """
+        # Should we merge chat options instead of ignoring the input params?
         if "chat_options" in kwargs:
             chat_options = kwargs.pop("chat_options")
             if not isinstance(chat_options, ChatOptions):
@@ -582,6 +583,7 @@ class ChatClientBase(AFBaseModel, ABC):
         Yields:
             A stream representing the response(s) from the LLM.
         """
+        # Should we merge chat options instead of ignoring the input params?
         if "chat_options" in kwargs:
             chat_options = kwargs.pop("chat_options")
             if not isinstance(chat_options, ChatOptions):
