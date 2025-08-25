@@ -259,22 +259,22 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
         int consecutiveErrorCount = 0;
 
         // Process approval requests (remove from originalMessages) and rejected approval responses (re-create FCC and create failed FRC).
-        var (preInvocationHistory, notInvokedApprovals) = ProcessPreInvocationFunctionApprovalResponses(originalMessages, !string.IsNullOrWhiteSpace(options?.ConversationId), toolResponseId: null, functionCallContentFallbackMessageId: null);
+        var (preDownstreamCallHistory, notInvokedApprovals) = ProcessFunctionApprovalResponses(originalMessages, !string.IsNullOrWhiteSpace(options?.ConversationId), toolResponseId: null, functionCallContentFallbackMessageId: null);
 
-        // Execute approved approval responses, which generates some additional FRC.
-        (IList<ChatMessage>? approvedExecutedPreInvocationFRC, bool shouldTerminate, consecutiveErrorCount) =
-            await ExecuteApprovedPreInvocationFunctionApprovalResponses(notInvokedApprovals, originalMessages, options, consecutiveErrorCount, isStreaming: false, cancellationToken);
+        // Invoke approved approval responses, which generates some additional FRC wrapped in ChatMessage.
+        (IList<ChatMessage>? invokedApprovedFunctionApprovalResponses, bool shouldTerminate, consecutiveErrorCount) =
+            await InvokeApprovedFunctionApprovalResponses(notInvokedApprovals, originalMessages, options, consecutiveErrorCount, isStreaming: false, cancellationToken);
 
-        if (approvedExecutedPreInvocationFRC is not null)
+        if (invokedApprovedFunctionApprovalResponses is not null)
         {
             // We need to add the generated FRC to the list we'll return to callers as part of the next response.
-            preInvocationHistory ??= [];
-            preInvocationHistory.AddRange(approvedExecutedPreInvocationFRC);
+            preDownstreamCallHistory ??= [];
+            preDownstreamCallHistory.AddRange(invokedApprovedFunctionApprovalResponses);
         }
 
         if (shouldTerminate)
         {
-            return new ChatResponse(preInvocationHistory);
+            return new ChatResponse(preDownstreamCallHistory);
         }
 
         for (int iteration = 0; ; iteration++)
@@ -304,8 +304,8 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
             {
                 // Insert any pre-invocation FCC and FRC that were converted from approval responses into the response here,
                 // so they are returned to the caller.
-                response.Messages = UpdateResponseMessagesWithPreInvocationHistory(response.Messages, preInvocationHistory);
-                preInvocationHistory = null;
+                response.Messages = UpdateResponseMessagesWithPreDownstreamCallHistory(response.Messages, preDownstreamCallHistory);
+                preDownstreamCallHistory = null;
 
                 return response;
             }
@@ -396,23 +396,23 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
         bool hasApprovalRequiringFunctions = approvalRequiredFunctions.Length > 0;
 
         // Process approval requests (remove from original messages) and rejected approval responses (re-create FCC and create failed FRC).
-        var (preInvocationFCCWithRejectedFRC, notInvokedApprovals) = ProcessPreInvocationFunctionApprovalResponses(originalMessages, !string.IsNullOrWhiteSpace(options?.ConversationId), toolResponseId, functionCallContentFallbackMessageId);
-        if (preInvocationFCCWithRejectedFRC is not null)
+        var (preDownstreamCallHistory, notInvokedApprovals) = ProcessFunctionApprovalResponses(originalMessages, !string.IsNullOrWhiteSpace(options?.ConversationId), toolResponseId, functionCallContentFallbackMessageId);
+        if (preDownstreamCallHistory is not null)
         {
-            foreach (var message in preInvocationFCCWithRejectedFRC)
+            foreach (var message in preDownstreamCallHistory)
             {
                 yield return ConvertToolResultMessageToUpdate(message, options?.ConversationId, message.MessageId);
                 Activity.Current = activity; // workaround for https://github.com/dotnet/runtime/issues/47802
             }
         }
 
-        // Execute approved approval responses, which generates some additional FRC.
-        (IList<ChatMessage>? approvedExecutedPreInvocationFRC, bool shouldTerminate, consecutiveErrorCount) =
-            await ExecuteApprovedPreInvocationFunctionApprovalResponses(notInvokedApprovals, originalMessages, options, consecutiveErrorCount, isStreaming: true, cancellationToken);
+        // Invoke approved approval responses, which generates some additional FRC wrapped in ChatMessage.
+        (IList<ChatMessage>? invokedApprovedFunctionApprovalResponses, bool shouldTerminate, consecutiveErrorCount) =
+            await InvokeApprovedFunctionApprovalResponses(notInvokedApprovals, originalMessages, options, consecutiveErrorCount, isStreaming: true, cancellationToken);
 
-        if (approvedExecutedPreInvocationFRC is not null)
+        if (invokedApprovedFunctionApprovalResponses is not null)
         {
-            foreach (var message in approvedExecutedPreInvocationFRC)
+            foreach (var message in invokedApprovedFunctionApprovalResponses)
             {
                 message.MessageId = toolResponseId;
                 yield return ConvertToolResultMessageToUpdate(message, options?.ConversationId, message.MessageId);
@@ -1035,7 +1035,7 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
     /// 3. Genreate failed <see cref="FunctionResultContent"/> for any rejected <see cref="FunctionApprovalResponseContent"/>.
     /// 4. add all the new content items to <paramref name="originalMessages"/> and return them as the pre-invocation history.
     /// </summary>
-    private static (List<ChatMessage>? preInvocationHistory, List<ApprovalResultWithRequestMessage>? approvals) ProcessPreInvocationFunctionApprovalResponses(
+    private static (List<ChatMessage>? preDownstreamCallHistory, List<ApprovalResultWithRequestMessage>? approvals) ProcessFunctionApprovalResponses(
         List<ChatMessage> originalMessages, bool hasConversationId, string? toolResponseId, string? functionCallContentFallbackMessageId)
     {
         // Extract any approval responses where we need to execute or reject the function calls.
@@ -1043,25 +1043,25 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
         var notInvokedResponses = ExtractAndRemoveApprovalRequestsAndResponses(originalMessages);
 
         // Wrap the function call content in message(s).
-        ICollection<ChatMessage>? allPreInvocationCallMessages = ConvertToFunctionCallContentMessages(
+        ICollection<ChatMessage>? allPreDownstreamCallMessages = ConvertToFunctionCallContentMessages(
             [.. notInvokedResponses.rejections ?? [], .. notInvokedResponses.approvals ?? []], functionCallContentFallbackMessageId);
 
         // Generate failed function result contents for any rejected requests and wrap it in a message.
         List<AIContent>? rejectedFunctionCallResults = GenerateRejectedFunctionResults(notInvokedResponses.rejections, toolResponseId);
-        ChatMessage? rejectedPreInvocationResultsMessage = rejectedFunctionCallResults != null ?
+        ChatMessage? rejectedPreDownstreamCallResultsMessage = rejectedFunctionCallResults != null ?
             new ChatMessage(ChatRole.Tool, rejectedFunctionCallResults) { MessageId = toolResponseId } :
             null;
 
-        // Add all the FCC that we generated to the pre-invocation history so that they can be returned to the caller as part of the next response.
+        // Add all the FCC that we generated to the pre-downstream-call history so that they can be returned to the caller as part of the next response.
         // Also, if we are not dealing with a service thread (i.e. we don't have a conversation ID), add them
         // into the original messages list so that they are passed to the inner client and can be used to generate a result.
-        List<ChatMessage>? preInvocationHistory = null;
-        if (allPreInvocationCallMessages is not null)
+        List<ChatMessage>? preDownstreamCallHistory = null;
+        if (allPreDownstreamCallMessages is not null)
         {
-            preInvocationHistory ??= [];
-            foreach (var message in allPreInvocationCallMessages)
+            preDownstreamCallHistory ??= [];
+            foreach (var message in allPreDownstreamCallMessages)
             {
-                preInvocationHistory.Add(message);
+                preDownstreamCallHistory.Add(message);
                 if (!hasConversationId)
                 {
                     originalMessages.Add(message);
@@ -1069,22 +1069,22 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
             }
         }
 
-        // Add all the FRC that we generated to the pre-invocation history so that they can be returned to the caller as part of the next response.
+        // Add all the FRC that we generated to the pre-downstream-call history so that they can be returned to the caller as part of the next response.
         // Also, add them into the original messages list so that they are passed to the inner client and can be used to generate a result.
-        if (rejectedPreInvocationResultsMessage is not null)
+        if (rejectedPreDownstreamCallResultsMessage is not null)
         {
-            preInvocationHistory ??= [];
-            originalMessages.Add(rejectedPreInvocationResultsMessage);
-            preInvocationHistory.Add(rejectedPreInvocationResultsMessage);
+            preDownstreamCallHistory ??= [];
+            originalMessages.Add(rejectedPreDownstreamCallResultsMessage);
+            preDownstreamCallHistory.Add(rejectedPreDownstreamCallResultsMessage);
         }
 
-        return (preInvocationHistory, notInvokedResponses.approvals);
+        return (preDownstreamCallHistory, notInvokedResponses.approvals);
     }
 
     /// <summary>
     /// Execute the provided <see cref="FunctionApprovalResponseContent"/> and return the resulting <see cref="FunctionCallContent"/>.
     /// </summary>
-    private async Task<(IList<ChatMessage>? FunctionResultContent, bool ShouldTerminate, int ConsecutiveErrorCount)> ExecuteApprovedPreInvocationFunctionApprovalResponses(
+    private async Task<(IList<ChatMessage>? FunctionResultContent, bool ShouldTerminate, int ConsecutiveErrorCount)> InvokeApprovedFunctionApprovalResponses(
         List<ApprovalResultWithRequestMessage>? notInvokedApprovals, List<ChatMessage> originalMessages, ChatOptions? options, int consecutiveErrorCount, bool isStreaming, CancellationToken cancellationToken)
     {
         // Check if there are any function calls to do for any approved functions and execute them.
@@ -1442,14 +1442,14 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
     }
 
     /// <summary>
-    /// Insert the given <paramref name="preInvocationHistory"/> at the start of the <paramref name="responseMessages"/>.
+    /// Insert the given <paramref name="preDownstreamCallHistory"/> at the start of the <paramref name="responseMessages"/>.
     /// </summary>
-    private static IList<ChatMessage> UpdateResponseMessagesWithPreInvocationHistory(IList<ChatMessage> responseMessages, List<ChatMessage>? preInvocationHistory)
+    private static IList<ChatMessage> UpdateResponseMessagesWithPreDownstreamCallHistory(IList<ChatMessage> responseMessages, List<ChatMessage>? preDownstreamCallHistory)
     {
-        if (preInvocationHistory?.Count > 0)
+        if (preDownstreamCallHistory?.Count > 0)
         {
             // Since these messages are pre-invocation, we want to insert them at the start of the response messages.
-            return [.. preInvocationHistory, .. responseMessages];
+            return [.. preDownstreamCallHistory, .. responseMessages];
         }
 
         return responseMessages;
