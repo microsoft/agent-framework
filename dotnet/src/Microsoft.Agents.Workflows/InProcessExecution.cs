@@ -24,10 +24,14 @@ public static class InProcessExecution
     /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation.</param>
     /// <returns>A <see cref="ValueTask{StreamingRun}"/> that represents the asynchronous operation. The result contains a <see
     /// cref="StreamingRun"/> for managing and interacting with the streaming run.</returns>
-    public static ValueTask<StreamingRun> StreamAsync<TInput>(Workflow<TInput> workflow, TInput input, CancellationToken cancellation = default) where TInput : notnull
+    public static async ValueTask<StreamingRun> StreamAsync<TInput>(Workflow<TInput> workflow, TInput input, CancellationToken cancellation = default) where TInput : notnull
     {
-        InProcessRunner<TInput> runner = new(workflow);
-        return runner.StreamAsync(input, cancellation);
+        InProcessRun<TInput> runHandle = new(workflow);
+        StreamingRun streaminRun = new(runHandle);
+
+        await runHandle.StartAsync(input, cancellation).ConfigureAwait(false);
+
+        return streaminRun;
     }
 
     /// <summary>
@@ -43,10 +47,14 @@ public static class InProcessExecution
     /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation.</param>
     /// <returns>A <see cref="StreamingRun{TResult}"/> that provides access to the results of the streaming
     /// run.</returns>
-    public static ValueTask<StreamingRun<TResult>> StreamAsync<TInput, TResult>(Workflow<TInput, TResult> workflow, TInput input, CancellationToken cancellation = default) where TInput : notnull
+    public static async ValueTask<StreamingRun<TResult>> StreamAsync<TInput, TResult>(Workflow<TInput, TResult> workflow, TInput input, CancellationToken cancellation = default) where TInput : notnull
     {
-        InProcessRunner<TInput, TResult> runner = new(workflow);
-        return runner.StreamAsync(input, cancellation);
+        InProcessRunner<TInput, TResult> runHandle = new(workflow);
+        StreamingRun<TResult> streaminRun = new(runHandle);
+
+        await runHandle.StartAsync(input, cancellation).ConfigureAwait(false);
+
+        return streaminRun;
     }
 
     /// <summary>
@@ -60,10 +68,15 @@ public static class InProcessExecution
     /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation.</param>
     /// <returns>A <see cref="ValueTask{Run}"/> that represents the asynchronous operation. The result contains a <see
     /// cref="Run"/> for managing and interacting with the streaming run.</returns>
-    public static ValueTask<Run> RunAsync<TInput>(Workflow<TInput> workflow, TInput input, CancellationToken cancellation = default) where TInput : notnull
+    public static async ValueTask<Run> RunAsync<TInput>(Workflow<TInput> workflow, TInput input, CancellationToken cancellation = default) where TInput : notnull
     {
-        InProcessRunner<TInput> runner = new(workflow);
-        return runner.RunAsync(input, cancellation);
+        InProcessRun<TInput> runHandle = new(workflow);
+        Run run = new(runHandle);
+
+        await runHandle.StartAsync(input, cancellation).ConfigureAwait(false);
+        await run.RunToNextHaltAsync(cancellation).ConfigureAwait(false);
+
+        return run;
     }
 
     /// <summary>
@@ -78,9 +91,14 @@ public static class InProcessExecution
     /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation.</param>
     /// <returns>A <see cref="ValueTask{Run}"/> that represents the asynchronous operation. The result contains a <see
     /// cref="Run"/> for managing and interacting with the streaming run.</returns>
-    public static ValueTask<Run<TResult>> RunAsync<TInput, TResult>(Workflow<TInput, TResult> workflow, TInput input, CancellationToken cancellation = default) where TInput : notnull
+    public static async ValueTask<Run<TResult>> RunAsync<TInput, TResult>(Workflow<TInput, TResult> workflow, TInput input, CancellationToken cancellation = default) where TInput : notnull
     {
-        InProcessRunner<TInput, TResult> runner = new(workflow);
-        return runner.RunAsync(input, cancellation);
+        InProcessRunner<TInput, TResult> runHandle = new(workflow);
+        Run<TResult> run = new(runHandle);
+
+        await runHandle.StartAsync(input, cancellation).ConfigureAwait(false);
+        await run.RunToNextHaltAsync(cancellation).ConfigureAwait(false);
+
+        return run;
     }
 }

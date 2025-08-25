@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Execution;
@@ -14,13 +15,13 @@ namespace Microsoft.Agents.Workflows.InProc;
 /// <summary>
 /// Provides a local, in-process runner for executing a workflow using the specified input type.
 /// </summary>
-/// <remarks><para> <see cref="InProcessRunner{TInput}"/> enables step-by-step execution of a workflow graph entirely
+/// <remarks><para> <see cref="InProcessRun{TInput}"/> enables step-by-step execution of a workflow graph entirely
 /// within the current process, without distributed coordination. It is primarily intended for testing, debugging, or
 /// scenarios where workflow execution does not require executor distribution. </para></remarks>
 /// <typeparam name="TInput">The type of input accepted by the workflow. Must be non-nullable.</typeparam>
-internal class InProcessRunner<TInput> : ISuperStepRunner where TInput : notnull
+internal class InProcessRun<TInput> : IAsyncRunHandle where TInput : notnull
 {
-    public InProcessRunner(Workflow<TInput> workflow)
+    public InProcessRun(Workflow<TInput> workflow)
     {
         this.Workflow = Throw.IfNull(workflow);
         this.RunContext = new InProcessRunnerContext<TInput>(workflow);
@@ -30,10 +31,8 @@ internal class InProcessRunner<TInput> : ISuperStepRunner where TInput : notnull
         this.EdgeMap = new EdgeMap(this.RunContext, this.Workflow.Edges, this.Workflow.Ports.Values, this.Workflow.StartExecutorId);
     }
 
-    public async ValueTask<bool> IsValidInputAsync<TMessage>(TMessage message)
+    public async ValueTask<bool> IsValidInputTypeAsync<TMessage>(CancellationToken cancellation = default)
     {
-        Throw.IfNull(message);
-
         Type type = typeof(TMessage);
 
         // Short circuit the logic if the type is the input type
@@ -46,11 +45,11 @@ internal class InProcessRunner<TInput> : ISuperStepRunner where TInput : notnull
         return startingExecutor.CanHandle(type);
     }
 
-    async ValueTask<bool> ISuperStepRunner.EnqueueMessageAsync<T>(T message)
+    public async ValueTask<bool> EnqueueMessageAsync<T>(T message, CancellationToken cancellation) where T : notnull
     {
         // Check that the type of the incoming message is compatible with the starting executor's
         // input type.
-        if (!await this.IsValidInputAsync(message).ConfigureAwait(false))
+        if (!await this.IsValidInputTypeAsync<T>(cancellation).ConfigureAwait(false))
         {
             return false;
         }
@@ -59,33 +58,14 @@ internal class InProcessRunner<TInput> : ISuperStepRunner where TInput : notnull
         return true;
     }
 
-    ValueTask ISuperStepRunner.EnqueueResponseAsync(ExternalResponse response)
+    public ValueTask EnqueueResponseAsync(ExternalResponse response, CancellationToken cancellation)
     {
         return this.RunContext.AddExternalMessageAsync(response);
     }
 
-    private Dictionary<string, string> PendingCalls { get; } = new();
     private Workflow<TInput> Workflow { get; init; }
     private InProcessRunnerContext<TInput> RunContext { get; init; }
     private EdgeMap EdgeMap { get; init; }
-
-    event EventHandler<WorkflowEvent>? ISuperStepRunner.WorkflowEvent
-    {
-        add => this.WorkflowEvent += value;
-        remove => this.WorkflowEvent -= value;
-    }
-
-    private event EventHandler<WorkflowEvent>? WorkflowEvent;
-
-    private void RaiseWorkflowEvent(WorkflowEvent workflowEvent)
-    {
-        this.WorkflowEvent?.Invoke(this, workflowEvent);
-    }
-
-    private bool IsResponse(object message)
-    {
-        return message is ExternalResponse;
-    }
 
     private ValueTask<IEnumerable<object?>> RouteExternalMessageAsync(MessageEnvelope envelope)
     {
@@ -107,37 +87,91 @@ internal class InProcessRunner<TInput> : ISuperStepRunner where TInput : notnull
         return this.EdgeMap.InvokeResponseAsync(response);
     }
 
-    public async ValueTask<StreamingRun> StreamAsync(TInput input, CancellationToken cancellation = default)
+    private readonly InitLocked<Task> _runTask = new();
+    private readonly InitLocked<Task> _untilHaltTask = new();
+
+    public async ValueTask StartAsync(TInput input, CancellationToken token)
     {
-        await this.RunContext.AddExternalMessageAsync(input).ConfigureAwait(false);
+        await this.EnqueueMessageAsync(input, token).ConfigureAwait(false);
+        this._runTask.Init(RunLoopAsync);
 
-        return new StreamingRun(this);
-    }
-
-    public async ValueTask<Run> RunAsync(TInput input, CancellationToken cancellation = default)
-    {
-        StreamingRun streamingRun = await this.StreamAsync(input, cancellation).ConfigureAwait(false);
-        cancellation.ThrowIfCancellationRequested();
-
-        return await Run.CaptureStreamAsync(streamingRun, cancellation).ConfigureAwait(false);
-    }
-
-    bool ISuperStepRunner.HasUnservicedRequests => this.RunContext.HasUnservicedRequests;
-    bool ISuperStepRunner.HasUnprocessedMessages => this.RunContext.NextStepHasActions;
-
-    async ValueTask<bool> ISuperStepRunner.RunSuperStepAsync(CancellationToken cancellation)
-    {
-        cancellation.ThrowIfCancellationRequested();
-
-        StepContext currentStep = this.RunContext.Advance();
-
-        if (currentStep.HasMessages)
+        async Task RunLoopAsync()
         {
-            await this.RunSuperstepAsync(currentStep).ConfigureAwait(false);
-            return true;
+            this._runStatus = RunStatus.Running;
+
+            try
+            {
+                while (!token.IsCancellationRequested && !this.RunContext.RaisedCompletion)
+                {
+                    //this._untilHaltTask.Init(RunToHaltAsync);
+                    //await this._untilHaltTask.Get()!.ConfigureAwait(false);
+                    while (this.RunContext.NextStepHasActions && !token.IsCancellationRequested && !this.RunContext.RaisedCompletion)
+                    {
+                        StepContext currentStep = this.RunContext.Advance();
+                        await this.RunSuperstepAsync(currentStep).ConfigureAwait(false);
+                    }
+
+                    // We are in a halted state. Signal the halt to the EventStream, and then wait for new input.
+                    this._runStatus = this.RunContext.HasUnservicedRequests ? RunStatus.PendingRequests : RunStatus.Idle;
+                    this.RunContext.WorkflowEvents.SignalHalt();
+
+                    await this.RunContext.JoinWaitUntilInputAsync(token).ConfigureAwait(false);
+                    this._runStatus = RunStatus.Running;
+                }
+            }
+            finally
+            {
+                this._runStatus = RunStatus.Completed;
+            }
         }
 
-        return false;
+        //async Task RunToHaltAsync()
+        //{
+        //    while (this.RunContext.NextStepHasActions && !token.IsCancellationRequested && !this.RunContext.RaisedCompletion)
+        //    {
+        //        StepContext currentStep = this.RunContext.Advance();
+        //        await this.RunSuperstepAsync(currentStep).ConfigureAwait(false);
+        //    }
+        //}
+    }
+
+    private RunStatus _runStatus = RunStatus.Idle;
+    public ValueTask<RunStatus> GetStatusAsync(CancellationToken cancellation)
+    {
+        return new(this._runStatus);
+    }
+
+    public async ValueTask<RunStatus> JoinUntilHaltAsync(CancellationToken cancellation)
+    {
+        Task? maybeTask = this._untilHaltTask.Get();
+        if (maybeTask != null)
+        {
+            await maybeTask.ConfigureAwait(false);
+        }
+
+        return await this.GetStatusAsync(cancellation).ConfigureAwait(false);
+    }
+
+    public async IAsyncEnumerable<WorkflowEvent> ForwardEventsAsync(bool breakOnHalt, [EnumeratorCancellation] CancellationToken cancellation)
+    {
+        while (true)
+        {
+            await foreach (WorkflowEvent evt in this.RunContext.WorkflowEvents.JoinStreamAsync(cancellation)
+                                                                              .WithCancellation(cancellation)
+                                                                              .ConfigureAwait(false))
+            {
+                yield return evt;
+            }
+
+            if (breakOnHalt || this._runStatus == RunStatus.Completed || cancellation.IsCancellationRequested)
+            {
+                yield break;
+            }
+            else if (!breakOnHalt)
+            {
+                await this.RunContext.WorkflowEvents.JoinWaitForEventAsync(cancellation).ConfigureAwait(false);
+            }
+        }
     }
 
     private async ValueTask RunSuperstepAsync(StepContext currentStep)
@@ -167,45 +201,30 @@ internal class InProcessRunner<TInput> : ISuperStepRunner where TInput : notnull
 
         // Commit the state updates (so they are visible to the next step)
         await this.RunContext.StateManager.PublishUpdatesAsync().ConfigureAwait(false);
-
-        // After the message handler invocations, we may have some events to deliver
-        foreach (WorkflowEvent @event in this.RunContext.QueuedEvents)
-        {
-            this.RaiseWorkflowEvent(@event);
-        }
-
-        this.RunContext.QueuedEvents.Clear();
     }
 }
 
-internal class InProcessRunner<TInput, TResult> : IRunnerWithOutput<TResult> where TInput : notnull
+internal class InProcessRunner<TInput, TResult> : IRunHandleWithOutput<TResult> where TInput : notnull
 {
     private readonly Workflow<TInput, TResult> _workflow;
-    private readonly ISuperStepRunner _innerRunner;
+    private readonly InProcessRun<TInput> _run;
 
     public InProcessRunner(Workflow<TInput, TResult> workflow)
     {
         this._workflow = Throw.IfNull(workflow);
-        this._innerRunner = new InProcessRunner<TInput>(workflow);
+        this._run = new InProcessRun<TInput>(workflow);
     }
 
-    public async ValueTask<StreamingRun<TResult>> StreamAsync(TInput input, CancellationToken cancellation = default)
+    public ValueTask StartAsync(TInput input, CancellationToken cancellation = default)
+        => this._run.StartAsync(input, cancellation);
+
+    public ValueTask<TResult?> GetRunningOutputAsync(CancellationToken cancellation = default)
     {
-        await this._innerRunner.EnqueueMessageAsync(input).ConfigureAwait(false);
-
-        return new StreamingRun<TResult>(this);
-    }
-
-    public async ValueTask<Run<TResult>> RunAsync(TInput input, CancellationToken cancellation = default)
-    {
-        StreamingRun<TResult> streamingRun = await this.StreamAsync(input, cancellation).ConfigureAwait(false);
-        cancellation.ThrowIfCancellationRequested();
-
-        return await Run<TResult>.CaptureStreamAsync(streamingRun, cancellation).ConfigureAwait(false);
+        return new(this._workflow.RunningOutput);
     }
 
     /// <inheritdoc cref="Workflow{TInput, TResult}.RunningOutput"/>
     public TResult? RunningOutput => this._workflow.RunningOutput;
 
-    ISuperStepRunner IRunnerWithOutput<TResult>.StepRunner => this._innerRunner;
+    public IAsyncRunHandle RunHandle => this._run;
 }
