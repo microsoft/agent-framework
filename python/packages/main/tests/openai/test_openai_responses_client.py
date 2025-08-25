@@ -2,8 +2,8 @@
 
 import asyncio
 import os
-import unittest.mock
 from typing import Annotated
+from unittest.mock import MagicMock, patch
 
 import pytest
 from openai import BadRequestError
@@ -315,12 +315,12 @@ def test_content_filter_exception() -> None:
     # Mock a BadRequestError with content_filter code
     mock_error = BadRequestError(
         message="Content filter error",
-        response=unittest.mock.MagicMock(),
+        response=MagicMock(),
         body={"error": {"code": "content_filter", "message": "Content filter error"}},
     )
     mock_error.code = "content_filter"
 
-    with unittest.mock.patch.object(client.client.responses, "create", side_effect=mock_error):
+    with patch.object(client.client.responses, "create", side_effect=mock_error):
         with pytest.raises(OpenAIContentFilterException) as exc_info:
             asyncio.run(client.get_response(messages=[ChatMessage(role="user", text="Test message")]))
 
@@ -371,7 +371,7 @@ def test_response_format_parse_path() -> None:
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
     # Mock successful parse response
-    mock_parsed_response = unittest.mock.MagicMock()
+    mock_parsed_response = MagicMock()
     mock_parsed_response.id = "parsed_response_123"
     mock_parsed_response.text = "Parsed response"
     mock_parsed_response.model = "test-model"
@@ -380,7 +380,7 @@ def test_response_format_parse_path() -> None:
     mock_parsed_response.output_parsed = None
     mock_parsed_response.usage = None
 
-    with unittest.mock.patch.object(client.client.responses, "parse", return_value=mock_parsed_response):
+    with patch.object(client.client.responses, "parse", return_value=mock_parsed_response):
         response = asyncio.run(
             client.get_response(
                 messages=[ChatMessage(role="user", text="Test message")], response_format=OutputStruct, store=True
@@ -398,12 +398,12 @@ def test_bad_request_error_non_content_filter() -> None:
     # Mock a BadRequestError without content_filter code
     mock_error = BadRequestError(
         message="Invalid request",
-        response=unittest.mock.MagicMock(),
+        response=MagicMock(),
         body={"error": {"code": "invalid_request", "message": "Invalid request"}},
     )
     mock_error.code = "invalid_request"
 
-    with unittest.mock.patch.object(client.client.responses, "parse", side_effect=mock_error):
+    with patch.object(client.client.responses, "parse", side_effect=mock_error):
         with pytest.raises(ServiceResponseException) as exc_info:
             asyncio.run(
                 client.get_response(
@@ -419,10 +419,10 @@ async def test_streaming_content_filter_exception_handling() -> None:
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
     # Mock the OpenAI client to raise a BadRequestError with content_filter code
-    with unittest.mock.patch.object(client.client.responses, "create") as mock_create:
+    with patch.object(client.client.responses, "create") as mock_create:
         mock_create.side_effect = BadRequestError(
             message="Content filtered in stream",
-            response=unittest.mock.MagicMock(),
+            response=MagicMock(),
             body={"error": {"code": "content_filter", "message": "Content filtered"}},
         )
         mock_create.side_effect.code = "content_filter"
@@ -474,7 +474,7 @@ def test_response_content_creation_with_annotations() -> None:
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
     # Create a mock response with annotated text content
-    mock_response = unittest.mock.MagicMock()
+    mock_response = MagicMock()
     mock_response.output_parsed = None
     mock_response.metadata = {}
     mock_response.usage = None
@@ -483,24 +483,24 @@ def test_response_content_creation_with_annotations() -> None:
     mock_response.created_at = 1000000000
 
     # Create mock annotation
-    mock_annotation = unittest.mock.MagicMock()
+    mock_annotation = MagicMock()
     mock_annotation.type = "file_citation"
     mock_annotation.file_id = "file_123"
     mock_annotation.filename = "document.pdf"
     mock_annotation.index = 0
 
-    mock_message_content = unittest.mock.MagicMock()
+    mock_message_content = MagicMock()
     mock_message_content.type = "output_text"
     mock_message_content.text = "Text with annotations."
     mock_message_content.annotations = [mock_annotation]
 
-    mock_message_item = unittest.mock.MagicMock()
+    mock_message_item = MagicMock()
     mock_message_item.type = "message"
     mock_message_item.content = [mock_message_content]
 
     mock_response.output = [mock_message_item]
 
-    with unittest.mock.patch.object(client, "_get_metadata_from_response", return_value={}):
+    with patch.object(client, "_get_metadata_from_response", return_value={}):
         response = client._create_response_content(mock_response, chat_options=ChatOptions())  # type: ignore
 
         assert len(response.messages[0].contents) >= 1
@@ -514,7 +514,7 @@ def test_response_content_creation_with_refusal() -> None:
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
     # Create a mock response with refusal content
-    mock_response = unittest.mock.MagicMock()
+    mock_response = MagicMock()
     mock_response.output_parsed = None
     mock_response.metadata = {}
     mock_response.usage = None
@@ -522,11 +522,11 @@ def test_response_content_creation_with_refusal() -> None:
     mock_response.model = "test-model"
     mock_response.created_at = 1000000000
 
-    mock_refusal_content = unittest.mock.MagicMock()
+    mock_refusal_content = MagicMock()
     mock_refusal_content.type = "refusal"
     mock_refusal_content.refusal = "I cannot provide that information."
 
-    mock_message_item = unittest.mock.MagicMock()
+    mock_message_item = MagicMock()
     mock_message_item.type = "message"
     mock_message_item.content = [mock_refusal_content]
 
@@ -544,7 +544,7 @@ def test_response_content_creation_with_reasoning() -> None:
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
     # Create a mock response with reasoning content
-    mock_response = unittest.mock.MagicMock()
+    mock_response = MagicMock()
     mock_response.output_parsed = None
     mock_response.metadata = {}
     mock_response.usage = None
@@ -552,10 +552,10 @@ def test_response_content_creation_with_reasoning() -> None:
     mock_response.model = "test-model"
     mock_response.created_at = 1000000000
 
-    mock_reasoning_content = unittest.mock.MagicMock()
+    mock_reasoning_content = MagicMock()
     mock_reasoning_content.text = "Reasoning step"
 
-    mock_reasoning_item = unittest.mock.MagicMock()
+    mock_reasoning_item = MagicMock()
     mock_reasoning_item.type = "reasoning"
     mock_reasoning_item.content = [mock_reasoning_content]
     mock_reasoning_item.summary = ["Summary"]
@@ -575,7 +575,7 @@ def test_response_content_creation_with_code_interpreter() -> None:
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
     # Create a mock response with code interpreter outputs
-    mock_response = unittest.mock.MagicMock()
+    mock_response = MagicMock()
     mock_response.output_parsed = None
     mock_response.metadata = {}
     mock_response.usage = None
@@ -583,15 +583,15 @@ def test_response_content_creation_with_code_interpreter() -> None:
     mock_response.model = "test-model"
     mock_response.created_at = 1000000000
 
-    mock_log_output = unittest.mock.MagicMock()
+    mock_log_output = MagicMock()
     mock_log_output.type = "logs"
     mock_log_output.logs = "Code execution log"
 
-    mock_image_output = unittest.mock.MagicMock()
+    mock_image_output = MagicMock()
     mock_image_output.type = "image"
     mock_image_output.url = "https://example.com/image.png"
 
-    mock_code_interpreter_item = unittest.mock.MagicMock()
+    mock_code_interpreter_item = MagicMock()
     mock_code_interpreter_item.type = "code_interpreter_call"
     mock_code_interpreter_item.outputs = [mock_log_output, mock_image_output]
     mock_code_interpreter_item.code = "print('hello')"
@@ -613,7 +613,7 @@ def test_response_content_creation_with_function_call() -> None:
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
     # Create a mock response with function call
-    mock_response = unittest.mock.MagicMock()
+    mock_response = MagicMock()
     mock_response.output_parsed = None
     mock_response.metadata = {}
     mock_response.usage = None
@@ -621,7 +621,7 @@ def test_response_content_creation_with_function_call() -> None:
     mock_response.model = "test-model"
     mock_response.created_at = 1000000000
 
-    mock_function_call_item = unittest.mock.MagicMock()
+    mock_function_call_item = MagicMock()
     mock_function_call_item.type = "function_call"
     mock_function_call_item.call_id = "call_123"
     mock_function_call_item.name = "get_weather"
@@ -644,7 +644,7 @@ def test_usage_details_basic() -> None:
     """Test _usage_details_from_openai without cached or reasoning tokens."""
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
-    mock_usage = unittest.mock.MagicMock()
+    mock_usage = MagicMock()
     mock_usage.input_tokens = 100
     mock_usage.output_tokens = 50
     mock_usage.total_tokens = 150
@@ -662,11 +662,11 @@ def test_usage_details_with_cached_tokens() -> None:
     """Test _usage_details_from_openai with cached input tokens."""
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
-    mock_usage = unittest.mock.MagicMock()
+    mock_usage = MagicMock()
     mock_usage.input_tokens = 200
     mock_usage.output_tokens = 75
     mock_usage.total_tokens = 275
-    mock_usage.input_tokens_details = unittest.mock.MagicMock()
+    mock_usage.input_tokens_details = MagicMock()
     mock_usage.input_tokens_details.cached_tokens = 25
     mock_usage.output_tokens_details = None
 
@@ -680,12 +680,12 @@ def test_usage_details_with_reasoning_tokens() -> None:
     """Test _usage_details_from_openai with reasoning tokens."""
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
-    mock_usage = unittest.mock.MagicMock()
+    mock_usage = MagicMock()
     mock_usage.input_tokens = 150
     mock_usage.output_tokens = 80
     mock_usage.total_tokens = 230
     mock_usage.input_tokens_details = None
-    mock_usage.output_tokens_details = unittest.mock.MagicMock()
+    mock_usage.output_tokens_details = MagicMock()
     mock_usage.output_tokens_details.reasoning_tokens = 30
 
     details = client._usage_details_from_openai(mock_usage)  # type: ignore
@@ -699,7 +699,7 @@ def test_get_metadata_from_response() -> None:
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
     # Test with logprobs
-    mock_output_with_logprobs = unittest.mock.MagicMock()
+    mock_output_with_logprobs = MagicMock()
     mock_output_with_logprobs.logprobs = {"token": "test", "probability": 0.9}
 
     metadata = client._get_metadata_from_response(mock_output_with_logprobs)  # type: ignore
@@ -707,7 +707,7 @@ def test_get_metadata_from_response() -> None:
     assert metadata["logprobs"]["token"] == "test"
 
     # Test without logprobs
-    mock_output_no_logprobs = unittest.mock.MagicMock()
+    mock_output_no_logprobs = MagicMock()
     mock_output_no_logprobs.logprobs = None
 
     metadata_empty = client._get_metadata_from_response(mock_output_no_logprobs)  # type: ignore
@@ -721,7 +721,7 @@ def test_streaming_response_basic_structure() -> None:
     function_call_ids: dict[int, tuple[str, str]] = {}
 
     # Test with a basic mock event to ensure the method returns proper structure
-    mock_event = unittest.mock.MagicMock()
+    mock_event = MagicMock()
 
     response = client._create_streaming_response_content(mock_event, chat_options, function_call_ids)  # type: ignore
 
@@ -1063,3 +1063,28 @@ async def test_openai_responses_client_streaming_file_search() -> None:
 
     assert "sunny" in full_message.lower()
     assert "75" in full_message
+
+
+def test_service_response_exception_includes_original_error_details() -> None:
+    """Test that ServiceResponseException messages include original error details in the new format."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    messages = [ChatMessage(role="user", text="test message")]
+
+    mock_response = MagicMock()
+    original_error_message = "Request rate limit exceeded"
+    mock_error = BadRequestError(
+        message=original_error_message,
+        response=mock_response,
+        body={"error": {"code": "rate_limit", "message": original_error_message}},
+    )
+    mock_error.code = "rate_limit"
+
+    with (
+        patch.object(client.client.responses, "parse", side_effect=mock_error),
+        pytest.raises(ServiceResponseException) as exc_info,
+    ):
+        asyncio.run(client.get_response(messages=messages, response_format=OutputStruct))
+
+    exception_message = str(exc_info.value)
+    assert "service failed to complete the prompt:" in exception_message
+    assert original_error_message in exception_message

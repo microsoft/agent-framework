@@ -312,16 +312,16 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         except BadRequestError as ex:
             if ex.code == "content_filter":
                 raise OpenAIContentFilterException(
-                    f"{type(self)} service encountered a content error",
+                    f"{type(self)} service encountered a content error: {ex}",
                     inner_exception=ex,
                 ) from ex
             raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt",
+                f"{type(self)} service failed to complete the prompt: {ex}",
                 inner_exception=ex,
             ) from ex
         except Exception as ex:
             raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt, with exception: {ex}",
+                f"{type(self)} service failed to complete the prompt: {ex}",
                 inner_exception=ex,
             ) from ex
 
@@ -359,16 +359,16 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         except BadRequestError as ex:
             if ex.code == "content_filter":
                 raise OpenAIContentFilterException(
-                    f"{type(self)} service encountered a content error",
+                    f"{type(self)} service encountered a content error: {ex}",
                     inner_exception=ex,
                 ) from ex
             raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt",
+                f"{type(self)} service failed to complete the prompt: {ex}",
                 inner_exception=ex,
             ) from ex
         except Exception as ex:
             raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt",
+                f"{type(self)} service failed to complete the prompt: {ex}",
                 inner_exception=ex,
             ) from ex
 
