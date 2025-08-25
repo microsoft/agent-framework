@@ -379,7 +379,7 @@ agent.AddFilters<AYZFilter>([new MyAgentAYZFilter(), new MyMultipleFilterImpleme
 - Adding more filters may require adding more properties to the agent/processor class.
 - Adding more filters requires bigger code changes downstream to callers.
 
-### 3. Filter Hierarchy, Fully Generic Setup
+### 3. Setup with Filter Hierarchy, Fully Generic Setup
 
 In a more generic approach, filters can be grouped in the same bucket and processed based on the context.
 One generic interface for all filters, with context-specific implementations. 
@@ -392,6 +392,13 @@ agent.Filters.Add(new MyAgentRunFilter());
 agent.Filters.Add(new MyAgentFunctionCallFilter());
 agent.Filters.Add(new MyAgentAYZFilter());
 agent.Filters.Add(new MyMultipleFilterImplementation());
+
+// OR Via constructor (Also DI Friendly)
+var agent = new MyAgent(new List<IAgentFilter> { 
+    new MyAgentRunFilter(), 
+    new MyAgentFunctionCallFilter(), 
+    new MyAgentAYZFilter(), 
+    new MyMultipleFilterImplementation() });
 
 // Impl
 interface IAgentFilter
