@@ -138,6 +138,36 @@ class Workflow(AFBaseModel):
             workflow_id=workflow_id,
         )
 
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
+        """Custom serialization that properly handles WorkflowExecutor nested workflows."""
+        data = super().model_dump(**kwargs)
+
+        # Ensure WorkflowExecutor instances have their workflow field serialized
+        if "executors" in data:
+            executors_data = data["executors"]
+            for executor_id, executor_data in executors_data.items():
+                # Check if this is a WorkflowExecutor that might be missing its workflow field
+                if (
+                    isinstance(executor_data, dict)
+                    and executor_data.get("type") == "WorkflowExecutor"
+                    and "workflow" not in executor_data
+                ):
+                    # Get the original executor object and serialize its workflow
+                    original_executor = self.executors.get(executor_id)
+                    if original_executor and hasattr(original_executor, "workflow"):
+                        from ._executor import WorkflowExecutor
+
+                        if isinstance(original_executor, WorkflowExecutor):
+                            executor_data["workflow"] = original_executor.workflow.model_dump(**kwargs)
+
+        return data
+
+    def model_dump_json(self, **kwargs: Any) -> str:
+        """Custom JSON serialization that properly handles WorkflowExecutor nested workflows."""
+        import json
+
+        return json.dumps(self.model_dump(**kwargs))
+
     def get_start_executor(self) -> Executor:
         """Get the starting executor of the workflow.
 
