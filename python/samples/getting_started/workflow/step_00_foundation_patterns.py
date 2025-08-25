@@ -21,8 +21,8 @@ The samples here use numbers and simple arithmetic operations to demonstrate the
 class AddOneExecutor(Executor):
     """An executor that processes a number by adding one."""
 
-    @handler(output_types=[int])
-    async def add_one(self, number: int, ctx: WorkflowContext) -> None:
+    @handler
+    async def add_one(self, number: int, ctx: WorkflowContext[int]) -> None:
         """Execute the task by adding one to the input number."""
         result = number + 1
 
@@ -35,8 +35,8 @@ class AddOneExecutor(Executor):
 class MultiplyByTwoExecutor(Executor):
     """An executor that processes a number by multiplying it by two."""
 
-    @handler(output_types=[int])
-    async def multiply_by_two(self, number: int, ctx: WorkflowContext) -> None:
+    @handler
+    async def multiply_by_two(self, number: int, ctx: WorkflowContext[int]) -> None:
         """Execute the task by multiplying the input number by two."""
         result = number * 2
 
@@ -49,8 +49,8 @@ class MultiplyByTwoExecutor(Executor):
 class DivideByTwoExecutor(Executor):
     """An executor that processes a number by dividing it by two."""
 
-    @handler(output_types=[float])
-    async def divide_by_two(self, number: int, ctx: WorkflowContext) -> None:
+    @handler
+    async def divide_by_two(self, number: int, ctx: WorkflowContext[float]) -> None:
         """Execute the task by dividing the input number by two."""
         result = number / 2
 
@@ -64,7 +64,7 @@ class AggregateResultExecutor(Executor):
     """An executor that receives results and prints them."""
 
     @handler
-    async def aggregate_results(self, results: Any, ctx: WorkflowContext) -> None:
+    async def aggregate_results(self, results: Any, ctx: WorkflowContext[None]) -> None:
         """Print whatever results are received."""
         print("Aggregating results:", results)
 
