@@ -21,7 +21,8 @@ internal static class Program
         // Load configuration and create kernel with Azure OpenAI Chat Completion service
         IConfiguration config = InitializeConfig();
         Dictionary<string, string> nameCache = [];
-        PersistentAgentsClient client = new(Throw.IfNull(config["AzureAI:Endpoint"]), new AzureCliCredential());
+        string foundryProjectEndpoint = config["AzureAI:Endpoint"] ?? throw new InvalidOperationException("Undefined configuration: AzureAI:Endpoint");
+        PersistentAgentsClient client = new(foundryProjectEndpoint, new AzureCliCredential());
 
         await foreach (PersistentThreadMessage message in client.Messages.GetMessagesAsync(workflowId, order: ListSortOrder.Ascending))
         {

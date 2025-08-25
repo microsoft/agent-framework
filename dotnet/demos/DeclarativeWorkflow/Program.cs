@@ -13,7 +13,6 @@ using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Declarative;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Shared.Diagnostics;
 
 namespace Demo.DeclarativeWorkflow;
 
@@ -36,7 +35,8 @@ internal static class Program
         // Load configuration and create kernel with Azure OpenAI Chat Completion service
         IConfiguration config = InitializeConfig();
 
-        PersistentAgentsClient client = new(Throw.IfNull(config["AzureAI:Endpoint"]), new AzureCliCredential());
+        string foundryProjectEndpoint = config["AzureAI:Endpoint"] ?? throw new InvalidOperationException("Undefined configuration: AzureAI:Endpoint");
+        PersistentAgentsClient client = new(foundryProjectEndpoint, new AzureCliCredential());
 
         // Read and parse the declarative workflow.
         Notify($"WORKFLOW: Parsing {Path.GetFullPath(workflowFile)}");
@@ -46,7 +46,7 @@ internal static class Program
 
         // DeclarativeWorkflowContext provides the components for workflow execution.
         DeclarativeWorkflowOptions workflowContext =
-            new(projectEndpoint: Throw.IfNull(config["AzureAI:Endpoint"]))
+            new(foundryProjectEndpoint)
             {
                 ProjectCredentials = new AzureCliCredential(),
             };
