@@ -45,8 +45,12 @@ internal static class FormulaValueExtensions
             TimeValue => DataType.Time,
             StringValue => DataType.String,
             BlankValue => DataType.Blank,
+            ColorValue => DataType.Color,
+            GuidValue => DataType.Guid,
+            BlobValue => DataType.File,
             RecordValue recordValue => recordValue.Type.ToDataType(),
             TableValue tableValue => tableValue.Type.ToDataType(),
+            UntypedObjectValue => DataType.Any,
             _ => DataType.Unspecified,
         };
 
@@ -62,8 +66,12 @@ internal static class FormulaValueExtensions
             TimeType => DataType.Time,
             StringType => DataType.String,
             BlankType => DataType.Blank,
+            ColorType => DataType.Color,
+            GuidType => DataType.Guid,
+            BlobType => DataType.File,
             RecordType recordType => recordType.ToDataType(),
             TableType tableType => tableType.ToDataType(),
+            UntypedObjectType => DataType.Any,
             _ => DataType.Unspecified,
         };
 
@@ -77,9 +85,10 @@ internal static class FormulaValueExtensions
             DateTimeValue datetimeValue => $"{datetimeValue.GetConvertedValue(TimeZoneInfo.Utc)}",
             TimeValue timeValue => $"{timeValue.Value}",
             StringValue stringValue => stringValue.Value,
-            GuidValue guidValue => $"{guidValue.Value}",
             BlankValue blankValue => string.Empty,
             VoidValue voidValue => string.Empty,
+            ColorValue colorValue => colorValue.Value.ToString(),
+            GuidValue guidValue => guidValue.Value.ToString("N"),
             TableValue tableValue => tableValue.ToJson().ToJsonString(s_options),
             RecordValue recordValue => recordValue.ToJson().ToJsonString(s_options),
             ErrorValue errorValue => $"Error:{Environment.NewLine}{string.Join(Environment.NewLine, errorValue.Errors.Select(error => $"{error.MessageKey}: {error.Message}"))}",
@@ -140,8 +149,6 @@ internal static class FormulaValueExtensions
             RecordValue recordValue => recordValue.ToJson(),
             TableValue tableValue => tableValue.ToJson(),
             BlankValue blankValue => JsonValue.Create(string.Empty),
-            //VoidValue voidValue => JsonValue.Create(),
-            //ErrorValue errorValue => $"Error:{Environment.NewLine}{string.Join(Environment.NewLine, errorValue.Errors.Select(error => $"{error.MessageKey}: {error.Message}"))}",
             _ => $"[{value.GetType().Name}]",
         };
 

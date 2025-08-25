@@ -94,5 +94,7 @@ internal class StateManager
             StateScope stateScope = this.GetOrCreateScope(scope);
             await stateScope.WriteStateAsync(updatesByScope[scope]).ConfigureAwait(false);
         }
+
+        this._queuedUpdates.Clear();
     }
 }

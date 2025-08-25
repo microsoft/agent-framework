@@ -103,7 +103,6 @@ public class StateSmokeTest
         Assert.Equal(Value2, await manager.ReadStateAsync<string>(sharedScope2, Key));
 
         // Try to publish the updates
-        // %%% HAXX: SUPERSTEP STATE MANAGEMENT
-        // await Assert.ThrowsAsync<InvalidOperationException>(() => manager.PublishUpdatesAsync().AsTask());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => manager.PublishUpdatesAsync().AsTask());
     }
 }

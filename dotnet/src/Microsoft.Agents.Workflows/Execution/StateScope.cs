@@ -39,17 +39,18 @@ internal class StateScope
 
         foreach (string key in updates.Keys)
         {
-            if (updates[key].Count == 0)
+            var scopedUpdate = updates[key];
+            if (scopedUpdate.Count == 0)
             {
                 continue;
             }
 
-            //if (updates[key].Count > 1) // %%% HAXX: SUPERSTEP STATE MANAGEMENT
-            //{
-            //    throw new InvalidOperationException($"Expected exactly one update for key '{key}'.");
-            //}
+            if (scopedUpdate.Count > 1)
+            {
+                throw new InvalidOperationException($"Expected exactly one update for key '{key}'.");
+            }
 
-            StateUpdate update = updates[key].Last();
+            StateUpdate update = scopedUpdate[0];
             if (update.IsDelete)
             {
                 this._stateData.Remove(key);

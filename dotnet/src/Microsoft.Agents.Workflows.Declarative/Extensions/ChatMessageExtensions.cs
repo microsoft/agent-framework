@@ -9,7 +9,7 @@ namespace Microsoft.Agents.Workflows.Declarative.Extensions;
 
 internal static class ChatMessageExtensions
 {
-    public static RecordValue ToRecordValue(this ChatMessage message) => // %%% CPS - MESSAGETYPE
+    public static RecordValue ToRecord(this ChatMessage message) => // %%% CPS - MESSAGETYPE
         RecordValue.NewRecordFromFields(message.GetMessageFields());
 
     private static IEnumerable<NamedValue> GetMessageFields(this ChatMessage message)

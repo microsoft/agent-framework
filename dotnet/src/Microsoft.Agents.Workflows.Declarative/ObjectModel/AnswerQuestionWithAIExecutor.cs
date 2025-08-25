@@ -113,7 +113,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
         PropertyPath? variablePath = this.Model.Variable?.Path;
         if (variablePath is not null)
         {
-            this.AssignTarget(variablePath, response.ToRecordValue());
+            this.AssignTarget(variablePath, response.ToRecord());
         }
 
         return default;

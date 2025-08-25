@@ -30,23 +30,7 @@ internal static class DataValueExtensions
             _ => FormulaValue.NewError(new Microsoft.PowerFx.ExpressionError { Message = $"Unknown literal type: {value.GetType().Name}" }),
         };
 
-    public static FormulaType ToFormulaType(this DataValue? value) =>
-        value switch
-        {
-            null => FormulaType.Blank,
-            BlankDataValue => FormulaType.Blank,
-            BooleanDataValue => FormulaType.Boolean,
-            NumberDataValue numberValue => FormulaType.Number,
-            FloatDataValue floatValue => FormulaType.Decimal,
-            StringDataValue stringValue => FormulaType.String,
-            DateTimeDataValue dateTimeValue => FormulaType.DateTime,
-            DateDataValue dateValue => FormulaType.Date,
-            TimeDataValue timeValue => FormulaType.Time,
-            TableDataValue tableValue => tableValue.Values.FirstOrDefault()?.ParseRecordType() ?? RecordType.Empty(),
-            RecordDataValue recordValue => recordValue.ParseRecordType(),
-            OptionDataValue optionValue => FormulaType.String,
-            _ => FormulaType.Unknown,
-        };
+    public static FormulaType ToFormulaType(this DataValue? value) => value?.GetDataType().ToFormulaType() ?? FormulaType.Blank;
 
     public static FormulaType ToFormulaType(this DataType? type) =>
         type switch
@@ -59,9 +43,13 @@ internal static class DataValueExtensions
             DateTimeDataType => FormulaType.DateTime,
             DateDataType => FormulaType.Date,
             TimeDataType => FormulaType.Time,
+            ColorDataType => FormulaType.Color,
+            GuidDataType => FormulaType.Guid,
+            FileDataType => FormulaType.Blob,
             RecordDataType => RecordType.Empty(),
             TableDataType => TableType.Empty(),
             OptionSetDataType => FormulaType.String,
+            AnyType => FormulaType.UntypedObject,
             _ => FormulaType.Unknown,
         };
 

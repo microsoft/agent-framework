@@ -7,6 +7,7 @@ using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.Bot.ObjectModel.Analysis;
 using Microsoft.Bot.ObjectModel.PowerFx;
+using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.Workflows.Declarative.PowerFx;
@@ -15,26 +16,35 @@ internal static class WorkflowDiagnostics
 {
     private static readonly WorkflowFeatureConfiguration s_semanticFeatureConfig = new();
 
-    public static void InitializeDefaults(this WorkflowScopes scopes, AdaptiveDialog workflowElement)
+    public static void Initialize(this WorkflowScopes scopes, AdaptiveDialog workflowElement, ChatMessage inputMessage)
     {
-        foreach (string systemVariableName in SystemScope.GetNames()) // %%% HAXX - Shouldn't be needed
-        {
-            scopes.Set(systemVariableName, VariableScopeNames.System, FormulaValue.NewBlank());
-        }
-        scopes.InitializeSemanticModel(workflowElement);
+        scopes.InitializeSystem(inputMessage);
+
+        SemanticModel semanticModel = workflowElement.GetSemanticModel(new PowerFxExpressionChecker(s_semanticFeatureConfig), s_semanticFeatureConfig);
+        scopes.InitializeEnvironment(semanticModel);
+        scopes.InitializeDefaults(semanticModel, workflowElement.SchemaName.Value);
     }
 
-    private static void InitializeSemanticModel(this WorkflowScopes scopes, AdaptiveDialog workflowElement)
+    private static void InitializeEnvironment(this WorkflowScopes scopes, SemanticModel semanticModel)
     {
-        SemanticModel semanticModel = workflowElement.GetSemanticModel(new PowerFxExpressionChecker(s_semanticFeatureConfig), s_semanticFeatureConfig);
-        foreach (VariableInformationDiagnostic variableDiagnostic in semanticModel.GetVariables(workflowElement.SchemaName).Where(x => !x.IsSystemVariable).Select(v => v.ToDiagnostic()))
+        foreach (string variableName in semanticModel.GetAllEnvironmentVariablesReferencedInTheBot())
         {
-            if (variableDiagnostic?.Path?.VariableName is null)
+            string? environmentValue = Environment.GetEnvironmentVariable(variableName);
+            FormulaValue variableValue = string.IsNullOrEmpty(environmentValue) ? FormulaType.String.NewBlank() : FormulaValue.New(environmentValue);
+            scopes.Set(variableName, VariableScopeNames.Environment, variableValue);
+        }
+    }
+
+    private static void InitializeDefaults(this WorkflowScopes scopes, SemanticModel semanticModel, string schemaName)
+    {
+        foreach (VariableInformationDiagnostic variableDiagnostic in semanticModel.GetVariables(schemaName).Where(x => !x.IsSystemVariable).Select(v => v.ToDiagnostic()))
+        {
+            if (variableDiagnostic is null || variableDiagnostic?.Path?.VariableName is null)
             {
                 continue;
             }
 
-            FormulaValue defaultValue = ReadValue(variableDiagnostic) ?? ReadBlank(variableDiagnostic);
+            FormulaValue defaultValue = variableDiagnostic.ConstantValue?.ToFormulaValue() ?? variableDiagnostic.Type.NewBlank();
 
             if (variableDiagnostic.Path.VariableScopeName?.Equals(VariableScopeNames.System, StringComparison.OrdinalIgnoreCase) ?? false)
             {
@@ -46,16 +56,6 @@ internal static class WorkflowDiagnostics
 
             scopes.Set(variableDiagnostic.Path.VariableName, variableDiagnostic.Path.VariableScopeName ?? VariableScopeNames.Topic, defaultValue);
         }
-
-        static FormulaValue? ReadValue(VariableInformationDiagnostic diagnostic) => diagnostic.ConstantValue?.ToFormulaValue();
-
-        //static FormulaValue? ReadValue(string variableName)
-        //{
-        //    string? variableValue = Environment.GetEnvironmentVariable(variableName); // %%% TODO: Is provided as `ConstantValue` ???
-        //    return string.IsNullOrEmpty(variableValue) ? null : FormulaValue.New(variableValue);
-        //}
-
-        static FormulaValue ReadBlank(VariableInformationDiagnostic diagnostic) => diagnostic.Type.NewBlank();
     }
 
     private sealed class WorkflowFeatureConfiguration : IFeatureConfiguration
