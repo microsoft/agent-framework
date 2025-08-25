@@ -21,8 +21,8 @@ from agent_framework_workflow._workflow_context import WorkflowContext
 @pytest.fixture
 def tracing_enabled() -> Generator[None, None, None]:
     """Enable tracing for tests."""
-    original_value = os.environ.get("AGENT_FRAMEWORK_ENABLE_WORKFLOW_TRACING")
-    os.environ["AGENT_FRAMEWORK_ENABLE_WORKFLOW_TRACING"] = "true"
+    original_value = os.environ.get("AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS")
+    os.environ["AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS"] = "true"
 
     # Force reload the settings to pick up the environment variable
     from agent_framework_workflow._telemetry import WorkflowDiagnosticSettings
@@ -33,9 +33,9 @@ def tracing_enabled() -> Generator[None, None, None]:
 
     # Restore original value
     if original_value is None:
-        os.environ.pop("AGENT_FRAMEWORK_ENABLE_WORKFLOW_TRACING", None)
+        os.environ.pop("AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS", None)
     else:
-        os.environ["AGENT_FRAMEWORK_ENABLE_WORKFLOW_TRACING"] = original_value
+        os.environ["AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS"] = original_value
 
     # Reload settings again
     workflow_tracer.settings = WorkflowDiagnosticSettings()
