@@ -25,6 +25,7 @@
     <File Path="../workflows/HelloWorld.yaml" />
     <File Path="../workflows/MathChat.yaml" />
     <File Path="../workflows/Question.yaml" />
+  </Folder>
   <Folder Name="/Samples/GettingStartedSteps/">
     <File Path="samples/GettingStartedSteps/README.md" />
     <Project Path="samples/GettingStartedSteps/Step01_ChatClientAgent_Running/Step01_ChatClientAgent_Running.csproj" />
