@@ -35,6 +35,11 @@ _IMPORTS = [
     "WorkflowCheckpoint",
     "Case",
     "Default",
+    "RequestResponse",
+    "SubWorkflowRequestInfo",
+    "SubWorkflowResponse",
+    "WorkflowExecutor",
+    "intercepts_request",
 ]
 
 

@@ -11,6 +11,9 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Steps;
 
+/// <summary>
+/// Demonstrates how to indicate that certain function calls require user approval before they can be executed and how to then approve or reject those function calls.
+/// </summary>
 public sealed class Step10_ChatClientAgent_UsingFunctionToolsWithApprovals(ITestOutputHelper output) : AgentSample(output)
 {
     [Theory]
@@ -25,11 +28,14 @@ public sealed class Step10_ChatClientAgent_UsingFunctionToolsWithApprovals(ITest
         var menuTools = new MenuTools();
 
         // Define the options for the chat client agent.
+        // We mark GetMenu and GetSpecial as requiring approval before they can be invoked, while GetItemPrice can be invoked without user approval.
+        // IMPORTANT: A limitation of the approvals flow when using ChatClientAgent is that if more than one function needs to be executed in one run,
+        // and any one of them requires approval, approval will be sought for all function calls produced during that run.
         var agentOptions = new ChatClientAgentOptions(
             name: "Host",
             instructions: "Answer questions about the menu",
             tools: [
-                AIFunctionFactory.Create(menuTools.GetMenu),
+                new ApprovalRequiredAIFunction(AIFunctionFactory.Create(menuTools.GetMenu)),
                 new ApprovalRequiredAIFunction(AIFunctionFactory.Create(menuTools.GetSpecials)),
                 AIFunctionFactory.Create(menuTools.GetItemPrice),
                 new HostedMcpServerTool("Tiktoken Documentation", new Uri("https://gitmcp.io/openai/tiktoken"))
@@ -78,28 +84,33 @@ public sealed class Step10_ChatClientAgent_UsingFunctionToolsWithApprovals(ITest
         {
             this.WriteUserMessage(input);
             var response = await agent.RunAsync(input, thread);
-            this.WriteResponseOutput(response);
-
-            var userInputRequests = response.UserInputRequests.ToList();
 
             // Loop until all user input requests are handled.
+            var userInputRequests = response.UserInputRequests.ToList();
             while (userInputRequests.Count > 0)
             {
+                // Approve GetSpecials function calls, reject all others.
                 List<ChatMessage> nextIterationMessages = userInputRequests?.Select((request) => request switch
                 {
                     FunctionApprovalRequestContent functionApprovalRequest when functionApprovalRequest.FunctionCall.Name == "GetSpecials" || functionApprovalRequest.FunctionCall.Name == "add" || functionApprovalRequest.FunctionCall.Name == "search_tiktoken_documentation" =>
                         new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(approved: true)]),
+
                     FunctionApprovalRequestContent functionApprovalRequest =>
                         new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(approved: false)]),
-                    _ => throw new NotSupportedException($"Unsupported request type: {request.GetType().Name}")
+
+                    _ => throw new NotSupportedException($"Unsupported user input request type: {request.GetType().Name}")
                 })?.ToList() ?? [];
 
+                // Write out what the decision was for each function approval request.
                 nextIterationMessages.ForEach(x => Console.WriteLine($"Approval for the {(x.Contents[0] as FunctionApprovalResponseContent)?.FunctionCall.Name} function call is set to {(x.Contents[0] as FunctionApprovalResponseContent)?.Approved}."));
 
+                // Pass the user input responses back to the agent for further processing.
                 response = await agent.RunAsync(nextIterationMessages, thread);
-                this.WriteResponseOutput(response);
+
                 userInputRequests = response.UserInputRequests.ToList();
             }
+
+            this.WriteResponseOutput(response);
         }
 
         // Clean up the server-side agent after use when applicable (depending on the provider).
@@ -117,12 +128,15 @@ public sealed class Step10_ChatClientAgent_UsingFunctionToolsWithApprovals(ITest
         // Creating a MenuTools instance to be used by the agent.
         var menuTools = new MenuTools();
 
-        // Define the options for the chat client agent.
+        // Creating a MenuTools instance to be used by the agent.
+        // We mark GetMenu and GetSpecial as requiring approval before they can be invoked, while GetItemPrice can be invoked without user approval.
+        // IMPORTANT: A limitation of the approvals flow when using ChatClientAgent is that if more than one function needs to be executed in one run,
+        // and any one of them requires approval, approval will be sought for all function calls produced during that run.
         var agentOptions = new ChatClientAgentOptions(
             name: "Host",
             instructions: "Answer questions about the menu",
             tools: [
-                AIFunctionFactory.Create(menuTools.GetMenu),
+                new ApprovalRequiredAIFunction(AIFunctionFactory.Create(menuTools.GetMenu)),
                 new ApprovalRequiredAIFunction(AIFunctionFactory.Create(menuTools.GetSpecials)),
                 AIFunctionFactory.Create(menuTools.GetItemPrice),
                 new HostedMcpServerTool("Tiktoken Documentation", new Uri("https://gitmcp.io/openai/tiktoken"))
@@ -171,27 +185,33 @@ public sealed class Step10_ChatClientAgent_UsingFunctionToolsWithApprovals(ITest
         {
             this.WriteUserMessage(input);
             var updates = await agent.RunStreamingAsync(input, thread).ToListAsync();
-            this.WriteResponseOutput(updates.ToAgentRunResponse());
-            var userInputRequests = updates.SelectMany(x => x.UserInputRequests).ToList();
 
             // Loop until all user input requests are handled.
+            var userInputRequests = updates.SelectMany(x => x.UserInputRequests).ToList();
             while (userInputRequests.Count > 0)
             {
+                // Approve GetSpecials function calls, reject all others.
                 List<ChatMessage> nextIterationMessages = userInputRequests?.Select((request) => request switch
                 {
                     FunctionApprovalRequestContent functionApprovalRequest when functionApprovalRequest.FunctionCall.Name == "GetSpecials" || functionApprovalRequest.FunctionCall.Name == "add" || functionApprovalRequest.FunctionCall.Name == "search_tiktoken_documentation" =>
                         new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(approved: true)]),
+
                     FunctionApprovalRequestContent functionApprovalRequest =>
                         new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(approved: false)]),
+
                     _ => throw new NotSupportedException($"Unsupported request type: {request.GetType().Name}")
                 })?.ToList() ?? [];
 
+                // Write out what the decision was for each function approval request.
                 nextIterationMessages.ForEach(x => Console.WriteLine($"Approval for the {(x.Contents[0] as FunctionApprovalResponseContent)?.FunctionCall.Name} function call is set to {(x.Contents[0] as FunctionApprovalResponseContent)?.Approved}."));
 
+                // Pass the user input responses back to the agent for further processing.
                 updates = await agent.RunStreamingAsync(nextIterationMessages, thread).ToListAsync();
-                this.WriteResponseOutput(updates.ToAgentRunResponse());
+
                 userInputRequests = updates.SelectMany(x => x.UserInputRequests).ToList();
             }
+
+            this.WriteResponseOutput(updates.ToAgentRunResponse());
         }
 
         // Clean up the server-side agent after use when applicable (depending on the provider).

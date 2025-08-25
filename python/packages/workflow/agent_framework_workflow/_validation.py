@@ -22,6 +22,7 @@ class ValidationTypeEnum(Enum):
     TYPE_COMPATIBILITY = "TYPE_COMPATIBILITY"
     GRAPH_CONNECTIVITY = "GRAPH_CONNECTIVITY"
     HANDLER_OUTPUT_ANNOTATION = "HANDLER_OUTPUT_ANNOTATION"
+    INTERCEPTOR_CONFLICT = "INTERCEPTOR_CONFLICT"
 
 
 class WorkflowValidationError(Exception):
@@ -94,6 +95,13 @@ class HandlerOutputAnnotationError(WorkflowValidationError):
         self.handler_name = handler_name
 
 
+class InterceptorConflictError(WorkflowValidationError):
+    """Exception raised when multiple executors intercept the same request type from the same sub-workflow."""
+
+    def __init__(self, message: str):
+        super().__init__(message, validation_type=ValidationTypeEnum.INTERCEPTOR_CONFLICT)
+
+
 # endregion
 
 
@@ -112,19 +120,30 @@ class WorkflowGraphValidator:
         self._executors: dict[str, Executor] = {}
 
     # region Core Validation Methods
-    def validate_workflow(self, edge_groups: Sequence[EdgeGroup], start_executor: Executor | str) -> None:
+    def validate_workflow(
+        self, edge_groups: Sequence[EdgeGroup], executors: dict[str, Executor], start_executor: Executor | str
+    ) -> None:
         """Validate the entire workflow graph.
 
         Args:
             edge_groups: list of edge groups in the workflow
+            executors: Map of executor IDs to executor instances
             start_executor: The starting executor (can be instance or ID)
 
         Raises:
             WorkflowValidationError: If any validation fails
         """
-        self._executors = self._build_executor_map(edge_groups)
+        self._executors = executors
         self._edges = [edge for group in edge_groups for edge in group.edges]
         self._edge_groups = edge_groups
+
+        # If only the start executor exists, add it to the executor map
+        # Handle the special case where the workflow consists of only a single executor and no edges.
+        # In this scenario, the executor map will be empty because there are no edge groups to reference executors.
+        # Adding the start executor to the map ensures that single-executor workflows (without any edges) are supported,
+        # allowing validation and execution to proceed for workflows that do not require inter-executor communication.
+        if not self._executors and start_executor and isinstance(start_executor, Executor):
+            self._executors[start_executor.id] = start_executor
 
         # Validate that start_executor exists in the graph
         # It should because we check for it in the WorkflowBuilder
@@ -142,15 +161,7 @@ class WorkflowGraphValidator:
         self._validate_handler_ambiguity()
         self._validate_dead_ends()
         self._validate_cycles()
-
-    def _build_executor_map(self, edge_groups: Sequence[EdgeGroup]) -> dict[str, Executor]:
-        """Build a map of executor IDs to executor instances."""
-        executors: dict[str, Executor] = {}
-        for group in edge_groups:
-            for executor in group.source_executors + group.target_executors:
-                executors[executor.id] = executor
-
-        return executors
+        self._validate_interceptor_uniqueness()
 
     def _validate_handler_output_annotations(self) -> None:
         """Validate that each handler's ctx parameter is annotated with WorkflowContext[T].
@@ -165,14 +176,16 @@ class WorkflowGraphValidator:
 
         # Iterate over all registered executors in the workflow graph
         for executor_id, executor in self._executors.items():
-            for attr_name in dir(executor):
+            for attr_name in dir(executor.__class__):
+                if attr_name.startswith("_"):
+                    continue
                 # Retrieve attributes without binding (so the first parameter remains 'self').
                 # This ensures inspect.signature sees all three parameters: (self, message, ctx).
                 attr = None
                 from contextlib import suppress
 
                 with suppress(Exception):
-                    attr = inspect.getattr_static(executor, attr_name)
+                    attr = inspect.getattr_static(executor.__class__, attr_name)
                 if attr is None:
                     continue
                 # Consider only callables that were decorated with @handler
@@ -298,8 +311,8 @@ class WorkflowGraphValidator:
         Raises:
             TypeCompatibilityError: If type incompatibility is detected
         """
-        source_executor = edge.source
-        target_executor = edge.target
+        source_executor = self._executors[edge.source_id]
+        target_executor = self._executors[edge.target_id]
 
         # Get output types from source executor
         source_output_types = self._get_executor_output_types(source_executor)
@@ -310,13 +323,21 @@ class WorkflowGraphValidator:
         # If either executor has no type information, log warning and skip validation
         # This allows for dynamic typing scenarios but warns about reduced validation coverage
         if not source_output_types or not target_input_types:
-            if not source_output_types:
+            # Suppress warnings for built-in workflow components where dynamic typing is expected
+            try:
+                from ._executor import RequestInfoExecutor, WorkflowExecutor  # local import to avoid cycles
+
+                builtin_types = (RequestInfoExecutor, WorkflowExecutor)
+            except Exception:
+                builtin_types = tuple()  # type: ignore[assignment]
+
+            if not source_output_types and not isinstance(source_executor, builtin_types):
                 logger.warning(
                     f"Executor '{source_executor.id}' has no output type annotations. "
                     f"Type compatibility validation will be skipped for edges from this executor. "
                     f"Consider adding WorkflowContext[T] generics in handlers for better validation."
                 )
-            if not target_input_types:
+            if not target_input_types and not isinstance(target_executor, builtin_types):
                 logger.warning(
                     f"Executor '{target_executor.id}' has no input type annotations. "
                     f"Type compatibility validation will be skipped for edges to this executor. "
@@ -367,12 +388,25 @@ class WorkflowGraphValidator:
         """
         output_types: list[type[Any]] = []
 
-        for attr_name in dir(executor):
-            attr = getattr(executor, attr_name)
-            if callable(attr) and hasattr(attr, "_handler_spec"):
-                handler_spec = attr._handler_spec  # type: ignore
-                handler_output_types = handler_spec.get("output_types", [])
-                output_types.extend(handler_output_types)
+        for attr_name in dir(executor.__class__):
+            if attr_name.startswith("_"):
+                continue
+            try:
+                attr = getattr(executor.__class__, attr_name)
+                if callable(attr) and hasattr(attr, "_handler_spec"):
+                    handler_spec = attr._handler_spec  # type: ignore
+                    handler_output_types = handler_spec.get("output_types", [])
+                    output_types.extend(handler_output_types)
+            except AttributeError:
+                # Skip attributes that may not be accessible
+                continue
+
+        # Also include intercepted request types as potential outputs
+        # since @intercepts_request methods can forward requests
+        if hasattr(executor, "_request_interceptors"):
+            for request_type in executor._request_interceptors:
+                if isinstance(request_type, type):
+                    output_types.append(request_type)
 
         return output_types
 
@@ -569,6 +603,54 @@ class WorkflowGraphValidator:
                 "Ensure proper termination conditions exist to prevent infinite loops."
             )
 
+    def _validate_interceptor_uniqueness(self) -> None:
+        """Validate that only one executor intercepts a given request type from a specific sub-workflow.
+
+        This prevents non-deterministic behavior where multiple executors could intercept
+        the same request type from the same sub-workflow.
+        """
+        from ._executor import WorkflowExecutor
+
+        # Find all WorkflowExecutor instances in the workflow
+        workflow_executors: dict[str, WorkflowExecutor] = {}
+        for executor_id, executor in self._executors.items():
+            if isinstance(executor, WorkflowExecutor):
+                workflow_executors[executor_id] = executor
+
+        # For each WorkflowExecutor, check which executors can intercept its requests
+        for workflow_id, _workflow_executor in workflow_executors.items():
+            # Map of request_type -> list of intercepting executor IDs
+            interceptors_by_type: dict[type | str, list[str]] = {}
+
+            # Find all executors that have edges from this WorkflowExecutor
+            # These are potential interceptors
+            for edge in self._edges:
+                if edge.source_id == workflow_id:
+                    target_executor = self._executors.get(edge.target_id)
+                    if target_executor and hasattr(target_executor, "_request_interceptors"):
+                        # Check what request types this executor intercepts
+                        for request_type, interceptor_list in target_executor._request_interceptors.items():
+                            # Check if any interceptor is scoped to this workflow or unscoped
+                            for interceptor_info in interceptor_list:
+                                from_workflow = interceptor_info.get("from_workflow")
+                                # If unscoped or specifically scoped to this workflow
+                                if from_workflow is None or from_workflow == workflow_id:
+                                    if request_type not in interceptors_by_type:
+                                        interceptors_by_type[request_type] = []
+                                    interceptors_by_type[request_type].append(edge.target_id)
+
+            # Check for duplicates
+            for request_type, executor_ids in interceptors_by_type.items():
+                unique_executors = list(set(executor_ids))  # Remove duplicates from same executor
+                if len(unique_executors) > 1:
+                    type_name = request_type.__name__ if isinstance(request_type, type) else str(request_type)
+                    raise InterceptorConflictError(
+                        f"Multiple executors intercept the same request type '{type_name}' "
+                        f"from sub-workflow '{workflow_id}': {', '.join(unique_executors)}. "
+                        f"Only one executor should intercept a given request type from a specific sub-workflow "
+                        f"to ensure deterministic behavior."
+                    )
+
     # endregion
 
     # region Type Compatibility Utilities
@@ -621,15 +703,18 @@ class WorkflowGraphValidator:
 # endregion
 
 
-def validate_workflow_graph(edge_groups: Sequence[EdgeGroup], start_executor: Executor | str) -> None:
+def validate_workflow_graph(
+    edge_groups: Sequence[EdgeGroup], executors: dict[str, Executor], start_executor: Executor | str
+) -> None:
     """Convenience function to validate a workflow graph.
 
     Args:
         edge_groups: list of edge groups in the workflow
+        executors: Map of executor IDs to executor instances
         start_executor: The starting executor (can be instance or ID)
 
     Raises:
         WorkflowValidationError: If any validation fails
     """
     validator = WorkflowGraphValidator()
-    validator.validate_workflow(edge_groups, start_executor)
+    validator.validate_workflow(edge_groups, executors, start_executor)
