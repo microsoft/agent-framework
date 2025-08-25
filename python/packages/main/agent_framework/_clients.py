@@ -4,7 +4,7 @@ import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, MutableSequence, Sequence
 from functools import wraps
-from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, overload, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -698,6 +698,64 @@ class RunnableChatClient(ChatClientBase):
         Args:
             request_id: The ID of the request to delete.
         """
+
+    @overload
+    async def get_response(
+        self,
+        *,
+        message_id: str,
+        **kwargs: Any,
+    ) -> ChatResponse: ...
+
+    @overload
+    async def get_response(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage],
+        **kwargs: Any,
+    ) -> ChatResponse: ...
+
+    async def get_response(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        *,
+        message_id: str | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
+        return await super().get_response(messages=messages or [], message_id=message_id, **kwargs)
+
+    # omit async from overloaded function signatures per
+    # https://discuss.python.org/t/overloads-of-async-generators-inconsistent-coroutine-wrapping/56665/17
+    @overload
+    def get_streaming_response(
+        self,
+        *,
+        conversation_id: str,
+        sequence_number: int | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterable[ChatResponseUpdate]: ...
+
+    @overload
+    def get_streaming_response(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage],
+        **kwargs: Any,
+    ) -> AsyncIterable[ChatResponseUpdate]: ...
+
+    async def get_streaming_response(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        *,
+        conversation_id: str | None = None,
+        sequence_number: int | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterable[ChatResponseUpdate]:
+        async for update in super().get_streaming_response(
+            messages=messages or [],
+            conversation_id=conversation_id,
+            sequence_number=sequence_number,
+            **kwargs,
+        ):
+            yield update
 
 
 # region Embedding Client

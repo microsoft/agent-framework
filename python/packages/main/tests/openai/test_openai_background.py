@@ -42,7 +42,7 @@ async def test_openai_responses_client_background_response() -> None:
 
     messages: list[ChatMessage] = []
     messages.append(ChatMessage(role="user", text="The weather in New York is sunny"))
-    messages.append(ChatMessage(role="user", text="What is the weather in New York?"))
+    messages.append(ChatMessage(role="user", text="What is the weather in New York? Use the chat history"))
 
     # Test that the client can be used to get a response
     response = await openai_responses_client.get_response(
@@ -55,8 +55,7 @@ async def test_openai_responses_client_background_response() -> None:
     assert response.status and response.status != ResponseStatus.COMPLETED
 
     response = await openai_responses_client.get_response(
-        messages=[],  # messages are meaningless here.. do something about that
-        long_running_message_id=response.response_id,
+        message_id=response.response_id,
         # Uncomment this lines if you want to poll
         # background=True,
     )
@@ -86,8 +85,7 @@ async def test_openai_responses_client_background_structured_response() -> None:
     assert response.status and response.status != ResponseStatus.COMPLETED
 
     final_response = await openai_responses_client.get_response(
-        messages=[],  # messages are meaningless here.. do something about that
-        long_running_message_id=response.response_id,
+        message_id=response.response_id,
         # Uncomment this lines if you want to poll
         # background=True,
     )
@@ -123,11 +121,11 @@ async def test_openai_responses_client_background_streaming_response() -> None:
         all_messages.append(response.text)
 
     assert conversation_id is not None
+    assert len(all_messages) > 0
     restart_idx = floor(len(all_messages) / 2)
     stream = openai_responses_client.get_streaming_response(
-        messages=[],  # messages are meaningless here.. do something about that
-        long_running_conversation_id=conversation_id,
-        long_running_sequence_number=restart_idx,
+        conversation_id=conversation_id,
+        sequence_number=restart_idx,
     )
     assert stream is not None
     async for response in stream:
@@ -163,16 +161,15 @@ async def test_openai_responses_client_background_streaming_structured_response(
         if response.conversation_id:
             conversation_id = response.conversation_id
         # The first response should contain the conversation_id
-        assert conversation_id is not None
         all_messages.append(response.text)
 
+    assert conversation_id is not None
     restart_idx = floor(len(all_messages) / 2)
     # Currently broken. See https://github.com/openai/openai-python/issues/2579
     with pytest.raises(ServiceResponseException):
         stream = openai_responses_client.get_streaming_response(
-            messages=[],
-            long_running_conversation_id=conversation_id,
-            long_running_sequence_number=restart_idx,
+            conversation_id=conversation_id,
+            sequence_number=restart_idx,
             response_format=OutputStruct,
         )
         assert stream is not None
