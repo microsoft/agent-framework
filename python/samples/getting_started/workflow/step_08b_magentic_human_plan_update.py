@@ -1,0 +1,176 @@
+# Copyright (c) Microsoft. All rights.
+
+import asyncio
+import logging
+from typing import cast
+
+from agent_framework import AgentRunResponseUpdate, ChatClientAgent, ChatMessage, HostedCodeInterpreterTool
+from agent_framework.openai import OpenAIAssistantsClient, OpenAIChatClient
+from agent_framework_workflow import (
+    MagenticWorkflowBuilder,
+    PlanReviewDecision,
+    PlanReviewReply,
+    PlanReviewRequest,
+    RequestInfoEvent,
+    WorkflowCompletedEvent,
+)
+
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
+
+async def main() -> None:
+    researcher_agent = ChatClientAgent(
+        name="ResearcherAgent",
+        description="Specialist in research and information gathering",
+        instructions=(
+            "You are a Researcher. You find information without additional computation or quantitative analysis."
+        ),
+        # This agent requires the gpt-4o-search-preview model to perform web searches.
+        # Feel free to explore with other agents that support web search, for example,
+        # the `OpenAIResponseAgent` or `AzureAIAgent` with bing grounding.
+        chat_client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
+    )
+
+    async with ChatClientAgent(
+        name="CoderAgent",
+        description="A helpful assistant that writes and executes code to process and analyze data.",
+        instructions="You solve questions using code. Please provide detailed analysis and computation process.",
+        chat_client=OpenAIAssistantsClient(),
+        tools=HostedCodeInterpreterTool(),
+    ) as coder_agent:
+        # Callbacks
+        async def on_result(final_answer: ChatMessage) -> None:
+            print("\n" + "=" * 50)
+            print("FINAL RESULT:")
+            print("=" * 50)
+            print(final_answer.text)
+            print("=" * 50)
+
+        def on_exception(exception: Exception) -> None:
+            print(f"Exception occurred: {exception}")
+            logger.exception("Workflow exception", exc_info=exception)
+
+        async def on_agent_response(agent_id: str, message: ChatMessage) -> None:
+            # Non-streaming callback: final messages from orchestrator and agents
+            response_text = (message.text or "").replace("\n", " ")
+            print(f"\n[on_agent_response] {agent_id}: {message.role.value}\n\n{response_text}\n{'-' * 26}")
+
+        async def on_agent_stream(agent_id: str, update: AgentRunResponseUpdate, is_final: bool) -> None:
+            # Streaming callback: incremental agent updates when available
+            # Print the agent id once and append chunks on the same line until final.
+            nonlocal last_stream_agent_id, stream_line_open
+
+            chunk = getattr(update, "text", None)
+            if not chunk:
+                try:
+                    # Fallback: concatenate text from contents if present
+                    contents = getattr(update, "contents", []) or []
+                    chunk = "".join(getattr(c, "text", "") for c in contents)
+                except Exception:
+                    chunk = None
+            if not chunk:
+                return
+
+            if last_stream_agent_id != agent_id or not stream_line_open:
+                if stream_line_open:
+                    print()  # close previous agent's line
+                print(f"\n[on_agent_stream] {agent_id}: ", end="", flush=True)
+                last_stream_agent_id = agent_id
+                stream_line_open = True
+
+            print(chunk, end="", flush=True)
+
+            if is_final:
+                print(" (final)")
+                stream_line_open = False
+                print()
+
+        print("\nBuilding Magentic Workflow...")
+
+        last_stream_agent_id: str | None = None
+        stream_line_open: bool = False
+
+        workflow = (
+            MagenticWorkflowBuilder()
+            .participants(researcher=researcher_agent, coder=coder_agent)
+            .on_result(on_result)
+            .on_exception(on_exception)
+            .on_agent_response(on_agent_response)
+            .on_agent_stream(on_agent_stream)
+            .with_standard_manager(
+                chat_client=OpenAIChatClient(),
+                max_round_count=10,
+                max_stall_count=3,
+                max_reset_count=2,
+            )
+            .with_plan_review()
+            .build()
+        )
+
+        task = (
+            "I am preparing a report on the energy efficiency of different machine learning model architectures. "
+            "Compare the estimated training and inference energy consumption of ResNet-50, BERT-base, and GPT-2 "
+            "on standard datasets (e.g., ImageNet for ResNet, GLUE for BERT, WebText for GPT-2). "
+            "Then, estimate the CO2 emissions associated with each, assuming training on an Azure Standard_NC6s_v3 "
+            "VM for 24 hours. Provide tables for clarity, and recommend the most energy-efficient model "
+            "per task type (image classification, text classification, and text generation)."
+        )
+
+        print(f"\nTask: {task}")
+        print("\nStarting workflow execution...")
+
+        try:
+            completion_event: WorkflowCompletedEvent | None = None
+            pending_request: RequestInfoEvent | None = None
+
+            while True:
+                # Phase 1: run until either completion or a HIL request
+                if pending_request is None:
+                    async for event in workflow.run_streaming(task):
+                        print(f"Event: {event}")
+
+                        if isinstance(event, WorkflowCompletedEvent):
+                            completion_event = event
+
+                        if isinstance(event, RequestInfoEvent) and event.request_type is PlanReviewRequest:
+                            pending_request = event
+                            review_req = cast(PlanReviewRequest, event.data)
+                            if review_req.plan_text:
+                                print(f"\n=== PLAN REVIEW REQUEST ===\n{review_req.plan_text}\n")
+
+                # Break if completed
+                if completion_event is not None:
+                    data = getattr(completion_event, "data", None)
+                    preview = getattr(data, "text", None) or (str(data) if data is not None else "")
+                    print(f"Workflow completed with result:\n\n{preview}")
+
+                # Phase 2: respond to the pending plan review (HIL) request
+                if pending_request is not None:
+                    # For demo purposes we approve as-is. Replace this with UI input
+                    # to collect a human decision/comments/edited plan.
+                    reply = PlanReviewReply(decision=PlanReviewDecision.APPROVE)
+
+                    async for event in workflow.send_responses_streaming({pending_request.request_id: reply}):
+                        print(f"Event: {event}")
+
+                        if isinstance(event, WorkflowCompletedEvent):
+                            completion_event = event
+
+                        if isinstance(event, RequestInfoEvent) and event.request_type is PlanReviewRequest:
+                            # Another review cycle requested; keep pending
+                            pending_request = event
+                            review_req = cast(PlanReviewRequest, event.data)
+                            if review_req.plan_text:
+                                print(f"\n=== PLAN REVIEW REQUEST ===\n{review_req.plan_text}\n")
+                        else:
+                            # Clear pending if no immediate new request
+                            pending_request = None
+
+        except Exception as e:
+            print(f"Workflow execution failed: {e}")
+            on_exception(e)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

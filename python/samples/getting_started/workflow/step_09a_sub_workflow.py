@@ -79,18 +79,16 @@ class TextProcessor(Executor):
         super().__init__(id="text_processor")
 
     @handler
-    async def process_text(
-        self, request: TextProcessingRequest, ctx: WorkflowContext[TextProcessingResult]
-    ) -> None:
+    async def process_text(self, request: TextProcessingRequest, ctx: WorkflowContext[TextProcessingResult]) -> None:
         """Process a text string and return statistics."""
         text_preview = f"'{request.text[:50]}{'...' if len(request.text) > 50 else ''}'"
-        print(f"🔍 Sub-workflow processing text (Task {request.task_id}): {text_preview}")
+        print(f"Sub-workflow processing text (Task {request.task_id}): {text_preview}")
 
         # Simple text processing
         word_count = len(request.text.split()) if request.text.strip() else 0
         char_count = len(request.text)
 
-        print(f"📊 Task {request.task_id}: {word_count} words, {char_count} characters")
+        print(f"Task {request.task_id}: {word_count} words, {char_count} characters")
 
         # Create result
         result = TextProcessingResult(
@@ -100,7 +98,7 @@ class TextProcessor(Executor):
             char_count=char_count,
         )
 
-        print(f"✅ Sub-workflow completed task {request.task_id}")
+        print(f"Sub-workflow completed task {request.task_id}")
         # Signal completion
         await ctx.add_event(WorkflowCompletedEvent(data=result))
 
@@ -108,7 +106,7 @@ class TextProcessor(Executor):
 # Parent workflow
 class TextProcessingOrchestrator(Executor):
     """Orchestrates multiple text processing tasks using sub-workflows."""
-    
+
     results: list[TextProcessingResult] = []
     expected_count: int = 0
 
@@ -116,28 +114,24 @@ class TextProcessingOrchestrator(Executor):
         super().__init__(id="text_orchestrator")
 
     @handler
-    async def start_processing(
-        self, texts: list[str], ctx: WorkflowContext[TextProcessingRequest]
-    ) -> None:
+    async def start_processing(self, texts: list[str], ctx: WorkflowContext[TextProcessingRequest]) -> None:
         """Start processing multiple text strings."""
-        print(f"📄 Starting processing of {len(texts)} text strings")
+        print(f"Starting processing of {len(texts)} text strings")
         print("=" * 60)
 
         self.expected_count = len(texts)
 
         # Send each text to a sub-workflow
         for i, text in enumerate(texts):
-            task_id = f"task_{i+1}"
+            task_id = f"task_{i + 1}"
             request = TextProcessingRequest(text=text, task_id=task_id)
-            print(f"📤 Dispatching {task_id} to sub-workflow")
+            print(f"Dispatching {task_id} to sub-workflow")
             await ctx.send_message(request, target_id="text_processor_workflow")
 
     @handler
-    async def collect_result(
-        self, result: TextProcessingResult, ctx: WorkflowContext[None]
-    ) -> None:
+    async def collect_result(self, result: TextProcessingResult, ctx: WorkflowContext[None]) -> None:
         """Collect results from sub-workflows."""
-        print(f"📥 Collected result from {result.task_id}")
+        print(f"Collected result from {result.task_id}")
         self.results.append(result)
 
         # Check if all results are collected
@@ -163,18 +157,14 @@ class TextProcessingOrchestrator(Executor):
 
 async def main():
     """Main function to run the basic sub-workflow example."""
-    print("🚀 Setting up sub-workflow...")
+    print("Setting up sub-workflow...")
 
     # Step 1: Create the text processing sub-workflow
     text_processor = TextProcessor()
 
-    processing_workflow = (
-        WorkflowBuilder()
-        .set_start_executor(text_processor)
-        .build()
-    )
+    processing_workflow = WorkflowBuilder().set_start_executor(text_processor).build()
 
-    print("🔧 Setting up parent workflow...")
+    print("Setting up parent workflow...")
 
     # Step 2: Create the parent workflow
     orchestrator = TextProcessingOrchestrator()
@@ -193,19 +183,19 @@ async def main():
         "Hello world! This is a simple test.",
         "Python is a powerful programming language used for many applications.",
         "Short text.",
-        "This is a longer text with multiple sentences. It contains more words and characters. We use it to test our text processing workflow.",
+        "This is a longer text with multiple sentences. It contains more words and characters. We use it to test our text processing workflow.",  # noqa: E501
         "",  # Empty string
         "   Spaces   around   text   ",
     ]
 
-    print(f"\n🧪 Testing with {len(test_texts)} text strings")
+    print(f"\nTesting with {len(test_texts)} text strings")
     print("=" * 60)
 
     # Step 4: Run the workflow
     result = await main_workflow.run(test_texts)
 
     # Step 5: Display results
-    print(f"\n📊 Processing Results:")
+    print("\nProcessing Results:")
     print("=" * 60)
 
     # Sort results by task_id for consistent display
@@ -213,20 +203,18 @@ async def main():
 
     for result in sorted_results:
         preview = result.text[:30] + "..." if len(result.text) > 30 else result.text
-        preview = preview.replace('\n', ' ').strip() or '(empty)'
-        print(f"✅ {result.task_id}: '{preview}' -> {result.word_count} words, {result.char_count} chars")
+        preview = preview.replace("\n", " ").strip() or "(empty)"
+        print(f"{result.task_id}: '{preview}' -> {result.word_count} words, {result.char_count} chars")
 
     # Step 6: Display summary
     summary = orchestrator.get_summary()
-    print(f"\n📈 Summary:")
+    print("Summary:")
     print("=" * 60)
-    print(f"📄 Total texts processed: {summary['total_texts']}")
-    print(f"📝 Total words: {summary['total_words']}")
-    print(f"🔤 Total characters: {summary['total_characters']}")
-    print(f"📊 Average words per text: {summary['average_words_per_text']}")
-    print(f"📏 Average characters per text: {summary['average_characters_per_text']}")
-
-    print(f"\n🏁 Processing complete!")
+    print(f"Total texts processed: {summary['total_texts']}")
+    print(f"Total words: {summary['total_words']}")
+    print(f"Total characters: {summary['total_characters']}")
+    print(f"Average words per text: {summary['average_words_per_text']}")
+    print(f"Average characters per text: {summary['average_characters_per_text']}")
 
 
 if __name__ == "__main__":

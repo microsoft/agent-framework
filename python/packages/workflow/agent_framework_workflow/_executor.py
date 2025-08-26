@@ -188,8 +188,12 @@ class Executor(AFBaseModel):
                     # Check if interceptor handled it or needs to forward
                     if isinstance(response, RequestResponse):
                         # Add automatic correlation info to the response
-                        correlated_response = RequestResponse._with_correlation(
-                            response, request.data, request.request_id
+                        # Use cast to help with type inference for framework code
+                        from typing import cast
+
+                        typed_response = cast(RequestResponse[Any, Any], response)
+                        correlated_response = RequestResponse.with_correlation(  # type: ignore
+                            typed_response, request.data, request.request_id
                         )
 
                         if correlated_response.is_handled:
@@ -201,15 +205,15 @@ class Executor(AFBaseModel):
                                 target_id=request.sub_workflow_id,
                                 data=SubWorkflowResponse(
                                     request_id=request.request_id,
-                                    data=correlated_response.data,
+                                    data=correlated_response.data,  # pyright: ignore[reportUnknownMemberType]
                                 ),
                             )
                             await ctx.send_message(response_message)
                         else:
                             # Forward WITH CONTEXT PRESERVED
                             # Update the data if interceptor provided a modified request
-                            if correlated_response.forward_request:
-                                request.data = correlated_response.forward_request
+                            if correlated_response.forward_request:  # pyright: ignore[reportUnknownMemberType]
+                                request.data = correlated_response.forward_request  # pyright: ignore[reportUnknownMemberType]
 
                             # Send the inner request to RequestInfoExecutor to create external request
                             from ._runner_context import Message
@@ -422,17 +426,17 @@ class RequestResponse(Generic[TRequest, TResponse]):
         return cls(is_handled=True, data=data)
 
     @classmethod
-    def forward(cls, modified_request: Any = None) -> "RequestResponse[Any, Any]":
+    def forward(cls, modified_request: TRequest | None = None) -> "RequestResponse[TRequest, Any]":
         """Create a response indicating the request should be forwarded."""
         return cls(is_handled=False, forward_request=modified_request)
 
     @staticmethod
-    def _with_correlation(
-        original_response: "RequestResponse[Any, TResponse]", original_request: TRequest, request_id: str
+    def with_correlation(
+        original_response: "RequestResponse[TRequest, TResponse]", original_request: TRequest, request_id: str
     ) -> "RequestResponse[TRequest, TResponse]":
-        """Internal method to add correlation info to a response.
+        """Add correlation info to a response.
 
-        This is called automatically by the framework and should not be used directly.
+        This is called automatically by the framework when processing intercepted requests.
         """
         return RequestResponse(
             is_handled=original_response.is_handled,
@@ -761,8 +765,8 @@ class RequestInfoExecutor(Executor):
         event = RequestInfoEvent(
             request_id=message.request_id,  # Use original request ID
             source_executor_id=source_executor_id,
-            request_type=type(message.data),  # SubWorkflowRequestInfo type
-            request_data=message.data,  # The full SubWorkflowRequestInfo
+            request_type=type(message.data),  # Type of the wrapped data # type: ignore
+            request_data=message.data,  # The wrapped request data
         )
         self._request_events[message.request_id] = event
         await ctx.add_event(event)
@@ -800,8 +804,8 @@ class RequestInfoExecutor(Executor):
         else:
             # Regular response - send directly back to source
             # Create a correlated response that includes both the response data and original request
-            correlated_response = RequestResponse.handled(response_data)
-            correlated_response = RequestResponse._with_correlation(correlated_response, event.data, request_id)
+            correlated_response = RequestResponse.handled(response_data)  # type: ignore
+            correlated_response = RequestResponse.with_correlation(correlated_response, event.data, request_id)  # type: ignore
 
             await ctx.send_message(correlated_response, target_id=event.source_executor_id)
 
