@@ -80,6 +80,18 @@ public class ChatClientAgentOptions
     public Func<IChatMessageStore>? ChatMessageStoreFactory { get; set; } = null;
 
     /// <summary>
+    /// Gets or sets a value indicating whether to use the provided <see cref="IChatClient"/> instance as is,
+    /// without applying any default decorators.
+    /// </summary>
+    /// <remarks>
+    /// By default the <see cref="ChatClientAgent"/> applies decorators to the provided <see cref="IChatClient"/>
+    /// for doing automatic function invocation and logging. Setting this property to <see langword="true"/>
+    /// disables this behavior, and requires the caller to provide an <see cref="IChatClient"/> that already
+    /// has the desired behavior.
+    /// </remarks>
+    public bool UseProvidedChatClientAsIs { get; set; } = false;
+
+    /// <summary>
     /// Creates a new instance of <see cref="ChatClientAgentOptions"/> with the same values as this instance.
     /// </summary>
     internal ChatClientAgentOptions Clone()

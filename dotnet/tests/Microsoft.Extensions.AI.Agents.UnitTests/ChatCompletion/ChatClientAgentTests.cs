@@ -324,7 +324,8 @@ public class ChatClientAgentTests
         AgentThread thread = new() { ConversationId = "ConvId" };
 
         // Act & Assert
-        await agent.RunAsync([new(ChatRole.User, "test")], thread, chatOptions: chatOptions);
+        var response = await agent.RunAsync([new(ChatRole.User, "test")], thread, chatOptions: chatOptions);
+        Assert.NotNull(response);
     }
 
     /// <summary>
@@ -424,6 +425,7 @@ public class ChatClientAgentTests
         // Act & Assert
         Assert.NotNull(agent.Id);
         Assert.NotEmpty(agent.Id);
+
         // Base implementation returns a GUID, so it should be parseable as a GUID
         Assert.True(Guid.TryParse(agent.Id, out _));
     }
@@ -442,6 +444,7 @@ public class ChatClientAgentTests
         // Act & Assert
         Assert.NotNull(agent.Id);
         Assert.NotEmpty(agent.Id);
+
         // Base implementation returns a GUID, so it should be parseable as a GUID
         Assert.True(Guid.TryParse(agent.Id, out _));
     }
@@ -1383,6 +1386,7 @@ public class ChatClientAgentTests
         // Assert
         Assert.NotNull(result);
         Assert.Same(agent, result);
+
         // Verify that the ChatClient's GetService was not called for this type since base.GetService() handled it
         mockChatClient.Verify(c => c.GetService(typeof(ChatClientAgent), null), Times.Never);
     }
@@ -1406,6 +1410,7 @@ public class ChatClientAgentTests
         // Assert
         Assert.NotNull(result);
         Assert.Same(agent, result);
+
         // Verify that the ChatClient's GetService was not called for this type since base.GetService() handled it
         mockChatClient.Verify(c => c.GetService(typeof(AIAgent), null), Times.Never);
     }
@@ -1430,6 +1435,7 @@ public class ChatClientAgentTests
         // Assert
         Assert.NotNull(result);
         Assert.IsAssignableFrom<IChatClient>(result);
+
         // Verify that the ChatClient's GetService was NOT called because IChatClient is handled by the agent itself
         mockChatClient.Verify(c => c.GetService(typeof(IChatClient), "some-key"), Times.Never);
     }
@@ -1454,6 +1460,7 @@ public class ChatClientAgentTests
         // Assert
         Assert.NotNull(result);
         Assert.Equal("test-result", result);
+
         // Verify that the ChatClient's GetService was called after base.GetService() returned null
         mockChatClient.Verify(c => c.GetService(typeof(string), "some-key"), Times.Once);
     }
