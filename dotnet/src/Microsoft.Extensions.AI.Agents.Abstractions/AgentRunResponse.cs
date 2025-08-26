@@ -1,14 +1,14 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-#if NET8_0_OR_GREATER
+#if NET9_0_OR_GREATER
 using System.Buffers;
 #endif
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 
-#if NET8_0_OR_GREATER
+#if NET9_0_OR_GREATER
 using System.Text;
 #endif
 using System.Text.Json;
@@ -220,7 +220,7 @@ public class AgentRunResponse
 
     private static T? DeserializeFirstTopLevelObject<T>(string json, JsonTypeInfo<T> typeInfo)
     {
-#if NET8_0_OR_GREATER
+#if NET9_0_OR_GREATER
         // We need to deserialize only the first top-level object as a workaround for a common LLM backend
         // issue. GPT 3.5 Turbo commonly returns multiple top-level objects after doing a function call.
         // See https://community.openai.com/t/2-json-objects-returned-when-using-function-calling-and-json-mode/574348
