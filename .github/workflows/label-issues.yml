@@ -12,7 +12,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
-      members: read
     steps:
       - uses: actions/github-script@v7
         with:
