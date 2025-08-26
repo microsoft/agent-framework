@@ -5,6 +5,16 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Execution;
 
+/// <summary>
+/// Represents a unique key used to identify an update within a specific scope.
+/// </summary>
+/// <remarks>An <see cref="UpdateKey"/> is composed of a <see cref="ScopeId"/> and a key, similar
+/// to <see cref="ScopeKey"/>. The difference is in how equality is determined: Unlike ScopeKey,
+/// two UpdateKeys that differ only by their ScopeId's ExecutorId are considered different, because
+/// updates coming from different executors need to be tracked separately, until they are marged (if
+/// appropriate) and published during a step transition.</remarks>
+/// <param name="scopeId"></param>
+/// <param name="key"></param>
 internal class UpdateKey(ScopeId scopeId, string key)
 {
     public ScopeId ScopeId { get; } = Throw.IfNull(scopeId);

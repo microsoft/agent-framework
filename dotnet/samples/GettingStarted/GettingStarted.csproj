@@ -14,7 +14,7 @@
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
   </PropertyGroup>
-  
+ 
   <ItemGroup>
     <PackageReference Include="Azure.AI.Agents.Persistent" />
     <PackageReference Include="Azure.AI.OpenAI" />

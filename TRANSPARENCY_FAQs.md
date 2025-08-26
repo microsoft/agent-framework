@@ -10,7 +10,7 @@ Building upon its foundational capabilities, Microsoft Agent Framework facilitat
 -	AI Agent Development: Users can create agents capable of performing specific tasks or interactions based on user input.
 -	Function Invocation: It can automate code execution by calling functions based on AI model outputs.
 -	Modular and Extensible: Developers can enhance functionality through tools and a variety of pre-built connectors, providing flexibility in integrating additional AI services.
--	Multi-Modal Support: The framework easily expands existing applications to support modalities like voice and video through its architecture
+-	Multi-Modal Support: The framework easily expands existing applications to support modalities like voice and video through its architecture.
 -   Filtering: Developers can use filters to monitor the application, control function invocation or implement Responsible AI.
 -   Workflow Orchestration: Developers can create graph-based workflows connecting agents and deterministic functions with streaming, checkpointing, and time-travel capabilities.
 
@@ -28,14 +28,14 @@ Microsoft Agent Framework metrics include:
 
 
 ## What are the limitations of Microsoft Agent Framework?
-Agent Framework integrates with Large Language Models (LLMs) to allow AI capabilities to be added to existing application.
+Agent Framework integrates with Large Language Models (LLMs) to allow AI capabilities to be added to existing applications.
 LLMs have some inherent limitations such as:
 -	Contextual Misunderstanding: The system may struggle with nuanced requests, particularly those involving complex context.
 -	Bias in LLM Outputs: Historical biases in the training data can inadvertently influence model outputs. 
 	-	Users can mitigate these issues by:
 		-	Formulating clear and explicit queries.
 		-	Regularly reviewing AI-generated outputs to identify and rectify biases or inaccuracies.
-        -   Providing relevant information when prompting the LLM so that it can base it's responses on this data
+        -   Providing relevant information when prompting the LLM so that it can base its responses on this data
 -   Not all LLMs support all features uniformly e.g., function calling.
 Agent Framework is constantly evolving and adding new features so:
 -   There are some components still being developed e.g., support for some modalities such as Video and Classification, memory connectors for certain Vector databases, AI connectors for certain AI services.

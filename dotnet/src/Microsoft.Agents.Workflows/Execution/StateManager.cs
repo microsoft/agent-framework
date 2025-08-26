@@ -2,7 +2,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Agents.Workflows.Checkpointing;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Execution;
@@ -69,7 +71,7 @@ internal class StateManager
         return default;
     }
 
-    public async ValueTask PublishUpdatesAsync()
+    public async ValueTask PublishUpdatesAsync(IStepTracer? tracer)
     {
         Dictionary<ScopeId, Dictionary<string, List<StateUpdate>>> updatesByScope = new();
 
@@ -89,10 +91,57 @@ internal class StateManager
             stateUpdates.Add(this._queuedUpdates[key]);
         }
 
+        if (updatesByScope.Count > 0 && tracer != null)
+        {
+            tracer.TraceStatePublished();
+        }
+
         foreach (ScopeId scope in updatesByScope.Keys)
         {
             StateScope stateScope = this.GetOrCreateScope(scope);
             await stateScope.WriteStateAsync(updatesByScope[scope]).ConfigureAwait(false);
         }
+
+        this._queuedUpdates.Clear();
+    }
+
+    private static IEnumerable<KeyValuePair<ScopeKey, ExportedState>> ExportScope(StateScope scope)
+    {
+        foreach (KeyValuePair<string, ExportedState> state in scope.ExportStates())
+        {
+            yield return new(new ScopeKey(scope.ScopeId, state.Key), state.Value);
+        }
+    }
+
+    internal async ValueTask<Dictionary<ScopeKey, ExportedState>> ExportStateAsync()
+    {
+        if (this._queuedUpdates.Count != 0)
+        {
+            throw new InvalidOperationException("Cannot export state while there are queued updates. Call PublishUpdatesAsync() first.");
+        }
+
+        return this._scopes.Values.SelectMany(ExportScope).ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+    }
+
+    internal ValueTask ImportStateAsync(Checkpoint checkpoint)
+    {
+        // TODO: Should this be a warning instead?
+        if (this._queuedUpdates.Count != 0)
+        {
+            throw new InvalidOperationException("Cannot import state while there are queued updates. Call PublishUpdatesAsync() first.");
+        }
+
+        this._queuedUpdates.Clear();
+        this._scopes.Clear();
+
+        Dictionary<ScopeKey, ExportedState> importedState = checkpoint.State;
+
+        foreach (ScopeKey scopeKey in importedState.Keys)
+        {
+            StateScope scope = this.GetOrCreateScope(scopeKey.ScopeId);
+            scope.ImportState(scopeKey.Key, importedState[scopeKey]);
+        }
+
+        return default;
     }
 }

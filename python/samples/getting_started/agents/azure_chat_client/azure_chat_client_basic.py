@@ -5,7 +5,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework.azure import AzureChatClient
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 from pydantic import Field
 
 
@@ -22,7 +22,9 @@ async def non_streaming_example() -> None:
     print("=== Non-streaming Response Example ===")
 
     # Create agent with Azure Chat Client
-    agent = AzureChatClient(ad_credential=DefaultAzureCredential()).create_agent(
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
+    agent = AzureChatClient(credential=AzureCliCredential()).create_agent(
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -38,7 +40,9 @@ async def streaming_example() -> None:
     print("=== Streaming Response Example ===")
 
     # Create agent with Azure Chat Client
-    agent = AzureChatClient(ad_credential=DefaultAzureCredential()).create_agent(
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
+    agent = AzureChatClient(credential=AzureCliCredential()).create_agent(
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
