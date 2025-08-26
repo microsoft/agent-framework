@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
+using Microsoft.Agents.Workflows.Execution;
 
 namespace Microsoft.Agents.Workflows;
 
@@ -10,7 +10,7 @@ namespace Microsoft.Agents.Workflows;
 /// </summary>
 /// <param name="sourceIds">An enumeration of ids of the source executor nodes.</param>
 /// <param name="sinkId">The id of the target executor node.</param>
-public sealed class FanInEdgeData(List<string> sourceIds, string sinkId)
+public sealed class FanInEdgeData(List<string> sourceIds, string sinkId) : EdgeData
 {
     /// <summary>
     /// The ordered list of Ids of the source <see cref="Executor"/> nodes.
@@ -22,5 +22,6 @@ public sealed class FanInEdgeData(List<string> sourceIds, string sinkId)
     /// </summary>
     public string SinkId => sinkId;
 
-    internal Guid UniqueKey { get; } = Guid.NewGuid();
+    /// <inheritdoc />
+    internal override EdgeConnection Connection { get; } = new(sourceIds, [sinkId]);
 }

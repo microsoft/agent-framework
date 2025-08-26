@@ -12,7 +12,7 @@ internal class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData edgeData
 
     public FanInEdgeState CreateState() => new(this.EdgeData);
 
-    public async ValueTask<object?> ChaseAsync(string sourceId, MessageEnvelope envelope, FanInEdgeState state)
+    public async ValueTask<object?> ChaseAsync(string sourceId, MessageEnvelope envelope, FanInEdgeState state, IStepTracer? tracer)
     {
         if (envelope.TargetId != null && this.EdgeData.SinkId != envelope.TargetId)
         {
@@ -28,11 +28,12 @@ internal class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData edgeData
             return null;
         }
 
-        Executor target = await this.RunContext.EnsureExecutorAsync(this.EdgeData.SinkId)
+        Executor target = await this.RunContext.EnsureExecutorAsync(this.EdgeData.SinkId, tracer)
                                                    .ConfigureAwait(false);
 
         if (target.CanHandle(message.GetType()))
         {
+            tracer?.TraceActivated(target.Id);
             return await target.ExecuteAsync(message, envelope.MessageType, this.BoundContext)
                                .ConfigureAwait(false);
         }
