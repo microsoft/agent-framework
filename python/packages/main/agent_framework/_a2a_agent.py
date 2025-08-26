@@ -147,6 +147,8 @@ class A2AAgent(AgentBase):
         """Convert a ChatMessage to a Message."""
         parts: list[A2APart] = []
         # TODO(peterychang): Handle other content types
+        if not message.contents:
+            raise ValueError("ChatMessage.contents is empty; cannot convert to A2AMessage.")
         content = message.contents[0]
         if content.type == "text":
             try:
