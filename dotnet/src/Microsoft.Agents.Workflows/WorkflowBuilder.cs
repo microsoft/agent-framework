@@ -58,7 +58,7 @@ public class WorkflowBuilder
                 if (existing.ExecutorType != incoming.ExecutorType)
                 {
                     throw new InvalidOperationException(
-                        $"Cannot bind executor with ID '{executorish.Id}' because an executor with the same ID but different type is already bound.");
+                        $"Cannot bind executor with ID '{executorish.Id}' because an executor with the same ID but a different type ({existing.ExecutorType.Name} vs {incoming.ExecutorType.Name}) is already bound.");
                 }
 
                 if (existing.RawExecutorishData != null &&
