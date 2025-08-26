@@ -199,11 +199,10 @@ class Workflow(AFBaseModel):
         from ._telemetry import workflow_tracer
 
         # Create workflow span that encompasses the entire execution
-        with workflow_tracer.create_workflow_span(self) as span:
+        with workflow_tracer.create_workflow_span(self):
             try:
-                if span and span.is_recording():
-                    span.set_attribute("workflow.status", "running")
-                    span.set_attribute("workflow.max_iterations", self.max_iterations)
+                # Add workflow started event
+                workflow_tracer.add_workflow_event("workflow.started")
 
                 # Reset context for a new run if supported
                 if reset_context:
@@ -218,12 +217,9 @@ class Workflow(AFBaseModel):
                     yield event
 
                 # Success
-                if span and span.is_recording():
-                    span.set_attribute("workflow.status", "completed")
+                workflow_tracer.add_workflow_event("workflow.completed")
             except Exception as e:
-                if span and span.is_recording():
-                    span.set_attribute("workflow.status", "failed")
-                    span.set_status("ERROR", str(e))
+                workflow_tracer.add_workflow_error_event(e)
                 raise
 
     async def run_streaming(self, message: Any) -> AsyncIterable[WorkflowEvent]:

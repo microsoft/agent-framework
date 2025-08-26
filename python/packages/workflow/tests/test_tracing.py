@@ -127,6 +127,7 @@ async def test_workflow_span_creation(tracing_enabled: Any, span_exporter: InMem
             (),
             {
                 "id": "test-workflow-id",
+                "max_iterations": 100,
                 "model_dump_json": lambda self: '{"id": "test-workflow-id", "type": "mock"}',
             },
         )(),
@@ -158,7 +159,11 @@ async def test_executor_processing_span_creation(tracing_enabled: Any, span_expo
         type(
             "MockWorkflow",
             (),
-            {"id": "test-workflow", "model_dump_json": lambda self: '{"id": "test-workflow", "type": "mock"}'},
+            {
+                "id": "test-workflow",
+                "max_iterations": 100,
+                "model_dump_json": lambda self: '{"id": "test-workflow", "type": "mock"}',
+            },
         )(),
     )
 
@@ -190,7 +195,11 @@ async def test_message_sending_span_creation(tracing_enabled: Any, span_exporter
         type(
             "MockWorkflow",
             (),
-            {"id": "test-workflow", "model_dump_json": lambda self: '{"id": "test-workflow", "type": "mock"}'},
+            {
+                "id": "test-workflow",
+                "max_iterations": 100,
+                "model_dump_json": lambda self: '{"id": "test-workflow", "type": "mock"}',
+            },
         )(),
     )
 
@@ -316,11 +325,12 @@ async def test_end_to_end_workflow_tracing(tracing_enabled: Any, span_exporter: 
     assert len(processing_spans) >= 2  # At least one for each executor
     assert len(sending_spans) >= 1  # At least one for message.sending
 
-    # Verify workflow span attributes
+    # Verify workflow span events
     workflow_span = workflow_spans[0]
-    assert workflow_span.attributes is not None
-    assert "workflow.status" in workflow_span.attributes
-    assert workflow_span.attributes.get("workflow.status") == "completed"
+    assert workflow_span.events is not None
+    event_names = [event.name for event in workflow_span.events]
+    assert "workflow.started" in event_names
+    assert "workflow.completed" in event_names
 
 
 @pytest.mark.asyncio
@@ -382,9 +392,11 @@ async def test_workflow_error_handling_in_tracing(tracing_enabled: Any, span_exp
 
     workflow_span = workflow_spans[0]
 
-    # Verify error status is recorded
-    assert workflow_span.attributes is not None
-    assert workflow_span.attributes.get("workflow.status") == "failed"
+    # Verify error event and status are recorded
+    assert workflow_span.events is not None
+    event_names = [event.name for event in workflow_span.events]
+    assert "workflow.started" in event_names
+    assert "workflow.error" in event_names
     assert workflow_span.status.status_code.name == "ERROR"
 
 
@@ -458,6 +470,7 @@ async def test_span_attributes_completeness(tracing_enabled: Any, span_exporter:
             (),
             {
                 "id": "test-workflow-123",
+                "max_iterations": 100,
                 "model_dump_json": lambda self: '{"id": "test-workflow-123", "type": "mock"}',
             },
         )(),
@@ -465,7 +478,7 @@ async def test_span_attributes_completeness(tracing_enabled: Any, span_exporter:
 
     # Test workflow span
     with workflow_tracer.create_workflow_span(mock_workflow) as workflow_span:
-        workflow_span.set_attribute("workflow.status", "running")
+        workflow_tracer.add_workflow_event("workflow.started")
         workflow_span.set_attribute("workflow.max_iterations", 100)
 
         # Test processing span and sending span
@@ -482,8 +495,11 @@ async def test_span_attributes_completeness(tracing_enabled: Any, span_exporter:
     workflow_span = next(s for s in spans if s.name == "workflow.run")
     assert workflow_span.attributes is not None
     assert workflow_span.attributes.get("workflow.id") == "test-workflow-123"
-    assert workflow_span.attributes.get("workflow.status") == "running"
     assert workflow_span.attributes.get("workflow.max_iterations") == 100
+    # Check workflow events
+    assert workflow_span.events is not None
+    event_names = [event.name for event in workflow_span.events]
+    assert "workflow.started" in event_names
 
     # Check processing span
     processing_span = next(s for s in spans if s.name == "executor.process")

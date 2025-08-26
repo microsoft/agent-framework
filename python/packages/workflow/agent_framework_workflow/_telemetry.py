@@ -3,8 +3,9 @@
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from agent_framework._pydantic import AFBaseSettings
-from opentelemetry.trace import Link, NoOpTracer, SpanKind, get_tracer
+from opentelemetry.trace import Link, NoOpTracer, SpanKind, StatusCode, get_current_span, get_tracer
 from opentelemetry.trace.span import SpanContext
+from opentelemetry.util.types import Attributes
 
 if TYPE_CHECKING:
     from ._workflow import Workflow
@@ -51,6 +52,7 @@ class WorkflowTracer:
         attributes = {
             "workflow.id": workflow.id,
             "workflow.definition": workflow.model_dump_json(),
+            "workflow.max_iterations": workflow.max_iterations,
         }
 
         return self.tracer.start_as_current_span(_WORKFLOW_RUN_SPAN, kind=SpanKind.INTERNAL, attributes=attributes)
@@ -121,6 +123,38 @@ class WorkflowTracer:
             kind=SpanKind.PRODUCER,
             attributes=attributes,
         )
+
+    def add_workflow_event(self, event_name: str, attributes: Attributes | None = None) -> None:
+        """Add an event to the current workflow span.
+
+        Args:
+            event_name: Name of the event (e.g., "workflow.started", "workflow.completed")
+            attributes: Optional attributes to attach to the event
+        """
+        span = get_current_span()
+        if span and span.is_recording():
+            span.add_event(event_name, attributes)
+
+    def add_workflow_error_event(self, error: Exception, attributes: Attributes | None = None) -> None:
+        """Add an error event to the current workflow span.
+
+        Args:
+            error: The exception that occurred
+            attributes: Optional additional attributes to attach to the event
+        """
+        span = get_current_span()
+        if span and span.is_recording():
+            event_attributes: dict[str, str | bool | int | float] = {
+                "error.message": str(error),
+                "error.type": type(error).__name__,
+            }
+            if attributes:
+                # Safely merge attributes, ensuring type compatibility
+                for key, value in attributes.items():
+                    if isinstance(value, (str, bool, int, float)):
+                        event_attributes[key] = value
+            span.add_event("workflow.error", event_attributes)
+            span.set_status(StatusCode.ERROR, str(error))
 
 
 # Global workflow tracer instance
