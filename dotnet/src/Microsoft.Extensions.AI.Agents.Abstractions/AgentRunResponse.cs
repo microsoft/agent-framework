@@ -16,6 +16,9 @@ using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.Shared.Diagnostics;
 
+#pragma warning disable S109 // Magic numbers should not be used
+#pragma warning disable S1121 // Assignments should not be made from within sub-expressions
+
 namespace Microsoft.Extensions.AI.Agents;
 
 /// <summary>Represents the response to an Agent run request.</summary>
@@ -84,7 +87,7 @@ public class AgentRunResponse
     [JsonIgnore]
     public string Text => this._messages?.ConcatText() ?? string.Empty;
 
-    /// <summary>Gets or sets the user input requests associated with the response.</summary>
+    /// <summary>Gets the user input requests associated with the response.</summary>
     /// <remarks>
     /// This property concatenates all <see cref="UserInputRequestContent"/> instances in the response.
     /// </remarks>
@@ -170,7 +173,6 @@ public class AgentRunResponse
         return updates;
     }
 
-    // TODO: Add overloads without serializer options.
     /// <summary>
     /// Deserializes the response text into the given type using the specified serializer options.
     /// </summary>
@@ -180,6 +182,8 @@ public class AgentRunResponse
     /// <exception cref="InvalidOperationException">The result is not parsable into the requested type.</exception>
     public T Deserialize<T>(JsonSerializerOptions serializerOptions)
     {
+        _ = Throw.IfNull(serializerOptions);
+
         var structuredOutput = this.GetResultCore<T>(serializerOptions, out var failureReason);
         return failureReason switch
         {
@@ -198,6 +202,8 @@ public class AgentRunResponse
     /// <returns><see langword="true" /> if parsing was successful; otherwise, <see langword="false" />.</returns>
     public bool TryDeserialize<T>(JsonSerializerOptions serializerOptions, [NotNullWhen(true)] out T? structuredOutput)
     {
+        _ = Throw.IfNull(serializerOptions);
+
         try
         {
             structuredOutput = this.GetResultCore<T>(serializerOptions, out var failureReason);
@@ -214,7 +220,7 @@ public class AgentRunResponse
 
     private static T? DeserializeFirstTopLevelObject<T>(string json, JsonTypeInfo<T> typeInfo)
     {
-#if NET9_0_OR_GREATER
+#if NET8_0_OR_GREATER
         // We need to deserialize only the first top-level object as a workaround for a common LLM backend
         // issue. GPT 3.5 Turbo commonly returns multiple top-level objects after doing a function call.
         // See https://community.openai.com/t/2-json-objects-returned-when-using-function-calling-and-json-mode/574348
