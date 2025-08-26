@@ -77,9 +77,9 @@ internal sealed class WorkflowScopes : IEnumerable<WorkflowScope>
         }
     }
 
-    public FormulaValue Get(string name, string? scopeName = null)
+    public FormulaValue Get(string variableName, string? scopeName = null)
     {
-        if (this._scopes[scopeName ?? WorkflowScopes.DefaultScopeName].TryGetValue(name, out FormulaValue? value))
+        if (this._scopes[scopeName ?? WorkflowScopes.DefaultScopeName].TryGetValue(variableName, out FormulaValue? value))
         {
             return value;
         }
@@ -96,17 +96,17 @@ internal sealed class WorkflowScopes : IEnumerable<WorkflowScope>
         }
     }
 
-    public void Reset(string name) => this.Reset(name, WorkflowScopes.DefaultScopeName);
+    public void Reset(string variableName) => this.Reset(variableName, WorkflowScopes.DefaultScopeName);
 
-    public void Reset(string name, string scopeName)
+    public void Reset(string variableName, string scopeName)
     {
-        if (this._scopes[scopeName].TryGetValue(name, out FormulaValue? value))
+        if (this._scopes[scopeName].TryGetValue(variableName, out FormulaValue? value))
         {
-            this.Set(name, scopeName, FormulaValue.NewBlank(value.Type));
+            this.Set(variableName, scopeName, FormulaValue.NewBlank(value.Type));
         }
     }
 
-    public void Set(string name, FormulaValue value) => this.Set(name, WorkflowScopes.DefaultScopeName, value);
+    public void Set(string variableName, FormulaValue value) => this.Set(variableName, WorkflowScopes.DefaultScopeName, value);
 
-    public void Set(string name, string scopeName, FormulaValue value) => this._scopes[scopeName][name] = value;
+    public void Set(string variableName, string scopeName, FormulaValue value) => this._scopes[scopeName][variableName] = value;
 }
