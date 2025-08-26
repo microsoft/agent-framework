@@ -612,7 +612,7 @@ def get_weather(location: str) -> str:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_response() -> None:
     """Test Azure OpenAI chat completion responses."""
-    azure_chat_client = AzureChatClient(ad_credential=AzureCliCredential())
+    azure_chat_client = AzureChatClient(credential=AzureCliCredential())
     assert isinstance(azure_chat_client, ChatClient)
 
     messages: list[ChatMessage] = []
@@ -638,7 +638,7 @@ async def test_azure_openai_chat_client_response() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_response_tools() -> None:
     """Test AzureOpenAI chat completion responses."""
-    azure_chat_client = AzureChatClient(ad_credential=AzureCliCredential())
+    azure_chat_client = AzureChatClient(credential=AzureCliCredential())
     assert isinstance(azure_chat_client, ChatClient)
 
     messages: list[ChatMessage] = []
@@ -659,7 +659,7 @@ async def test_azure_openai_chat_client_response_tools() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_streaming() -> None:
     """Test Azure OpenAI chat completion responses."""
-    azure_chat_client = AzureChatClient(ad_credential=AzureCliCredential())
+    azure_chat_client = AzureChatClient(credential=AzureCliCredential())
     assert isinstance(azure_chat_client, ChatClient)
 
     messages: list[ChatMessage] = []
@@ -691,7 +691,7 @@ async def test_azure_openai_chat_client_streaming() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_streaming_tools() -> None:
     """Test AzureOpenAI chat completion responses."""
-    azure_chat_client = AzureChatClient(ad_credential=AzureCliCredential())
+    azure_chat_client = AzureChatClient(credential=AzureCliCredential())
     assert isinstance(azure_chat_client, ChatClient)
 
     messages: list[ChatMessage] = []
@@ -718,7 +718,7 @@ async def test_azure_openai_chat_client_streaming_tools() -> None:
 async def test_azure_openai_chat_client_agent_basic_run():
     """Test Azure OpenAI chat client agent basic run functionality with AzureChatClient."""
     async with ChatClientAgent(
-        chat_client=AzureChatClient(ad_credential=AzureCliCredential()),
+        chat_client=AzureChatClient(credential=AzureCliCredential()),
     ) as agent:
         # Test basic run
         response = await agent.run("Tell me a short fact about artificial intelligence.")
@@ -733,7 +733,7 @@ async def test_azure_openai_chat_client_agent_basic_run():
 async def test_azure_openai_chat_client_agent_basic_run_streaming():
     """Test Azure OpenAI chat client agent basic streaming functionality with AzureChatClient."""
     async with ChatClientAgent(
-        chat_client=AzureChatClient(ad_credential=AzureCliCredential()),
+        chat_client=AzureChatClient(credential=AzureCliCredential()),
     ) as agent:
         # Test streaming run
         full_text = ""
@@ -750,7 +750,7 @@ async def test_azure_openai_chat_client_agent_basic_run_streaming():
 async def test_azure_openai_chat_client_agent_thread_persistence():
     """Test Azure OpenAI chat client agent thread persistence across runs with AzureChatClient."""
     async with ChatClientAgent(
-        chat_client=AzureChatClient(ad_credential=AzureCliCredential()),
+        chat_client=AzureChatClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as agent:
         # Create a new thread that will be reused
@@ -777,7 +777,7 @@ async def test_azure_openai_chat_client_agent_existing_thread():
     preserved_thread = None
 
     async with ChatClientAgent(
-        chat_client=AzureChatClient(ad_credential=AzureCliCredential()),
+        chat_client=AzureChatClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as first_agent:
         # Start a conversation and capture the thread
@@ -793,7 +793,7 @@ async def test_azure_openai_chat_client_agent_existing_thread():
     # Second conversation - reuse the thread in a new agent instance
     if preserved_thread:
         async with ChatClientAgent(
-            chat_client=AzureChatClient(ad_credential=AzureCliCredential()),
+            chat_client=AzureChatClient(credential=AzureCliCredential()),
             instructions="You are a helpful assistant with good memory.",
         ) as second_agent:
             # Reuse the preserved thread
@@ -808,7 +808,7 @@ async def test_azure_openai_chat_client_agent_existing_thread():
 async def test_azure_openai_chat_client_agent_hosted_web_search_tool():
     """Test Azure OpenAI chat client agent with HostedWebSearchTool through AzureChatClient."""
     async with ChatClientAgent(
-        chat_client=AzureChatClient(ad_credential=AzureCliCredential()),
+        chat_client=AzureChatClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that can search the web for current information. "
         "If you cannot find the requested information or cannot search the web, "
         "respond with exactly 'I don't know' and nothing else.",
@@ -831,7 +831,7 @@ async def test_azure_chat_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with Azure Chat Client."""
 
     async with ChatClientAgent(
-        chat_client=AzureChatClient(ad_credential=AzureCliCredential()),
+        chat_client=AzureChatClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that uses available tools.",
         tools=[get_weather],  # Agent-level tool
     ) as agent:
@@ -866,7 +866,7 @@ async def test_azure_chat_client_run_level_tool_isolation():
         return f"The weather in {location} is sunny and 72°F."
 
     async with ChatClientAgent(
-        chat_client=AzureChatClient(ad_credential=AzureCliCredential()),
+        chat_client=AzureChatClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant.",
     ) as agent:
         # First run - use run-level tool

@@ -266,7 +266,7 @@ def get_weather(
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_get_response() -> None:
     """Test Azure Assistants Client response."""
-    async with AzureAssistantsClient(ad_credential=AzureCliCredential()) as azure_assistants_client:
+    async with AzureAssistantsClient(credential=AzureCliCredential()) as azure_assistants_client:
         assert isinstance(azure_assistants_client, ChatClient)
 
         messages: list[ChatMessage] = []
@@ -290,7 +290,7 @@ async def test_azure_assistants_client_get_response() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_get_response_tools() -> None:
     """Test Azure Assistants Client response with tools."""
-    async with AzureAssistantsClient(ad_credential=AzureCliCredential()) as azure_assistants_client:
+    async with AzureAssistantsClient(credential=AzureCliCredential()) as azure_assistants_client:
         assert isinstance(azure_assistants_client, ChatClient)
 
         messages: list[ChatMessage] = []
@@ -311,7 +311,7 @@ async def test_azure_assistants_client_get_response_tools() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_streaming() -> None:
     """Test Azure Assistants Client streaming response."""
-    async with AzureAssistantsClient(ad_credential=AzureCliCredential()) as azure_assistants_client:
+    async with AzureAssistantsClient(credential=AzureCliCredential()) as azure_assistants_client:
         assert isinstance(azure_assistants_client, ChatClient)
 
         messages: list[ChatMessage] = []
@@ -341,7 +341,7 @@ async def test_azure_assistants_client_streaming() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_streaming_tools() -> None:
     """Test Azure Assistants Client streaming response with tools."""
-    async with AzureAssistantsClient(ad_credential=AzureCliCredential()) as azure_assistants_client:
+    async with AzureAssistantsClient(credential=AzureCliCredential()) as azure_assistants_client:
         assert isinstance(azure_assistants_client, ChatClient)
 
         messages: list[ChatMessage] = []
@@ -368,7 +368,7 @@ async def test_azure_assistants_client_streaming_tools() -> None:
 async def test_azure_assistants_client_with_existing_assistant() -> None:
     """Test Azure Assistants Client with existing assistant ID."""
     # First create an assistant to use in the test
-    async with AzureAssistantsClient(ad_credential=AzureCliCredential()) as temp_client:
+    async with AzureAssistantsClient(credential=AzureCliCredential()) as temp_client:
         # Get the assistant ID by triggering assistant creation
         messages = [ChatMessage(role="user", text="Hello")]
         await temp_client.get_response(messages=messages)
@@ -376,7 +376,7 @@ async def test_azure_assistants_client_with_existing_assistant() -> None:
 
         # Now test using the existing assistant
         async with AzureAssistantsClient(
-            assistant_id=assistant_id, ad_credential=AzureCliCredential()
+            assistant_id=assistant_id, credential=AzureCliCredential()
         ) as azure_assistants_client:
             assert isinstance(azure_assistants_client, ChatClient)
             assert azure_assistants_client.assistant_id == assistant_id
@@ -395,7 +395,7 @@ async def test_azure_assistants_client_with_existing_assistant() -> None:
 async def test_azure_assistants_agent_basic_run():
     """Test ChatClientAgent basic run functionality with AzureAssistantsClient."""
     async with ChatClientAgent(
-        chat_client=AzureAssistantsClient(ad_credential=AzureCliCredential()),
+        chat_client=AzureAssistantsClient(credential=AzureCliCredential()),
     ) as agent:
         # Run a simple query
         response = await agent.run("Hello! Please respond with 'Hello World' exactly.")
@@ -411,7 +411,7 @@ async def test_azure_assistants_agent_basic_run():
 async def test_azure_assistants_agent_basic_run_streaming():
     """Test ChatClientAgent basic streaming functionality with AzureAssistantsClient."""
     async with ChatClientAgent(
-        chat_client=AzureAssistantsClient(ad_credential=AzureCliCredential()),
+        chat_client=AzureAssistantsClient(credential=AzureCliCredential()),
     ) as agent:
         # Run streaming query
         full_message: str = ""
@@ -430,7 +430,7 @@ async def test_azure_assistants_agent_basic_run_streaming():
 async def test_azure_assistants_agent_thread_persistence():
     """Test ChatClientAgent thread persistence across runs with AzureAssistantsClient."""
     async with ChatClientAgent(
-        chat_client=AzureAssistantsClient(ad_credential=AzureCliCredential()),
+        chat_client=AzureAssistantsClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as agent:
         # Create a new thread that will be reused
@@ -461,7 +461,7 @@ async def test_azure_assistants_agent_existing_thread_id():
     existing_thread_id = None
 
     async with ChatClientAgent(
-        chat_client=AzureAssistantsClient(ad_credential=AzureCliCredential()),
+        chat_client=AzureAssistantsClient(credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
     ) as agent:
@@ -481,7 +481,7 @@ async def test_azure_assistants_agent_existing_thread_id():
     # Now continue with the same thread ID in a new agent instance
 
     async with ChatClientAgent(
-        chat_client=AzureAssistantsClient(thread_id=existing_thread_id, ad_credential=AzureCliCredential()),
+        chat_client=AzureAssistantsClient(thread_id=existing_thread_id, credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
     ) as agent:
@@ -503,7 +503,7 @@ async def test_azure_assistants_agent_code_interpreter():
     """Test ChatClientAgent with code interpreter through AzureAssistantsClient."""
 
     async with ChatClientAgent(
-        chat_client=AzureAssistantsClient(ad_credential=AzureCliCredential()),
+        chat_client=AzureAssistantsClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that can write and execute Python code.",
         tools=[HostedCodeInterpreterTool()],
     ) as agent:
@@ -522,7 +522,7 @@ async def test_azure_assistants_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with Azure Assistants Client."""
 
     async with ChatClientAgent(
-        chat_client=AzureAssistantsClient(ad_credential=AzureCliCredential()),
+        chat_client=AzureAssistantsClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that uses available tools.",
         tools=[get_weather],  # Agent-level tool
     ) as agent:
@@ -557,7 +557,7 @@ async def test_azure_assistants_client_run_level_tool_isolation():
         return f"The weather in {location} is sunny and 72°F."
 
     async with ChatClientAgent(
-        chat_client=AzureAssistantsClient(ad_credential=AzureCliCredential()),
+        chat_client=AzureAssistantsClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant.",
     ) as agent:
         # First run - use run-level tool
@@ -583,7 +583,7 @@ async def test_azure_assistants_client_run_level_tool_isolation():
 
 
 def test_azure_assistants_client_entra_id_authentication() -> None:
-    """Test Entra ID authentication path with ad_credential."""
+    """Test Entra ID authentication path with credential."""
     mock_credential = MagicMock()
 
     with (
@@ -605,7 +605,7 @@ def test_azure_assistants_client_entra_id_authentication() -> None:
             deployment_name="test-deployment",
             api_key="placeholder-key",
             endpoint="https://test-endpoint.openai.azure.com",
-            ad_credential=mock_credential,
+            credential=mock_credential,
             token_endpoint="https://login.microsoftonline.com/test",
         )
 

@@ -117,7 +117,7 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_response() -> None:
     """Test azure responses client responses."""
-    azure_responses_client = AzureResponsesClient(ad_credential=AzureCliCredential())
+    azure_responses_client = AzureResponsesClient(credential=AzureCliCredential())
 
     assert isinstance(azure_responses_client, ChatClient)
 
@@ -160,7 +160,7 @@ async def test_azure_responses_client_response() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_response_tools() -> None:
     """Test azure responses client tools."""
-    azure_responses_client = AzureResponsesClient(ad_credential=AzureCliCredential())
+    azure_responses_client = AzureResponsesClient(credential=AzureCliCredential())
 
     assert isinstance(azure_responses_client, ChatClient)
 
@@ -199,7 +199,7 @@ async def test_azure_responses_client_response_tools() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_streaming() -> None:
     """Test Azure azure responses client streaming responses."""
-    azure_responses_client = AzureResponsesClient(ad_credential=AzureCliCredential())
+    azure_responses_client = AzureResponsesClient(credential=AzureCliCredential())
 
     assert isinstance(azure_responses_client, ChatClient)
 
@@ -249,7 +249,7 @@ async def test_azure_responses_client_streaming() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_streaming_tools() -> None:
     """Test azure responses client streaming tools."""
-    azure_responses_client = AzureResponsesClient(ad_credential=AzureCliCredential())
+    azure_responses_client = AzureResponsesClient(credential=AzureCliCredential())
 
     assert isinstance(azure_responses_client, ChatClient)
 
@@ -296,7 +296,7 @@ async def test_azure_responses_client_streaming_tools() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_agent_basic_run():
     """Test Azure Responses Client agent basic run functionality with AzureResponsesClient."""
-    agent = AzureResponsesClient(ad_credential=AzureCliCredential()).create_agent(
+    agent = AzureResponsesClient(credential=AzureCliCredential()).create_agent(
         instructions="You are a helpful assistant.",
     )
 
@@ -313,7 +313,7 @@ async def test_azure_responses_client_agent_basic_run():
 async def test_azure_responses_client_agent_basic_run_streaming():
     """Test Azure Responses Client agent basic streaming functionality with AzureResponsesClient."""
     async with ChatClientAgent(
-        chat_client=AzureResponsesClient(ad_credential=AzureCliCredential()),
+        chat_client=AzureResponsesClient(credential=AzureCliCredential()),
     ) as agent:
         # Test streaming run
         full_text = ""
@@ -330,7 +330,7 @@ async def test_azure_responses_client_agent_basic_run_streaming():
 async def test_azure_responses_client_agent_thread_persistence():
     """Test Azure Responses Client agent thread persistence across runs with AzureResponsesClient."""
     async with ChatClientAgent(
-        chat_client=AzureResponsesClient(ad_credential=AzureCliCredential()),
+        chat_client=AzureResponsesClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as agent:
         # Create a new thread that will be reused
@@ -353,7 +353,7 @@ async def test_azure_responses_client_agent_thread_persistence():
 async def test_azure_responses_client_agent_thread_storage_with_store_true():
     """Test Azure Responses Client agent with store=True to verify service_thread_id is returned."""
     async with ChatClientAgent(
-        chat_client=AzureResponsesClient(ad_credential=AzureCliCredential()),
+        chat_client=AzureResponsesClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant.",
     ) as agent:
         # Create a new thread
@@ -387,7 +387,7 @@ async def test_azure_responses_client_agent_existing_thread():
     preserved_thread = None
 
     async with ChatClientAgent(
-        chat_client=AzureResponsesClient(ad_credential=AzureCliCredential()),
+        chat_client=AzureResponsesClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as first_agent:
         # Start a conversation and capture the thread
@@ -403,7 +403,7 @@ async def test_azure_responses_client_agent_existing_thread():
     # Second conversation - reuse the thread in a new agent instance
     if preserved_thread:
         async with ChatClientAgent(
-            chat_client=AzureResponsesClient(ad_credential=AzureCliCredential()),
+            chat_client=AzureResponsesClient(credential=AzureCliCredential()),
             instructions="You are a helpful assistant with good memory.",
         ) as second_agent:
             # Reuse the preserved thread
@@ -418,7 +418,7 @@ async def test_azure_responses_client_agent_existing_thread():
 async def test_azure_responses_client_agent_hosted_code_interpreter_tool():
     """Test Azure Responses Client agent with HostedCodeInterpreterTool through AzureResponsesClient."""
     async with ChatClientAgent(
-        chat_client=AzureResponsesClient(ad_credential=AzureCliCredential()),
+        chat_client=AzureResponsesClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that can execute Python code.",
         tools=[HostedCodeInterpreterTool()],
     ) as agent:
@@ -440,7 +440,7 @@ async def test_azure_responses_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with Azure Responses Client."""
 
     async with ChatClientAgent(
-        chat_client=AzureResponsesClient(ad_credential=AzureCliCredential()),
+        chat_client=AzureResponsesClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that uses available tools.",
         tools=[get_weather],  # Agent-level tool
     ) as agent:
@@ -475,7 +475,7 @@ async def test_azure_responses_client_run_level_tool_isolation():
         return f"The weather in {location} is sunny and 72°F."
 
     async with ChatClientAgent(
-        chat_client=AzureResponsesClient(ad_credential=AzureCliCredential()),
+        chat_client=AzureResponsesClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant.",
     ) as agent:
         # First run - use run-level tool
