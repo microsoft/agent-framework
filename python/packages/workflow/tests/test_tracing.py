@@ -148,7 +148,7 @@ async def test_span_creation_and_attributes(tracing_enabled: Any, span_exporter:
     )
 
     # Test all span types in nested context
-    with workflow_tracer.create_workflow_span(mock_workflow) as workflow_span:
+    with workflow_tracer.create_workflow_run_span(mock_workflow) as workflow_span:
         workflow_tracer.add_workflow_event("workflow.started")
 
         with (

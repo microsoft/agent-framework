@@ -199,7 +199,7 @@ class Workflow(AFBaseModel):
         from ._telemetry import workflow_tracer
 
         # Create workflow span that encompasses the entire execution
-        with workflow_tracer.create_workflow_span(self):
+        with workflow_tracer.create_workflow_run_span(self):
             try:
                 # Add workflow started event
                 workflow_tracer.add_workflow_event("workflow.started")

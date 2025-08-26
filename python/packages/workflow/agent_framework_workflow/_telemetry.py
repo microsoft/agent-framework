@@ -33,9 +33,10 @@ class WorkflowTracer:
     """Central tracing coordinator for workflow system.
 
     Manages OpenTelemetry span creation and relationships for:
+    - Workflow build spans (workflow.build)
     - Workflow execution spans (workflow.run)
     - Executor processing spans (executor.process)
-    - Message publishing spans (message.publish)
+    - Message sending spans (message.send)
 
     Implements span linking for causality without unwanted nesting.
     """
@@ -48,7 +49,7 @@ class WorkflowTracer:
     def enabled(self) -> bool:
         return self.settings.ENABLED
 
-    def create_workflow_span(self, workflow: "Workflow") -> Any:
+    def create_workflow_run_span(self, workflow: "Workflow") -> Any:
         """Create a workflow execution span."""
         attributes: dict[str, str | int] = {
             "workflow.id": workflow.id,
@@ -59,19 +60,6 @@ class WorkflowTracer:
     def create_workflow_build_span(self) -> Any:
         """Create a workflow build span."""
         return self.tracer.start_as_current_span(_WORKFLOW_BUILD_SPAN, kind=SpanKind.INTERNAL)
-
-    def set_workflow_build_span_attributes(self, workflow: "Workflow") -> None:
-        """Set workflow attributes on the current span.
-
-        Args:
-            workflow: The workflow instance to extract attributes from
-        """
-        span = get_current_span()
-        if span and span.is_recording():
-            span.set_attributes({
-                "workflow.id": workflow.id,
-                "workflow.definition": workflow.model_dump_json(),
-            })
 
     def create_processing_span(
         self,
@@ -171,6 +159,19 @@ class WorkflowTracer:
                         event_attributes[key] = value
             span.add_event("workflow.error", event_attributes)
             span.set_status(StatusCode.ERROR, str(error))
+
+    def set_workflow_build_span_attributes(self, workflow: "Workflow") -> None:
+        """Set workflow attributes on the current span.
+
+        Args:
+            workflow: The workflow instance to extract attributes from
+        """
+        span = get_current_span()
+        if span and span.is_recording():
+            span.set_attributes({
+                "workflow.id": workflow.id,
+                "workflow.definition": workflow.model_dump_json(),
+            })
 
     def add_build_event(self, event_name: str, attributes: Attributes | None = None) -> None:
         """Add an event to the current workflow build span.
