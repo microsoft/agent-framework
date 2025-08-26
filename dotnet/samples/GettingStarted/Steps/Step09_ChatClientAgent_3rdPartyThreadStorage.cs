@@ -27,23 +27,19 @@ public sealed class Step09_ChatClientAgent_3rdPartyThreadStorage(ITestOutputHelp
     [InlineData(ChatClientProviders.OpenAIResponses_InMemoryMessageThread)]
     public async Task ThirdPartyStorageThread(ChatClientProviders provider)
     {
-        var inMemoryVectorStore = new InMemoryVectorStore();
+        VectorStore vectorStore = new InMemoryVectorStore();
 
         // Define the options for the chat client agent.
         var agentOptions = new ChatClientAgentOptions
         {
             Name = JokerName,
             Instructions = JokerInstructions,
-
-            // Get chat options based on the store type, if needed.
-            ChatOptions = base.GetChatOptions(provider),
-
             ChatMessageStoreFactory = () =>
             {
                 // Create a new chat message store for this agent that stores the messages in a vector store.
                 // Each thread must get its own copy of the VectorChatMessageStore, since the store
                 // also contains the id that the thread is stored under.
-                return new VectorChatMessageStore(inMemoryVectorStore);
+                return new VectorChatMessageStore(vectorStore);
             }
         };
 

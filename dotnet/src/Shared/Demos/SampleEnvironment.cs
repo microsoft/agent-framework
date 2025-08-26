@@ -11,12 +11,15 @@ namespace SampleHelpers;
 internal static class SampleEnvironment
 {
     public static string? GetEnvironmentVariable(string key)
+        => SampleEnvironment.GetEnvironmentVariable(key, EnvironmentVariableTarget.Process);
+
+    public static string? GetEnvironmentVariable(string key, EnvironmentVariableTarget target)
     {
         // Allows for opting into showing all setting values in the console output, so that it is easy to troubleshoot sample setup issues.
-        var showAllSampleValues = SystemEnvironment.GetEnvironmentVariable("AF_SHOW_ALL_DEMO_SETTING_VALUES");
+        var showAllSampleValues = SystemEnvironment.GetEnvironmentVariable("AF_SHOW_ALL_DEMO_SETTING_VALUES", target);
         var shouldShowValue = showAllSampleValues?.ToUpperInvariant() == "Y";
 
-        var value = SystemEnvironment.GetEnvironmentVariable(key);
+        var value = SystemEnvironment.GetEnvironmentVariable(key, target);
         if (string.IsNullOrWhiteSpace(value))
         {
             var color = Console.ForegroundColor;
@@ -65,9 +68,6 @@ internal static class SampleEnvironment
     }
 
     // Methods that directly call System.Environment
-
-    public static string? GetEnvironmentVariable(string variable, EnvironmentVariableTarget target)
-        => System.Environment.GetEnvironmentVariable(variable, target);
 
     public static IDictionary GetEnvironmentVariables()
         => System.Environment.GetEnvironmentVariables();

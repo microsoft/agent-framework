@@ -2,7 +2,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Agents.Workflows.Checkpointing;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Execution;
@@ -60,5 +62,23 @@ internal class StateScope
         }
 
         return default;
+    }
+
+    public IEnumerable<KeyValuePair<string, ExportedState>> ExportStates()
+    {
+        return this._stateData.Keys.Select(WrapStates);
+
+        KeyValuePair<string, ExportedState> WrapStates(string key)
+        {
+            return new(key, new(this._stateData[key]));
+        }
+    }
+
+    public void ImportState(string key, ExportedState state)
+    {
+        Throw.IfNullOrEmpty(key);
+        Throw.IfNull(state);
+
+        this._stateData[key] = state.Value;
     }
 }
