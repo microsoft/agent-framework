@@ -116,16 +116,17 @@ class A2AAgent(AgentBase):
         )
         a2a_responses = self._client.send_message_streaming(message_request)
         async for response in a2a_responses:
-            if isinstance(response, SendStreamingMessageSuccessResponse):
-                if isinstance(response.result, A2AMessage):
+            inner_response = response.root
+            if isinstance(inner_response, SendStreamingMessageSuccessResponse):
+                if isinstance(inner_response.result, A2AMessage):
                     yield AgentRunResponseUpdate(
-                        contents=self._a2a_message_to_chat_message(response.result).contents,
-                        response_id=str(response.id) if isinstance(response.id, int) else response.id,
-                        raw_representation=response,
+                        contents=self._a2a_message_to_chat_message(inner_response.result).contents,
+                        response_id=str(inner_response.id) if isinstance(inner_response.id, int) else inner_response.id,
+                        raw_representation=inner_response,
                     )
             else:
                 # TODO(peterychang): Handle this later
-                raise ValueError("Unhandled type")
+                raise ValueError("Unhandled type: ", type(response))
 
     def _normalize_messages(
         self,
