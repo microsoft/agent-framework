@@ -75,7 +75,7 @@ public class StateSmokeTest
         Assert.Null(await manager.ReadStateAsync<object>(sharedScope1, "key2"));
 
         // Publish the write
-        await manager.PublishUpdatesAsync();
+        await manager.PublishUpdatesAsync(tracer: null);
 
         // Now all the executors should be able to see the new state
         Assert.NotNull(await manager.ReadStateAsync<object>(sharedScope1, Key));
@@ -105,7 +105,7 @@ public class StateSmokeTest
         // Try to publish the updates
         try
         {
-            await manager.PublishUpdatesAsync();
+            await manager.PublishUpdatesAsync(tracer: null);
             Assert.Fail("Expected InvalidOperationException due to conflicting writes.");
         }
         catch (InvalidOperationException)

@@ -14,7 +14,7 @@ from agent_framework import (
 )
 from agent_framework.azure import AzureResponsesClient
 from agent_framework.exceptions import ServiceInitializationError
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 from pydantic import BaseModel
 
 skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
@@ -112,7 +112,7 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_response() -> None:
     """Test azure responses client responses."""
-    azure_responses_client = AzureResponsesClient(ad_credential=DefaultAzureCredential())
+    azure_responses_client = AzureResponsesClient(credential=AzureCliCredential())
 
     assert isinstance(azure_responses_client, ChatClient)
 
@@ -155,7 +155,7 @@ async def test_azure_responses_client_response() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_response_tools() -> None:
     """Test azure responses client tools."""
-    azure_responses_client = AzureResponsesClient(ad_credential=DefaultAzureCredential())
+    azure_responses_client = AzureResponsesClient(credential=AzureCliCredential())
 
     assert isinstance(azure_responses_client, ChatClient)
 
@@ -194,7 +194,7 @@ async def test_azure_responses_client_response_tools() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_streaming() -> None:
     """Test Azure azure responses client streaming responses."""
-    azure_responses_client = AzureResponsesClient(ad_credential=DefaultAzureCredential())
+    azure_responses_client = AzureResponsesClient(credential=AzureCliCredential())
 
     assert isinstance(azure_responses_client, ChatClient)
 
@@ -244,7 +244,7 @@ async def test_azure_responses_client_streaming() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_streaming_tools() -> None:
     """Test azure responses client streaming tools."""
-    azure_responses_client = AzureResponsesClient(ad_credential=DefaultAzureCredential())
+    azure_responses_client = AzureResponsesClient(credential=AzureCliCredential())
 
     assert isinstance(azure_responses_client, ChatClient)
 

@@ -127,11 +127,19 @@ class EmailValidator(Executor):
     ) -> None:
         """Handle domain check response from RequestInfo with correlation."""
         approved = bool(response.data)
-        domain = response.original_request.domain if (hasattr(response, 'original_request') and response.original_request) else "unknown"
+        domain = (
+            response.original_request.domain
+            if (hasattr(response, "original_request") and response.original_request)
+            else "unknown"
+        )
         print(f"📬 Sub-workflow received domain response for '{domain}': {approved}")
-        
+
         # Find the corresponding email using the request_id
-        request_id = response.original_request.request_id if (hasattr(response, 'original_request') and response.original_request) else None
+        request_id = (
+            response.original_request.request_id
+            if (hasattr(response, "original_request") and response.original_request)
+            else None
+        )
         if request_id and request_id in self._pending_emails:
             email = self._pending_emails.pop(request_id)  # Remove from pending
             result = ValidationResult(
@@ -146,6 +154,7 @@ class EmailValidator(Executor):
 # 3. Implement the parent workflow with request interception
 class SmartEmailOrchestrator(Executor):
     """Parent orchestrator that can intercept domain checks."""
+
     approved_domains: set[str] = set()
 
     def __init__(self, approved_domains: set[str] | None = None):
@@ -177,7 +186,7 @@ class SmartEmailOrchestrator(Executor):
             print(f"✅ Domain '{request.domain}' is pre-approved locally!")
             return RequestResponse[DomainCheckRequest, bool].handled(True)
         print(f"❓ Domain '{request.domain}' unknown, forwarding to external service...")
-        return RequestResponse.forward()
+        return RequestResponse[DomainCheckRequest, bool].forward()
 
     @handler
     async def collect_result(self, result: ValidationResult, ctx: WorkflowContext[None]) -> None:
@@ -196,7 +205,7 @@ async def run_example() -> None:
     """Run the sub-workflow example."""
     print("🚀 Setting up sub-workflow with request interception...")
     print()
-    
+
     # 4. Build the sub-workflow
     email_validator = EmailValidator()
     # Match the target_id used in EmailValidator ("email_request_info")
@@ -262,12 +271,12 @@ async def run_example() -> None:
         print("\n🎯 All requests were intercepted and handled locally!")
 
     # 10. Display final summary
-    print(f"\n📊 Final Results Summary:")
+    print("\n📊 Final Results Summary:")
     print("=" * 60)
     for result in orchestrator.results:
         status = "✅ VALID" if result.is_valid else "❌ INVALID"
         print(f"{status} {result.email}: {result.reason}")
-    
+
     print(f"\n🏁 Processed {len(orchestrator.results)} emails total")
 
 

@@ -9,6 +9,7 @@
     <Project Path="demos/MinimalConsole/MinimalConsole.csproj" />
   </Folder>
   <Folder Name="/Samples/">
+    <File Path="samples/README.md" />
     <Project Path="samples/GettingStarted/GettingStarted.csproj" />
   </Folder>
   <Folder Name="/Samples/AgentWebChat/">
@@ -16,6 +17,11 @@
     <Project Path="samples/AgentWebChat/AgentWebChat.AppHost/AgentWebChat.AppHost.csproj" />
     <Project Path="samples/AgentWebChat/AgentWebChat.ServiceDefaults/AgentWebChat.ServiceDefaults.csproj" />
     <Project Path="samples/AgentWebChat/AgentWebChat.Web/AgentWebChat.Web.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStartedSteps/">
+    <File Path="samples/GettingStartedSteps/README.md" />
+    <Project Path="samples/GettingStartedSteps/Step01_ChatClientAgent_Running/Step01_ChatClientAgent_Running.csproj" />
+    <Project Path="samples/GettingStartedSteps/Step02_ChatClientAgent_Multiturn/Step02_ChatClientAgent_Multiturn.csproj" />
   </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
