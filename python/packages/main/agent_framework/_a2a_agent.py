@@ -131,6 +131,7 @@ class A2AAgent(AgentBase):
         )
         a2a_responses = self._client.send_message_streaming(message_request)
         async for response in a2a_responses:
+            contents: list[AIContents] = []
             inner_response = response.root
             if isinstance(inner_response, SendStreamingMessageSuccessResponse):
                 if isinstance(inner_response.result, A2AMessage):
@@ -140,7 +141,7 @@ class A2AAgent(AgentBase):
                     raise ValueError("Unhandled type")
             else:
                 # error returned
-                contents: list[AIContents] = [
+                contents = [
                     ErrorContent(
                         message=inner_response.error.message,
                         error_code=str(inner_response.error.code) if inner_response.error.code else None,
@@ -247,40 +248,40 @@ class A2AAgent(AgentBase):
         contents: list[AIContents] = []
         if message.kind == "message":
             for part in message.parts:
-                part = part.root
-                if part.kind == "text":
+                inner_part = part.root
+                if inner_part.kind == "text":
                     contents.append(
                         TextContent(
-                            text=part.text,
-                            additional_properties=part.metadata,
-                            raw_representation=part,
+                            text=inner_part.text,
+                            additional_properties=inner_part.metadata,
+                            raw_representation=inner_part,
                         )
                     )
-                elif part.kind == "file":
-                    if isinstance(part.file, FileWithUri):
+                elif inner_part.kind == "file":
+                    if isinstance(inner_part.file, FileWithUri):
                         contents.append(
                             UriContent(
-                                uri=part.file.uri,
-                                media_type=part.file.mime_type or "",
-                                additional_properties=part.metadata,
-                                raw_representation=part,
+                                uri=inner_part.file.uri,
+                                media_type=inner_part.file.mime_type or "",
+                                additional_properties=inner_part.metadata,
+                                raw_representation=inner_part,
                             )
                         )
-                    elif isinstance(part.file, FileWithBytes):
+                    elif isinstance(inner_part.file, FileWithBytes):
                         contents.append(
                             DataContent(
-                                data=base64.b64decode(part.file.bytes),
-                                media_type=part.file.mime_type or "",
-                                additional_properties=part.metadata,
-                                raw_representation=part,
+                                data=base64.b64decode(inner_part.file.bytes),
+                                media_type=inner_part.file.mime_type or "",
+                                additional_properties=inner_part.metadata,
+                                raw_representation=inner_part,
                             )
                         )
-                elif part.kind == "data":
+                elif inner_part.kind == "data":
                     contents.append(
                         TextContent(
-                            text=json.dumps(part.data),
-                            additional_properties=part.metadata,
-                            raw_representation=part,
+                            text=json.dumps(inner_part.data),
+                            additional_properties=inner_part.metadata,
+                            raw_representation=inner_part,
                         )
                     )
         return ChatMessage(
