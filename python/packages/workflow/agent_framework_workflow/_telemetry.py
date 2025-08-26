@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 
 # Span name constants
+_WORKFLOW_BUILD_SPAN = "workflow.build"
 _WORKFLOW_RUN_SPAN = "workflow.run"
 _EXECUTOR_PROCESS_SPAN = "executor.process"
 _MESSAGE_SEND_SPAN = "message.send"
@@ -51,11 +52,26 @@ class WorkflowTracer:
         """Create a workflow execution span."""
         attributes: dict[str, str | int] = {
             "workflow.id": workflow.id,
-            "workflow.definition": workflow.model_dump_json(),
-            "workflow.max_iterations": workflow.max_iterations,
         }
 
         return self.tracer.start_as_current_span(_WORKFLOW_RUN_SPAN, kind=SpanKind.INTERNAL, attributes=attributes)
+
+    def create_workflow_build_span(self) -> Any:
+        """Create a workflow build span."""
+        return self.tracer.start_as_current_span(_WORKFLOW_BUILD_SPAN, kind=SpanKind.INTERNAL)
+
+    def set_workflow_build_span_attributes(self, workflow: "Workflow") -> None:
+        """Set workflow attributes on the current span.
+
+        Args:
+            workflow: The workflow instance to extract attributes from
+        """
+        span = get_current_span()
+        if span and span.is_recording():
+            span.set_attributes({
+                "workflow.id": workflow.id,
+                "workflow.definition": workflow.model_dump_json(),
+            })
 
     def create_processing_span(
         self,
@@ -154,6 +170,38 @@ class WorkflowTracer:
                     if isinstance(value, (str, bool, int, float)):
                         event_attributes[key] = value
             span.add_event("workflow.error", event_attributes)
+            span.set_status(StatusCode.ERROR, str(error))
+
+    def add_build_event(self, event_name: str, attributes: Attributes | None = None) -> None:
+        """Add an event to the current workflow build span.
+
+        Args:
+            event_name: Name of the build event (e.g., "build.started", "build.validation_completed")
+            attributes: Optional attributes to attach to the event
+        """
+        span = get_current_span()
+        if span and span.is_recording():
+            span.add_event(event_name, attributes)
+
+    def add_build_error_event(self, error: Exception, attributes: Attributes | None = None) -> None:
+        """Add an error event to the current workflow build span.
+
+        Args:
+            error: The exception that occurred during build
+            attributes: Optional additional attributes to attach to the event
+        """
+        span = get_current_span()
+        if span and span.is_recording():
+            event_attributes: dict[str, str | bool | int | float] = {
+                "build.error.message": str(error),
+                "build.error.type": type(error).__name__,
+            }
+            if attributes:
+                # Safely merge attributes, ensuring type compatibility
+                for key, value in attributes.items():
+                    if isinstance(value, (str, bool, int, float)):
+                        event_attributes[key] = value
+            span.add_event("build.error", event_attributes)
             span.set_status(StatusCode.ERROR, str(error))
 
 

@@ -746,14 +746,42 @@ class WorkflowBuilder:
             WorkflowValidationError: If workflow validation fails (includes EdgeDuplicationError,
                 TypeCompatibilityError, and GraphConnectivityError subclasses).
         """
-        if not self._start_executor:
-            raise ValueError("Starting executor must be set using set_start_executor before building the workflow.")
+        # Import here to avoid circular imports
+        from ._telemetry import workflow_tracer
 
-        validate_workflow_graph(self._edge_groups, self._executors, self._start_executor)
+        # Create workflow build span that includes validation and workflow creation
+        with workflow_tracer.create_workflow_build_span():
+            try:
+                # Add workflow build started event
+                workflow_tracer.add_build_event("build.started")
 
-        context = InProcRunnerContext(self._checkpoint_storage)
+                if not self._start_executor:
+                    raise ValueError(
+                        "Starting executor must be set using set_start_executor before building the workflow."
+                    )
 
-        return Workflow(self._edge_groups, self._executors, self._start_executor, context, self._max_iterations)
+                # Perform validation before creating the workflow
+                validate_workflow_graph(self._edge_groups, self._executors, self._start_executor)
 
+                # Add validation completed event
+                workflow_tracer.add_build_event("build.validation_completed")
 
-# endregion
+                context = InProcRunnerContext(self._checkpoint_storage)
+
+                # Create workflow instance after validation
+                workflow = Workflow(
+                    self._edge_groups, self._executors, self._start_executor, context, self._max_iterations
+                )
+
+                # Set workflow attributes on the span
+                workflow_tracer.set_workflow_build_span_attributes(workflow)
+
+                # Add workflow build completed event
+                workflow_tracer.add_build_event("build.completed")
+
+                return workflow
+
+            except Exception as e:
+                # The method already includes sufficient error info (error.message, error.type)
+                workflow_tracer.add_build_error_event(e)
+                raise
