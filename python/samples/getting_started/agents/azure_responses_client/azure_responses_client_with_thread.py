@@ -6,7 +6,7 @@ from typing import Annotated
 
 from agent_framework import AgentThread, ChatClientAgent
 from agent_framework.azure import AzureResponsesClient
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 from pydantic import Field
 
 
@@ -23,7 +23,7 @@ async def example_with_automatic_thread_creation() -> None:
     print("=== Automatic Thread Creation Example ===")
 
     agent = ChatClientAgent(
-        chat_client=AzureResponsesClient(ad_credential=DefaultAzureCredential()),
+        chat_client=AzureResponsesClient(ad_credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -50,7 +50,7 @@ async def example_with_thread_persistence_in_memory() -> None:
     print("=== Thread Persistence Example (In-Memory) ===")
 
     agent = ChatClientAgent(
-        chat_client=AzureResponsesClient(ad_credential=DefaultAzureCredential()),
+        chat_client=AzureResponsesClient(ad_credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -92,7 +92,7 @@ async def example_with_existing_thread_id() -> None:
     existing_thread_id = None
 
     agent = ChatClientAgent(
-        chat_client=AzureResponsesClient(ad_credential=DefaultAzureCredential()),
+        chat_client=AzureResponsesClient(ad_credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -115,7 +115,7 @@ async def example_with_existing_thread_id() -> None:
         print("\n--- Continuing with the same thread ID in a new agent instance ---")
 
         agent = ChatClientAgent(
-            chat_client=AzureResponsesClient(ad_credential=DefaultAzureCredential()),
+            chat_client=AzureResponsesClient(ad_credential=AzureCliCredential()),
             instructions="You are a helpful weather agent.",
             tools=get_weather,
         )

@@ -12,7 +12,7 @@ from pydantic.networks import AnyUrl
 from ._shared import AzureOpenAISettings
 
 if TYPE_CHECKING:
-    from azure.identity import ChainedTokenCredential
+    from azure.core.credentials import TokenCredential
 
 __all__ = ["AzureAssistantsClient"]
 
@@ -35,7 +35,7 @@ class AzureAssistantsClient(OpenAIAssistantsClient):
         ad_token: str | None = None,
         ad_token_provider: AsyncAzureADTokenProvider | None = None,
         token_endpoint: str | None = None,
-        ad_credential: "ChainedTokenCredential | None" = None,
+        ad_credential: "TokenCredential | None" = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | None = None,
         env_file_path: str | None = None,

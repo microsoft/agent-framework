@@ -10,7 +10,7 @@ from agent_framework._pydantic import AFBaseSettings, HttpsUrl
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai._shared import OpenAIHandler
 from agent_framework.telemetry import USER_AGENT_KEY
-from azure.identity import ChainedTokenCredential
+from azure.core.credentials import TokenCredential
 from openai.lib.azure import AsyncAzureOpenAI
 from pydantic import ConfigDict, SecretStr, model_validator, validate_call
 
@@ -135,7 +135,7 @@ class AzureOpenAISettings(AFBaseSettings):
     default_token_endpoint: str = DEFAULT_AZURE_TOKEN_ENDPOINT
 
     def get_azure_auth_token(
-        self, credential: "ChainedTokenCredential", token_endpoint: str | None = None, **kwargs: Any
+        self, credential: "TokenCredential", token_endpoint: str | None = None, **kwargs: Any
     ) -> str | None:
         """Retrieve a Microsoft Entra Auth Token for a given token endpoint for the use with Azure OpenAI.
 
@@ -181,7 +181,7 @@ class AzureOpenAIConfigBase(OpenAIHandler):
         ad_token: str | None = None,
         ad_token_provider: Callable[[], str | Awaitable[str]] | None = None,
         token_endpoint: str | None = None,
-        ad_credential: ChainedTokenCredential | None = None,
+        ad_credential: TokenCredential | None = None,
         default_headers: Mapping[str, str] | None = None,
         client: AsyncAzureOpenAI | None = None,
         instruction_role: str | None = None,

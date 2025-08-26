@@ -7,7 +7,7 @@ from typing import Annotated
 
 from agent_framework import ChatClientAgent
 from agent_framework.foundry import FoundryChatClient
-from azure.identity.aio import DefaultAzureCredential
+from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
 
@@ -32,7 +32,7 @@ async def tools_on_agent_level() -> None:
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
     async with (
-        DefaultAzureCredential() as credential,
+        AzureCliCredential() as credential,
         ChatClientAgent(
             chat_client=FoundryChatClient(async_ad_credential=credential),
             instructions="You are a helpful assistant that can provide weather and time information.",
@@ -64,7 +64,7 @@ async def tools_on_run_level() -> None:
 
     # Agent created without tools
     async with (
-        DefaultAzureCredential() as credential,
+        AzureCliCredential() as credential,
         ChatClientAgent(
             chat_client=FoundryChatClient(async_ad_credential=credential),
             instructions="You are a helpful assistant.",
@@ -96,7 +96,7 @@ async def mixed_tools_example() -> None:
 
     # Agent created with some base tools
     async with (
-        DefaultAzureCredential() as credential,
+        AzureCliCredential() as credential,
         ChatClientAgent(
             chat_client=FoundryChatClient(async_ad_credential=credential),
             instructions="You are a comprehensive assistant that can help with various information requests.",

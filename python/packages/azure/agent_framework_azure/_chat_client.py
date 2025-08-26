@@ -14,7 +14,7 @@ from agent_framework import (
 )
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai._chat_client import OpenAIChatClientBase
-from azure.identity import ChainedTokenCredential
+from azure.core.credentials import TokenCredential
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from openai.types.chat.chat_completion import Choice
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
@@ -50,7 +50,7 @@ class AzureChatClient(AzureOpenAIConfigBase, OpenAIChatClientBase):
         ad_token: str | None = None,
         ad_token_provider: AsyncAzureADTokenProvider | None = None,
         token_endpoint: str | None = None,
-        ad_credential: ChainedTokenCredential | None = None,
+        ad_credential: TokenCredential | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | None = None,
         env_file_path: str | None = None,

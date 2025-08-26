@@ -162,7 +162,7 @@ class FoundryChatClient(ChatClientBase):
             if agent_id is None and not foundry_settings.model_deployment_name:
                 raise ServiceInitializationError("Model deployment name is required for agent creation.")
 
-            # Use provided credential or fallback to DefaultAzureCredential
+            # Use provided credential
             if not async_ad_credential:
                 raise ServiceInitializationError("Azure AD credential is required when client is not provided.")
             client = AIProjectClient(endpoint=foundry_settings.project_endpoint, credential=async_ad_credential)
