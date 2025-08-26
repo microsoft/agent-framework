@@ -68,17 +68,17 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
         except BadRequestError as ex:
             if ex.code == "content_filter":
                 raise OpenAIContentFilterException(
-                    f"{type(self)} service encountered a content error",
-                    ex,
+                    f"{type(self)} service encountered a content error: {ex}",
+                    inner_exception=ex,
                 ) from ex
             raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt",
-                ex,
+                f"{type(self)} service failed to complete the prompt: {ex}",
+                inner_exception=ex,
             ) from ex
         except Exception as ex:
             raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt",
-                ex,
+                f"{type(self)} service failed to complete the prompt: {ex}",
+                inner_exception=ex,
             ) from ex
 
     async def _inner_get_streaming_response(
@@ -98,17 +98,17 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
         except BadRequestError as ex:
             if ex.code == "content_filter":
                 raise OpenAIContentFilterException(
-                    f"{type(self)} service encountered a content error",
-                    ex,
+                    f"{type(self)} service encountered a content error: {ex}",
+                    inner_exception=ex,
                 ) from ex
             raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt",
-                ex,
+                f"{type(self)} service failed to complete the prompt: {ex}",
+                inner_exception=ex,
             ) from ex
         except Exception as ex:
             raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt",
-                ex,
+                f"{type(self)} service failed to complete the prompt: {ex}",
+                inner_exception=ex,
             ) from ex
 
     # region content creation

@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using Microsoft.Agents.Workflows.Checkpointing;
 
 namespace Microsoft.Agents.Workflows.Execution;
 
@@ -19,5 +21,29 @@ internal class StepContext
         }
 
         return messages;
+    }
+
+    // TODO: Create a MessageEnvelope class that extends from the ExportedState object (with appropriate rename) to avoid
+    // unnecessary wrapping and unwrapping of messages during checkpointing.
+    internal Dictionary<ExecutorIdentity, List<ExportedState>> ExportMessages()
+    {
+        return this.QueuedMessages.Keys.ToDictionary(
+            keySelector: identity => identity,
+            elementSelector: identity => this.QueuedMessages[identity]
+                                             .Select(v => new ExportedState(v))
+                                             .ToList()
+        );
+    }
+
+    internal void ImportMessages(Dictionary<ExecutorIdentity, List<ExportedState>> messages)
+    {
+        foreach (ExecutorIdentity identity in messages.Keys)
+        {
+            this.QueuedMessages[identity] = messages[identity].Select(UnwrapExportedState).ToList();
+        }
+
+        MessageEnvelope UnwrapExportedState(ExportedState es)
+            => es.Value as MessageEnvelope
+            ?? throw new InvalidDataException($"Expected a MessageEnvelope in the ExportedState. Got {es.RuntimeType}");
     }
 }

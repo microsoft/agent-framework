@@ -14,13 +14,13 @@ internal class FanOutEdgeRunner(IRunnerContext runContext, FanOutEdgeData edgeDa
             sinkId => sinkId,
             sinkId => runContext.Bind(sinkId));
 
-    public async ValueTask<IEnumerable<object?>> ChaseAsync(MessageEnvelope envelope)
+    public async ValueTask<IEnumerable<object?>> ChaseAsync(MessageEnvelope envelope, IStepTracer? tracer)
     {
         object message = envelope.Message;
         List<string> targets =
-            this.EdgeData.PartitionAssigner == null
+            this.EdgeData.EdgeAssigner == null
                 ? this.EdgeData.SinkIds
-                : this.EdgeData.PartitionAssigner(message, this.BoundContexts.Count)
+                : this.EdgeData.EdgeAssigner(message, this.BoundContexts.Count)
                                .Select(i => this.EdgeData.SinkIds[i]).ToList();
 
         IEnumerable<string> filteredTargets = envelope.TargetId != null
@@ -32,11 +32,12 @@ internal class FanOutEdgeRunner(IRunnerContext runContext, FanOutEdgeData edgeDa
 
         async Task<object?> ProcessTargetAsync(string targetId)
         {
-            Executor executor = await this.RunContext.EnsureExecutorAsync(targetId)
+            Executor executor = await this.RunContext.EnsureExecutorAsync(targetId, tracer)
                                                          .ConfigureAwait(false);
 
             if (executor.CanHandle(message.GetType()))
             {
+                tracer?.TraceActivated(executor.Id);
                 return await executor.ExecuteAsync(message, envelope.MessageType, this.BoundContexts[targetId])
                                      .ConfigureAwait(false);
             }

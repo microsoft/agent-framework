@@ -9,6 +9,7 @@
     <Project Path="demos/MinimalConsole/MinimalConsole.csproj" />
   </Folder>
   <Folder Name="/Samples/">
+    <File Path="samples/README.md" />
     <Project Path="samples/GettingStarted/GettingStarted.csproj" />
   </Folder>
   <Folder Name="/Samples/AgentWebChat/">
@@ -16,6 +17,11 @@
     <Project Path="samples/AgentWebChat/AgentWebChat.AppHost/AgentWebChat.AppHost.csproj" />
     <Project Path="samples/AgentWebChat/AgentWebChat.ServiceDefaults/AgentWebChat.ServiceDefaults.csproj" />
     <Project Path="samples/AgentWebChat/AgentWebChat.Web/AgentWebChat.Web.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStartedSteps/">
+    <File Path="samples/GettingStartedSteps/README.md" />
+    <Project Path="samples/GettingStartedSteps/Step01_ChatClientAgent_Running/Step01_ChatClientAgent_Running.csproj" />
+    <Project Path="samples/GettingStartedSteps/Step02_ChatClientAgent_Multiturn/Step02_ChatClientAgent_Multiturn.csproj" />
   </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
@@ -30,6 +36,10 @@
     <File Path="../.github/workflows/dotnet-check-coverage.ps1" />
     <File Path="../.github/workflows/dotnet-cosmosdb-integration-tests.yml" />
     <File Path="../.github/workflows/dotnet-format.yml" />
+  </Folder>
+  <Folder Name="/Solution Items/demos/">
+    <File Path="demos/.editorconfig" />
+    <File Path="demos/Directory.Build.props" />
   </Folder>
   <Folder Name="/Solution Items/docs/" />
   <Folder Name="/Solution Items/docs/decisions/">
@@ -88,6 +98,10 @@
     <File Path="src/LegacySupport/TrimAttributes/UnconditionalSuppressMessageAttribute.cs" />
   </Folder>
   <Folder Name="/Solution Items/src/Shared/" />
+  <Folder Name="/Solution Items/src/Shared/Demos/">
+    <File Path="src/Shared/Demos/README.md" />
+    <File Path="src/Shared/Demos/SampleEnvironment.cs" />
+  </Folder>
   <Folder Name="/Solution Items/src/Shared/IntegrationTests/">
     <File Path="src/Shared/IntegrationTests/AzureAIConfiguration.cs" />
     <File Path="src/Shared/IntegrationTests/OpenAIConfiguration.cs" />
@@ -115,6 +129,8 @@
     <Project Path="src/Microsoft.Extensions.AI.Agents.AzureAI/Microsoft.Extensions.AI.Agents.AzureAI.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.CopilotStudio/Microsoft.Extensions.AI.Agents.CopilotStudio.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.Hosting/Microsoft.Extensions.AI.Agents.Hosting.csproj" />
+    <Project Path="src/Microsoft.Extensions.AI.Agents.Hosting.A2A/Microsoft.Extensions.AI.Agents.Hosting.A2A.csproj" />
+    <Project Path="src/Microsoft.Extensions.AI.Agents.Hosting.A2A.AspNetCore/Microsoft.Extensions.AI.Agents.Hosting.A2A.AspNetCore.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.OpenAI/Microsoft.Extensions.AI.Agents.OpenAI.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.Runtime.Abstractions/Microsoft.Extensions.AI.Agents.Runtime.Abstractions.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.csproj" />
@@ -136,6 +152,7 @@
   </Folder>
   <Folder Name="/Tests/UnitTests/">
     <Project Path="tests/Microsoft.Agents.Orchestration.UnitTests/Microsoft.Agents.Orchestration.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Extensions.AI.Agents.Hosting.A2A.Tests/Microsoft.Extensions.AI.Agents.Hosting.A2A.Tests.csproj" Id="2a1c544d-237d-4436-8732-ba0c447ac06b" />
     <Project Path="tests/Microsoft.Agents.Workflows.UnitTests/Microsoft.Agents.Workflows.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Extensions.AI.Agents.Abstractions.UnitTests/Microsoft.Extensions.AI.Agents.Abstractions.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Extensions.AI.Agents.Hosting.UnitTests/Microsoft.Extensions.AI.Agents.Hosting.UnitTests.csproj" />

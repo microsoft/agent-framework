@@ -12,12 +12,13 @@ from agent_framework.workflow import (
     RequestInfoEvent,
     RequestInfoExecutor,
     RequestInfoMessage,
+    RequestResponse,
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
     handler,
 )
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 
 """
 The following sample demonstrates a basic workflow that simulates
@@ -94,16 +95,20 @@ class CriticGroupChatManager(Executor):
 
     @handler
     async def handle_request_response(
-        self, response: list[ChatMessage], ctx: WorkflowContext[AgentExecutorRequest]
+        self,
+        response: RequestResponse[RequestInfoMessage, list[ChatMessage]],
+        ctx: WorkflowContext[AgentExecutorRequest],
     ) -> None:
         """Handler that processes the response from the RequestInfoExecutor."""
+        messages: list[ChatMessage] = response.data or []
+
         # Update the chat history with the response
-        self._chat_history.extend(response)
+        self._chat_history.extend(messages)
 
         # Send the response to the other members
         await asyncio.gather(*[
             ctx.send_message(
-                AgentExecutorRequest(messages=response, should_respond=False),
+                AgentExecutorRequest(messages=messages, should_respond=False),
                 target_id=member_id,
             )
             for member_id in self._members
@@ -145,7 +150,9 @@ class CriticGroupChatManager(Executor):
 async def main():
     """Main function to run the group chat workflow."""
     # Step 1: Create the executors.
-    chat_client = AzureChatClient(ad_credential=DefaultAzureCredential())
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
+    chat_client = AzureChatClient(credential=AzureCliCredential())
     writer = AgentExecutor(
         chat_client.create_agent(
             instructions=(
