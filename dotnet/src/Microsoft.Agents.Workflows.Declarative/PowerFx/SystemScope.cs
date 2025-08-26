@@ -50,6 +50,7 @@ internal static class SystemScope
     public static void InitializeSystem(this WorkflowScopes scopes, ChatMessage inputMessage)
     {
         scopes.Set(Names.Activity, VariableScopeNames.System, RecordValue.Empty());
+        scopes.Set(Names.Bot, VariableScopeNames.System, RecordValue.Empty());
 
         scopes.Set(Names.LastMessage, VariableScopeNames.System, inputMessage.ToRecord());
         Set(Names.LastMessageId, inputMessage.MessageId);
