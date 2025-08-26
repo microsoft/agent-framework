@@ -35,7 +35,7 @@ LLMs have some inherent limitations such as:
 	-	Users can mitigate these issues by:
 		-	Formulating clear and explicit queries.
 		-	Regularly reviewing AI-generated outputs to identify and rectify biases or inaccuracies.
-        -   Providing relevant information when prompting the LLM so that it can base it's responses on this data
+        -   Providing relevant information when prompting the LLM so that it can base its responses on this data
 -   Not all LLMs support all features uniformly e.g., function calling.
 Agent Framework is constantly evolving and adding new features so:
 -   There are some components still being developed e.g., support for some modalities such as Video and Classification, memory connectors for certain Vector databases, AI connectors for certain AI services.
