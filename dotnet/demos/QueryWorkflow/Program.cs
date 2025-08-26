@@ -8,7 +8,6 @@ using System.Threading.Tasks;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Shared.Diagnostics;
 
 namespace Demo.DeclarativeWorkflow;
 
