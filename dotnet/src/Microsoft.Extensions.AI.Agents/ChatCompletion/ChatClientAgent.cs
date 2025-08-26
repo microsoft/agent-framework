@@ -240,6 +240,7 @@ public sealed class ChatClientAgent : AIAgent
         requestChatOptions.AllowMultipleToolCalls ??= this._agentOptions.ChatOptions.AllowMultipleToolCalls;
         requestChatOptions.ConversationId ??= this._agentOptions.ChatOptions.ConversationId;
         requestChatOptions.FrequencyPenalty ??= this._agentOptions.ChatOptions.FrequencyPenalty;
+        requestChatOptions.Instructions ??= this._agentOptions.ChatOptions.Instructions;
         requestChatOptions.MaxOutputTokens ??= this._agentOptions.ChatOptions.MaxOutputTokens;
         requestChatOptions.ModelId ??= this._agentOptions.ChatOptions.ModelId;
         requestChatOptions.PresencePenalty ??= this._agentOptions.ChatOptions.PresencePenalty;
@@ -362,10 +363,10 @@ public sealed class ChatClientAgent : AIAgent
                 """);
         }
 
-        if (!string.IsNullOrWhiteSpace(this.ChatOptions?.Instructions))
+        if (!string.IsNullOrWhiteSpace(this.Instructions))
         {
             chatOptions ??= new();
-            chatOptions.Instructions = this.ChatOptions!.Instructions;
+            chatOptions.Instructions = string.IsNullOrWhiteSpace(chatOptions.Instructions) ? this.Instructions : $"{this.Instructions}\n{chatOptions.Instructions}";
         }
 
         // Only create or update ChatOptions if we have an id on the thread and we don't have the same one already in ChatOptions.

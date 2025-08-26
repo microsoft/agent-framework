@@ -12,7 +12,7 @@ internal static class ChatClientExtensions
     {
         var chatBuilder = chatClient.AsBuilder();
 
-        if (chatClient is not AgentInvokedChatClient agentInvokingChatClient)
+        if (chatClient is not AgentInvokedChatClient agentInvokedChatClient)
         {
             chatBuilder.UseAgentInvocation();
         }
