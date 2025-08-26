@@ -10,7 +10,7 @@ Building upon its foundational capabilities, Microsoft Agent Framework facilitat
 -	AI Agent Development: Users can create agents capable of performing specific tasks or interactions based on user input.
 -	Function Invocation: It can automate code execution by calling functions based on AI model outputs.
 -	Modular and Extensible: Developers can enhance functionality through tools and a variety of pre-built connectors, providing flexibility in integrating additional AI services.
--	Multi-Modal Support: The framework easily expands existing applications to support modalities like voice and video through its architecture
+-	Multi-Modal Support: The framework easily expands existing applications to support modalities like voice and video through its architecture.
 -   Filtering: Developers can use filters to monitor the application, control function invocation or implement Responsible AI.
 -   Workflow Orchestration: Developers can create graph-based workflows connecting agents and deterministic functions with streaming, checkpointing, and time-travel capabilities.
 
