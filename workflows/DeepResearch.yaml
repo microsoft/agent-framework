@@ -1,5 +1,6 @@
 kind: AdaptiveDialog
 beginDialog:
+
   kind: OnActivity
   id: activity_xyz123
   type: Message

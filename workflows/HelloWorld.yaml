@@ -1,5 +1,4 @@
 kind: AdaptiveDialog
-
 beginDialog:
 
   kind: OnActivity
