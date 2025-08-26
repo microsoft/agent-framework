@@ -92,6 +92,12 @@ internal abstract class WorkflowActionExecutor :
 
     protected void AssignTarget(PropertyPath targetPath, FormulaValue result)
     {
+        if (!VariableScopeNames.Global.Equals(targetPath.VariableScopeName, StringComparison.OrdinalIgnoreCase) &&
+            !VariableScopeNames.Topic.Equals(targetPath.VariableScopeName, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new UnsupportedVariableException($"Unsupported variable scope: {targetPath.VariableScopeName}");
+        }
+
         this.State.Set(targetPath, result);
 
 #if DEBUG
