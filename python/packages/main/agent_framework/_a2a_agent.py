@@ -230,20 +230,20 @@ class A2AAgent(AgentBase):
                         )
                     )
                 elif part.kind == "file":
-                    if isinstance(part, FileWithUri):
+                    if isinstance(part.file, FileWithUri):
                         contents.append(
                             UriContent(
-                                uri=part.uri,
-                                media_type=part.mime_type or "",
+                                uri=part.file.uri,
+                                media_type=part.file.mime_type or "",
                                 additional_properties=part.metadata,
                                 raw_representation=part,
                             )
                         )
-                    elif isinstance(part, FileWithBytes):
+                    elif isinstance(part.file, FileWithBytes):
                         contents.append(
                             DataContent(
-                                data=base64.b64decode(part.bytes),
-                                media_type=part.mime_type or "",
+                                data=base64.b64decode(part.file.bytes),
+                                media_type=part.file.mime_type or "",
                                 additional_properties=part.metadata,
                                 raw_representation=part,
                             )
