@@ -28,7 +28,7 @@ Microsoft Agent Framework metrics include:
 
 
 ## What are the limitations of Microsoft Agent Framework?
-Agent Framework integrates with Large Language Models (LLMs) to allow AI capabilities to be added to existing application.
+Agent Framework integrates with Large Language Models (LLMs) to allow AI capabilities to be added to existing applications.
 LLMs have some inherent limitations such as:
 -	Contextual Misunderstanding: The system may struggle with nuanced requests, particularly those involving complex context.
 -	Bias in LLM Outputs: Historical biases in the training data can inadvertently influence model outputs. 
