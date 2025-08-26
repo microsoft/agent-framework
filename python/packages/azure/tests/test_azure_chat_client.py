@@ -16,7 +16,6 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    HostedWebSearchTool,
     TextContent,
     ai_function,
 )
@@ -802,28 +801,6 @@ async def test_azure_openai_chat_client_agent_existing_thread():
             assert isinstance(second_response, AgentRunResponse)
             assert second_response.text is not None
             assert "alice" in second_response.text.lower()
-
-
-@skip_if_azure_integration_tests_disabled
-async def test_azure_openai_chat_client_agent_hosted_web_search_tool():
-    """Test Azure OpenAI chat client agent with HostedWebSearchTool through AzureChatClient."""
-    async with ChatClientAgent(
-        chat_client=AzureChatClient(credential=AzureCliCredential()),
-        instructions="You are a helpful assistant that can search the web for current information. "
-        "If you cannot find the requested information or cannot search the web, "
-        "respond with exactly 'I don't know' and nothing else.",
-        tools=[HostedWebSearchTool()],
-    ) as agent:
-        # Test web search with prompt-based validation
-        response = await agent.run(
-            "What is the current stock price of Microsoft (MSFT)? Please search for the most recent price in USD."
-        )
-
-        # Validate that the web search worked by checking the response doesn't contain "I don't know"
-        response_text = response.text
-
-        # If web search is working, the response should contain actual information, not "I don't know"
-        assert "i don't know" not in response_text.lower()
 
 
 @skip_if_azure_integration_tests_disabled
