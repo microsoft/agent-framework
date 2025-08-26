@@ -19,7 +19,7 @@ from agent_framework import (
     ai_function,
 )
 from agent_framework.exceptions import ServiceInitializationError
-from azure.identity import AzureCliCredential, ChainedTokenCredential
+from azure.identity import AzureCliCredential
 from pydantic import Field
 
 from agent_framework_azure import AzureAssistantsClient
@@ -266,9 +266,7 @@ def get_weather(
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_get_response() -> None:
     """Test Azure Assistants Client response."""
-    async with AzureAssistantsClient(
-        ad_credential=ChainedTokenCredential(AzureCliCredential())
-    ) as azure_assistants_client:
+    async with AzureAssistantsClient(ad_credential=AzureCliCredential()) as azure_assistants_client:
         assert isinstance(azure_assistants_client, ChatClient)
 
         messages: list[ChatMessage] = []
@@ -292,9 +290,7 @@ async def test_azure_assistants_client_get_response() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_get_response_tools() -> None:
     """Test Azure Assistants Client response with tools."""
-    async with AzureAssistantsClient(
-        ad_credential=ChainedTokenCredential(AzureCliCredential())
-    ) as azure_assistants_client:
+    async with AzureAssistantsClient(ad_credential=AzureCliCredential()) as azure_assistants_client:
         assert isinstance(azure_assistants_client, ChatClient)
 
         messages: list[ChatMessage] = []
@@ -315,9 +311,7 @@ async def test_azure_assistants_client_get_response_tools() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_streaming() -> None:
     """Test Azure Assistants Client streaming response."""
-    async with AzureAssistantsClient(
-        ad_credential=ChainedTokenCredential(AzureCliCredential())
-    ) as azure_assistants_client:
+    async with AzureAssistantsClient(ad_credential=AzureCliCredential()) as azure_assistants_client:
         assert isinstance(azure_assistants_client, ChatClient)
 
         messages: list[ChatMessage] = []
@@ -347,9 +341,7 @@ async def test_azure_assistants_client_streaming() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_streaming_tools() -> None:
     """Test Azure Assistants Client streaming response with tools."""
-    async with AzureAssistantsClient(
-        ad_credential=ChainedTokenCredential(AzureCliCredential())
-    ) as azure_assistants_client:
+    async with AzureAssistantsClient(ad_credential=AzureCliCredential()) as azure_assistants_client:
         assert isinstance(azure_assistants_client, ChatClient)
 
         messages: list[ChatMessage] = []
@@ -376,7 +368,7 @@ async def test_azure_assistants_client_streaming_tools() -> None:
 async def test_azure_assistants_client_with_existing_assistant() -> None:
     """Test Azure Assistants Client with existing assistant ID."""
     # First create an assistant to use in the test
-    async with AzureAssistantsClient(ad_credential=ChainedTokenCredential(AzureCliCredential())) as temp_client:
+    async with AzureAssistantsClient(ad_credential=AzureCliCredential()) as temp_client:
         # Get the assistant ID by triggering assistant creation
         messages = [ChatMessage(role="user", text="Hello")]
         await temp_client.get_response(messages=messages)
@@ -384,7 +376,7 @@ async def test_azure_assistants_client_with_existing_assistant() -> None:
 
         # Now test using the existing assistant
         async with AzureAssistantsClient(
-            assistant_id=assistant_id, ad_credential=ChainedTokenCredential(AzureCliCredential())
+            assistant_id=assistant_id, ad_credential=AzureCliCredential()
         ) as azure_assistants_client:
             assert isinstance(azure_assistants_client, ChatClient)
             assert azure_assistants_client.assistant_id == assistant_id
@@ -403,7 +395,7 @@ async def test_azure_assistants_client_with_existing_assistant() -> None:
 async def test_azure_assistants_agent_basic_run():
     """Test ChatClientAgent basic run functionality with AzureAssistantsClient."""
     async with ChatClientAgent(
-        chat_client=AzureAssistantsClient(ad_credential=ChainedTokenCredential(AzureCliCredential())),
+        chat_client=AzureAssistantsClient(ad_credential=AzureCliCredential()),
     ) as agent:
         # Run a simple query
         response = await agent.run("Hello! Please respond with 'Hello World' exactly.")
@@ -419,7 +411,7 @@ async def test_azure_assistants_agent_basic_run():
 async def test_azure_assistants_agent_basic_run_streaming():
     """Test ChatClientAgent basic streaming functionality with AzureAssistantsClient."""
     async with ChatClientAgent(
-        chat_client=AzureAssistantsClient(ad_credential=ChainedTokenCredential(AzureCliCredential())),
+        chat_client=AzureAssistantsClient(ad_credential=AzureCliCredential()),
     ) as agent:
         # Run streaming query
         full_message: str = ""
@@ -438,7 +430,7 @@ async def test_azure_assistants_agent_basic_run_streaming():
 async def test_azure_assistants_agent_thread_persistence():
     """Test ChatClientAgent thread persistence across runs with AzureAssistantsClient."""
     async with ChatClientAgent(
-        chat_client=AzureAssistantsClient(ad_credential=ChainedTokenCredential(AzureCliCredential())),
+        chat_client=AzureAssistantsClient(ad_credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as agent:
         # Create a new thread that will be reused
@@ -458,26 +450,8 @@ async def test_azure_assistants_agent_thread_persistence():
         assert isinstance(second_response, AgentRunResponse)
         assert "42" in second_response.text
 
-
-@skip_if_azure_integration_tests_disabled
-async def test_azure_assistants_agent_new_thread():
-    """Test ChatClientAgent creating new threads with AzureAssistantsClient."""
-    async with ChatClientAgent(
-        chat_client=AzureAssistantsClient(ad_credential=ChainedTokenCredential(AzureCliCredential())),
-    ) as agent:
-        # Create a new thread
-        new_thread = AgentThread()
-
-        # Run with the new thread
-        response = await agent.run("Hello, this is a new thread conversation.", thread=new_thread)
-
-        # Validate response
-        assert isinstance(response, AgentRunResponse)
-        assert response.text is not None
-        assert len(response.text) > 0
-
         # Verify thread has been populated with conversation ID
-        assert new_thread.service_thread_id is not None
+        assert thread.service_thread_id is not None
 
 
 @skip_if_azure_integration_tests_disabled
@@ -487,7 +461,7 @@ async def test_azure_assistants_agent_existing_thread_id():
     existing_thread_id = None
 
     async with ChatClientAgent(
-        chat_client=AzureAssistantsClient(ad_credential=ChainedTokenCredential(AzureCliCredential())),
+        chat_client=AzureAssistantsClient(ad_credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
     ) as agent:
@@ -505,60 +479,23 @@ async def test_azure_assistants_agent_existing_thread_id():
         assert existing_thread_id is not None
 
     # Now continue with the same thread ID in a new agent instance
-    if existing_thread_id:
-        async with ChatClientAgent(
-            chat_client=AzureAssistantsClient(
-                thread_id=existing_thread_id, ad_credential=ChainedTokenCredential(AzureCliCredential())
-            ),
-            instructions="You are a helpful weather agent.",
-            tools=[get_weather],
-        ) as agent:
-            # Create a thread with the existing ID
-            thread = AgentThread(service_thread_id=existing_thread_id)
 
-            # Ask about the previous conversation
-            response2 = await agent.run("What was the last city I asked about?", thread=thread)
-
-            # Validate that the agent remembers the previous conversation
-            assert isinstance(response2, AgentRunResponse)
-            assert response2.text is not None
-            # Should reference Paris from the previous conversation
-            assert "paris" in response2.text.lower()
-
-
-@skip_if_azure_integration_tests_disabled
-async def test_azure_assistants_agent_function_tools_on_agent_level():
-    """Test ChatClientAgent with function tools through AzureAssistantsClient."""
     async with ChatClientAgent(
-        chat_client=AzureAssistantsClient(ad_credential=ChainedTokenCredential(AzureCliCredential())),
-        instructions="You are a helpful weather assistant. Use the available tools to get weather information.",
+        chat_client=AzureAssistantsClient(thread_id=existing_thread_id, ad_credential=AzureCliCredential()),
+        instructions="You are a helpful weather agent.",
         tools=[get_weather],
     ) as agent:
-        # Test weather function
-        response = await agent.run("What's the weather like in Seattle? Please use the get_weather function.")
-        assert isinstance(response, AgentRunResponse)
-        assert response.text is not None
-        assert any(word in response.text.lower() for word in ["weather", "seattle", "sunny", "25°c"])
+        # Create a thread with the existing ID
+        thread = AgentThread(service_thread_id=existing_thread_id)
 
+        # Ask about the previous conversation
+        response2 = await agent.run("What was the last city I asked about?", thread=thread)
 
-@skip_if_azure_integration_tests_disabled
-async def test_azure_assistants_agent_function_tools_on_run_level_():
-    """Test ChatClientAgent with weather tool passed at run level."""
-    # Agent created without tools
-    async with ChatClientAgent(
-        chat_client=AzureAssistantsClient(ad_credential=ChainedTokenCredential(AzureCliCredential())),
-        instructions="You are a helpful assistant.",
-    ) as agent:
-        # Query with weather tool passed to run method
-        response = await agent.run(
-            "What's the weather like in Seattle? Please use the get_weather function.",
-            tools=[get_weather],
-        )
-
-        # Validate response contains weather information
-        assert isinstance(response, AgentRunResponse)
-        assert response.text is not None
-        assert any(word in response.text.lower() for word in ["weather", "seattle", "sunny", "25°c"])
+        # Validate that the agent remembers the previous conversation
+        assert isinstance(response2, AgentRunResponse)
+        assert response2.text is not None
+        # Should reference Paris from the previous conversation
+        assert "paris" in response2.text.lower()
 
 
 @skip_if_azure_integration_tests_disabled
@@ -566,7 +503,7 @@ async def test_azure_assistants_agent_code_interpreter():
     """Test ChatClientAgent with code interpreter through AzureAssistantsClient."""
 
     async with ChatClientAgent(
-        chat_client=AzureAssistantsClient(ad_credential=ChainedTokenCredential(AzureCliCredential())),
+        chat_client=AzureAssistantsClient(ad_credential=AzureCliCredential()),
         instructions="You are a helpful assistant that can write and execute Python code.",
         tools=[HostedCodeInterpreterTool()],
     ) as agent:
@@ -585,7 +522,7 @@ async def test_azure_assistants_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with Azure Assistants Client."""
 
     async with ChatClientAgent(
-        chat_client=AzureAssistantsClient(ad_credential=ChainedTokenCredential(AzureCliCredential())),
+        chat_client=AzureAssistantsClient(ad_credential=AzureCliCredential()),
         instructions="You are a helpful assistant that uses available tools.",
         tools=[get_weather],  # Agent-level tool
     ) as agent:
@@ -620,7 +557,7 @@ async def test_azure_assistants_client_run_level_tool_isolation():
         return f"The weather in {location} is sunny and 72°F."
 
     async with ChatClientAgent(
-        chat_client=AzureAssistantsClient(ad_credential=ChainedTokenCredential(AzureCliCredential())),
+        chat_client=AzureAssistantsClient(ad_credential=AzureCliCredential()),
         instructions="You are a helpful assistant.",
     ) as agent:
         # First run - use run-level tool
