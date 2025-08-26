@@ -4,30 +4,43 @@ import base64
 import json
 import re
 import uuid
+from collections.abc import AsyncIterable, Sequence
+from typing import Any
 
-from a2a.server.agent_execution import AgentExecutor
-from a2a.server.agent_execution.context import RequestContext
-from a2a.server.events.event_queue import EventQueue
-from a2a.types import DataPart, FilePart, FileWithBytes, FileWithUri, TextPart
+import httpx
+from a2a.client import A2AClient
 from a2a.types import (
-    Message as A2AMessage,
+    AgentCard,
+    DataPart,
+    FilePart,
+    FileWithBytes,
+    FileWithUri,
+    MessageSendParams,
+    SendMessageRequest,
+    SendMessageSuccessResponse,
+    SendStreamingMessageRequest,
+    SendStreamingMessageSuccessResponse,
+    TextPart,
 )
-from a2a.types import (
-    Part as A2APart,
-)
+from a2a.types import Message as A2AMessage
+from a2a.types import Part as A2APart
 from a2a.types import Role as A2ARole
+from pydantic import AnyUrl
 
-from ._agents import AIAgent
+from ._agents import AgentBase
+from ._threads import AgentThread
 from ._types import (
     AgentRunResponse,
+    AgentRunResponseUpdate,
     AIContents,
     ChatMessage,
+    ChatRole,
     DataContent,
     TextContent,
     UriContent,
 )
 
-__all__ = ["A2AAgentExecutor"]
+__all__ = ["A2AAgent"]
 
 URI_PATTERN = re.compile(r"^data:(?P<media_type>[^;]+);base64,(?P<base64_data>[A-Za-z0-9+/=]+)$")
 
@@ -40,25 +53,168 @@ def _get_uri_data(uri: str) -> str:
     return match.group("base64_data")
 
 
-class A2AAgentExecutor(AgentExecutor):
-    """A2A Agent Executor."""
+class A2AAgent(AgentBase):
+    """A2A Agent."""
 
-    _agent: AIAgent
+    # TODO(peterychang): A2AClient was deprecated recently, but none of the tutorials have been updated yet.
+    # Change this to BaseClient at some point
+    _client: A2AClient
 
-    def __init__(self, agent: AIAgent) -> None:
-        self._agent = agent
+    def __init__(
+        self,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        agent_card: AgentCard | None = None,
+        url: AnyUrl,
+        executor: A2AClient | None = None,
+    ) -> None:
+        self.name = name
+        self.description = description
+        self._client = executor or A2AClient(
+            httpx_client=httpx.AsyncClient(),
+            agent_card=agent_card,
+            url=str(url),
+        )
 
-    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
-        # TODO(peterychang): Add AgentThread logic
-        if context.message is not None:
-            response = await self._agent.run(self._message_to_chat_message(context.message))
-            await event_queue.enqueue_event(self._chat_message_to_a2a_message(context.message, response))
-        # TODO(peterychang): Handle case where context.message is None
+    async def run(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        *,
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> AgentRunResponse:
+        messages = self._normalize_messages(messages)
+        a2a_message = self._chat_message_to_a2a_message(messages[-1])
+        message_request = SendMessageRequest(id=a2a_message.message_id, params=MessageSendParams(message=a2a_message))
+        a2a_response = await self._client.send_message(message_request)
+        inner_response = a2a_response.root
+        if isinstance(inner_response, SendMessageSuccessResponse):
+            if isinstance(inner_response.result, A2AMessage):
+                chat_messages = [self._a2a_message_to_chat_message(inner_response.result)]
+            else:
+                # TODO(peterychang): Handle this later
+                raise ValueError("Unhandled type")
+            return AgentRunResponse(
+                messages=chat_messages,
+                response_id=str(inner_response.id) if isinstance(inner_response.id, int) else inner_response.id,
+                raw_representation=inner_response,
+            )
+        raise ValueError(f"Unexpected response type: {type(a2a_response)}")
 
-    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        pass
+    async def run_streaming(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        *,
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterable[AgentRunResponseUpdate]:
+        messages = self._normalize_messages(messages)
+        a2a_message = self._chat_message_to_a2a_message(messages[-1])
+        message_request = SendStreamingMessageRequest(
+            id=a2a_message.message_id, params=MessageSendParams(message=a2a_message)
+        )
+        a2a_responses = self._client.send_message_streaming(message_request)
+        async for response in a2a_responses:
+            if isinstance(response, SendStreamingMessageSuccessResponse):
+                if isinstance(response.result, A2AMessage):
+                    yield AgentRunResponseUpdate(
+                        contents=self._a2a_message_to_chat_message(response.result).contents,
+                        response_id=str(response.id) if isinstance(response.id, int) else response.id,
+                        raw_representation=response,
+                    )
+            else:
+                # TODO(peterychang): Handle this later
+                raise ValueError("Unhandled type")
 
-    def _message_to_chat_message(self, message: A2AMessage) -> ChatMessage:
+    def _normalize_messages(
+        self,
+        messages: str | ChatMessage | Sequence[str] | Sequence[ChatMessage] | None = None,
+    ) -> list[ChatMessage]:
+        if messages is None:
+            return []
+
+        if isinstance(messages, str):
+            return [ChatMessage(role=ChatRole.USER, text=messages)]
+
+        if isinstance(messages, ChatMessage):
+            return [messages]
+
+        return [ChatMessage(role=ChatRole.USER, text=msg) if isinstance(msg, str) else msg for msg in messages]
+
+    def _chat_message_to_a2a_message(self, message: ChatMessage) -> A2AMessage:
+        """Convert a ChatMessage to a Message."""
+        parts: list[A2APart] = []
+        # TODO(peterychang): Handle other content types
+        content = message.contents[0]
+        if content.type == "text":
+            try:
+                text_json = json.loads(content.text)
+                parts.append(
+                    A2APart(
+                        root=DataPart(
+                            data=text_json,
+                            metadata=content.additional_properties,
+                        )
+                    )
+                )
+            except json.JSONDecodeError:
+                parts.append(
+                    A2APart(
+                        root=TextPart(
+                            text=content.text,
+                            metadata=content.additional_properties,
+                        )
+                    )
+                )
+        elif content.type == "function_call" or content.type == "function_result":
+            # TODO(peterychang): Need to handle this?
+            pass
+        elif content.type == "error":
+            parts.append(
+                A2APart(
+                    root=TextPart(
+                        text=content.message or "An error occurred.",
+                        metadata=content.additional_properties,
+                    )
+                )
+            )
+        elif content.type == "uri":
+            parts.append(
+                A2APart(
+                    root=FilePart(
+                        file=FileWithUri(
+                            uri=content.uri,
+                            mime_type=content.media_type,
+                        ),
+                        metadata=content.additional_properties,
+                    )
+                )
+            )
+        elif content.type == "data":
+            parts.append(
+                A2APart(
+                    root=FilePart(
+                        file=FileWithBytes(
+                            bytes=_get_uri_data(content.uri),
+                            mime_type=content.media_type,
+                        ),
+                        metadata=content.additional_properties,
+                    )
+                )
+            )
+        else:
+            # TODO(peterychang): What do we do here?
+            raise ValueError(f"Unknown content type: {type(content)}")
+
+        return A2AMessage(
+            role=A2ARole("user"),
+            parts=parts,
+            message_id=message.message_id or uuid.uuid4().hex,
+            metadata=message.additional_properties,
+        )
+
+    def _a2a_message_to_chat_message(self, message: A2AMessage) -> ChatMessage:
         """Convert a Message to a ChatMessage."""
         contents: list[AIContents] = []
         if message.kind == "message":
@@ -102,79 +258,4 @@ class A2AAgentExecutor(AgentExecutor):
         return ChatMessage(
             role="user" if message.role == "user" else "assistant",
             contents=contents,
-        )
-
-    def _chat_message_to_a2a_message(self, input: A2AMessage, response: AgentRunResponse) -> A2AMessage:
-        """Convert a ChatMessage to a Message."""
-        parts: list[A2APart] = []
-        # TODO(peterychang): Handle other content types
-        for message in response.messages:
-            content = message.contents[0]
-            if content.type == "text":
-                try:
-                    text_json = json.loads(content.text)
-                    parts.append(
-                        A2APart(
-                            root=DataPart(
-                                data=text_json,
-                                metadata=content.additional_properties,
-                            )
-                        )
-                    )
-                except json.JSONDecodeError:
-                    parts.append(
-                        A2APart(
-                            root=TextPart(
-                                text=content.text,
-                                metadata=content.additional_properties,
-                            )
-                        )
-                    )
-            elif content.type == "function_call" or content.type == "function_result":
-                # TODO(peterychang): Need to handle this?
-                pass
-            elif content.type == "error":
-                parts.append(
-                    A2APart(
-                        root=TextPart(
-                            text=content.message or "An error occurred.",
-                            metadata=content.additional_properties,
-                        )
-                    )
-                )
-            elif content.type == "uri":
-                parts.append(
-                    A2APart(
-                        root=FilePart(
-                            file=FileWithUri(
-                                uri=content.uri,
-                                mime_type=content.media_type,
-                            ),
-                            metadata=content.additional_properties,
-                        )
-                    )
-                )
-            elif content.type == "data":
-                parts.append(
-                    A2APart(
-                        root=FilePart(
-                            file=FileWithBytes(
-                                bytes=_get_uri_data(content.uri),
-                                mime_type=content.media_type,
-                            ),
-                            metadata=content.additional_properties,
-                        )
-                    )
-                )
-            else:
-                # TODO(peterychang): What do we do here?
-                raise ValueError(f"Unknown content type: {type(content)}")
-
-        return A2AMessage(
-            role=A2ARole("user"),
-            parts=parts,
-            message_id=response.response_id or uuid.uuid4().hex,
-            task_id=input.task_id,
-            context_id=input.context_id,
-            metadata=response.additional_properties,
         )
