@@ -47,7 +47,6 @@ DO's:
 
   - [.NET](https://learn.microsoft.com/dotnet/csharp/fundamentals/coding-style/coding-conventions)
   - [Python](https://pypi.org/project/black/)
-  - [Typescript](https://typescript-eslint.io/rules/)/[React](https://github.com/jsx-eslint/eslint-plugin-react/tree/master/docs/rules)
 
 - **DO** give priority to the current style of the project or file you're changing
   if it diverges from the general guidelines.
@@ -105,7 +104,8 @@ The scripts below are used to build, test, and lint within the project.
 
 - Python: see [python/DEV_SETUP.md](./python/DEV_SETUP.md).
 - .NET:
-  - Build/Test: `run build.cmd` or `bash build.sh`
+  - Build: `dotnet build`
+  - Test: `dotnet test`
   - Linting (auto-fix): `dotnet format`
 
 ### PR - CI Process
