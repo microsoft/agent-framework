@@ -65,7 +65,7 @@ public sealed class ChatClientAgent : AIAgent
         // Get the type of the chat client before wrapping it as an agent invoking chat client.
         this._chatClientType = chatClient.GetType();
 
-        this.ChatClient = chatClient.AsAgentInvokingChatClient();
+        this.ChatClient = chatClient.AsAgentInvokingChatClient(options);
 
         this._logger = (loggerFactory ?? chatClient.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance).CreateLogger<ChatClientAgent>();
     }

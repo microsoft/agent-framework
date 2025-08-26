@@ -8,14 +8,9 @@ namespace Microsoft.Extensions.AI.Agents;
 
 internal static class ChatClientExtensions
 {
-    internal static IChatClient AsAgentInvokingChatClient(this IChatClient chatClient)
+    internal static IChatClient AsAgentInvokingChatClient(this IChatClient chatClient, ChatClientAgentOptions? options = null)
     {
         var chatBuilder = chatClient.AsBuilder();
-
-        if (chatClient is not AgentInvokingChatClient agentInvokingChatClient)
-        {
-            chatBuilder.UseAgentInvocation();
-        }
 
         if (chatClient.GetService<NewFunctionInvokingChatClient>() is null)
         {
@@ -27,6 +22,20 @@ internal static class ChatClientExtensions
             });
         }
 
-        return chatBuilder.Build();
+        // AgentInvokingChatClient should be the outermost decorator
+        if (chatClient is not AgentInvokingChatClient agentInvokingChatClient)
+        {
+            chatBuilder.UseAgentInvocation();
+        }
+
+        var agentChatClient = chatBuilder.Build();
+
+        if (options?.ChatOptions?.Tools is { Count: > 0 })
+        {
+            // When tools are provided in the constructor, set the tools for the whole lifecycle of the chat client
+            agentChatClient.GetService<NewFunctionInvokingChatClient>()!.AdditionalTools = options.ChatOptions.Tools;
+        }
+
+        return agentChatClient;
     }
 }

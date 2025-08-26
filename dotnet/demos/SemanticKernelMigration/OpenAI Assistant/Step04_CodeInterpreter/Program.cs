@@ -1,0 +1,145 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using System.Text;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
+using Microsoft.SemanticKernel;
+using Microsoft.SemanticKernel.Agents;
+using Microsoft.SemanticKernel.Agents.OpenAI;
+using OpenAI;
+using OpenAI.Assistants;
+
+#pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
+#pragma warning disable CS8321 // Local function is declared but never used
+
+Console.ForegroundColor = ConsoleColor.Gray;
+
+var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
+var modelId = "gpt-4o";
+var userInput = "Create a python code file using the code interpreter tool with a code ready to determine the values in the Fibonacci sequence that are less then the value of 101";
+
+var assistantsClient = new AssistantClient(apiKey);
+
+Console.WriteLine($"User Input: {userInput}");
+
+await AFAgent();
+await SKAgent();
+
+Console.ForegroundColor = ConsoleColor.Gray;
+
+async Task SKAgent()
+{
+    Console.ForegroundColor = ConsoleColor.Yellow;
+    Console.WriteLine("\n=== SK Agent ===\n");
+
+    var builder = Kernel.CreateBuilder().AddOpenAIChatClient(modelId, apiKey);
+
+    // Define the assistant
+    Console.Write("Creating agent in the cloud...");
+    Assistant assistant = await assistantsClient.CreateAssistantAsync(modelId, enableCodeInterpreter: true);
+    Console.Write("Done\n");
+
+    // Create the agent
+    OpenAIAssistantAgent agent = new(assistant, assistantsClient);
+
+    // Create a thread for the agent conversation.
+    var thread = new OpenAIAssistantAgentThread(assistantsClient);
+
+    // Respond to user input
+    Console.WriteLine("\nResponse:");
+    await foreach (var content in agent.InvokeAsync(userInput, thread))
+    {
+        string contentExpression = string.IsNullOrWhiteSpace(content.Message.Content) ? string.Empty : content.Message.Content;
+        bool isCode = content.Message.Metadata?.ContainsKey(OpenAIAssistantAgent.CodeInterpreterMetadataKey) ?? false;
+        string codeMarker = isCode ? "\n  [CODE]\n" : " ";
+        Console.WriteLine($"\n# {content.Message.Role}:{codeMarker}{contentExpression}");
+
+        foreach (var item in content.Message.Items)
+        {
+            // Process each item in the message
+#pragma warning disable SKEXP0110 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
+            if (item is AnnotationContent annotation)
+            {
+                if (annotation.Kind != AnnotationKind.UrlCitation)
+                {
+                    Console.WriteLine($"  [{item.GetType().Name}] {annotation.Label}: File #{annotation.ReferenceId}");
+                }
+            }
+            else if (item is FileReferenceContent fileReference)
+            {
+                Console.WriteLine($"  [{item.GetType().Name}] File #{fileReference.FileId}");
+            }
+        }
+    }
+#pragma warning restore SKEXP0110 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
+
+    // Clean up
+    await thread.DeleteAsync();
+    await assistantsClient.DeleteAssistantAsync(agent.Id);
+}
+
+async Task AFAgent()
+{
+    Console.ForegroundColor = ConsoleColor.Green;
+    Console.WriteLine("\n=== AF Agent ===\n");
+
+    Console.Write("Creating agent in the cloud...");
+    var agent = await assistantsClient.CreateAIAgentAsync(modelId, tools: [new HostedCodeInterpreterTool()]);
+    Console.Write("Done\n");
+
+    var thread = agent.GetNewThread();
+
+    Console.WriteLine("Response:");
+    var result = await agent.RunAsync(userInput, thread);
+    Console.WriteLine(result);
+
+    var codeContent = GetCodeInterpreterContent(result);
+    bool isCode = !string.IsNullOrEmpty(codeContent);
+    string codeMarker = isCode ? "\n  [CODE]\n" : " ";
+    if (!string.IsNullOrEmpty(codeContent))
+    {
+        Console.WriteLine($"\n# {result.Messages[0].Role}:{codeMarker}{codeContent}");
+    }
+    foreach (var textContent in result.Messages[0].Contents.OfType<Microsoft.Extensions.AI.TextContent>())
+    {
+        foreach (var annotation in textContent.Annotations ?? [])
+        {
+            if (annotation is CitationAnnotation citation)
+            {
+                if (citation.Url is null)
+                {
+                    Console.WriteLine($"  [{citation.GetType().Name}] {citation.Snippet}: File #{citation.FileId}");
+                }
+
+                foreach (var region in citation.AnnotatedRegions ?? [])
+                {
+                    if (region is TextSpanAnnotatedRegion textSpanRegion)
+                    {
+                        Console.WriteLine($"\n[TextSpan Region] {textSpanRegion.StartIndex}-{textSpanRegion.EndIndex}");
+                    }
+                }
+            }
+        }
+    }
+
+    // Extracts via breaking glass the code generated by code interpreter tool 
+    string GetCodeInterpreterContent(AgentRunResponse agentResponse)
+    {
+        var chatResponse = agentResponse.RawRepresentation as ChatResponse;
+        StringBuilder generatedCode = new();
+
+        foreach (object? updateRawRepresentation in chatResponse?.RawRepresentation as IEnumerable<object?> ?? [])
+        {
+            if (updateRawRepresentation is RunStepDetailsUpdate update && update.CodeInterpreterInput is not null)
+            {
+                generatedCode.Append(update.CodeInterpreterInput);
+            }
+        }
+
+        return generatedCode.ToString();
+    }
+
+    // Clean up
+    await assistantsClient.DeleteThreadAsync(thread.ConversationId);
+    await assistantsClient.DeleteAssistantAsync(agent.Id);
+}

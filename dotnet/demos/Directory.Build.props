@@ -14,7 +14,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="$(MSBuildThisFileDirectory)\..\src\Shared\Demos\*.cs" LinkBase="" Visible="false" />
+    <Compile Include="$(MSBuildThisFileDirectory)../src/Shared/Demos/*.cs" LinkBase="" Visible="false" />
   </ItemGroup>
 
 </Project>
