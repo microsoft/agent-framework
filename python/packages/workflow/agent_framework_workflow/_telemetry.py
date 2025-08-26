@@ -49,7 +49,7 @@ class WorkflowTracer:
 
     def create_workflow_span(self, workflow: "Workflow") -> Any:
         """Create a workflow execution span."""
-        attributes = {
+        attributes: dict[str, str | int] = {
             "workflow.id": workflow.id,
             "workflow.definition": workflow.model_dump_json(),
             "workflow.max_iterations": workflow.max_iterations,
