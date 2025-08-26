@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Azure.AI.Agents.Persistent;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
@@ -17,7 +16,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, PersistentAgentsClient client) : DeclarativeActionExecutor<AnswerQuestionWithAI>(model)
+internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, WorkflowAgentProvider agentProvider) : DeclarativeActionExecutor<AnswerQuestionWithAI>(model)
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
@@ -37,8 +36,8 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
             agentId = agentInstructions.Substring(0, delimiterIndex).Trim();
             additionalInstructions = agentInstructions.Substring(delimiterIndex + 1).Trim();
         }
-        using NewPersistentAgentsChatClient chatClient = new(client, agentId);
-        ChatClientAgent agent = new(chatClient);
+
+        AIAgent agent = await agentProvider.GetAgentAsync(agentId, cancellationToken).ConfigureAwait(false);
 
         string? userInput = null;
         if (this.Model.UserInput is not null)
@@ -59,16 +58,10 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
                 this.State.GetConversationId() :
                 this.State.GetInternalConversationId();
 
-        string conversationId;
+        string? conversationId = null;
         if (conversationValue is StringValue stringValue)
         {
-            conversationId = stringValue.Value;
-        }
-        else
-        {
-            PersistentAgentThread thread = await client.Threads.CreateThreadAsync(cancellationToken: default).ConfigureAwait(false);
-            conversationId = thread.Id;
-            await context.AddEventAsync(new DeclarativeWorkflowInvokeEvent(conversationId)).ConfigureAwait(false);
+            await AssignConversationId(stringValue.Value).ConfigureAwait(false);
         }
 
         AgentThread agentThread = new() { ConversationId = conversationId };
@@ -83,6 +76,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
         {
             agentResponseUpdates.Add(update);
             messageId ??= update.MessageId;
+            await AssignConversationId(((ChatResponseUpdate?)update.RawRepresentation)?.ConversationId).ConfigureAwait(false);
             if (this.Model.AutoSend)
             {
                 await context.AddEventAsync(new DeclarativeWorkflowStreamEvent(update)).ConfigureAwait(false);
@@ -98,7 +92,8 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
             await context.AddEventAsync(new DeclarativeWorkflowMessageEvent(response, agentResponse.Usage)).ConfigureAwait(false);
         }
 
-        if (conversationValue is not StringValue)
+        // Assign conversation ID if it wasn't already assigned.
+        if (conversationValue is not StringValue && conversationId is not null)
         {
             if (this.Model.AutoSend) // ISSUE #485: Conversation implicitly managed until updated OM is available.
             {
@@ -117,5 +112,14 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, P
         }
 
         return default;
+
+        async ValueTask AssignConversationId(string? assignValue)
+        {
+            if (assignValue != null && conversationId == null)
+            {
+                conversationId = assignValue;
+                await context.AddEventAsync(new DeclarativeWorkflowInvokeEvent(conversationId)).ConfigureAwait(false);
+            }
+        }
     }
 }

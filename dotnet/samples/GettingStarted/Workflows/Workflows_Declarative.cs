@@ -32,11 +32,12 @@ public class Workflows_Declarative(ITestOutputHelper output) : OrchestrationSamp
         //
         // DeclarativeWorkflowContext provides the components for workflow execution.
         //
+
+        FoundryAgentProvider agentProvider = new(Throw.IfNull(TestConfiguration.AzureAI.Endpoint), new AzureCliCredential());
         DeclarativeWorkflowOptions workflowContext =
-            new(Throw.IfNull(TestConfiguration.AzureAI.Endpoint))
+            new(agentProvider)
             {
                 LoggerFactory = this.LoggerFactory,
-                ProjectCredentials = new AzureCliCredential(),
             };
         //
         // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.

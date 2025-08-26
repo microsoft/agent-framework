@@ -1,8 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Net.Http;
-using Azure.Core;
-using Azure.Identity;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -11,7 +9,7 @@ namespace Microsoft.Agents.Workflows.Declarative;
 /// <summary>
 /// Configuration options for workflow execution.
 /// </summary>
-public sealed class DeclarativeWorkflowOptions(string projectEndpoint)
+public sealed class DeclarativeWorkflowOptions(WorkflowAgentProvider agentProvider)
 {
     /// <summary>
     /// Optionally identifies a continued workflow conversation.
@@ -19,14 +17,9 @@ public sealed class DeclarativeWorkflowOptions(string projectEndpoint)
     public string? ConversationId { get; init; }
 
     /// <summary>
-    /// Defines the endpoint for the Foundry project.
+    /// Defines the agent provider.
     /// </summary>
-    public string ProjectEndpoint { get; } = projectEndpoint;
-
-    /// <summary>
-    /// Defines the credentials that authorize access to the Foundry project.
-    /// </summary>
-    public TokenCredential ProjectCredentials { get; init; } = new DefaultAzureCredential();
+    public WorkflowAgentProvider AgentProvider { get; } = agentProvider;
 
     /// <summary>
     /// Defines the maximum number of nested calls allowed in a PowerFx formula.

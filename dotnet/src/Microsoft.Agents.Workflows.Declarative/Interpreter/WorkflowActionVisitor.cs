@@ -193,7 +193,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        this.ContinueWith(new AnswerQuestionWithAIExecutor(item, this._options.CreateClient()));
+        this.ContinueWith(new AnswerQuestionWithAIExecutor(item, this._options.AgentProvider));
     }
 
     protected override void Visit(SetVariable item)
@@ -455,17 +455,9 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     private static string PostId(string actionId) => $"{actionId}_Post";
 
-    private static string GetParentId(BotElement item)
-    {
-        string? parentId = item.GetParentId();
-
-        if (parentId is null)
-        {
-            throw new UnknownActionException($"Missing parent ID for action element: {item.GetId()} [{item.GetType().Name}].");
-        }
-
-        return parentId;
-    }
+    private static string GetParentId(BotElement item) =>
+        item.GetParentId() ??
+        throw new UnknownActionException($"Missing parent ID for action element: {item.GetId()} [{item.GetType().Name}].");
 
     private string ContinuationFor(string parentId) => this.ContinuationFor(parentId, parentId);
 

@@ -5,6 +5,7 @@ using Azure.Core;
 using Azure.Identity;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 
 namespace Microsoft.Agents.Workflows.Declarative.UnitTests;
 
@@ -14,11 +15,11 @@ public class DeclarativeWorkflowContextTests
     public void InitializeDefaultValues()
     {
         // Act
-        DeclarativeWorkflowOptions context = new("http://test");
+        Mock<WorkflowAgentProvider> mockProvider = new(MockBehavior.Strict);
+        DeclarativeWorkflowOptions context = new(mockProvider.Object);
 
         // Assert
-        Assert.Equal("http://test", context.ProjectEndpoint);
-        Assert.IsType<DefaultAzureCredential>(context.ProjectCredentials);
+        Assert.Equal(mockProvider.Object, context.AgentProvider);
         Assert.Null(context.MaximumCallDepth);
         Assert.Null(context.MaximumExpressionLength);
         Assert.Null(context.HttpClient);
@@ -29,7 +30,6 @@ public class DeclarativeWorkflowContextTests
     public void InitializeExplicitValues()
     {
         // Arrange
-        string projectEndpoint = "https://test-endpoint.com";
         TokenCredential credentials = new DefaultAzureCredential();
         int maxCallDepth = 10;
         int maxExpressionLength = 100;
@@ -37,9 +37,9 @@ public class DeclarativeWorkflowContextTests
         ILoggerFactory loggerFactory = LoggerFactory.Create(builder => { });
 
         // Act
-        DeclarativeWorkflowOptions context = new(projectEndpoint)
+        Mock<WorkflowAgentProvider> mockProvider = new(MockBehavior.Strict);
+        DeclarativeWorkflowOptions context = new(mockProvider.Object)
         {
-            ProjectCredentials = credentials,
             MaximumCallDepth = maxCallDepth,
             MaximumExpressionLength = maxExpressionLength,
             HttpClient = httpClient,
@@ -47,8 +47,7 @@ public class DeclarativeWorkflowContextTests
         };
 
         // Assert
-        Assert.Equal(projectEndpoint, context.ProjectEndpoint);
-        Assert.Same(credentials, context.ProjectCredentials);
+        Assert.Equal(mockProvider.Object, context.AgentProvider);
         Assert.Equal(maxCallDepth, context.MaximumCallDepth);
         Assert.Equal(maxExpressionLength, context.MaximumExpressionLength);
         Assert.Same(httpClient, context.HttpClient);

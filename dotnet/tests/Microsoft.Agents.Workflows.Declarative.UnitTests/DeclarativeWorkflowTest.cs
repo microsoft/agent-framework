@@ -9,6 +9,7 @@ using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.Workflows.Reflection;
 using Microsoft.Bot.ObjectModel;
+using Moq;
 using Xunit.Abstractions;
 
 namespace Microsoft.Agents.Workflows.Declarative.UnitTests;
@@ -197,7 +198,8 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
             };
 
         WorkflowScopes scopes = new();
-        DeclarativeWorkflowOptions workflowContext = new("http://test");
+        Mock<WorkflowAgentProvider> mockAgentProvider = new(MockBehavior.Strict);
+        DeclarativeWorkflowOptions workflowContext = new(mockAgentProvider.Object);
         WorkflowActionVisitor visitor = new(new RootExecutor(), workflowContext);
         WorkflowElementWalker walker = new(dialogBuilder.Build(), visitor);
         Assert.True(visitor.HasUnsupportedActions);
@@ -231,7 +233,8 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     private async Task RunWorkflow<TInput>(string workflowPath, TInput workflowInput) where TInput : notnull
     {
         using StreamReader yamlReader = File.OpenText(Path.Combine("Workflows", workflowPath));
-        DeclarativeWorkflowOptions workflowContext = new("http://test") { LoggerFactory = this.Output };
+        Mock<WorkflowAgentProvider> mockAgentProvider = new(MockBehavior.Strict);
+        DeclarativeWorkflowOptions workflowContext = new(mockAgentProvider.Object) { LoggerFactory = this.Output };
 
         Workflow<TInput> workflow = DeclarativeWorkflowBuilder.Build<TInput>(yamlReader, workflowContext);
 

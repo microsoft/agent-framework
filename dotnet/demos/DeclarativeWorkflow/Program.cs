@@ -44,11 +44,8 @@ internal static class Program
         Stopwatch timer = Stopwatch.StartNew();
 
         // DeclarativeWorkflowContext provides the components for workflow execution.
-        DeclarativeWorkflowOptions options =
-            new(foundryProjectEndpoint)
-            {
-                ProjectCredentials = new AzureCliCredential(),
-            };
+        FoundryAgentProvider agentProvider = new(foundryProjectEndpoint, new AzureCliCredential());
+        DeclarativeWorkflowOptions options = new(agentProvider);
 
         // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
         Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>(workflowFile, options);
