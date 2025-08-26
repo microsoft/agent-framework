@@ -12,6 +12,12 @@ internal static class ChatClientExtensions
     {
         var chatBuilder = chatClient.AsBuilder();
 
+        // AgentInvokingChatClient should be the outermost decorator
+        if (chatClient is not AgentInvokingChatClient agentInvokingChatClient)
+        {
+            chatBuilder.UseAgentInvocation();
+        }
+
         if (chatClient.GetService<NewFunctionInvokingChatClient>() is null)
         {
             chatBuilder.Use((IChatClient innerClient, IServiceProvider services) =>
@@ -20,12 +26,6 @@ internal static class ChatClientExtensions
 
                 return new NewFunctionInvokingChatClient(innerClient, loggerFactory, services);
             });
-        }
-
-        // AgentInvokingChatClient should be the outermost decorator
-        if (chatClient is not AgentInvokingChatClient agentInvokingChatClient)
-        {
-            chatBuilder.UseAgentInvocation();
         }
 
         var agentChatClient = chatBuilder.Build();
