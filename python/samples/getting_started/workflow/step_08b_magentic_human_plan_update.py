@@ -18,6 +18,26 @@ from agent_framework_workflow import (
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
+"""
+Magentic workflow with human-in-the-loop plan review and update.
+
+This sample builds a Magentic workflow with two cooperating agents and enables
+plan review so a human can approve or revise the plan before execution:
+
+- researcher: ChatClientAgent backed by OpenAIChatClient (web/search-capable model)
+- coder: ChatClientAgent backed by OpenAIAssistantsClient with the Hosted Code Interpreter tool
+
+Key behaviors demonstrated:
+- with_plan_review(): requests a PlanReviewRequest before coordination begins
+- Event loop that waits for RequestInfoEvent[PlanReviewRequest], prints the plan, then
+    replies with PlanReviewReply (here we auto-approve, but you can edit/collect input)
+- Callbacks: on_agent_stream (incremental chunks), on_agent_response (final messages),
+    on_result (final answer), and on_exception
+
+Prereqs: configure your OpenAI credentials in the environment so the Chat/Assistants
+clients can run. You can swap clients/models as needed.
+"""
+
 
 async def main() -> None:
     researcher_agent = ChatClientAgent(
