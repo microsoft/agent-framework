@@ -15,7 +15,7 @@ public class Workflow
     /// <summary>
     /// A dictionary of executor providers, keyed by executor ID.
     /// </summary>
-    public Dictionary<string, ExecutorProvider<Executor>> ExecutorProviders { get; internal init; } = new();
+    internal Dictionary<string, ExecutorRegistration> Registrations { get; init; } = new();
 
     /// <summary>
     /// Gets the collection of edges grouped by their source node identifier.
@@ -26,7 +26,7 @@ public class Workflow
     /// Gets the collection of external request ports, keyed by their ID.
     /// </summary>
     /// <remarks>
-    /// Each port has a corresponding entry in the <see cref="ExecutorProviders"/> dictionary.
+    /// Each port has a corresponding entry in the <see cref="Registrations"/> dictionary.
     /// </remarks>
     public Dictionary<string, InputPort> Ports { get; internal init; } = new();
 
@@ -73,7 +73,7 @@ public class Workflow<T> : Workflow
 
         return new Workflow<T, TResult>(this.StartExecutorId, outputSource)
         {
-            ExecutorProviders = this.ExecutorProviders,
+            Registrations = this.Registrations,
             Edges = this.Edges,
             Ports = this.Ports
         };
@@ -95,6 +95,11 @@ public class Workflow<TInput, TResult> : Workflow<TInput>
     {
         this._output = Throw.IfNull(outputSource);
     }
+
+    /// <summary>
+    /// Gets the unique identifier of the output collector.
+    /// </summary>
+    public string OutputCollectorId => this._output.Id;
 
     /// <summary>
     /// The running (partial) output of the workflow, if any.

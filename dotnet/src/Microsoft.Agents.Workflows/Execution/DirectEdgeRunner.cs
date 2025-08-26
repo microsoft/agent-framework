@@ -10,13 +10,13 @@ internal class DirectEdgeRunner(IRunnerContext runContext, DirectEdgeData edgeDa
 {
     public IWorkflowContext WorkflowContext { get; } = runContext.Bind(edgeData.SinkId);
 
-    private async ValueTask<Executor> FindRouterAsync()
+    private async ValueTask<Executor> FindRouterAsync(IStepTracer? tracer)
     {
-        return await this.RunContext.EnsureExecutorAsync(this.EdgeData.SinkId)
+        return await this.RunContext.EnsureExecutorAsync(this.EdgeData.SinkId, tracer)
                                     .ConfigureAwait(false);
     }
 
-    public async ValueTask<IEnumerable<object?>> ChaseAsync(MessageEnvelope envelope)
+    public async ValueTask<IEnumerable<object?>> ChaseAsync(MessageEnvelope envelope, IStepTracer? tracer)
     {
         if (envelope.TargetId != null && this.EdgeData.SinkId != envelope.TargetId)
         {
@@ -29,9 +29,10 @@ internal class DirectEdgeRunner(IRunnerContext runContext, DirectEdgeData edgeDa
             return [];
         }
 
-        Executor target = await this.FindRouterAsync().ConfigureAwait(false);
+        Executor target = await this.FindRouterAsync(tracer).ConfigureAwait(false);
         if (target.CanHandle(envelope.MessageType))
         {
+            tracer?.TraceActivated(target.Id);
             return [await target.ExecuteAsync(message, envelope.MessageType, this.WorkflowContext).ConfigureAwait(false)];
         }
 
