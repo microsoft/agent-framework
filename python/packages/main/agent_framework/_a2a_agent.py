@@ -66,15 +66,15 @@ class A2AAgent(AgentBase):
         name: str | None = None,
         description: str | None = None,
         agent_card: AgentCard | None = None,
-        url: AnyUrl,
+        url: AnyUrl | None = None,
         executor: A2AClient | None = None,
     ) -> None:
-        self.name = name
-        self.description = description
+        super().__init__(name=name, description=description)
+
         self._client = executor or A2AClient(
             httpx_client=httpx.AsyncClient(),
             agent_card=agent_card,
-            url=str(url),
+            url=str(url) if url else None,
         )
 
     async def run(
