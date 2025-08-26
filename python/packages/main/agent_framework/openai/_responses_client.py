@@ -645,7 +645,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                             case "output_text":
                                 text_content = TextContent(
                                     text=message_content.text,
-                                    raw_representation=message_content,
+                                    raw_representation=message_content,  # type: ignore[reportUnknownArgumentType]
                                 )
                                 metadata.update(self._get_metadata_from_response(message_content))
                                 if message_content.annotations:
@@ -864,12 +864,13 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             # ResponseCustomToolCallInputDeltaEvent,
             # ResponseCustomToolCallInputDoneEvent,
             case "response.content_part.added":
-                match event.part.type:
+                event_part = event.part
+                match event_part.type:
                     case "output_text":
-                        contents.append(TextContent(text=event.part.text, raw_representation=event))
-                        metadata.update(self._get_metadata_from_response(event.part))
+                        contents.append(TextContent(text=event_part.text, raw_representation=event))
+                        metadata.update(self._get_metadata_from_response(event_part))
                     case "refusal":
-                        contents.append(TextContent(text=event.part.refusal, raw_representation=event))
+                        contents.append(TextContent(text=event_part.refusal, raw_representation=event))
             case "response.output_text.delta":
                 contents.append(TextContent(text=event.delta, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
@@ -881,7 +882,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     if usage:
                         contents.append(UsageContent(details=usage, raw_representation=event))
             case "response.output_item.added":
-                match event.item.type:
+                event_item = event.item
+                match event_item.type:
                     # types:
                     # ResponseOutputMessage,
                     # ResponseFileSearchToolCall,
@@ -897,43 +899,43 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     # McpApprovalRequest,
                     # ResponseCustomToolCall,
                     case "function_call":
-                        function_call_ids[event.output_index] = (event.item.call_id, event.item.name)
+                        function_call_ids[event.output_index] = (event_item.call_id, event_item.name)
                     case "mcp_approval_request":
                         contents.append(
                             FunctionApprovalRequestContent(
-                                id=event.item.id,
+                                id=event_item.id,
                                 function_call=FunctionCallContent(
-                                    call_id=event.item.id,
-                                    name=event.item.name,
-                                    arguments=event.item.arguments,
-                                    additional_properties={"server_label": event.item.server_label},
-                                    raw_representation=event.item,
+                                    call_id=event_item.id,
+                                    name=event_item.name,
+                                    arguments=event_item.arguments,
+                                    additional_properties={"server_label": event_item.server_label},
+                                    raw_representation=event_item,
                                 ),
                             )
                         )
                     case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
-                        if event.item.outputs:
-                            for code_output in event.item.outputs:
+                        if event_item.outputs:
+                            for code_output in event_item.outputs:
                                 if code_output.type == "logs":
-                                    contents.append(TextContent(text=code_output.logs, raw_representation=event.item))
+                                    contents.append(TextContent(text=code_output.logs, raw_representation=event_item))
                                 if code_output.type == "image":
                                     contents.append(
                                         UriContent(
                                             uri=code_output.url,
-                                            raw_representation=event.item,
+                                            raw_representation=event_item,
                                             # no more specific media type then this can be inferred
                                             media_type="image",
                                         )
                                     )
-                        elif event.item.code:
+                        elif event_item.code:
                             # fallback if no output was returned is the code:
-                            contents.append(TextContent(text=event.item.code, raw_representation=event.item))
+                            contents.append(TextContent(text=event_item.code, raw_representation=event_item))
                     case "reasoning":  # ResponseOutputReasoning
-                        if event.item.content:
-                            for index, reasoning_content in enumerate(event.item.content):
+                        if event_item.content:
+                            for index, reasoning_content in enumerate(event_item.content):
                                 additional_properties = None
-                                if event.item.summary and index < len(event.item.summary):
-                                    additional_properties = {"summary": event.item.summary[index]}
+                                if event_item.summary and index < len(event_item.summary):
+                                    additional_properties = {"summary": event_item.summary[index]}
                                 contents.append(
                                     TextReasoningContent(
                                         text=reasoning_content.text,

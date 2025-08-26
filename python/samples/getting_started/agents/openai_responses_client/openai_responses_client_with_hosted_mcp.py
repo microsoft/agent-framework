@@ -55,11 +55,11 @@ async def handle_approvals_with_thread_streaming(query: str, agent: "AIAgent", t
     """Here we let the thread deal with the previous responses, and we just rerun with the approval."""
     from agent_framework import ChatMessage
 
-    new_input: list[ChatMessage | str] = []
+    new_input: list[ChatMessage] = []
     new_input_added = True
     while new_input_added:
         new_input_added = False
-        new_input.append(query)
+        new_input.append(ChatMessage(role="user", text=query))
         async for update in agent.run_streaming(new_input, thread=thread, store=True):
             if update.user_input_requests:
                 for user_input_needed in update.user_input_requests:
