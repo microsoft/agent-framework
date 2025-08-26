@@ -25,8 +25,8 @@ class WorkflowContext(Generic[T_Out]):
         source_executor_ids: list[str],
         shared_state: SharedState,
         runner_context: RunnerContext,
-        trace_context: dict[str, str] | None = None,  # OpenTelemetry trace context
-        source_span_id: str | None = None,  # Source span ID for linking
+        trace_context: dict[str, str] | None = None,
+        source_span_id: str | None = None,
     ):
         """Initialize the executor context with the given workflow context.
 

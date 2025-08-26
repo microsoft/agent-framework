@@ -1,10 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from agent_framework._pydantic import AFBaseSettings
-from opentelemetry.trace import Link, SpanKind, get_tracer
+from opentelemetry.trace import Link, NoOpTracer, SpanKind, get_tracer
 from opentelemetry.trace.span import SpanContext
 
 if TYPE_CHECKING:
@@ -40,8 +39,8 @@ class WorkflowTracer:
     """
 
     def __init__(self) -> None:
-        self.tracer = get_tracer("agent_framework")
         self.settings = WorkflowDiagnosticSettings()
+        self.tracer = get_tracer("agent_framework") if self.settings.ENABLED else NoOpTracer()
 
     @property
     def enabled(self) -> bool:
@@ -49,9 +48,6 @@ class WorkflowTracer:
 
     def create_workflow_span(self, workflow: "Workflow") -> Any:
         """Create a workflow execution span."""
-        if not self.enabled:
-            return nullcontext()
-
         attributes = {
             "workflow.id": workflow.id,
             "workflow.definition": workflow.model_dump_json(),
@@ -72,9 +68,6 @@ class WorkflowTracer:
         Processing spans are created as children of the current workflow span and
         linked (not nested) to the source publishing span for causality tracking.
         """
-        if not self.enabled:
-            return nullcontext()
-
         # Create links to source spans for causality without nesting
         links = []
         if source_trace_context and source_span_id:
@@ -117,9 +110,6 @@ class WorkflowTracer:
         Sending spans are created as children of the current processing span
         to track message emission for distributed tracing.
         """
-        if not self.enabled:
-            return nullcontext()
-
         attributes: dict[str, str] = {
             "message.type": message_type,
         }

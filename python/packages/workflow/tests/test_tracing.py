@@ -108,20 +108,6 @@ async def test_workflow_tracer_disabled_by_default() -> None:
     tracer = WorkflowTracer()
     assert not tracer.enabled
 
-    # Create a mock workflow object
-    mock_workflow = cast(
-        Workflow,
-        type(
-            "MockWorkflow",
-            (),
-            {"id": "test-workflow", "model_dump_json": lambda self: '{"id": "test-workflow", "type": "mock"}'},
-        )(),
-    )
-
-    # Spans should return nullcontext when disabled
-    span = tracer.create_workflow_span(mock_workflow)
-    assert span.__class__.__name__ == "nullcontext"
-
 
 @pytest.mark.asyncio
 async def test_workflow_tracer_enabled(tracing_enabled: Any) -> None:
