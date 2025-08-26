@@ -13,9 +13,11 @@ async def suspend_resume_service_managed_thread() -> None:
 
     # Foundry Chat Client is used as an example here,
     # other chat clients can be used as well.
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
     async with (
         AzureCliCredential() as credential,
-        FoundryChatClient(async_ad_credential=credential).create_agent(
+        FoundryChatClient(async_credential=credential).create_agent(
             name="Joker", instructions="You are good at telling jokes."
         ) as agent,
     ):

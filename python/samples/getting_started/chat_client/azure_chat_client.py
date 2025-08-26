@@ -18,7 +18,9 @@ def get_weather(
 
 
 async def main() -> None:
-    client = AzureChatClient(ad_credential=AzureCliCredential())
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
+    client = AzureChatClient(credential=AzureCliCredential())
     message = "What's the weather in Amsterdam and in Paris?"
     stream = False
     print(f"User: {message}")

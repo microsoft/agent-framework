@@ -37,8 +37,10 @@ async def main() -> None:
     """Example showing how to use the HostedCodeInterpreterTool with Azure OpenAI Assistants."""
     print("=== Azure OpenAI Assistants Agent with Code Interpreter Example ===")
 
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
     async with ChatClientAgent(
-        chat_client=AzureAssistantsClient(ad_credential=AzureCliCredential()),
+        chat_client=AzureAssistantsClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
         tools=HostedCodeInterpreterTool(),
     ) as agent:

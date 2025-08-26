@@ -120,7 +120,7 @@ class FoundryChatClient(ChatClientBase):
         thread_id: str | None = None,
         project_endpoint: str | None = None,
         model_deployment_name: str | None = None,
-        async_ad_credential: AsyncTokenCredential | None = None,
+        async_credential: AsyncTokenCredential | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         **kwargs: Any,
@@ -137,7 +137,7 @@ class FoundryChatClient(ChatClientBase):
                 conversation_id property, when making a request.
             project_endpoint: The Azure AI Foundry project endpoint URL. Used if client is not provided.
             model_deployment_name: The model deployment name to use for agent creation.
-            async_ad_credential: Azure async credential to use for authentication.
+            async_credential: Azure async credential to use for authentication.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
             **kwargs: Additional keyword arguments passed to the parent class.
@@ -163,14 +163,14 @@ class FoundryChatClient(ChatClientBase):
                 raise ServiceInitializationError("Model deployment name is required for agent creation.")
 
             # Use provided credential
-            if not async_ad_credential:
+            if not async_credential:
                 raise ServiceInitializationError("Azure AD credential is required when client is not provided.")
-            client = AIProjectClient(endpoint=foundry_settings.project_endpoint, credential=async_ad_credential)
+            client = AIProjectClient(endpoint=foundry_settings.project_endpoint, credential=async_credential)
             should_close_client = True
 
         super().__init__(
             client=client,  # type: ignore[reportCallIssue]
-            credential=async_ad_credential,  # type: ignore[reportCallIssue]
+            credential=async_credential,  # type: ignore[reportCallIssue]
             agent_id=agent_id,  # type: ignore[reportCallIssue]
             thread_id=thread_id,  # type: ignore[reportCallIssue]
             agent_name=foundry_settings.agent_name,  # type: ignore[reportCallIssue]
