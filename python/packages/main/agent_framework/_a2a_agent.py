@@ -36,6 +36,7 @@ from ._types import (
     ChatMessage,
     ChatRole,
     DataContent,
+    ErrorContent,
     TextContent,
     UriContent,
 )
@@ -93,14 +94,28 @@ class A2AAgent(AgentBase):
             if isinstance(inner_response.result, A2AMessage):
                 chat_messages = [self._a2a_message_to_chat_message(inner_response.result)]
             else:
-                # TODO(peterychang): Handle this later
+                # TODO(peterychang): handle other response types
                 raise ValueError("Unhandled type")
             return AgentRunResponse(
                 messages=chat_messages,
                 response_id=str(inner_response.id) if isinstance(inner_response.id, int) else inner_response.id,
                 raw_representation=inner_response,
             )
-        raise ValueError(f"Unexpected response type: {type(a2a_response)}")
+        # error returned
+        error_content = ErrorContent(
+            message=inner_response.error.message,
+            error_code=str(inner_response.error.code) if inner_response.error.code else None,
+            raw_representation=inner_response,
+        )
+        chat_message = ChatMessage(
+            role="assistant",
+            contents=[error_content],
+        )
+        return AgentRunResponse(
+            messages=chat_message,
+            response_id=str(inner_response.id) if isinstance(inner_response.id, int) else inner_response.id,
+            raw_representation=inner_response,
+        )
 
     async def run_streaming(
         self,
@@ -119,14 +134,24 @@ class A2AAgent(AgentBase):
             inner_response = response.root
             if isinstance(inner_response, SendStreamingMessageSuccessResponse):
                 if isinstance(inner_response.result, A2AMessage):
-                    yield AgentRunResponseUpdate(
-                        contents=self._a2a_message_to_chat_message(inner_response.result).contents,
-                        response_id=str(inner_response.id) if isinstance(inner_response.id, int) else inner_response.id,
+                    contents = self._a2a_message_to_chat_message(inner_response.result).contents
+                else:
+                    # TODO(peterychang): handle other response types
+                    raise ValueError("Unhandled type")
+            else:
+                # error returned
+                contents: list[AIContents] = [
+                    ErrorContent(
+                        message=inner_response.error.message,
+                        error_code=str(inner_response.error.code) if inner_response.error.code else None,
                         raw_representation=inner_response,
                     )
-            else:
-                # TODO(peterychang): Handle this later
-                raise ValueError("Unhandled type: ", type(response))
+                ]
+            yield AgentRunResponseUpdate(
+                contents=contents,
+                response_id=str(inner_response.id) if isinstance(inner_response.id, int) else inner_response.id,
+                raw_representation=inner_response,
+            )
 
     def _normalize_messages(
         self,
