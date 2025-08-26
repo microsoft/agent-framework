@@ -52,8 +52,8 @@ internal static class SystemScope
         scopes.Set(Names.Activity, VariableScopeNames.System, RecordValue.Empty());
 
         scopes.Set(Names.LastMessage, VariableScopeNames.System, inputMessage.ToRecord());
-        scopes.Set(Names.LastMessageId, VariableScopeNames.System, FormulaType.String.NewBlank());
-        scopes.Set(Names.LastMessageText, VariableScopeNames.System, FormulaType.String.NewBlank());
+        Set(Names.LastMessageId, inputMessage.MessageId);
+        Set(Names.LastMessageText, inputMessage.Text);
 
         scopes.Set(
             Names.Conversation,
@@ -79,6 +79,18 @@ internal static class SystemScope
             RecordValue.NewRecordFromFields(
                 new NamedValue("Language", StringValue.New(CultureInfo.CurrentCulture.TwoLetterISOLanguageName))));
         scopes.Set(Names.UserLanguage, VariableScopeNames.System, StringValue.New(CultureInfo.CurrentCulture.TwoLetterISOLanguageName));
+
+        void Set(string key, string? value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                scopes.Set(key, VariableScopeNames.System, FormulaType.String.NewBlank());
+            }
+            else
+            {
+                scopes.Set(key, VariableScopeNames.System, FormulaValue.New(value));
+            }
+        }
     }
 
     public static FormulaValue GetConversationId(this DeclarativeWorkflowState state) =>

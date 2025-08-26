@@ -16,6 +16,11 @@ beginDialog:
                 agentid: "asst_oujtcQzC1TtrzC7mBpQogqMn"
             },
             {
+                name: "CoderAgent", 
+                description: "Able to write and execute Python code",
+                agentid: "asst_7QIO6YE66Tt7sNwNhQ7mOfvL"
+            },
+            {
                 name: "WebAgent", 
                 description: "Able to perform generic websearches",
                 agentid: "asst_Of5U92uEjhiB5CsaUDW5LIX6"
