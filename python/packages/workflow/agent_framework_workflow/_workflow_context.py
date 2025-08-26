@@ -61,7 +61,7 @@ class WorkflowContext(Generic[T_Out]):
                        If None, the message will be sent to all target executors.
         """
         # Create publishing span (inherits current trace context automatically)
-        with workflow_tracer.create_publishing_span(type(message).__name__, target_id) as span:
+        with workflow_tracer.create_sending_span(type(message).__name__, target_id) as span:
             # Create Message wrapper
             msg = Message(data=message, source_id=self._executor_id, target_id=target_id)
 

@@ -11,6 +11,12 @@ if TYPE_CHECKING:
     from ._workflow import Workflow
 
 
+# Span name constants
+_WORKFLOW_RUN_SPAN = "workflow.run"
+_EXECUTOR_PROCESS_SPAN = "executor.process"
+_MESSAGE_SEND_SPAN = "message.send"
+
+
 class WorkflowDiagnosticSettings(AFBaseSettings):
     """Settings for workflow tracing diagnostics."""
 
@@ -51,7 +57,7 @@ class WorkflowTracer:
             "workflow.definition": workflow.model_dump_json(),
         }
 
-        return self.tracer.start_as_current_span("workflow.run", kind=SpanKind.INTERNAL, attributes=attributes)
+        return self.tracer.start_as_current_span(_WORKFLOW_RUN_SPAN, kind=SpanKind.INTERNAL, attributes=attributes)
 
     def create_processing_span(
         self,
@@ -95,8 +101,8 @@ class WorkflowTracer:
                 pass
 
         return self.tracer.start_as_current_span(
-            "executor.process",
-            kind=SpanKind.CONSUMER,
+            _EXECUTOR_PROCESS_SPAN,
+            kind=SpanKind.INTERNAL,
             attributes={
                 "executor.id": executor_id,
                 "executor.type": executor_type,
@@ -105,10 +111,10 @@ class WorkflowTracer:
             links=links,
         )
 
-    def create_publishing_span(self, message_type: str, target_executor_id: str | None = None) -> Any:
-        """Create a message publishing span.
+    def create_sending_span(self, message_type: str, target_executor_id: str | None = None) -> Any:
+        """Create a message send span.
 
-        Publishing spans are created as children of the current processing span
+        Sending spans are created as children of the current processing span
         to track message emission for distributed tracing.
         """
         if not self.enabled:
@@ -121,7 +127,7 @@ class WorkflowTracer:
             attributes["message.destination_executor_id"] = target_executor_id
 
         return self.tracer.start_as_current_span(
-            "message.publish",
+            _MESSAGE_SEND_SPAN,
             kind=SpanKind.PRODUCER,
             attributes=attributes,
         )

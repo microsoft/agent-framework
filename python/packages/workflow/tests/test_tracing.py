@@ -188,7 +188,7 @@ async def test_executor_processing_span_creation(tracing_enabled: Any, span_expo
 
     # Find the processing span
     processing_span = next(s for s in spans if s.name == "executor.process")
-    assert processing_span.kind == trace.SpanKind.CONSUMER
+    assert processing_span.kind == trace.SpanKind.INTERNAL
     assert processing_span.attributes is not None
     assert processing_span.attributes.get("executor.id") == "executor-1"
     assert processing_span.attributes.get("executor.type") == "MockExecutor"
@@ -196,8 +196,8 @@ async def test_executor_processing_span_creation(tracing_enabled: Any, span_expo
 
 
 @pytest.mark.asyncio
-async def test_message_publishing_span_creation(tracing_enabled: Any, span_exporter: InMemorySpanExporter) -> None:
-    """Test that message publishing spans are created correctly."""
+async def test_message_sending_span_creation(tracing_enabled: Any, span_exporter: InMemorySpanExporter) -> None:
+    """Test that message.sending spans are created correctly."""
     # Create a mock workflow object
     mock_workflow = cast(
         Workflow,
@@ -211,7 +211,7 @@ async def test_message_publishing_span_creation(tracing_enabled: Any, span_expor
     with (
         workflow_tracer.create_workflow_span(mock_workflow),
         workflow_tracer.create_processing_span("executor-1", "MockExecutor", "str"),
-        workflow_tracer.create_publishing_span("str", "target-executor") as span,
+        workflow_tracer.create_sending_span("str", "target-executor") as span,
     ):
         assert span is not None
         assert span.is_recording()
@@ -219,12 +219,12 @@ async def test_message_publishing_span_creation(tracing_enabled: Any, span_expor
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 3
 
-    # Find the publishing span
-    publishing_span = next(s for s in spans if s.name == "message.publish")
-    assert publishing_span.kind == trace.SpanKind.PRODUCER
-    assert publishing_span.attributes is not None
-    assert publishing_span.attributes.get("message.type") == "str"
-    assert publishing_span.attributes.get("message.destination_executor_id") == "target-executor"
+    # Find the sending span
+    sending_span = next(s for s in spans if s.name == "message.send")
+    assert sending_span.kind == trace.SpanKind.PRODUCER
+    assert sending_span.attributes is not None
+    assert sending_span.attributes.get("message.type") == "str"
+    assert sending_span.attributes.get("message.destination_executor_id") == "target-executor"
 
 
 @pytest.mark.asyncio
@@ -243,7 +243,7 @@ async def test_trace_context_propagation_in_messages(tracing_enabled: Any, span_
         source_span_id="1234567890123456",
     )
 
-    # Send a message (this should create a publishing span and propagate trace context)
+    # Send a message (this should create a sending span and propagate trace context)
     await workflow_ctx.send_message("test message")
 
     # Check that message was created with trace context
@@ -282,12 +282,12 @@ async def test_executor_trace_context_handling(tracing_enabled: Any, span_export
     # Check that spans were created
     spans = span_exporter.get_finished_spans()
 
-    # Should have processing span and publishing span
+    # Should have processing span and sending span
     processing_spans = [s for s in spans if s.name == "executor.process"]
-    publishing_spans = [s for s in spans if s.name == "message.publish"]
+    sending_spans = [s for s in spans if s.name == "message.send"]
 
     assert len(processing_spans) >= 1
-    assert len(publishing_spans) >= 1
+    assert len(sending_spans) >= 1
 
     # Verify processing span attributes
     processing_span = processing_spans[0]
@@ -321,14 +321,14 @@ async def test_end_to_end_workflow_tracing(tracing_enabled: Any, span_exporter: 
     # Check spans
     spans = span_exporter.get_finished_spans()
 
-    # Should have workflow span, processing spans, and publishing spans
+    # Should have workflow span, processing spans, and sending spans
     workflow_spans = [s for s in spans if s.name == "workflow.run"]
     processing_spans = [s for s in spans if s.name == "executor.process"]
-    publishing_spans = [s for s in spans if s.name == "message.publish"]
+    sending_spans = [s for s in spans if s.name == "message.send"]
 
     assert len(workflow_spans) == 1
     assert len(processing_spans) >= 2  # At least one for each executor
-    assert len(publishing_spans) >= 1  # At least one for message publishing
+    assert len(sending_spans) >= 1  # At least one for message.sending
 
     # Verify workflow span attributes
     workflow_span = workflow_spans[0]
@@ -338,10 +338,10 @@ async def test_end_to_end_workflow_tracing(tracing_enabled: Any, span_exporter: 
 
 
 @pytest.mark.asyncio
-async def test_span_linking_between_message_publishing_and_processing(
+async def test_span_linking_between_message_sending_and_processing(
     tracing_enabled: Any, span_exporter: InMemorySpanExporter
 ) -> None:
-    """Test that spans are properly linked between message publishing and processing."""
+    """Test that spans are properly linked between message.sending and processing."""
     executor1 = MockExecutor("executor1")
     executor2 = SecondExecutor("executor2")
 
@@ -354,12 +354,12 @@ async def test_span_linking_between_message_publishing_and_processing(
     spans = span_exporter.get_finished_spans()
 
     # Find publishing and processing spans
-    publishing_spans = [s for s in spans if s.name == "message.publish"]
+    sending_spans = [s for s in spans if s.name == "message.send"]
     processing_spans = [s for s in spans if s.name == "executor.process"]
 
-    # There should be at least one publishing span that has a corresponding processing span
-    # The processing span should have links to the publishing span
-    assert len(publishing_spans) >= 1
+    # There should be at least one sending span that has a corresponding processing span
+    # The processing span should have links to the sending span
+    assert len(sending_spans) >= 1
     assert len(processing_spans) >= 2
 
     # Check if any processing spans have links (this verifies the linking mechanism)
@@ -482,10 +482,10 @@ async def test_span_attributes_completeness(tracing_enabled: Any, span_exporter:
         workflow_span.set_attribute("workflow.status", "running")
         workflow_span.set_attribute("workflow.max_iterations", 100)
 
-        # Test processing span and publishing span
+        # Test processing span and sending span
         with (
             workflow_tracer.create_processing_span("executor-456", "TestExecutor", "TestMessage") as processing_span,
-            workflow_tracer.create_publishing_span("ResponseMessage", "target-789"),
+            workflow_tracer.create_sending_span("ResponseMessage", "target-789"),
         ):
             pass
 
@@ -506,11 +506,11 @@ async def test_span_attributes_completeness(tracing_enabled: Any, span_exporter:
     assert processing_span.attributes.get("executor.type") == "TestExecutor"
     assert processing_span.attributes.get("message.type") == "TestMessage"
 
-    # Check publishing span
-    publishing_span = next(s for s in spans if s.name == "message.publish")
-    assert publishing_span.attributes is not None
-    assert publishing_span.attributes.get("message.type") == "ResponseMessage"
-    assert publishing_span.attributes.get("message.destination_executor_id") == "target-789"
+    # Check sending span
+    sending_span = next(s for s in spans if s.name == "message.send")
+    assert sending_span.attributes is not None
+    assert sending_span.attributes.get("message.type") == "ResponseMessage"
+    assert sending_span.attributes.get("message.destination_executor_id") == "target-789"
 
 
 @pytest.mark.asyncio
