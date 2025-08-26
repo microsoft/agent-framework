@@ -77,6 +77,11 @@ class Edge(AFBaseModel):
         return self._condition(data)
 
 
+def _default_edge_list() -> list[Edge]:
+    """Get the default list of edges for the group."""
+    return []
+
+
 class EdgeGroup(AFBaseModel):
     """Represents a group of edges that share some common properties and can be triggered together."""
 
@@ -84,7 +89,7 @@ class EdgeGroup(AFBaseModel):
         default_factory=lambda: f"EdgeGroup/{uuid.uuid4()}", description="Unique identifier for the edge group"
     )
     type: str = Field(description="The type of edge group, corresponding to the class name")
-    edges: list[Edge] = Field(default_factory=list[Edge], description="List of edges in this group")
+    edges: list[Edge] = Field(default_factory=_default_edge_list, description="List of edges in this group")
 
     def __init__(self, **kwargs: Any) -> None:
         """Initialize the edge group."""
@@ -263,6 +268,11 @@ class SwitchCaseEdgeGroupDefault(AFBaseModel):
     type: str = Field(default="Default", description="The type of the case")
 
 
+def _default_case_list() -> list[SwitchCaseEdgeGroupCase | SwitchCaseEdgeGroupDefault]:
+    """Get the default list of cases for the group."""
+    return []
+
+
 class SwitchCaseEdgeGroup(FanOutEdgeGroup):
     """Represents a group of edges that assemble a conditional routing pattern.
 
@@ -287,7 +297,7 @@ class SwitchCaseEdgeGroup(FanOutEdgeGroup):
     """
 
     cases: list[SwitchCaseEdgeGroupCase | SwitchCaseEdgeGroupDefault] = Field(
-        default_factory=list[SwitchCaseEdgeGroupCase | SwitchCaseEdgeGroupDefault],
+        default_factory=_default_case_list,
         description="List of conditional cases for this switch-case group",
     )
 
