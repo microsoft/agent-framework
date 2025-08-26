@@ -4,7 +4,7 @@ import asyncio
 
 from agent_framework.foundry import FoundryChatClient
 from agent_framework.openai import OpenAIChatClient
-from azure.identity.aio import DefaultAzureCredential
+from azure.identity.aio import AzureCliCredential
 
 
 async def suspend_resume_service_managed_thread() -> None:
@@ -13,9 +13,11 @@ async def suspend_resume_service_managed_thread() -> None:
 
     # Foundry Chat Client is used as an example here,
     # other chat clients can be used as well.
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
     async with (
-        DefaultAzureCredential() as credential,
-        FoundryChatClient(async_ad_credential=credential).create_agent(
+        AzureCliCredential() as credential,
+        FoundryChatClient(async_credential=credential).create_agent(
             name="Joker", instructions="You are good at telling jokes."
         ) as agent,
     ):

@@ -8,7 +8,7 @@ from agent_framework import use_tool_calling
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai._responses_client import OpenAIResponsesClientBase
 from agent_framework.telemetry import use_telemetry
-from azure.identity import ChainedTokenCredential
+from azure.core.credentials import TokenCredential
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from pydantic import SecretStr, ValidationError
 from pydantic.networks import AnyUrl
@@ -36,7 +36,7 @@ class AzureResponsesClient(AzureOpenAIConfigBase, OpenAIResponsesClientBase):
         ad_token: str | None = None,
         ad_token_provider: AsyncAzureADTokenProvider | None = None,
         token_endpoint: str | None = None,
-        ad_credential: ChainedTokenCredential | None = None,
+        credential: TokenCredential | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | None = None,
         env_file_path: str | None = None,
@@ -59,7 +59,7 @@ class AzureResponsesClient(AzureOpenAIConfigBase, OpenAIResponsesClientBase):
             ad_token: The Azure Active Directory token. (Optional)
             ad_token_provider: The Azure Active Directory token provider. (Optional)
             token_endpoint: The token endpoint to request an Azure token. (Optional)
-            ad_credential: The Azure Active Directory credential. (Optional)
+            credential: The Azure credential for authentication. (Optional)
             default_headers: The default headers mapping of string keys to
                 string values for HTTP requests. (Optional)
             async_client: An existing client to use. (Optional)
@@ -107,7 +107,7 @@ class AzureResponsesClient(AzureOpenAIConfigBase, OpenAIResponsesClientBase):
             ad_token=ad_token,
             ad_token_provider=ad_token_provider,
             token_endpoint=azure_openai_settings.token_endpoint,
-            ad_credential=ad_credential,
+            credential=credential,
             default_headers=default_headers,
             client=async_client,
             instruction_role=instruction_role,

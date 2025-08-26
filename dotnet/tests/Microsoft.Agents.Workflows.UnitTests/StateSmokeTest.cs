@@ -75,7 +75,7 @@ public class StateSmokeTest
         Assert.Null(await manager.ReadStateAsync<object>(sharedScope1, "key2"));
 
         // Publish the write
-        await manager.PublishUpdatesAsync();
+        await manager.PublishUpdatesAsync(tracer: null);
 
         // Now all the executors should be able to see the new state
         Assert.NotNull(await manager.ReadStateAsync<object>(sharedScope1, Key));
@@ -103,6 +103,6 @@ public class StateSmokeTest
         Assert.Equal(Value2, await manager.ReadStateAsync<string>(sharedScope2, Key));
 
         // Try to publish the updates
-        await Assert.ThrowsAsync<InvalidOperationException>(() => manager.PublishUpdatesAsync().AsTask());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => manager.PublishUpdatesAsync(tracer: null).AsTask());
     }
 }

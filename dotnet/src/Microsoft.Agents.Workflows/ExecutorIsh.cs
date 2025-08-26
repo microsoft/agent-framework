@@ -103,10 +103,27 @@ public sealed class ExecutorIsh :
     };
 
     /// <summary>
-    /// Gets an <see cref="ExecutorProvider{T}"/> that can be used to obtain an <see cref="Executor"/> instance
+    /// Gets the registration details for the current executor.
+    /// </summary>
+    /// <remarks>The returned registration depends on the type of the executor. If the executor is unbound, an
+    /// <see cref="InvalidOperationException"/> is thrown. For other executor types, the registration  includes the
+    /// appropriate ID, type, and provider based on the executor's configuration.</remarks>
+    internal ExecutorRegistration Registration => new(this.Id, this.RuntimeType, this.ExecutorProvider);
+
+    private System.Type RuntimeType => this.ExecutorType switch
+    {
+        Type.Unbound => throw new InvalidOperationException($"ExecutorIsh with ID '{this.Id}' is unbound."),
+        Type.Executor => this._executorValue!.GetType(),
+        Type.InputPort => typeof(RequestInfoExecutor),
+        Type.Agent => typeof(AIAgentHostExecutor),
+        _ => throw new InvalidOperationException($"Unknown ExecutorIsh type: {this.ExecutorType}")
+    };
+
+    /// <summary>
+    /// Gets an <see cref="Func{Executor}"/> that can be used to obtain an <see cref="Executor"/> instance
     /// corresponding to this <see cref="ExecutorIsh"/>.
     /// </summary>
-    public ExecutorProvider<Executor> ExecutorProvider => this.ExecutorType switch
+    private Func<Executor> ExecutorProvider => this.ExecutorType switch
     {
         Type.Unbound => throw new InvalidOperationException($"Executor with ID '{this.Id}' is unbound."),
         Type.Executor => () => this._executorValue!,

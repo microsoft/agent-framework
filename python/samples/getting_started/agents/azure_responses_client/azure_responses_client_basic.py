@@ -5,7 +5,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework.azure import AzureResponsesClient
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 from pydantic import Field
 
 
@@ -21,7 +21,9 @@ async def non_streaming_example() -> None:
     """Example of non-streaming response (get the complete result at once)."""
     print("=== Non-streaming Response Example ===")
 
-    agent = AzureResponsesClient(ad_credential=DefaultAzureCredential()).create_agent(
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
+    agent = AzureResponsesClient(credential=AzureCliCredential()).create_agent(
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -36,7 +38,9 @@ async def streaming_example() -> None:
     """Example of streaming response (get results as they are generated)."""
     print("=== Streaming Response Example ===")
 
-    agent = AzureResponsesClient(ad_credential=DefaultAzureCredential()).create_agent(
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
+    agent = AzureResponsesClient(credential=AzureCliCredential()).create_agent(
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
