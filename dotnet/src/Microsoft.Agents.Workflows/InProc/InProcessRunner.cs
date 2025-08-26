@@ -214,6 +214,8 @@ internal class InProcessRunner<TInput> : ISuperStepRunner, ICheckpointingRunner 
     {
         if (this.CheckpointManager == null)
         {
+            // Always publish the state updates, even in the absence of a CheckpointManager.
+            await this.RunContext.StateManager.PublishUpdatesAsync(this.StepTracer).ConfigureAwait(false);
             return;
         }
 
