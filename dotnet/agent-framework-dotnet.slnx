@@ -8,23 +8,23 @@
     <Project Path="demos/AgentOpenTelemetry/AgentOpenTelemetry.csproj" />
     <Project Path="demos/MinimalConsole/MinimalConsole.csproj" />
   </Folder>
-  <Folder Name="/Demos/SemanticKernelMigration/" />
-  <Folder Name="/Demos/SemanticKernelMigration/Azure AI Foundry/">
-    <Project Path="demos/SemanticKernelMigration/Azure AI Foundry/Step01_Basics/Step01_Basics.csproj" />
-    <Project Path="demos/SemanticKernelMigration/Azure AI Foundry/Step02_DependencyInjection/Step02_DependencyInjection.csproj" />
-    <Project Path="demos/SemanticKernelMigration/Azure AI Foundry/Step03_ToolCall/Step03_ToolCall.csproj" />
-    <Project Path="demos/SemanticKernelMigration/Azure AI Foundry/Step04_CodeInterpreter/Step04_CodeInterpreter.csproj" />
+  <Folder Name="/Samples/SemanticKernelMigration/" />
+  <Folder Name="/Samples/SemanticKernelMigration/Azure AI Foundry/">
+    <Project Path="samples/SemanticKernelMigration/Azure AI Foundry/Step01_Basics/Step01_Basics.csproj" />
+    <Project Path="samples/SemanticKernelMigration/Azure AI Foundry/Step02_DependencyInjection/Step02_DependencyInjection.csproj" />
+    <Project Path="samples/SemanticKernelMigration/Azure AI Foundry/Step03_ToolCall/Step03_ToolCall.csproj" />
+    <Project Path="samples/SemanticKernelMigration/Azure AI Foundry/Step04_CodeInterpreter/Step04_CodeInterpreter.csproj" />
   </Folder>
-  <Folder Name="/Demos/SemanticKernelMigration/OpenAI Assistants/">
-    <Project Path="demos/SemanticKernelMigration/OpenAI Assistant/Step01_Basics/Step01_Basics.csproj" />
-    <Project Path="demos/SemanticKernelMigration/OpenAI Assistant/Step02_DependencyInjection/Step02_DependencyInjection.csproj" />
-    <Project Path="demos/SemanticKernelMigration/OpenAI Assistant/Step03_ToolCall/Step03_ToolCall.csproj" />
-    <Project Path="demos/SemanticKernelMigration/OpenAI Assistant/Step04_CodeInterpreter/Step04_CodeInterpreter.csproj" />
+  <Folder Name="/Samples/SemanticKernelMigration/OpenAI Assistants/">
+    <Project Path="samples/SemanticKernelMigration/OpenAI Assistant/Step01_Basics/Step01_Basics.csproj" />
+    <Project Path="samples/SemanticKernelMigration/OpenAI Assistant/Step02_DependencyInjection/Step02_DependencyInjection.csproj" />
+    <Project Path="samples/SemanticKernelMigration/OpenAI Assistant/Step03_ToolCall/Step03_ToolCall.csproj" />
+    <Project Path="samples/SemanticKernelMigration/OpenAI Assistant/Step04_CodeInterpreter/Step04_CodeInterpreter.csproj" />
   </Folder>
-  <Folder Name="/Demos/SemanticKernelMigration/OpenAI/">
-    <Project Path="demos/SemanticKernelMigration/OpenAI/Step01_Basics/Step01_Basics.csproj" />
-    <Project Path="demos/SemanticKernelMigration/OpenAI/Step02_DependencyInjection/Step02_DependencyInjection.csproj" />
-    <Project Path="demos/SemanticKernelMigration/OpenAI/Step03_ToolCall/Step03_ToolCall.csproj" />
+  <Folder Name="/Samples/SemanticKernelMigration/OpenAI/">
+    <Project Path="samples/SemanticKernelMigration/OpenAI/Step01_Basics/Step01_Basics.csproj" />
+    <Project Path="samples/SemanticKernelMigration/OpenAI/Step02_DependencyInjection/Step02_DependencyInjection.csproj" />
+    <Project Path="samples/SemanticKernelMigration/OpenAI/Step03_ToolCall/Step03_ToolCall.csproj" />
   </Folder>
   <Folder Name="/Samples/">
     <File Path="samples/README.md" />
