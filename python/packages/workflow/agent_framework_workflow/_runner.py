@@ -185,8 +185,8 @@ class Runner:
                                         [message.source_id],
                                         self._shared_state,
                                         self._ctx,
-                                        trace_context=message.trace_context,
-                                        source_span_id=message.source_span_id,
+                                        trace_contexts=[message.trace_context] if message.trace_context else None,
+                                        source_span_ids=[message.source_span_id] if message.source_span_id else None,
                                     )
                                     await executor.execute(sub_request, workflow_ctx)
                                     interceptor_found = True
@@ -206,8 +206,8 @@ class Runner:
                                 [message.source_id],
                                 self._shared_state,
                                 self._ctx,
-                                trace_context=message.trace_context,
-                                source_span_id=message.source_span_id,
+                                trace_contexts=[message.trace_context] if message.trace_context else None,
+                                source_span_ids=[message.source_span_id] if message.source_span_id else None,
                             )
                             logger.info(
                                 f"Sending sub-workflow request of type '{sub_request.data.__class__.__name__}' "

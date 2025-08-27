@@ -241,8 +241,8 @@ class Workflow(AFBaseModel):
                     [self.__class__.__name__],
                     self._shared_state,
                     self._runner.context,
-                    trace_context=None,  # No parent trace context for workflow start
-                    source_span_id=None,  # No source span for workflow start
+                    trace_contexts=None,  # No parent trace context for workflow start
+                    source_span_ids=None,  # No source span for workflow start
                 ),
             )
 
@@ -304,8 +304,8 @@ class Workflow(AFBaseModel):
                                 [self.__class__.__name__],
                                 self._shared_state,
                                 self._runner.context,
-                                trace_context=None,  # No parent trace context for new workflow span
-                                source_span_id=None,  # No source span for response handling
+                                trace_contexts=None,  # No parent trace context for new workflow span
+                                source_span_ids=None,  # No source span for response handling
                             ),
                         )
 
@@ -341,8 +341,8 @@ class Workflow(AFBaseModel):
                         [self.__class__.__name__],
                         self._shared_state,
                         self._runner.context,
-                        trace_context=None,  # No parent trace context for new workflow span
-                        source_span_id=None,  # No source span for response handling
+                        trace_contexts=None,  # No parent trace context for new workflow span
+                        source_span_ids=None,  # No source span for response handling
                     ),
                 )
 
@@ -529,8 +529,8 @@ class Workflow(AFBaseModel):
                         data=msg_data.get("data"),
                         source_id=source_id,
                         target_id=target_id,
-                        trace_context=msg_data.get("trace_context"),
-                        source_span_id=msg_data.get("source_span_id"),
+                        trace_contexts=msg_data.get("trace_contexts"),
+                        source_span_ids=msg_data.get("source_span_ids"),
                     )
                 )
 

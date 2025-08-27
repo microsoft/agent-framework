@@ -102,6 +102,46 @@ class SecondExecutor(Executor):
         return self._processed_messages
 
 
+class ProcessingExecutor(Executor):
+    """Executor that processes and forwards messages with a custom prefix."""
+
+    def __init__(self, id: str, prefix: str = "processed") -> None:
+        super().__init__(id=id)
+        # Use private field to avoid Pydantic validation
+        self._processed_messages: list[str] = []
+        self._prefix = prefix
+
+    @handler
+    async def handle_message(self, message: str, ctx: WorkflowContext[str]) -> None:
+        """Handle string messages and send them forward with prefix."""
+        self._processed_messages.append(message)
+        await ctx.send_message(f"{self._prefix}: {message}")
+
+    @property
+    def processed_messages(self) -> list[str]:
+        return self._processed_messages
+
+
+class FanInAggregator(Executor):
+    """Fan-in aggregator that expects a list of inputs."""
+
+    def __init__(self, id: str = "aggregator") -> None:
+        super().__init__(id=id)
+        # Use private field to avoid Pydantic validation
+        self._processed_messages: list[Any] = []
+
+    @handler
+    async def handle_aggregated_data(self, messages: list[str], ctx: WorkflowContext[None]) -> None:
+        # Process aggregated messages from fan-in
+        aggregated = f"aggregated: {', '.join(messages)}"
+        self._processed_messages.append(aggregated)
+
+    @property
+    def processed_messages(self) -> list[Any]:
+        """Access to processed messages for testing."""
+        return self._processed_messages
+
+
 @pytest.mark.asyncio
 async def test_workflow_tracer_configuration() -> None:
     """Test that workflow tracer can be enabled and disabled."""
@@ -201,8 +241,8 @@ async def test_trace_context_handling(tracing_enabled: Any, span_exporter: InMem
         ["source"],
         shared_state,
         ctx,
-        trace_context={"traceparent": "00-12345678901234567890123456789012-1234567890123456-01"},
-        source_span_id="1234567890123456",
+        trace_contexts=[{"traceparent": "00-12345678901234567890123456789012-1234567890123456-01"}],
+        source_span_ids=["1234567890123456"],
     )
 
     # Send a message (this should create a sending span and propagate trace context)
@@ -264,13 +304,21 @@ async def test_trace_context_disabled_when_tracing_disabled() -> None:
 
 @pytest.mark.asyncio
 async def test_end_to_end_workflow_tracing(tracing_enabled: Any, span_exporter: InMemorySpanExporter) -> None:
-    """Test end-to-end tracing including workflow build, execution, and span linking."""
-    # Create executors
+    """Test end-to-end tracing including workflow build, execution, and span linking with fan-in edges."""
+    # Create executors for fan-in scenario
     executor1 = MockExecutor("executor1")
-    executor2 = SecondExecutor("executor2")
+    executor2 = ProcessingExecutor("executor2", "second")
+    executor3 = ProcessingExecutor("executor3", "third")
+    aggregator = FanInAggregator("aggregator")
 
-    # Create workflow (this should create a build span)
-    workflow = WorkflowBuilder().set_start_executor(executor1).add_edge(executor1, executor2).build()
+    # Create workflow with fan-in: executor1 -> [executor2, executor3] -> aggregator
+    workflow = (
+        WorkflowBuilder()
+        .set_start_executor(executor1)
+        .add_fan_out_edges(executor1, [executor2, executor3])
+        .add_fan_in_edges([executor2, executor3], aggregator)
+        .build()
+    )
 
     # Verify build span was created
     build_spans = [s for s in span_exporter.get_finished_spans() if s.name == "workflow.build"]
@@ -303,6 +351,13 @@ async def test_end_to_end_workflow_tracing(tracing_enabled: Any, span_exporter: 
     assert executor1.processed_messages[0] == "test input"
     assert len(executor2.processed_messages) == 1
     assert executor2.processed_messages[0] == "processed: test input"
+    assert len(executor3.processed_messages) == 1
+    assert executor3.processed_messages[0] == "processed: test input"  # executor3 receives from executor1 via fan-out
+    assert len(aggregator.processed_messages) == 1
+    # The aggregator should receive both processed messages from executor2 and executor3
+    aggregated_msg = aggregator.processed_messages[0]
+    assert "second: processed: test input" in aggregated_msg
+    assert "third: processed: test input" in aggregated_msg
 
     # Check run spans (build spans should not be present after clear)
     spans = span_exporter.get_finished_spans()
@@ -314,8 +369,8 @@ async def test_end_to_end_workflow_tracing(tracing_enabled: Any, span_exporter: 
     build_spans_after_run = [s for s in spans if s.name == "workflow.build"]
 
     assert len(workflow_spans) == 1
-    assert len(processing_spans) >= 2  # At least one for each executor
-    assert len(sending_spans) >= 1  # At least one for message.sending
+    assert len(processing_spans) >= 4  # executor1, executor2, executor3, aggregator
+    assert len(sending_spans) >= 3  # Messages sent between executors
     assert len(build_spans_after_run) == 0  # No build spans should be present after clear
 
     # Verify workflow span events
@@ -325,9 +380,51 @@ async def test_end_to_end_workflow_tracing(tracing_enabled: Any, span_exporter: 
     assert "workflow.started" in event_names
     assert "workflow.completed" in event_names
 
-    # Test span linking infrastructure (spans should exist for linking even if links aren't always present)
-    assert len(sending_spans) >= 1
-    assert len(processing_spans) >= 2
+    # Test fan-in span linking: find the aggregator's processing span
+    aggregator_spans = [s for s in processing_spans if s.attributes and s.attributes.get("executor.id") == "aggregator"]
+    assert len(aggregator_spans) == 1
+
+    aggregator_span = aggregator_spans[0]
+    # The aggregator span should have links to the source spans (from executor2 and executor3)
+    # This tests that FanInEdgeRunner properly handles multiple trace contexts and span IDs
+    assert aggregator_span.links is not None
+
+    # Find the sending spans from executor2 and executor3 by checking parent relationships
+    executor2_processing_spans = [
+        s for s in processing_spans if s.attributes and s.attributes.get("executor.id") == "executor2"
+    ]
+    executor3_processing_spans = [
+        s for s in processing_spans if s.attributes and s.attributes.get("executor.id") == "executor3"
+    ]
+
+    # Get span IDs from processing spans
+    executor2_processing_span_ids = {format(s.context.span_id, "016x") for s in executor2_processing_spans if s.context}
+    executor3_processing_span_ids = {format(s.context.span_id, "016x") for s in executor3_processing_spans if s.context}
+
+    executor2_sending_spans = [
+        s for s in sending_spans if s.parent and format(s.parent.span_id, "016x") in executor2_processing_span_ids
+    ]
+    executor3_sending_spans = [
+        s for s in sending_spans if s.parent and format(s.parent.span_id, "016x") in executor3_processing_span_ids
+    ]
+
+    # Verify that we have sending spans from both executors
+    assert len(executor2_sending_spans) >= 1, "Should have at least one sending span from executor2"
+    assert len(executor3_sending_spans) >= 1, "Should have at least one sending span from executor3"
+
+    # Verify that the aggregator span links point to the correct source spans
+    linked_span_ids = {link.context.span_id for link in aggregator_span.links}
+
+    # Should have links from both executor2 and executor3's sending spans
+    executor2_span_ids = {s.context.span_id for s in executor2_sending_spans if s.context}
+    executor3_span_ids = {s.context.span_id for s in executor3_sending_spans if s.context}
+
+    # At least one span from each executor should be linked
+    assert bool(linked_span_ids & executor2_span_ids), "Aggregator should link to executor2's sending span"
+    assert bool(linked_span_ids & executor3_span_ids), "Aggregator should link to executor3's sending span"
+
+    # Should have at least 2 links (one from each source executor)
+    assert len(aggregator_span.links) >= 2, f"Expected at least 2 links, got {len(aggregator_span.links)}"
 
 
 @pytest.mark.asyncio
@@ -376,8 +473,8 @@ async def test_message_trace_context_serialization() -> None:
         data="test",
         source_id="source",
         target_id="target",
-        trace_context={"traceparent": "00-trace-span-01"},
-        source_span_id="span123",
+        trace_contexts=[{"traceparent": "00-trace-span-01"}],
+        source_span_ids=["span123"],
     )
 
     await ctx.send_message(message)
@@ -387,16 +484,18 @@ async def test_message_trace_context_serialization() -> None:
 
     # Check serialized message includes trace context
     serialized_msg = state["messages"]["source"][0]
-    assert serialized_msg["trace_context"] == {"traceparent": "00-trace-span-01"}
-    assert serialized_msg["source_span_id"] == "span123"
+    assert serialized_msg["trace_contexts"] == [{"traceparent": "00-trace-span-01"}]
+    assert serialized_msg["source_span_ids"] == ["span123"]
 
     # Test deserialization
     await ctx.set_checkpoint_state(state)
     restored_messages = await ctx.drain_messages()
 
     restored_msg = list(restored_messages.values())[0][0]
-    assert restored_msg.trace_context == {"traceparent": "00-trace-span-01"}
-    assert restored_msg.source_span_id == "span123"
+    assert restored_msg.trace_context == {"traceparent": "00-trace-span-01"}  # Test backward compatibility
+    assert restored_msg.source_span_id == "span123"  # Test backward compatibility
+    assert restored_msg.trace_contexts == [{"traceparent": "00-trace-span-01"}]  # Test new format
+    assert restored_msg.source_span_ids == ["span123"]  # Test new format
 
 
 @pytest.mark.asyncio

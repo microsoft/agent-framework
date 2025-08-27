@@ -57,14 +57,24 @@ class EdgeRunner(ABC):
 
         target_executor = self._executors[target_id]
 
-        # Create WorkflowContext with trace context from message
+        # Handle both old single trace context format and new multiple trace contexts format
+        trace_contexts = getattr(message, "trace_contexts", None)
+        source_span_ids = getattr(message, "source_span_ids", None)
+
+        # Backwards compatibility: if old format is used, convert to new format
+        if trace_contexts is None and hasattr(message, "trace_context") and message.trace_context:
+            trace_contexts = [message.trace_context]
+        if source_span_ids is None and hasattr(message, "source_span_id") and message.source_span_id:
+            source_span_ids = [message.source_span_id]
+
+        # Create WorkflowContext with trace contexts from message
         workflow_context: WorkflowContext[Any] = WorkflowContext(
             target_id,
             [source_id],
             shared_state,
             ctx,
-            trace_context=message.trace_context,  # Pass trace context to WorkflowContext
-            source_span_id=message.source_span_id,  # Pass source span ID for linking
+            trace_contexts=trace_contexts,  # Pass trace contexts to WorkflowContext
+            source_span_ids=source_span_ids,  # Pass source span IDs for linking
         )
 
         # Execute with trace context in WorkflowContext
@@ -169,14 +179,17 @@ class FanInEdgeRunner(EdgeRunner):
             self._buffer.clear()
             # Send aggregated data to target
             aggregated_data = [msg.data for msg in messages_to_send]
+
+            # Collect all trace contexts and source span IDs for fan-in linking
+            trace_contexts = [msg.trace_context for msg in messages_to_send if msg.trace_context]
+            source_span_ids = [msg.source_span_id for msg in messages_to_send if msg.source_span_id]
+
             # Create a new Message object for the aggregated data
-            # Use the first message's trace context as the representative trace context
-            first_message = messages_to_send[0] if messages_to_send else None
             aggregated_message = Message(
                 data=aggregated_data,
                 source_id=self._edge_group.__class__.__name__,
-                trace_context=first_message.trace_context if first_message else None,
-                source_span_id=first_message.source_span_id if first_message else None,
+                trace_contexts=trace_contexts,
+                source_span_ids=source_span_ids,
             )
             await self._execute_on_target(
                 self._edges[0].target_id, self._edge_group.__class__.__name__, aggregated_message, shared_state, ctx

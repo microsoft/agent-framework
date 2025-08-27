@@ -25,8 +25,8 @@ class WorkflowContext(Generic[T_Out]):
         source_executor_ids: list[str],
         shared_state: SharedState,
         runner_context: RunnerContext,
-        trace_context: dict[str, str] | None = None,
-        source_span_id: str | None = None,
+        trace_contexts: list[dict[str, str]] | None = None,
+        source_span_ids: list[str] | None = None,
     ):
         """Initialize the executor context with the given workflow context.
 
@@ -37,17 +37,17 @@ class WorkflowContext(Generic[T_Out]):
                 messages to the same executor.
             shared_state: The shared state for the workflow.
             runner_context: The runner context that provides methods to send messages and events.
-            trace_context: Optional trace context for OpenTelemetry propagation.
-            source_span_id: Optional source span ID for linking (not for nesting).
+            trace_contexts: Optional trace contexts from multiple sources for OpenTelemetry propagation.
+            source_span_ids: Optional source span IDs from multiple sources for linking (not for nesting).
         """
         self._executor_id = executor_id
         self._source_executor_ids = source_executor_ids
         self._runner_context = runner_context
         self._shared_state = shared_state
 
-        # Store trace context and source span ID for linking
-        self._trace_context = trace_context
-        self._source_span_id = source_span_id
+        # Store trace contexts and source span IDs for linking (supporting multiple sources)
+        self._trace_contexts = trace_contexts or []
+        self._source_span_ids = source_span_ids or []
 
         if not self._source_executor_ids:
             raise ValueError("source_executor_ids cannot be empty. At least one source executor ID is required.")
@@ -70,8 +70,8 @@ class WorkflowContext(Generic[T_Out]):
                 trace_context: dict[str, str] = {}
                 inject(trace_context)  # Inject current trace context for message propagation
 
-                msg.trace_context = trace_context
-                msg.source_span_id = format(span.get_span_context().span_id, "016x")
+                msg.trace_contexts = [trace_context]
+                msg.source_span_ids = [format(span.get_span_context().span_id, "016x")]
 
             await self._runner_context.send_message(msg)
 

@@ -81,8 +81,8 @@ class Executor(AFBaseModel):
         # Create processing span for tracing (gracefully handles disabled tracing)
         from ._telemetry import workflow_tracer
 
-        source_trace_context = getattr(context, "_trace_context", None)
-        source_span_id = getattr(context, "_source_span_id", None)
+        source_trace_contexts = getattr(context, "_trace_contexts", None)
+        source_span_ids = getattr(context, "_source_span_ids", None)
 
         # Handle case where Message wrapper is passed instead of raw data
         from ._runner_context import Message
@@ -94,8 +94,8 @@ class Executor(AFBaseModel):
             self.id,
             self.__class__.__name__,
             type(message).__name__,
-            source_trace_context=source_trace_context,
-            source_span_id=source_span_id,
+            source_trace_contexts=source_trace_contexts,
+            source_span_ids=source_span_ids,
         ):
             # Lazy registration for SubWorkflowRequestInfo if we have interceptors
             if self._request_interceptors and message.__class__.__name__ == "SubWorkflowRequestInfo":

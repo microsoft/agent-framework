@@ -66,38 +66,41 @@ class WorkflowTracer:
         executor_id: str,
         executor_type: str,
         message_type: str,
-        source_trace_context: dict[str, str] | None = None,
-        source_span_id: str | None = None,
+        source_trace_contexts: list[dict[str, str]] | None = None,
+        source_span_ids: list[str] | None = None,
     ) -> Any:
-        """Create an executor processing span with optional link to source span.
+        """Create an executor processing span with optional links to source spans.
 
         Processing spans are created as children of the current workflow span and
-        linked (not nested) to the source publishing span for causality tracking.
+        linked (not nested) to the source publishing spans for causality tracking.
+        This supports multiple links for fan-in scenarios.
         """
         # Create links to source spans for causality without nesting
         links = []
-        if source_trace_context and source_span_id:
-            try:
-                # Extract trace and span IDs from the trace context
-                # This is a simplified approach - in production you'd want more robust parsing
-                traceparent = source_trace_context.get("traceparent", "")
-                if traceparent:
-                    # traceparent format: "00-{trace_id}-{parent_span_id}-{trace_flags}"
-                    parts = traceparent.split("-")
-                    if len(parts) >= 3:
-                        trace_id_hex = parts[1]
-                        # Use the source_span_id that was saved from the publishing span
+        if source_trace_contexts and source_span_ids:
+            # Create links for all source spans (supporting fan-in with multiple sources)
+            for trace_context, span_id in zip(source_trace_contexts, source_span_ids, strict=False):
+                try:
+                    # Extract trace and span IDs from the trace context
+                    # This is a simplified approach - in production you'd want more robust parsing
+                    traceparent = trace_context.get("traceparent", "")
+                    if traceparent:
+                        # traceparent format: "00-{trace_id}-{parent_span_id}-{trace_flags}"
+                        parts = traceparent.split("-")
+                        if len(parts) >= 3:
+                            trace_id_hex = parts[1]
+                            # Use the source_span_id that was saved from the publishing span
 
-                        # Create span context for linking
-                        span_context = SpanContext(
-                            trace_id=int(trace_id_hex, 16),
-                            span_id=int(source_span_id, 16),
-                            is_remote=True,
-                        )
-                        links.append(Link(span_context))
-            except (ValueError, TypeError, AttributeError):
-                # If linking fails, continue without link (graceful degradation)
-                pass
+                            # Create span context for linking
+                            span_context = SpanContext(
+                                trace_id=int(trace_id_hex, 16),
+                                span_id=int(span_id, 16),
+                                is_remote=True,
+                            )
+                            links.append(Link(span_context))
+                except (ValueError, TypeError, AttributeError):
+                    # If linking fails, continue without link (graceful degradation)
+                    pass
 
         return self.tracer.start_as_current_span(
             _EXECUTOR_PROCESS_SPAN,

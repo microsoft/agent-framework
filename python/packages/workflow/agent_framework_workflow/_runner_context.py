@@ -25,8 +25,20 @@ class Message:
     target_id: str | None = None
 
     # OpenTelemetry trace context fields for message propagation
-    trace_context: dict[str, str] | None = None  # W3C Trace Context headers
-    source_span_id: str | None = None  # Publishing span ID for linking
+    # These are plural to support fan-in scenarios where multiple messages are aggregated
+    trace_contexts: list[dict[str, str]] | None = None  # W3C Trace Context headers from multiple sources
+    source_span_ids: list[str] | None = None  # Publishing span IDs for linking from multiple sources
+
+    # Backward compatibility properties
+    @property
+    def trace_context(self) -> dict[str, str] | None:
+        """Get the first trace context for backward compatibility."""
+        return self.trace_contexts[0] if self.trace_contexts else None
+
+    @property
+    def source_span_id(self) -> str | None:
+        """Get the first source span ID for backward compatibility."""
+        return self.source_span_ids[0] if self.source_span_ids else None
 
 
 class CheckpointState(TypedDict):
@@ -276,8 +288,8 @@ class InProcRunnerContext:
                     "data": msg.data,
                     "source_id": msg.source_id,
                     "target_id": msg.target_id,
-                    "trace_context": msg.trace_context,
-                    "source_span_id": msg.source_span_id,
+                    "trace_contexts": msg.trace_contexts,
+                    "source_span_ids": msg.source_span_ids,
                 }
                 for msg in message_list
             ]
@@ -298,8 +310,8 @@ class InProcRunnerContext:
                     data=msg.get("data"),
                     source_id=msg.get("source_id", ""),
                     target_id=msg.get("target_id"),
-                    trace_context=msg.get("trace_context"),
-                    source_span_id=msg.get("source_span_id"),
+                    trace_contexts=msg.get("trace_contexts"),
+                    source_span_ids=msg.get("source_span_ids"),
                 )
                 for msg in message_list
             ]
