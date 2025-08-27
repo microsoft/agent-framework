@@ -8,18 +8,18 @@ namespace Microsoft.Extensions.AI.Agents;
 
 internal static class ChatClientExtensions
 {
-    internal static IChatClient AsAgentInvokingChatClient(this IChatClient chatClient)
+    internal static IChatClient AsAgentInvokedChatClient(this IChatClient chatClient)
     {
         var chatBuilder = chatClient.AsBuilder();
 
-        if (chatClient is not AgentInvokingChatClient agentInvokingChatClient)
+        if (chatClient is not AgentInvokedChatClient agentInvokedChatClient)
         {
             chatBuilder.UseAgentInvocation();
         }
 
         if (chatClient.GetService<NewFunctionInvokingChatClient>() is null)
         {
-            chatBuilder.Use((IChatClient innerClient, IServiceProvider services) =>
+            _ = chatBuilder.Use((IChatClient innerClient, IServiceProvider services) =>
             {
                 var loggerFactory = services.GetService<ILoggerFactory>();
 

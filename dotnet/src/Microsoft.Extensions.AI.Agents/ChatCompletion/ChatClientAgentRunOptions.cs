@@ -11,8 +11,8 @@ public sealed class ChatClientAgentRunOptions : AgentRunOptions
     /// Initializes a new instance of the <see cref="ChatClientAgentRunOptions"/> class.
     /// </summary>
     /// <param name="chatOptions">Optional chat options to pass to the agent's invocation.</param>
-    public ChatClientAgentRunOptions(ChatOptions? chatOptions = null) :
-        this(null, chatOptions)
+    public ChatClientAgentRunOptions(ChatOptions? chatOptions = null)
+        : this(null, chatOptions)
     {
     }
 
@@ -26,8 +26,6 @@ public sealed class ChatClientAgentRunOptions : AgentRunOptions
         this.ChatOptions = chatOptions;
     }
 
-    /// <summary>
-    /// Gets or sets optional chat options to pass to the agent's invocation
-    /// </summary>
+    /// <summary>Gets or sets optional chat options to pass to the agent's invocation.</summary>
     public ChatOptions? ChatOptions { get; set; }
 }
