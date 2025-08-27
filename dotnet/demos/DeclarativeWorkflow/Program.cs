@@ -24,40 +24,35 @@ namespace Demo.DeclarativeWorkflow;
 /// All other arguments are intepreted as a queue of inputs.
 /// When no input is queued, interactive input is requested from the console.
 /// </remarks>
-internal static class Program
+internal sealed class Program
 {
     private const string DefaultWorkflow = "HelloWorld.yaml";
 
     public static async Task Main(string[] args)
     {
-        string workflowFile = GetWorkflowFile(args);
+        Program program = new(args);
+        await program.ExecuteAsync();
+    }
 
-        // Load configuration and create kernel with Azure OpenAI Chat Completion service
-        IConfiguration config = InitializeConfig();
-
-        string foundryProjectEndpoint = config["AzureAI:Endpoint"] ?? throw new InvalidOperationException("Undefined configuration: AzureAI:Endpoint");
-        PersistentAgentsClient client = new(foundryProjectEndpoint, new AzureCliCredential());
-
+    private async Task ExecuteAsync()
+    {
         // Read and parse the declarative workflow.
-        Notify($"WORKFLOW: Parsing {Path.GetFullPath(workflowFile)}");
+        Notify($"WORKFLOW: Parsing {Path.GetFullPath(this.WorkflowFile)}");
 
         Stopwatch timer = Stopwatch.StartNew();
 
-        // DeclarativeWorkflowContext provides the components for workflow execution.
-        FoundryAgentProvider agentProvider = new(foundryProjectEndpoint, new AzureCliCredential());
-        DeclarativeWorkflowOptions options = new(agentProvider);
-
         // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
-        Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>(workflowFile, options);
+        DeclarativeWorkflowOptions options = new(new FoundryAgentProvider(this.FoundryEndpoint, new AzureCliCredential()));
+        Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>(this.WorkflowFile, options);
 
         Notify($"\nWORKFLOW: Defined {timer.Elapsed}");
 
         Notify("\nWORKFLOW: Starting...");
 
         // Run the workflow, just like any other workflow
-        string input = GetWorkflowInput(args);
+        string input = this.GetWorkflowInput();
         StreamingRun run = await InProcessExecution.StreamAsync(workflow, input);
-        await MonitorWorkflowRunAsync(run, client);
+        await this.MonitorWorkflowRunAsync(run);
 
         Notify("\nWORKFLOW: Done!");
     }
@@ -65,7 +60,24 @@ internal static class Program
     private static readonly Dictionary<string, string> s_nameCache = [];
     private static readonly HashSet<string> s_fileCache = [];
 
-    private static async Task MonitorWorkflowRunAsync(StreamingRun run, PersistentAgentsClient client)
+    private string WorkflowFile { get; }
+    private string? WorkflowInput { get; }
+    private string FoundryEndpoint { get; }
+    private PersistentAgentsClient FoundryClient { get; }
+    private IConfiguration Configuration { get; }
+
+    private Program(string[] args)
+    {
+        this.WorkflowFile = ParseWorkflowFile(args);
+        this.WorkflowInput = ParseWorkflowInput(args);
+
+        this.Configuration = InitializeConfig();
+
+        this.FoundryEndpoint = this.Configuration["AzureAI:Endpoint"] ?? throw new InvalidOperationException("Undefined configuration: AzureAI:Endpoint");
+        this.FoundryClient = new PersistentAgentsClient(this.FoundryEndpoint, new AzureCliCredential());
+    }
+
+    private async Task MonitorWorkflowRunAsync(StreamingRun run)
     {
         string? messageId = null;
 
@@ -100,7 +112,7 @@ internal static class Program
                         {
                             if (!s_nameCache.TryGetValue(agentId, out string? realName))
                             {
-                                PersistentAgent agent = await client.Administration.GetAgentAsync(agentId);
+                                PersistentAgent agent = await this.FoundryClient.Administration.GetAgentAsync(agentId);
                                 s_nameCache[agentId] = agent.Name;
                                 realName = agent.Name;
                             }
@@ -121,7 +133,7 @@ internal static class Program
                         string? fileId = messageUpdate.ImageFileId ?? messageUpdate.TextAnnotation?.OutputFileId;
                         if (fileId is not null && s_fileCache.Add(fileId))
                         {
-                            BinaryData content = await client.Files.GetFileContentAsync(fileId);
+                            BinaryData content = await this.FoundryClient.Files.GetFileContentAsync(fileId);
                             await DownloadFileContentAsync(Path.GetFileName(messageUpdate.TextAnnotation?.TextToReplace ?? "response.png"), content);
                         }
                         break;
@@ -165,7 +177,7 @@ internal static class Program
         }
     }
 
-    private static string GetWorkflowFile(string[] args)
+    private static string ParseWorkflowFile(string[] args)
     {
         string workflowFile = args.FirstOrDefault() ?? DefaultWorkflow;
 
@@ -182,9 +194,9 @@ internal static class Program
         return workflowFile;
     }
 
-    private static string GetWorkflowInput(string[] args)
+    private string GetWorkflowInput()
     {
-        string? input = GetWorkflowInputs(args).FirstOrDefault();
+        string? input = this.WorkflowInput;
 
         try
         {
@@ -212,16 +224,16 @@ internal static class Program
         }
     }
 
-    private static string[] GetWorkflowInputs(string[] args)
+    private static string? ParseWorkflowInput(string[] args)
     {
         if (args.Length == 0)
         {
-            return [];
+            return null;
         }
 
         string[] workflowInput = [.. args.Skip(1)];
 
-        return workflowInput;
+        return workflowInput.FirstOrDefault();
     }
 
     // Load configuration from user-secrets

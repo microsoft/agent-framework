@@ -1,3 +1,29 @@
+#
+# This workflow demonstrates a multi-agent orchestrator that attempts to address complex user requests.
+# 
+# For this workflow, several agents used, each with a prompt specific to their role:
+# 
+# 1. Analyst Agent: Able to analyze the current task.
+#    Enable "Bing Grounding Tool" in the agent settings.
+# 
+# 2. Manager Agent: Able to create plans and delegate tasks to other agents.
+# 
+# 3. Research Agent:
+#    Enable "Bing Grounding" in the agent settings.
+#
+#    With instructions: 
+#    
+#    Only provide requested information in a way that is throughfully organized and formatted.
+#    Never include any analysis or code.
+#    Never generate a file.
+#    Avoid repeating yourself.
+# 
+# 4. Coder Agent: 
+#    Enable "Code Interpreter" in the agent settings.
+#
+# 5. Weather Agent: Able to retrieve factual information from the web.
+#    Enable "Open API" in the agent settings using the wttr.json schema.
+# 
 kind: AdaptiveDialog
 beginDialog:
 

@@ -1,3 +1,8 @@
+#
+# This workflow provides the most basic example of providing a response that includes the user and environment input.
+#
+# No setup is required to run this workflow.
+#
 kind: AdaptiveDialog
 beginDialog:
 

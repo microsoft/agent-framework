@@ -1,3 +1,21 @@
+#
+# This workflow demonstrates conversation between two agents: a student and a teacher.
+# The student attempts to solve the input problem and the teacher provides guidance.
+#
+# For this workflow, two agents are used, each with a prompt specific to their role.
+#
+# Student:
+# Your job is help a math teacher practice teaching by making intentional mistakes.  
+# You Attempt to solve the given math problem, but with intentional mistakes so the teacher can help.
+# Always incorporate the teacher's advice to fix your next response.
+# You have the math-skills of a 6th grader.    
+
+# Teacher:
+# Review and coach the student's approach to solving the given math problem.  
+# Don't repeat the solution or try and solve it.  
+# If the student has demonstrated comprehension and responded to all of your feedback, 
+# give the student your congraluations by using the word "congratulations".    
+#
 kind: AdaptiveDialog
 beginDialog:
 
