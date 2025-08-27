@@ -25,7 +25,7 @@ To create one of these agents, simply construct a `ChatClientAgent` using the Ch
 ```csharp
 using Microsoft.Extensions.AI;
 
-var agent = new ChatClientAgent(chatClient, instructions: "You are a helpful asssistant");
+var agent = new ChatClientAgent(chatClient, instructions: "You are a helpful assistant");
 ```
 
 For examples on how to construct `ChatClientAgents` with various `IChatClient` implementations, see the [Agent setup samples](../../../dotnet/samples/AgentSetup).
