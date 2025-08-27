@@ -102,13 +102,22 @@ public sealed class ExecutorIsh :
         _ => throw new InvalidOperationException($"Unknown ExecutorIsh type: {this.ExecutorType}")
     };
 
+    internal object? RawData => this.ExecutorType switch
+    {
+        Type.Unbound => this._idValue,
+        Type.Executor => this._executorValue,
+        Type.InputPort => this._inputPortValue,
+        Type.Agent => this._aiAgentValue,
+        _ => throw new InvalidOperationException($"Unknown ExecutorIsh type: {this.ExecutorType}")
+    };
+
     /// <summary>
     /// Gets the registration details for the current executor.
     /// </summary>
     /// <remarks>The returned registration depends on the type of the executor. If the executor is unbound, an
     /// <see cref="InvalidOperationException"/> is thrown. For other executor types, the registration  includes the
     /// appropriate ID, type, and provider based on the executor's configuration.</remarks>
-    internal ExecutorRegistration Registration => new(this.Id, this.RuntimeType, this.ExecutorProvider);
+    internal ExecutorRegistration Registration => new(this.Id, this.RuntimeType, this.ExecutorProvider, this.RawData);
 
     private System.Type RuntimeType => this.ExecutorType switch
     {

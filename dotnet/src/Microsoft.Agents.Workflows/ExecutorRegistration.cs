@@ -7,11 +7,13 @@ using ExecutorFactoryF = System.Func<Microsoft.Agents.Workflows.Executor>;
 
 namespace Microsoft.Agents.Workflows;
 
-internal class ExecutorRegistration(string id, Type executorType, ExecutorFactoryF provider)
+internal class ExecutorRegistration(string id, Type executorType, ExecutorFactoryF provider, object? rawData)
 {
     public string Id { get; } = Throw.IfNullOrEmpty(id);
     public Type ExecutorType { get; } = Throw.IfNull(executorType);
     public ExecutorFactoryF Provider { get; } = Throw.IfNull(provider);
+
+    internal object? RawExecutorishData { get; } = rawData;
 
     public override string ToString() => $"{this.ExecutorType.Name}({this.Id})";
 
