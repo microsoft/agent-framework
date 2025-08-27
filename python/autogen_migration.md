@@ -74,7 +74,7 @@ client = AzureChatClient(
 
 ## Chat Agent
 
-In Autogen, a specialized agent implementation was created for use as an assistant agent. With Agent Framework, a chat agent can be created from the model client itself.
+Autogen  provided a convenience [AssistantAgent](https://microsoft.github.io/autogen/dev/user-guide/agentchat-user-guide/tutorial/agents.html#assistant-agent) class with a set of defined functionality. With Agent Framework, a similar chat agent can be created from the model client itself.
 
 ```python
 from agent_framework.openai import OpenAIChatClient
