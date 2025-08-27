@@ -6,167 +6,81 @@
 // while the agent is waiting for user input.
 
 using System;
-using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
-using System.Threading.Tasks;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using OpenAI;
-using SampleApp;
 
-var azureOpenAIEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var azureOpenAIDeploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
-// Define the menu tools to be used by the agent.
-var menuTools = new MenuTools();
-
-// Define the options for the chat client agent.
-// We mark GetMenu and GetSpecial as requiring approval before they can be invoked, while GetItemPrice can be invoked without user approval.
-// IMPORTANT: A limitation of the approvals flow when using ChatClientAgent is that if more than one function needs to be executed in one run,
-// and any one of them requires approval, approval will be sought for all function calls produced during that run.
-var agentOptions = new ChatClientAgentOptions(
-    name: "Host",
-    instructions: "Answer questions about the menu",
-    tools: [
-        new ApprovalRequiredAIFunction(AIFunctionFactory.Create(menuTools.GetMenu)),
-        new ApprovalRequiredAIFunction(AIFunctionFactory.Create(menuTools.GetSpecials)),
-        AIFunctionFactory.Create(menuTools.GetItemPrice)
-    ]);
+// Create a sample function tool that the agent can use.
+[Description("Get the weather for a given location.")]
+static string GetWeather([Description("The location to get the weather for.")] string location)
+    => $"The weather in {location} is cloudy with a high of 15°C.";
 
 // Create the chat client and agent.
+// Note that we are wrapping the function tool with ApprovalRequiredAIFunction to require user approval before invoking it.
 AIAgent agent = new AzureOpenAIClient(
-    new Uri(azureOpenAIEndpoint),
+    new Uri(endpoint),
     new AzureCliCredential())
-     .GetChatClient(azureOpenAIDeploymentName)
-     .CreateAIAgent(agentOptions);
+     .GetChatClient(deploymentName)
+     .CreateAIAgent(instructions: "You are a helpful assistant", tools: [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(GetWeather))]);
 
-// Non-streaming agent interaction with function tools.
 Console.WriteLine("\n--- Run with approval requiring function tools ---\n");
 
+// Call the agent and check if there are any user input requests to handle.
 AgentThread thread = agent.GetNewThread();
+var response = await agent.RunAsync("What is the weather like in Amsterdam?", thread);
+var userInputRequests = response.UserInputRequests.ToList();
 
-// Respond to user input, invoking functions where appropriate.
-await RunAgentAsync("What is the special soup and its price?");
-await RunAgentAsync("What is the special drink?");
-
-async Task RunAgentAsync(string input)
+while (userInputRequests.Count > 0)
 {
-    Console.WriteLine($"\nUser: {input}");
-    var response = await agent.RunAsync(input, thread);
-
-    // Loop until all user input requests are handled.
-    var userInputRequests = response.UserInputRequests.ToList();
-    while (userInputRequests.Count > 0)
-    {
-        // Approve GetSpecials function calls, reject all others.
-        List<ChatMessage> nextIterationMessages = userInputRequests?.Select((request) => request switch
+    // Ask the user to approve each function call request.
+    // For simplicity, we are assuming here that only function approval requests are being made.
+    var userInputResponses = userInputRequests
+        .OfType<FunctionApprovalRequestContent>()
+        .Select(functionApprovalRequest =>
         {
-            FunctionApprovalRequestContent functionApprovalRequest when functionApprovalRequest.FunctionCall.Name == "GetSpecials" =>
-                new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(approved: true)]),
+            Console.WriteLine($"The agent would like to invoke the following function, please reply Y to approve: Name {functionApprovalRequest.FunctionCall.Name}");
+            return new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(Console.ReadLine()?.Equals("Y", StringComparison.OrdinalIgnoreCase) ?? false)]);
+        })
+        .ToList();
 
-            FunctionApprovalRequestContent functionApprovalRequest =>
-                new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(approved: false)]),
+    // Pass the user input responses back to the agent for further processing.
+    response = await agent.RunAsync(userInputResponses, thread);
 
-            _ => throw new NotSupportedException($"Unsupported user input request type: {request.GetType().Name}")
-        })?.ToList() ?? [];
-
-        // Write out what the decision was for each function approval request.
-        nextIterationMessages.ForEach(x => Console.WriteLine($"Approval for the {(x.Contents[0] as FunctionApprovalResponseContent)?.FunctionCall.Name} function call is set to {(x.Contents[0] as FunctionApprovalResponseContent)?.Approved}."));
-
-        // Pass the user input responses back to the agent for further processing.
-        response = await agent.RunAsync(nextIterationMessages, thread);
-
-        userInputRequests = response.UserInputRequests.ToList();
-    }
-
-    Console.WriteLine($"\nAgent: {response}");
+    userInputRequests = response.UserInputRequests.ToList();
 }
 
-// Streaming agent interaction with function tools.
+Console.WriteLine($"\nAgent: {response}");
+
 Console.WriteLine("\n--- Run with approval requiring function tools and streaming ---\n");
-// Create the chat history thread to capture the agent interaction.
+
+// Call the agent and check if there are any user input requests to handle.
 thread = agent.GetNewThread();
+var updates = await agent.RunStreamingAsync("What is the weather like in Amsterdam?", thread).ToListAsync();
+userInputRequests = updates.SelectMany(x => x.UserInputRequests).ToList();
 
-// Respond to user input, invoking functions where appropriate.
-await RunAgentStreamingAsync("What is the special soup and its price?");
-await RunAgentStreamingAsync("What is the special drink?");
-
-async Task RunAgentStreamingAsync(string input)
+while (userInputRequests.Count > 0)
 {
-    Console.WriteLine($"\nUser: {input}");
-    var updates = await agent.RunStreamingAsync(input, thread).ToListAsync();
-
-    // Loop until all user input requests are handled.
-    var userInputRequests = updates.SelectMany(x => x.UserInputRequests).ToList();
-    while (userInputRequests.Count > 0)
-    {
-        // Approve GetSpecials function calls, reject all others.
-        List<ChatMessage> nextIterationMessages = userInputRequests?.Select((request) => request switch
+    // Ask the user to approve each function call request.
+    // For simplicity, we are assuming here that only function approval requests are being made.
+    var userInputResponses = userInputRequests
+        .OfType<FunctionApprovalRequestContent>()
+        .Select(functionApprovalRequest =>
         {
-            FunctionApprovalRequestContent functionApprovalRequest when functionApprovalRequest.FunctionCall.Name == "GetSpecials" =>
-                new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(approved: true)]),
+            Console.WriteLine($"The agent would like to invoke the following function, please reply Y to approve: Name {functionApprovalRequest.FunctionCall.Name}");
+            return new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(Console.ReadLine()?.Equals("Y", StringComparison.OrdinalIgnoreCase) ?? false)]);
+        })
+        .ToList();
 
-            FunctionApprovalRequestContent functionApprovalRequest =>
-                new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(approved: false)]),
-
-            _ => throw new NotSupportedException($"Unsupported request type: {request.GetType().Name}")
-        })?.ToList() ?? [];
-
-        // Write out what the decision was for each function approval request.
-        nextIterationMessages.ForEach(x => Console.WriteLine($"Approval for the {(x.Contents[0] as FunctionApprovalResponseContent)?.FunctionCall.Name} function call is set to {(x.Contents[0] as FunctionApprovalResponseContent)?.Approved}."));
-
-        // Pass the user input responses back to the agent for further processing.
-        updates = await agent.RunStreamingAsync(nextIterationMessages, thread).ToListAsync();
-
-        userInputRequests = updates.SelectMany(x => x.UserInputRequests).ToList();
-    }
-
-    Console.WriteLine($"\nAgent: {updates.ToAgentRunResponse()}");
+    // Pass the user input responses back to the agent for further processing.
+    updates = await agent.RunStreamingAsync(userInputResponses, thread).ToListAsync();
+    userInputRequests = updates.SelectMany(x => x.UserInputRequests).ToList();
 }
 
-namespace SampleApp
-{
-    /// <summary>
-    /// MenuTools class as used in the agent's function tools.
-    /// </summary>
-    internal sealed class MenuTools
-    {
-        private static readonly MenuItem[] s_menuItems = [
-            new() { Category = "Soup", Name = "Clam Chowder", Price = 4.95f, IsSpecial = true },
-            new() { Category = "Soup", Name = "Tomato Soup", Price = 4.95f, IsSpecial = false },
-            new() { Category = "Salad", Name = "Cobb Salad", Price = 9.99f },
-            new() { Category = "Salad", Name = "House Salad", Price = 4.95f },
-            new() { Category = "Drink", Name = "Chai Tea", Price = 2.95f, IsSpecial = true },
-            new() { Category = "Drink", Name = "Soda", Price = 1.95f },
-        ];
-
-        [Description("Get the full menu items.")]
-        public MenuItem[] GetMenu()
-        {
-            return s_menuItems;
-        }
-
-        [Description("Get the specials from the menu.")]
-        public IEnumerable<MenuItem> GetSpecials()
-        {
-            return s_menuItems.Where(i => i.IsSpecial);
-        }
-
-        [Description("Get the price of a menu item.")]
-        public float? GetItemPrice([Description("The name of the menu item.")] string menuItem)
-        {
-            return s_menuItems.FirstOrDefault(i => i.Name.Equals(menuItem, StringComparison.OrdinalIgnoreCase))?.Price;
-        }
-
-        public sealed class MenuItem
-        {
-            public string Category { get; set; } = string.Empty;
-            public string Name { get; set; } = string.Empty;
-            public float Price { get; set; }
-            public bool IsSpecial { get; set; }
-        }
-    }
-}
+Console.WriteLine($"\nAgent: {updates.ToAgentRunResponse()}");

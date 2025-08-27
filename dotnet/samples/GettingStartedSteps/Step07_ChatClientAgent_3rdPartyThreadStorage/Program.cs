@@ -19,8 +19,8 @@ using Microsoft.SemanticKernel.Connectors.InMemory;
 using OpenAI;
 using SampleApp;
 
-var azureOpenAIEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var azureOpenAIDeploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 const string JokerName = "Joker";
 const string JokerInstructions = "You are good at telling jokes.";
@@ -31,9 +31,9 @@ VectorStore vectorStore = new InMemoryVectorStore();
 
 // Create the agent
 AIAgent agent = new AzureOpenAIClient(
-    new Uri(azureOpenAIEndpoint),
+    new Uri(endpoint),
     new AzureCliCredential())
-     .GetChatClient(azureOpenAIDeploymentName)
+     .GetChatClient(deploymentName)
      .CreateAIAgent(new ChatClientAgentOptions
      {
          Name = JokerName,

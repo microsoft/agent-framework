@@ -8,16 +8,16 @@ using Azure.Identity;
 using Microsoft.Extensions.AI.Agents;
 using OpenAI;
 
-var azureOpenAIEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var azureOpenAIDeploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 const string JokerName = "Joker";
 const string JokerInstructions = "You are good at telling jokes.";
 
 AIAgent agent = new AzureOpenAIClient(
-    new Uri(azureOpenAIEndpoint),
+    new Uri(endpoint),
     new AzureCliCredential())
-     .GetChatClient(azureOpenAIDeploymentName)
+     .GetChatClient(deploymentName)
      .CreateAIAgent(JokerInstructions, JokerName);
 
 // Invoke the agent and output the text result.

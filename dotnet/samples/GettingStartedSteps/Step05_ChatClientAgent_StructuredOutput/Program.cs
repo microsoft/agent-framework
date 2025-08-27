@@ -12,8 +12,8 @@ using Microsoft.Extensions.AI.Agents;
 using OpenAI;
 using SampleApp;
 
-var azureOpenAIEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var azureOpenAIDeploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 // Create the agent options, specifying the response format to use a JSON schema based on the PersonInfo class.
 ChatClientAgentOptions agentOptions = new(name: "HelpfulAssistant", instructions: "You are a helpful assistant.")
@@ -29,9 +29,9 @@ ChatClientAgentOptions agentOptions = new(name: "HelpfulAssistant", instructions
 
 // Create the agent using Azure OpenAI.
 AIAgent agent = new AzureOpenAIClient(
-    new Uri(azureOpenAIEndpoint),
+    new Uri(endpoint),
     new AzureCliCredential())
-        .GetChatClient(azureOpenAIDeploymentName)
+        .GetChatClient(deploymentName)
         .CreateAIAgent(agentOptions);
 
 Console.WriteLine("\n--- Run with structured output ---\n");

@@ -14,8 +14,8 @@ using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
-var azureOpenAIEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var azureOpenAIDeploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 // Create a host builder that we will register services with and then run.
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
@@ -27,9 +27,9 @@ builder.Services.AddSingleton(new ChatClientAgentOptions(JokerInstructions, Joke
 
 // Add a chat client to the service collection.
 builder.Services.AddKeyedChatClient("AzureOpenAI", (sp) => new AzureOpenAIClient(
-    new Uri(azureOpenAIEndpoint),
+    new Uri(endpoint),
     new AzureCliCredential())
-        .GetChatClient(azureOpenAIDeploymentName)
+        .GetChatClient(deploymentName)
         .AsIChatClient());
 
 // Add the AI agent to the service collection.
