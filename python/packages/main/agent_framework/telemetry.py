@@ -19,7 +19,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from opentelemetry.util._decorator import _AgnosticContextManager  # type: ignore[reportPrivateUsage]
 
     from ._agents import Agent, AgentProtocol, AgentThread
-    from ._clients import ChatClientBase
+    from ._clients import ChatClient
     from ._tools import AIFunction
     from ._types import (
         AgentRunResponse,
@@ -30,7 +30,7 @@ if TYPE_CHECKING:  # pragma: no cover
         ChatResponseUpdate,
     )
 
-TChatClientBase = TypeVar("TChatClientBase", bound="ChatClientBase")
+TChatClient = TypeVar("TChatClient", bound="ChatClient")
 TAgent = TypeVar("TAgent", bound="Agent")
 
 tracer = get_tracer("agent_framework")
@@ -272,9 +272,10 @@ def _set_error(span: Span, error: Exception) -> None:
 
 
 def _trace_chat_get_response(
-    chat_client: "ChatClientBase",
+    chat_client: "ChatClient",
     completion_func: Callable[..., Awaitable["ChatResponse"]],
     model_diagnostics: ModelDiagnosticSettings,
+    model_provider_name: str | None = None,
 ) -> Callable[..., Awaitable["ChatResponse"]]:
     """Decorator to trace chat completion activities.
 
@@ -282,7 +283,9 @@ def _trace_chat_get_response(
         chat_client: the chat client
         completion_func: The function to trace.
         model_diagnostics: the settings for what to trace
+        model_provider_name: The model provider name, if not provided it will be taken from the chat client.
     """
+    model_provider = model_provider_name or str(getattr(chat_client, "MODEL_PROVIDER_NAME", "unknown"))
 
     @functools.wraps(completion_func)
     async def wrap_inner_get_response(
@@ -303,16 +306,16 @@ def _trace_chat_get_response(
             _get_chat_response_span(
                 GenAIAttributes.CHAT_COMPLETION_OPERATION.value,
                 getattr(chat_client, "ai_model_id", chat_options.ai_model_id or "unknown"),
-                chat_client.MODEL_PROVIDER_NAME,
-                chat_client.service_url() if hasattr(chat_client, "service_url") else None,
+                model_provider,
+                chat_client.service_url() if hasattr(chat_client, "service_url") else None,  # type: ignore[reportAttributeAccessIssue]
                 chat_options,
             ),
             end_on_exit=True,
         ) as current_span:
-            _set_chat_response_input(chat_client.MODEL_PROVIDER_NAME, messages)
+            _set_chat_response_input(model_provider, messages)
             try:
                 response = await completion_func(messages=messages, chat_options=chat_options, **kwargs)
-                _set_chat_response_output(current_span, response, chat_client.MODEL_PROVIDER_NAME)
+                _set_chat_response_output(current_span, response, model_provider)
                 return response
             except Exception as exception:
                 _set_error(current_span, exception)
@@ -325,9 +328,10 @@ def _trace_chat_get_response(
 
 
 def _trace_chat_get_streaming_response(
-    chat_client: "ChatClientBase",
+    chat_client: "ChatClient",
     completion_func: Callable[..., AsyncIterable["ChatResponseUpdate"]],
     model_diagnostics: ModelDiagnosticSettings,
+    model_provider_name: str | None = None,
 ) -> Callable[..., AsyncIterable["ChatResponseUpdate"]]:
     """Decorator to trace streaming chat completion activities.
 
@@ -335,7 +339,9 @@ def _trace_chat_get_streaming_response(
         chat_client: the Chat client.
         completion_func: The function to trace.
         model_diagnostics: the settings for what to trace.
+        model_provider_name: The model provider name, if not provided it will be taken from the chat client.
     """
+    model_provider = model_provider_name or str(getattr(chat_client, "MODEL_PROVIDER_NAME", "unknown"))
 
     @functools.wraps(completion_func)
     async def wrap_inner_get_streaming_response(
@@ -357,20 +363,20 @@ def _trace_chat_get_streaming_response(
             _get_chat_response_span(
                 GenAIAttributes.CHAT_COMPLETION_OPERATION.value,
                 getattr(chat_client, "ai_model_id", chat_options.ai_model_id or "unknown"),
-                chat_client.MODEL_PROVIDER_NAME,
-                chat_client.service_url() if hasattr(chat_client, "service_url") else None,
+                model_provider,
+                chat_client.service_url() if hasattr(chat_client, "service_url") else None,  # type: ignore[reportAttributeAccessIssue]
                 chat_options,
             ),
             end_on_exit=True,
         ) as current_span:
-            _set_chat_response_input(chat_client.MODEL_PROVIDER_NAME, messages)
+            _set_chat_response_input(model_provider, messages)
             try:
                 async for response in completion_func(messages=messages, chat_options=chat_options, **kwargs):
                     all_updates.append(response)
                     yield response
 
                 all_messages_flattened = ChatResponse.from_chat_response_updates(all_updates)
-                _set_chat_response_output(current_span, all_messages_flattened, chat_client.MODEL_PROVIDER_NAME)
+                _set_chat_response_output(current_span, all_messages_flattened, model_provider)
             except Exception as exception:
                 _set_error(current_span, exception)
                 raise
@@ -381,15 +387,15 @@ def _trace_chat_get_streaming_response(
 
 
 def OpenTelemetryChatClient(
-    chat_client: TChatClientBase,
+    chat_client: TChatClient,
     *,
     enable_otel_diagnostics: bool | None = None,
     enable_otel_diagnostics_sensitive: bool | None = None,
-) -> TChatClientBase:
+) -> TChatClient:
     """Class decorator that enables telemetry for a chat client.
 
     Remarks:
-        This only works on classes that derive from ChatClientBase
+        This only works on classes that derive from ChatClient
         and the _inner_get_response
         and _inner_get_streaming_response methods.
         It also relies on the presence of the MODEL_PROVIDER_NAME class variable.
@@ -402,11 +408,15 @@ def OpenTelemetryChatClient(
 
     setattr(chat_client, "__open_telemetry_chat_client__", True)  # noqa: B010
     if inner_response := getattr(chat_client, "_inner_get_response", None):
-        chat_client._inner_get_response = _trace_chat_get_response(chat_client, inner_response, model_diagnostics)  # type: ignore
+        chat_client._inner_get_response = _trace_chat_get_response(chat_client, inner_response, model_diagnostics)  # type: ignore[reportAttributeAccessIssue]
+    else:
+        logger.info("OpenTelemetryChatClient: no _inner_get_response method found on %s", type(chat_client))
     if inner_streaming_response := getattr(chat_client, "_inner_get_streaming_response", None):
-        chat_client._inner_get_streaming_response = _trace_chat_get_streaming_response(
+        chat_client._inner_get_streaming_response = _trace_chat_get_streaming_response(  # type: ignore[reportAttributeAccessIssue]
             chat_client, inner_streaming_response, model_diagnostics
         )
+    else:
+        logger.info("OpenTelemetryChatClient: no _inner_get_streaming_response method found on %s", type(chat_client))
     return chat_client
 
 

@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import sys
-from collections.abc import AsyncIterable, Callable, MutableMapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from enum import Enum
 from functools import wraps
@@ -46,8 +46,8 @@ __all__ = [
     "AgentBase",
     "AgentProtocol",
     "AgentThread",
-    "AgentThread",
     "AgentThreadType",
+    "ChatClientAgentThread",
     "MessagesRetrievableThread",
     "agent",
 ]
@@ -245,7 +245,7 @@ class AgentThreadType(Enum):
     """Messages are stored in the service and the thread object just has an id reference to the service storage."""
 
 
-class AgentThread(AgentThread):
+class ChatClientAgentThread(AgentThread):
     """Chat client agent thread.
 
     This class manages chat threads either locally (in-memory) or via a service based on initialization.
@@ -717,10 +717,10 @@ class Agent(AgentBase):
         await self._notify_thread_of_new_messages(thread, response.messages)
 
     def get_new_thread(self) -> AgentThread:
-        return AgentThread()
+        return ChatClientAgentThread()
 
     def _update_thread_with_type_and_conversation_id(
-        self, chat_client_thread: AgentThread, responseConversationId: str | None
+        self, chat_client_thread: ChatClientAgentThread, responseConversationId: str | None
     ) -> None:
         """Update thread with storage type and conversation ID.
 
@@ -753,7 +753,7 @@ class Agent(AgentBase):
         *,
         thread: AgentThread | None,
         input_messages: list[ChatMessage] | None = None,
-    ) -> tuple[AgentThread, list[ChatMessage]]:
+    ) -> tuple[ChatClientAgentThread, list[ChatMessage]]:
         """Prepare the messages for agent execution.
 
         Args:
@@ -766,10 +766,10 @@ class Agent(AgentBase):
         Raises:
             AgentExecutionException: If the thread is not of the expected type.
         """
-        validated_thread: AgentThread = self._validate_or_create_thread_type(  # type: ignore[reportAssignmentType]
+        validated_thread: ChatClientAgentThread = self._validate_or_create_thread_type(  # type: ignore[reportAssignmentType]
             thread=thread,
             construct_thread=self.get_new_thread,
-            expected_type=AgentThread,
+            expected_type=ChatClientAgentThread,
         )
         messages: list[ChatMessage] = []
         if self.instructions:
@@ -800,7 +800,9 @@ class Agent(AgentBase):
 
 
 def agent(
-    func: Callable[..., AgentRunResponse] | Callable[..., AsyncIterable[AgentRunResponseUpdate]] | None = None,
+    func: Callable[..., Awaitable[AgentRunResponse]]
+    | Callable[..., AsyncIterable[AgentRunResponseUpdate]]
+    | None = None,
     *,
     id: str | None = None,
     name: str | None = None,
@@ -811,11 +813,11 @@ def agent(
     """Create a simple agent out of a function."""
 
     def decorator(
-        func: Callable[..., AgentRunResponse] | Callable[..., AsyncIterable[AgentRunResponseUpdate]],
+        func: Callable[..., Awaitable[AgentRunResponse]] | Callable[..., AsyncIterable[AgentRunResponseUpdate]],
     ) -> "AgentProtocol":
         @wraps(func)
         def wrapper(
-            f: Callable[..., AgentRunResponse] | Callable[..., AsyncIterable[AgentRunResponseUpdate]],
+            f: Callable[..., Awaitable[AgentRunResponse]] | Callable[..., AsyncIterable[AgentRunResponseUpdate]],
         ) -> "AgentProtocol":
             agent_name = name or f.__name__
             agent_description = description or f.__doc__
@@ -825,7 +827,7 @@ def agent(
                 class RunFunctionAgent:
                     def __init__(
                         self,
-                        run: Callable[..., AgentRunResponse],
+                        run: Callable[..., Awaitable[AgentRunResponse]],
                         id: str | None,
                         name: str | None,
                         description: str | None,
@@ -840,16 +842,34 @@ def agent(
                         self.additional_properties = kwargs
                         self.display_name = name or self.id
 
-                    async def run(self, *args, **kwargs) -> AgentRunResponse:
-                        return await self._func(*args, **kwargs)
+                    async def run(
+                        self,
+                        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+                        *,
+                        thread: AgentThread | None = None,
+                        **kwargs: Any,
+                    ) -> AgentRunResponse:
+                        return await self._func(messages=messages, thread=thread, **kwargs)
 
-                    async def run_streaming(self, *args, **kwargs) -> AsyncIterable[AgentRunResponseUpdate]:
+                    def run_streaming(
+                        self,
+                        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+                        *,
+                        thread: AgentThread | None = None,
+                        **kwargs: Any,
+                    ) -> AsyncIterable[AgentRunResponseUpdate]:
                         raise NotImplementedError("Streaming is not supported for this agent.")
 
                     def get_new_thread(self) -> AgentThread:
-                        return AgentThread()
+                        return ChatClientAgentThread()
 
-                return RunFunctionAgent(f, id, agent_name, agent_description, agent_instructions)
+                return RunFunctionAgent(
+                    f,  # type: ignore[reportArgumentType]
+                    id,
+                    agent_name,
+                    agent_description,
+                    agent_instructions,
+                )
             if isasyncgenfunction(f):
 
                 class StreamingRunFunctionAgent:
@@ -878,7 +898,7 @@ def agent(
                             yield update
 
                     def get_new_thread(self) -> AgentThread:
-                        return AgentThread()
+                        return ChatClientAgentThread()
 
                 return StreamingRunFunctionAgent(f, id, agent_name, agent_description, agent_instructions)
 

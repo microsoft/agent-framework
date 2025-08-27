@@ -82,7 +82,7 @@ async def _auto_invoke_function(
 
 
 def _tool_call_non_streaming(
-    chat_client: "ChatClientBase",
+    chat_client: "ChatClient",
     func: Callable[..., Awaitable["ChatResponse"]],
     max_iterations: int = 10,
 ) -> Callable[..., Awaitable["ChatResponse"]]:
@@ -159,7 +159,7 @@ def _tool_call_non_streaming(
 
 
 def _tool_call_streaming(
-    chat_client: "ChatClientBase",
+    chat_client: "ChatClient",
     func: Callable[..., AsyncIterable["ChatResponseUpdate"]],
     max_iterations: int = 10,
 ) -> Callable[..., AsyncIterable["ChatResponseUpdate"]]:
@@ -226,22 +226,28 @@ def _tool_call_streaming(
     return wrapper
 
 
-def FunctionInvokingChatClient(chat_client: "ChatClientBase", *, max_iterations: int = 10) -> "ChatClientBase":
+def FunctionInvokingChatClient(chat_client: "ChatClient", *, max_iterations: int = 10) -> "ChatClient":
     """Class decorator that enables tool calling for a chat client."""
     setattr(chat_client, "__function_invoking_chat_client__", True)  # noqa: B010
 
     if inner_response := getattr(chat_client, "_inner_get_response", None):
-        chat_client._inner_get_response = _tool_call_non_streaming(
+        chat_client._inner_get_response = _tool_call_non_streaming(  # type: ignore[reportAttributeAccessIssue]
             chat_client=chat_client,
             func=inner_response,
             max_iterations=max_iterations,
         )  # type: ignore
+    else:
+        logger.info("FunctionInvokingChatClient: no _inner_get_response method found on %s", type(chat_client))
     if inner_streaming_response := getattr(chat_client, "_inner_get_streaming_response", None):
-        chat_client._inner_get_streaming_response = _tool_call_streaming(
+        chat_client._inner_get_streaming_response = _tool_call_streaming(  # type: ignore[reportAttributeAccessIssue]
             chat_client=chat_client,
             func=inner_streaming_response,
             max_iterations=max_iterations,
         )  # type: ignore
+    else:
+        logger.info(
+            "FunctionInvokingChatClient: no _inner_get_streaming_response method found on %s", type(chat_client)
+        )
     return chat_client
 
 
@@ -671,19 +677,17 @@ TChatClientBuilder = TypeVar("TChatClientBuilder", bound="ChatClientBuilder")
 class ChatClientBuilder:
     """A builder class for creating ChatClient instances."""
 
-    def __init__(self, chat_client: type[ChatClientBase] | ChatClientBase | None = None) -> None:
+    def __init__(self, chat_client: type[ChatClient] | ChatClient | None = None) -> None:
         self.chat_client = self._chat_client
-        self._base_chat_client: type[ChatClientBase] | ChatClientBase | None = chat_client
-        self._decorators: list[Callable[[ChatClientBase], ChatClientBase]] = []
+        self._base_chat_client: type[ChatClient] | ChatClient | None = chat_client
+        self._decorators: list[Callable[[ChatClient], ChatClient]] = []
 
     @classmethod
-    def chat_client(
-        cls: type[TChatClientBuilder], chat_client: type[ChatClientBase] | ChatClientBase
-    ) -> TChatClientBuilder:
+    def chat_client(cls: type[TChatClientBuilder], chat_client: type[ChatClient] | ChatClient) -> TChatClientBuilder:
         """Create a new ChatClientBuilder instance with the specified chat client."""
         return cls(chat_client=chat_client)
 
-    def _chat_client(self, chat_client: type[ChatClientBase] | ChatClientBase) -> Self:
+    def _chat_client(self, chat_client: type[ChatClient] | ChatClient) -> Self:
         """Add a base chat client to the builder.
 
         Args:
@@ -695,11 +699,11 @@ class ChatClientBuilder:
         self._base_chat_client = chat_client
         return self
 
-    def add_decorator(self, decorator: Callable[[ChatClientBase], ChatClientBase]) -> Self:
+    def add_decorator(self, decorator: Callable[[ChatClient], ChatClient]) -> Self:
         """Add a decorator to the builder.
 
         Args:
-            decorator: A callable that takes a ChatClientBase instance and returns a modified instance.
+            decorator: A callable that takes a ChatClient instance and returns a modified instance.
 
         Returns:
             The builder instance.
@@ -754,7 +758,7 @@ class ChatClientBuilder:
         )
         return self
 
-    def build(self) -> ChatClientBase:
+    def build(self) -> ChatClient:
         """Build the final chat client instance.
 
         Returns:
@@ -763,13 +767,13 @@ class ChatClientBuilder:
         if self._base_chat_client is None:
             raise ValueError("Base chat client must be set before building.")
         chat_client = (
-            self._base_chat_client if isinstance(self._base_chat_client, ChatClientBase) else self._base_chat_client()
+            self._base_chat_client if isinstance(self._base_chat_client, ChatClient) else self._base_chat_client()
         )
         for decorator in self._decorators:
             chat_client = decorator(chat_client)
         return chat_client
 
-    async def __aenter__(self) -> ChatClientBase:
+    async def __aenter__(self) -> ChatClient:
         return self.build()
 
     async def __aexit__(
