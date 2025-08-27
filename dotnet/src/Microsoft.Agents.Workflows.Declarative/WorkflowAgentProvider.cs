@@ -36,23 +36,32 @@ public abstract class WorkflowAgentProvider
 /// <param name="httpClient">An optional <see cref="HttpClient"/> instance to be used for making HTTP requests. If not provided, a default client will be used.</param>
 public sealed class FoundryAgentProvider(string projectEndpoint, TokenCredential? projectCredentials = null, HttpClient? httpClient = null) : WorkflowAgentProvider
 {
+    private PersistentAgentsClient? _agentsClient;
+
     /// <inheritdoc/>
     public override async Task<AIAgent> GetAgentAsync(string agentId, CancellationToken cancellationToken = default)
     {
-        AIAgent agent = await this.CreateClient().GetAIAgentAsync(agentId, chatOptions: null, cancellationToken).ConfigureAwait(false);
+        AIAgent agent = await this.GetAgentsClient().GetAIAgentAsync(agentId, chatOptions: null, cancellationToken).ConfigureAwait(false);
 
         return agent;
     }
 
-    private PersistentAgentsClient CreateClient()
+    private PersistentAgentsClient GetAgentsClient()
     {
-        PersistentAgentsAdministrationClientOptions clientOptions = new();
-
-        if (httpClient is not null)
+        if (this._agentsClient is null)
         {
-            clientOptions.Transport = new HttpClientTransport(httpClient);
+            PersistentAgentsAdministrationClientOptions clientOptions = new();
+
+            if (httpClient is not null)
+            {
+                clientOptions.Transport = new HttpClientTransport(httpClient);
+            }
+
+            PersistentAgentsClient newClient = new(projectEndpoint, projectCredentials ?? new DefaultAzureCredential(), clientOptions);
+
+            Interlocked.CompareExchange(ref this._agentsClient, newClient, null);
         }
 
-        return new PersistentAgentsClient(projectEndpoint, projectCredentials ?? new DefaultAzureCredential(), clientOptions);
+        return this._agentsClient;
     }
 }
