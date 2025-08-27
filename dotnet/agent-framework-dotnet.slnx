@@ -21,7 +21,14 @@
   <Folder Name="/Samples/GettingStartedSteps/">
     <File Path="samples/GettingStartedSteps/README.md" />
     <Project Path="samples/GettingStartedSteps/Step01_ChatClientAgent_Running/Step01_ChatClientAgent_Running.csproj" />
-    <Project Path="samples/GettingStartedSteps/Step02_ChatClientAgent_Multiturn/Step02_ChatClientAgent_Multiturn.csproj" />
+    <Project Path="samples/GettingStartedSteps/Step02_ChatClientAgent_MultiturnConversation/Step02_ChatClientAgent_MultiturnConversation.csproj" />
+    <Project Path="samples/GettingStartedSteps/Step03_ChatClientAgent_UsingFunctionTools/Step03_ChatClientAgent_UsingFunctionTools.csproj" />
+    <Project Path="samples/GettingStartedSteps/Step04_ChatClientAgent_UsingFunctionToolsWithApprovals/Step04_ChatClientAgent_UsingFunctionToolsWithApprovals.csproj" />
+    <Project Path="samples/GettingStartedSteps/Step05_ChatClientAgent_StructuredOutput/Step05_ChatClientAgent_StructuredOutput.csproj" />
+    <Project Path="samples/GettingStartedSteps/Step06_ChatClientAgent_PersistedConversations/Step06_ChatClientAgent_PersistedConversations.csproj" />
+    <Project Path="samples/GettingStartedSteps/Step07_ChatClientAgent_3rdPartyThreadStorage/Step07_ChatClientAgent_3rdPartyThreadStorage.csproj" />
+    <Project Path="samples/GettingStartedSteps/Step08_ChatClientAgent_Telemetry/Step08_ChatClientAgent_Telemetry.csproj" />
+    <Project Path="samples/GettingStartedSteps/Step09_ChatClientAgent_DependencyInjection/Step09_ChatClientAgent_DependencyInjection.csproj" />
   </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
@@ -128,9 +135,9 @@
     <Project Path="src/Microsoft.Extensions.AI.Agents.Abstractions/Microsoft.Extensions.AI.Agents.Abstractions.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.AzureAI/Microsoft.Extensions.AI.Agents.AzureAI.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.CopilotStudio/Microsoft.Extensions.AI.Agents.CopilotStudio.csproj" />
-    <Project Path="src/Microsoft.Extensions.AI.Agents.Hosting/Microsoft.Extensions.AI.Agents.Hosting.csproj" />
-    <Project Path="src/Microsoft.Extensions.AI.Agents.Hosting.A2A/Microsoft.Extensions.AI.Agents.Hosting.A2A.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.Hosting.A2A.AspNetCore/Microsoft.Extensions.AI.Agents.Hosting.A2A.AspNetCore.csproj" />
+    <Project Path="src/Microsoft.Extensions.AI.Agents.Hosting.A2A/Microsoft.Extensions.AI.Agents.Hosting.A2A.csproj" />
+    <Project Path="src/Microsoft.Extensions.AI.Agents.Hosting/Microsoft.Extensions.AI.Agents.Hosting.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.OpenAI/Microsoft.Extensions.AI.Agents.OpenAI.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.Runtime.Abstractions/Microsoft.Extensions.AI.Agents.Runtime.Abstractions.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.csproj" />
@@ -152,9 +159,9 @@
   </Folder>
   <Folder Name="/Tests/UnitTests/">
     <Project Path="tests/Microsoft.Agents.Orchestration.UnitTests/Microsoft.Agents.Orchestration.UnitTests.csproj" />
-    <Project Path="tests/Microsoft.Extensions.AI.Agents.Hosting.A2A.Tests/Microsoft.Extensions.AI.Agents.Hosting.A2A.Tests.csproj" Id="2a1c544d-237d-4436-8732-ba0c447ac06b" />
     <Project Path="tests/Microsoft.Agents.Workflows.UnitTests/Microsoft.Agents.Workflows.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Extensions.AI.Agents.Abstractions.UnitTests/Microsoft.Extensions.AI.Agents.Abstractions.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Extensions.AI.Agents.Hosting.A2A.Tests/Microsoft.Extensions.AI.Agents.Hosting.A2A.Tests.csproj" Id="2a1c544d-237d-4436-8732-ba0c447ac06b" />
     <Project Path="tests/Microsoft.Extensions.AI.Agents.Hosting.UnitTests/Microsoft.Extensions.AI.Agents.Hosting.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Extensions.AI.Agents.Runtime.Abstractions.UnitTests/Microsoft.Extensions.AI.Agents.Runtime.Abstractions.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Extensions.AI.Agents.UnitTests/Microsoft.Extensions.AI.Agents.UnitTests.csproj" />
