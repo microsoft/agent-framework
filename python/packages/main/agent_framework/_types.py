@@ -1184,19 +1184,10 @@ class FunctionApprovalRequestContent(UserInputRequestContent):
             **kwargs,
         )
 
-    def create_approval(self) -> "FunctionApprovalResponseContent":
-        """Approve the function call."""
+    def create_response(self, approved: bool) -> "FunctionApprovalResponseContent":
+        """Create a response for the function approval request."""
         return FunctionApprovalResponseContent(
-            True,
-            id=self.id,
-            function_call=self.function_call,
-            additional_properties=self.additional_properties,
-        )
-
-    def create_rejection(self) -> "FunctionApprovalResponseContent":
-        """Reject the function call."""
-        return FunctionApprovalResponseContent(
-            False,
+            approved,
             id=self.id,
             function_call=self.function_call,
             additional_properties=self.additional_properties,

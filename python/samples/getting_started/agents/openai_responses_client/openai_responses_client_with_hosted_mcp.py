@@ -24,7 +24,7 @@ async def handle_approvals_without_thread(query: str, agent: "AIAgent"):
                     f" with arguments: {user_input_needed.function_call.arguments}"
                 )
                 new_inputs.append(ChatMessage(role="assistant", contents=[user_input_needed]))
-                new_inputs.append(ChatMessage(role="user", contents=[user_input_needed.create_approval()]))
+                new_inputs.append(ChatMessage(role="user", contents=[user_input_needed.create_response(True)]))
             else:
                 print(f"Other user input requested: {user_input_needed.type}")
         result = await agent.run(new_inputs)
@@ -44,7 +44,7 @@ async def handle_approvals_with_thread(query: str, agent: "AIAgent", thread: "Ag
                     f"User Input Request for function from {agent.name}: {user_input_needed.function_call.name}"
                     f" with arguments: {user_input_needed.function_call.arguments}"
                 )
-                new_input.append(ChatMessage(role="user", contents=[user_input_needed.create_approval()]))
+                new_input.append(ChatMessage(role="user", contents=[user_input_needed.create_response(True)]))
             else:
                 print(f"Other user input requested: {user_input_needed.type}")
         result = await agent.run(new_input, thread=thread, store=True)
@@ -68,7 +68,7 @@ async def handle_approvals_with_thread_streaming(query: str, agent: "AIAgent", t
                             f"User Input Request for function from {agent.name}: {user_input_needed.function_call.name}"
                             f" with arguments: {user_input_needed.function_call.arguments}"
                         )
-                        new_input.append(ChatMessage(role="user", contents=[user_input_needed.create_approval()]))
+                        new_input.append(ChatMessage(role="user", contents=[user_input_needed.create_response(True)]))
                         new_input_added = True
             else:
                 yield update
@@ -206,9 +206,9 @@ async def main() -> None:
     print("=== OpenAI Responses Client Agent with Hosted Mcp Tools Examples ===\n")
 
     await run_hosted_mcp_with_thread_streaming()
-    # await run_hosted_mcp_with_thread()
-    # await run_hosted_mcp_wo_thread()
-    # await run_hosted_mcp_wo_approval()
+    await run_hosted_mcp_with_thread()
+    await run_hosted_mcp_wo_thread()
+    await run_hosted_mcp_wo_approval()
 
 
 if __name__ == "__main__":
