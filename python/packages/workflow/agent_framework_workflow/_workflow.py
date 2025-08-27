@@ -4,7 +4,7 @@ import asyncio
 import logging
 import sys
 import uuid
-from collections.abc import AsyncIterable, Callable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from typing import Any
 
 from agent_framework._pydantic import AFBaseModel
@@ -88,7 +88,7 @@ class Workflow(AFBaseModel):
     max_iterations: int = Field(
         default=DEFAULT_MAX_ITERATIONS, description="Maximum number of iterations the workflow will run"
     )
-    workflow_id: str = Field(
+    id: str = Field(
         default_factory=lambda: str(uuid.uuid4()), description="Unique identifier for this workflow instance"
     )
 
@@ -114,14 +114,14 @@ class Workflow(AFBaseModel):
         # Convert start_executor to string ID if it's an Executor instance
         start_executor_id = start_executor.id if isinstance(start_executor, Executor) else start_executor
 
-        workflow_id = str(uuid.uuid4())
+        id = str(uuid.uuid4())
 
         kwargs.update({
             "edge_groups": edge_groups,
             "executors": executors,
             "start_executor_id": start_executor_id,
             "max_iterations": max_iterations,
-            "workflow_id": workflow_id,
+            "id": id,
         })
 
         super().__init__(**kwargs)
@@ -135,8 +135,38 @@ class Workflow(AFBaseModel):
             self._shared_state,
             runner_context,
             max_iterations=max_iterations,
-            workflow_id=workflow_id,
+            workflow_id=id,
         )
+
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
+        """Custom serialization that properly handles WorkflowExecutor nested workflows."""
+        data = super().model_dump(**kwargs)
+
+        # Ensure WorkflowExecutor instances have their workflow field serialized
+        if "executors" in data:
+            executors_data = data["executors"]
+            for executor_id, executor_data in executors_data.items():
+                # Check if this is a WorkflowExecutor that might be missing its workflow field
+                if (
+                    isinstance(executor_data, dict)
+                    and executor_data.get("type") == "WorkflowExecutor"
+                    and "workflow" not in executor_data
+                ):
+                    # Get the original executor object and serialize its workflow
+                    original_executor = self.executors.get(executor_id)
+                    if original_executor and hasattr(original_executor, "workflow"):
+                        from ._executor import WorkflowExecutor
+
+                        if isinstance(original_executor, WorkflowExecutor):
+                            executor_data["workflow"] = original_executor.workflow.model_dump(**kwargs)
+
+        return data
+
+    def model_dump_json(self, **kwargs: Any) -> str:
+        """Custom JSON serialization that properly handles WorkflowExecutor nested workflows."""
+        import json
+
+        return json.dumps(self.model_dump(**kwargs))
 
     def get_start_executor(self) -> Executor:
         """Get the starting executor of the workflow.
@@ -150,6 +180,48 @@ class Workflow(AFBaseModel):
         """Get the list of executors in the workflow."""
         return list(self.executors.values())
 
+    async def _run_workflow_with_tracing(
+        self, initial_executor_fn: Callable[[], Awaitable[None]] | None = None, reset_context: bool = True
+    ) -> AsyncIterable[WorkflowEvent]:
+        """Private method to run workflow with proper tracing.
+
+        All workflow entry points create a NEW workflow span. It is the responsibility
+        of external callers to maintain context across different workflow runs.
+
+        Args:
+            initial_executor_fn: Optional function to execute initial executor
+            reset_context: Whether to reset the context for a new run
+
+        Yields:
+            WorkflowEvent: The events generated during the workflow execution.
+        """
+        # Import here to avoid circular imports
+        from ._telemetry import workflow_tracer
+
+        # Create workflow span that encompasses the entire execution
+        with workflow_tracer.create_workflow_run_span(self):
+            try:
+                # Add workflow started event
+                workflow_tracer.add_workflow_event("workflow.started")
+
+                # Reset context for a new run if supported
+                if reset_context:
+                    self._runner.context.reset_for_new_run(self._shared_state)
+
+                # Execute initial setup if provided
+                if initial_executor_fn:
+                    await initial_executor_fn()
+
+                # All executor executions happen within workflow span
+                async for event in self._runner.run_until_convergence():
+                    yield event
+
+                # Success
+                workflow_tracer.add_workflow_event("workflow.completed")
+            except Exception as e:
+                workflow_tracer.add_workflow_error_event(e)
+                raise
+
     async def run_streaming(self, message: Any) -> AsyncIterable[WorkflowEvent]:
         """Run the workflow with a starting message and stream events.
 
@@ -159,22 +231,22 @@ class Workflow(AFBaseModel):
         Yields:
             WorkflowEvent: The events generated during the workflow execution.
         """
-        # Reset context for a new run if supported
-        self._runner.context.reset_for_new_run(self._shared_state)
 
-        executor = self.get_start_executor()
+        async def initial_execution() -> None:
+            executor = self.get_start_executor()
+            await executor.execute(
+                message,
+                WorkflowContext(
+                    executor.id,
+                    [self.__class__.__name__],
+                    self._shared_state,
+                    self._runner.context,
+                    trace_contexts=None,  # No parent trace context for workflow start
+                    source_span_ids=None,  # No source span for workflow start
+                ),
+            )
 
-        await executor.execute(
-            message,
-            WorkflowContext(
-                executor.id,
-                [self.__class__.__name__],
-                self._shared_state,
-                self._runner.context,
-            ),
-        )
-
-        async for event in self._runner.run_until_convergence():
+        async for event in self._run_workflow_with_tracing(initial_executor_fn=initial_execution, reset_context=True):
             yield event
 
     async def run_streaming_from_checkpoint(
@@ -199,41 +271,48 @@ class Workflow(AFBaseModel):
             ValueError: If neither checkpoint_storage is provided nor checkpointing is enabled.
             RuntimeError: If checkpoint restoration fails.
         """
-        has_checkpointing = self._runner.context.has_checkpointing()
 
-        if not has_checkpointing and not checkpoint_storage:
-            raise ValueError(
-                "Cannot restore from checkpoint: either provide checkpoint_storage parameter "
-                "or build workflow with WorkflowBuilder.with_checkpointing(checkpoint_storage)."
-            )
+        async def checkpoint_restoration() -> None:
+            has_checkpointing = self._runner.context.has_checkpointing()
 
-        if has_checkpointing:
-            # restore via Runner so shared state and iteration are synchronized
-            restored = await self._runner.restore_from_checkpoint(checkpoint_id)
-        else:
-            if checkpoint_storage is None:
-                raise ValueError("checkpoint_storage cannot be None.")
-            restored = await self._restore_from_external_checkpoint(checkpoint_id, checkpoint_storage)
+            if not has_checkpointing and not checkpoint_storage:
+                raise ValueError(
+                    "Cannot restore from checkpoint: either provide checkpoint_storage parameter "
+                    "or build workflow with WorkflowBuilder.with_checkpointing(checkpoint_storage)."
+                )
 
-        if not restored:
-            raise RuntimeError(f"Failed to restore from checkpoint: {checkpoint_id}")
+            if has_checkpointing:
+                # restore via Runner so shared state and iteration are synchronized
+                restored = await self._runner.restore_from_checkpoint(checkpoint_id)
+            else:
+                if checkpoint_storage is None:
+                    raise ValueError("checkpoint_storage cannot be None.")
+                restored = await self._restore_from_external_checkpoint(checkpoint_id, checkpoint_storage)
 
-        if responses:
-            request_info_executor = self._find_request_info_executor()
-            if request_info_executor:
-                for request_id, response_data in responses.items():
-                    await request_info_executor.handle_response(
-                        response_data,
-                        request_id,
-                        WorkflowContext(
-                            request_info_executor.id,
-                            [self.__class__.__name__],
-                            self._shared_state,
-                            self._runner.context,
-                        ),
-                    )
+            if not restored:
+                raise RuntimeError(f"Failed to restore from checkpoint: {checkpoint_id}")
 
-        async for event in self._runner.run_until_convergence():
+            if responses:
+                request_info_executor = self._find_request_info_executor()
+                if request_info_executor:
+                    for request_id, response_data in responses.items():
+                        await request_info_executor.handle_response(
+                            response_data,
+                            request_id,
+                            WorkflowContext(
+                                request_info_executor.id,
+                                [self.__class__.__name__],
+                                self._shared_state,
+                                self._runner.context,
+                                trace_contexts=None,  # No parent trace context for new workflow span
+                                source_span_ids=None,  # No source span for response handling
+                            ),
+                        )
+
+        async for event in self._run_workflow_with_tracing(
+            initial_executor_fn=checkpoint_restoration,
+            reset_context=False,  # Don't reset context when resuming from checkpoint
+        ):
             yield event
 
     async def send_responses_streaming(self, responses: dict[str, Any]) -> AsyncIterable[WorkflowEvent]:
@@ -246,26 +325,35 @@ class Workflow(AFBaseModel):
         Yields:
             WorkflowEvent: The events generated during the workflow execution after sending the responses.
         """
-        request_info_executor = self._find_request_info_executor()
-        if not request_info_executor:
-            raise ValueError("No RequestInfoExecutor found in workflow.")
 
-        async def _handle_response(response: Any, request_id: str) -> None:
-            """Handle the response from the RequestInfoExecutor."""
-            await request_info_executor.handle_response(
-                response,
-                request_id,
-                WorkflowContext(
-                    request_info_executor.id,
-                    [self.__class__.__name__],
-                    self._shared_state,
-                    self._runner.context,
-                ),
-            )
+        async def send_responses() -> None:
+            request_info_executor = self._find_request_info_executor()
+            if not request_info_executor:
+                raise ValueError("No RequestInfoExecutor found in workflow.")
 
-        await asyncio.gather(*[_handle_response(response, request_id) for request_id, response in responses.items()])
+            async def _handle_response(response: Any, request_id: str) -> None:
+                """Handle the response from the RequestInfoExecutor."""
+                await request_info_executor.handle_response(
+                    response,
+                    request_id,
+                    WorkflowContext(
+                        request_info_executor.id,
+                        [self.__class__.__name__],
+                        self._shared_state,
+                        self._runner.context,
+                        trace_contexts=None,  # No parent trace context for new workflow span
+                        source_span_ids=None,  # No source span for response handling
+                    ),
+                )
 
-        async for event in self._runner.run_until_convergence():
+            await asyncio.gather(*[
+                _handle_response(response, request_id) for request_id, response in responses.items()
+            ])
+
+        async for event in self._run_workflow_with_tracing(
+            initial_executor_fn=send_responses,
+            reset_context=False,  # Don't reset context when sending responses
+        ):
             yield event
 
     async def run(self, message: Any) -> WorkflowRunResult:
@@ -437,7 +525,13 @@ class Workflow(AFBaseModel):
                 from ._runner_context import Message as _Msg
 
                 await self._runner.context.send_message(
-                    _Msg(data=msg_data.get("data"), source_id=source_id, target_id=target_id)
+                    _Msg(
+                        data=msg_data.get("data"),
+                        source_id=source_id,
+                        target_id=target_id,
+                        trace_contexts=msg_data.get("trace_contexts"),
+                        source_span_ids=msg_data.get("source_span_ids"),
+                    )
                 )
 
 
@@ -652,14 +746,42 @@ class WorkflowBuilder:
             WorkflowValidationError: If workflow validation fails (includes EdgeDuplicationError,
                 TypeCompatibilityError, and GraphConnectivityError subclasses).
         """
-        if not self._start_executor:
-            raise ValueError("Starting executor must be set using set_start_executor before building the workflow.")
+        # Import here to avoid circular imports
+        from ._telemetry import workflow_tracer
 
-        validate_workflow_graph(self._edge_groups, self._executors, self._start_executor)
+        # Create workflow build span that includes validation and workflow creation
+        with workflow_tracer.create_workflow_build_span():
+            try:
+                # Add workflow build started event
+                workflow_tracer.add_build_event("build.started")
 
-        context = InProcRunnerContext(self._checkpoint_storage)
+                if not self._start_executor:
+                    raise ValueError(
+                        "Starting executor must be set using set_start_executor before building the workflow."
+                    )
 
-        return Workflow(self._edge_groups, self._executors, self._start_executor, context, self._max_iterations)
+                # Perform validation before creating the workflow
+                validate_workflow_graph(self._edge_groups, self._executors, self._start_executor)
 
+                # Add validation completed event
+                workflow_tracer.add_build_event("build.validation_completed")
 
-# endregion
+                context = InProcRunnerContext(self._checkpoint_storage)
+
+                # Create workflow instance after validation
+                workflow = Workflow(
+                    self._edge_groups, self._executors, self._start_executor, context, self._max_iterations
+                )
+
+                # Set workflow attributes on the span
+                workflow_tracer.set_workflow_build_span_attributes(workflow)
+
+                # Add workflow build completed event
+                workflow_tracer.add_build_event("build.completed")
+
+                return workflow
+
+            except Exception as e:
+                # The method already includes sufficient error info (error.message, error.type)
+                workflow_tracer.add_build_error_event(e)
+                raise

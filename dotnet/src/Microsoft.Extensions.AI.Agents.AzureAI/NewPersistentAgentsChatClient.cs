@@ -256,6 +256,7 @@ namespace Azure.AI.Agents.Persistent
             // Populate the run options from the ChatOptions, if provided.
             if (options is not null)
             {
+                runOptions.OverrideInstructions ??= options.Instructions ?? _agent.Instructions;
                 runOptions.MaxCompletionTokens ??= options.MaxOutputTokens;
                 runOptions.OverrideModelName ??= options.ModelId;
                 runOptions.TopP ??= options.TopP;
