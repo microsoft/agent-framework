@@ -9,7 +9,7 @@ Before you begin, ensure you have the following:
 - [.NET 8.0 SDK or later](https://dotnet.microsoft.com/download)
 - For Azure AI Foundry samples: Azure OpenAI service endpoint and deployment configured
 - For OpenAI samples: OpenAI API key
-- For OpenAI Assistant samples: OpenAI API key with Assistant API access
+- For OpenAI Assistants samples: OpenAI API key with Assistant API access
 
 ## Environment Variables
 
@@ -20,7 +20,7 @@ Set the appropriate environment variables based on the sample type you want to r
 $env:AZURE_OPENAI_ENDPOINT = "https://your-resource.openai.azure.com/"
 ```
 
-**For OpenAI and OpenAI Assistant projects:**
+**For OpenAI and OpenAI Assistants projects:**
 ```powershell
 $env:OPENAI_API_KEY = "sk-..."
 ```
@@ -40,7 +40,7 @@ The migration samples are organized into three categories, each demonstrating di
 |---|---|---|
 |[Azure AI Foundry](./Azure%20AI%20Foundry/)|Azure OpenAI service integration samples|4 projects|
 |[OpenAI](./OpenAI/)|Direct OpenAI API integration samples|3 projects|
-|[OpenAI Assistant](./OpenAI%20Assistant/)|OpenAI Assistant API integration samples|4 projects|
+|[OpenAI Assistants](./OpenAI%20Assistants/)|OpenAI Assistant API integration samples|4 projects|
 
 ### Sample Types
 
@@ -49,7 +49,7 @@ Each category includes the following migration demonstrations:
 - **Step01_Basics**: Basic agent creation and invocation
 - **Step02_DependencyInjection**: Using dependency injection patterns
 - **Step03_ToolCall**: Function/tool calling capabilities
-- **Step04_CodeInterpreter**: Code interpreter functionality (Azure AI Foundry and OpenAI Assistant only)
+- **Step04_CodeInterpreter**: Code interpreter functionality (Azure AI Foundry and OpenAI Assistants only)
 
 ## Running the samples from the console
 
@@ -70,11 +70,11 @@ dotnet run
 cd "OpenAI\Step02_DependencyInjection"
 dotnet run
 
-# OpenAI Assistant Examples
-cd "OpenAI Assistant\Step01_Basics"
+# OpenAI Assistants Examples
+cd "OpenAI Assistants\Step01_Basics"
 dotnet run
 
-cd "OpenAI Assistant\Step04_CodeInterpreter"
+cd "OpenAI Assistants\Step04_CodeInterpreter"
 dotnet run
 ```
 
@@ -190,11 +190,11 @@ dotnet run
 cd "OpenAI\Step02_DependencyInjection"
 dotnet run
 
-# OpenAI Assistant Examples
-cd "OpenAI Assistant\Step01_Basics"
+# OpenAI Assistants Examples
+cd "OpenAI Assistants\Step01_Basics"
 dotnet run
 
-cd "OpenAI Assistant\Step04_CodeInterpreter"
+cd "OpenAI Assistants\Step04_CodeInterpreter"
 dotnet run
 ```
 
@@ -203,9 +203,9 @@ Each project demonstrates **side-by-side comparisons** of:
 1. **AF Agent** (Agent Framework approach) - The new way
 2. **SK Agent** (Semantic Kernel approach) - The legacy way
 
-### OpenAI Assistant - Step02_DependencyInjection
+### OpenAI Assistants - Step02_DependencyInjection
 
-**Purpose**: Dependency injection with OpenAI Assistant agents
+**Purpose**: Dependency injection with OpenAI Assistants agents
 
 #### Before (Semantic Kernel)
 ```csharp
@@ -245,9 +245,9 @@ var agent = serviceProvider.GetRequiredService<AIAgent>();
 - **Creation Method**: Use `CreateAIAgentAsync()` directly instead of creating `Assistant` first
 - **No Kernel Dependency**: No need to register Kernel services for AF agents
 
-### OpenAI Assistant - Step03_ToolCall
+### OpenAI Assistants - Step03_ToolCall
 
-**Purpose**: Function calling with OpenAI Assistant agents
+**Purpose**: Function calling with OpenAI Assistants agents
 
 #### Before (Semantic Kernel)
 ```csharp
@@ -346,14 +346,14 @@ await foreach (var update in agent.RunStreamingAsync(userInput, thread))
 
 ### Cleanup Patterns
 
-#### Semantic Kernel (OpenAI Assistant)
+#### Semantic Kernel (OpenAI Assistants)
 ```csharp
 // Manual cleanup required
 await thread.DeleteAsync();
 await assistantsClient.DeleteAssistantAsync(agent.Id);
 ```
 
-#### Agent Framework (OpenAI Assistant)
+#### Agent Framework (OpenAI Assistants)
 ```csharp
 // Consistent cleanup across providers
 await assistantClient.DeleteThreadAsync(thread.ConversationId);
