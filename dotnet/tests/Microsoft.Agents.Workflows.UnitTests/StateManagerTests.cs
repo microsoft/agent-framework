@@ -218,11 +218,11 @@ public class StateManagerTests
         otherValue1 = await manager.ReadStateAsync<string>(scopeOtherView, Key1);
         if (isSharedScope)
         {
-            otherValue1.Should().Be(Value1, "writes to private scopes should not be visible across executors");
+            otherValue1.Should().Be(Value1, "clears should not be visible to other executors until published (key2: written by self, read by other)");
         }
         else
         {
-            otherValue1.Should().BeNull("clears should not be visible to other executors until published (key2: written by self, read by other)");
+            otherValue1.Should().BeNull("writes to private scopes should not be visible across executors");
         }
 
         otherValue2 = await manager.ReadStateAsync<string>(scopeOtherView, Key2);
