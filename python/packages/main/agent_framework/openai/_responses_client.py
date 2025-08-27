@@ -99,6 +99,13 @@ class OpenAIResponsesClientBase(OpenAIHandler, RunnableChatClient):
         message_id: str,
         background: bool | None = None,
         include: list["ResponseIncludable"] | None = None,
+        tools: AITool
+        | list[AITool]
+        | Callable[..., Any]
+        | list[Callable[..., Any]]
+        | MutableMapping[str, Any]
+        | list[MutableMapping[str, Any]]
+        | None = None,
         **kwargs: Any,
     ) -> ChatResponse: ...
 
