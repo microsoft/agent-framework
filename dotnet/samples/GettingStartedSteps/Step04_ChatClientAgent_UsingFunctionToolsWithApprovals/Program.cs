@@ -30,12 +30,14 @@ AIAgent agent = new AzureOpenAIClient(
      .GetChatClient(deploymentName)
      .CreateAIAgent(instructions: "You are a helpful assistant", tools: [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(GetWeather))]);
 
-Console.WriteLine("\n--- Run with approval requiring function tools ---\n");
-
 // Call the agent and check if there are any user input requests to handle.
 AgentThread thread = agent.GetNewThread();
 var response = await agent.RunAsync("What is the weather like in Amsterdam?", thread);
 var userInputRequests = response.UserInputRequests.ToList();
+
+// For streaming use:
+// var updates = await agent.RunStreamingAsync("What is the weather like in Amsterdam?", thread).ToListAsync();
+// userInputRequests = updates.SelectMany(x => x.UserInputRequests).ToList();
 
 while (userInputRequests.Count > 0)
 {
@@ -54,33 +56,13 @@ while (userInputRequests.Count > 0)
     response = await agent.RunAsync(userInputResponses, thread);
 
     userInputRequests = response.UserInputRequests.ToList();
+
+    // For streaming use:
+    // updates = await agent.RunStreamingAsync(userInputResponses, thread).ToListAsync();
+    // userInputRequests = updates.SelectMany(x => x.UserInputRequests).ToList();
 }
 
 Console.WriteLine($"\nAgent: {response}");
 
-Console.WriteLine("\n--- Run with approval requiring function tools and streaming ---\n");
-
-// Call the agent and check if there are any user input requests to handle.
-thread = agent.GetNewThread();
-var updates = await agent.RunStreamingAsync("What is the weather like in Amsterdam?", thread).ToListAsync();
-userInputRequests = updates.SelectMany(x => x.UserInputRequests).ToList();
-
-while (userInputRequests.Count > 0)
-{
-    // Ask the user to approve each function call request.
-    // For simplicity, we are assuming here that only function approval requests are being made.
-    var userInputResponses = userInputRequests
-        .OfType<FunctionApprovalRequestContent>()
-        .Select(functionApprovalRequest =>
-        {
-            Console.WriteLine($"The agent would like to invoke the following function, please reply Y to approve: Name {functionApprovalRequest.FunctionCall.Name}");
-            return new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(Console.ReadLine()?.Equals("Y", StringComparison.OrdinalIgnoreCase) ?? false)]);
-        })
-        .ToList();
-
-    // Pass the user input responses back to the agent for further processing.
-    updates = await agent.RunStreamingAsync(userInputResponses, thread).ToListAsync();
-    userInputRequests = updates.SelectMany(x => x.UserInputRequests).ToList();
-}
-
-Console.WriteLine($"\nAgent: {updates.ToAgentRunResponse()}");
+// For streaming use:
+// Console.WriteLine($"\nAgent: {updates.ToAgentRunResponse()}");
