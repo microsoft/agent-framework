@@ -4,7 +4,7 @@ This is a migration guide for users of [Autogen](https://microsoft.github.io/aut
 
 
 ## What is Agent Framework?
-Agent Framework is an asyncrhonous, event-driven Agentic framework library which merges the best ideas and features from both `Autogen` and `Semantic Kernel`. The high level structure of Agent Framework is similar to that of Autogen, including the components used to build complex workflows.
+Agent Framework is an asynchronous, event-driven Agentic framework library which merges the best ideas and features from both `Autogen` and `Semantic Kernel`. The high level structure of Agent Framework is similar to that of Autogen, including the components used to build complex workflows.
 
 This guide will focus on translating the various components from `Autogen 0.4+` to `Agent Framework`
 
