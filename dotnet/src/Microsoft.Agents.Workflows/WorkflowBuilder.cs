@@ -8,14 +8,6 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.Workflows;
 
 /// <summary>
-/// A factory method that produces an executor instance.
-/// </summary>
-/// <typeparam name="TExecutor">The executor type.</typeparam>
-/// <returns>A new <typeparamref name="TExecutor"/> instance.</returns>
-public delegate TExecutor ExecutorProvider<out TExecutor>()
-    where TExecutor : Executor;
-
-/// <summary>
 /// Provides a builder for constructing and configuring a workflow by defining executors and the connections between
 /// them.
 /// </summary>
@@ -30,7 +22,7 @@ public class WorkflowBuilder
         public override string ToString() => $"{this.SourceId} -> {this.TargetId}";
     }
 
-    private readonly Dictionary<string, ExecutorProvider<Executor>> _executors = new();
+    private readonly Dictionary<string, ExecutorRegistration> _executors = new();
     private readonly Dictionary<string, HashSet<Edge>> _edges = new();
     private readonly HashSet<string> _unboundExecutors = new();
     private readonly HashSet<EdgeId> _conditionlessEdges = new();
@@ -49,20 +41,41 @@ public class WorkflowBuilder
 
     private ExecutorIsh Track(ExecutorIsh executorish)
     {
-        ExecutorProvider<Executor> provider = executorish.ExecutorProvider;
-
         // If the executor is unbound, create an entry for it, unless it already exists.
         // Otherwise, update the entry for it, and remove the unbound tag
         if (executorish.IsUnbound && !this._executors.ContainsKey(executorish.Id))
         {
             // If this is an unbound executor, we need to track it separately
             this._unboundExecutors.Add(executorish.Id);
-            this._executors[executorish.Id] = provider;
         }
         else if (!executorish.IsUnbound)
         {
-            // If we already have an executor with this ID, we need to update it (todo: should we throw on double binding?)
-            this._executors[executorish.Id] = provider;
+            ExecutorRegistration incoming = executorish.Registration;
+            // If there is already a bound executor with this ID, we need to validate (to best efforts)
+            // that the two are matching (at least based on type)
+            if (this._executors.TryGetValue(executorish.Id, out ExecutorRegistration? existing))
+            {
+                if (existing.ExecutorType != incoming.ExecutorType)
+                {
+                    throw new InvalidOperationException(
+                        $"Cannot bind executor with ID '{executorish.Id}' because an executor with the same ID but a different type ({existing.ExecutorType.Name} vs {incoming.ExecutorType.Name}) is already bound.");
+                }
+
+                if (existing.RawExecutorishData != null &&
+                    !object.ReferenceEquals(existing.RawExecutorishData, incoming.RawExecutorishData))
+                {
+                    throw new InvalidOperationException(
+                        $"Cannot bind executor with ID '{executorish.Id}' because an executor with the same ID but different instance is already bound.");
+                }
+            }
+            else
+            {
+                this._executors[executorish.Id] = executorish.Registration;
+                if (this._unboundExecutors.Contains(executorish.Id))
+                {
+                    this._unboundExecutors.Remove(executorish.Id);
+                }
+            }
         }
 
         if (executorish.ExecutorType == ExecutorIsh.Type.InputPort)
@@ -72,11 +85,6 @@ public class WorkflowBuilder
         }
 
         return executorish;
-    }
-
-    private void UpdateExecutor(string id, ExecutorProvider<Executor> provider)
-    {
-        this._executors[id] = provider;
     }
 
     /// <summary>
@@ -93,7 +101,7 @@ public class WorkflowBuilder
                 $"Executor with ID '{executor.Id}' is already bound or does not exist in the workflow.");
         }
 
-        this._executors[executor.Id] = () => executor;
+        this._executors[executor.Id] = new ExecutorIsh(executor).Registration;
         this._unboundExecutors.Remove(executor.Id);
         return this;
     }
@@ -214,14 +222,14 @@ public class WorkflowBuilder
         }
 
         // Grab the start node, and make sure it has the right type?
-        if (!this._executors.TryGetValue(this._startExecutorId, out ExecutorProvider<Executor>? startProvider))
+        if (!this._executors.TryGetValue(this._startExecutorId, out ExecutorRegistration? startRegistration))
         {
             // TODO: This should never be able to be hit
             throw new InvalidOperationException($"Start executor with ID '{this._startExecutorId}' is not bound.");
         }
 
-        // TODO: Delay-instantiate the start executor, and ensure it is of type T.
-        Executor startExecutor = startProvider();
+        // TODO: Delay-instantiate the start executor, and ensure it take input of type T
+        Executor startExecutor = startRegistration.Provider();
 
         if (!startExecutor.InputTypes.Any(t => t.IsAssignableFrom(typeof(T))))
         {
@@ -233,7 +241,7 @@ public class WorkflowBuilder
 
         return new Workflow<T>(this._startExecutorId) // Why does it not see the default ctor?
         {
-            ExecutorProviders = this._executors,
+            Registrations = this._executors,
             Edges = this._edges,
             Ports = this._inputPorts
         };

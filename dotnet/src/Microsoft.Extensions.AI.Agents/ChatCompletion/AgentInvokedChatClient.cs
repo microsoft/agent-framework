@@ -5,13 +5,13 @@ namespace Microsoft.Extensions.AI.Agents;
 /// <summary>
 /// Internal chat client that handle agent invocation details for the chat client pipeline.
 /// </summary>
-internal sealed class AgentInvokingChatClient : DelegatingChatClient
+internal sealed class AgentInvokedChatClient : DelegatingChatClient
 {
     /// <summary>
-    /// Initializes a new instance of the <see cref="AgentInvokingChatClient"/> class.
+    /// Initializes a new instance of the <see cref="AgentInvokedChatClient"/> class.
     /// </summary>
     /// <param name="chatClient">The chat client to invoke agents.</param>
-    internal AgentInvokingChatClient(IChatClient chatClient)
+    internal AgentInvokedChatClient(IChatClient chatClient)
         : base(chatClient)
     {
     }
