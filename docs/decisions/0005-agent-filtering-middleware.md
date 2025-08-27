@@ -26,6 +26,32 @@ The challenge is to design an architecture that supports:
 - The design should allow flexible custom behaviors provided by enough context information.
 - The design should be exception friendly and allow clear error handling and recovery mechanisms.
 
+## Other AI Agent Framework Analysis
+
+This section provides an analysis of how other major AI agent frameworks handle filtering, middleware, hooks, or similar interception capabilities. The goal is to identify ubiquitous language, design patterns, and approaches that could inform our Agent Middleware design also providing valuable insights into achieving a more idiomatic designs.
+
+### Overview Comparison Table
+
+| Provider                  | Language | Supports (Y/N) | Naming                          | TL;DR Observation |
+|---------------------------|----------|----------------|---------------------------------|------------------------|
+| LangChain (Python)       | Python  | Y (read/write) | Callbacks (BaseCallbackHandler) | Uses observer pattern with event methods for interception (e.g., on_chain_start); supports agent actions and errors; handlers can read inputs/outputs and modify metadata or raise exceptions to influence flow. [Details](#langchain) |
+| LangChain (JS)           | JS      | Y (read/write) | Callbacks (BaseCallbackHandler) | Similar observer pattern to Python, with event methods adapted for JS async handling; supports chain/agent interception; handlers can read inputs/outputs and modify metadata or raise exceptions to influence flow. [Details](#langchain) |
+| LangGraph                | Python  | Y (read/write) | Hooks/Callbacks (inherited from LangChain) | Event-driven with runtime handlers; integrates callbacks for observability in graphs; inherits LangChain's ability to read/modify metadata or interrupt execution. [Details](#langgraph) |
+| AutoGen (Python)         | Python  | Y (read/write) | Reply Functions (register_reply) | Reply functions intercept and process messages; middleware-like for agent replies; can directly modify messages or replies before continuing. [Details](#autogen) |
+| AutoGen (C#)             | C#      | Y (read/write) | Middleware (MiddlewareAgent)   | Decorator/wrapper with middleware delegates for message modification; delegates can read and alter message content or options. [Details](#autogen) |
+| Semantic Kernel (C#)     | C#      | Y (read/write) | Filters (IFunctionInvocationFilter, etc.) | Interface-based processor pattern for function/prompt interception; filters can read and modify context, arguments, or results. [Details](#semantic-kernel) |
+| Semantic Kernel (Python) | Python  | Y (read/write) | Filters (add_filter, @kernel.filter decorator) | Function and decorator-based for interception; no explicit interfaces like C#, focuses on async functions for filters; can read and modify context/arguments/results. [Details](#semantic-kernel) |
+| Semantic Kernel (Java)   | Java    | Y (read/write) | Filters (FunctionInvocationFilter, etc.) | Interface-based similar to C#, adapted for Java's functional interfaces; supports function invocation interception; can read and modify context/arguments/results. [Details](#semantic-kernel) |
+| CrewAI                   | Python  | Y (read)       | Events/Callbacks (BaseEventListener) | Event-driven orchestration with listeners for workflows; listeners can observe events (e.g., read source/event data) but are primarily for logging/reactions without direct modification of workflow state. [Details](#crewai) |
+| LlamaIndex               | Python  | Y (read)       | Callbacks (BaseCallbackHandler) | Observer pattern with event methods for queries and tools; handlers can observe events/payloads (e.g., read prompts/responses) but are designed for debugging/tracing without modifying execution context. [Details](#llamaindex) |
+| Haystack                 | Python  | N (Pipeline-based interception) | N/A (Pipeline Components/Routers) | Relies on modular pipelines for implicit interception but lacks explicit middleware/filters; custom components can read/write data flow via routing/transformations, but this is compositional rather than hook-based interception. [Details](#haystack) |
+| OpenAI Swarm             | Python  | N              | N/A                             | No explicit middleware/filters; interception requires custom wrappers or manual handling (e.g., function decorators, client subclassing), lacking native framework support for built-in components to accept such modifications. [Details](#openai-swarm) |
+| Atomic Agents            | Python  | N              | N/A (Composable Components)     | No explicit middleware/filters; modularity allows composable units but no dedicated interception hooks or callbacks for custom reading/modification mid-execution. [Details](#atomic-agents) |
+| Smolagents (Hugging Face)| Python  | N              | N/A                             | No explicit support; focuses on simple agent building without interception mechanisms or hooks for reading/modifying execution. [Details](#smolagents) |
+| Phidata (Agno)           | Python  | N              | N/A                             | No explicit middleware/filters; agents use tools/memory but no interception hooks for custom reading/modification of calls. [Details](#phidata) |
+| PromptFlow (Microsoft)   | Python  | N (Tracing only) | Tracing                         | Supports tracing for LLM interactions, acting as callbacks for debugging/iteration; tracing is read-only for observability/telemetry without options to modify context or intercept calls beyond logging. [Details](#promptflow) |
+| n8n                      | JS/TS   | Y (read/write) | Callbacks (inherited from LangChain) | AI Agent node uses LangChain under the hood, inheriting callbacks for observability; supports reading/modifying metadata or interrupting flow as in LangChain. [Details](#n8n) |
+
 ## Considered Options
 
 ### Option 1: Semantic Kernel Approach
@@ -483,3 +509,5 @@ class MyMultipleFilterImplementation : IAgentFilter<AgentRunContext>, IAgentFilt
 ## Decision Outcome
 
 Chosen option: To be determined after further discussion and evaluation of the pros and cons of each option.
+
+## Appendix: Other Considerations
