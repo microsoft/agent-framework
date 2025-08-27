@@ -105,11 +105,17 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent) => RunnerContext.AddEventAsync(workflowEvent);
         public ValueTask SendMessageAsync(object message, string? targetId = null) => RunnerContext.SendMessageAsync(ExecutorId, message, targetId);
 
+        public ValueTask<T?> ReadStateAsync<T>(string key, string? scopeName = null)
+            => RunnerContext.StateManager.ReadStateAsync<T>(ExecutorId, scopeName, key);
+
+        public ValueTask<HashSet<string>> ReadStateKeysAsync(string? scopeName = null)
+            => RunnerContext.StateManager.ReadKeysAsync(ExecutorId, scopeName);
+
         public ValueTask QueueStateUpdateAsync<T>(string key, T? value, string? scopeName = null)
             => RunnerContext.StateManager.WriteStateAsync(ExecutorId, scopeName, key, value);
 
-        public ValueTask<T?> ReadStateAsync<T>(string key, string? scopeName = null)
-            => RunnerContext.StateManager.ReadStateAsync<T>(ExecutorId, scopeName, key);
+        public ValueTask QueueClearScopeAsync(string? scopeName = null)
+            => RunnerContext.StateManager.ClearStateAsync(ExecutorId, scopeName);
     }
 
     internal Task PrepareForCheckpointAsync(CancellationToken cancellation = default)
