@@ -24,7 +24,14 @@ Before you begin, ensure you have the following prerequisites:
 |Sample|Description|
 |---|---|
 |[Running a simple agent](./Step01_ChatClientAgent_Running/)|This sample demonstrates how to create and run a basic agent with instructions|
-|[Multi-turn conversation with a simple agent](./Step02_ChatClientAgent_MultiTurn/)|This sample demonstrates how to implement a multi-turn conversation with a simple agent|
+|[Multi-turn conversation with a simple agent](./Step02_ChatClientAgent_MultiturnConversation/)|This sample demonstrates how to implement a multi-turn conversation with a simple agent|
+|[Using function tools with a simple agent](./Step03_ChatClientAgent_UsingFunctionTools/)|This sample demonstrates how to use function tools with a simple agent|
+|[Using function tools with approvals](./Step04_ChatClientAgent_UsingFunctionToolsWithApprovals/)|This sample demonstrates how to use function tools where approvals require human in the loop approvals before execution|
+|[Structured output with a simple agent](./Step05_ChatClientAgent_StructuredOutput/)|This sample demonstrates how to use structured output with a simple agent|
+|[Persisted conversations with a simple agent](./Step06_ChatClientAgent_PersistedConversations/)|This sample demonstrates how to persist conversations and reload them later. This is useful for cases where an agent is hosted in a stateless service|
+|[3rd party thread storage with a simple agent](./Step07_ChatClientAgent_3rdPartyThreadStorage/)|This sample demonstrates how to store conversation history in a 3rd party storage solution|
+|[Telemetry with a simple agent](./Step08_ChatClientAgent_Telemetry/)|This sample demonstrates how to add telemetry to a simple agent|
+|[Dependency injection with a simple agent](./Step09_ChatClientAgent_DependencyInjection/)|This sample demonstrates how to add and resolve an agent with a dependency injection container|
 
 ## Running the samples from the console
 
