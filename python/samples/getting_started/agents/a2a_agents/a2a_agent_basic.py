@@ -10,35 +10,29 @@ from a2a.utils.constants import EXTENDED_AGENT_CARD_PATH
 # https://a2a-protocol.org/latest/tutorials/python/4-agent-executor/ and
 # https://a2a-protocol.org/latest/tutorials/python/5-start-server/
 
-async def get_agent_card() -> AgentCard:
-    base_url = 'http://localhost:9999'
-    final_agent_card_to_use: AgentCard | None = None
+async def get_agent_card(
+    *,
+    base_url: str = "http://localhost:9999",
+    token: str | None = None,
+    timeout: float = 5.0
+) -> AgentCard:
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resolver = A2ACardResolver(httpx_client=client, base_url=base_url)
 
-    # Get an agent_card.
-    async with httpx.AsyncClient() as httpx_client:
-        resolver = A2ACardResolver(
-            httpx_client=httpx_client,
-            base_url=base_url,
-            # agent_card_path uses default, extended_agent_card_path also uses default
-        )
+        public_card = await resolver.get_agent_card()
 
-        _public_card = (
-            await resolver.get_agent_card()
-        )  # Fetches from default public path
-        final_agent_card_to_use = _public_card
+        if not public_card.supports_authenticated_extended_card or not token:
+            return public_card
 
-        if _public_card.supports_authenticated_extended_card:
-            auth_headers_dict = {
-                'Authorization': 'Bearer dummy-token-for-extended-card'
-            }
-            _extended_card = await resolver.get_agent_card(
+        try:
+            extended_card = await resolver.get_agent_card(
                 relative_card_path=EXTENDED_AGENT_CARD_PATH,
-                http_kwargs={'headers': auth_headers_dict},
+                http_kwargs={"headers": {"Authorization": f"Bearer {token}"}},
             )
-            final_agent_card_to_use = (
-                _extended_card  # Update to use the extended card
-            )
-    return final_agent_card_to_use
+            return extended_card
+        except httpx.HTTPError:
+            # Graceful fallback if auth is invalid or the endpoint errors out
+            return public_card
 
 async def main():
     stream = False

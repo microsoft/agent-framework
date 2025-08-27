@@ -26,7 +26,6 @@ from a2a.types import Message as A2AMessage
 from a2a.types import Part as A2APart
 from a2a.types import Role as A2ARole
 from a2a.types import Task as A2ATask
-from pydantic import AnyUrl
 
 from ._agents import AgentBase
 from ._threads import AgentThread
@@ -66,17 +65,25 @@ class A2AAgent(AgentBase):
         self,
         *,
         name: str | None = None,
+        id: str | None = None,
         description: str | None = None,
         agent_card: AgentCard | None = None,
-        url: AnyUrl | None = None,
-        executor: A2AClient | None = None,
+        url: str | None = None,
+        client: A2AClient | None = None,
     ) -> None:
-        super().__init__(name=name, description=description)
+        args: dict[str, Any] = {}
+        if name:
+            args["name"] = name
+        if id:
+            args["id"] = id
+        if description:
+            args["description"] = description
+        super().__init__(**args)
 
-        self._client = executor or A2AClient(
+        self._client = client or A2AClient(
             httpx_client=httpx.AsyncClient(),
             agent_card=agent_card,
-            url=str(url) if url else None,
+            url=url,
         )
 
     async def run(
@@ -86,6 +93,26 @@ class A2AAgent(AgentBase):
         thread: AgentThread | None = None,
         **kwargs: Any,
     ) -> AgentRunResponse:
+        """Get a response from the agent.
+
+        This method returns the final result of the agent's execution
+        as a single AgentRunResponse object. The caller is blocked until
+        the final result is available.
+
+        Note: For streaming responses, use the run_streaming method, which returns
+        intermediate steps and the final result as a stream of AgentRunResponseUpdate
+        objects. Streaming only the final result is not feasible because the timing of
+        the final result's availability is unknown, and blocking the caller until then
+        is undesirable in streaming scenarios.
+
+        Args:
+            messages: The message(s) to send to the agent.
+            thread: The conversation thread associated with the message(s).
+            kwargs: Additional keyword arguments.
+
+        Returns:
+            An agent response item.
+        """
         messages = self._normalize_messages(messages)
         a2a_message = self._chat_message_to_a2a_message(messages[-1])
         message_request = SendMessageRequest(id=a2a_message.message_id, params=MessageSendParams(message=a2a_message))
@@ -129,10 +156,10 @@ class A2AAgent(AgentBase):
                             ]
                         case "submitted" | "working":
                             # TODO(peterychang): Long running task. How to handle this?
-                            raise Exception("Long running task")
+                            raise ValueError("Long running tasks not supported")
                         case _:
                             # input_required, auth_required, unknown
-                            raise Exception("Unhandled Task status")
+                            raise ValueError(f"Unhandled Task status {result.status.state}")
                 case _:
                     raise ValueError(f"Unknown response type {result}")
             return AgentRunResponse(
@@ -163,6 +190,21 @@ class A2AAgent(AgentBase):
         thread: AgentThread | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentRunResponseUpdate]:
+        """Run the agent as a stream.
+
+        This method will return the intermediate steps and final results of the
+        agent's execution as a stream of AgentRunResponseUpdate objects to the caller.
+
+        Note: An AgentRunResponseUpdate object contains a chunk of a message.
+
+        Args:
+            messages: The message(s) to send to the agent.
+            thread: The conversation thread associated with the message(s).
+            kwargs: Additional keyword arguments.
+
+        Yields:
+            An agent response item.
+        """
         messages = self._normalize_messages(messages)
         a2a_message = self._chat_message_to_a2a_message(messages[-1])
         message_request = SendStreamingMessageRequest(
@@ -195,10 +237,10 @@ class A2AAgent(AgentBase):
                                     ]
                             case "submitted" | "working":
                                 # TODO(peterychang): Long running task. How to handle this?
-                                raise Exception("Long running task")
+                                raise ValueError("Long running tasks not supported")
                             case _:
                                 # input_required, auth_required, unknown
-                                raise Exception("Unhandled Task status")
+                                raise ValueError(f"Unhandled Task status {result.status.state}")
                     case _:
                         raise ValueError(f"Unhandled response type {result}")
             else:
@@ -238,65 +280,66 @@ class A2AAgent(AgentBase):
         if not message.contents:
             raise ValueError("ChatMessage.contents is empty; cannot convert to A2AMessage.")
         content = message.contents[0]
-        if content.type == "text":
-            try:
-                text_json = json.loads(content.text)
-                parts.append(
-                    A2APart(
-                        root=DataPart(
-                            data=text_json,
-                            metadata=content.additional_properties,
+        match content.type:
+            case "text":
+                try:
+                    text_json = json.loads(content.text)
+                    parts.append(
+                        A2APart(
+                            root=DataPart(
+                                data=text_json,
+                                metadata=content.additional_properties,
+                            )
                         )
                     )
-                )
-            except json.JSONDecodeError:
+                except json.JSONDecodeError:
+                    parts.append(
+                        A2APart(
+                            root=TextPart(
+                                text=content.text,
+                                metadata=content.additional_properties,
+                            )
+                        )
+                    )
+            case "function_call" | "function_result":
+                # TODO(peterychang): Need to handle this?
+                pass
+            case "error":
                 parts.append(
                     A2APart(
                         root=TextPart(
-                            text=content.text,
+                            text=content.message or "An error occurred.",
                             metadata=content.additional_properties,
                         )
                     )
                 )
-        elif content.type == "function_call" or content.type == "function_result":
-            # TODO(peterychang): Need to handle this?
-            pass
-        elif content.type == "error":
-            parts.append(
-                A2APart(
-                    root=TextPart(
-                        text=content.message or "An error occurred.",
-                        metadata=content.additional_properties,
+            case "uri":
+                parts.append(
+                    A2APart(
+                        root=FilePart(
+                            file=FileWithUri(
+                                uri=content.uri,
+                                mime_type=content.media_type,
+                            ),
+                            metadata=content.additional_properties,
+                        )
                     )
                 )
-            )
-        elif content.type == "uri":
-            parts.append(
-                A2APart(
-                    root=FilePart(
-                        file=FileWithUri(
-                            uri=content.uri,
-                            mime_type=content.media_type,
-                        ),
-                        metadata=content.additional_properties,
+            case "data":
+                parts.append(
+                    A2APart(
+                        root=FilePart(
+                            file=FileWithBytes(
+                                bytes=_get_uri_data(content.uri),
+                                mime_type=content.media_type,
+                            ),
+                            metadata=content.additional_properties,
+                        )
                     )
                 )
-            )
-        elif content.type == "data":
-            parts.append(
-                A2APart(
-                    root=FilePart(
-                        file=FileWithBytes(
-                            bytes=_get_uri_data(content.uri),
-                            mime_type=content.media_type,
-                        ),
-                        metadata=content.additional_properties,
-                    )
-                )
-            )
-        else:
-            # TODO(peterychang): What do we do here?
-            raise ValueError(f"Unknown content type: {type(content)}")
+            case _:
+                # TODO(peterychang): What do we do here?
+                raise ValueError(f"Unknown content type: {type(content)}")
 
         return A2AMessage(
             role=A2ARole("user"),
@@ -309,39 +352,42 @@ class A2AAgent(AgentBase):
         contents: list[AIContents] = []
         for part in parts:
             inner_part = part.root
-            if inner_part.kind == "text":
-                contents.append(
-                    TextContent(
-                        text=inner_part.text,
-                        additional_properties=inner_part.metadata,
-                        raw_representation=inner_part,
-                    )
-                )
-            elif inner_part.kind == "file":
-                if isinstance(inner_part.file, FileWithUri):
+            match inner_part.kind:
+                case "text":
                     contents.append(
-                        UriContent(
-                            uri=inner_part.file.uri,
-                            media_type=inner_part.file.mime_type or "",
+                        TextContent(
+                            text=inner_part.text,
                             additional_properties=inner_part.metadata,
                             raw_representation=inner_part,
                         )
                     )
-                elif isinstance(inner_part.file, FileWithBytes):
+                case "file":
+                    if isinstance(inner_part.file, FileWithUri):
+                        contents.append(
+                            UriContent(
+                                uri=inner_part.file.uri,
+                                media_type=inner_part.file.mime_type or "",
+                                additional_properties=inner_part.metadata,
+                                raw_representation=inner_part,
+                            )
+                        )
+                    elif isinstance(inner_part.file, FileWithBytes):
+                        contents.append(
+                            DataContent(
+                                data=base64.b64decode(inner_part.file.bytes),
+                                media_type=inner_part.file.mime_type or "",
+                                additional_properties=inner_part.metadata,
+                                raw_representation=inner_part,
+                            )
+                        )
+                case "data":
                     contents.append(
-                        DataContent(
-                            data=base64.b64decode(inner_part.file.bytes),
-                            media_type=inner_part.file.mime_type or "",
+                        TextContent(
+                            text=json.dumps(inner_part.data),
                             additional_properties=inner_part.metadata,
                             raw_representation=inner_part,
                         )
                     )
-            elif inner_part.kind == "data":
-                contents.append(
-                    TextContent(
-                        text=json.dumps(inner_part.data),
-                        additional_properties=inner_part.metadata,
-                        raw_representation=inner_part,
-                    )
-                )
+                case _:
+                    raise ValueError(f"Unknown Part kind: {inner_part.kind}")
         return contents
