@@ -41,6 +41,7 @@ from ._magentic import (
     MagenticAgentDeltaEvent,
     MagenticAgentExecutor,
     MagenticAgentMessageEvent,
+    MagenticBuilder,
     MagenticCallbackEvent,
     MagenticCallbackMode,
     MagenticContext,
@@ -56,7 +57,6 @@ from ._magentic import (
     MagenticRequestMessage,
     MagenticResponseMessage,
     MagenticStartMessage,
-    MagenticWorkflowBuilder,
     StandardMagenticManager,
 )
 from ._runner_context import (
@@ -104,6 +104,7 @@ __all__ = [
     "MagenticAgentDeltaEvent",
     "MagenticAgentExecutor",
     "MagenticAgentMessageEvent",
+    "MagenticBuilder",
     "MagenticCallbackEvent",
     "MagenticCallbackMode",
     "MagenticContext",
@@ -119,7 +120,6 @@ __all__ = [
     "MagenticRequestMessage",
     "MagenticResponseMessage",
     "MagenticStartMessage",
-    "MagenticWorkflowBuilder",
     "Message",
     "RequestInfoEvent",
     "RequestInfoExecutor",

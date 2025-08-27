@@ -47,7 +47,7 @@ _IMPORTS = [
     "SubWorkflowResponse",
     "WorkflowExecutor",
     "intercepts_request",
-    "MagenticWorkflowBuilder",
+    "MagenticBuilder",
     "PlanReviewDecision",
     "PlanReviewReply",
     "PlanReviewRequest",

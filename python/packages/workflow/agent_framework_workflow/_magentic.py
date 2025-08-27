@@ -1376,7 +1376,7 @@ class MagenticAgentExecutor(Executor):
 # region Magentic Workflow Builder
 
 
-class MagenticWorkflowBuilder:
+class MagenticBuilder:
     """High-level builder for creating Magentic One workflows."""
 
     def __init__(self) -> None:
@@ -1398,7 +1398,7 @@ class MagenticWorkflowBuilder:
         self._participants.update(participants)
         return self
 
-    def with_plan_review(self, enable: bool = True) -> "MagenticWorkflowBuilder":
+    def with_plan_review(self, enable: bool = True) -> "MagenticBuilder":
         """Require human sign-off on the plan before coordination begins."""
         self._enable_plan_review = enable
         return self

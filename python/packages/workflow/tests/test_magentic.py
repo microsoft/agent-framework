@@ -17,13 +17,13 @@ from agent_framework._clients import ChatClient as AFChatClient
 
 from agent_framework_workflow import (
     Executor,
+    MagenticBuilder,
     MagenticManagerBase,
     MagenticPlanReviewDecision,
     MagenticPlanReviewReply,
     MagenticPlanReviewRequest,
     MagenticProgressLedger,
     MagenticProgressLedgerItem,
-    MagenticWorkflowBuilder,
     RequestInfoEvent,
     WorkflowCompletedEvent,
     WorkflowContext,
@@ -156,7 +156,7 @@ async def test_standard_manager_progress_ledger_and_fallback():
 async def test_magentic_workflow_plan_review_approval_to_completion():
     manager = FakeManager(max_round_count=10)
     wf = (
-        MagenticWorkflowBuilder()
+        MagenticBuilder()
         .participants(agentA=_DummyExec("agentA"))
         .with_standard_manager(manager)
         .with_plan_review()
@@ -183,7 +183,7 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
 async def test_magentic_orchestrator_round_limit_produces_partial_result():
     manager = FakeManager(max_round_count=1)
     manager.satisfied_after_signoff = False
-    wf = MagenticWorkflowBuilder().participants(agentA=_DummyExec("agentA")).with_standard_manager(manager).build()
+    wf = MagenticBuilder().participants(agentA=_DummyExec("agentA")).with_standard_manager(manager).build()
 
     from agent_framework_workflow import WorkflowEvent  # type: ignore
 
@@ -370,7 +370,7 @@ async def _collect_agent_responses_setup(participant_obj: object):
             captured.append(event.message)
 
     wf = (
-        MagenticWorkflowBuilder()
+        MagenticBuilder()
         .participants(agentA=participant_obj)  # type: ignore[arg-type]
         .with_standard_manager(InvokeOnceManager())
         .on_event(sink)  # type: ignore

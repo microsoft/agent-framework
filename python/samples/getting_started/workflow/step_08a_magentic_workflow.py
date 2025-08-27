@@ -8,11 +8,11 @@ from agent_framework.openai import OpenAIAssistantsClient, OpenAIChatClient
 from agent_framework_workflow import (
     MagenticAgentDeltaEvent,
     MagenticAgentMessageEvent,
+    MagenticBuilder,
     MagenticCallbackEvent,
     MagenticCallbackMode,
     MagenticFinalResultEvent,
     MagenticOrchestratorMessageEvent,
-    MagenticWorkflowBuilder,
     WorkflowCompletedEvent,
 )
 
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 Magentic Workflow (multi-agent) sample.
 
 This sample shows how to orchestrate multiple agents using the
-MagenticWorkflowBuilder:
+MagenticBuilder:
 
 - ResearcherAgent (ChatClientAgent backed by an OpenAI chat client) for
     finding information.
@@ -102,7 +102,7 @@ async def main() -> None:
         stream_line_open: bool = False
 
         workflow = (
-            MagenticWorkflowBuilder()
+            MagenticBuilder()
             .participants(researcher=researcher_agent, coder=coder_agent)
             .on_event(on_event, mode=MagenticCallbackMode.STREAMING)
             .with_standard_manager(

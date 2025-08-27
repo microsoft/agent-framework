@@ -9,6 +9,7 @@ from agent_framework.openai import OpenAIAssistantsClient, OpenAIChatClient
 from agent_framework_workflow import (
     MagenticAgentDeltaEvent,
     MagenticAgentMessageEvent,
+    MagenticBuilder,
     MagenticCallbackEvent,
     MagenticCallbackMode,
     MagenticFinalResultEvent,
@@ -16,7 +17,6 @@ from agent_framework_workflow import (
     MagenticPlanReviewDecision,
     MagenticPlanReviewReply,
     MagenticPlanReviewRequest,
-    MagenticWorkflowBuilder,
     RequestInfoEvent,
     WorkflowCompletedEvent,
 )
@@ -106,7 +106,7 @@ async def main() -> None:
         stream_line_open: bool = False
 
         workflow = (
-            MagenticWorkflowBuilder()
+            MagenticBuilder()
             .participants(researcher=researcher_agent, coder=coder_agent)
             .on_exception(on_exception)
             .on_event(on_event, mode=MagenticCallbackMode.STREAMING)
