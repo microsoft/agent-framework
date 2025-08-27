@@ -1,0 +1,188 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
+using A2A;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Shared.Diagnostics;
+
+namespace Microsoft.Extensions.AI.Agents.A2A;
+
+/// <summary>
+/// Represents an agent that can interact with A2A agents.
+/// </summary>
+/// <remarks>
+/// This agent supports only messages as a response from A2A agents.
+/// Support for tasks will be added later as part of the long-running
+/// executions work.
+/// </remarks>
+internal sealed class A2AAgent : AIAgent
+{
+    private readonly A2AClient _a2aClient;
+    private readonly string? _id;
+    private readonly string? _name;
+    private readonly string? _description;
+    private readonly string? _displayName;
+    private readonly ILogger _logger;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="A2AAgent"/> class.
+    /// </summary>
+    /// <param name="a2aClient">The A2A client to use for interacting with A2A agents.</param>
+    /// <param name="id">The unique identifier for the agent.</param>
+    /// <param name="name">The the name of the agent.</param>
+    /// <param name="description">The description of the agent.</param>
+    /// <param name="displayName">The display name of the agent.</param>
+    /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
+    public A2AAgent(A2AClient a2aClient, string? id = null, string? name = null, string? description = null, string? displayName = null, ILoggerFactory? loggerFactory = null)
+    {
+        _ = Throw.IfNull(a2aClient);
+
+        this._a2aClient = a2aClient;
+        this._id = id;
+        this._name = name;
+        this._description = description;
+        this._displayName = displayName;
+        this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<A2AAgent>();
+    }
+
+    /// <inheritdoc/>
+    public override async Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        var parameters = new MessageSendParams
+        {
+            Message = ConvertToA2AMessage(messages, thread)
+        };
+
+        this._logger.LogA2AAgentInvokingAgent(nameof(RunStreamingAsync), this.Id, this.Name);
+
+        var response = await this._a2aClient.SendMessageAsync(parameters, cancellationToken).ConfigureAwait(false);
+
+        this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, this.Name);
+
+        if (response is Message message)
+        {
+            UpdateThreadConversationId(thread, message);
+
+            return new AgentRunResponse
+            {
+                Messages = [ConvertToChatMessage(message)],
+                RawRepresentation = message
+            };
+        }
+
+        throw new InvalidOperationException($"Only message responses are supported from A2A agents. Received: {response.GetType().FullName ?? "null"}");
+    }
+
+    /// <inheritdoc/>
+    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var parameters = new MessageSendParams
+        {
+            Message = ConvertToA2AMessage(messages, thread)
+        };
+
+        this._logger.LogA2AAgentInvokingAgent(nameof(RunStreamingAsync), this.Id, this.Name);
+
+        var sseEvents = this._a2aClient.SendMessageStreamAsync(parameters, cancellationToken).ConfigureAwait(false);
+
+        this._logger.LogAgentChatClientInvokedAgent(nameof(RunStreamingAsync), this.Id, this.Name);
+
+        await foreach (var sseEvent in sseEvents)
+        {
+            if (sseEvent.Data is not Message message)
+            {
+                throw new InvalidOperationException($"Only message responses are supported from A2A agents. Received: {sseEvent.Data?.GetType().FullName ?? "null"}");
+            }
+
+            UpdateThreadConversationId(thread, message);
+
+            yield return new AgentRunResponseUpdate
+            {
+                Role = ChatRole.Assistant,
+                RawRepresentation = message,
+                MessageId = message.MessageId,
+                Contents = [.. message.Parts.Select(part => part.ToAIContent())],
+                AdditionalProperties = message.Metadata.ToAdditionalProperties(),
+            };
+        }
+    }
+
+    /// <inheritdoc/>
+    public override string Id => this._id ?? base.Id;
+
+    /// <inheritdoc/>
+    public override string? Name => this._name ?? base.Name;
+
+    /// <inheritdoc/>
+    public override string DisplayName => this._displayName ?? base.DisplayName;
+
+    /// <inheritdoc/>
+    public override string? Description => this._description ?? base.Description;
+
+    private static Message ConvertToA2AMessage(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread)
+    {
+        List<Part> allParts = [];
+
+        foreach (var message in messages)
+        {
+            if (message.Role != ChatRole.User)
+            {
+                throw new ArgumentException($"All input messages for A2A agents must have the role '{ChatRole.User}'. Found '{message.Role}'.", nameof(messages));
+            }
+
+            if (message.Contents.ToA2AParts() is { Count: > 0 } ps)
+            {
+                allParts.AddRange(ps);
+            }
+        }
+
+        return new Message
+        {
+            MessageId = Guid.NewGuid().ToString(),
+            Role = MessageRole.User,
+            Parts = allParts,
+            // Linking the message to the existing conversation, if any.
+            ContextId = thread?.ConversationId,
+        };
+    }
+
+    private static ChatMessage ConvertToChatMessage(Message message)
+    {
+        List<AIContent>? aiContents = null;
+
+        foreach (var part in message.Parts)
+        {
+            (aiContents ??= []).Add(part.ToAIContent());
+        }
+
+        return new ChatMessage(ChatRole.Assistant, aiContents)
+        {
+            AdditionalProperties = message.Metadata.ToAdditionalProperties(),
+        };
+    }
+
+    private static void UpdateThreadConversationId(AgentThread? thread, Message message)
+    {
+        if (thread is null)
+        {
+            return;
+        }
+
+        // Surface cases where the A2A agent responds with a message that
+        // has a different context Id than the thread's conversation Id.
+        if (thread.ConversationId is not null && message.ContextId is not null && thread.ConversationId != message.ContextId)
+        {
+            throw new InvalidOperationException(
+                $"The {nameof(message.ContextId)} returned from the A2A agent is different from the conversation Id of the provided {nameof(AgentThread)}.");
+        }
+
+        // Assign a server-generated context Id to the thread if it's not already set.
+        thread.ConversationId ??= message.ContextId;
+    }
+}

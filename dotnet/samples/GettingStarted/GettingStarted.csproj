@@ -36,11 +36,14 @@
     <PackageReference Include="Moq" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
-    <PackageReference Include="System.Linq.Async" />
+    <PackageReference Include="A2A" />
+    <PackageReference Include="System.Net.ServerSentEvents" VersionOverride="10.0.0-preview.5.25277.114" />
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" VersionOverride="10.0.0-preview.5.25277.114" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Microsoft.Agents.Orchestration\Microsoft.Agents.Orchestration.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Extensions.AI.Agents.A2A\Microsoft.Extensions.AI.Agents.A2A.csproj" />
     <ProjectReference Include="..\..\src\Microsoft.Extensions.AI.Agents.AzureAI\Microsoft.Extensions.AI.Agents.AzureAI.csproj" />
     <ProjectReference Include="..\..\src\Microsoft.Extensions.AI.Agents.OpenAI\Microsoft.Extensions.AI.Agents.OpenAI.csproj" />
     <ProjectReference Include="..\..\src\Microsoft.Extensions.AI.Agents\Microsoft.Extensions.AI.Agents.csproj" />

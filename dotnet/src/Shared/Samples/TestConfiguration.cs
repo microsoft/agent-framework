@@ -18,6 +18,9 @@ public sealed class TestConfiguration
     /// <summary>Gets the configuration settings for the Azure OpenAI integration.</summary>
     public static AzureOpenAIConfig AzureOpenAI => LoadSection<AzureOpenAIConfig>();
 
+    /// <summary>Gets the configuration settings for the Azure OpenAI integration.</summary>
+    public static A2AConfig A2A => LoadSection<A2AConfig>();
+
     /// <summary>Represents the configuration settings required to interact with the OpenAI service.</summary>
     public class OpenAIConfig
     {
@@ -51,6 +54,16 @@ public sealed class TestConfiguration
 
         /// <summary>Gets or sets the name of the model deployment.</summary>
         public string? DeploymentName { get; set; }
+    }
+
+    /// <summary>Represents the configuration settings required to interact with the A2A agent.</summary>
+    public sealed class A2AConfig
+    {
+        /// <summary>Gets or sets the endpoint of A2A agent.</summary>
+        public Uri? AgentEndpoint { get; set; }
+
+        /// <summary>Gets or sets the endpoint of A2A agent card.</summary>
+        public Uri? AgentHost { get; set; }
     }
 
     /// <summary>
