@@ -15,8 +15,6 @@ Console.WriteLine($"User Input: {userInput}");
 await AFAgent();
 await SKAgent();
 
-Console.ForegroundColor = ConsoleColor.Gray;
-
 async Task SKAgent()
 {
     var builder = Kernel.CreateBuilder().AddOpenAIChatClient(modelId, apiKey);
@@ -32,7 +30,6 @@ async Task SKAgent()
     // Initialize plugin and add to the agent's Kernel (same as direct Kernel usage).
     agent.Kernel.Plugins.Add(KernelPluginFactory.CreateFromType<MenuPlugin>());
 
-    Console.ForegroundColor = ConsoleColor.Yellow;
     Console.WriteLine("\n=== SK Agent Response ===\n");
 
     var result = await agent.InvokeAsync(userInput).FirstAsync();
@@ -50,7 +47,6 @@ async Task AFAgent()
             AIFunctionFactory.Create(MenuTools.GetItemPrice)
         ]);
 
-    Console.ForegroundColor = ConsoleColor.Green;
     Console.WriteLine("\n=== AF Agent Response ===\n");
 
     var result = await agent.RunAsync(userInput);

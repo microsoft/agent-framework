@@ -93,7 +93,7 @@ You will be prompted for any required environment variables if they are not alre
 The migration samples demonstrate the following key differences between Semantic Kernel and Agent Framework:
 
 ### Core Changes
-- **Namespace Updates**: From `Microsoft.SemanticKernel` to `Microsoft.Extensions.AI`
+- **Namespace Updates**: From `Microsoft.SemanticKernel.Agents` to `Microsoft.Extensions.AI.Agents`
 - **Agent Creation**: Single fluent API calls vs multi-step builder patterns
 - **Thread Management**: Built-in thread management vs manual thread creation
 - **Tool Registration**: Direct function registration vs plugin wrapper systems
@@ -116,7 +116,7 @@ Always update your using statements to include the new Agent Framework namespace
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 
-// Keep these for SK compatibility during migration
+// Remove these after SK code was fully migrated
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Agents;
 ```
@@ -145,7 +145,7 @@ var thread = agent.GetNewThread();
 ```
 
 ### 4. Tool Registration
-Register tools directly instead of using plugin wrappers:
+Register tools directly instead of using `Kernel` with plugin wrappers:
 
 ```csharp
 // Old
@@ -159,7 +159,8 @@ var agent = client.CreateAIAgent(tools: [
 ```
 
 ### 5. Dependency Injection
-Simplify service registration:
+
+Simpler service registration:
 
 ```csharp
 // Old
@@ -170,11 +171,13 @@ services.AddTransient<SpecificAgent>(...);
 services.AddTransient<AIAgent>(() => client.CreateAIAgent(...));
 ```
 
-## Running Individual Projects
+## Running Individual Sample Projects
 
-Each migration demo is now a **separate console application project** that can be run independently:
+Each migration demo is now full end-to-end **separate console application project** that can be run independently with clear view on what are all required dependencies and environment variables.
 
-### Run Specific Projects
+This approach also paves the way for future sample convergence in the .net 10 `dotnet run file.cs` feature, see: https://devblogs.microsoft.com/dotnet/announcing-dotnet-run-app/
+
+### Running Specific Sample Projects
 ```powershell
 # Azure AI Foundry Examples
 cd "Azure AI Foundry\Step01_Basics"
@@ -199,102 +202,126 @@ dotnet run
 ```
 
 ### What Each Demo Shows
-Each project demonstrates **side-by-side comparisons** of:
-1. **AF Agent** (Agent Framework approach) - The new way
-2. **SK Agent** (Semantic Kernel approach) - The legacy way
-
-### OpenAI Assistants - Step02_DependencyInjection
-
-**Purpose**: Dependency injection with OpenAI Assistants agents
-
-#### Before (Semantic Kernel)
-```csharp
-var serviceCollection = new ServiceCollection();
-serviceCollection.AddSingleton((sp) => new AssistantClient(apiKey));
-serviceCollection.AddKernel().AddOpenAIChatClient(modelId, apiKey);
-serviceCollection.AddTransient<OpenAIAssistantAgent>((sp) =>
-{
-    var assistantsClient = sp.GetRequiredService<AssistantClient>();
-    Assistant assistant = assistantsClient.CreateAssistantAsync(modelId, name: "Joker", instructions: "You are good at telling jokes.")
-        .GetAwaiter().GetResult();
-    return new OpenAIAssistantAgent(assistant, assistantsClient);
-});
-
-await using ServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();
-var agent = serviceProvider.GetRequiredService<OpenAIAssistantAgent>();
-```
-
-#### After (Agent Framework)
-```csharp
-var serviceCollection = new ServiceCollection();
-serviceCollection.AddSingleton((sp) => new AssistantClient(apiKey));
-serviceCollection.AddTransient<AIAgent>((sp) =>
-{
-    var assistantClient = sp.GetRequiredService<AssistantClient>();
-    var agent = assistantClient.CreateAIAgentAsync(modelId, name: "Joker", instructions: "You are good at telling jokes.")
-        .GetAwaiter().GetResult();
-    return agent;
-});
-
-await using ServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();
-var agent = serviceProvider.GetRequiredService<AIAgent>();
-```
+Each project demonstrates **side-by-side comparisons** of the same functionality using:
+2. **SK Agent** (Semantic Kernel approach)
+1. **AF Agent** (Agent Framework approach)
 
 #### Key Migration Points
 - **Service Type**: Register `AIAgent` instead of `OpenAIAssistantAgent`
 - **Creation Method**: Use `CreateAIAgentAsync()` directly instead of creating `Assistant` first
-- **No Kernel Dependency**: No need to register Kernel services for AF agents
-
-### OpenAI Assistants - Step03_ToolCall
-
-**Purpose**: Function calling with OpenAI Assistants agents
-
-#### Before (Semantic Kernel)
-```csharp
-var builder = Kernel.CreateBuilder();
-var assistantsClient = new AssistantClient(apiKey);
-
-Assistant assistant = await assistantsClient.CreateAssistantAsync(
-    modelId, name: "Host", instructions: "Answer questions about the menu");
-
-OpenAIAssistantAgent agent = new(assistant, assistantsClient)
-{
-    Kernel = builder.Build(),
-    Arguments = new KernelArguments(new OpenAIPromptExecutionSettings()
-    {
-        MaxTokens = 1000,
-        FunctionChoiceBehavior = FunctionChoiceBehavior.Auto()
-    }),
-};
-
-// Requires plugin wrapper
-agent.Kernel.Plugins.Add(KernelPluginFactory.CreateFromType<MenuPlugin>());
-```
-
-#### After (Agent Framework)
-```csharp
-var assistantClient = new AssistantClient(apiKey);
-
-var agent = await assistantClient.CreateAIAgentAsync(
-    modelId,
-    name: "Host",
-    instructions: "Answer questions about the menu",
-    tools: [
-        AIFunctionFactory.Create(MenuTools.GetMenu),
-        AIFunctionFactory.Create(MenuTools.GetSpecials),
-        AIFunctionFactory.Create(MenuTools.GetItemPrice)
-    ]);
-```
-
-#### Key Migration Points
 - **Tool Registration**: Tools specified at creation time vs post-creation plugin addition
 - **No Kernel Required**: AF agents don't need Kernel for tool calling
 - **Direct Function Registration**: Use `AIFunctionFactory.Create()` vs plugin wrappers
 - **Automatic Function Choice**: Built-in function calling behavior
 
-## Advanced Migration Scenarios
+## Key differences
 
-### Error Handling Differences
+### Agent Non-Streaming Invocation
+
+Key differences in the method names from `Invoke` to `Run` and the return types.
+
+#### Semantic Kernel
+
+The Non-Streaming uses a streaming pattern `IAsyncEnumerable<AgentResponseItem<ChatMessageContent>>` for returning multiple agent messages.
+
+```csharp
+await foreach (var result in agent.InvokeAsync(userInput, thread, agentOptions))
+{
+    Console.WriteLine(result.Message);
+}
+```
+
+#### Agent Framework
+
+The Non-Streaming returns a single `AgentRunResponse` with the final agent message. 
+This aligns with a simplified non-streaming experience for the API.
+
+```csharp
+var agentResponse = await agent.RunAsync(userInput, thread);
+```
+
+### Agent Streaming Invocation
+
+Key differences in the method names from `Invoke` to `Run` and the return types.
+
+#### Semantic Kernel
+
+```csharp
+await foreach (StreamingChatMessageContent update in agent.InvokeStreamingAsync(userInput, thread))
+{
+    Console.Write(update);
+}
+```
+
+#### Agent Framework
+
+Similar streaming API pattern with the key difference being that it `AgentRunResponseUpdate` including more agent related information per update.
+
+```csharp
+await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(userInput, thread))
+{
+    Console.Write(update); // Update is ToString() friendly
+}
+```
+
+### Hosted Agent Thread Cleanup
+
+In Agent framework threads don't have a deletion method anymore, 
+the caller must know the provider of a given hosted agent thread and delete it 
+using the provider client.
+
+#### Semantic Kernel
+
+Threads have a deletion method
+
+i.e: OpenAI Assistants Provider
+```csharp
+await thread.DeleteAsync();
+await assistantsClient.DeleteAssistantAsync(agent.Id);
+```
+
+#### Agent Framework 
+
+Threads don't have a deletion method, knowing the thread source and using the source provider client is required
+
+i.e: OpenAI Assistants Provider
+```csharp
+await assistantClient.DeleteThreadAsync(thread.ConversationId);
+await assistantClient.DeleteAssistantAsync(agent.Id);
+```
+
+### Tool Function Signatures
+**Problem**: SK plugin methods need `[KernelFunction]` attributes
+```csharp
+public class MenuPlugin
+{
+    [KernelFunction] // Required for SK
+    public static MenuItem[] GetMenu() => ...;
+}
+```
+
+**Solution**: AF can use methods directly without attributes
+```csharp
+public class MenuTools
+{
+    [Description("Get menu items")] // Only Description needed
+    public static MenuItem[] GetMenu() => ...;
+}
+```
+
+### Options Configuration
+**Problem**: Complex options setup in SK
+```csharp
+var settings = new OpenAIPromptExecutionSettings() { MaxTokens = 1000 };
+var options = new AgentInvokeOptions() { KernelArguments = new(settings) };
+```
+
+**Solution**: Simplified options in AF
+```csharp
+var options = new ChatClientAgentRunOptions(new() { MaxOutputTokens = 1000 });
+```
+
+### Error Handling
 
 #### Semantic Kernel
 ```csharp
@@ -324,83 +351,4 @@ catch (AIException ex)
 {
     // AF-specific exception handling
 }
-```
-
-### Streaming Differences
-
-#### Semantic Kernel
-```csharp
-await foreach (var update in agent.InvokeStreamingAsync(userInput, thread))
-{
-    Console.Write(update.Message); // Update is not ToString() friendly, Message property needed
-}
-```
-
-#### Agent Framework
-```csharp
-await foreach (var update in agent.RunStreamingAsync(userInput, thread))
-{
-    Console.Write(update); // Update is ToString() friendly
-}
-```
-
-### Cleanup Patterns
-
-#### Semantic Kernel (OpenAI Assistants)
-```csharp
-// Manual cleanup required
-await thread.DeleteAsync();
-await assistantsClient.DeleteAssistantAsync(agent.Id);
-```
-
-#### Agent Framework (OpenAI Assistants)
-```csharp
-// Consistent cleanup across providers
-await assistantClient.DeleteThreadAsync(thread.ConversationId);
-await assistantClient.DeleteAssistantAsync(agent.Id);
-```
-
-## Common Gotchas and Solutions
-
-### 1. Tool Function Signatures
-**Problem**: SK plugin methods need `[KernelFunction]` attributes
-```csharp
-public class MenuPlugin
-{
-    [KernelFunction] // Required for SK
-    public static MenuItem[] GetMenu() => ...;
-}
-```
-
-**Solution**: AF can use methods directly without attributes
-```csharp
-public class MenuTools
-{
-    [Description("Get menu items")] // Only Description needed
-    public static MenuItem[] GetMenu() => ...;
-}
-```
-
-### 2. Thread Lifecycle Management
-**Problem**: Different thread cleanup patterns between frameworks
-
-**Solution**: Use consistent cleanup patterns per provider:
-```csharp
-// OpenAI Assistant
-await assistantClient.DeleteThreadAsync(thread.ConversationId);
-
-// Azure AI Foundry
-await azureClient.Threads.DeleteThreadAsync(thread.ConversationId);
-```
-
-### 3. Options Configuration
-**Problem**: Complex options setup in SK
-```csharp
-var settings = new OpenAIPromptExecutionSettings() { MaxTokens = 1000 };
-var options = new AgentInvokeOptions() { KernelArguments = new(settings) };
-```
-
-**Solution**: Simplified options in AF
-```csharp
-var options = new ChatClientAgentRunOptions(new() { MaxOutputTokens = 1000 });
 ```

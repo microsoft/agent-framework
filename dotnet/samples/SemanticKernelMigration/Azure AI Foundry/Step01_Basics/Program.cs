@@ -8,8 +8,6 @@ using Microsoft.SemanticKernel.Agents.AzureAI;
 
 #pragma warning disable SKEXP0110 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
-Console.ForegroundColor = ConsoleColor.Gray;
-
 var azureEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 
 var modelId = "gpt-4o";
@@ -20,11 +18,8 @@ Console.WriteLine($"User Input: {userInput}");
 await AFAgent();
 await SKAgent();
 
-Console.ForegroundColor = ConsoleColor.Gray;
-
 async Task SKAgent()
 {
-    Console.ForegroundColor = ConsoleColor.Yellow;
     Console.WriteLine("\n=== SK Agent ===\n");
 
     var azureAgentClient = AzureAIAgent.CreateAgentsClient(azureEndpoint, new AzureCliCredential());
@@ -48,7 +43,7 @@ async Task SKAgent()
 
     Console.WriteLine("\nStreaming Response:");
     Console.WriteLine("Waiting agent output...");
-    await foreach (ChatMessageContent update in agent.InvokeAsync(userInput, thread))
+    await foreach (StreamingChatMessageContent update in agent.InvokeStreamingAsync(userInput, thread))
     {
         Console.Write(update);
     }
@@ -60,7 +55,6 @@ async Task SKAgent()
 
 async Task AFAgent()
 {
-    Console.ForegroundColor = ConsoleColor.Green;
     Console.WriteLine("\n=== AF Agent ===\n");
 
     var azureAgentClient = new PersistentAgentsClient(azureEndpoint, new AzureCliCredential());

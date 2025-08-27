@@ -10,8 +10,6 @@ using Microsoft.SemanticKernel.Connectors.OpenAI;
 using OpenAI;
 using OpenAI.Assistants;
 
-Console.ForegroundColor = ConsoleColor.Gray;
-
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
 var modelId = "gpt-4o";
 var userInput = "Tell me a joke about a pirate.";
@@ -21,11 +19,8 @@ Console.WriteLine($"User Input: {userInput}");
 await AFAgent();
 await SKAgent();
 
-Console.ForegroundColor = ConsoleColor.Gray;
-
 async Task SKAgent()
 {
-    Console.ForegroundColor = ConsoleColor.Yellow;
     Console.WriteLine("\n=== SK Agent ===\n");
 
     var serviceCollection = new ServiceCollection();
@@ -72,7 +67,6 @@ async Task SKAgent()
 
 async Task AFAgent()
 {
-    Console.ForegroundColor = ConsoleColor.Green;
     Console.WriteLine("\n=== AF Agent ===\n");
 
     var serviceCollection = new ServiceCollection();

@@ -8,7 +8,9 @@
     <Project Path="demos/AgentOpenTelemetry/AgentOpenTelemetry.csproj" />
     <Project Path="demos/MinimalConsole/MinimalConsole.csproj" />
   </Folder>
-  <Folder Name="/Samples/SemanticKernelMigration/" />
+  <Folder Name="/Samples/SemanticKernelMigration/">
+    <File Path="samples/SemanticKernelMigration/README.md" />
+  </Folder>
   <Folder Name="/Samples/SemanticKernelMigration/Azure AI Foundry/">
     <Project Path="samples/SemanticKernelMigration/Azure AI Foundry/Step01_Basics/AzureAIFoundry_Step_01.csproj" />
     <Project Path="samples/SemanticKernelMigration/Azure AI Foundry/Step02_DependencyInjection/AzureAIFoundry_Step_02.csproj" />
