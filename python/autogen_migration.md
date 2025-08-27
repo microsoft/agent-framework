@@ -34,7 +34,7 @@ config = {
 model_client = ChatCompletionClient.load_component(config)
 ```
 
-Agent Framework currently requires its components to be configured individually with a configuration dictionary, though in the future we will be implementing Copilot Studio Declarative Language (CPSDL) as our official declarative specification.
+Agent Framework currently requires its components to be configured individually with a configuration dictionary, though there may be changes to this in the future for improved developer experience.
 
 ```python
 from agent_framework.openai import OpenAIChatClient
