@@ -3,9 +3,15 @@
 import asyncio
 import logging
 
-from agent_framework import AgentRunResponseUpdate, ChatClientAgent, ChatMessage, HostedCodeInterpreterTool
+from agent_framework import ChatClientAgent, HostedCodeInterpreterTool
 from agent_framework.openai import OpenAIAssistantsClient, OpenAIChatClient
 from agent_framework_workflow import (
+    MagenticAgentDeltaEvent,
+    MagenticAgentMessageEvent,
+    MagenticCallbackEvent,
+    MagenticCallbackMode,
+    MagenticFinalResultEvent,
+    MagenticOrchestratorMessageEvent,
     MagenticWorkflowBuilder,
     WorkflowCompletedEvent,
 )
@@ -55,48 +61,39 @@ async def main() -> None:
         chat_client=OpenAIAssistantsClient(),
         tools=HostedCodeInterpreterTool(),
     ) as coder_agent:
-        # Callbacks
-        async def on_result(final_answer: ChatMessage) -> None:
-            print("\n" + "=" * 50)
-            print("FINAL RESULT:")
-            print("=" * 50)
-            print(final_answer.text)
-            print("=" * 50)
-
-        async def on_agent_response(agent_id: str, message: ChatMessage) -> None:
-            # Non-streaming callback: final messages from orchestrator and agents
-            response_text = (message.text or "").replace("\n", " ")
-            print(f"\n[on_agent_response] {agent_id}: {message.role.value}\n\n{response_text}\n{'-' * 26}")
-
-        async def on_agent_stream(agent_id: str, update: AgentRunResponseUpdate, is_final: bool) -> None:
-            # Streaming callback: incremental agent updates when available
-            # Print the agent id once and append chunks on the same line until final.
+        # Unified callback
+        async def on_event(event: MagenticCallbackEvent) -> None:
+            """
+            The `on_event` callback processes events emitted by the workflow.
+            Events include: orchestrator messages, agent delta updates, agent messages, and final result events.
+            """
             nonlocal last_stream_agent_id, stream_line_open
-
-            chunk = getattr(update, "text", None)
-            if not chunk:
-                try:
-                    # Fallback: concatenate text from contents if present
-                    contents = getattr(update, "contents", []) or []
-                    chunk = "".join(getattr(c, "text", "") for c in contents)
-                except Exception:
-                    chunk = None
-            if not chunk:
-                return
-
-            if last_stream_agent_id != agent_id or not stream_line_open:
+            if isinstance(event, MagenticOrchestratorMessageEvent):
+                print(f"\n[ORCH:{event.kind}]\n\n{getattr(event.message, 'text', '')}\n{'-' * 26}")
+            elif isinstance(event, MagenticAgentDeltaEvent):
+                if last_stream_agent_id != event.agent_id or not stream_line_open:
+                    if stream_line_open:
+                        print()
+                    print(f"\n[STREAM:{event.agent_id}]: ", end="", flush=True)
+                    last_stream_agent_id = event.agent_id
+                    stream_line_open = True
+                print(event.text, end="", flush=True)
+            elif isinstance(event, MagenticAgentMessageEvent):
                 if stream_line_open:
-                    print()  # close previous agent's line
-                print(f"\n[on_agent_stream] {agent_id}: ", end="", flush=True)
-                last_stream_agent_id = agent_id
-                stream_line_open = True
-
-            print(chunk, end="", flush=True)
-
-            if is_final:
-                print(" (final)")
-                stream_line_open = False
-                print()
+                    print(" (final)")
+                    stream_line_open = False
+                    print()
+                msg = event.message
+                if msg is not None:
+                    response_text = (msg.text or "").replace("\n", " ")
+                    print(f"\n[AGENT:{event.agent_id}] {msg.role.value}\n\n{response_text}\n{'-' * 26}")
+            elif isinstance(event, MagenticFinalResultEvent):
+                print("\n" + "=" * 50)
+                print("FINAL RESULT:")
+                print("=" * 50)
+                if event.message is not None:
+                    print(event.message.text)
+                print("=" * 50)
 
         print("\nBuilding Magentic Workflow...")
 
@@ -107,9 +104,7 @@ async def main() -> None:
         workflow = (
             MagenticWorkflowBuilder()
             .participants(researcher=researcher_agent, coder=coder_agent)
-            .on_result(on_result)
-            .on_agent_response(on_agent_response)
-            .on_agent_stream(on_agent_stream)
+            .on_event(on_event, mode=MagenticCallbackMode.STREAMING)
             .with_standard_manager(
                 chat_client=OpenAIChatClient(),
                 max_round_count=10,

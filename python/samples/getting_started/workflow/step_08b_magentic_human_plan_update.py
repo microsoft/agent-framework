@@ -4,13 +4,19 @@ import asyncio
 import logging
 from typing import cast
 
-from agent_framework import AgentRunResponseUpdate, ChatClientAgent, ChatMessage, HostedCodeInterpreterTool
+from agent_framework import ChatClientAgent, HostedCodeInterpreterTool
 from agent_framework.openai import OpenAIAssistantsClient, OpenAIChatClient
 from agent_framework_workflow import (
+    MagenticAgentDeltaEvent,
+    MagenticAgentMessageEvent,
+    MagenticCallbackEvent,
+    MagenticCallbackMode,
+    MagenticFinalResultEvent,
+    MagenticOrchestratorMessageEvent,
+    MagenticPlanReviewDecision,
+    MagenticPlanReviewReply,
+    MagenticPlanReviewRequest,
     MagenticWorkflowBuilder,
-    PlanReviewDecision,
-    PlanReviewReply,
-    PlanReviewRequest,
     RequestInfoEvent,
     WorkflowCompletedEvent,
 )
@@ -60,51 +66,39 @@ async def main() -> None:
         tools=HostedCodeInterpreterTool(),
     ) as coder_agent:
         # Callbacks
-        async def on_result(final_answer: ChatMessage) -> None:
-            print("\n" + "=" * 50)
-            print("FINAL RESULT:")
-            print("=" * 50)
-            print(final_answer.text)
-            print("=" * 50)
-
         def on_exception(exception: Exception) -> None:
             print(f"Exception occurred: {exception}")
             logger.exception("Workflow exception", exc_info=exception)
 
-        async def on_agent_response(agent_id: str, message: ChatMessage) -> None:
-            # Non-streaming callback: final messages from orchestrator and agents
-            response_text = (message.text or "").replace("\n", " ")
-            print(f"\n[on_agent_response] {agent_id}: {message.role.value}\n\n{response_text}\n{'-' * 26}")
-
-        async def on_agent_stream(agent_id: str, update: AgentRunResponseUpdate, is_final: bool) -> None:
-            # Streaming callback: incremental agent updates when available
-            # Print the agent id once and append chunks on the same line until final.
+        # Unified callback
+        async def on_event(event: MagenticCallbackEvent) -> None:
             nonlocal last_stream_agent_id, stream_line_open
-
-            chunk = getattr(update, "text", None)
-            if not chunk:
-                try:
-                    # Fallback: concatenate text from contents if present
-                    contents = getattr(update, "contents", []) or []
-                    chunk = "".join(getattr(c, "text", "") for c in contents)
-                except Exception:
-                    chunk = None
-            if not chunk:
-                return
-
-            if last_stream_agent_id != agent_id or not stream_line_open:
+            if isinstance(event, MagenticOrchestratorMessageEvent):
+                print(f"\n[ORCH:{event.kind}]\n\n{getattr(event.message, 'text', '')}\n{'-' * 26}")
+            elif isinstance(event, MagenticAgentDeltaEvent):
+                if last_stream_agent_id != event.agent_id or not stream_line_open:
+                    if stream_line_open:
+                        print()
+                    print(f"\n[STREAM:{event.agent_id}]: ", end="", flush=True)
+                    last_stream_agent_id = event.agent_id
+                    stream_line_open = True
+                print(event.text, end="", flush=True)
+            elif isinstance(event, MagenticAgentMessageEvent):
                 if stream_line_open:
-                    print()  # close previous agent's line
-                print(f"\n[on_agent_stream] {agent_id}: ", end="", flush=True)
-                last_stream_agent_id = agent_id
-                stream_line_open = True
-
-            print(chunk, end="", flush=True)
-
-            if is_final:
-                print(" (final)")
-                stream_line_open = False
-                print()
+                    print(" (final)")
+                    stream_line_open = False
+                    print()
+                msg = event.message
+                if msg is not None:
+                    response_text = (msg.text or "").replace("\n", " ")
+                    print(f"\n[AGENT:{event.agent_id}] {msg.role.value}\n\n{response_text}\n{'-' * 26}")
+            elif isinstance(event, MagenticFinalResultEvent):
+                print("\n" + "=" * 50)
+                print("FINAL RESULT:")
+                print("=" * 50)
+                if event.message is not None:
+                    print(event.message.text)
+                print("=" * 50)
 
         print("\nBuilding Magentic Workflow...")
 
@@ -114,10 +108,8 @@ async def main() -> None:
         workflow = (
             MagenticWorkflowBuilder()
             .participants(researcher=researcher_agent, coder=coder_agent)
-            .on_result(on_result)
             .on_exception(on_exception)
-            .on_agent_response(on_agent_response)
-            .on_agent_stream(on_agent_stream)
+            .on_event(on_event, mode=MagenticCallbackMode.STREAMING)
             .with_standard_manager(
                 chat_client=OpenAIChatClient(),
                 max_round_count=10,
@@ -153,9 +145,9 @@ async def main() -> None:
                         if isinstance(event, WorkflowCompletedEvent):
                             completion_event = event
 
-                        if isinstance(event, RequestInfoEvent) and event.request_type is PlanReviewRequest:
+                        if isinstance(event, RequestInfoEvent) and event.request_type is MagenticPlanReviewRequest:
                             pending_request = event
-                            review_req = cast(PlanReviewRequest, event.data)
+                            review_req = cast(MagenticPlanReviewRequest, event.data)
                             if review_req.plan_text:
                                 print(f"\n=== PLAN REVIEW REQUEST ===\n{review_req.plan_text}\n")
 
@@ -169,7 +161,7 @@ async def main() -> None:
                 if pending_request is not None:
                     # For demo purposes we approve as-is. Replace this with UI input
                     # to collect a human decision/comments/edited plan.
-                    reply = PlanReviewReply(decision=PlanReviewDecision.APPROVE)
+                    reply = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)
 
                     async for event in workflow.send_responses_streaming({pending_request.request_id: reply}):
                         print(f"Event: {event}")
@@ -177,10 +169,10 @@ async def main() -> None:
                         if isinstance(event, WorkflowCompletedEvent):
                             completion_event = event
 
-                        if isinstance(event, RequestInfoEvent) and event.request_type is PlanReviewRequest:
+                        if isinstance(event, RequestInfoEvent) and event.request_type is MagenticPlanReviewRequest:
                             # Another review cycle requested; keep pending
                             pending_request = event
-                            review_req = cast(PlanReviewRequest, event.data)
+                            review_req = cast(MagenticPlanReviewRequest, event.data)
                             if review_req.plan_text:
                                 print(f"\n=== PLAN REVIEW REQUEST ===\n{review_req.plan_text}\n")
                         else:

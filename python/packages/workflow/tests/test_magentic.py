@@ -18,9 +18,12 @@ from agent_framework._clients import ChatClient as AFChatClient
 from agent_framework_workflow import (
     Executor,
     MagenticManagerBase,
+    MagenticPlanReviewDecision,
+    MagenticPlanReviewReply,
+    MagenticPlanReviewRequest,
+    MagenticProgressLedger,
+    MagenticProgressLedgerItem,
     MagenticWorkflowBuilder,
-    ProgressLedger,
-    ProgressLedgerItem,
     RequestInfoEvent,
     WorkflowCompletedEvent,
     WorkflowContext,
@@ -30,9 +33,6 @@ from agent_framework_workflow import (
 from agent_framework_workflow._magentic import (
     MagenticContext,
     MagenticStartMessage,
-    PlanReviewDecision,
-    PlanReviewReply,
-    PlanReviewRequest,
 )
 
 
@@ -45,20 +45,20 @@ def test_magentic_start_message_from_string():
 
 
 def test_plan_review_request_defaults_and_reply_variants():
-    req = PlanReviewRequest()  # defaults provided by dataclass
+    req = MagenticPlanReviewRequest()  # defaults provided by dataclass
     assert hasattr(req, "request_id")
     assert req.task_text == "" and req.facts_text == "" and req.plan_text == ""
     assert isinstance(req.round_index, int) and req.round_index == 0
 
     # Replies: approve, revise with comments, revise with edited text
-    approve = PlanReviewReply(decision=PlanReviewDecision.APPROVE)
-    revise_comments = PlanReviewReply(decision=PlanReviewDecision.REVISE, comments="Tighten scope")
-    revise_text = PlanReviewReply(
-        decision=PlanReviewDecision.REVISE,
+    approve = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)
+    revise_comments = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.REVISE, comments="Tighten scope")
+    revise_text = MagenticPlanReviewReply(
+        decision=MagenticPlanReviewDecision.REVISE,
         edited_plan_text="- Step 1\n- Step 2",
     )
 
-    assert approve.decision == PlanReviewDecision.APPROVE
+    assert approve.decision == MagenticPlanReviewDecision.APPROVE
     assert revise_comments.comments == "Tighten scope"
     assert revise_text.edited_plan_text is not None and revise_text.edited_plan_text.startswith("- Step 1")
 
@@ -108,14 +108,14 @@ class FakeManager(MagenticManagerBase):
         combined = f"Task: {magentic_context.task.text}\n\nFacts:\n{facts.text}\n\nPlan:\n{plan.text}"
         return ChatMessage(role=ChatRole.ASSISTANT, text=combined, author_name="magentic_manager")
 
-    async def create_progress_ledger(self, magentic_context: MagenticContext) -> ProgressLedger:
+    async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
         is_satisfied = self.satisfied_after_signoff and len(magentic_context.chat_history) > 0
-        return ProgressLedger(
-            is_request_satisfied=ProgressLedgerItem(reason="test", answer=is_satisfied),
-            is_in_loop=ProgressLedgerItem(reason="test", answer=False),
-            is_progress_being_made=ProgressLedgerItem(reason="test", answer=True),
-            next_speaker=ProgressLedgerItem(reason="test", answer=self.next_speaker_name),
-            instruction_or_question=ProgressLedgerItem(reason="test", answer=self.instruction_text),
+        return MagenticProgressLedger(
+            is_request_satisfied=MagenticProgressLedgerItem(reason="test", answer=is_satisfied),
+            is_in_loop=MagenticProgressLedgerItem(reason="test", answer=False),
+            is_progress_being_made=MagenticProgressLedgerItem(reason="test", answer=True),
+            next_speaker=MagenticProgressLedgerItem(reason="test", answer=self.next_speaker_name),
+            instruction_or_question=MagenticProgressLedgerItem(reason="test", answer=self.instruction_text),
         )
 
     async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:
@@ -145,7 +145,7 @@ async def test_standard_manager_progress_ledger_and_fallback():
     )
 
     ledger = await manager.create_progress_ledger(ctx.model_copy(deep=True))
-    assert isinstance(ledger, ProgressLedger)
+    assert isinstance(ledger, MagenticProgressLedger)
     assert ledger.next_speaker.answer == "agentA"
 
     manager.satisfied_after_signoff = False
@@ -165,13 +165,13 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
 
     req_event: RequestInfoEvent | None = None
     async for ev in wf.run_streaming("do work"):
-        if isinstance(ev, RequestInfoEvent) and ev.request_type is PlanReviewRequest:
+        if isinstance(ev, RequestInfoEvent) and ev.request_type is MagenticPlanReviewRequest:
             req_event = ev
     assert req_event is not None
 
     completed: WorkflowCompletedEvent | None = None
     async for ev in wf.send_responses_streaming({
-        req_event.request_id: PlanReviewReply(decision=PlanReviewDecision.APPROVE)
+        req_event.request_id: MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)
     }):
         if isinstance(ev, WorkflowCompletedEvent):
             completed = ev
@@ -300,24 +300,24 @@ class InvokeOnceManager(MagenticManagerBase):
     async def replan(self, magentic_context: MagenticContext) -> ChatMessage:
         return ChatMessage(role=ChatRole.ASSISTANT, text="re-ledger")
 
-    async def create_progress_ledger(self, magentic_context: MagenticContext) -> ProgressLedger:
+    async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
         if not self._invoked:
             # First round: ask agentA to respond
             self._invoked = True
-            return ProgressLedger(
-                is_request_satisfied=ProgressLedgerItem(reason="r", answer=False),
-                is_in_loop=ProgressLedgerItem(reason="r", answer=False),
-                is_progress_being_made=ProgressLedgerItem(reason="r", answer=True),
-                next_speaker=ProgressLedgerItem(reason="r", answer="agentA"),
-                instruction_or_question=ProgressLedgerItem(reason="r", answer="say hi"),
+            return MagenticProgressLedger(
+                is_request_satisfied=MagenticProgressLedgerItem(reason="r", answer=False),
+                is_in_loop=MagenticProgressLedgerItem(reason="r", answer=False),
+                is_progress_being_made=MagenticProgressLedgerItem(reason="r", answer=True),
+                next_speaker=MagenticProgressLedgerItem(reason="r", answer="agentA"),
+                instruction_or_question=MagenticProgressLedgerItem(reason="r", answer="say hi"),
             )
         # Next round: mark satisfied so run can conclude
-        return ProgressLedger(
-            is_request_satisfied=ProgressLedgerItem(reason="r", answer=True),
-            is_in_loop=ProgressLedgerItem(reason="r", answer=False),
-            is_progress_being_made=ProgressLedgerItem(reason="r", answer=True),
-            next_speaker=ProgressLedgerItem(reason="r", answer="agentA"),
-            instruction_or_question=ProgressLedgerItem(reason="r", answer="done"),
+        return MagenticProgressLedger(
+            is_request_satisfied=MagenticProgressLedgerItem(reason="r", answer=True),
+            is_in_loop=MagenticProgressLedgerItem(reason="r", answer=False),
+            is_progress_being_made=MagenticProgressLedgerItem(reason="r", answer=True),
+            next_speaker=MagenticProgressLedgerItem(reason="r", answer="agentA"),
+            instruction_or_question=MagenticProgressLedgerItem(reason="r", answer="done"),
         )
 
     async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:
@@ -363,11 +363,17 @@ class StubAssistantsAgent(AgentBase):
 async def _collect_agent_responses_setup(participant_obj: object):
     captured: list[ChatMessage] = []
 
+    async def sink(event) -> None:  # type: ignore[no-untyped-def]
+        from agent_framework_workflow._magentic import MagenticAgentMessageEvent
+
+        if isinstance(event, MagenticAgentMessageEvent) and event.message is not None:
+            captured.append(event.message)
+
     wf = (
         MagenticWorkflowBuilder()
         .participants(agentA=participant_obj)  # type: ignore[arg-type]
         .with_standard_manager(InvokeOnceManager())
-        .on_agent_response(lambda agent_id, msg: (captured.append(msg)) and (None))  # type: ignore[arg-type]
+        .on_event(sink)  # type: ignore
         .build()
     )
 

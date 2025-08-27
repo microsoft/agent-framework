@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Annotated, Any, TypeVar, cast
+from typing import Annotated, Any, Literal, Protocol, TypeVar, Union, cast
 from uuid import uuid4
 
 from agent_framework import AgentRunResponse, AgentRunResponseUpdate, ChatClient, ChatMessage, ChatRole
@@ -36,6 +36,66 @@ MAGENTIC_MANAGER_NAME = "magentic_manager"
 # Optional kinds for generic orchestrator message callback
 ORCH_MSG_KIND_USER_TASK = "user_task"
 ORCH_MSG_KIND_TASK_LEDGER = "task_ledger"
+# Newly surfaced kinds for unified callback consumers
+ORCH_MSG_KIND_INSTRUCTION = "instruction"
+ORCH_MSG_KIND_NOTICE = "notice"
+
+# region Unified callback API (developer-facing)
+
+
+class MagenticCallbackMode(str, Enum):
+    """Controls whether agent deltas are surfaced via on_event.
+
+    STREAMING: emit AgentDeltaEvent chunks and a final AgentMessageEvent.
+    NON_STREAMING: suppress deltas and only emit AgentMessageEvent.
+    """
+
+    STREAMING = "streaming"
+    NON_STREAMING = "non_streaming"
+
+
+@dataclass
+class MagenticOrchestratorMessageEvent:
+    source: Literal["orchestrator"] = "orchestrator"
+    orchestrator_id: str = ""
+    message: ChatMessage | None = None
+    # Kind values include: user_task, task_ledger, instruction, notice
+    kind: str = ""
+
+
+@dataclass
+class MagenticAgentDeltaEvent:
+    source: Literal["agent"] = "agent"
+    agent_id: str = ""
+    text: str = ""
+
+
+@dataclass
+class MagenticAgentMessageEvent:
+    source: Literal["agent"] = "agent"
+    agent_id: str = ""
+    message: ChatMessage | None = None
+
+
+@dataclass
+class MagenticFinalResultEvent:
+    source: Literal["workflow"] = "workflow"
+    message: ChatMessage | None = None
+
+
+MagenticCallbackEvent = Union[
+    MagenticOrchestratorMessageEvent,
+    MagenticAgentDeltaEvent,
+    MagenticAgentMessageEvent,
+    MagenticFinalResultEvent,
+]
+
+
+class CallbackSink(Protocol):
+    async def __call__(self, event: MagenticCallbackEvent) -> None: ...
+
+
+# endregion Unified callback API
 
 # region Magentic One Prompts
 
@@ -239,7 +299,7 @@ class MagenticResponseMessage:
 
 
 @dataclass
-class PlanReviewRequest(RequestInfoMessage):
+class MagenticPlanReviewRequest(RequestInfoMessage):
     """Human-in-the-loop request to review and optionally edit the plan before execution."""
 
     # Because RequestInfoMessage defines a default field (request_id),
@@ -250,16 +310,16 @@ class PlanReviewRequest(RequestInfoMessage):
     round_index: int = 0  # number of review rounds so far
 
 
-class PlanReviewDecision(str, Enum):
+class MagenticPlanReviewDecision(str, Enum):
     APPROVE = "approve"
     REVISE = "revise"
 
 
 @dataclass
-class PlanReviewReply:
+class MagenticPlanReviewReply:
     """Human reply to a plan review request."""
 
-    decision: PlanReviewDecision
+    decision: MagenticPlanReviewDecision
     edited_plan_text: str | None = None  # if supplied, becomes the new plan text verbatim
     comments: str | None = None  # guidance for replan if no edited text provided
 
@@ -271,21 +331,21 @@ class MagenticTaskLedger(AFBaseModel):
     plan: Annotated[ChatMessage, Field(description="The plan for the task.")]
 
 
-class ProgressLedgerItem(AFBaseModel):
+class MagenticProgressLedgerItem(AFBaseModel):
     """A progress ledger item."""
 
     reason: str
     answer: str | bool
 
 
-class ProgressLedger(AFBaseModel):
+class MagenticProgressLedger(AFBaseModel):
     """A progress ledger for tracking workflow progress."""
 
-    is_request_satisfied: ProgressLedgerItem
-    is_in_loop: ProgressLedgerItem
-    is_progress_being_made: ProgressLedgerItem
-    next_speaker: ProgressLedgerItem
-    instruction_or_question: ProgressLedgerItem
+    is_request_satisfied: MagenticProgressLedgerItem
+    is_in_loop: MagenticProgressLedgerItem
+    is_progress_being_made: MagenticProgressLedgerItem
+    next_speaker: MagenticProgressLedgerItem
+    instruction_or_question: MagenticProgressLedgerItem
 
 
 class MagenticContext(AFBaseModel):
@@ -410,7 +470,7 @@ class MagenticManagerBase(BaseModel, ABC):
         ...
 
     @abstractmethod
-    async def create_progress_ledger(self, magentic_context: MagenticContext) -> ProgressLedger:
+    async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
         """Create a progress ledger."""
         ...
 
@@ -616,7 +676,7 @@ class StandardMagenticManager(MagenticManagerBase):
         )
         return ChatMessage(role=ChatRole.ASSISTANT, text=combined, author_name=MAGENTIC_MANAGER_NAME)
 
-    async def create_progress_ledger(self, magentic_context: MagenticContext) -> ProgressLedger:
+    async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
         """Use the model to produce a JSON progress ledger based on the conversation so far.
 
         Adds lightweight retries with backoff for transient parse issues and avoids selecting a
@@ -643,7 +703,7 @@ class StandardMagenticManager(MagenticManagerBase):
             raw = await self._complete([*magentic_context.chat_history, user_message])
             try:
                 ledger_dict = _extract_json(raw.text)
-                return _pd_validate(ProgressLedger, ledger_dict)
+                return _pd_validate(MagenticProgressLedger, ledger_dict)
             except Exception as ex:  # parse error or schema mismatch
                 last_error = ex
                 attempts += 1
@@ -655,15 +715,15 @@ class StandardMagenticManager(MagenticManagerBase):
         # Final conservative fallback if retries failed
         logger.warning("Progress ledger parse failed after retries. Using conservative fallback: first agent.")
         fallback_next = agent_names[0]
-        return ProgressLedger(
-            is_request_satisfied=ProgressLedgerItem(
+        return MagenticProgressLedger(
+            is_request_satisfied=MagenticProgressLedgerItem(
                 reason=f"Fallback due to parsing error: {last_error}",
                 answer=False,
             ),
-            is_in_loop=ProgressLedgerItem(reason="Fallback", answer=False),
-            is_progress_being_made=ProgressLedgerItem(reason="Fallback", answer=True),
-            next_speaker=ProgressLedgerItem(reason="Fallback", answer=fallback_next),
-            instruction_or_question=ProgressLedgerItem(
+            is_in_loop=MagenticProgressLedgerItem(reason="Fallback", answer=False),
+            is_progress_being_made=MagenticProgressLedgerItem(reason="Fallback", answer=True),
+            next_speaker=MagenticProgressLedgerItem(reason="Fallback", answer=fallback_next),
+            instruction_or_question=MagenticProgressLedgerItem(
                 reason="Fallback",
                 answer="Provide a concrete next step with sufficient detail to move the task forward.",
             ),
@@ -760,7 +820,7 @@ class MagenticOrchestratorExecutor(Executor):
     async def handle_start_message(
         self,
         message: MagenticStartMessage,
-        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage | PlanReviewRequest],
+        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage | MagenticPlanReviewRequest],
     ) -> None:
         """Handle the initial start message to begin orchestration."""
         if getattr(self, "_terminated", False):
@@ -833,10 +893,10 @@ class MagenticOrchestratorExecutor(Executor):
     @handler
     async def handle_plan_review_response(
         self,
-        response: RequestResponse[PlanReviewRequest, PlanReviewReply],
+        response: RequestResponse[MagenticPlanReviewRequest, MagenticPlanReviewReply],
         context: WorkflowContext[
             # may broadcast ledger next, or ask for another round of review
-            MagenticResponseMessage | MagenticRequestMessage | PlanReviewRequest
+            MagenticResponseMessage | MagenticRequestMessage | MagenticPlanReviewRequest
         ],
     ) -> None:
         if getattr(self, "_terminated", False):
@@ -847,9 +907,9 @@ class MagenticOrchestratorExecutor(Executor):
         human = response.data
         if human is None:
             # Defensive fallback: treat as revise with empty comments
-            human = PlanReviewReply(decision=PlanReviewDecision.REVISE, comments="")
+            human = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.REVISE, comments="")
 
-        if human.decision == PlanReviewDecision.APPROVE:
+        if human.decision == MagenticPlanReviewDecision.APPROVE:
             # If the user supplied an edited plan, adopt it
             if human.edited_plan_text:
                 # Update the manager's internal ledger and rebuild the combined message
@@ -900,6 +960,9 @@ class MagenticOrchestratorExecutor(Executor):
                 author_name=MAGENTIC_MANAGER_NAME,
             )
             self._context.chat_history.append(notice)
+            if self._message_callback:
+                with contextlib.suppress(Exception):
+                    await self._message_callback(self.id, notice, ORCH_MSG_KIND_NOTICE)
             if self._task_ledger:
                 self._context.chat_history.append(self._task_ledger)
                 # No further review requests; proceed directly into coordination
@@ -1035,6 +1098,10 @@ class MagenticOrchestratorExecutor(Executor):
             author_name=MAGENTIC_MANAGER_NAME,
         )
         ctx.chat_history.append(instruction_msg)
+        # Surface instruction message to observers
+        if self._message_callback:
+            with contextlib.suppress(Exception):
+                await self._message_callback(self.id, instruction_msg, ORCH_MSG_KIND_INSTRUCTION)
 
         # Determine the selected agent's executor id
         target_executor_id = f"agent_{next_speaker_value}"
@@ -1130,7 +1197,7 @@ class MagenticOrchestratorExecutor(Executor):
 
     async def _send_plan_review_request(
         self,
-        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage | PlanReviewRequest],
+        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage | MagenticPlanReviewRequest],
     ) -> None:
         """Emit a PlanReviewRequest via RequestInfoExecutor."""
         # If plan sign-off is disabled (e.g., ran out of review rounds), do nothing
@@ -1141,7 +1208,7 @@ class MagenticOrchestratorExecutor(Executor):
         plan_text = ledger.plan.text if ledger else ""
         task_text = self._context.task.text if self._context else ""
 
-        req = PlanReviewRequest(
+        req = MagenticPlanReviewRequest(
             task_text=task_text,
             facts_text=facts_text,
             plan_text=plan_text,
@@ -1322,6 +1389,9 @@ class MagenticWorkflowBuilder:
         self._agent_response_callback: Callable[[str, ChatMessage], Awaitable[None]] | None = None
         self._agent_streaming_callback: Callable[[str, AgentRunResponseUpdate, bool], Awaitable[None]] | None = None
         self._enable_plan_review: bool = False
+        # Unified callback wiring
+        self._unified_callback: CallbackSink | None = None
+        self._callback_mode: MagenticCallbackMode | None = None
 
     def participants(self, **participants: AgentBase | Executor) -> Self:
         """Add participants (agents or executors) to the workflow."""
@@ -1403,26 +1473,16 @@ class MagenticWorkflowBuilder:
         self._result_callback = callback
         return self
 
-    def on_orchestrator_message(self, callback: Callable[[str, ChatMessage, str], Awaitable[None]]) -> Self:
-        """Receive orchestrator-emitted messages (non-streaming).
+    def on_event(
+        self, callback: CallbackSink, *, mode: MagenticCallbackMode = MagenticCallbackMode.NON_STREAMING
+    ) -> Self:
+        """Register a single sink for all workflow, orchestrator, and agent events.
 
-        The callback signature is (orchestrator_id, message, kind), where kind is a small string such as
-        ORCH_MSG_KIND_USER_TASK or ORCH_MSG_KIND_TASK_LEDGER to help distinguish message purpose.
+        mode=STREAMING yields AgentDeltaEvent plus AgentMessageEvent at the end.
+        mode=NON_STREAMING only yields AgentMessageEvent at the end (no deltas).
         """
-        self._message_callback = callback
-        return self
-
-    def on_agent_response(self, callback: Callable[[str, ChatMessage], Awaitable[None]]) -> Self:
-        """Set a callback to receive final messages from orchestrator and agents."""
-        self._agent_response_callback = callback
-        return self
-
-    def on_agent_stream(self, callback: Callable[[str, AgentRunResponseUpdate, bool], Awaitable[None]]) -> Self:
-        """Set a callback to receive streaming updates from agents when available.
-
-        The callback signature is (agent_id, update, is_final).
-        """
-        self._agent_streaming_callback = callback
+        self._unified_callback = callback
+        self._callback_mode = mode
         return self
 
     def build(self) -> "MagenticWorkflow":
@@ -1443,6 +1503,47 @@ class MagenticWorkflowBuilder:
             else:
                 description = f"Executor {name}"
             participant_descriptions[name] = description
+
+        # If unified sink is provided, map it to legacy callback surfaces
+        unified = self._unified_callback
+        mode = self._callback_mode
+
+        if unified is not None:
+            prior_result = self._result_callback
+
+            async def _on_result(msg: ChatMessage) -> None:
+                with contextlib.suppress(Exception):
+                    await unified(MagenticFinalResultEvent(message=msg))
+                if prior_result is not None:
+                    with contextlib.suppress(Exception):
+                        await prior_result(msg)
+
+            async def _on_orch(orch_id: str, msg: ChatMessage, kind: str) -> None:
+                with contextlib.suppress(Exception):
+                    await unified(MagenticOrchestratorMessageEvent(orchestrator_id=orch_id, message=msg, kind=kind))
+
+            async def _on_agent_final(agent_id: str, message: ChatMessage) -> None:
+                with contextlib.suppress(Exception):
+                    await unified(MagenticAgentMessageEvent(agent_id=agent_id, message=message))
+
+            async def _on_agent_delta(agent_id: str, update: AgentRunResponseUpdate, is_final: bool) -> None:
+                if mode == MagenticCallbackMode.STREAMING:
+                    # Extract a text chunk robustly
+                    chunk: str | None = getattr(update, "text", None)
+                    if not chunk:
+                        with contextlib.suppress(Exception):
+                            contents = getattr(update, "contents", []) or []
+                            chunk = "".join(getattr(c, "text", "") for c in contents) or None
+                    if chunk:
+                        with contextlib.suppress(Exception):
+                            await unified(MagenticAgentDeltaEvent(agent_id=agent_id, text=chunk))
+                # final aggregation handled by _on_agent_final via agent_response_callback
+
+            # Override delegates for orchestrator and agent callbacks
+            self._result_callback = _on_result
+            self._message_callback = _on_orch
+            self._agent_response_callback = _on_agent_final
+            self._agent_streaming_callback = _on_agent_delta if mode == MagenticCallbackMode.STREAMING else None
 
         # Create orchestrator executor
         orchestrator_executor = MagenticOrchestratorExecutor(
@@ -1466,7 +1567,9 @@ class MagenticWorkflowBuilder:
                 workflow_builder
                 # Only route plan review asks to request_info
                 .add_edge(
-                    orchestrator_executor, request_info, condition=lambda msg: isinstance(msg, PlanReviewRequest)
+                    orchestrator_executor,
+                    request_info,
+                    condition=lambda msg: isinstance(msg, MagenticPlanReviewRequest),
                 ).add_edge(request_info, orchestrator_executor)
             )
 
