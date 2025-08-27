@@ -53,8 +53,6 @@ namespace Azure.AI.Agents.Persistent
             _metadata = new(ProviderName);
         }
 
-        protected NewPersistentAgentsChatClient() { }
-
         /// <inheritdoc />
         public virtual object? GetService(Type serviceType, object? serviceKey = null) =>
             serviceType is null ? throw new ArgumentNullException(nameof(serviceType)) :
