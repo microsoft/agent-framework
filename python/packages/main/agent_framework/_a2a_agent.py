@@ -25,6 +25,7 @@ from a2a.types import (
 from a2a.types import Message as A2AMessage
 from a2a.types import Part as A2APart
 from a2a.types import Role as A2ARole
+from a2a.types import Task as A2ATask
 from pydantic import AnyUrl
 
 from ._agents import AgentBase
@@ -91,11 +92,49 @@ class A2AAgent(AgentBase):
         a2a_response = await self._client.send_message(message_request)
         inner_response = a2a_response.root
         if isinstance(inner_response, SendMessageSuccessResponse):
-            if isinstance(inner_response.result, A2AMessage):
-                chat_messages = [self._a2a_message_to_chat_message(inner_response.result)]
-            else:
-                # TODO(peterychang): handle other response types
-                raise ValueError("Unhandled type")
+            result = inner_response.result
+            match result:
+                case A2AMessage():
+                    chat_messages = [
+                        ChatMessage(
+                            role="user" if result.role == "user" else "assistant",
+                            contents=self._a2a_parts_to_contents(result.parts),
+                            raw_representation=result,
+                        )
+                    ]
+                case A2ATask():
+                    match result.status.state:
+                        case "completed":
+                            chat_messages = [
+                                ChatMessage(
+                                    role="assistant",
+                                    contents=self._a2a_parts_to_contents(artifact.parts),
+                                    raw_representation=result,
+                                )
+                                for artifact in result.artifacts or []
+                            ]
+                        case "canceled" | "failed" | "rejected":
+                            contents: list[AIContents] = []
+                            if result.status.message:
+                                contents = self._a2a_parts_to_contents(result.status.message.parts)
+                            else:
+                                contents = [
+                                    ErrorContent(
+                                        message=f"A2A Task failed with state {result.status.state}",
+                                        raw_representation=result,
+                                    )
+                                ]
+                            chat_messages = [
+                                ChatMessage(role="assistant", contents=contents, raw_representation=result)
+                            ]
+                        case "submitted" | "working":
+                            # TODO(peterychang): Long running task. How to handle this?
+                            raise Exception("Long running task")
+                        case _:
+                            # input_required, auth_required, unknown
+                            raise Exception("Unhandled Task status")
+                case _:
+                    raise ValueError(f"Unknown response type {result}")
             return AgentRunResponse(
                 messages=chat_messages,
                 response_id=str(inner_response.id) if isinstance(inner_response.id, int) else inner_response.id,
@@ -134,11 +173,34 @@ class A2AAgent(AgentBase):
             contents: list[AIContents] = []
             inner_response = response.root
             if isinstance(inner_response, SendStreamingMessageSuccessResponse):
-                if isinstance(inner_response.result, A2AMessage):
-                    contents = self._a2a_message_to_chat_message(inner_response.result).contents
-                else:
-                    # TODO(peterychang): handle other response types
-                    raise ValueError("Unhandled type")
+                result = inner_response.result
+                match result:
+                    case A2AMessage():
+                        contents = self._a2a_parts_to_contents(result.parts)
+                    case A2ATask():
+                        match result.status.state:
+                            case "completed":
+                                for artifact in result.artifacts or []:
+                                    contents.extend(self._a2a_parts_to_contents(artifact.parts))
+                            case "canceled" | "failed" | "rejected":
+                                contents: list[AIContents] = []
+                                if result.status.message:
+                                    contents = self._a2a_parts_to_contents(result.status.message.parts)
+                                else:
+                                    contents = [
+                                        ErrorContent(
+                                            message=f"A2A Task failed with state {result.status.state}",
+                                            raw_representation=result,
+                                        )
+                                    ]
+                            case "submitted" | "working":
+                                # TODO(peterychang): Long running task. How to handle this?
+                                raise Exception("Long running task")
+                            case _:
+                                # input_required, auth_required, unknown
+                                raise Exception("Unhandled Task status")
+                    case _:
+                        raise ValueError(f"Unhandled response type {result}")
             else:
                 # error returned
                 contents = [
@@ -243,48 +305,43 @@ class A2AAgent(AgentBase):
             metadata=message.additional_properties,
         )
 
-    def _a2a_message_to_chat_message(self, message: A2AMessage) -> ChatMessage:
-        """Convert a Message to a ChatMessage."""
+    def _a2a_parts_to_contents(self, parts: Sequence[A2APart]) -> list[AIContents]:
         contents: list[AIContents] = []
-        if message.kind == "message":
-            for part in message.parts:
-                inner_part = part.root
-                if inner_part.kind == "text":
+        for part in parts:
+            inner_part = part.root
+            if inner_part.kind == "text":
+                contents.append(
+                    TextContent(
+                        text=inner_part.text,
+                        additional_properties=inner_part.metadata,
+                        raw_representation=inner_part,
+                    )
+                )
+            elif inner_part.kind == "file":
+                if isinstance(inner_part.file, FileWithUri):
                     contents.append(
-                        TextContent(
-                            text=inner_part.text,
+                        UriContent(
+                            uri=inner_part.file.uri,
+                            media_type=inner_part.file.mime_type or "",
                             additional_properties=inner_part.metadata,
                             raw_representation=inner_part,
                         )
                     )
-                elif inner_part.kind == "file":
-                    if isinstance(inner_part.file, FileWithUri):
-                        contents.append(
-                            UriContent(
-                                uri=inner_part.file.uri,
-                                media_type=inner_part.file.mime_type or "",
-                                additional_properties=inner_part.metadata,
-                                raw_representation=inner_part,
-                            )
-                        )
-                    elif isinstance(inner_part.file, FileWithBytes):
-                        contents.append(
-                            DataContent(
-                                data=base64.b64decode(inner_part.file.bytes),
-                                media_type=inner_part.file.mime_type or "",
-                                additional_properties=inner_part.metadata,
-                                raw_representation=inner_part,
-                            )
-                        )
-                elif inner_part.kind == "data":
+                elif isinstance(inner_part.file, FileWithBytes):
                     contents.append(
-                        TextContent(
-                            text=json.dumps(inner_part.data),
+                        DataContent(
+                            data=base64.b64decode(inner_part.file.bytes),
+                            media_type=inner_part.file.mime_type or "",
                             additional_properties=inner_part.metadata,
                             raw_representation=inner_part,
                         )
                     )
-        return ChatMessage(
-            role="user" if message.role == "user" else "assistant",
-            contents=contents,
-        )
+            elif inner_part.kind == "data":
+                contents.append(
+                    TextContent(
+                        text=json.dumps(inner_part.data),
+                        additional_properties=inner_part.metadata,
+                        raw_representation=inner_part,
+                    )
+                )
+        return contents
