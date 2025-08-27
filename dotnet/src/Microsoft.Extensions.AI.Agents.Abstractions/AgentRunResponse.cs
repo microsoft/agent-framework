@@ -1,12 +1,14 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-#if NET9_0_OR_GREATER
+#if NET8_0_OR_GREATER
 using System.Buffers;
 #endif
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-#if NET9_0_OR_GREATER
+using System.Linq;
+
+#if NET8_0_OR_GREATER
 using System.Text;
 #endif
 using System.Text.Json;
@@ -81,6 +83,13 @@ public class AgentRunResponse
     /// </remarks>
     [JsonIgnore]
     public string Text => this._messages?.ConcatText() ?? string.Empty;
+
+    /// <summary>Gets or sets the user input requests associated with the response.</summary>
+    /// <remarks>
+    /// This property concatenates all <see cref="UserInputRequestContent"/> instances in the response.
+    /// </remarks>
+    [JsonIgnore]
+    public IEnumerable<UserInputRequestContent> UserInputRequests => this._messages?.SelectMany(x => x.Contents).OfType<UserInputRequestContent>() ?? [];
 
     /// <summary>Gets or sets the ID of the agent that produced the response.</summary>
     public string? AgentId { get; set; }

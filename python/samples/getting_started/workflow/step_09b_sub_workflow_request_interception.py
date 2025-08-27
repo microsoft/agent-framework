@@ -132,7 +132,7 @@ class EmailValidator(Executor):
             if (hasattr(response, "original_request") and response.original_request)
             else "unknown"
         )
-        print(f"Sub-workflow received domain response for '{domain}': {approved}")
+        print(f"📬 Sub-workflow received domain response for '{domain}': {approved}")
 
         # Find the corresponding email using the request_id
         request_id = (
@@ -185,8 +185,8 @@ class SmartEmailOrchestrator(Executor):
         if request.domain in self.approved_domains:
             print(f"Domain '{request.domain}' is pre-approved locally!")
             return RequestResponse[DomainCheckRequest, bool].handled(True)
-        print(f"Domain '{request.domain}' unknown, forwarding to external service...")
-        return RequestResponse.forward()
+        print(f"❓ Domain '{request.domain}' unknown, forwarding to external service...")
+        return RequestResponse[DomainCheckRequest, bool].forward()
 
     @handler
     async def collect_result(self, result: ValidationResult, ctx: WorkflowContext[None]) -> None:
@@ -270,13 +270,13 @@ async def run_example() -> None:
         print("\n🎯 All requests were intercepted and handled locally!")
 
     # 10. Display final summary
-    print("\nFinal Results Summary:")
+    print("\n📊 Final Results Summary:")
     print("=" * 60)
     for result in orchestrator.results:
         status = "VALID" if result.is_valid else "!! INVALID !!"
         print(f"{status} {result.email}: {result.reason}")
 
-    print(f"\nProcessed {len(orchestrator.results)} emails total")
+    print(f"\n🏁 Processed {len(orchestrator.results)} emails total")
 
 
 if __name__ == "__main__":

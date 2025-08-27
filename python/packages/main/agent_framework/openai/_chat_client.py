@@ -68,7 +68,7 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
         except BadRequestError as ex:
             if ex.code == "content_filter":
                 raise OpenAIContentFilterException(
-                    f"{type(self)} service encountered a content error",
+                    f"{type(self)} service encountered a content error: {ex}",
                     inner_exception=ex,
                 ) from ex
             raise ServiceResponseException(
@@ -98,7 +98,7 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
         except BadRequestError as ex:
             if ex.code == "content_filter":
                 raise OpenAIContentFilterException(
-                    f"{type(self)} service encountered a content error",
+                    f"{type(self)} service encountered a content error: {ex}",
                     inner_exception=ex,
                 ) from ex
             raise ServiceResponseException(

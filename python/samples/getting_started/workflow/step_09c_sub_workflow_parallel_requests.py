@@ -143,7 +143,8 @@ class ResourceRequester(Executor):
                 await ctx.send_message(request)
             elif req_type == "policy":
                 print(
-                    f" >>> Checking policy: {req_data.get('type', 'cpu')} x{req_data.get('amount', 1)} ({req_data.get('policy_type', 'quota')})"  # noqa: E501
+                    f"  🛡️  Checking policy: {req_data.get('type', 'cpu')} x{req_data.get('amount', 1)} "
+                    f"({req_data.get('policy_type', 'quota')})"
                 )
                 request = PolicyCheckRequest(
                     resource_type=req_data.get("type", "cpu"),
@@ -161,8 +162,10 @@ class ResourceRequester(Executor):
     ) -> None:
         """Handle resource allocation response."""
         if response.data:
+            source_icon = "🏪" if response.data.source == "cache" else "🌐"
             print(
-                f" >>> Sub-workflow received: {response.data.allocated} {response.data.resource_type} from {response.data.source}"  # noqa: E501
+                f"📦 {source_icon} Sub-workflow received: {response.data.allocated} {response.data.resource_type} "
+                f"from {response.data.source}"
             )
             if self._collect_results():
                 # Emit completion event and send RequestFinished to the parent workflow.
@@ -174,7 +177,11 @@ class ResourceRequester(Executor):
     ) -> None:
         """Handle policy check response."""
         if response.data:
-            print(f" >>> Sub-workflow received policy response: {response.data.approved} - {response.data.reason}")
+            status_icon = "✅" if response.data.approved else "❌"
+            print(
+                f"🛡️  {status_icon} Sub-workflow received policy response: "
+                f"{response.data.approved} - {response.data.reason}"
+            )
             if self._collect_results():
                 # Emit completion event and send RequestFinished to the parent workflow.
                 await ctx.add_event(WorkflowCompletedEvent(RequestFinished()))
@@ -216,8 +223,8 @@ class ResourceCache(Executor):
             return RequestResponse[ResourceRequest, ResourceResponse].handled(response)
 
         # Cache miss - forward to external
-        print(f"   Cache miss: need {request.amount}, have {available} {request.resource_type}")
-        return RequestResponse.forward()
+        print(f"  ❌ Cache miss: need {request.amount}, have {available} {request.resource_type}")
+        return RequestResponse[ResourceRequest, ResourceResponse].forward()
 
     @handler
     async def collect_result(
@@ -227,7 +234,8 @@ class ResourceCache(Executor):
         if response.data and response.data.source != "cache":  # Don't double-count our own results
             self.results.append(response.data)
             print(
-                f"   Cache received external response: {response.data.allocated} {response.data.resource_type} from {response.data.source}"  # noqa: E501
+                f"🏪 🌐 Cache received external response: {response.data.allocated} {response.data.resource_type} "
+                f"from {response.data.source}"
             )
 
 
@@ -263,12 +271,12 @@ class PolicyEngine(Executor):
                 self.results.append(response)
                 return RequestResponse[PolicyCheckRequest, PolicyResponse].handled(response)
             # Exceeds quota - forward to external for review
-            print(f"  Policy exceeds quota: {request.amount} > {quota_limit}, forwarding to external")
-            return RequestResponse.forward()
+            print(f"  ❌ Policy exceeds quota: {request.amount} > {quota_limit}, forwarding to external")
+            return RequestResponse[PolicyCheckRequest, PolicyResponse].forward()
 
         # Unknown policy type - forward to external
-        print(f"  Unknown policy type: {request.policy_type}, forwarding")
-        return RequestResponse.forward()
+        print(f"  ❓ Unknown policy type: {request.policy_type}, forwarding")
+        return RequestResponse[PolicyCheckRequest, PolicyResponse].forward()
 
     @handler
     async def collect_policy_result(
@@ -291,8 +299,11 @@ class Coordinator(Executor):
 
     @handler
     async def handle_completion(self, completion: RequestFinished, ctx: WorkflowContext[None]) -> None:
-        """Handle sub-workflow completion. It comes from the sub-workflow emitted WorkflowCompletionEvent's data field."""
-        print("Main workflow received completion.")
+        """Handle sub-workflow completion.
+
+        It comes from the sub-workflow emitted WorkflowCompletionEvent's data field.
+        """
+        print("🎯 Main workflow received completion.")
 
 
 async def main() -> None:
@@ -351,7 +362,11 @@ async def main() -> None:
 
     print(f"Testing with {len(test_requests)} mixed requests:")
     for i, req in enumerate(test_requests, 1):
-        print(f"  {i}. {req['type']} x{req['amount']} ({req.get('priority', req.get('policy_type', 'default'))})")
+        req_icon = "📦" if req["request_type"] == "resource" else "🛡️"
+        print(
+            f"  {i}. {req_icon} {req['type']} x{req['amount']} "
+            f"({req.get('priority', req.get('policy_type', 'default'))})"
+        )
     print("=" * 70)
 
     # 8. Run the workflow
@@ -395,15 +410,15 @@ async def main() -> None:
     for result in policy.results:
         print(f"  Approved: {result.approved} - {result.reason}")
 
-    print("\nFinal Cache State:")
+    print("\n💾 Final Cache State:")
     for resource, amount in cache.cache.items():
         print(f"  {resource}: {amount} remaining")
 
-    print("\nSummary:")
-    print(f"  Total requests: {len(test_requests)}")
-    print(f"  Resource requests handled: {len(cache.results)}")
-    print(f"  Policy requests handled: {len(policy.results)}")
-    print(f"  External requests: {len(request_events) if request_events else 0}")
+    print("\n📈 Summary:")
+    print(f"  🎯 Total requests: {len(test_requests)}")
+    print(f"  🏪 Resource requests handled: {len(cache.results)}")
+    print(f"  🛡️  Policy requests handled: {len(policy.results)}")
+    print(f"  🌐 External requests: {len(request_events) if request_events else 0}")
 
     print("\n" + "=" * 70)
 

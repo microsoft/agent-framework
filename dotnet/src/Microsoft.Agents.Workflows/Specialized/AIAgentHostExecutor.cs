@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
@@ -20,7 +22,7 @@ internal class AIAgentHostExecutor : Executor
         this._emitEvents = emitEvents;
     }
 
-    private AgentThread EnsureThread()
+    private AgentThread EnsureThread(IWorkflowContext context)
     {
         if (this._thread != null)
         {
@@ -49,10 +51,48 @@ internal class AIAgentHostExecutor : Executor
         return default;
     }
 
+    private const string ThreadStateKey = nameof(AIAgentHostExecutor._thread);
+    private const string PendingMessagesStateKey = nameof(AIAgentHostExecutor._pendingMessages);
+    protected internal override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellation = default)
+    {
+        Task threadTask = Task.CompletedTask;
+        if (this._thread != null)
+        {
+            JsonElement threadValue = await this._thread.SerializeAsync(cancellationToken: cancellation).ConfigureAwait(false);
+            threadTask = context.QueueStateUpdateAsync(ThreadStateKey, threadValue).AsTask();
+        }
+
+        Task messagesTask = Task.CompletedTask;
+        if (this._pendingMessages.Count > 0)
+        {
+            JsonElement messagesValue = this._pendingMessages.SerializeToJson();
+            messagesTask = context.QueueStateUpdateAsync(PendingMessagesStateKey, messagesValue).AsTask();
+        }
+
+        await Task.WhenAll(threadTask, messagesTask).ConfigureAwait(false);
+    }
+
+    protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellation = default)
+    {
+        JsonElement? threadValue = await context.ReadStateAsync<JsonElement?>(ThreadStateKey).ConfigureAwait(false);
+        if (threadValue.HasValue)
+        {
+            this._thread = await this._agent.DeserializeThreadAsync(threadValue.Value, cancellationToken: cancellation)
+                                            .ConfigureAwait(false);
+        }
+
+        JsonElement? messagesValue = await context.ReadStateAsync<JsonElement?>(PendingMessagesStateKey).ConfigureAwait(false);
+        if (messagesValue.HasValue)
+        {
+            List<ChatMessage> messages = messagesValue.Value.DeserializeMessageList();
+            this._pendingMessages.AddRange(messages);
+        }
+    }
+
     public async ValueTask TakeTurnAsync(TurnToken token, IWorkflowContext context)
     {
         bool emitEvents = token.EmitEvents.HasValue ? token.EmitEvents.Value : this._emitEvents;
-        IAsyncEnumerable<AgentRunResponseUpdate> agentStream = this._agent.RunStreamingAsync(this._pendingMessages, this.EnsureThread());
+        IAsyncEnumerable<AgentRunResponseUpdate> agentStream = this._agent.RunStreamingAsync(this._pendingMessages, this.EnsureThread(context));
 
         List<AgentRunResponseUpdate> updates = new();
         await foreach (AgentRunResponseUpdate update in agentStream.ConfigureAwait(false))

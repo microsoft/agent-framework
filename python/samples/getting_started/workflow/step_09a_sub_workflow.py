@@ -195,7 +195,7 @@ async def main():
     result = await main_workflow.run(test_texts)
 
     # Step 5: Display results
-    print("\nProcessing Results:")
+    print("\n📊 Processing Results:")
     print("=" * 60)
 
     # Sort results by task_id for consistent display
@@ -204,17 +204,19 @@ async def main():
     for result in sorted_results:
         preview = result.text[:30] + "..." if len(result.text) > 30 else result.text
         preview = preview.replace("\n", " ").strip() or "(empty)"
-        print(f"{result.task_id}: '{preview}' -> {result.word_count} words, {result.char_count} chars")
+        print(f"✅ {result.task_id}: '{preview}' -> {result.word_count} words, {result.char_count} chars")
 
     # Step 6: Display summary
     summary = orchestrator.get_summary()
-    print("Summary:")
+    print("\n📈 Summary:")
     print("=" * 60)
-    print(f"Total texts processed: {summary['total_texts']}")
-    print(f"Total words: {summary['total_words']}")
-    print(f"Total characters: {summary['total_characters']}")
-    print(f"Average words per text: {summary['average_words_per_text']}")
-    print(f"Average characters per text: {summary['average_characters_per_text']}")
+    print(f"📄 Total texts processed: {summary['total_texts']}")
+    print(f"📝 Total words: {summary['total_words']}")
+    print(f"🔤 Total characters: {summary['total_characters']}")
+    print(f"📊 Average words per text: {summary['average_words_per_text']}")
+    print(f"📏 Average characters per text: {summary['average_characters_per_text']}")
+
+    print("\n🏁 Processing complete!")
 
 
 if __name__ == "__main__":
