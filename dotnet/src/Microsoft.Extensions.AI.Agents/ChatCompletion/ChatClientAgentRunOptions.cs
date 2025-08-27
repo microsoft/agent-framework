@@ -26,8 +26,6 @@ public sealed class ChatClientAgentRunOptions : AgentRunOptions
         this.ChatOptions = chatOptions;
     }
 
-    /// <summary>
-    /// Gets or sets optional chat options to pass to the agent's invocation.
-    /// </summary>
+    /// <summary>Gets or sets optional chat options to pass to the agent's invocation.</summary>
     public ChatOptions? ChatOptions { get; set; }
 }

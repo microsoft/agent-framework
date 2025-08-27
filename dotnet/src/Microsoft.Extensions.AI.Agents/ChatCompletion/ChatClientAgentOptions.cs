@@ -85,9 +85,11 @@ public class ChatClientAgentOptions
     /// </summary>
     /// <remarks>
     /// By default the <see cref="ChatClientAgent"/> applies decorators to the provided <see cref="IChatClient"/>
-    /// for doing automatic function invocation and logging. Setting this property to <see langword="true"/>
-    /// disables this behavior, and requires the caller to provide an <see cref="IChatClient"/> that already
-    /// has the desired behavior.
+    /// for doing for example automatic function invocation. Setting this property to <see langword="true"/>
+    /// disables adding these default decorators.
+    /// Disabling is recommended if you want to decorate the <see cref="IChatClient"/> with different decorators
+    /// than the default ones. The provided <see cref="IChatClient"/> instance should then already be decorated
+    /// with the desired decorators.
     /// </remarks>
     public bool UseProvidedChatClientAsIs { get; set; } = false;
 
