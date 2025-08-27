@@ -56,7 +56,10 @@ public static class DeclarativeWorkflowBuilder
 
         string rootId = WorkflowActionVisitor.RootId(workflowElement.BeginDialog?.Id.Value ?? "workflow");
 
-        DeclarativeWorkflowExecutor<TInput> rootExecutor = new(rootId, WrapWithBot(workflowElement), message => DefaultTransform(message));
+        DeclarativeWorkflowExecutor<TInput> rootExecutor =
+            new(rootId,
+                WrapWithBot(workflowElement),
+                message => inputTransform?.Invoke(message) ?? DefaultTransform(message));
 
         WorkflowActionVisitor visitor = new(rootExecutor, options);
         WorkflowElementWalker walker = new(rootElement, visitor);
