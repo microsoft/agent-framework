@@ -8,7 +8,7 @@ namespace Microsoft.Agents.Workflows.Declarative;
 public class DeclarativeWorkflowInvokeEvent(string conversationId) : DeclarativeWorkflowEvent(conversationId)
 {
     /// <summary>
-    /// The converation ID associated with the workflow.
+    /// The conversation ID associated with the workflow.
     /// </summary>
     public new string Data => conversationId;
 }
