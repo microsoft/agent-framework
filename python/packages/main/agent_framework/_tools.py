@@ -21,10 +21,9 @@ from typing import (
 from opentelemetry import metrics, trace
 from pydantic import AnyUrl, BaseModel, Field, PrivateAttr, create_model
 
-from agent_framework.exceptions import ServiceInitializationError
-
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
+from .exceptions import ToolException
 from .telemetry import GenAIAttributes, start_as_current_span
 
 if TYPE_CHECKING:
@@ -43,7 +42,6 @@ __all__ = [
     "AIFunction",
     "HostedCodeInterpreterTool",
     "HostedFileSearchTool",
-    "HostedMcpApprovalMode",
     "HostedMcpApprovalSpecific",
     "HostedMcpTool",
     "HostedWebSearchTool",
@@ -212,12 +210,6 @@ class HostedWebSearchTool(BaseTool):
         super().__init__(**args, **kwargs)
 
 
-class HostedMcpApprovalMode(AFBaseModel):
-    value: Literal["always_require", "never_require", "specific"] = "always_require"
-    always_require_approval: set[str] | None = None
-    never_require_approval: set[str] | None = None
-
-
 class HostedMcpApprovalSpecific(TypedDict, total=False):
     """Represents the approval mode for a hosted tool."""
 
@@ -377,7 +369,7 @@ class HostedMcpTool(AIToolBase):
             args["allowed_tools"] = allowed_tools
         if approval_mode is not None:
             if isinstance(approval_mode, str) and approval_mode not in ["always_require", "never_require"]:
-                raise ServiceInitializationError(
+                raise ToolException(
                     f"Invalid approval_mode: {approval_mode}, must be `always_require`, `never_require`, or a dict "
                     "with keys: `always_require_approval` and `never_require_approval`, followed by a set of strings "
                     "with the names of the relevant tools."

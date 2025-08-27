@@ -5,8 +5,15 @@ from unittest.mock import Mock, patch
 import pytest
 from pydantic import BaseModel
 
-from agent_framework import AIFunction, HostedCodeInterpreterTool, ToolProtocol, ai_function
+from agent_framework import (
+    AIFunction,
+    HostedCodeInterpreterTool,
+    HostedMcpTool,
+    ToolProtocol,
+    ai_function,
+)
 from agent_framework._tools import _parse_inputs
+from agent_framework.exceptions import ToolException
 from agent_framework.telemetry import GenAIAttributes
 
 
@@ -507,3 +514,32 @@ def test_hosted_code_interpreter_tool_with_unknown_input():
     """Test HostedCodeInterpreterTool with single unknown input."""
     with pytest.raises(ValueError, match="Unsupported input type"):
         HostedCodeInterpreterTool(inputs={"hosted_file": "file-single"})
+
+
+def test_hosted_mcp_tool_with_specific_approval_mode_and_headers():
+    """Test creating a HostedMcpTool with a specific approval dict, headers and additional properties."""
+    approval_mode = {"always_require_approval": ["toolA"], "never_require_approval": ["toolB"]}
+    tool = HostedMcpTool(
+        name="mcp-tool",
+        url="https://mcp.example",
+        approval_mode=approval_mode,
+        allowed_tools={"toolA", "toolC"},
+        headers={"x": "y"},
+        additional_properties={"p": 1},
+    )
+
+    assert tool.name == "mcp-tool"
+    # pydantic AnyUrl preserves as string-like
+    assert str(tool.url).startswith("https://")
+    # approval_mode accepted as dict-typed specific mode
+    assert isinstance(tool.approval_mode, dict)
+    assert "always_require_approval" in tool.approval_mode
+    assert tool.allowed_tools == {"toolA", "toolC"}
+    assert tool.headers == {"x": "y"}
+    assert tool.additional_properties == {"p": 1}
+
+
+def test_hosted_mcp_tool_invalid_approval_mode_raises():
+    """Invalid approval_mode string should raise ServiceInitializationError."""
+    with pytest.raises(ToolException):
+        HostedMcpTool(name="bad", url="https://x", approval_mode="invalid_mode")
