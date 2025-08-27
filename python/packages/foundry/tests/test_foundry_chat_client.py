@@ -864,8 +864,8 @@ async def test_foundry_chat_client_agent_existing_thread_id() -> None:
 
 
 @skip_if_foundry_integration_tests_disabled
-async def test_azure_assistants_agent_code_interpreter():
-    """Test ChatClientAgent with code interpreter through AzureAssistantsClient."""
+async def test_foundry_chat_client_agent_code_interpreter():
+    """Test ChatClientAgent with code interpreter through FoundryChatClient."""
 
     async with ChatClientAgent(
         chat_client=FoundryChatClient(async_credential=AzureCliCredential()),
