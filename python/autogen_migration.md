@@ -12,7 +12,7 @@ This guide will focus on translating the various components from `Autogen 0.4+` 
 
 Autogen is broken down into several component packages, including `autogen_agentchat`, `autogen_core`, `autogen_ext`, etc. Objects are also nested into logical subpackages.
 
-The Agent Framework package stucture opts toward a flatter structure. The packages are broken into the core package, and model-specific packages; including `agent-framework`, `agent-framework-azure`, `agent-framework-openai`, etc. However, each package's contents can be accessed through the `agent_framework` namespace as well. For example, `OpenAIChatClient` can be accessed with either `agent-framework-openai.OpenAIChatClient` or `agent_framework.openai.OpenAIChatClient`. Most objects, outside of specific components like errors or telemetry functionality, are contained within the top level package.
+The Agent Framework package structure opts toward a flatter structure. The packages are broken into the core package, and model-specific packages; including `agent-framework`, `agent-framework-azure`, `agent-framework-openai`, etc. However, each package's contents can be accessed through the `agent_framework` namespace as well. For example, `OpenAIChatClient` can be accessed with either `agent-framework-openai.OpenAIChatClient` or `agent_framework.openai.OpenAIChatClient`. Most objects, outside of specific components like errors or telemetry functionality, are contained within the top level package.
 
 ## Model Client
 
