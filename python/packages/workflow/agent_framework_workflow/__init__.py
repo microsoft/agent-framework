@@ -105,3 +105,11 @@ __all__ = [
     "intercepts_request",
     "validate_workflow_graph",
 ]
+
+
+# Rebuild models to resolve forward references after all imports are complete
+import contextlib
+
+with contextlib.suppress(AttributeError, TypeError, ValueError):
+    # Rebuild WorkflowExecutor to resolve Workflow forward reference
+    WorkflowExecutor.model_rebuild()

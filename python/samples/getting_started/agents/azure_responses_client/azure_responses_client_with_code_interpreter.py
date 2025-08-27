@@ -4,7 +4,7 @@ import asyncio
 
 from agent_framework import ChatClientAgent, ChatResponse, HostedCodeInterpreterTool
 from agent_framework.azure import AzureResponsesClient
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 from openai.types.responses.response import Response as OpenAIResponse
 from openai.types.responses.response_code_interpreter_tool_call import ResponseCodeInterpreterToolCall
 
@@ -13,8 +13,10 @@ async def main() -> None:
     """Example showing how to use the HostedCodeInterpreterTool with Azure OpenAI Responses."""
     print("=== Azure OpenAI Responses Agent with Code Interpreter Example ===")
 
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
     agent = ChatClientAgent(
-        chat_client=AzureResponsesClient(ad_credential=DefaultAzureCredential()),
+        chat_client=AzureResponsesClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
         tools=HostedCodeInterpreterTool(),
     )

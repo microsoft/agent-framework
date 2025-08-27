@@ -36,7 +36,7 @@ public class ChatClientAgentTests
         Assert.Equal("test description", agent.Description);
         Assert.Equal("test instructions", agent.Instructions);
         Assert.NotNull(agent.ChatClient);
-        Assert.Equal("AgentInvokingChatClient", agent.ChatClient.GetType().Name);
+        Assert.Equal("AgentInvokedChatClient", agent.ChatClient.GetType().Name);
     }
 
     /// <summary>
@@ -139,7 +139,7 @@ public class ChatClientAgentTests
                 null,
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object);
         var runOptions = new AgentRunOptions();
 
         // Act
@@ -158,7 +158,7 @@ public class ChatClientAgentTests
     /// Verify that RunAsync includes base instructions in messages.
     /// </summary>
     [Fact]
-    public async Task RunAsyncIncludesBaseInstructionsAsync()
+    public async Task RunAsyncIncludesBaseInstructionsInOptionsAsync()
     {
         // Arrange
         Mock<IChatClient> mockService = new();
@@ -166,7 +166,7 @@ public class ChatClientAgentTests
         mockService.Setup(
             s => s.GetResponseAsync(
                 It.IsAny<IEnumerable<ChatMessage>>(),
-                It.IsAny<ChatOptions>(),
+                It.Is<ChatOptions>(x => x.Instructions == "base instructions"),
                 It.IsAny<CancellationToken>()))
             .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((msgs, opts, ct) =>
                 capturedMessages.AddRange(msgs))
@@ -179,7 +179,6 @@ public class ChatClientAgentTests
         await agent.RunAsync([new(ChatRole.User, "test")], options: runOptions);
 
         // Assert
-        Assert.Contains(capturedMessages, m => m.Text == "base instructions" && m.Role == ChatRole.System);
         Assert.Contains(capturedMessages, m => m.Text == "test" && m.Role == ChatRole.User);
     }
 
@@ -238,8 +237,7 @@ public class ChatClientAgentTests
         await agent.RunAsync([new(ChatRole.User, "new message")], thread: thread);
 
         // Assert
-        // Should contain: instructions + new message
-        Assert.Contains(capturedMessages, m => m.Text == "test instructions");
+        // Should contain: new message
         Assert.Contains(capturedMessages, m => m.Text == "new message");
     }
 
@@ -298,9 +296,7 @@ public class ChatClientAgentTests
 
         // Assert
         // Should only contain the instructions
-        Assert.Single(capturedMessages);
-        Assert.Equal("test instructions", capturedMessages[0].Text);
-        Assert.Equal(ChatRole.System, capturedMessages[0].Role);
+        Assert.Empty(capturedMessages);
     }
 
     /// <summary>
@@ -324,7 +320,8 @@ public class ChatClientAgentTests
         AgentThread thread = new() { ConversationId = "ConvId" };
 
         // Act & Assert
-        await agent.RunAsync([new(ChatRole.User, "test")], thread, chatOptions: chatOptions);
+        var response = await agent.RunAsync([new(ChatRole.User, "test")], thread, chatOptions: chatOptions);
+        Assert.NotNull(response);
     }
 
     /// <summary>
@@ -424,6 +421,7 @@ public class ChatClientAgentTests
         // Act & Assert
         Assert.NotNull(agent.Id);
         Assert.NotEmpty(agent.Id);
+
         // Base implementation returns a GUID, so it should be parseable as a GUID
         Assert.True(Guid.TryParse(agent.Id, out _));
     }
@@ -442,6 +440,7 @@ public class ChatClientAgentTests
         // Act & Assert
         Assert.NotNull(agent.Id);
         Assert.NotEmpty(agent.Id);
+
         // Base implementation returns a GUID, so it should be parseable as a GUID
         Assert.True(Guid.TryParse(agent.Id, out _));
     }
@@ -732,6 +731,7 @@ public class ChatClientAgentTests
         Assert.NotNull(capturedChatOptions);
         Assert.Equal(100, capturedChatOptions.MaxOutputTokens);
         Assert.Equal(0.7f, capturedChatOptions.Temperature);
+        Assert.Equal("test instructions", capturedChatOptions.Instructions);
     }
 
     /// <summary>
@@ -741,7 +741,7 @@ public class ChatClientAgentTests
     public async Task ChatOptionsMergingUsesRequestOptionsWhenAgentHasNoneAsync()
     {
         // Arrange
-        var requestChatOptions = new ChatOptions { MaxOutputTokens = 200, Temperature = 0.3f };
+        var requestChatOptions = new ChatOptions { MaxOutputTokens = 200, Temperature = 0.3f, Instructions = "test instructions" };
         Mock<IChatClient> mockService = new();
         ChatOptions? capturedChatOptions = null;
         mockService.Setup(
@@ -753,7 +753,7 @@ public class ChatClientAgentTests
                 capturedChatOptions = opts)
             .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object);
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
 
         // Act
@@ -764,6 +764,7 @@ public class ChatClientAgentTests
         Assert.Equivalent(requestChatOptions, capturedChatOptions); // Should be the same instance since no merging needed
         Assert.Equal(200, capturedChatOptions.MaxOutputTokens);
         Assert.Equal(0.3f, capturedChatOptions.Temperature);
+        Assert.Equal("test instructions", capturedChatOptions.Instructions);
     }
 
     /// <summary>
@@ -785,7 +786,8 @@ public class ChatClientAgentTests
         {
             MaxOutputTokens = 200,
             Temperature = 0.3f,
-            AdditionalProperties = new AdditionalPropertiesDictionary() { ["key"] = "request-value" }
+            AdditionalProperties = new AdditionalPropertiesDictionary() { ["key"] = "request-value" },
+            Instructions = "request instructions"
             // TopP and ModelId not set, should use agent values
         };
         var expectedChatOptionsMerge = new ChatOptions
@@ -794,7 +796,8 @@ public class ChatClientAgentTests
             Temperature = 0.3f, // Request value takes priority
             AdditionalProperties = new AdditionalPropertiesDictionary() { ["key"] = "request-value" }, // Request value takes priority
             TopP = 0.9f, // Agent value used when request doesn't specify
-            ModelId = "agent-model" // Agent value used when request doesn't specify
+            ModelId = "agent-model", // Agent value used when request doesn't specify
+            Instructions = "test instructions\nrequest instructions" // Request is in addition to agent instructions
         };
 
         Mock<IChatClient> mockService = new();
@@ -847,7 +850,7 @@ public class ChatClientAgentTests
                 capturedChatOptions = opts)
             .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object);
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
 
         // Act
@@ -1014,6 +1017,7 @@ public class ChatClientAgentTests
             TopK = 50,
             PresencePenalty = 0.1f,
             FrequencyPenalty = 0.2f,
+            Instructions = "agent instructions",
             ModelId = "agent-model",
             Seed = 12345,
             ConversationId = "agent-conversation",
@@ -1024,6 +1028,7 @@ public class ChatClientAgentTests
         {
             MaxOutputTokens = 200,
             Temperature = 0.3f,
+            Instructions = "request instructions",
             // Other properties not set, should use agent values
             StopSequences = ["request-stop"]
         };
@@ -1038,6 +1043,7 @@ public class ChatClientAgentTests
             TopK = 50,
             PresencePenalty = 0.1f,
             FrequencyPenalty = 0.2f,
+            Instructions = "test instructions\nrequest instructions",
             ModelId = "agent-model",
             Seed = 12345,
             ConversationId = "agent-conversation",
@@ -1142,8 +1148,8 @@ public class ChatClientAgentTests
         // Assert
         Assert.NotNull(result);
         Assert.IsAssignableFrom<IChatClient>(result);
-        // Note: The result will be the AgentInvokingChatClient wrapper, not the original mock
-        Assert.Equal("AgentInvokingChatClient", result.GetType().Name);
+        // Note: The result will be the AgentInvokedChatClient wrapper, not the original mock
+        Assert.Equal("AgentInvokedChatClient", result.GetType().Name);
     }
 
     /// <summary>
@@ -1383,6 +1389,7 @@ public class ChatClientAgentTests
         // Assert
         Assert.NotNull(result);
         Assert.Same(agent, result);
+
         // Verify that the ChatClient's GetService was not called for this type since base.GetService() handled it
         mockChatClient.Verify(c => c.GetService(typeof(ChatClientAgent), null), Times.Never);
     }
@@ -1406,6 +1413,7 @@ public class ChatClientAgentTests
         // Assert
         Assert.NotNull(result);
         Assert.Same(agent, result);
+
         // Verify that the ChatClient's GetService was not called for this type since base.GetService() handled it
         mockChatClient.Verify(c => c.GetService(typeof(AIAgent), null), Times.Never);
     }
@@ -1430,6 +1438,7 @@ public class ChatClientAgentTests
         // Assert
         Assert.NotNull(result);
         Assert.IsAssignableFrom<IChatClient>(result);
+
         // Verify that the ChatClient's GetService was NOT called because IChatClient is handled by the agent itself
         mockChatClient.Verify(c => c.GetService(typeof(IChatClient), "some-key"), Times.Never);
     }
@@ -1454,6 +1463,7 @@ public class ChatClientAgentTests
         // Assert
         Assert.NotNull(result);
         Assert.Equal("test-result", result);
+
         // Verify that the ChatClient's GetService was called after base.GetService() returned null
         mockChatClient.Verify(c => c.GetService(typeof(string), "some-key"), Times.Once);
     }

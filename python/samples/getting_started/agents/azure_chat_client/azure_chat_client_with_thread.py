@@ -6,7 +6,7 @@ from typing import Annotated
 
 from agent_framework import AgentThread, ChatClientAgent, ChatMessageList
 from agent_framework.azure import AzureChatClient
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 from pydantic import Field
 
 
@@ -22,8 +22,10 @@ async def example_with_automatic_thread_creation() -> None:
     """Example showing automatic thread creation (service-managed thread)."""
     print("=== Automatic Thread Creation Example ===")
 
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
     agent = ChatClientAgent(
-        chat_client=AzureChatClient(ad_credential=DefaultAzureCredential()),
+        chat_client=AzureChatClient(credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -47,8 +49,10 @@ async def example_with_thread_persistence() -> None:
     print("=== Thread Persistence Example ===")
     print("Using the same thread across multiple conversations to maintain context.\n")
 
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
     agent = ChatClientAgent(
-        chat_client=AzureChatClient(ad_credential=DefaultAzureCredential()),
+        chat_client=AzureChatClient(credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -80,8 +84,10 @@ async def example_with_existing_thread_messages() -> None:
     """Example showing how to work with existing thread messages for Azure."""
     print("=== Existing Thread Messages Example ===")
 
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
     agent = ChatClientAgent(
-        chat_client=AzureChatClient(ad_credential=DefaultAzureCredential()),
+        chat_client=AzureChatClient(credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -104,7 +110,7 @@ async def example_with_existing_thread_messages() -> None:
 
     # Create a new agent instance but use the existing thread with its message history
     new_agent = ChatClientAgent(
-        chat_client=AzureChatClient(ad_credential=DefaultAzureCredential()),
+        chat_client=AzureChatClient(credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )

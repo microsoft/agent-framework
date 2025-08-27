@@ -21,7 +21,7 @@ from agent_framework.openai import (
     OpenAIContentFilterException,
 )
 from agent_framework.telemetry import USER_AGENT_KEY
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 from httpx import Request, Response
 from openai import AsyncAzureOpenAI, AsyncStream
 from openai.resources.chat.completions import AsyncCompletions as AsyncChatCompletions
@@ -601,7 +601,7 @@ def get_story_text() -> str:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_response() -> None:
     """Test Azure OpenAI chat completion responses."""
-    azure_chat_client = AzureChatClient(ad_credential=DefaultAzureCredential())
+    azure_chat_client = AzureChatClient(credential=AzureCliCredential())
     assert isinstance(azure_chat_client, ChatClient)
 
     messages: list[ChatMessage] = []
@@ -627,7 +627,7 @@ async def test_azure_openai_chat_client_response() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_response_tools() -> None:
     """Test AzureOpenAI chat completion responses."""
-    azure_chat_client = AzureChatClient(ad_credential=DefaultAzureCredential())
+    azure_chat_client = AzureChatClient(credential=AzureCliCredential())
     assert isinstance(azure_chat_client, ChatClient)
 
     messages: list[ChatMessage] = []
@@ -648,7 +648,7 @@ async def test_azure_openai_chat_client_response_tools() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_streaming() -> None:
     """Test Azure OpenAI chat completion responses."""
-    azure_chat_client = AzureChatClient(ad_credential=DefaultAzureCredential())
+    azure_chat_client = AzureChatClient(credential=AzureCliCredential())
     assert isinstance(azure_chat_client, ChatClient)
 
     messages: list[ChatMessage] = []
@@ -680,7 +680,7 @@ async def test_azure_openai_chat_client_streaming() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_streaming_tools() -> None:
     """Test AzureOpenAI chat completion responses."""
-    azure_chat_client = AzureChatClient(ad_credential=DefaultAzureCredential())
+    azure_chat_client = AzureChatClient(credential=AzureCliCredential())
     assert isinstance(azure_chat_client, ChatClient)
 
     messages: list[ChatMessage] = []

@@ -15,7 +15,7 @@ from agent_framework.workflow import (
     WorkflowContext,
     handler,
 )
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 
 """
 The following sample demonstrates a basic workflow that simulates
@@ -93,7 +93,9 @@ async def main():
     """Main function to run the group chat workflow."""
 
     # Step 1: Create the executors.
-    chat_client = AzureChatClient(ad_credential=DefaultAzureCredential())
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
+    chat_client = AzureChatClient(credential=AzureCliCredential())
     writer = AgentExecutor(
         chat_client.create_agent(
             instructions=(
