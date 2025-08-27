@@ -362,7 +362,9 @@ def _extract_json(text: str) -> dict[str, Any]:
 
     for attempt in (candidate, candidate.replace("True", "true").replace("False", "false").replace("None", "null")):
         with contextlib.suppress(Exception):
-            return json.loads(attempt)
+            val = json.loads(attempt)
+            if isinstance(val, dict):
+                return cast(dict[str, Any], val)
 
     with contextlib.suppress(Exception):
         import ast
@@ -378,8 +380,8 @@ TModel = TypeVar("TModel", bound=BaseModel)
 
 
 def _pd_validate(model: type[TModel], data: dict[str, Any]) -> TModel:
-    """Validate against a Pydantic v2 model and return a typed instance."""
-    return cast(TModel, model.model_validate(data))  # type: ignore[attr-defined]
+    """Validate against a Pydantic model and return a typed instance."""
+    return model.model_validate(data)  # type: ignore[attr-defined]
 
 
 # endregion Utilities
@@ -1493,10 +1495,13 @@ class MagenticWorkflowBuilder:
             orchestrator_executor.register_agent_executor(name, agent_executor)
 
             # Add bidirectional edges between orchestrator and agent
+            def _cond(msg: object, _an: str = name) -> bool:
+                return _route_to_agent(msg, agent_name=_an)
+
             workflow_builder = workflow_builder.add_edge(
                 orchestrator_executor,
                 agent_executor,
-                condition=lambda msg, _an=name: _route_to_agent(msg, agent_name=_an),
+                condition=_cond,
             ).add_edge(agent_executor, orchestrator_executor)
 
         return MagenticWorkflow(workflow_builder.build())
