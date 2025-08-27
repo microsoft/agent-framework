@@ -909,7 +909,7 @@ async def test_foundry_chat_client_agent_level_tool_persistence():
 
 @skip_if_foundry_integration_tests_disabled
 async def test_foundry_chat_client_run_level_tool_isolation():
-    """Test that run-level tools are isolated to specific runs and don't persist with Azure Assistants Client."""
+    """Test that run-level tools are isolated to specific runs and don't persist with FoundryChatClient."""
     # Counter to track how many times the weather tool is called
     call_count = 0
 
