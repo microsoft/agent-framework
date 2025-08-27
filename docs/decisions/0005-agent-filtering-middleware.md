@@ -42,7 +42,7 @@ This section provides an analysis of how other major AI agent frameworks handle 
 | Semantic Kernel (C#)     | C#      | Y (read/write) | Filters (IFunctionInvocationFilter, etc.) | Interface-based middleware pattern for function/prompt interception; filters can read and modify context, arguments, or results. [Details](#semantic-kernel) |
 | Semantic Kernel (Python) | Python  | Y (read/write) | Filters (add_filter, @kernel.filter decorator) | Function and decorator-based for interception; no explicit interfaces like C#, focuses on async functions for filters; can read and modify context/arguments/results. [Details](#semantic-kernel) |
 | CrewAI                   | Python  | Y (read)       | Events/Callbacks (BaseEventListener) | Event-driven orchestration with listeners for workflows; listeners can observe events (e.g., read source/event data) but are primarily for logging/reactions without direct modification of workflow state. [Details](#crewai) |
-| LlamaIndex               | Python  | Y (read)       | Callbacks (BaseCallbackHandler) | Observer pattern with event methods for queries and tools; handlers can observe events/payloads (e.g., read prompts/responses) but are designed for debugging/tracing without modifying execution context. [Details](#llamaindex) |
+| LlamaIndex               | Python  | Y (read)       | Callbacks (CallbackManager) | Observer pattern with event methods for queries and tools; handlers can observe events/payloads (e.g., read prompts/responses) but are designed for debugging/tracing without modifying execution context. [Details](#llamaindex) |
 | Haystack                 | Python  | N (Pipeline-based interception) | N/A (Pipeline Components/Routers) | Relies on modular pipelines for implicit interception but lacks explicit middleware/filters; custom components can read/write data flow via routing/transformations, but this is compositional rather than hook-based interception. [Details](#haystack) |
 | OpenAI Swarm             | Python  | N              | N/A                             | No explicit middleware/filters; interception requires custom wrappers or manual handling (e.g., function decorators, client subclassing), lacking native framework support for built-in components to accept such modifications. [Details](#openai-swarm) |
 | Atomic Agents            | Python  | N              | N/A (Composable Components)     | No explicit middleware/filters; modularity allows composable units but no dedicated interception hooks or callbacks for custom reading/modification mid-execution. [Details](#atomic-agents) |
@@ -779,7 +779,7 @@ crew = Crew(agents=[...], tasks=[...])
 
 LlamaIndex uses callback managers with handlers.
 
-Naming (Python): Callbacks (BaseCallbackHandler)  
+Naming (Python): Callbacks (CallbackManager, BaseCallbackHandler)  
 Supports: Y (read)  
 Observation: Observer pattern with event methods for queries and tools; handlers can observe events/payloads (e.g., read prompts/responses) but are designed for debugging/tracing without modifying execution context.
 
@@ -788,7 +788,7 @@ For more details, see the official documentation: [Callbacks - LlamaIndex](https
 ```python
 from llama_index.core.callbacks import CallbackManager, LlamaDebugHandler
 
-debug_handler = LlamaDebugHandler()
+debug_handler = LlamaDebugHandler()  # Concrete handler subclassing BaseCallbackHandler
 callback_manager = CallbackManager([debug_handler])
 
 # Assign to components, e.g., an index or query engine
