@@ -71,6 +71,16 @@ class A2AAgent(AgentBase):
         url: str | None = None,
         client: A2AClient | None = None,
     ) -> None:
+        """Initialize the A2AAgent.
+
+        Args:
+            name: The name of the agent.
+            id: The unique identifier for the agent, will be created automatically if not provided.
+            description: A brief description of the agent's purpose.
+            agent_card: The agent card for the agent.
+            url: The URL for the A2A server.
+            client: The A2A client for the agent.
+        """
         args: dict[str, Any] = {}
         if name:
             args["name"] = name
