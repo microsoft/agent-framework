@@ -53,6 +53,28 @@ public class ScopeId(string executorId, string? scopeName = null)
     }
 
     /// <inheritdoc/>
+    public static bool operator ==(ScopeId? left, ScopeId? right)
+    {
+        if (left is null && right == null)
+        {
+            return true;
+        }
+
+        if (right is null)
+        {
+            return false;
+        }
+
+        // The inversion here is necessary because the null analysis is incapable of proving to itself
+        // that left cannot be null here: If it was, either right is null, and we returned true, or right
+        // is not null, and we returned false.
+        return right.Equals(left);
+    }
+
+    /// <inheritdoc/>
+    public static bool operator !=(ScopeId? left, ScopeId? right) => !(left == right);
+
+    /// <inheritdoc/>
     public override int GetHashCode()
     {
         if (this.ScopeName is null)

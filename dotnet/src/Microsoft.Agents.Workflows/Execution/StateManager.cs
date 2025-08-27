@@ -27,6 +27,73 @@ internal class StateManager
         return scope;
     }
 
+    private IEnumerable<UpdateKey> GetUpdatesForScopeStrict(ScopeId scopeId)
+    {
+        Throw.IfNull(scopeId);
+
+        return this._queuedUpdates.Keys.Where(key => key.IsMatchingScope(scopeId, strict: true));
+    }
+
+    public ValueTask ClearStateAsync(string executorId, string? scopeName)
+        => this.ClearStateAsync(new ScopeId(Throw.IfNullOrEmpty(executorId), scopeName));
+
+    public async ValueTask ClearStateAsync(ScopeId scopeId)
+    {
+        Throw.IfNull(scopeId);
+
+        if (this._scopes.TryGetValue(scopeId, out StateScope? scope))
+        {
+            HashSet<string> keysToDelete = await scope.ReadKeysAsync().ConfigureAwait(false);
+
+            foreach (UpdateKey updateKey in this.GetUpdatesForScopeStrict(scopeId))
+            {
+                StateUpdate update = this._queuedUpdates[updateKey];
+                if (!update.IsDelete)
+                {
+                    this._queuedUpdates[updateKey] = StateUpdate.Delete(update.Key);
+                }
+
+                keysToDelete.Remove(update.Key);
+            }
+
+            foreach (string key in keysToDelete)
+            {
+                UpdateKey updateKey = new(scopeId, key);
+                this._queuedUpdates[updateKey] = StateUpdate.Delete(key);
+            }
+        }
+    }
+
+    private HashSet<string> ApplyUnpublishedUpdates(ScopeId scopeId, HashSet<string> keys)
+    {
+        // Apply any queued updates for this scope
+        foreach (UpdateKey key in this.GetUpdatesForScopeStrict(scopeId))
+        {
+            StateUpdate update = this._queuedUpdates[key];
+            if (update.IsDelete)
+            {
+                keys.Remove(update.Key);
+            }
+            else
+            {
+                // Add is idempotent on Sets
+                keys.Add(update.Key);
+            }
+        }
+
+        return keys;
+    }
+
+    public ValueTask<HashSet<string>> ReadKeysAsync(string executorId, string? scopeName = null)
+        => this.ReadKeysAsync(new ScopeId(Throw.IfNullOrEmpty(executorId), scopeName));
+
+    public async ValueTask<HashSet<string>> ReadKeysAsync(ScopeId scopeId)
+    {
+        StateScope scope = this.GetOrCreateScope(scopeId);
+        HashSet<string> keys = await scope.ReadKeysAsync().ConfigureAwait(false);
+        return this.ApplyUnpublishedUpdates(scopeId, keys);
+    }
+
     public ValueTask<T?> ReadStateAsync<T>(string executorId, string? scopeName, string key)
         => this.ReadStateAsync<T>(new ScopeId(Throw.IfNullOrEmpty(executorId), scopeName), key);
 
@@ -91,7 +158,7 @@ internal class StateManager
             stateUpdates.Add(this._queuedUpdates[key]);
         }
 
-        if (updatesByScope.Count > 0 && tracer != null)
+        if (tracer != null && (updatesByScope.Count > 0))
         {
             tracer.TraceStatePublished();
         }
