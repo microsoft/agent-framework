@@ -4,7 +4,7 @@ import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, MutableSequence, Sequence
 from functools import wraps
-from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, overload, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -37,6 +37,7 @@ __all__ = [
     "ChatClient",
     "ChatClientBase",
     "EmbeddingGenerator",
+    "RunnableChatClient",
     "use_tool_calling",
 ]
 
@@ -91,6 +92,8 @@ def _tool_call_non_streaming(
         fcc_messages: list[ChatMessage] = []
         for attempt_idx in range(getattr(self, "__maximum_iterations_per_request", 10)):
             response = await func(self, messages=messages, chat_options=chat_options, **kwargs)
+            if not response.messages:
+                return response
             # if there are function calls, we will handle them first
             function_results = {
                 it.call_id for it in response.messages[0].contents if isinstance(it, FunctionResultContent)
@@ -675,6 +678,84 @@ class ChatClientBase(AFBaseModel, ABC):
             chat_message_store_factory=chat_message_store_factory,
             **kwargs,
         )
+
+
+class RunnableChatClient(ChatClientBase):
+    """A chat client with long-running request capabilities."""
+
+    @abstractmethod
+    async def cancel_long_running(self, request_id: str) -> None:
+        """Cancel a long-running request by its ID.
+
+        Args:
+            request_id: The ID of the request to cancel.
+        """
+
+    @abstractmethod
+    async def delete_long_running(self, request_id: str) -> None:
+        """Delete a long-running request on the host by its ID.
+
+        Args:
+            request_id: The ID of the request to delete.
+        """
+
+    @overload
+    async def get_response(
+        self,
+        *,
+        message_id: str,
+        **kwargs: Any,
+    ) -> ChatResponse: ...
+
+    @overload
+    async def get_response(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage],
+        **kwargs: Any,
+    ) -> ChatResponse: ...
+
+    async def get_response(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        *,
+        message_id: str | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
+        return await super().get_response(messages=messages or [], message_id=message_id, **kwargs)
+
+    # omit async from overloaded function signatures per
+    # https://discuss.python.org/t/overloads-of-async-generators-inconsistent-coroutine-wrapping/56665/17
+    @overload
+    def get_streaming_response(
+        self,
+        *,
+        conversation_id: str,
+        sequence_number: int | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterable[ChatResponseUpdate]: ...
+
+    @overload
+    def get_streaming_response(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage],
+        **kwargs: Any,
+    ) -> AsyncIterable[ChatResponseUpdate]: ...
+
+    async def get_streaming_response(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        *,
+        conversation_id: str | None = None,
+        sequence_number: int | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterable[ChatResponseUpdate]:
+        async for update in super().get_streaming_response(
+            messages=messages or [],
+            conversation_id=conversation_id,
+            sequence_number=sequence_number,
+            **kwargs,
+        ):
+            yield update
 
 
 # region Embedding Client
