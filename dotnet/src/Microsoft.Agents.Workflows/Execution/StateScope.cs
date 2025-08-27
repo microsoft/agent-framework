@@ -52,7 +52,7 @@ internal class StateScope
                 continue;
             }
 
-            if (scopedUpdate.Count > 1)
+            if (updates[key].Count > 1)
             {
                 throw new InvalidOperationException($"Expected exactly one update for key '{key}'.");
             }
