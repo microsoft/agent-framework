@@ -63,6 +63,7 @@ internal static class Program
     }
 
     private static readonly Dictionary<string, string> s_nameCache = [];
+    private static readonly HashSet<string> s_fileCache = [];
 
     private static async Task MonitorWorkflowRunAsync(StreamingRun run, PersistentAgentsClient client)
     {
@@ -111,6 +112,19 @@ internal static class Program
                         Console.ForegroundColor = ConsoleColor.DarkGray;
                         Console.WriteLine($" [{messageId}]");
                     }
+                }
+
+                ChatResponseUpdate? chatUpdate = streamEvent.Data.RawRepresentation as ChatResponseUpdate;
+                switch (chatUpdate?.RawRepresentation)
+                {
+                    case MessageContentUpdate messageUpdate:
+                        string? fileId = messageUpdate.ImageFileId ?? messageUpdate.TextAnnotation?.OutputFileId;
+                        if (fileId is not null && s_fileCache.Add(fileId))
+                        {
+                            BinaryData content = await client.Files.GetFileContentAsync(fileId);
+                            await DownloadFileContentAsync(Path.GetFileName(messageUpdate.TextAnnotation?.TextToReplace ?? "response.png"), content);
+                        }
+                        break;
                 }
                 try
                 {
@@ -227,5 +241,20 @@ internal static class Program
         {
             Console.ResetColor();
         }
+    }
+
+    private static async ValueTask DownloadFileContentAsync(string filename, BinaryData content)
+    {
+        string filePath = Path.Combine(Path.GetTempPath(), Path.GetFileName(filename));
+        filePath = Path.ChangeExtension(filePath, ".png");
+
+        await File.WriteAllBytesAsync(filePath, content.ToArray());
+
+        Process.Start(
+            new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = $"/C start {filePath}"
+            });
     }
 }

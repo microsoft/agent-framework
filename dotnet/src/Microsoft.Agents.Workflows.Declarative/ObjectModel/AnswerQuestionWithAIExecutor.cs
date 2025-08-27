@@ -71,7 +71,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, W
                     agent.RunStreamingAsync(agentThread, options, cancellationToken);
 
         string? messageId = null;
-        List<AgentRunResponseUpdate> agentResponseUpdates = [];
+        List<AgentRunResponseUpdate> agentResponseUpdates = new(0x400);
         await foreach (AgentRunResponseUpdate update in agentUpdates.ConfigureAwait(false))
         {
             agentResponseUpdates.Add(update);
