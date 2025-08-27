@@ -29,7 +29,6 @@ from agent_framework_workflow import (
 )
 from agent_framework_workflow._magentic import (
     MagenticContext,
-    MagenticResetMessage,
     MagenticStartMessage,
     PlanReviewDecision,
     PlanReviewReply,
@@ -79,11 +78,6 @@ def test_magentic_context_reset_behavior():
     assert ctx.chat_history == []
     assert ctx.stall_count == 0
     assert ctx.reset_count == prev_reset + 1
-
-
-def test_magentic_reset_message_instantiation():
-    reset_msg = MagenticResetMessage()
-    assert isinstance(reset_msg, MagenticResetMessage)
 
 
 @dataclass
@@ -164,7 +158,7 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
     wf = (
         MagenticWorkflowBuilder()
         .participants(agentA=_DummyExec("agentA"))
-        .with_manager(manager)
+        .with_standard_manager(manager)
         .with_plan_review()
         .build()
     )
@@ -189,7 +183,7 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
 async def test_magentic_orchestrator_round_limit_produces_partial_result():
     manager = FakeManager(max_round_count=1)
     manager.satisfied_after_signoff = False
-    wf = MagenticWorkflowBuilder().participants(agentA=_DummyExec("agentA")).with_manager(manager).build()
+    wf = MagenticWorkflowBuilder().participants(agentA=_DummyExec("agentA")).with_standard_manager(manager).build()
 
     from agent_framework_workflow import WorkflowEvent  # type: ignore
 
@@ -372,7 +366,7 @@ async def _collect_agent_responses_setup(participant_obj: object):
     wf = (
         MagenticWorkflowBuilder()
         .participants(agentA=participant_obj)  # type: ignore[arg-type]
-        .with_manager(InvokeOnceManager())
+        .with_standard_manager(InvokeOnceManager())
         .on_agent_response(lambda agent_id, msg: (captured.append(msg)) and (None))  # type: ignore[arg-type]
         .build()
     )

@@ -78,7 +78,7 @@ class Workflow(AFBaseModel):
     It serves as a base class for more complex workflows that can be defined in subclasses.
     """
 
-    edge_groups: list[EdgeGroup] = Field(  # type: ignore
+    edge_groups: list[EdgeGroup] = Field(
         default_factory=list, description="List of edge groups that define the workflow edges"
     )
     executors: dict[str, Executor] = Field(

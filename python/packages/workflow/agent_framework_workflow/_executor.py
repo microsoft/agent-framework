@@ -340,9 +340,7 @@ def handler(
         if len(params) != 3:  # self, message, ctx
             raise ValueError(f"Handler must have exactly 3 parameters, got {len(params)}")
 
-        # Resolve the handler message type, supporting forward references (from __future__ import annotations)
-        message_param = params[1]
-        message_type = message_param.annotation
+        message_type = params[1].annotation
         if message_type is inspect.Parameter.empty:
             raise ValueError("Handler's second parameter must have a type annotation")
 

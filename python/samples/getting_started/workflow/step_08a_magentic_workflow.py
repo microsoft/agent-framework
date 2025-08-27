@@ -1,4 +1,4 @@
-# Copyright (c) Microsoft. All rights.
+# Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
 import logging
