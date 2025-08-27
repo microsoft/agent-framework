@@ -2,6 +2,7 @@
 
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative;
 
@@ -13,7 +14,7 @@ public sealed class DeclarativeWorkflowOptions(WorkflowAgentProvider agentProvid
     /// <summary>
     /// Defines the agent provider.
     /// </summary>
-    public WorkflowAgentProvider AgentProvider { get; } = agentProvider;
+    public WorkflowAgentProvider AgentProvider { get; } = Throw.IfNull(agentProvider, nameof(agentProvider));
 
     /// <summary>
     /// Optionally identifies a continued workflow conversation.

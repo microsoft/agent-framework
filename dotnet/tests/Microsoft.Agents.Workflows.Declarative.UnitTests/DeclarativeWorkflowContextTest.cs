@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Net.Http;
 using Azure.Core;
 using Azure.Identity;
 using Microsoft.Extensions.Logging;
@@ -22,7 +21,6 @@ public class DeclarativeWorkflowContextTests
         Assert.Equal(mockProvider.Object, context.AgentProvider);
         Assert.Null(context.MaximumCallDepth);
         Assert.Null(context.MaximumExpressionLength);
-        Assert.Null(context.HttpClient);
         Assert.Same(NullLoggerFactory.Instance, context.LoggerFactory);
     }
 
@@ -33,7 +31,6 @@ public class DeclarativeWorkflowContextTests
         TokenCredential credentials = new DefaultAzureCredential();
         int maxCallDepth = 10;
         int maxExpressionLength = 100;
-        using HttpClient httpClient = new();
         ILoggerFactory loggerFactory = LoggerFactory.Create(builder => { });
 
         // Act
@@ -42,7 +39,6 @@ public class DeclarativeWorkflowContextTests
         {
             MaximumCallDepth = maxCallDepth,
             MaximumExpressionLength = maxExpressionLength,
-            HttpClient = httpClient,
             LoggerFactory = loggerFactory
         };
 
@@ -50,7 +46,6 @@ public class DeclarativeWorkflowContextTests
         Assert.Equal(mockProvider.Object, context.AgentProvider);
         Assert.Equal(maxCallDepth, context.MaximumCallDepth);
         Assert.Equal(maxExpressionLength, context.MaximumExpressionLength);
-        Assert.Same(httpClient, context.HttpClient);
         Assert.Same(loggerFactory, context.LoggerFactory);
     }
 }
