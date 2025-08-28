@@ -51,7 +51,7 @@ public class AgentThread
     /// </remarks>
     public string? ConversationId
     {
-        get { return this._conversationId; }
+        get => this._conversationId;
         set
         {
             if (string.IsNullOrWhiteSpace(this._conversationId) && string.IsNullOrWhiteSpace(value))
@@ -90,7 +90,7 @@ public class AgentThread
     /// </remarks>
     public IChatMessageStore? MessageStore
     {
-        get { return this._messageStore; }
+        get => this._messageStore;
         set
         {
             if (this._messageStore is null && value is null)
@@ -124,6 +124,27 @@ public class AgentThread
                 yield return message;
             }
         }
+    }
+
+    /// <summary>
+    /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
+    /// </summary>
+    /// <param name="jsonSerializerOptions">The JSON serialization options to use.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
+    public virtual async Task<JsonElement> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    {
+        var storeState = this._messageStore is null ?
+            null :
+            await this._messageStore.SerializeStateAsync(jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
+
+        var state = new ThreadState
+        {
+            ConversationId = this.ConversationId,
+            StoreState = storeState
+        };
+
+        return JsonSerializer.SerializeToElement(state, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState)));
     }
 
     /// <summary>
@@ -168,6 +189,7 @@ public class AgentThread
     /// <param name="serializedThread">A <see cref="JsonElement"/> representing the state of the thread.</param>
     /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A <see cref="ValueTask"/> that completes when the state has been deserialized.</returns>
     protected internal virtual async Task DeserializeAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
         var state = JsonSerializer.Deserialize(
@@ -195,27 +217,6 @@ public class AgentThread
         }
 
         await this._messageStore.DeserializeStateAsync(state!.StoreState.Value, jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
-    /// </summary>
-    /// <param name="jsonSerializerOptions">The JSON serialization options to use.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
-    public virtual async Task<JsonElement> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-    {
-        var storeState = this._messageStore is null ?
-            (JsonElement?)null :
-            await this._messageStore.SerializeStateAsync(jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
-
-        var state = new ThreadState
-        {
-            ConversationId = this.ConversationId,
-            StoreState = storeState
-        };
-
-        return JsonSerializer.SerializeToElement(state, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState)));
     }
 
     internal class ThreadState

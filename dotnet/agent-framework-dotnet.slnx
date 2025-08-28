@@ -30,7 +30,23 @@
   <Folder Name="/Samples/GettingStartedSteps/">
     <File Path="samples/GettingStartedSteps/README.md" />
     <Project Path="samples/GettingStartedSteps/Step01_ChatClientAgent_Running/Step01_ChatClientAgent_Running.csproj" />
-    <Project Path="samples/GettingStartedSteps/Step02_ChatClientAgent_Multiturn/Step02_ChatClientAgent_Multiturn.csproj" />
+    <Project Path="samples/GettingStartedSteps/Step02_ChatClientAgent_MultiturnConversation/Step02_ChatClientAgent_MultiturnConversation.csproj" />
+    <Project Path="samples/GettingStartedSteps/Step03_ChatClientAgent_UsingFunctionTools/Step03_ChatClientAgent_UsingFunctionTools.csproj" />
+    <Project Path="samples/GettingStartedSteps/Step04_ChatClientAgent_UsingFunctionToolsWithApprovals/Step04_ChatClientAgent_UsingFunctionToolsWithApprovals.csproj" />
+    <Project Path="samples/GettingStartedSteps/Step05_ChatClientAgent_StructuredOutput/Step05_ChatClientAgent_StructuredOutput.csproj" />
+    <Project Path="samples/GettingStartedSteps/Step06_ChatClientAgent_PersistedConversations/Step06_ChatClientAgent_PersistedConversations.csproj" />
+    <Project Path="samples/GettingStartedSteps/Step07_ChatClientAgent_3rdPartyThreadStorage/Step07_ChatClientAgent_3rdPartyThreadStorage.csproj" />
+    <Project Path="samples/GettingStartedSteps/Step08_ChatClientAgent_Telemetry/Step08_ChatClientAgent_Telemetry.csproj" />
+    <Project Path="samples/GettingStartedSteps/Step09_ChatClientAgent_DependencyInjection/Step09_ChatClientAgent_DependencyInjection.csproj" />
+  </Folder>
+  <Folder Name="/Samples/HowToCreateAnAIAgentByProvider/">
+    <File Path="samples/HowToCreateAnAIAgentByProvider/README.md" />
+    <Project Path="samples/HowToCreateAnAIAgentByProvider/AIAgent_With_AzureFoundry/AIAgent_With_AzureFoundry.csproj" />
+    <Project Path="samples/HowToCreateAnAIAgentByProvider/AIAgent_With_AzureOpenAIChatCompletion/AIAgent_With_AzureOpenAIChatCompletion.csproj" />
+    <Project Path="samples/HowToCreateAnAIAgentByProvider/AIAgent_With_AzureOpenAIResponses/AIAgent_With_AzureOpenAIResponses.csproj" />
+    <Project Path="samples/HowToCreateAnAIAgentByProvider/AIAgent_With_ONNX/AIAgent_With_ONNX.csproj" />
+    <Project Path="samples/HowToCreateAnAIAgentByProvider/AIAgent_With_OpenAIChatCompletion/AIAgent_With_OpenAIChatCompletion.csproj" />
+    <Project Path="samples/HowToCreateAnAIAgentByProvider/AIAgent_With_OpenAIResponses/AIAgent_With_OpenAIResponses.csproj" />
   </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
