@@ -7,13 +7,13 @@ using Microsoft.SemanticKernel.Agents;
 using OpenAI;
 
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
-var modelId = "gpt-4o";
+var modelId = Environment.GetEnvironmentVariable("OPENAI_MODELID") ?? "gpt-4o";
 var userInput = "What is the special soup and its price?";
 
 Console.WriteLine($"User Input: {userInput}");
 
-await AFAgent();
 await SKAgent();
+await AFAgent();
 
 async Task SKAgent()
 {

@@ -11,13 +11,13 @@ using OpenAI;
 using OpenAI.Assistants;
 
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
-var modelId = "gpt-4o";
+var modelId = Environment.GetEnvironmentVariable("OPENAI_MODELID") ?? "gpt-4o";
 var userInput = "Tell me a joke about a pirate.";
 
 Console.WriteLine($"User Input: {userInput}");
 
-await AFAgent();
 await SKAgent();
+await AFAgent();
 
 async Task SKAgent()
 {
@@ -31,9 +31,7 @@ async Task SKAgent()
         var assistantsClient = sp.GetRequiredService<AssistantClient>();
 
         Console.Write("Creating agent in the cloud...");
-        Assistant assistant = assistantsClient.CreateAssistantAsync(modelId, name: "Joker", instructions: "You are good at telling jokes.")
-            .GetAwaiter()
-            .GetResult();
+        Assistant assistant = assistantsClient.CreateAssistant(modelId, new() { Name = "Joker", Instructions = "You are good at telling jokes." });
         Console.Write("Done\n");
 
         return new OpenAIAssistantAgent(assistant, assistantsClient);
@@ -76,9 +74,7 @@ async Task AFAgent()
         var assistantClient = sp.GetRequiredService<AssistantClient>();
 
         Console.Write("Creating agent in the cloud...");
-        var agent = assistantClient.CreateAIAgentAsync(modelId, name: "Joker", instructions: "You are good at telling jokes.")
-            .GetAwaiter()
-            .GetResult();
+        var agent = assistantClient.CreateAIAgent(modelId, name: "Joker", instructions: "You are good at telling jokes.");
         Console.Write("Done\n");
 
         return agent;

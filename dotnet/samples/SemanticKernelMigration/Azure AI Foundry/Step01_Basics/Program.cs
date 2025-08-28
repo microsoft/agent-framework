@@ -9,14 +9,13 @@ using Microsoft.SemanticKernel.Agents.AzureAI;
 #pragma warning disable SKEXP0110 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
 var azureEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-
-var modelId = "gpt-4o";
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENTNAME") ?? "gpt-4o";
 var userInput = "Tell me a joke about a pirate.";
 
 Console.WriteLine($"User Input: {userInput}");
 
-await AFAgent();
 await SKAgent();
+await AFAgent();
 
 async Task SKAgent()
 {
@@ -26,7 +25,7 @@ async Task SKAgent()
 
     Console.Write("Creating agent in the cloud...");
     PersistentAgent definition = await azureAgentClient.Administration.CreateAgentAsync(
-        modelId,
+        deploymentName,
         name: "GenerateStory",
         instructions: "You are good at telling jokes.");
     Console.Write("Done\n");
@@ -61,7 +60,7 @@ async Task AFAgent()
 
     Console.Write("Creating agent in the cloud...");
     var agent = await azureAgentClient.CreateAIAgentAsync(
-        modelId,
+        deploymentName,
         name: "GenerateStory",
         instructions: "You are good at telling jokes.");
     Console.Write("Done\n");
