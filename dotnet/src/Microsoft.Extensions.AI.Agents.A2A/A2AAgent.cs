@@ -14,7 +14,7 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Extensions.AI.Agents.A2A;
 
 /// <summary>
-/// Represents an agent that can interact with A2A agents.
+/// Represents an <see cref="AIAgent"/> that can interact with remote agents that are exposed via the A2A protocol
 /// </summary>
 /// <remarks>
 /// This agent supports only messages as a response from A2A agents.
@@ -78,7 +78,7 @@ internal sealed class A2AAgent : AIAgent
             };
         }
 
-        throw new InvalidOperationException($"Only message responses are supported from A2A agents. Received: {a2aResponse.GetType().FullName ?? "null"}");
+        throw new NotSupportedException($"Only message responses are supported from A2A agents. Received: {a2aResponse.GetType().FullName ?? "null"}");
     }
 
     /// <inheritdoc/>
@@ -101,7 +101,7 @@ internal sealed class A2AAgent : AIAgent
         {
             if (sseEvent.Data is not Message message)
             {
-                throw new InvalidOperationException($"Only message responses are supported from A2A agents. Received: {sseEvent.Data?.GetType().FullName ?? "null"}");
+                throw new NotSupportedException($"Only message responses are supported from A2A agents. Received: {sseEvent.Data?.GetType().FullName ?? "null"}");
             }
 
             UpdateThreadConversationId(thread, message);
