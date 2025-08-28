@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -95,7 +96,7 @@ internal class AIAgentHostExecutor : Executor
         IAsyncEnumerable<AgentRunResponseUpdate> agentStream = this._agent.RunStreamingAsync(this._pendingMessages, this.EnsureThread(context));
 
         List<AgentRunResponseUpdate> updates = new();
-        ChatMessage? currentStreamingMessage = null;
+        string? currentMessageId = null;
 
         await foreach (AgentRunResponseUpdate update in agentStream.ConfigureAwait(false))
         {
@@ -109,12 +110,11 @@ internal class AIAgentHostExecutor : Executor
             // providing some mechanisms to help the user complete the request, or route it out of the
             // workflow.
 
-            updates.Add(update);
+            currentMessageId ??= string.IsNullOrEmpty(update.MessageId) ? null : update.MessageId;
 
-            if (currentStreamingMessage == null || currentStreamingMessage.MessageId != update.MessageId)
+            if (currentMessageId != null && currentMessageId != update.MessageId)
             {
-                await PublishCurrentMessageAsync().ConfigureAwait(false);
-                currentStreamingMessage = new(update.Role ?? ChatRole.Assistant, update.Contents)
+                ChatMessage currentMessage = new(update.Role ?? ChatRole.Assistant, string.Concat(updates.Select(u => u.Text)))
                 {
                     AuthorName = update.AuthorName,
                     CreatedAt = update.CreatedAt,
@@ -122,20 +122,34 @@ internal class AIAgentHostExecutor : Executor
                     RawRepresentation = update.RawRepresentation,
                     AdditionalProperties = update.AdditionalProperties
                 };
+                await PublishCurrentMessageAsync(currentMessage).ConfigureAwait(false);
             }
+
+            updates.Add(update);
         }
 
-        await PublishCurrentMessageAsync().ConfigureAwait(false);
+        if (updates.Count > 0)
+        {
+            ChatMessage lastMessage = new(updates[0].Role ?? ChatRole.Assistant, string.Concat(updates.Select(u => u.Text)))
+            {
+                AuthorName = updates[0].AuthorName,
+                CreatedAt = updates[0].CreatedAt,
+                MessageId = updates[0].MessageId,
+                RawRepresentation = updates[0].RawRepresentation,
+                AdditionalProperties = updates[0].AdditionalProperties
+            };
+            await PublishCurrentMessageAsync(lastMessage).ConfigureAwait(false);
+        }
+
+        // Forward the tunr token
         await context.SendMessageAsync(token).ConfigureAwait(false);
 
-        async ValueTask PublishCurrentMessageAsync()
+        async ValueTask PublishCurrentMessageAsync(ChatMessage currentMessage)
         {
-            if (currentStreamingMessage != null)
-            {
-                await context.SendMessageAsync(currentStreamingMessage).ConfigureAwait(false);
-            }
+            await context.SendMessageAsync(currentMessage).ConfigureAwait(false);
 
-            currentStreamingMessage = null;
+            updates.Clear();
+            currentMessageId = null;
         }
     }
 }
