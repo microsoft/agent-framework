@@ -3,6 +3,7 @@
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
+using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;
@@ -19,19 +20,9 @@ internal sealed class WorkflowScopes
 
     private readonly ImmutableDictionary<string, WorkflowScope> _scopes;
 
-    public WorkflowScopes(Dictionary<string, WorkflowScope>? scopes = null)
+    public WorkflowScopes()
     {
-        this._scopes = VariableScopeNames.AllScopes.ToDictionary(scopeName => scopeName, scopeName => GetScope(scopeName)).ToImmutableDictionary();
-
-        WorkflowScope GetScope(string scopeName)
-        {
-            if (scopes is not null && scopes.TryGetValue(scopeName, out WorkflowScope? scope))
-            {
-                return scope;
-            }
-
-            return new WorkflowScope(scopeName);
-        }
+        this._scopes = VariableScopeNames.AllScopes.ToDictionary(scopeName => scopeName, scopeName => new WorkflowScope(scopeName)).ToImmutableDictionary();
     }
 
     public FormulaValue Get(string variableName, string? scopeName = null)
@@ -84,6 +75,55 @@ internal sealed class WorkflowScopes
             RecordValue scopeRecord = this.BuildRecord(scopeName);
             engine.DeleteFormula(scopeName);
             engine.UpdateVariable(scopeName, scopeRecord);
+        }
+    }
+
+    /// <summary>
+    /// The set of variables for a specific action scope.
+    /// </summary>
+    private sealed class WorkflowScope(string scopeName) : Dictionary<string, FormulaValue>
+    {
+        public string Name => scopeName;
+
+        public void Reset()
+        {
+            foreach (string variableName in this.Keys.ToArray())
+            {
+                this.Reset(variableName);
+            }
+        }
+
+        public void Reset(string variableName)
+        {
+            if (this.TryGetValue(variableName, out FormulaValue? value))
+            {
+                this[variableName] = value.Type.NewBlank();
+            }
+        }
+
+        public RecordValue BuildRecord()
+        {
+            return FormulaValue.NewRecordFromFields(GetFields());
+
+            IEnumerable<NamedValue> GetFields()
+            {
+                foreach (KeyValuePair<string, FormulaValue> kvp in this)
+                {
+                    yield return new NamedValue(kvp.Key, kvp.Value);
+                }
+            }
+        }
+
+        public RecordDataValue BuildState()
+        {
+            RecordDataValue.Builder recordBuilder = new();
+
+            foreach (KeyValuePair<string, FormulaValue> kvp in this)
+            {
+                recordBuilder.Properties.Add(kvp.Key, kvp.Value.ToDataValue());
+            }
+
+            return recordBuilder.Build();
         }
     }
 }
