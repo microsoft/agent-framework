@@ -20,6 +20,7 @@ const string JokerInstructions = "You are good at telling jokes.";
 AppContext.SetSwitch("Microsoft.Extensions.AI.Agents.EnableTelemetry", true);
 
 // Create TracerProvider with console exporter
+// This will output the telemetry data to the console.
 string sourceName = Guid.NewGuid().ToString();
 using var tracerProvider = Sdk.CreateTracerProviderBuilder()
     .AddSource(sourceName)
@@ -42,5 +43,3 @@ await foreach (var update in agent.RunStreamingAsync("Tell me a joke about a pir
 {
     Console.WriteLine(update);
 }
-
-// The telemetry data will also be output to the console by the OpenTelemetry console exporter.
