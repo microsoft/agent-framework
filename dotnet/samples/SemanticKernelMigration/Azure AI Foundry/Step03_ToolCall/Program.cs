@@ -10,11 +10,16 @@ using Microsoft.SemanticKernel.Agents.AzureAI;
 
 #pragma warning disable SKEXP0110 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
-var azureEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENTNAME") ?? "gpt-4o";
-var userInput = "What is the special soup and its price?";
+var azureEndpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
+var deploymentName = System.Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o";
+var userInput = "What is the weather like in Amsterdam?";
 
 Console.WriteLine($"User Input: {userInput}");
+
+[KernelFunction]
+[Description("Get the weather for a given location.")]
+static string GetWeather([Description("The location to get the weather for.")] string location)
+    => $"The weather in {location} is cloudy with a high of 15°C.";
 
 await SKAgent();
 await AFAgent();
@@ -25,33 +30,25 @@ async Task SKAgent()
 
     var azureAgentClient = AzureAIAgent.CreateAgentsClient(azureEndpoint, new AzureCliCredential());
 
-    Console.Write("Creating agent in the cloud...");
-    PersistentAgent definition = await azureAgentClient.Administration.CreateAgentAsync(
-        deploymentName,
-        name: "GenerateStory",
-        instructions: "You are good at telling jokes.");
-    Console.Write("Done\n");
+    PersistentAgent definition = await azureAgentClient.Administration.CreateAgentAsync(deploymentName, instructions: "You are a helpful assistant");
 
     AzureAIAgent agent = new(definition, azureAgentClient)
     {
         Kernel = Kernel.CreateBuilder().Build(),
         Name = "Host",
-        Instructions = "Answer questions about the menu",
+        Instructions = "You are a helpful assistant",
         Arguments = new KernelArguments(new PromptExecutionSettings() { FunctionChoiceBehavior = FunctionChoiceBehavior.Auto() }),
     };
 
     var thread = new AzureAIAgentThread(azureAgentClient);
 
     // Initialize plugin and add to the agent's Kernel (same as direct Kernel usage).
-    agent.Kernel.Plugins.Add(KernelPluginFactory.CreateFromType<MenuPlugin>());
+    agent.Kernel.Plugins.Add(KernelPluginFactory.CreateFromFunctions("KernelPluginName", [KernelFunctionFactory.CreateFromMethod(GetWeather)]));
 
-    Console.WriteLine("Non-Streaming Response:");
-    Console.WriteLine("Waiting agent output...");
     var result = await agent.InvokeAsync(userInput).FirstAsync();
     Console.WriteLine(result.Message);
 
-    Console.WriteLine("\nStreaming Response:");
-    Console.WriteLine("Waiting agent output...");
+    Console.WriteLine("---");
     await foreach (ChatMessageContent update in agent.InvokeAsync(userInput, thread))
     {
         Console.Write(update);
@@ -68,30 +65,15 @@ async Task AFAgent()
 
     var azureAgentClient = new PersistentAgentsClient(azureEndpoint, new AzureCliCredential());
 
-    Console.Write("Creating agent in the cloud...");
-    var agent = await azureAgentClient.CreateAIAgentAsync(
-        deploymentName,
-        name: "Host",
-        instructions: "Answer questions about the menu");
-
-    Console.Write("Done\n");
+    var agent = await azureAgentClient.CreateAIAgentAsync(deploymentName, instructions: "Answer questions about the menu");
 
     var thread = agent.GetNewThread();
-    var agentOptions = new ChatClientAgentRunOptions(new()
-    {
-        MaxOutputTokens = 1000,
-        Tools = [
-            AIFunctionFactory.Create(MenuTools.GetMenu),
-            AIFunctionFactory.Create(MenuTools.GetSpecials),
-            AIFunctionFactory.Create(MenuTools.GetItemPrice)
-        ]
-    });
+    var agentOptions = new ChatClientAgentRunOptions(new() { Tools = [AIFunctionFactory.Create(GetWeather)] });
 
-    Console.WriteLine("Non-Streaming Response:");
     var result = await agent.RunAsync(userInput, thread, agentOptions);
     Console.WriteLine(result);
 
-    Console.WriteLine("\nStreaming Response:");
+    Console.WriteLine("---");
     await foreach (var update in agent.RunStreamingAsync(userInput, thread, agentOptions))
     {
         Console.Write(update);
@@ -100,63 +82,4 @@ async Task AFAgent()
     // Clean up
     await azureAgentClient.Threads.DeleteThreadAsync(thread.ConversationId);
     await azureAgentClient.Administration.DeleteAgentAsync(agent.Id);
-}
-
-public class MenuTools
-{
-    [Description("Get the full menu items.")]
-    public static MenuItem[] GetMenu()
-    {
-        return s_menuItems;
-    }
-
-    [Description("Get the specials from the menu.")]
-    public static IEnumerable<MenuItem> GetSpecials()
-    {
-        return s_menuItems.Where(i => i.IsSpecial);
-    }
-
-    [Description("Get the price of a menu item.")]
-    public static float? GetItemPrice([Description("The name of the menu item.")] string menuItem)
-    {
-        return s_menuItems.FirstOrDefault(i => i.Name.Equals(menuItem, StringComparison.OrdinalIgnoreCase))?.Price;
-    }
-
-    private static readonly MenuItem[] s_menuItems = [
-        new() { Category = "Soup", Name = "Clam Chowder", Price = 4.95f, IsSpecial = true },
-        new() { Category = "Soup", Name = "Tomato Soup", Price = 4.95f, IsSpecial = false },
-        new() { Category = "Salad", Name = "Cobb Salad", Price = 9.99f },
-        new() { Category = "Salad", Name = "House Salad", Price = 4.95f },
-        new() { Category = "Drink", Name = "Chai Tea", Price = 2.95f, IsSpecial = true },
-        new() { Category = "Drink", Name = "Soda", Price = 1.95f },
-    ];
-
-    public sealed class MenuItem
-    {
-        public string Category { get; set; } = string.Empty;
-        public string Name { get; set; } = string.Empty;
-        public float Price { get; set; }
-        public bool IsSpecial { get; set; }
-    }
-}
-
-/// <summary>
-/// This SK Plugin wrapper is necessary as Semantic Kernel plugin functions exposed as tools require KernelFunction attributes.
-/// </summary>
-public sealed class MenuPlugin : MenuTools
-{
-    [KernelFunction]
-    [Description("Get the full menu items.")]
-    public new static MenuItem[] GetMenu()
-        => MenuTools.GetMenu();
-
-    [KernelFunction]
-    [Description("Get the specials from the menu.")]
-    public new static IEnumerable<MenuItem> GetSpecials()
-        => MenuTools.GetSpecials();
-
-    [KernelFunction]
-    [Description("Get the price of a menu item.")]
-    public new static float? GetItemPrice([Description("The name of the menu item.")] string menuItem)
-        => MenuTools.GetItemPrice(menuItem);
 }

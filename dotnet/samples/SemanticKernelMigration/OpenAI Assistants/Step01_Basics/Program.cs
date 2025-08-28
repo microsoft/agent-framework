@@ -10,7 +10,7 @@ using OpenAI;
 using OpenAI.Assistants;
 
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
-var modelId = Environment.GetEnvironmentVariable("OPENAI_MODELID") ?? "gpt-4o";
+var modelId = System.Environment.GetEnvironmentVariable("OPENAI_MODELID") ?? "gpt-4o";
 var userInput = "Tell me a joke about a pirate.";
 
 Console.WriteLine($"User Input: {userInput}");
@@ -27,9 +27,7 @@ async Task SKAgent()
     var assistantsClient = new AssistantClient(apiKey);
 
     // Define the assistant
-    Console.Write("Creating agent in the cloud...");
     Assistant assistant = await assistantsClient.CreateAssistantAsync(modelId, name: "Joker", instructions: "You are good at telling jokes.");
-    Console.Write("Done\n");
 
     // Create the agent
     OpenAIAssistantAgent agent = new(assistant, assistantsClient);
@@ -39,13 +37,12 @@ async Task SKAgent()
     var settings = new OpenAIPromptExecutionSettings() { MaxTokens = 1000 };
     var agentOptions = new OpenAIAssistantAgentInvokeOptions() { KernelArguments = new(settings) };
 
-    Console.WriteLine("Non-Streaming Response:");
     await foreach (var result in agent.InvokeAsync(userInput, thread, agentOptions))
     {
         Console.WriteLine(result.Message);
     }
 
-    Console.WriteLine("\nStreaming Response:");
+    Console.WriteLine("---");
     await foreach (var update in agent.InvokeStreamingAsync(userInput, thread, agentOptions))
     {
         Console.Write(update.Message);
@@ -62,20 +59,21 @@ async Task AFAgent()
 
     var assistantClient = new AssistantClient(apiKey);
 
-    Console.Write("Creating agent in the cloud...");
     var agent = await assistantClient.CreateAIAgentAsync(modelId, name: "Joker", instructions: "You are good at telling jokes.");
-    Console.Write("Done\n");
 
     var thread = agent.GetNewThread();
     var agentOptions = new ChatClientAgentRunOptions(new() { MaxOutputTokens = 1000 });
 
-    Console.WriteLine("Non-Streaming Response:");
     var result = await agent.RunAsync(userInput, thread, agentOptions);
     Console.WriteLine(result);
 
-    Console.WriteLine("\nStreaming Response:");
+    Console.WriteLine("---");
     await foreach (var update in agent.RunStreamingAsync(userInput, thread, agentOptions))
     {
         Console.Write(update);
     }
+
+    // Clean up
+    await assistantClient.DeleteThreadAsync(thread.ConversationId);
+    await assistantClient.DeleteAssistantAsync(agent.Id);
 }

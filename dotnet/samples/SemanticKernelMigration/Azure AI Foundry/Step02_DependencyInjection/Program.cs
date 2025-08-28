@@ -10,8 +10,8 @@ using Microsoft.SemanticKernel.Agents.AzureAI;
 
 #pragma warning disable SKEXP0110 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
-var azureEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENTNAME") ?? "gpt-4o";
+var azureEndpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
+var deploymentName = System.Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o";
 var userInput = "Tell me a joke about a pirate.";
 
 Console.WriteLine($"User Input: {userInput}");
@@ -32,11 +32,9 @@ async Task SKAgent()
         Console.Write("Creating agent in the cloud...");
 
         PersistentAgent definition = azureAgentClient.Administration
-            .CreateAgentAsync(deploymentName,
+            .CreateAgent(deploymentName,
                 name: "GenerateStory",
-                instructions: "You are good at telling jokes.")
-            .GetAwaiter()
-            .GetResult();
+                instructions: "You are good at telling jokes.");
 
         Console.Write("Done\n");
 
@@ -49,13 +47,10 @@ async Task SKAgent()
 
     var thread = new AzureAIAgentThread(agent.Client);
 
-    Console.WriteLine("Non-Streaming Response:");
-    Console.WriteLine("Waiting agent output...");
     var result = await agent.InvokeAsync(userInput).FirstAsync();
     Console.WriteLine(result.Message);
 
-    Console.WriteLine("\nStreaming Response:");
-    Console.WriteLine("Waiting agent output...");
+    Console.WriteLine("---");
     await foreach (ChatMessageContent update in agent.InvokeAsync(userInput, thread))
     {
         Console.Write(update);
@@ -76,16 +71,10 @@ async Task AFAgent()
     {
         var azureAgentClient = sp.GetRequiredService<PersistentAgentsClient>();
 
-        Console.Write("Creating agent in the cloud...");
-
-        var aiAgent = azureAgentClient.CreateAIAgentAsync(
+        var aiAgent = azureAgentClient.CreateAIAgent(
             deploymentName,
             name: "GenerateStory",
-            instructions: "You are good at telling jokes.")
-            .GetAwaiter()
-            .GetResult();
-
-        Console.Write("Done\n");
+            instructions: "You are good at telling jokes.");
 
         return aiAgent;
     });
@@ -95,13 +84,10 @@ async Task AFAgent()
 
     var thread = agent.GetNewThread();
 
-    Console.WriteLine("Non-Streaming Response:");
-    Console.WriteLine("Waiting agent output...");
     var result = await agent.RunAsync(userInput, thread);
     Console.WriteLine(result);
 
-    Console.WriteLine("\nStreaming Response:");
-    Console.WriteLine("Waiting agent output...");
+    Console.WriteLine("---");
     await foreach (var update in agent.RunStreamingAsync(userInput, thread))
     {
         Console.Write(update);

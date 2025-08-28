@@ -11,8 +11,8 @@ using Microsoft.SemanticKernel.Agents.AzureAI;
 #pragma warning disable SKEXP0110 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 #pragma warning disable CS8321 // Local function is declared but never used
 
-var azureEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENTNAME") ?? "gpt-4o";
+var azureEndpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
+var deploymentName = System.Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o";
 var userInput = "Create a python code file using the code interpreter tool with a code ready to determine the values in the Fibonacci sequence that are less then the value of 101";
 
 Console.WriteLine($"User Input: {userInput}");
@@ -26,22 +26,21 @@ async Task SKAgent()
 
     var azureAgentClient = AzureAIAgent.CreateAgentsClient(azureEndpoint, new AzureCliCredential());
 
-    Console.Write("Creating agent in the cloud...");
     PersistentAgent definition = await azureAgentClient.Administration.CreateAgentAsync(deploymentName, tools: [new CodeInterpreterToolDefinition()]);
-    Console.Write("Done\n");
 
     AzureAIAgent agent = new(definition, azureAgentClient);
     var thread = new AzureAIAgentThread(azureAgentClient);
 
-    // Respond to user input
-    Console.WriteLine("\nResponse:");
+    // SK Azure AI Agent provides the code interpreter content and the assistant message as different contents in the call iteration.
     await foreach (var content in agent.InvokeAsync(userInput, thread))
     {
-        string contentExpression = string.IsNullOrWhiteSpace(content.Message.Content) ? string.Empty : content.Message.Content;
-        bool isCode = content.Message.Metadata?.ContainsKey(AzureAIAgent.CodeInterpreterMetadataKey) ?? false;
-        string codeMarker = isCode ? "\n# Generated Code:\n" : " ";
-        Console.WriteLine($"\n# {content.Message.Role}:{codeMarker}{contentExpression}");
+        if (!string.IsNullOrWhiteSpace(content.Message.Content))
+        {
+            bool isCode = content.Message.Metadata?.ContainsKey(AzureAIAgent.CodeInterpreterMetadataKey) ?? false;
+            Console.WriteLine($"\n# {content.Message.Role}{(isCode ? "\n# Generated Code:\n" : ":")}{content.Message.Content}");
+        }
 
+        // Check for the citations
         foreach (var item in content.Message.Items)
         {
             // Process each item in the message
@@ -71,14 +70,9 @@ async Task AFAgent()
     Console.WriteLine("\n=== AF Agent ===\n");
 
     var azureAgentClient = new PersistentAgentsClient(azureEndpoint, new AzureCliCredential());
-
-    Console.Write("Creating agent in the cloud...");
     var agent = await azureAgentClient.CreateAIAgentAsync(deploymentName, tools: [new CodeInterpreterToolDefinition()]);
-    Console.Write("Done\n");
-
     var thread = agent.GetNewThread();
 
-    Console.WriteLine("Response:");
     var result = await agent.RunAsync(userInput, thread);
     Console.WriteLine(result);
 
