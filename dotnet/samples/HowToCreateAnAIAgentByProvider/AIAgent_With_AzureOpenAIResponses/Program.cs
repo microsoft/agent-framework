@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to create and use a simple AI agent with Azure OpenAI as the backend.
+// This sample shows how to create and use a simple AI agent with Azure OpenAI Responses as the backend.
+
+#pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
 using System;
 using Azure.AI.OpenAI;
@@ -17,14 +19,8 @@ const string JokerInstructions = "You are good at telling jokes.";
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
-     .GetChatClient(deploymentName)
+     .GetOpenAIResponseClient(deploymentName)
      .CreateAIAgent(JokerInstructions, JokerName);
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));
-
-// Invoke the agent with streaming support.
-await foreach (var update in agent.RunStreamingAsync("Tell me a joke about a pirate."))
-{
-    Console.WriteLine(update);
-}

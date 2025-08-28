@@ -1,26 +1,24 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+// This sample shows how to create and use a simple AI agent with Azure OpenAI Chat Completion as the backend.
+
 using System;
-using System.ComponentModel;
 using Azure.AI.OpenAI;
 using Azure.Identity;
-using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using OpenAI;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
-[Description("Get the weather for a given location.")]
-static string GetWeather([Description("The location to get the weather for.")] string location)
-    => $"The weather in {location} is cloudy with a high of 15°C.";
+const string JokerName = "Joker";
+const string JokerInstructions = "You are good at telling jokes.";
 
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
      .GetChatClient(deploymentName)
-     .CreateAIAgent(
-        instructions: "You are a helpful assistant, you can help the user with weather information.",
-        tools: [AIFunctionFactory.Create(GetWeather)]);
+     .CreateAIAgent(JokerInstructions, JokerName);
 
-Console.WriteLine(await agent.RunAsync("What's the weather in Amsterdam?"));
+// Invoke the agent and output the text result.
+Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));
