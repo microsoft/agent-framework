@@ -28,7 +28,7 @@ To run the samples, navigate to the desired sample directory, e.g.
 cd AIAgent_With_AzureOpenAIChatCompletion
 ```
 
-Set the required environment variables as documentd in the sample readme.
+Set the required environment variables as documented in the sample readme.
 If the variables are not set, you will be prompted for the values when running the samples.
 Execute the following command to build the sample:
 
