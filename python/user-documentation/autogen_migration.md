@@ -206,6 +206,7 @@ agent = ChatClientAgent(
 ### Union/Inherited Types
 
 #### AutoGen
+AutoGen differentiates client inputs, agent inputs, agent responses, and events being emitted by agents.
 
 `LLMMessage`: Union of 
 - `SystemMessage`: Messages used to pass developer instructions to the model
@@ -234,6 +235,8 @@ agent = ChatClientAgent(
 - `SelectorEvent`: Event emitted from a `SelectorGroupChat`
 
 #### Agent Framework
+
+Agent Framework unifies the data used within its ecosystem. The underlying type is `AIContents`, which are wrapped within different structures depending on the precise usage.
 
 `AIContents`: Union of
 - `TextContent`: Contains text
