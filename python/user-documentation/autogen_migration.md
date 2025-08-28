@@ -16,6 +16,31 @@ The Agent Framework package stucture opts toward a flatter structure. The packag
 
 ## Model Client
 
+### Use model client directly
+
+The model clients themselves can be configured nearly identically to Autogen, with the exception of the occasional parameter name change
+
+OpenAI:
+```python
+from agent_framework.openai import OpenAIChatClient
+
+client = OpenAIChatClient(
+    ai_model_id="gpt-4o",
+    api_key="sk-xxx"
+)
+```
+
+Azure OpenAI:
+```python
+from agent_framework.azure import AzureChatClient
+
+client = AzureChatClient(
+    deployment_name="gpt-4o",
+    endpoint="https://<your-endpoint>.openai.azure.com/",
+    api_key="sk-xxx"
+)
+```
+
 ### Client Configuration
 
 In Autogen, a self-describing configuration was used create its various components. For example:
@@ -45,31 +70,6 @@ config = {
 }
 
 chat_client = OpenAIChatClient.from_dict(config)
-```
-
-### Use model client directly
-
-The model clients themselves can be configured nearly identically to Autogen, with the exception of the occasional parameter name change
-
-OpenAI:
-```python
-from agent_framework.openai import OpenAIChatClient
-
-client = OpenAIChatClient(
-    ai_model_id="gpt-4o",
-    api_key="sk-xxx"
-)
-```
-
-Azure OpenAI:
-```python
-from agent_framework.azure import AzureChatClient
-
-client = AzureChatClient(
-    deployment_name="gpt-4o",
-    endpoint="https://<your-endpoint>.openai.azure.com/",
-    api_key="sk-xxx"
-)
 ```
 
 ## Chat Agent
