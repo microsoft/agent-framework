@@ -207,15 +207,45 @@ agent = ChatClientAgent(
 
 #### AutoGen
 
-`LLMMessage`: Union of `SystemMessage`, `UserMessage`, `AssistantMessage`, and `FunctionExecutionResultMessage`.
+`LLMMessage`: Union of 
+- `SystemMessage`: Messages used to pass developer instructions to the model
+- `AssistantMessage`: Messages returned from the language model
+- `FunctionExecutionResultMessage`: Results of function executions, typically passed to the model.
+- `UserMessage`: General message used to convey messages from the end user or information that does not fit into other message types
 
-`BaseChatMessage`: A base class. Default provided child classes are `StructuredMessage`, `TextMessage`, `StopMessage`, `HandoffMessage`, `ToolCallSummaryMessage`, and `MultiModalMessage`.
+`BaseChatMessage`: A base class. Default provided child classes are
+- `StructuredMessage`: Contains a user-defined response object. Used in models that support structured outputs
+- `TextMessage`: Contains text
+- `StopMessage`: Indicating the end of a conversation
+- `HandoffMessage`: Message requesting handoff of a conversation to another agent
+- `ToolCallSummaryMessage`: Contains a tool call's inputs and outputs
+- `MultiModalMessage`: Contains multimodal media
 
-`BaseAgentEvent`: A base class. Default provided child classes are `ToolCallRequestEvent`, `CodeGenerationEvent`, `CodeExecutionEvent`, `ToolCallExecutionEvent`, `UserInputRequestedEvent`, `MemoryQueryEvent`, `ModelClientStreamingChunkEvent`, `ThoughtEvent`, `SelectSpeakerEvent`, and `SelectorEvent`.
+`BaseAgentEvent`: A base class. Default provided child classes are 
+- `ToolCallRequestEvent`: Event requesting the use of a tool
+- `CodeGenerationEvent`: Event containing generated code
+- `CodeExecutionEvent`:  Event containing results of `CodeGenerationEvent`
+- `ToolCallExecutionEvent`: Event containing the results of a `ToolCallRequestEvent`
+- `UserInputRequestedEvent`: Event signalling a user proxy has requested user input
+- `MemoryQueryEvent`: Event containing results of memory queries
+- `ModelClientStreamingChunkEvent`: Event containing a chunk of text from a streaming request
+- `ThoughtEvent`: Event containing the thought process of a model
+- `SelectSpeakerEvent`: Event signalling selected agents should speak next
+- `SelectorEvent`: Event emitted from a `SelectorGroupChat`
 
 #### Agent Framework
 
-`AIContents`: Union of `TextContent`, `DataContent`, `TextReasoningContent`, `UriContent`, `FunctionCallContent`, `FunctionResultContent`, `ErrorContent`, `UsageContent`, `HostedFileContent`, or `HostedVectorStoreContent`.
+`AIContents`: Union of
+- `TextContent`: Contains text
+- `DataContent`: Contains binary data and associated media type
+- `TextReasoningContent`: Contains text reasoning of a model
+- `UriContent`: Contains a URI of online media
+- `FunctionCallContent`: Represents a function call request
+- `FunctionResultContent`: Contains the results of a `FunctionCallContent`
+- `ErrorContent`: Contains an error
+- `UsageContent`: Contains model usage information
+- `HostedFileContent`: Represents a file hosted in a model data store
+- `HostedVectorStoreContent`: Represents a hosted vector store
 
 ### Input Types
 
