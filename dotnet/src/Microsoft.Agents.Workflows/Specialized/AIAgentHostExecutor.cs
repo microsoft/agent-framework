@@ -99,6 +99,12 @@ internal class AIAgentHostExecutor : Executor
 
         await foreach (AgentRunResponseUpdate update in agentStream.ConfigureAwait(false))
         {
+            if (string.IsNullOrEmpty(update.MessageId))
+            {
+                // Ignore updates that don't have a message ID.
+                continue;
+            }
+
             if (emitEvents)
             {
                 await context.AddEventAsync(new AgentRunUpdateEvent(this.Id, update)).ConfigureAwait(false);
