@@ -22,7 +22,7 @@ internal sealed class EditTableExecutor(EditTable model, DeclarativeWorkflowStat
         FormulaValue table = this.State.Get(variablePath);
         if (table is not TableValue tableValue)
         {
-            throw new DeclarativeActionException($"Require '{variablePath.Format()}' to be a table, not: '{table.GetType().Name}'.");
+            throw this.Exception($"Require '{variablePath.Format()}' to be a table, not: '{table.GetType().Name}'.");
         }
 
         TableChangeType changeType = this.Model.ChangeType.Value;
