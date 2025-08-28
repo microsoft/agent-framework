@@ -2,6 +2,12 @@
 
 ## Installation
 
+To install the base `workflow` package, please run:
+
+```bash
+pip install agent-framework-workflow
+```
+
 You can install the workflow package with visualization dependency:
 
 ```bash
