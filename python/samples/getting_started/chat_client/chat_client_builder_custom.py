@@ -20,10 +20,10 @@ def get_weather(
 
 
 class CustomChatClient:
-    async def get_response(self, *args, **kwargs):
+    async def get_response(self, *args, **kwargs):  # type: ignore
         return ChatResponse(messages=[ChatMessage(role="assistant", text="This is a custom chat client response.")])
 
-    async def get_streaming_response(self, *args, **kwargs):
+    async def get_streaming_response(self, *args, **kwargs):  # type: ignore
         yield ChatResponseUpdate(role="assistant", text="This is a custom chat client streaming response.")
 
 

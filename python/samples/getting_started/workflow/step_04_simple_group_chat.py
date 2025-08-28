@@ -15,7 +15,7 @@ from agent_framework.workflow import (
     WorkflowContext,
     handler,
 )
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 
 """
 The following sample demonstrates a basic workflow that simulates
@@ -33,8 +33,8 @@ class RoundRobinGroupChatManager(Executor):
         self._max_round = max_round
         self._current_round = 0
 
-    @handler(output_types=[AgentExecutorRequest])
-    async def start(self, task: str, ctx: WorkflowContext) -> None:
+    @handler
+    async def start(self, task: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
         """Execute the task by sending messages to the next executor in the round-robin sequence."""
         initial_message = ChatMessage(ChatRole.USER, text=task)
 
@@ -53,8 +53,10 @@ class RoundRobinGroupChatManager(Executor):
             target_id=self._get_next_member(),
         )
 
-    @handler(output_types=[AgentExecutorRequest])
-    async def handle_agent_response(self, response: AgentExecutorResponse, ctx: WorkflowContext) -> None:
+    @handler
+    async def handle_agent_response(
+        self, response: AgentExecutorResponse, ctx: WorkflowContext[AgentExecutorRequest]
+    ) -> None:
         """Execute the task by sending messages to the next executor in the round-robin sequence."""
         # Send the response to the other members
         await asyncio.gather(*[
@@ -91,7 +93,9 @@ async def main():
     """Main function to run the group chat workflow."""
 
     # Step 1: Create the executors.
-    chat_client = AzureChatClient(ad_credential=DefaultAzureCredential())
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
+    chat_client = AzureChatClient(credential=AzureCliCredential())
     writer = AgentExecutor(
         chat_client.create_agent(
             instructions=(
@@ -120,8 +124,7 @@ async def main():
     workflow = (
         WorkflowBuilder()
         .set_start_executor(group_chat_manager)
-        .add_edge(group_chat_manager, writer)
-        .add_edge(group_chat_manager, reviewer)
+        .add_fan_out_edges(group_chat_manager, [writer, reviewer])
         .add_edge(writer, group_chat_manager)
         .add_edge(reviewer, group_chat_manager)
         .build()

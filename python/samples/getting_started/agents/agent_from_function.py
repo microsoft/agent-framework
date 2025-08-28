@@ -7,7 +7,7 @@ from agent_framework import AgentProtocol, AgentRunResponse, AgentRunResponseUpd
 
 
 async def streaming_agent_from_function() -> None:
-    @agent(instructions="This is a custom agent that responds to user input.")
+    @agent(instructions="This is a custom agent that responds to user input.")  # type: ignore
     async def my_custom_streaming_agent(messages: str, **kwargs: Any) -> AsyncGenerator[AgentRunResponseUpdate, None]:
         """This is a custom agent that responds to user input."""
         # Your custom agent logic here
@@ -24,7 +24,7 @@ async def streaming_agent_from_function() -> None:
 
 
 async def agent_from_function() -> None:
-    @agent(instructions="This is a custom agent that responds to user input.")
+    @agent(instructions="This is a custom agent that responds to user input.")  # type: ignore
     async def my_custom_agent(messages: str, **kwargs: Any) -> AgentRunResponse:
         """This is a custom agent that responds to user input."""
         # Your custom agent logic here

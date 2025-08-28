@@ -11,6 +11,7 @@ from ._checkpoint import (
 from ._const import (
     DEFAULT_MAX_ITERATIONS,
 )
+from ._edge import Case, Default
 from ._events import (
     AgentRunEvent,
     AgentRunStreamingEvent,
@@ -29,7 +30,34 @@ from ._executor import (
     Executor,
     RequestInfoExecutor,
     RequestInfoMessage,
+    RequestResponse,
+    SubWorkflowRequestInfo,
+    SubWorkflowResponse,
+    WorkflowExecutor,
     handler,
+    intercepts_request,
+)
+from ._magentic import (
+    MagenticAgentDeltaEvent,
+    MagenticAgentExecutor,
+    MagenticAgentMessageEvent,
+    MagenticBuilder,
+    MagenticCallbackEvent,
+    MagenticCallbackMode,
+    MagenticContext,
+    MagenticFinalResultEvent,
+    MagenticManagerBase,
+    MagenticOrchestratorExecutor,
+    MagenticOrchestratorMessageEvent,
+    MagenticPlanReviewDecision,
+    MagenticPlanReviewReply,
+    MagenticPlanReviewRequest,
+    MagenticProgressLedger,
+    MagenticProgressLedgerItem,
+    MagenticRequestMessage,
+    MagenticResponseMessage,
+    MagenticStartMessage,
+    StandardMagenticManager,
 )
 from ._runner_context import (
     InProcRunnerContext,
@@ -44,6 +72,7 @@ from ._validation import (
     WorkflowValidationError,
     validate_workflow_graph,
 )
+from ._viz import WorkflowViz
 from ._workflow import Workflow, WorkflowBuilder, WorkflowRunResult
 from ._workflow_context import WorkflowContext
 
@@ -60,7 +89,9 @@ __all__ = [
     "AgentExecutorResponse",
     "AgentRunEvent",
     "AgentRunStreamingEvent",
+    "Case",
     "CheckpointStorage",
+    "Default",
     "EdgeDuplicationError",
     "Executor",
     "ExecutorCompletedEvent",
@@ -70,13 +101,34 @@ __all__ = [
     "GraphConnectivityError",
     "InMemoryCheckpointStorage",
     "InProcRunnerContext",
+    "MagenticAgentDeltaEvent",
+    "MagenticAgentExecutor",
+    "MagenticAgentMessageEvent",
+    "MagenticBuilder",
+    "MagenticCallbackEvent",
+    "MagenticCallbackMode",
+    "MagenticContext",
+    "MagenticFinalResultEvent",
+    "MagenticManagerBase",
+    "MagenticOrchestratorExecutor",
+    "MagenticOrchestratorMessageEvent",
+    "MagenticPlanReviewDecision",
+    "MagenticPlanReviewReply",
+    "MagenticPlanReviewRequest",
+    "MagenticProgressLedger",
+    "MagenticProgressLedgerItem",
+    "MagenticRequestMessage",
+    "MagenticResponseMessage",
+    "MagenticStartMessage",
     "Message",
     "RequestInfoEvent",
-    "RequestInfoEvent",
-    "RequestInfoExecutor",
     "RequestInfoExecutor",
     "RequestInfoMessage",
+    "RequestResponse",
     "RunnerContext",
+    "StandardMagenticManager",
+    "SubWorkflowRequestInfo",
+    "SubWorkflowResponse",
     "TypeCompatibilityError",
     "ValidationTypeEnum",
     "Workflow",
@@ -85,10 +137,21 @@ __all__ = [
     "WorkflowCompletedEvent",
     "WorkflowContext",
     "WorkflowEvent",
+    "WorkflowExecutor",
     "WorkflowRunResult",
     "WorkflowStartedEvent",
     "WorkflowValidationError",
+    "WorkflowViz",
     "__version__",
     "handler",
+    "intercepts_request",
     "validate_workflow_graph",
 ]
+
+
+# Rebuild models to resolve forward references after all imports are complete
+import contextlib
+
+with contextlib.suppress(AttributeError, TypeError, ValueError):
+    # Rebuild WorkflowExecutor to resolve Workflow forward reference
+    WorkflowExecutor.model_rebuild()

@@ -48,7 +48,7 @@ internal class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageStore
     {
         if (serializedStoreState is null)
         {
-            return new ValueTask();
+            return default;
         }
 
         var state = JsonSerializer.Deserialize(
@@ -60,7 +60,7 @@ internal class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageStore
             this._messages.AddRange(messages);
         }
 
-        return new ValueTask();
+        return default;
     }
 
     /// <inheritdoc />

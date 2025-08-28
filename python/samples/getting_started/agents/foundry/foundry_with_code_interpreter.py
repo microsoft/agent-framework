@@ -11,7 +11,7 @@ from azure.ai.agents.models import (
     RunStepDeltaCodeInterpreterToolCall,
     RunStepDeltaToolCallObject,
 )
-from azure.identity.aio import DefaultAzureCredential
+from azure.identity.aio import AzureCliCredential
 
 
 def get_code_interpreter_chunk(chunk: AgentRunResponseUpdate) -> str | None:
@@ -37,11 +37,16 @@ async def main() -> None:
     """Example showing how to use the HostedCodeInterpreterTool with Foundry."""
     print("=== Foundry Agent with Code Interpreter Example ===")
 
-    async with ChatClientAgent(
-        chat_client=FoundryChatClient(async_ad_credential=DefaultAzureCredential()),
-        instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
-        tools=HostedCodeInterpreterTool(),
-    ) as agent:
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
+    async with (
+        AzureCliCredential() as credential,
+        ChatClientAgent(
+            chat_client=FoundryChatClient(async_credential=credential),
+            instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
+            tools=HostedCodeInterpreterTool(),
+        ) as agent,
+    ):
         query = "Generate the factorial of 100 using python code."
         print(f"User: {query}")
         print("Agent: ", end="", flush=True)

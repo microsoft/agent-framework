@@ -17,6 +17,7 @@ public class AgentRunOptionsTests
 
         // Act
         var clone = new AgentRunOptions(options);
+        Assert.NotNull(clone);
     }
 
     [Fact]

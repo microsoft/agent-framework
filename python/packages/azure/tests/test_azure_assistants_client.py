@@ -2,18 +2,24 @@
 
 import os
 from typing import Annotated
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import (
+    AgentRunResponse,
+    AgentRunResponseUpdate,
+    AgentThread,
     ChatClient,
+    ChatClientAgent,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
+    HostedCodeInterpreterTool,
     TextContent,
+    ai_function,
 )
 from agent_framework.exceptions import ServiceInitializationError
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 from pydantic import Field
 
 from agent_framework_azure import AzureAssistantsClient
@@ -260,7 +266,7 @@ def get_weather(
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_get_response() -> None:
     """Test Azure Assistants Client response."""
-    async with AzureAssistantsClient(ad_credential=DefaultAzureCredential()) as azure_assistants_client:
+    async with AzureAssistantsClient(credential=AzureCliCredential()) as azure_assistants_client:
         assert isinstance(azure_assistants_client, ChatClient)
 
         messages: list[ChatMessage] = []
@@ -284,7 +290,7 @@ async def test_azure_assistants_client_get_response() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_get_response_tools() -> None:
     """Test Azure Assistants Client response with tools."""
-    async with AzureAssistantsClient(ad_credential=DefaultAzureCredential()) as azure_assistants_client:
+    async with AzureAssistantsClient(credential=AzureCliCredential()) as azure_assistants_client:
         assert isinstance(azure_assistants_client, ChatClient)
 
         messages: list[ChatMessage] = []
@@ -305,7 +311,7 @@ async def test_azure_assistants_client_get_response_tools() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_streaming() -> None:
     """Test Azure Assistants Client streaming response."""
-    async with AzureAssistantsClient(ad_credential=DefaultAzureCredential()) as azure_assistants_client:
+    async with AzureAssistantsClient(credential=AzureCliCredential()) as azure_assistants_client:
         assert isinstance(azure_assistants_client, ChatClient)
 
         messages: list[ChatMessage] = []
@@ -335,7 +341,7 @@ async def test_azure_assistants_client_streaming() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_streaming_tools() -> None:
     """Test Azure Assistants Client streaming response with tools."""
-    async with AzureAssistantsClient(ad_credential=DefaultAzureCredential()) as azure_assistants_client:
+    async with AzureAssistantsClient(credential=AzureCliCredential()) as azure_assistants_client:
         assert isinstance(azure_assistants_client, ChatClient)
 
         messages: list[ChatMessage] = []
@@ -362,7 +368,7 @@ async def test_azure_assistants_client_streaming_tools() -> None:
 async def test_azure_assistants_client_with_existing_assistant() -> None:
     """Test Azure Assistants Client with existing assistant ID."""
     # First create an assistant to use in the test
-    async with AzureAssistantsClient(ad_credential=DefaultAzureCredential()) as temp_client:
+    async with AzureAssistantsClient(credential=AzureCliCredential()) as temp_client:
         # Get the assistant ID by triggering assistant creation
         messages = [ChatMessage(role="user", text="Hello")]
         await temp_client.get_response(messages=messages)
@@ -370,7 +376,7 @@ async def test_azure_assistants_client_with_existing_assistant() -> None:
 
         # Now test using the existing assistant
         async with AzureAssistantsClient(
-            assistant_id=assistant_id, ad_credential=DefaultAzureCredential()
+            assistant_id=assistant_id, credential=AzureCliCredential()
         ) as azure_assistants_client:
             assert isinstance(azure_assistants_client, ChatClient)
             assert azure_assistants_client.assistant_id == assistant_id
@@ -383,3 +389,375 @@ async def test_azure_assistants_client_with_existing_assistant() -> None:
             assert response is not None
             assert isinstance(response, ChatResponse)
             assert len(response.text) > 0
+
+
+@skip_if_azure_integration_tests_disabled
+async def test_azure_assistants_agent_basic_run():
+    """Test ChatClientAgent basic run functionality with AzureAssistantsClient."""
+    async with ChatClientAgent(
+        chat_client=AzureAssistantsClient(credential=AzureCliCredential()),
+    ) as agent:
+        # Run a simple query
+        response = await agent.run("Hello! Please respond with 'Hello World' exactly.")
+
+        # Validate response
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+        assert "Hello World" in response.text
+
+
+@skip_if_azure_integration_tests_disabled
+async def test_azure_assistants_agent_basic_run_streaming():
+    """Test ChatClientAgent basic streaming functionality with AzureAssistantsClient."""
+    async with ChatClientAgent(
+        chat_client=AzureAssistantsClient(credential=AzureCliCredential()),
+    ) as agent:
+        # Run streaming query
+        full_message: str = ""
+        async for chunk in agent.run_streaming("Please respond with exactly: 'This is a streaming response test.'"):
+            assert chunk is not None
+            assert isinstance(chunk, AgentRunResponseUpdate)
+            if chunk.text:
+                full_message += chunk.text
+
+        # Validate streaming response
+        assert len(full_message) > 0
+        assert "streaming response test" in full_message.lower()
+
+
+@skip_if_azure_integration_tests_disabled
+async def test_azure_assistants_agent_thread_persistence():
+    """Test ChatClientAgent thread persistence across runs with AzureAssistantsClient."""
+    async with ChatClientAgent(
+        chat_client=AzureAssistantsClient(credential=AzureCliCredential()),
+        instructions="You are a helpful assistant with good memory.",
+    ) as agent:
+        # Create a new thread that will be reused
+        thread = agent.get_new_thread()
+
+        # First message - establish context
+        first_response = await agent.run(
+            "Remember this number: 42. What number did I just tell you to remember?", thread=thread
+        )
+        assert isinstance(first_response, AgentRunResponse)
+        assert "42" in first_response.text
+
+        # Second message - test conversation memory
+        second_response = await agent.run(
+            "What number did I tell you to remember in my previous message?", thread=thread
+        )
+        assert isinstance(second_response, AgentRunResponse)
+        assert "42" in second_response.text
+
+        # Verify thread has been populated with conversation ID
+        assert thread.service_thread_id is not None
+
+
+@skip_if_azure_integration_tests_disabled
+async def test_azure_assistants_agent_existing_thread_id():
+    """Test ChatClientAgent with existing thread ID to continue conversations across agent instances."""
+    # First, create a conversation and capture the thread ID
+    existing_thread_id = None
+
+    async with ChatClientAgent(
+        chat_client=AzureAssistantsClient(credential=AzureCliCredential()),
+        instructions="You are a helpful weather agent.",
+        tools=[get_weather],
+    ) as agent:
+        # Start a conversation and get the thread ID
+        thread = agent.get_new_thread()
+        response1 = await agent.run("What's the weather in Paris?", thread=thread)
+
+        # Validate first response
+        assert isinstance(response1, AgentRunResponse)
+        assert response1.text is not None
+        assert any(word in response1.text.lower() for word in ["weather", "paris"])
+
+        # The thread ID is set after the first response
+        existing_thread_id = thread.service_thread_id
+        assert existing_thread_id is not None
+
+    # Now continue with the same thread ID in a new agent instance
+
+    async with ChatClientAgent(
+        chat_client=AzureAssistantsClient(thread_id=existing_thread_id, credential=AzureCliCredential()),
+        instructions="You are a helpful weather agent.",
+        tools=[get_weather],
+    ) as agent:
+        # Create a thread with the existing ID
+        thread = AgentThread(service_thread_id=existing_thread_id)
+
+        # Ask about the previous conversation
+        response2 = await agent.run("What was the last city I asked about?", thread=thread)
+
+        # Validate that the agent remembers the previous conversation
+        assert isinstance(response2, AgentRunResponse)
+        assert response2.text is not None
+        # Should reference Paris from the previous conversation
+        assert "paris" in response2.text.lower()
+
+
+@skip_if_azure_integration_tests_disabled
+async def test_azure_assistants_agent_code_interpreter():
+    """Test ChatClientAgent with code interpreter through AzureAssistantsClient."""
+
+    async with ChatClientAgent(
+        chat_client=AzureAssistantsClient(credential=AzureCliCredential()),
+        instructions="You are a helpful assistant that can write and execute Python code.",
+        tools=[HostedCodeInterpreterTool()],
+    ) as agent:
+        # Request code execution
+        response = await agent.run("Write Python code to calculate the factorial of 5 and show the result.")
+
+        # Validate response
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        # Factorial of 5 is 120
+        assert "120" in response.text or "factorial" in response.text.lower()
+
+
+@skip_if_azure_integration_tests_disabled
+async def test_azure_assistants_client_agent_level_tool_persistence():
+    """Test that agent-level tools persist across multiple runs with Azure Assistants Client."""
+
+    async with ChatClientAgent(
+        chat_client=AzureAssistantsClient(credential=AzureCliCredential()),
+        instructions="You are a helpful assistant that uses available tools.",
+        tools=[get_weather],  # Agent-level tool
+    ) as agent:
+        # First run - agent-level tool should be available
+        first_response = await agent.run("What's the weather like in Chicago?")
+
+        assert isinstance(first_response, AgentRunResponse)
+        assert first_response.text is not None
+        # Should use the agent-level weather tool
+        assert any(term in first_response.text.lower() for term in ["chicago", "sunny", "72"])
+
+        # Second run - agent-level tool should still be available (persistence test)
+        second_response = await agent.run("What's the weather in Miami?")
+
+        assert isinstance(second_response, AgentRunResponse)
+        assert second_response.text is not None
+        # Should use the agent-level weather tool again
+        assert any(term in second_response.text.lower() for term in ["miami", "sunny", "72"])
+
+
+@skip_if_azure_integration_tests_disabled
+async def test_azure_assistants_client_run_level_tool_isolation():
+    """Test that run-level tools are isolated to specific runs and don't persist with Azure Assistants Client."""
+    # Counter to track how many times the weather tool is called
+    call_count = 0
+
+    @ai_function
+    async def get_weather_with_counter(location: Annotated[str, "The location as a city name"]) -> str:
+        """Get the current weather in a given location."""
+        nonlocal call_count
+        call_count += 1
+        return f"The weather in {location} is sunny and 72°F."
+
+    async with ChatClientAgent(
+        chat_client=AzureAssistantsClient(credential=AzureCliCredential()),
+        instructions="You are a helpful assistant.",
+    ) as agent:
+        # First run - use run-level tool
+        first_response = await agent.run(
+            "What's the weather like in Chicago?",
+            tools=[get_weather_with_counter],  # Run-level tool
+        )
+
+        assert isinstance(first_response, AgentRunResponse)
+        assert first_response.text is not None
+        # Should use the run-level weather tool (call count should be 1)
+        assert call_count == 1
+        assert any(term in first_response.text.lower() for term in ["chicago", "sunny", "72"])
+
+        # Second run - run-level tool should NOT persist (key isolation test)
+        second_response = await agent.run("What's the weather like in Miami?")
+
+        assert isinstance(second_response, AgentRunResponse)
+        assert second_response.text is not None
+        # Should NOT use the weather tool since it was only run-level in previous call
+        # Call count should still be 1 (no additional calls)
+        assert call_count == 1
+
+
+def test_azure_assistants_client_entra_id_authentication() -> None:
+    """Test Entra ID authentication path with credential."""
+    mock_credential = MagicMock()
+
+    with (
+        patch("agent_framework_azure._assistants_client.AzureOpenAISettings") as mock_settings_class,
+        patch("agent_framework_azure._assistants_client.AsyncAzureOpenAI") as mock_azure_client,
+        patch("agent_framework.openai.OpenAIAssistantsClient.__init__", return_value=None),
+    ):
+        mock_settings = MagicMock()
+        mock_settings.chat_deployment_name = "test-deployment"
+        mock_settings.api_key = None  # No API key to trigger Entra ID path
+        mock_settings.token_endpoint = "https://login.microsoftonline.com/test"
+        mock_settings.get_azure_auth_token.return_value = "entra-token-12345"
+        mock_settings.api_version = "2024-05-01-preview"
+        mock_settings.endpoint = "https://test-endpoint.openai.azure.com"
+        mock_settings.base_url = None
+        mock_settings_class.return_value = mock_settings
+
+        client = AzureAssistantsClient(
+            deployment_name="test-deployment",
+            api_key="placeholder-key",
+            endpoint="https://test-endpoint.openai.azure.com",
+            credential=mock_credential,
+            token_endpoint="https://login.microsoftonline.com/test",
+        )
+
+        # Verify Entra ID token was requested
+        mock_settings.get_azure_auth_token.assert_called_once_with(mock_credential)
+
+        # Verify client was created with the token
+        mock_azure_client.assert_called_once()
+        call_args = mock_azure_client.call_args[1]
+        assert call_args["azure_ad_token"] == "entra-token-12345"
+
+        assert client is not None
+        assert isinstance(client, AzureAssistantsClient)
+
+
+def test_azure_assistants_client_no_authentication_error() -> None:
+    """Test authentication validation error when no auth provided."""
+    with patch("agent_framework_azure._assistants_client.AzureOpenAISettings") as mock_settings_class:
+        mock_settings = MagicMock()
+        mock_settings.chat_deployment_name = "test-deployment"
+        mock_settings.api_key = None  # No API key
+        mock_settings.token_endpoint = None  # No token endpoint
+        mock_settings_class.return_value = mock_settings
+
+        # Test missing authentication raises error
+        with pytest.raises(ServiceInitializationError, match="API key, ad_token, or ad_token_provider is required"):
+            AzureAssistantsClient(
+                deployment_name="test-deployment",
+                endpoint="https://test-endpoint.openai.azure.com",
+                # No authentication provided at all
+            )
+
+
+def test_azure_assistants_client_ad_token_authentication() -> None:
+    """Test ad_token authentication client parameter path."""
+    with (
+        patch("agent_framework_azure._assistants_client.AzureOpenAISettings") as mock_settings_class,
+        patch("agent_framework_azure._assistants_client.AsyncAzureOpenAI") as mock_azure_client,
+        patch("agent_framework.openai.OpenAIAssistantsClient.__init__", return_value=None),
+    ):
+        mock_settings = MagicMock()
+        mock_settings.chat_deployment_name = "test-deployment"
+        mock_settings.api_key = None  # No API key
+        mock_settings.api_version = "2024-05-01-preview"
+        mock_settings.endpoint = "https://test-endpoint.openai.azure.com"
+        mock_settings.base_url = None
+        mock_settings_class.return_value = mock_settings
+
+        client = AzureAssistantsClient(
+            deployment_name="test-deployment",
+            endpoint="https://test-endpoint.openai.azure.com",
+            ad_token="test-ad-token-12345",
+        )
+
+        # ad_token path
+        mock_azure_client.assert_called_once()
+        call_args = mock_azure_client.call_args[1]
+        assert call_args["azure_ad_token"] == "test-ad-token-12345"
+
+        assert client is not None
+        assert isinstance(client, AzureAssistantsClient)
+
+
+def test_azure_assistants_client_ad_token_provider_authentication() -> None:
+    """Test ad_token_provider authentication client parameter path."""
+    from openai.lib.azure import AsyncAzureADTokenProvider
+
+    mock_token_provider = MagicMock(spec=AsyncAzureADTokenProvider)
+
+    with (
+        patch("agent_framework_azure._assistants_client.AzureOpenAISettings") as mock_settings_class,
+        patch("agent_framework_azure._assistants_client.AsyncAzureOpenAI") as mock_azure_client,
+        patch("agent_framework.openai.OpenAIAssistantsClient.__init__", return_value=None),
+    ):
+        mock_settings = MagicMock()
+        mock_settings.chat_deployment_name = "test-deployment"
+        mock_settings.api_key = None  # No API key
+        mock_settings.api_version = "2024-05-01-preview"
+        mock_settings.endpoint = "https://test-endpoint.openai.azure.com"
+        mock_settings.base_url = None
+        mock_settings_class.return_value = mock_settings
+
+        client = AzureAssistantsClient(
+            deployment_name="test-deployment",
+            endpoint="https://test-endpoint.openai.azure.com",
+            ad_token_provider=mock_token_provider,
+        )
+
+        # ad_token_provider path
+        mock_azure_client.assert_called_once()
+        call_args = mock_azure_client.call_args[1]
+        assert call_args["azure_ad_token_provider"] is mock_token_provider
+
+        assert client is not None
+        assert isinstance(client, AzureAssistantsClient)
+
+
+def test_azure_assistants_client_base_url_configuration() -> None:
+    """Test base_url client parameter path."""
+    with (
+        patch("agent_framework_azure._assistants_client.AzureOpenAISettings") as mock_settings_class,
+        patch("agent_framework_azure._assistants_client.AsyncAzureOpenAI") as mock_azure_client,
+        patch("agent_framework.openai.OpenAIAssistantsClient.__init__", return_value=None),
+    ):
+        mock_settings = MagicMock()
+        mock_settings.chat_deployment_name = "test-deployment"
+        mock_settings.api_key.get_secret_value.return_value = "test-api-key"
+        mock_settings.base_url = "https://custom-base-url.com"
+        mock_settings.endpoint = None  # No endpoint, should use base_url
+        mock_settings.api_version = "2024-05-01-preview"
+        mock_settings_class.return_value = mock_settings
+
+        client = AzureAssistantsClient(
+            deployment_name="test-deployment", api_key="test-api-key", base_url="https://custom-base-url.com"
+        )
+
+        # base_url path
+        mock_azure_client.assert_called_once()
+        call_args = mock_azure_client.call_args[1]
+        assert call_args["base_url"] == "https://custom-base-url.com"
+        assert "azure_endpoint" not in call_args
+
+        assert client is not None
+        assert isinstance(client, AzureAssistantsClient)
+
+
+def test_azure_assistants_client_azure_endpoint_configuration() -> None:
+    """Test azure_endpoint client parameter path."""
+    with (
+        patch("agent_framework_azure._assistants_client.AzureOpenAISettings") as mock_settings_class,
+        patch("agent_framework_azure._assistants_client.AsyncAzureOpenAI") as mock_azure_client,
+        patch("agent_framework.openai.OpenAIAssistantsClient.__init__", return_value=None),
+    ):
+        mock_settings = MagicMock()
+        mock_settings.chat_deployment_name = "test-deployment"
+        mock_settings.api_key.get_secret_value.return_value = "test-api-key"
+        mock_settings.base_url = None  # No base_url
+        mock_settings.endpoint = "https://test-endpoint.openai.azure.com"
+        mock_settings.api_version = "2024-05-01-preview"
+        mock_settings_class.return_value = mock_settings
+
+        client = AzureAssistantsClient(
+            deployment_name="test-deployment",
+            api_key="test-api-key",
+            endpoint="https://test-endpoint.openai.azure.com",
+        )
+
+        # azure_endpoint path
+        mock_azure_client.assert_called_once()
+        call_args = mock_azure_client.call_args[1]
+        assert call_args["azure_endpoint"] == "https://test-endpoint.openai.azure.com"
+        assert "base_url" not in call_args
+
+        assert client is not None
+        assert isinstance(client, AzureAssistantsClient)

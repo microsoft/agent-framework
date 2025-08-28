@@ -3,7 +3,7 @@
 from random import randint
 from typing import Annotated
 
-from agent_framework import ChatClientBuilder
+from agent_framework import ChatClientAgent, ChatClientBuilder
 from agent_framework.openai import OpenAIResponsesClient
 
 

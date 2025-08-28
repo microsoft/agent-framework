@@ -7,11 +7,9 @@ namespace Microsoft.Agents.Workflows.Execution;
 internal interface IRunnerContext : IExternalRequestSink
 {
     ValueTask AddEventAsync(WorkflowEvent workflowEvent);
-    ValueTask SendMessageAsync(string executorId, object message);
-
-    // TODO: State Management
+    ValueTask SendMessageAsync(string sourceId, object message, string? targetId = null);
 
     StepContext Advance();
     IWorkflowContext Bind(string executorId);
-    ValueTask<Executor> EnsureExecutorAsync(string executorId);
+    ValueTask<Executor> EnsureExecutorAsync(string executorId, IStepTracer? tracer);
 }

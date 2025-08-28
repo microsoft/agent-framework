@@ -38,6 +38,36 @@ public abstract class AIAgent
     /// </summary>
     public virtual string? Description { get; }
 
+    /// <summary>Asks the <see cref="AIAgent"/> for an object of the specified type <paramref name="serviceType"/>.</summary>
+    /// <param name="serviceType">The type of object being requested.</param>
+    /// <param name="serviceKey">An optional key that can be used to help identify the target service.</param>
+    /// <returns>The found object, otherwise <see langword="null"/>.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="serviceType"/> is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// The purpose of this method is to allow for the retrieval of strongly-typed services that might be provided by the <see cref="AIAgent"/>,
+    /// including itself or any services it might be wrapping. For example, to access the <see cref="AIAgentMetadata"/> for the instance,
+    /// <see cref="GetService"/> may be used to request it.
+    /// </remarks>
+    public virtual object? GetService(Type serviceType, object? serviceKey = null)
+    {
+        _ = Throw.IfNull(serviceType);
+
+        return serviceKey is null && serviceType.IsInstanceOfType(this)
+            ? this
+            : null;
+    }
+
+    /// <summary>Asks the <see cref="AIAgent"/> for an object of type <typeparamref name="TService"/>.</summary>
+    /// <typeparam name="TService">The type of the object to be retrieved.</typeparam>
+    /// <param name="serviceKey">An optional key that can be used to help identify the target service.</param>
+    /// <returns>The found object, otherwise <see langword="null"/>.</returns>
+    /// <remarks>
+    /// The purpose of this method is to allow for the retrieval of strongly typed services that may be provided by the <see cref="AIAgent"/>,
+    /// including itself or any services it might be wrapping.
+    /// </remarks>
+    public TService? GetService<TService>(object? serviceKey = null)
+        => this.GetService(typeof(TService), serviceKey) is TService service ? service : default;
+
     /// <summary>
     /// Get a new <see cref="AgentThread"/> instance that is compatible with the agent.
     /// </summary>
@@ -70,7 +100,10 @@ public abstract class AIAgent
     /// <summary>
     /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the thread.
     /// </summary>
-    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
+    /// <param name="thread">
+    /// The conversation thread to continue with this invocation. If not provided, creates a new thread.
+    /// The thread will be mutated with the provided messages and agent response.
+    /// </param>
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="AgentRunResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
@@ -86,7 +119,10 @@ public abstract class AIAgent
     /// Run the agent with the provided message and arguments.
     /// </summary>
     /// <param name="message">The message to pass to the agent.</param>
-    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
+    /// <param name="thread">
+    /// The conversation thread to continue with this invocation. If not provided, creates a new thread.
+    /// The thread will be mutated with the provided messages and agent response.
+    /// </param>
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="AgentRunResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
@@ -99,7 +135,7 @@ public abstract class AIAgent
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        Throw.IfNullOrWhitespace(message);
+        _ = Throw.IfNullOrWhitespace(message);
 
         return this.RunAsync(new ChatMessage(ChatRole.User, message), thread, options, cancellationToken);
     }
@@ -108,7 +144,10 @@ public abstract class AIAgent
     /// Run the agent with the provided message and arguments.
     /// </summary>
     /// <param name="message">The message to pass to the agent.</param>
-    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
+    /// <param name="thread">
+    /// The conversation thread to continue with this invocation. If not provided, creates a new thread.
+    /// The thread will be mutated with the provided messages and agent response.
+    /// </param>
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="AgentRunResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
@@ -118,7 +157,7 @@ public abstract class AIAgent
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        Throw.IfNull(message);
+        _ = Throw.IfNull(message);
 
         return this.RunAsync([message], thread, options, cancellationToken);
     }
@@ -127,7 +166,10 @@ public abstract class AIAgent
     /// Run the agent with the provided message and arguments.
     /// </summary>
     /// <param name="messages">The messages to pass to the agent.</param>
-    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
+    /// <param name="thread">
+    /// The conversation thread to continue with this invocation. If not provided, creates a new thread.
+    /// The thread will be mutated with the provided messages and agent response.
+    /// </param>
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="AgentRunResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
@@ -140,7 +182,10 @@ public abstract class AIAgent
     /// <summary>
     /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the thread.
     /// </summary>
-    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
+    /// <param name="thread">
+    /// The conversation thread to continue with this invocation. If not provided, creates a new thread.
+    /// The thread will be mutated with the provided messages and agent response.
+    /// </param>
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An async list of response items that each contain a <see cref="AgentRunResponseUpdate"/>.</returns>
@@ -156,7 +201,10 @@ public abstract class AIAgent
     /// Run the agent with the provided message and arguments.
     /// </summary>
     /// <param name="message">The message to pass to the agent.</param>
-    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
+    /// <param name="thread">
+    /// The conversation thread to continue with this invocation. If not provided, creates a new thread.
+    /// The thread will be mutated with the provided messages and agent response.
+    /// </param>
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An async list of response items that each contain a <see cref="AgentRunResponseUpdate"/>.</returns>
@@ -169,7 +217,7 @@ public abstract class AIAgent
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        Throw.IfNullOrWhitespace(message);
+        _ = Throw.IfNullOrWhitespace(message);
 
         return this.RunStreamingAsync(new ChatMessage(ChatRole.User, message), thread, options, cancellationToken);
     }
@@ -178,7 +226,10 @@ public abstract class AIAgent
     /// Run the agent with the provided message and arguments.
     /// </summary>
     /// <param name="message">The message to pass to the agent.</param>
-    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
+    /// <param name="thread">
+    /// The conversation thread to continue with this invocation. If not provided, creates a new thread.
+    /// The thread will be mutated with the provided messages and agent response.
+    /// </param>
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An async list of response items that each contain a <see cref="AgentRunResponseUpdate"/>.</returns>
@@ -188,7 +239,7 @@ public abstract class AIAgent
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        Throw.IfNull(message);
+        _ = Throw.IfNull(message);
 
         return this.RunStreamingAsync([message], thread, options, cancellationToken);
     }
@@ -197,7 +248,10 @@ public abstract class AIAgent
     /// Run the agent with the provided message and arguments.
     /// </summary>
     /// <param name="messages">The messages to pass to the agent.</param>
-    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
+    /// <param name="thread">
+    /// The conversation thread to continue with this invocation. If not provided, creates a new thread.
+    /// The thread will be mutated with the provided messages and agent response.
+    /// </param>
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An async list of response items that each contain a <see cref="AgentRunResponseUpdate"/>.</returns>
@@ -231,7 +285,7 @@ public abstract class AIAgent
     /// <param name="messages">The messages to pass to the thread.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An async task that completes once the notification is complete.</returns>
-    protected async Task NotifyThreadOfNewMessagesAsync(AgentThread thread, IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken)
+    protected static async Task NotifyThreadOfNewMessagesAsync(AgentThread thread, IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken)
     {
         _ = Throw.IfNull(thread);
         _ = Throw.IfNull(messages);

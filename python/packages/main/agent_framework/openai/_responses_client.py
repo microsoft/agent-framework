@@ -7,6 +7,7 @@ from itertools import chain
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from openai import AsyncOpenAI, BadRequestError
+from openai.types.responses.file_search_tool_param import FileSearchToolParam
 from openai.types.responses.function_tool_param import FunctionToolParam
 from openai.types.responses.parsed_response import (
     ParsedResponse,
@@ -26,13 +27,15 @@ from openai.types.responses.tool_param import (
     CodeInterpreterContainerCodeInterpreterToolAuto,
     ToolParam,
 )
+from openai.types.responses.web_search_tool_param import UserLocation as WebSearchUserLocation
+from openai.types.responses.web_search_tool_param import WebSearchToolParam
 from pydantic import BaseModel, SecretStr, ValidationError
 
 from agent_framework import DataContent, TextReasoningContent, UriContent, UsageContent
 
 from .._clients import ChatClientBase
 from .._logging import get_logger
-from .._tools import AIFunction, AITool, HostedCodeInterpreterTool
+from .._tools import AIFunction, AITool, HostedCodeInterpreterTool, HostedFileSearchTool, HostedWebSearchTool
 from .._types import (
     AIContents,
     ChatMessage,
@@ -44,6 +47,7 @@ from .._types import (
     FunctionCallContent,
     FunctionResultContent,
     HostedFileContent,
+    HostedVectorStoreContent,
     TextContent,
     TextSpanRegion,
     UsageDetails,
@@ -77,13 +81,21 @@ __all__ = ["OpenAIResponsesClient"]
 class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
     """Base class for all OpenAI Responses based API's."""
 
+    FILE_SEARCH_MAX_RESULTS: int = 50
+
+    def _filter_options(self, **kwargs: Any) -> dict[str, Any]:
+        """Filter options for the responses call."""
+        # The responses call does not support all the options that the chat completion call does.
+        # We filter out the unsupported options.
+        return {key: value for key, value in kwargs.items() if value is not None}
+
     @override
     async def get_response(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage],
         *,
         include: list["ResponseIncludable"] | None = None,
-        instruction: str | None = None,
+        instructions: str | None = None,
         max_tokens: int | None = None,
         parallel_tool_calls: bool | None = None,
         model: str | None = None,
@@ -114,7 +126,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         Args:
             messages: the message or messages to send to the model
             include: additional output data to include in the model response.
-            instruction: a system (or developer) message inserted into the model's context.
+            instructions: a system (or developer) message inserted into the model's context.
             max_tokens: The maximum number of tokens to generate.
             parallel_tool_calls: Whether to enable parallel tool calls.
             model: The model to use for the agent.
@@ -138,26 +150,32 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         Returns:
             A chat response from the model.
         """
+        additional_properties = additional_properties or {}
+        additional_properties.update(
+            self._filter_options(
+                include=include,
+                instructions=instructions,
+                parallel_tool_calls=parallel_tool_calls,
+                model=model,
+                previous_response_id=previous_response_id,
+                reasoning=reasoning,
+                service_tier=service_tier,
+                truncation=truncation,
+                timeout=timeout,
+            )
+        )
+
         return await super().get_response(
             messages=messages,
-            include=include,
-            instruction=instruction,
             max_tokens=max_tokens,
-            parallel_tool_calls=parallel_tool_calls,
-            model=model,
-            previous_response_id=previous_response_id,
-            reasoning=reasoning,
-            service_tier=service_tier,
             response_format=response_format,
             seed=seed,
             store=store,
             temperature=temperature,
             tool_choice=tool_choice,
-            tools=tools,
+            tools=tools,  # type: ignore
             top_p=top_p,
             user=user,
-            truncation=truncation,
-            timeout=timeout,
             additional_properties=additional_properties,
             **kwargs,
         )
@@ -169,7 +187,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         *,
         # TODO(peterychang): enable this option. background: bool | None = None,
         include: list["ResponseIncludable"] | None = None,
-        instruction: str | None = None,
+        instructions: str | None = None,
         max_tokens: int | None = None,
         parallel_tool_calls: bool | None = None,
         model: str | None = None,
@@ -200,7 +218,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         Args:
             messages: the message or messages to send to the model
             include: additional output data to include in the model response.
-            instruction: a system (or developer) message inserted into the model's context.
+            instructions: a system (or developer) message inserted into the model's context.
             max_tokens: The maximum number of tokens to generate.
             parallel_tool_calls: Whether to enable parallel tool calls.
             model: The model to use for the agent.
@@ -224,26 +242,32 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         Returns:
             A stream representing the response(s) from the LLM.
         """
+        additional_properties = additional_properties or {}
+        additional_properties.update(
+            self._filter_options(
+                include=include,
+                instructions=instructions,
+                parallel_tool_calls=parallel_tool_calls,
+                model=model,
+                previous_response_id=previous_response_id,
+                reasoning=reasoning,
+                service_tier=service_tier,
+                truncation=truncation,
+                timeout=timeout,
+            )
+        )
+
         async for update in super().get_streaming_response(
             messages=messages,
-            include=include,
-            instruction=instruction,
             max_tokens=max_tokens,
-            parallel_tool_calls=parallel_tool_calls,
-            model=model,
-            previous_response_id=previous_response_id,
-            reasoning=reasoning,
-            service_tier=service_tier,
             response_format=response_format,
             seed=seed,
             store=store,
             temperature=temperature,
             tool_choice=tool_choice,
-            tools=tools,
+            tools=tools,  # type: ignore
             top_p=top_p,
             user=user,
-            truncation=truncation,
-            timeout=timeout,
             additional_properties=additional_properties,
             **kwargs,
         ):
@@ -279,16 +303,16 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         except BadRequestError as ex:
             if ex.code == "content_filter":
                 raise OpenAIContentFilterException(
-                    f"{type(self)} service encountered a content error",
+                    f"{type(self)} service encountered a content error: {ex}",
                     inner_exception=ex,
                 ) from ex
             raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt",
+                f"{type(self)} service failed to complete the prompt: {ex}",
                 inner_exception=ex,
             ) from ex
         except Exception as ex:
             raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt, with exception: {ex}",
+                f"{type(self)} service failed to complete the prompt: {ex}",
                 inner_exception=ex,
             ) from ex
 
@@ -326,16 +350,16 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         except BadRequestError as ex:
             if ex.code == "content_filter":
                 raise OpenAIContentFilterException(
-                    f"{type(self)} service encountered a content error",
+                    f"{type(self)} service encountered a content error: {ex}",
                     inner_exception=ex,
                 ) from ex
             raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt",
+                f"{type(self)} service failed to complete the prompt: {ex}",
                 inner_exception=ex,
             ) from ex
         except Exception as ex:
             raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt",
+                f"{type(self)} service failed to complete the prompt: {ex}",
                 inner_exception=ex,
             ) from ex
 
@@ -373,6 +397,45 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                                 strict=False,
                                 type="function",
                                 description=tool.description,
+                            )
+                        )
+                    case HostedFileSearchTool():
+                        if not tool.inputs:
+                            raise ValueError("HostedFileSearchTool requires inputs to be specified.")
+                        inputs: list[str] = [
+                            inp.vector_store_id for inp in tool.inputs if isinstance(inp, HostedVectorStoreContent)
+                        ]
+                        if not inputs:
+                            raise ValueError(
+                                "HostedFileSearchTool requires inputs to be of type `HostedVectorStoreContent`."
+                            )
+
+                        response_tools.append(
+                            FileSearchToolParam(
+                                type="file_search",
+                                vector_store_ids=inputs,
+                                max_num_results=tool.max_results
+                                or self.FILE_SEARCH_MAX_RESULTS,  # default to max results  if not specified
+                            )
+                        )
+                    case HostedWebSearchTool():
+                        location: dict[str, str] | None = (
+                            tool.additional_properties.get("user_location", None)
+                            if tool.additional_properties
+                            else None
+                        )
+                        response_tools.append(
+                            WebSearchToolParam(
+                                type="web_search_preview",
+                                user_location=WebSearchUserLocation(
+                                    type="approximate",
+                                    city=location.get("city", None),
+                                    country=location.get("country", None),
+                                    region=location.get("region", None),
+                                    timezone=location.get("timezone", None),
+                                )
+                                if location
+                                else None,
                             )
                         )
                     case _:

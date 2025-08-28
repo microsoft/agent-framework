@@ -21,7 +21,7 @@ public sealed class Step03_ChatClientAgent_UsingCodeInterpreterTools(ITestOutput
     [InlineData(ChatClientProviders.OpenAIAssistant)]
     public async Task RunningWithFileReferenceAsync(ChatClientProviders provider)
     {
-        var codeInterpreterTool = new NewHostedCodeInterpreterTool()
+        var codeInterpreterTool = new HostedCodeInterpreterTool()
         {
             Inputs = [new HostedFileContent(await UploadFileAsync("Resources/groceries.txt", provider))]
         };
