@@ -18,7 +18,7 @@ Globally, these are the steps:
 	- Workflow: `python/packages/workflow`
 
 Why use the repo URL?
-- Installing from the GitHub repo lets you try the current `main` branch without waiting for a PyPI release, once we start releasing out packages on PyPI we will remove this guide.
+- Installing from the GitHub repo lets you try the current `main` branch without waiting for a PyPI release, once we start releasing our packages on PyPI we will remove this guide.
 
 Important note about extras and sub-packages
 - The `agent-framework` package defines optional extras (for example `azure`, `foundry`, `workflow`) which declare dependency names like `agent-framework-azure`.
