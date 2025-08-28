@@ -6,8 +6,14 @@ from agent_framework.openai import OpenAIChatClient
 
 
 async def main() -> None:
-    # For OpenAI model ID: Use "ai_model_id" parameter or "OPENAI_CHAT_MODEL_ID" environment variable.
-    # For OpenAI API key: Use "api_key" parameter or "OPENAI_API_KEY" environment variable.
+    """
+    Demonstrates cancelling a chat response request after 1 second.
+    Creates a task for the chat request, waits briefly, then cancels it to show proper cleanup.
+
+    Configuration:
+    - OpenAI model ID: Use "ai_model_id" parameter or "OPENAI_CHAT_MODEL_ID" environment variable
+    - OpenAI API key: Use "api_key" parameter or "OPENAI_API_KEY" environment variable
+    """
     chat_client = OpenAIChatClient()
 
     try:
