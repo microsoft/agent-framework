@@ -107,9 +107,14 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
             raise ServiceInitializationError("Failed to create OpenAI settings.", ex) from ex
 
         if not async_client and not openai_settings.api_key:
-            raise ServiceInitializationError("The OpenAI API key is required.")
+            raise ServiceInitializationError(
+                "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
+            )
         if not openai_settings.chat_model_id:
-            raise ServiceInitializationError("The OpenAI model ID is required.")
+            raise ServiceInitializationError(
+                "OpenAI model ID is required. "
+                "Set via 'ai_model_id' parameter or 'OPENAI_CHAT_MODEL_ID' environment variable."
+            )
 
         super().__init__(
             ai_model_id=openai_settings.chat_model_id,
