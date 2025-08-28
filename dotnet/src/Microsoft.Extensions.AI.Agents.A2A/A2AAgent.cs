@@ -59,7 +59,7 @@ internal sealed class A2AAgent : AIAgent
             Message = ConvertToA2AMessage(messages, thread)
         };
 
-        this._logger.LogA2AAgentInvokingAgent(nameof(RunStreamingAsync), this.Id, this.Name);
+        this._logger.LogA2AAgentInvokingAgent(nameof(RunAsync), this.Id, this.Name);
 
         var response = await this._a2aClient.SendMessageAsync(parameters, cancellationToken).ConfigureAwait(false);
 
