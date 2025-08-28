@@ -8,7 +8,7 @@ namespace Microsoft.Extensions.AI.Agents;
 
 internal static class ChatClientExtensions
 {
-    internal static IChatClient AsAgentInvokedChatClient(this IChatClient chatClient, ChatClientAgentOptions? options = null)
+    internal static IChatClient AsAgentInvokedChatClient(this IChatClient chatClient, ChatClientAgentOptions? options)
     {
         var chatBuilder = chatClient.AsBuilder();
 

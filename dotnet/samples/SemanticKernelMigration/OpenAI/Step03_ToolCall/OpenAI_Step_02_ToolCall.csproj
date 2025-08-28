@@ -11,9 +11,9 @@
   <ItemGroup>
     <PackageReference Include="System.Linq.Async" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
-    <PackageReference Include="Microsoft.SemanticKernel" />
-    <PackageReference Include="Microsoft.SemanticKernel.Agents.OpenAI" />
-    <PackageReference Include="Microsoft.SemanticKernel.Agents.Core" />
+    <PackageReference Include="Microsoft.SemanticKernel" VersionOverride="1.*" />
+    <PackageReference Include="Microsoft.SemanticKernel.Agents.OpenAI" VersionOverride="1.*-*" />
+    <PackageReference Include="Microsoft.SemanticKernel.Agents.Core" VersionOverride="1.*" />
   </ItemGroup>
 
   <ItemGroup>

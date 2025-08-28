@@ -55,7 +55,7 @@ public sealed class ChatClientAgent : AIAgent
     /// <param name="chatClient">The chat client to use for invoking the agent.</param>
     /// <param name="options">Full set of options to configure the agent.</param>
     /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
-    public ChatClientAgent(IChatClient chatClient, ChatClientAgentOptions options, ILoggerFactory? loggerFactory = null)
+    public ChatClientAgent(IChatClient chatClient, ChatClientAgentOptions? options, ILoggerFactory? loggerFactory = null)
     {
         _ = Throw.IfNull(chatClient);
 
@@ -67,7 +67,8 @@ public sealed class ChatClientAgent : AIAgent
         // Get the type of the chat client before wrapping it as an agent invoking chat client.
         this._chatClientType = chatClient.GetType();
 
-        this.ChatClient = options?.UseProvidedChatClientAsIs is true ? chatClient : chatClient.AsAgentInvokedChatClient();
+        // If the user has not opted out of using our default decorators, we wrap the chat client.
+        this.ChatClient = options?.UseProvidedChatClientAsIs is true ? chatClient : chatClient.AsAgentInvokedChatClient(options);
 
         this._logger = (loggerFactory ?? chatClient.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance).CreateLogger<ChatClientAgent>();
     }
