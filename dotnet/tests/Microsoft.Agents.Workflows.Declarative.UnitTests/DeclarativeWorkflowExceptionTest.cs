@@ -11,51 +11,19 @@ namespace Microsoft.Agents.Workflows.Declarative.UnitTests;
 public sealed class DeclarativeWorkflowExceptionTest(ITestOutputHelper output) : WorkflowTest(output)
 {
     [Fact]
-    public void InvalidScopeException()
-    {
-        AssertDefault<UnsupportedVariableException>(() => throw new UnsupportedVariableException());
-        AssertMessage<UnsupportedVariableException>((message) => throw new UnsupportedVariableException(message));
-        AssertInner<UnsupportedVariableException>((message, inner) => throw new UnsupportedVariableException(message, inner));
-    }
-
-    [Fact]
-    public void InvalidSegmentException()
-    {
-        AssertDefault<InvalidSegmentException>(() => throw new InvalidSegmentException());
-        AssertMessage<InvalidSegmentException>((message) => throw new InvalidSegmentException(message));
-        AssertInner<InvalidSegmentException>((message, inner) => throw new InvalidSegmentException(message, inner));
-    }
-
-    [Fact]
-    public void UnknownActionException()
-    {
-        AssertDefault<UnknownActionException>(() => throw new UnknownActionException());
-        AssertMessage<UnknownActionException>((message) => throw new UnknownActionException(message));
-        AssertInner<UnknownActionException>((message, inner) => throw new UnknownActionException(message, inner));
-    }
-
-    [Fact]
-    public void UnknownDataTypeException()
-    {
-        AssertDefault<UnknownDataTypeException>(() => throw new UnknownDataTypeException());
-        AssertMessage<UnknownDataTypeException>((message) => throw new UnknownDataTypeException(message));
-        AssertInner<UnknownDataTypeException>((message, inner) => throw new UnknownDataTypeException(message, inner));
-    }
-
-    [Fact]
     public void WorkflowExecutionException()
     {
-        AssertDefault<WorkflowExecutionException>(() => throw new WorkflowExecutionException());
-        AssertMessage<WorkflowExecutionException>((message) => throw new WorkflowExecutionException(message));
-        AssertInner<WorkflowExecutionException>((message, inner) => throw new WorkflowExecutionException(message, inner));
+        AssertDefault<DeclarativeActionException>(() => throw new DeclarativeActionException());
+        AssertMessage<DeclarativeActionException>((message) => throw new DeclarativeActionException(message));
+        AssertInner<DeclarativeActionException>((message, inner) => throw new DeclarativeActionException(message, inner));
     }
 
     [Fact]
     public void WorkflowModelException()
     {
-        AssertDefault<WorkflowModelException>(() => throw new WorkflowModelException());
-        AssertMessage<WorkflowModelException>((message) => throw new WorkflowModelException(message));
-        AssertInner<WorkflowModelException>((message, inner) => throw new WorkflowModelException(message, inner));
+        AssertDefault<DeclarativeModelException>(() => throw new DeclarativeModelException());
+        AssertMessage<DeclarativeModelException>((message) => throw new DeclarativeModelException(message));
+        AssertInner<DeclarativeModelException>((message, inner) => throw new DeclarativeModelException(message, inner));
     }
 
     private static void AssertDefault<TException>(Action throwAction) where TException : Exception

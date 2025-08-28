@@ -49,7 +49,7 @@ internal static class WorkflowDiagnostics
             {
                 if (!SystemScope.AllNames.Contains(variableDiagnostic.Path.VariableName))
                 {
-                    throw new UnsupportedVariableException($"Variable '{variableDiagnostic.Path.VariableName}' is not a supported system variable.");
+                    throw new DeclarativeModelException($"Variable '{variableDiagnostic.Path.VariableName}' is not a supported system variable.");
                 }
             }
 

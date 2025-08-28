@@ -27,6 +27,7 @@ internal sealed class DeclarativeWorkflowState
     private readonly RecalcEngine _engine;
     private readonly WorkflowScopes _scopes;
     private WorkflowExpressionEngine? _expressionEngine;
+    private int _isInitialized;
 
     public DeclarativeWorkflowState(RecalcEngine engine, WorkflowScopes? scopes = null)
     {
@@ -67,7 +68,7 @@ internal sealed class DeclarativeWorkflowState
     {
         if (!s_mutableScopes.Contains(scopeName))
         {
-            throw new InvalidScopeException($"Invalid scope: {scopeName}");
+            throw new DeclarativeModelException($"Invalid scope: {scopeName}");
         }
 
         this._scopes.Set(varName, value, scopeName);
@@ -82,6 +83,11 @@ internal sealed class DeclarativeWorkflowState
 
     public async ValueTask RestoreAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
+        if (Interlocked.CompareExchange(ref this._isInitialized, 1, 0) == 1)
+        {
+            return;
+        }
+
         await Task.WhenAll(s_mutableScopes.Select(scopeName => ReadScopeAsync(scopeName).AsTask())).ConfigureAwait(false);
 
         async ValueTask ReadScopeAsync(string scopeName)

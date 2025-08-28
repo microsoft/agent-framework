@@ -459,7 +459,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     private static string GetParentId(BotElement item) =>
         item.GetParentId() ??
-        throw new UnknownActionException($"Missing parent ID for action element: {item.GetId()} [{item.GetType().Name}].");
+        throw new DeclarativeModelException($"Missing parent ID for action element: {item.GetId()} [{item.GetType().Name}].");
 
     private string ContinuationFor(string parentId) => this.ContinuationFor(parentId, parentId);
 
@@ -505,6 +505,6 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     private static string FormatParent(BotElement element) =>
         element.Parent is null ?
-        throw new WorkflowModelException($"Undefined parent for {element.GetType().Name} that is member of {element.GetId()}.") :
+        throw new DeclarativeModelException($"Undefined parent for {element.GetType().Name} that is member of {element.GetId()}.") :
         $"{element.Parent.GetType().Name} ({element.GetParentId()})";
 }

@@ -48,12 +48,12 @@ public static class DeclarativeWorkflowBuilder
         Func<TInput, ChatMessage>? inputTransform = null)
         where TInput : notnull
     {
-        BotElement rootElement = YamlSerializer.Deserialize<BotElement>(yamlReader) ?? throw new UnknownActionException("Unable to parse workflow.");
+        BotElement rootElement = YamlSerializer.Deserialize<BotElement>(yamlReader) ?? throw new DeclarativeModelException("Unable to parse workflow.");
 
         // ISSUE #486 - Use "Workflow" element for Foundry.
         if (rootElement is not AdaptiveDialog workflowElement)
         {
-            throw new UnknownActionException($"Unsupported root element: {rootElement.GetType().Name}. Expected an {nameof(AdaptiveDialog)}.");
+            throw new DeclarativeModelException($"Unsupported root element: {rootElement.GetType().Name}. Expected an {nameof(AdaptiveDialog)}.");
         }
 
         string rootId = WorkflowActionVisitor.RootId(workflowElement.BeginDialog?.Id.Value ?? "workflow");

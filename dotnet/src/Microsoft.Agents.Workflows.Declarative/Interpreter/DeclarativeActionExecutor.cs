@@ -45,7 +45,7 @@ internal abstract class WorkflowActionExecutor :
     {
         if (!model.HasRequiredProperties)
         {
-            throw new WorkflowModelException($"Missing required properties for element: {model.GetId()} ({model.GetType().Name}).");
+            throw new DeclarativeModelException($"Missing required properties for element: {model.GetId()} ({model.GetType().Name}).");
         }
 
         this.Model = model;
@@ -69,13 +69,15 @@ internal abstract class WorkflowActionExecutor :
             return;
         }
 
+        await this.State.RestoreAsync(context, default).ConfigureAwait(false);
+
         try
         {
             object? result = await this.ExecuteAsync(context, cancellationToken: default).ConfigureAwait(false);
 
             await context.SendMessageAsync(new DeclarativeExecutorResult(this.Id, result)).ConfigureAwait(false);
         }
-        catch (WorkflowExecutionException exception)
+        catch (DeclarativeActionException exception)
         {
             Debug.WriteLine($"ERROR [{this.Id}] {exception.GetType().Name}\n{exception.Message}");
             throw;
@@ -83,7 +85,7 @@ internal abstract class WorkflowActionExecutor :
         catch (Exception exception)
         {
             Debug.WriteLine($"ERROR [{this.Id}] {exception.GetType().Name}\n{exception.Message}");
-            throw new WorkflowExecutionException($"Unhandled workflow failure - #{this.Id} ({this.Model.GetType().Name})", exception);
+            throw new DeclarativeActionException($"Unhandled workflow failure - #{this.Id} ({this.Model.GetType().Name})", exception);
         }
     }
 
@@ -93,7 +95,7 @@ internal abstract class WorkflowActionExecutor :
     {
         if (!s_mutableScopes.Contains(Throw.IfNull(targetPath.VariableScopeName)))
         {
-            throw new InvalidScopeException($"Invalid scope: {targetPath.VariableScopeName}");
+            throw new DeclarativeModelException($"Invalid scope: {targetPath.VariableScopeName}");
         }
 
         await this.State.SetAsync(targetPath, result, context).ConfigureAwait(false);
@@ -108,5 +110,11 @@ internal abstract class WorkflowActionExecutor :
             VALUE:{valuePosition}{result.Format()} ({result.GetType().Name})
             """);
 #endif
+    }
+
+    protected DeclarativeActionException Exception(string text, Exception? exception = null)
+    {
+        string message = $"Unexpected workflow failure during {this.Model.GetType().Name} [{this.Id}]: {text}";
+        return exception is null ? new(message) : new(message, exception);
     }
 }

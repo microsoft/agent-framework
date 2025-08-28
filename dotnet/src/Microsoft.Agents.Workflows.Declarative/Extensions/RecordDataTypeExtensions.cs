@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -30,7 +31,7 @@ internal static class RecordDataTypeExtensions
                         TimeDataType => TimeValue.New(propertyElement.GetDateTimeOffset().TimeOfDay),
                         RecordDataType recordType => recordType.ParseRecord(propertyElement),
                         TableDataType tableType => ParseTable(tableType, propertyElement),
-                        _ => throw new UnknownDataTypeException($"Unsupported data type '{property.Value.Type}' for property '{property.Key}'"),
+                        _ => throw new InvalidOperationException($"Unsupported data type '{property.Value.Type}' for property '{property.Key}'"),
                     };
                 yield return new NamedValue(property.Key, parsedValue);
             }

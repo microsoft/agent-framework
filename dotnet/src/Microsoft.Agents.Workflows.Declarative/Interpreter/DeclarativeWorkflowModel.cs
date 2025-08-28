@@ -30,7 +30,7 @@ internal sealed class DeclarativeWorkflowModel
 
         if (!this.Nodes.TryGetValue(nodeId, out ModelNode? sourceNode))
         {
-            throw new UnknownActionException($"Unresolved step: {nodeId}.");
+            throw new DeclarativeModelException($"Unresolved step: {nodeId}.");
         }
 
         return sourceNode.Depth;
@@ -40,7 +40,7 @@ internal sealed class DeclarativeWorkflowModel
     {
         if (!this.Nodes.TryGetValue(parentId, out ModelNode? parentNode))
         {
-            throw new UnknownActionException($"Unresolved parent for {executor.Id}: {parentId}.");
+            throw new DeclarativeModelException($"Unresolved parent for {executor.Id}: {parentId}.");
         }
 
         ModelNode stepNode = this.DefineNode(executor, parentNode, executor.GetType(), completionHandler);
@@ -52,12 +52,12 @@ internal sealed class DeclarativeWorkflowModel
     {
         if (!this.Nodes.TryGetValue(parentId, out ModelNode? parentNode))
         {
-            throw new UnknownActionException($"Unresolved step: {parentId}.");
+            throw new DeclarativeModelException($"Unresolved step: {parentId}.");
         }
 
         if (parentNode.Children.Count == 0)
         {
-            throw new WorkflowModelException($"Cannot add a link from a node with no children: {parentId}.");
+            throw new DeclarativeModelException($"Cannot add a link from a node with no children: {parentId}.");
         }
 
         ModelNode sourceNode = parentNode.Children.Count == 1 ? parentNode : parentNode.Children[parentNode.Children.Count - 2];
@@ -69,7 +69,7 @@ internal sealed class DeclarativeWorkflowModel
     {
         if (!this.Nodes.TryGetValue(sourceId, out ModelNode? sourceNode))
         {
-            throw new UnknownActionException($"Unresolved step: {sourceId}.");
+            throw new DeclarativeModelException($"Unresolved step: {sourceId}.");
         }
 
         this.Links.Add(new ModelLink(sourceNode, targetId, condition));
@@ -91,7 +91,7 @@ internal sealed class DeclarativeWorkflowModel
         {
             if (!this.Nodes.TryGetValue(link.TargetId, out ModelNode? targetNode))
             {
-                throw new WorkflowModelException($"Unresolved target for {link.Source.Id}: {link.TargetId}.");
+                throw new DeclarativeModelException($"Unresolved target for {link.Source.Id}: {link.TargetId}.");
             }
 
             Debug.WriteLine($"> CONNECT: {link.Source.Id} => {link.TargetId}{(link.Condition is null ? string.Empty : " (?)")}");
@@ -120,7 +120,7 @@ internal sealed class DeclarativeWorkflowModel
         {
             if (!this.Nodes.TryGetValue(itemId, out ModelNode? itemNode))
             {
-                throw new UnknownActionException($"Unresolved child: {itemId}.");
+                throw new DeclarativeModelException($"Unresolved child: {itemId}.");
             }
 
             if (itemNode.ExecutorType == typeof(TAction))

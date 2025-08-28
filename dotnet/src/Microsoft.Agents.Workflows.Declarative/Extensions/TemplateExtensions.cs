@@ -44,6 +44,6 @@ internal static class TemplateExtensions
             }
         }
 
-        throw new InvalidSegmentException($"Unsupported segment type: {segment.GetType().Name}");
+        throw new DeclarativeModelException($"Unsupported segment type: {segment.GetType().Name}");
     }
 }

@@ -1,6 +1,7 @@
 ﻿
 // Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -51,19 +52,26 @@ internal sealed class ParseValueExecutor(ParseValue model, DeclarativeWorkflowSt
 
         if (parsedResult is null)
         {
-            throw new WorkflowExecutionException($"Unable to parse {expressionResult.Value.GetType().Name}");
+            throw this.Exception("Unable to parse value.");
         }
 
         await this.AssignAsync(variablePath, parsedResult, context).ConfigureAwait(false);
 
         return default;
-    }
 
-    private static RecordValue ParseRecord(RecordDataType recordType, string rawText)
-    {
-        string jsonText = rawText.TrimJsonDelimiter();
-        JsonDocument json = JsonDocument.Parse(jsonText);
-        JsonElement currentElement = json.RootElement;
-        return recordType.ParseRecord(currentElement);
+        RecordValue ParseRecord(RecordDataType recordType, string rawText)
+        {
+            string jsonText = rawText.TrimJsonDelimiter();
+            JsonDocument json = JsonDocument.Parse(jsonText);
+            JsonElement currentElement = json.RootElement;
+            try
+            {
+                return recordType.ParseRecord(currentElement);
+            }
+            catch (Exception exception)
+            {
+                throw this.Exception("Failed to parse value.", exception);
+            }
+        }
     }
 }

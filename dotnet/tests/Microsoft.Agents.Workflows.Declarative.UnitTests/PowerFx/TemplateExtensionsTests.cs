@@ -128,7 +128,7 @@ public class TemplateExtensionsTests(ITestOutputHelper output) : RecalcEngineTes
         RecalcEngine engine = this.CreateEngine();
 
         // Act & Assert
-        Assert.Throws<InvalidSegmentException>(() => engine.Format(line));
+        Assert.Throws<DeclarativeModelException>(() => engine.Format(line));
     }
 
     [Fact]

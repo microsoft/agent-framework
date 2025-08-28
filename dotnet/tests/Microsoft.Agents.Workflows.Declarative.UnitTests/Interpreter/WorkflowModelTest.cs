@@ -24,7 +24,7 @@ public sealed class DeclarativeWorkflowModelTest(ITestOutputHelper output) : Wor
     public async Task GetDepthForMissingNode()
     {
         DeclarativeWorkflowModel model = new(this.CreateExecutor("root"));
-        Assert.Throws<UnknownActionException>(() => model.GetDepth("missing"));
+        Assert.Throws<DeclarativeModelException>(() => model.GetDepth("missing"));
     }
 
     [Fact]
@@ -34,21 +34,21 @@ public sealed class DeclarativeWorkflowModelTest(ITestOutputHelper output) : Wor
         DeclarativeWorkflowModel model = new(rootExecutor);
         model.AddLink("root", "missing");
         WorkflowBuilder workflowBuilder = new(rootExecutor);
-        Assert.Throws<WorkflowModelException>(() => model.ConnectNodes(workflowBuilder));
+        Assert.Throws<DeclarativeModelException>(() => model.ConnectNodes(workflowBuilder));
     }
 
     [Fact]
     public async Task AddToMissingParent()
     {
         DeclarativeWorkflowModel model = new(this.CreateExecutor("root"));
-        Assert.Throws<UnknownActionException>(() => model.AddNode(this.CreateExecutor("next"), "missing"));
+        Assert.Throws<DeclarativeModelException>(() => model.AddNode(this.CreateExecutor("next"), "missing"));
     }
 
     [Fact]
     public async Task LinkFromMissingSource()
     {
         DeclarativeWorkflowModel model = new(this.CreateExecutor("root"));
-        Assert.Throws<UnknownActionException>(() => model.AddLink("missing", "anything"));
+        Assert.Throws<DeclarativeModelException>(() => model.AddLink("missing", "anything"));
     }
 
     [Fact]
@@ -56,7 +56,7 @@ public sealed class DeclarativeWorkflowModelTest(ITestOutputHelper output) : Wor
     {
         DeclarativeWorkflowModel model = new(this.CreateExecutor("root"));
         Assert.Null(model.LocateParent<TestExecutor>(null));
-        Assert.Throws<UnknownActionException>(() => model.LocateParent<TestExecutor>("missing"));
+        Assert.Throws<DeclarativeModelException>(() => model.LocateParent<TestExecutor>("missing"));
     }
 
     private TestExecutor CreateExecutor(string id) => new(id);

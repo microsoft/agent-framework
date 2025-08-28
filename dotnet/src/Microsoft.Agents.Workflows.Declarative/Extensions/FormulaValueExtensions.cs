@@ -4,12 +4,12 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Dynamic;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
-using BindingFlags = System.Reflection.BindingFlags;
 using BlankType = Microsoft.PowerFx.Types.BlankType;
 
 namespace Microsoft.Agents.Workflows.Declarative.Extensions;
@@ -20,12 +20,11 @@ internal static class FormulaValueExtensions
 
     public static FormulaValue NewBlank(this FormulaType? type) => FormulaValue.NewBlank(type ?? FormulaType.Blank);
 
-    public static FormulaValue ToFormulaValue(this object? value)
-    {
-        Type? type = value?.GetType();
-        return value switch
+    public static FormulaValue ToFormulaValue(this object? value) =>
+        value switch
         {
             null => FormulaValue.NewBlank(),
+            FormulaValue formulaValue => formulaValue,
             bool booleanValue => FormulaValue.New(booleanValue),
             int decimalValue => FormulaValue.New(decimalValue),
             long decimalValue => FormulaValue.New(decimalValue),
@@ -36,26 +35,27 @@ internal static class FormulaValueExtensions
             DateTime dateonlyValue when dateonlyValue.TimeOfDay == TimeSpan.Zero => FormulaValue.NewDateOnly(dateonlyValue),
             DateTime datetimeValue => FormulaValue.New(datetimeValue),
             TimeSpan timeValue => FormulaValue.New(timeValue),
-            object when typeof(IEnumerable).IsAssignableFrom(type) => ((IEnumerable)value).ToTableValue(type),
-            _ => value.ToRecordValue(type),
+            object when value is IEnumerable tableValue => tableValue.ToTable(),
+            ExpandoObject expandoValue => expandoValue.ToRecord(),
+            _ => throw new DeclarativeModelException($"Unsupported variable type: {value.GetType().Name}"),
         };
-    }
 
-    public static FormulaType ToFormulaType(this Type? type) =>
-        type switch
+    public static FormulaType GetFormulaType(this object? value) =>
+        value switch
         {
             null => FormulaType.Blank,
-            Type when type == typeof(bool) => FormulaType.Boolean,
-            Type when type == typeof(int) => FormulaType.Decimal,
-            Type when type == typeof(long) => FormulaType.Decimal,
-            Type when type == typeof(float) => FormulaType.Decimal,
-            Type when type == typeof(decimal) => FormulaType.Decimal,
-            Type when type == typeof(double) => FormulaType.Number,
-            Type when type == typeof(string) => FormulaType.String,
-            Type when type == typeof(DateTime) => FormulaType.DateTime,
-            Type when type == typeof(TimeSpan) => FormulaType.Time,
-            Type when typeof(IEnumerable).IsAssignableFrom(type) => type.ToTableType(),
-            _ => type.ToRecordType(),
+            bool => FormulaType.Boolean,
+            int => FormulaType.Decimal,
+            long => FormulaType.Decimal,
+            float => FormulaType.Decimal,
+            decimal => FormulaType.Decimal,
+            double => FormulaType.Number,
+            string => FormulaType.String,
+            DateTime => FormulaType.DateTime,
+            TimeSpan => FormulaType.Time,
+            object when value is IEnumerable tableValue => tableValue.ToTableType(),
+            ExpandoObject expandoValue => expandoValue.ToRecordType(),
+            _ => FormulaType.Unknown,
         };
 
     public static DataValue ToDataValue(this FormulaValue value) =>
@@ -72,7 +72,7 @@ internal static class FormulaValueExtensions
             VoidValue voidValue => DataValue.Blank(),
             RecordValue recordValue => recordValue.ToRecord(),
             TableValue tableValue => tableValue.ToTable(),
-            _ => throw new NotSupportedException($"Unsupported FormulaValue type: {value.GetType().Name}"),
+            _ => throw new DeclarativeModelException($"Unsupported variable type: {value.GetType().Name}"),
         };
 
     public static DataType GetDataType(this FormulaValue value) =>
@@ -143,7 +143,7 @@ internal static class FormulaValueExtensions
     public static RecordDataValue ToRecord(this RecordValue value) =>
         RecordDataValue.RecordFromFields(value.OriginalFields.Select(field => field.GetKeyValuePair()).ToImmutableArray());
 
-    public static RecordDataType ToDataType(this RecordType record)
+    private static RecordDataType ToDataType(this RecordType record)
     {
         RecordDataType recordType = new();
         foreach (string fieldName in record.FieldNames)
@@ -153,7 +153,7 @@ internal static class FormulaValueExtensions
         return recordType;
     }
 
-    public static TableDataType ToDataType(this TableType table)
+    private static TableDataType ToDataType(this TableType table)
     {
         TableDataType tableType = new();
         foreach (string fieldName in table.FieldNames)
@@ -163,85 +163,65 @@ internal static class FormulaValueExtensions
         return tableType;
     }
 
-    private static RecordType ToRecordType(this Type? type)
+    private static RecordType ToRecordType(this ExpandoObject value)
     {
         RecordType recordType = RecordType.Empty();
-
-        if (type is not null)
+        foreach (KeyValuePair<string, object?> property in value)
         {
-#pragma warning disable IL2070 // might not behave correctly in a trimmed deployment. // %%% REFLECTION
-            foreach ((string Name, Type Type) property in
-                     type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                        .Select(property => (property.Name, property.PropertyType)))
-#pragma warning restore IL2070 // might not behave correctly in a trimmed deployment.
-            {
-                recordType.Add(property.Name, property.Type.ToFormulaType());
-            }
+            recordType.Add(property.Key, property.Value.GetFormulaType());
         }
-
         return recordType;
     }
 
-    private static RecordValue ToRecordValue(this object value, Type? type)
+    private static RecordValue ToRecord(this ExpandoObject value) =>
+        FormulaValue.NewRecordFromFields(
+            value.Select(
+                property => new NamedValue(property.Key, property.Value.ToFormulaValue())));
+
+    private static TableType ToTableType(this IEnumerable value)
     {
-        type ??= value.GetType();
+        Type valueType = value.GetType();
+        Type? elementType = valueType.GetElementType() ?? valueType.GetGenericArguments().FirstOrDefault();
 
-        if (value is not RecordValue recordValue)
-        {
-#pragma warning disable IL2070 // might not behave correctly in a trimmed deployment. // %%% REFLECTION
-            IEnumerable<NamedValue> propertyValues =
-                type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                    .Select(property => new NamedValue(property.Name, property.GetValue(value).ToFormulaValue()));
-#pragma warning restore IL2070 // might not behave correctly in a trimmed deployment.
-            recordValue = FormulaValue.NewRecordFromFields(propertyValues);
-        }
-
-        return recordValue;
-    }
-
-    private static TableType ToTableType(this Type type)
-    {
-        TableType tableType = TableType.Empty();
-
-        Type? elementType = type.GetElementType() ?? type.GetGenericArguments().FirstOrDefault();
         if (elementType is not null)
         {
-#pragma warning disable IL2070 // might not behave correctly in a trimmed deployment. // %%% REFLECTION
-            foreach ((string Name, Type Type) property in
-                     type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                        .Select(property => (property.Name, property.PropertyType)))
-#pragma warning restore IL2070 // might not behave correctly in a trimmed deployment.
+            if (elementType != typeof(ExpandoObject))
             {
-                tableType.Add(property.Name, property.Type.ToFormulaType());
+                throw new DeclarativeModelException($"Invalid table element: {elementType.Name}");
+            }
+
+            foreach (ExpandoObject element in value)
+            {
+                return element.ToRecordType().ToTable();
             }
         }
 
-        return tableType;
+        return TableType.Empty();
     }
 
-    private static TableValue ToTableValue(this IEnumerable value, Type type)
+    private static TableValue ToTable(this IEnumerable value)
     {
-        Type? elementType = type.GetElementType() ?? type.GetGenericArguments().FirstOrDefault();
+        Type valueType = value.GetType();
+        Type? elementType = valueType.GetElementType() ?? valueType.GetGenericArguments().FirstOrDefault();
 
-        if (type is null)
+        if (elementType is null)
         {
             return FormulaValue.NewTable(RecordType.EmptySealed());
         }
 
-        return FormulaValue.NewTable(elementType.ToRecordType(), GetRecords());
-
-        IEnumerable<RecordValue> GetRecords()
+        if (elementType != typeof(ExpandoObject))
         {
-            foreach (object elementValue in value)
-            {
-                yield return elementValue.ToRecordValue(elementType);
-            }
+            throw new DeclarativeModelException($"Invalid table element: {elementType.Name}");
         }
+
+        List<RecordValue> records = [.. value.OfType<ExpandoObject>().Select(element => element.ToRecord())];
+
+        return FormulaValue.NewTable(value.ToTableType().ToRecord(), records);
     }
 
     private static KeyValuePair<string, DataValue> GetKeyValuePair(this NamedValue value) => new(value.Name, value.Value.ToDataValue());
 
-    public static JsonNode ToJson(this FormulaValue value) =>
+    private static JsonNode ToJson(this FormulaValue value) =>
         value switch
         {
             BooleanValue booleanValue => JsonValue.Create(booleanValue.Value),
@@ -258,7 +238,7 @@ internal static class FormulaValueExtensions
             _ => $"[{value.GetType().Name}]",
         };
 
-    public static JsonArray ToJson(this TableValue value)
+    private static JsonArray ToJson(this TableValue value)
     {
         return new([.. GetJsonElements()]);
 
@@ -272,7 +252,7 @@ internal static class FormulaValueExtensions
         }
     }
 
-    public static JsonObject ToJson(this RecordValue value)
+    private static JsonObject ToJson(this RecordValue value)
     {
         JsonObject jsonObject = [];
         foreach (NamedValue field in value.OriginalFields)

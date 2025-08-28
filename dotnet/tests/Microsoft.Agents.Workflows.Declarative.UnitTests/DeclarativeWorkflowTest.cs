@@ -29,7 +29,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData("BadKind.yaml")]
     public async Task InvalidWorkflow(string workflowFile)
     {
-        await Assert.ThrowsAsync<UnknownActionException>(() => this.RunWorkflow(workflowFile));
+        await Assert.ThrowsAsync<DeclarativeModelException>(() => this.RunWorkflow(workflowFile));
         this.AssertNotExecuted("end_all");
     }
 
