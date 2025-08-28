@@ -26,8 +26,7 @@ AIAgent agent = new AzureOpenAIClient(
 // Start a new thread for the agent conversation.
 AgentThread thread = agent.GetNewThread();
 
-Console.WriteLine("--- Run the agent (context preserved) ---\n");
-
+// Run the agent with a new thread.
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", thread));
 
 // Serialize the thread state to a JsonElement, so it can be stored for later use.
@@ -37,12 +36,11 @@ JsonElement serializedThread = await thread.SerializeAsync();
 string tempFilePath = Path.GetTempFileName();
 await File.WriteAllTextAsync(tempFilePath, JsonSerializer.Serialize(serializedThread));
 
-Console.WriteLine("\n--- Resume the conversation (with previously stored context) ---\n");
-
 // Load the serialized thread from the temporary file (for demonstration purposes).
 JsonElement reloadedSerializedThread = JsonSerializer.Deserialize<JsonElement>(await File.ReadAllTextAsync(tempFilePath));
 
 // Deserialize the thread state after loading from storage.
 AgentThread resumedThread = await agent.DeserializeThreadAsync(reloadedSerializedThread);
 
+// Run the agent again with the resumed thread.
 Console.WriteLine(await agent.RunAsync("Now tell the same joke in the voice of a pirate, and add some emojis to the joke.", resumedThread));

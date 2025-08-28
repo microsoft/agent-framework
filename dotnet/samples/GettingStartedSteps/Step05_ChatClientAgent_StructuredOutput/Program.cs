@@ -34,8 +34,6 @@ AIAgent agent = new AzureOpenAIClient(
         .GetChatClient(deploymentName)
         .CreateAIAgent(agentOptions);
 
-Console.WriteLine("\n--- Run with structured output ---\n");
-
 // Invoke the agent with some unstructured input, to extract the structured information from.
 var response = await agent.RunAsync("Please provide information about John Smith, who is a 35-year-old software engineer.");
 
@@ -47,9 +45,7 @@ Console.WriteLine($"Name: {personInfo.Name}");
 Console.WriteLine($"Age: {personInfo.Age}");
 Console.WriteLine($"Occupation: {personInfo.Occupation}");
 
-Console.WriteLine("\n--- Run with structured output and streaming ---\n");
-
-// Invoke the agent with some unstructured input, to extract the structured information from.
+// Invoke the agent with some unstructured input while streaming, to extract the structured information from.
 var updates = agent.RunStreamingAsync("Please provide information about John Smith, who is a 35-year-old software engineer.");
 
 // Assemble all the parts of the streamed output, since we can only deserialize once we have the full json,

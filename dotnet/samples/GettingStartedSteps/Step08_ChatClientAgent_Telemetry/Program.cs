@@ -35,14 +35,12 @@ AIAgent agent = new AzureOpenAIClient(
      .WithOpenTelemetry(sourceName: sourceName);
 
 // Invoke the agent and output the text result.
-Console.WriteLine("--- Run the agent ---\n");
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));
 
 // Invoke the agent with streaming support.
-Console.WriteLine("\n--- Run the agent with streaming ---\n");
 await foreach (var update in agent.RunStreamingAsync("Tell me a joke about a pirate."))
 {
-    Console.Write(update);
+    Console.WriteLine(update);
 }
 
 // The telemetry data will also be output to the console by the OpenTelemetry console exporter.

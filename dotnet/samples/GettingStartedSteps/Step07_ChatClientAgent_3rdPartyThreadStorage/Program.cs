@@ -50,8 +50,7 @@ AIAgent agent = new AzureOpenAIClient(
 // Start a new thread for the agent conversation.
 AgentThread thread = agent.GetNewThread();
 
-Console.WriteLine("--- Run the agent (with context saved in vector store) ---\n");
-
+// Run the agent with the thread that stores conversation history in the vector store.
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", thread));
 
 // Serialize the thread state, so it can be stored for later use.
@@ -68,7 +67,7 @@ Console.WriteLine(JsonSerializer.Serialize(serializedThread, new JsonSerializerO
 // Deserialize the thread state after loading from storage.
 AgentThread resumedThread = await agent.DeserializeThreadAsync(serializedThread);
 
-Console.WriteLine("\n--- Run the agent (with previous context from vector store) ---\n");
+// Run the agent with the thread that stores conversation history in the vector store a second time.
 Console.WriteLine(await agent.RunAsync("Now tell the same joke in the voice of a pirate, and add some emojis to the joke.", resumedThread));
 
 namespace SampleApp
