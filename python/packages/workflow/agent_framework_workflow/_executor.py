@@ -78,27 +78,44 @@ class Executor(AFBaseModel):
         Returns:
             An awaitable that resolves to the result of the execution.
         """
+        # Create processing span for tracing (gracefully handles disabled tracing)
+        from ._telemetry import workflow_tracer
+
+        source_trace_contexts = getattr(context, "_trace_contexts", None)
+        source_span_ids = getattr(context, "_source_span_ids", None)
+
         # Handle case where Message wrapper is passed instead of raw data
+        from ._runner_context import Message
 
-        # Lazy registration for SubWorkflowRequestInfo if we have interceptors
-        if self._request_interceptors and message.__class__.__name__ == "SubWorkflowRequestInfo":
-            # Directly handle SubWorkflowRequestInfo
+        if isinstance(message, Message):
+            message = message.data
+
+        with workflow_tracer.create_processing_span(
+            self.id,
+            self.__class__.__name__,
+            type(message).__name__,
+            source_trace_contexts=source_trace_contexts,
+            source_span_ids=source_span_ids,
+        ):
+            # Lazy registration for SubWorkflowRequestInfo if we have interceptors
+            if self._request_interceptors and message.__class__.__name__ == "SubWorkflowRequestInfo":
+                # Directly handle SubWorkflowRequestInfo
+                await context.add_event(ExecutorInvokeEvent(self.id))
+                await self._handle_sub_workflow_request(message, context)
+                await context.add_event(ExecutorCompletedEvent(self.id))
+                return
+
+            handler: Callable[[Any, WorkflowContext[Any]], Any] | None = None
+            for message_type in self._handlers:
+                if is_instance_of(message, message_type):
+                    handler = self._handlers[message_type]
+                    break
+
+            if handler is None:
+                raise RuntimeError(f"Executor {self.__class__.__name__} cannot handle message of type {type(message)}.")
             await context.add_event(ExecutorInvokeEvent(self.id))
-            await self._handle_sub_workflow_request(message, context)
+            await handler(message, context)
             await context.add_event(ExecutorCompletedEvent(self.id))
-            return
-
-        handler: Callable[[Any, WorkflowContext[Any]], Any] | None = None
-        for message_type in self._handlers:
-            if is_instance_of(message, message_type):
-                handler = self._handlers[message_type]
-                break
-
-        if handler is None:
-            raise RuntimeError(f"Executor {self.__class__.__name__} cannot handle message of type {type(message)}.")
-        await context.add_event(ExecutorInvokeEvent(self.id))
-        await handler(message, context)
-        await context.add_event(ExecutorCompletedEvent(self.id))
 
     def _discover_handlers(self) -> None:
         """Discover message handlers and request interceptors in the executor class."""
@@ -196,17 +213,13 @@ class Executor(AFBaseModel):
 
                         if correlated_response.is_handled:
                             # Send response back to sub-workflow
-                            from ._runner_context import Message
-
-                            response_message = Message(
-                                source_id=self.id,
-                                target_id=request.sub_workflow_id,
-                                data=SubWorkflowResponse(
+                            await ctx.send_message(
+                                SubWorkflowResponse(
                                     request_id=request.request_id,
                                     data=correlated_response.data,
                                 ),
+                                target_id=request.sub_workflow_id,
                             )
-                            await ctx.send_message(response_message)
                         else:
                             # Forward WITH CONTEXT PRESERVED
                             # Update the data if interceptor provided a modified request
@@ -214,13 +227,7 @@ class Executor(AFBaseModel):
                                 request.data = correlated_response.forward_request
 
                             # Send the inner request to RequestInfoExecutor to create external request
-                            from ._runner_context import Message
-
-                            forward_message = Message(
-                                source_id=self.id,
-                                data=request,
-                            )
-                            await ctx.send_message(forward_message)
+                            await ctx.send_message(request)
                     else:
                         # Legacy support: direct return means handled
                         await ctx.send_message(
@@ -234,10 +241,7 @@ class Executor(AFBaseModel):
 
         # No interceptor found - forward inner request to RequestInfoExecutor
         # This sends the original request to RequestInfoExecutor
-        from ._runner_context import Message
-
-        passthrough_message = Message(source_id=self.id, data=request.data)
-        await ctx.send_message(passthrough_message)
+        await ctx.send_message(request.data)
 
     def can_handle(self, message: Any) -> bool:
         """Check if the executor can handle a given message type.
@@ -357,7 +361,7 @@ def handler(
             return await func(self, message, ctx)
 
         # Preserve the original function signature for introspection during validation
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(AttributeError, TypeError):
             wrapper.__signature__ = sig  # type: ignore[attr-defined]
 
         wrapper._handler_spec = {  # type: ignore
@@ -806,15 +810,19 @@ class WorkflowExecutor(Executor):
     are intercepted by parent workflows.
     """
 
-    def __init__(self, workflow: "Workflow", id: str | None = None):
+    workflow: "Workflow" = Field(description="The workflow to execute as a sub-workflow")
+
+    def __init__(self, workflow: "Workflow", id: str | None = None, **kwargs: Any):
         """Initialize the WorkflowExecutor.
 
         Args:
             workflow: The workflow to execute as a sub-workflow.
             id: Optional unique identifier for this executor.
+            **kwargs: Additional keyword arguments passed to the parent constructor.
         """
-        super().__init__(id)
-        self._workflow = workflow
+        kwargs.update({"workflow": workflow})
+        super().__init__(id, **kwargs)
+
         # Track pending external responses by request_id
         self._pending_responses: dict[str, Any] = {}  # request_id -> response_data
         # Track workflow state for proper resumption - support multiple concurrent requests
@@ -846,7 +854,7 @@ class WorkflowExecutor(Executor):
 
         try:
             # Run the sub-workflow and collect all events
-            events = [event async for event in self._workflow.run_streaming(input_data)]
+            events = [event async for event in self.workflow.run_streaming(input_data)]
 
             # Count requests and initialize response tracking
             request_count = 0
@@ -932,7 +940,7 @@ class WorkflowExecutor(Executor):
             responses_to_send = dict(self._collected_responses)
             self._collected_responses.clear()  # Clear for next batch
 
-            result_events = [event async for event in self._workflow.send_responses_streaming(responses_to_send)]
+            result_events = [event async for event in self.workflow.send_responses_streaming(responses_to_send)]
 
             # Process the result events
             new_request_count = 0

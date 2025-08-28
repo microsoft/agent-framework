@@ -125,9 +125,9 @@ public class ChatClientAgentExtensionsTests
         await ChatClientAgentExtensions.RunAsync(agent, messages, agentRunOptions: runOptions);
 
         // Assert
-        Assert.Contains(capturedMessages, m => m.Text == "base instructions" && m.Role == ChatRole.System);
         Assert.Contains(capturedMessages, m => m.Text == "test" && m.Role == ChatRole.User);
-        Assert.All(capturedChatOptions, Assert.Null);
+        Assert.Single(capturedChatOptions);
+        Assert.Equal("base instructions", capturedChatOptions[0].Instructions);
     }
 
     /// <summary>
@@ -296,7 +296,6 @@ public class ChatClientAgentExtensionsTests
 
         // Assert
         Assert.Contains(capturedMessages, m => m.Text == "test prompt" && m.Role == ChatRole.User);
-        Assert.Contains(capturedMessages, m => m.Text == "test instructions" && m.Role == ChatRole.System);
     }
 
     /// <summary>
@@ -355,7 +354,6 @@ public class ChatClientAgentExtensionsTests
         await ChatClientAgentExtensions.RunAsync(agent, TestPrompt, agentRunOptions: runOptions);
 
         // Assert
-        Assert.Contains(capturedMessages, m => m.Text == "base instructions" && m.Role == ChatRole.System);
         Assert.Contains(capturedMessages, m => m.Text == "test prompt" && m.Role == ChatRole.User);
     }
 
@@ -749,7 +747,6 @@ public class ChatClientAgentExtensionsTests
         // Assert
         Assert.Single(updates);
         Assert.Contains(capturedMessages, m => m.Text == "test prompt" && m.Role == ChatRole.User);
-        Assert.Contains(capturedMessages, m => m.Text == "test instructions" && m.Role == ChatRole.System);
     }
 
     /// <summary>

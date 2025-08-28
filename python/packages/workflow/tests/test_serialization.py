@@ -15,6 +15,9 @@ from agent_framework_workflow._edge import (
     SwitchCaseEdgeGroupCase,
     SwitchCaseEdgeGroupDefault,
 )
+from agent_framework_workflow._executor import (
+    WorkflowExecutor,
+)
 
 
 class SampleExecutor(Executor):
@@ -398,6 +401,110 @@ class TestSerializationWorkflowClasses:
             "JSON SwitchCaseEdgeGroup edges should not have condition_name"
         )
 
+    def test_nested_workflow_executor_serialization(self) -> None:
+        """Test complete serialization of deeply nested WorkflowExecutors (subworkflows within subworkflows).
+
+        This test verifies that nested WorkflowExecutor objects are fully serialized with their
+        complete workflow structures, including deeply nested workflows and all their executors.
+        """
+        # Create innermost workflow
+        inner_executor = SampleExecutor(id="inner-exec")
+        inner_workflow = WorkflowBuilder().set_start_executor(inner_executor).set_max_iterations(10).build()
+
+        # Create middle workflow with WorkflowExecutor
+        inner_workflow_executor = WorkflowExecutor(workflow=inner_workflow, id="inner-workflow-exec")
+        middle_executor = SampleExecutor(id="middle-exec")
+        middle_workflow = (
+            WorkflowBuilder()
+            .set_start_executor(middle_executor)
+            .add_edge(middle_executor, inner_workflow_executor)
+            .set_max_iterations(20)
+            .build()
+        )
+
+        # Create outer workflow with nested WorkflowExecutor
+        middle_workflow_executor = WorkflowExecutor(workflow=middle_workflow, id="middle-workflow-exec")
+        outer_executor = SampleExecutor(id="outer-exec")
+        outer_workflow = (
+            WorkflowBuilder()
+            .set_start_executor(outer_executor)
+            .add_edge(outer_executor, middle_workflow_executor)
+            .set_max_iterations(30)
+            .build()
+        )
+
+        # Test serialization of the nested structure
+        data = outer_workflow.model_dump()
+
+        # Verify outer structure
+        assert data["start_executor_id"] == "outer-exec"
+        assert data["max_iterations"] == 30
+        assert "outer-exec" in data["executors"]
+        assert "middle-workflow-exec" in data["executors"]
+
+        # Verify middle WorkflowExecutor is present with full nested workflow serialization
+        middle_exec_data = data["executors"]["middle-workflow-exec"]
+        assert middle_exec_data["type"] == "WorkflowExecutor"
+        assert middle_exec_data["id"] == "middle-workflow-exec"
+
+        # Verify the nested workflow is fully serialized
+        assert "workflow" in middle_exec_data, "WorkflowExecutor should include nested workflow in serialization"
+        middle_workflow_data = middle_exec_data["workflow"]
+        assert "start_executor_id" in middle_workflow_data
+        assert "executors" in middle_workflow_data
+        assert "max_iterations" in middle_workflow_data
+        assert middle_workflow_data["start_executor_id"] == "middle-exec"
+        assert middle_workflow_data["max_iterations"] == 20
+
+        # Verify the deeply nested executors are present
+        assert "middle-exec" in middle_workflow_data["executors"]
+        assert "inner-workflow-exec" in middle_workflow_data["executors"]
+
+        # Verify the innermost WorkflowExecutor is also fully serialized
+        inner_workflow_exec_data = middle_workflow_data["executors"]["inner-workflow-exec"]
+        assert inner_workflow_exec_data["type"] == "WorkflowExecutor"
+        assert "workflow" in inner_workflow_exec_data, "Deeply nested WorkflowExecutor should also include its workflow"
+        innermost_workflow_data = inner_workflow_exec_data["workflow"]
+        assert "start_executor_id" in innermost_workflow_data
+        assert "executors" in innermost_workflow_data
+        assert "max_iterations" in innermost_workflow_data
+        assert innermost_workflow_data["start_executor_id"] == "inner-exec"
+        assert innermost_workflow_data["max_iterations"] == 10
+        assert "inner-exec" in innermost_workflow_data["executors"]
+
+        # Test JSON serialization preserves the complete nested structure
+        json_str = outer_workflow.model_dump_json()
+        parsed = json.loads(json_str)
+
+        # Verify the complete structure is preserved in JSON
+        middle_exec_json = parsed["executors"]["middle-workflow-exec"]
+        assert middle_exec_json["type"] == "WorkflowExecutor"
+        assert middle_exec_json["id"] == "middle-workflow-exec"
+
+        # Verify nested workflow is present in JSON
+        assert "workflow" in middle_exec_json, "JSON serialization should include nested workflow"
+        middle_workflow_json = middle_exec_json["workflow"]
+        assert middle_workflow_json["start_executor_id"] == "middle-exec"
+        assert middle_workflow_json["max_iterations"] == 20
+        assert "middle-exec" in middle_workflow_json["executors"]
+        assert "inner-workflow-exec" in middle_workflow_json["executors"]
+
+        # Verify deeply nested structure in JSON
+        inner_workflow_exec_json = middle_workflow_json["executors"]["inner-workflow-exec"]
+        assert inner_workflow_exec_json["type"] == "WorkflowExecutor"
+        assert "workflow" in inner_workflow_exec_json, "Deeply nested WorkflowExecutor should be in JSON"
+        innermost_workflow_json = inner_workflow_exec_json["workflow"]
+        assert innermost_workflow_json["start_executor_id"] == "inner-exec"
+        assert innermost_workflow_json["max_iterations"] == 10
+        assert "inner-exec" in innermost_workflow_json["executors"]
+
+        # Test that WorkflowExecutor also serializes correctly when accessed directly
+        direct_middle_data = middle_workflow_executor.model_dump()
+        assert "workflow" in direct_middle_data
+        assert direct_middle_data["type"] == "WorkflowExecutor"
+        assert "executors" in direct_middle_data["workflow"]
+        assert "inner-workflow-exec" in direct_middle_data["workflow"]["executors"]
+
     def test_switch_case_edge_group_serialization_with_named_condition(self) -> None:
         """Test that SwitchCaseEdgeGroup with named condition function serializes condition_name correctly."""
 
@@ -440,7 +547,7 @@ class TestSerializationWorkflowClasses:
         assert "executors" in data
         assert "start_executor_id" in data
         assert "max_iterations" in data
-        assert "workflow_id" in data
+        assert "id" in data
 
         assert data["start_executor_id"] == "executor1"
         assert "executor1" in data["executors"]
