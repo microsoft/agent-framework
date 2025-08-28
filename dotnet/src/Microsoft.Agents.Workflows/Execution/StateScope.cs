@@ -23,6 +23,13 @@ internal class StateScope
     {
     }
 
+    public ValueTask<HashSet<string>> ReadKeysAsync()
+    {
+        HashSet<string> keys = new(this._stateData.Keys, this._stateData.Comparer);
+
+        return new(keys);
+    }
+
     public ValueTask<T?> ReadStateAsync<T>(string key)
     {
         Throw.IfNullOrEmpty(key);
@@ -40,7 +47,7 @@ internal class StateScope
 
         foreach (string key in updates.Keys)
         {
-            if (updates[key].Count == 0)
+            if (updates == null || updates[key].Count == 0)
             {
                 continue;
             }
@@ -50,14 +57,14 @@ internal class StateScope
                 throw new InvalidOperationException($"Expected exactly one update for key '{key}'.");
             }
 
-            StateUpdate upadte = updates[key][0];
-            if (upadte.IsDelete)
+            StateUpdate update = updates[key][0];
+            if (update.IsDelete)
             {
                 this._stateData.Remove(key);
             }
             else
             {
-                this._stateData[key] = upadte.Value!;
+                this._stateData[key] = update.Value!;
             }
         }
 

@@ -1,6 +1,8 @@
-# Microsoft Agent Framework for .NET Getting Started
+# Microsoft Agent Framework Getting Started
 
 This guide will help you get up and running quickly with a basic agent using the Agent Framework and Azure OpenAI.
+
+::: zone pivot="programming-language-csharp"
 
 ## Prerequisites
 
@@ -37,3 +39,10 @@ Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));
 ```
 
 For more details and more advanced scenarios, see [Getting Started Steps](../../../dotnet/samples/GettingStartedSteps/).
+
+::: zone-end
+::: zone pivot="programming-language-python"
+
+## Coming Soon
+
+::: zone-end

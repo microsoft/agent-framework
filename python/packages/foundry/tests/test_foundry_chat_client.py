@@ -6,7 +6,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import (
+    AgentRunResponse,
+    AgentRunResponseUpdate,
+    AgentThread,
     ChatClient,
+    ChatClientAgent,
     ChatMessage,
     ChatOptions,
     ChatResponse,
@@ -14,8 +18,10 @@ from agent_framework import (
     ChatRole,
     FunctionCallContent,
     FunctionResultContent,
+    HostedCodeInterpreterTool,
     TextContent,
     UriContent,
+    ai_function,
 )
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.agents.models import (
@@ -758,3 +764,183 @@ async def test_foundry_chat_client_streaming_tools() -> None:
                     full_message += content.text
 
         assert any(word in full_message.lower() for word in ["sunny", "25"])
+
+
+@skip_if_foundry_integration_tests_disabled
+async def test_foundry_chat_client_agent_basic_run() -> None:
+    """Test ChatClientAgent basic run functionality with FoundryChatClient."""
+    async with ChatClientAgent(
+        chat_client=FoundryChatClient(async_credential=AzureCliCredential()),
+    ) as agent:
+        # Run a simple query
+        response = await agent.run("Hello! Please respond with 'Hello World' exactly.")
+
+        # Validate response
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+        assert "Hello World" in response.text
+
+
+@skip_if_foundry_integration_tests_disabled
+async def test_foundry_chat_client_agent_basic_run_streaming() -> None:
+    """Test ChatClientAgent basic streaming functionality with FoundryChatClient."""
+    async with ChatClientAgent(
+        chat_client=FoundryChatClient(async_credential=AzureCliCredential()),
+    ) as agent:
+        # Run streaming query
+        full_message: str = ""
+        async for chunk in agent.run_streaming("Please respond with exactly: 'This is a streaming response test.'"):
+            assert chunk is not None
+            assert isinstance(chunk, AgentRunResponseUpdate)
+            if chunk.text:
+                full_message += chunk.text
+
+        # Validate streaming response
+        assert len(full_message) > 0
+        assert "streaming response test" in full_message.lower()
+
+
+@skip_if_foundry_integration_tests_disabled
+async def test_foundry_chat_client_agent_thread_persistence() -> None:
+    """Test ChatClientAgent thread persistence across runs with FoundryChatClient."""
+    async with ChatClientAgent(
+        chat_client=FoundryChatClient(async_credential=AzureCliCredential()),
+        instructions="You are a helpful assistant with good memory.",
+    ) as agent:
+        # Create a new thread that will be reused
+        thread = agent.get_new_thread()
+
+        # First message - establish context
+        first_response = await agent.run(
+            "Remember this number: 42. What number did I just tell you to remember?", thread=thread
+        )
+        assert isinstance(first_response, AgentRunResponse)
+        assert "42" in first_response.text
+
+        # Second message - test conversation memory
+        second_response = await agent.run(
+            "What number did I tell you to remember in my previous message?", thread=thread
+        )
+        assert isinstance(second_response, AgentRunResponse)
+        assert "42" in second_response.text
+
+
+@skip_if_foundry_integration_tests_disabled
+async def test_foundry_chat_client_agent_existing_thread_id() -> None:
+    """Test ChatClientAgent existing thread ID functionality with FoundryChatClient."""
+    async with ChatClientAgent(
+        chat_client=FoundryChatClient(async_credential=AzureCliCredential()),
+        instructions="You are a helpful assistant with good memory.",
+    ) as first_agent:
+        # Start a conversation and get the thread ID
+        thread = first_agent.get_new_thread()
+        first_response = await first_agent.run("My name is Alice. Remember this.", thread=thread)
+
+        # Validate first response
+        assert isinstance(first_response, AgentRunResponse)
+        assert first_response.text is not None
+
+        # The thread ID is set after the first response
+        existing_thread_id = thread.service_thread_id
+        assert existing_thread_id is not None
+
+    # Now continue with the same thread ID in a new agent instance
+    async with ChatClientAgent(
+        chat_client=FoundryChatClient(thread_id=existing_thread_id, async_credential=AzureCliCredential()),
+        instructions="You are a helpful assistant with good memory.",
+    ) as second_agent:
+        # Create a thread with the existing ID
+        thread = AgentThread(service_thread_id=existing_thread_id)
+
+        # Ask about the previous conversation
+        response2 = await second_agent.run("What is my name?", thread=thread)
+
+        # Validate that the agent remembers the previous conversation
+        assert isinstance(response2, AgentRunResponse)
+        assert response2.text is not None
+        # Should reference Alice from the previous conversation
+        assert "alice" in response2.text.lower()
+
+
+@skip_if_foundry_integration_tests_disabled
+async def test_foundry_chat_client_agent_code_interpreter():
+    """Test ChatClientAgent with code interpreter through FoundryChatClient."""
+
+    async with ChatClientAgent(
+        chat_client=FoundryChatClient(async_credential=AzureCliCredential()),
+        instructions="You are a helpful assistant that can write and execute Python code.",
+        tools=[HostedCodeInterpreterTool()],
+    ) as agent:
+        # Request code execution
+        response = await agent.run("Write Python code to calculate the factorial of 5 and show the result.")
+
+        # Validate response
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        # Factorial of 5 is 120
+        assert "120" in response.text or "factorial" in response.text.lower()
+
+
+@skip_if_foundry_integration_tests_disabled
+async def test_foundry_chat_client_agent_level_tool_persistence():
+    """Test that agent-level tools persist across multiple runs with FoundryChatClient."""
+    async with ChatClientAgent(
+        chat_client=FoundryChatClient(async_credential=AzureCliCredential()),
+        instructions="You are a helpful assistant that uses available tools.",
+        tools=[get_weather],
+    ) as agent:
+        # First run - agent-level tool should be available
+        first_response = await agent.run("What's the weather like in Chicago?")
+
+        assert isinstance(first_response, AgentRunResponse)
+        assert first_response.text is not None
+        # Should use the agent-level weather tool
+        assert any(term in first_response.text.lower() for term in ["chicago", "sunny", "25"])
+
+        # Second run - agent-level tool should still be available (persistence test)
+        second_response = await agent.run("What's the weather in Miami?")
+
+        assert isinstance(second_response, AgentRunResponse)
+        assert second_response.text is not None
+        # Should use the agent-level weather tool again
+        assert any(term in second_response.text.lower() for term in ["miami", "sunny", "25"])
+
+
+@skip_if_foundry_integration_tests_disabled
+async def test_foundry_chat_client_run_level_tool_isolation():
+    """Test that run-level tools are isolated to specific runs and don't persist with FoundryChatClient."""
+    # Counter to track how many times the weather tool is called
+    call_count = 0
+
+    @ai_function
+    async def get_weather_with_counter(location: Annotated[str, "The location as a city name"]) -> str:
+        """Get the current weather in a given location."""
+        nonlocal call_count
+        call_count += 1
+        return f"The weather in {location} is sunny and 25°C."
+
+    async with ChatClientAgent(
+        chat_client=FoundryChatClient(async_credential=AzureCliCredential()),
+        instructions="You are a helpful assistant.",
+    ) as agent:
+        # First run - use run-level tool
+        first_response = await agent.run(
+            "What's the weather like in Chicago?",
+            tools=[get_weather_with_counter],  # Run-level tool
+        )
+
+        assert isinstance(first_response, AgentRunResponse)
+        assert first_response.text is not None
+        # Should use the run-level weather tool (call count should be 1)
+        assert call_count == 1
+        assert any(term in first_response.text.lower() for term in ["chicago", "sunny", "25"])
+
+        # Second run - run-level tool should NOT persist (key isolation test)
+        second_response = await agent.run("What's the weather like in Miami?")
+
+        assert isinstance(second_response, AgentRunResponse)
+        assert second_response.text is not None
+        # Should NOT use the weather tool since it was only run-level in previous call
+        # Call count should still be 1 (no additional calls)
+        assert call_count == 1
