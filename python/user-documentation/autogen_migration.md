@@ -4,7 +4,7 @@ This is a migration guide for users of [Autogen](https://microsoft.github.io/aut
 
 
 ## What is Agent Framework?
-Agent Framework is an asyncrhonous, event-driven Agentic framework library which merges the best ideas and features from both `Autogen` and `Semantic Kernel`. The high level structure of Agent Framework is similar to that of Autogen, including the components used to build complex workflows.
+Agent Framework is an asynchronous, event-driven Agentic framework library which merges the best ideas and features from both `Autogen` and `Semantic Kernel`. The high level structure of Agent Framework is similar to that of Autogen, including the components used to build complex workflows.
 
 This guide will focus on translating the various components from `Autogen 0.4+` to `Agent Framework`
 
@@ -12,7 +12,7 @@ This guide will focus on translating the various components from `Autogen 0.4+` 
 
 Autogen is broken down into several component packages, including `autogen_agentchat`, `autogen_core`, `autogen_ext`, etc. Objects are also nested into logical subpackages.
 
-The Agent Framework package stucture opts toward a flatter structure. The packages are broken into the core package, and model-specific packages; including `agent-framework`, `agent-framework-azure`, `agent-framework-openai`, etc. However, each package's contents can be accessed through the `agent_framework` namespace as well. For example, `OpenAIChatClient` can be accessed with either `agent-framework-openai.OpenAIChatClient` or `agent_framework.openai.OpenAIChatClient`. Most objects, outside of specific components like errors or telemetry functionality, are contained within the top level package.
+The Agent Framework package structure opts toward a flatter structure. The packages are broken into the core package, and several sub-packages; such as `azure`, `openai`, `workflow`, etc. However, each package's contents can and should be accessed through the `agent_framework` namespace and installed using the provided extra to ensure all dependencies are present and have the right versions. However this does mean that for example, `AzureChatClient` can be accessed with either `agent_framework_azure.AzureChatClient` or `agent_framework.azure.AzureChatClient`. Most objects, outside of specific components like exceptions or telemetry functionality, are contained within the top level package.
 
 ## Model Client
 
@@ -59,7 +59,7 @@ config = {
 model_client = ChatCompletionClient.load_component(config)
 ```
 
-Agent Framework currently requires its components to be configured individually with a configuration dictionary, though in the future we will be implementing Copilot Studio Declarative Language (CPSDL) our official the declarative specification.
+Agent Framework currently requires its components to be configured individually with a configuration dictionary, though there may be changes to this in the future for improved developer experience.
 
 ```python
 from agent_framework.openai import OpenAIChatClient
@@ -74,7 +74,7 @@ chat_client = OpenAIChatClient.from_dict(config)
 
 ## Chat Agent
 
-In Autogen, a specialized agent implementation was created for use as an assistant agent. With Agent Framework, a chat agent can be created from the model client itself.
+Autogen  provided a convenience [AssistantAgent](https://microsoft.github.io/autogen/dev/user-guide/agentchat-user-guide/tutorial/agents.html#assistant-agent) class with a set of defined functionality. With Agent Framework, a similar chat agent can be created from the model client itself.
 
 ```python
 from agent_framework.openai import OpenAIChatClient
