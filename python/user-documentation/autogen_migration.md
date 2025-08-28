@@ -106,18 +106,6 @@ config = {
 client = OpenAIChatClient.from_dict(config)
 ```
 
-## Message Types
-
-### Input Types
-
-AutoGen uses distinct message types between their clients and chat agents. Clients accept a list of `LLMMessage` types, which is a union of `SystemMessage`, `UserMessage`, `AssistantMessage`, and `FunctionExecutionResultMessage`. Each message type serves a unique purpose and are not interchangeable. Agents on the other hand accept strings or any object or list of objects inherited from the `BaseChatMessage` type. The default provided message types are: `StructuredMessage`, `TextMessage`, `StopMessage`, `HandoffMessage`, `ToolCallSummaryMessage`, and `MultiModalMessage`.
-
-Agent Framework on the other hand uses the same type across both clients and chat agents. In both cases, the accepted types are strings, list of strings, `ChatMessage`, or list of `ChatMessage`. `ChatMessage` itself contains a list of contents, which can be of types `TextContent`, `DataContent`, `TextReasoningContent`, `UriContent`, `FunctionCallContent`, `FunctionResultContent`, `ErrorContent`, `UsageContent`, `HostedFileContent`, or `HostedVectorStoreContent`.
-
-### Output Types
-
-
-
 ## Chat Agent
 
 AutoGen provided a convenience [AssistantAgent](https://microsoft.github.io/autogen/dev/user-guide/agentchat-user-guide/tutorial/agents.html#assistant-agent) class with a set of defined functionality. With Agent Framework, a similar chat agent can be created from the model client itself. The functions `run` and `run_streaming` are analogous to autogen's `run` and `run_stream` calls, with both being asynchronous and returning an async iterable for the latter.
@@ -211,3 +199,48 @@ agent = ChatClientAgent(
     name="assistant",
 )
 ```
+
+
+## Message Types
+
+### Union/Inherited Types
+
+#### AutoGen
+
+`LLMMessage`: Union of `SystemMessage`, `UserMessage`, `AssistantMessage`, and `FunctionExecutionResultMessage`.
+
+`BaseChatMessage`: A base class. Default provided child classes are `StructuredMessage`, `TextMessage`, `StopMessage`, `HandoffMessage`, `ToolCallSummaryMessage`, and `MultiModalMessage`.
+
+`BaseAgentEvent`: A base class. Default provided child classes are `ToolCallRequestEvent`, `CodeGenerationEvent`, `CodeExecutionEvent`, `ToolCallExecutionEvent`, `UserInputRequestedEvent`, `MemoryQueryEvent`, `ModelClientStreamingChunkEvent`, `ThoughtEvent`, `SelectSpeakerEvent`, and `SelectorEvent`.
+
+#### Agent Framework
+
+`AIContents`: Union of `TextContent`, `DataContent`, `TextReasoningContent`, `UriContent`, `FunctionCallContent`, `FunctionResultContent`, `ErrorContent`, `UsageContent`, `HostedFileContent`, or `HostedVectorStoreContent`.
+
+### Input Types
+
+AutoGen uses distinct message types between their clients and chat agents. Clients accept a list of `LLMMessage` types. Each message type serves a unique purpose and are not interchangeable. Agents on the other hand accept strings or any object or list of objects inherited from the `BaseChatMessage` type.
+
+Agent Framework on the other hand uses the same type across both clients and chat agents. In both cases, the accepted types are strings, list of strings, `ChatMessage`, or list of `ChatMessage`. `ChatMessage` itself contains a list of `AIContents`.
+
+### Output Types
+
+AutoGen's clients and chat agents similarly produce different output types. These are further split by their streaming and non-streaming calls.
+
+|                   | client                             | agent        |
+| ----------------- | ---------------------------------- | ------------ |
+| **non-streaming** | `CreateResult`                     | `TaskResult` |
+| **streaming**     | stream of string or `CreateResult` | stream of `BaseAgentEvent` or `BaseChatMessage` or `TaskResult` |
+
+`CreateResult` contains a string or a list of `FunctionCall`.
+`TastResult` contains a sequence of `BaseAgentEvent` or `BaseChatMessage`.
+
+Agent Framework's outputs follow a similar pattern
+
+|                   | client                         | agent              |
+| ----------------- | ------------------------------ | ------------------ |
+| **non-streaming** | `ChatResponse`                 | `AgentRunResponse` |
+| **streaming**     | stream of `ChatResponseUpdate` | stream of `AgentRunResponseUpdate` |
+
+`ChatResponse` and `AgentRunResponse` contain a list of `ChatMessage`.
+`ChatResponseUpdate` and `AgentRunResponseUpdate` contain a list of `AIContents`.
