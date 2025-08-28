@@ -23,6 +23,8 @@ public sealed class A2APartExtensionsTests
 
         // Assert
         Assert.NotNull(result);
+        Assert.Equal(textPart, result.RawRepresentation);
+
         var textContent = Assert.IsType<TextContent>(result);
         Assert.Equal("Hello, world!", textContent.Text);
     }
@@ -69,6 +71,8 @@ public sealed class A2APartExtensionsTests
 
         // Assert
         Assert.NotNull(result);
+        Assert.Equal(filePart, result.RawRepresentation);
+
         var hostedFileContent = Assert.IsType<HostedFileContent>(result);
         Assert.Equal(uri, hostedFileContent.FileId);
         Assert.Null(hostedFileContent.AdditionalProperties);

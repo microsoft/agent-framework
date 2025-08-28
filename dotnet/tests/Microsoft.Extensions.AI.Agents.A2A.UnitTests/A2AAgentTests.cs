@@ -119,6 +119,13 @@ public sealed class A2AAgentTests : IDisposable
 
         // Assert response from A2AClient is converted correctly
         Assert.NotNull(result);
+        Assert.Equal(this._agent.Id, result.AgentId);
+        Assert.Equal("response-123", result.ResponseId);
+
+        Assert.NotNull(result.RawRepresentation);
+        Assert.IsType<Message>(result.RawRepresentation);
+        Assert.Equal("response-123", ((Message)result.RawRepresentation).MessageId);
+
         Assert.Single(result.Messages);
         Assert.Equal(ChatRole.Assistant, result.Messages[0].Role);
         Assert.Equal("Hello! How can I help you today?", result.Messages[0].Text);
@@ -239,6 +246,12 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal(ChatRole.Assistant, updates[0].Role);
         Assert.Equal("Hello", updates[0].Text);
         Assert.Equal("stream-1", updates[0].MessageId);
+        Assert.Equal(this._agent.Id, updates[0].AgentId);
+        Assert.Equal("stream-1", updates[0].ResponseId);
+
+        Assert.NotNull(updates[0].RawRepresentation);
+        Assert.IsType<Message>(updates[0].RawRepresentation);
+        Assert.Equal("stream-1", ((Message)updates[0].RawRepresentation!).MessageId);
     }
 
     [Fact]

@@ -22,6 +22,7 @@ internal static class A2AMessageExtensions
         return new ChatMessage(ChatRole.Assistant, aiContents)
         {
             AdditionalProperties = message.Metadata.ToAdditionalProperties(),
+            RawRepresentation = message,
         };
     }
 }

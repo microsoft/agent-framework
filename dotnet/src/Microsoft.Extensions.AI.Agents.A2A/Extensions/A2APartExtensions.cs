@@ -21,10 +21,12 @@ internal static class A2APartExtensions
         {
             TextPart textPart => new TextContent(textPart.Text)
             {
+                RawRepresentation = textPart,
                 AdditionalProperties = textPart.Metadata.ToAdditionalProperties()
             },
             FilePart filePart when filePart.File is FileWithUri fileWithUrl => new HostedFileContent(fileWithUrl.Uri)
             {
+                RawRepresentation = filePart,
                 AdditionalProperties = filePart.Metadata.ToAdditionalProperties()
             },
             _ => throw new NotSupportedException($"Part type '{part.GetType().Name}' is not supported.")

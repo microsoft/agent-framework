@@ -41,6 +41,8 @@ public sealed class A2AMessageExtensionsTests
         // Assert
         Assert.NotNull(result);
         Assert.Equal(ChatRole.Assistant, result.Role);
+        Assert.Equal(message, result.RawRepresentation);
+
         Assert.NotNull(result.Contents);
         Assert.Equal(3, result.Contents.Count);
 

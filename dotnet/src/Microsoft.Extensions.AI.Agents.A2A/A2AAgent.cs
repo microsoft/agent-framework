@@ -56,7 +56,7 @@ internal sealed class A2AAgent : AIAgent
     {
         ValidateInputMessages(messages);
 
-        Message a2aMessage = messages.ToA2AMessage();
+        var a2aMessage = messages.ToA2AMessage();
 
         // Linking the message to the existing conversation, if any.
         a2aMessage.ContextId = thread?.ConversationId;
@@ -73,8 +73,11 @@ internal sealed class A2AAgent : AIAgent
 
             return new AgentRunResponse
             {
+                AgentId = this.Id,
+                ResponseId = message.MessageId,
+                RawRepresentation = message,
                 Messages = [message.ToChatMessage()],
-                RawRepresentation = message
+                AdditionalProperties = message.Metadata.ToAdditionalProperties(),
             };
         }
 
@@ -86,7 +89,7 @@ internal sealed class A2AAgent : AIAgent
     {
         ValidateInputMessages(messages);
 
-        Message a2aMessage = messages.ToA2AMessage();
+        var a2aMessage = messages.ToA2AMessage();
 
         // Linking the message to the existing conversation, if any.
         a2aMessage.ContextId = thread?.ConversationId;
@@ -108,8 +111,10 @@ internal sealed class A2AAgent : AIAgent
 
             yield return new AgentRunResponseUpdate
             {
-                Role = ChatRole.Assistant,
+                AgentId = this.Id,
+                ResponseId = message.MessageId,
                 RawRepresentation = message,
+                Role = ChatRole.Assistant,
                 MessageId = message.MessageId,
                 Contents = [.. message.Parts.Select(part => part.ToAIContent())],
                 AdditionalProperties = message.Metadata.ToAdditionalProperties(),
