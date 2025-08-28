@@ -13,24 +13,24 @@ namespace Microsoft.Extensions.AI.Agents.Abstractions.UnitTests;
 /// <summary>
 /// Unit tests for the <see cref="AIAgent"/> class.
 /// </summary>
-public class AgentTests
+public class AIAgentTests
 {
     private readonly Mock<AIAgent> _agentMock;
     private readonly Mock<AgentThread> _agentThreadMock;
-    private readonly AgentRunResponse _invokeResponse = new();
+    private readonly AgentRunResponse _invokeResponse;
     private readonly List<AgentRunResponseUpdate> _invokeStreamingResponses = [];
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="AgentTests"/> class.
+    /// Initializes a new instance of the <see cref="AIAgentTests"/> class.
     /// </summary>
-    public AgentTests()
+    public AIAgentTests()
     {
         this._agentThreadMock = new Mock<AgentThread>(MockBehavior.Strict);
 
         this._invokeResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Hi"));
         this._invokeStreamingResponses.Add(new AgentRunResponseUpdate(ChatRole.Assistant, "Hi"));
 
-        this._agentMock = new Mock<AIAgent>() { CallBase = true };
+        this._agentMock = new Mock<AIAgent> { CallBase = true };
         this._agentMock
             .Setup(x => x.RunAsync(
                 It.IsAny<IReadOnlyCollection<ChatMessage>>(),
@@ -56,7 +56,7 @@ public class AgentTests
     {
         // Arrange
         var options = new AgentRunOptions();
-        var cancellationToken = new CancellationToken();
+        var cancellationToken = default(CancellationToken);
 
         // Act
         var response = await this._agentMock.Object.RunAsync(this._agentThreadMock.Object, options, cancellationToken);
@@ -82,7 +82,7 @@ public class AgentTests
         // Arrange
         var message = "Hello, Agent!";
         var options = new AgentRunOptions();
-        var cancellationToken = new CancellationToken();
+        var cancellationToken = default(CancellationToken);
 
         // Act
         var response = await this._agentMock.Object.RunAsync(message, this._agentThreadMock.Object, options, cancellationToken);
@@ -108,7 +108,7 @@ public class AgentTests
         // Arrange
         var message = new ChatMessage(ChatRole.User, "Hello, Agent!");
         var options = new AgentRunOptions();
-        var cancellationToken = new CancellationToken();
+        var cancellationToken = default(CancellationToken);
 
         // Act
         var response = await this._agentMock.Object.RunAsync(message, this._agentThreadMock.Object, options, cancellationToken);
@@ -133,7 +133,7 @@ public class AgentTests
     {
         // Arrange
         var options = new AgentRunOptions();
-        var cancellationToken = new CancellationToken();
+        var cancellationToken = default(CancellationToken);
 
         // Act
         await foreach (var response in this._agentMock.Object.RunStreamingAsync(this._agentThreadMock.Object, options, cancellationToken))
@@ -162,7 +162,7 @@ public class AgentTests
         // Arrange
         var message = "Hello, Agent!";
         var options = new AgentRunOptions();
-        var cancellationToken = new CancellationToken();
+        var cancellationToken = default(CancellationToken);
 
         // Act
         await foreach (var response in this._agentMock.Object.RunStreamingAsync(message, this._agentThreadMock.Object, options, cancellationToken))
@@ -191,7 +191,7 @@ public class AgentTests
         // Arrange
         var message = new ChatMessage(ChatRole.User, "Hello, Agent!");
         var options = new AgentRunOptions();
-        var cancellationToken = new CancellationToken();
+        var cancellationToken = default(CancellationToken);
 
         // Act
         await foreach (var response in this._agentMock.Object.RunStreamingAsync(message, this._agentThreadMock.Object, options, cancellationToken))
@@ -223,16 +223,15 @@ public class AgentTests
     [Fact]
     public async Task NotifyThreadOfNewMessagesNotifiesThreadAsync()
     {
-        var cancellationToken = new CancellationToken();
+        var cancellationToken = default(CancellationToken);
 
         var messages = new[] { new ChatMessage(ChatRole.User, "msg1"), new ChatMessage(ChatRole.User, "msg2") };
 
-        var threadMock = new Mock<TestAgentThread>() { CallBase = true };
+        var threadMock = new Mock<TestAgentThread> { CallBase = true };
         threadMock.SetupAllProperties();
         threadMock.Object.ConversationId = "test-thread-id";
-        var agent = new MockAgent();
 
-        await agent.NotifyThreadOfNewMessagesAsync(threadMock.Object, messages, cancellationToken);
+        await MockAgent.NotifyThreadOfNewMessagesAsync(threadMock.Object, messages, cancellationToken);
 
         threadMock.Protected().Verify("OnNewMessagesAsync", Times.Once(), messages, cancellationToken);
     }
@@ -360,17 +359,25 @@ public class AgentTests
 
     private sealed class MockAgent : AIAgent
     {
-        public new Task NotifyThreadOfNewMessagesAsync(AgentThread thread, IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken)
+        public static new Task NotifyThreadOfNewMessagesAsync(AgentThread thread, IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken)
         {
-            return base.NotifyThreadOfNewMessagesAsync(thread, messages, cancellationToken);
+            return AIAgent.NotifyThreadOfNewMessagesAsync(thread, messages, cancellationToken);
         }
 
-        public override Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        public override Task<AgentRunResponse> RunAsync(
+            IReadOnlyCollection<ChatMessage> messages,
+            AgentThread? thread = null,
+            AgentRunOptions? options = null,
+            CancellationToken cancellationToken = default)
         {
             throw new System.NotImplementedException();
         }
 
-        public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+            IReadOnlyCollection<ChatMessage> messages,
+            AgentThread? thread = null,
+            AgentRunOptions? options = null,
+            CancellationToken cancellationToken = default)
         {
             throw new System.NotImplementedException();
         }

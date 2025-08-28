@@ -28,6 +28,8 @@ Below are the basics for each language implementation. For more details on pytho
 
 ## Agent Framework Documentation
 
+- [Python documentation](./user-documentation-python/README.md)
+- [DotNet documentation](./user-documentation-dotnet/README.md)
 - [Agent Framework Repository](https://github.com/microsoft/agent-framework)
 - [Design Documents](./docs/design)
 - [Architectural Decision Records](./docs/decisions)
