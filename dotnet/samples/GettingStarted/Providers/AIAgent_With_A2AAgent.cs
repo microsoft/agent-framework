@@ -33,7 +33,7 @@ public sealed class AIAgent_With_A2AAgent(ITestOutputHelper output) : AgentSampl
         Console.WriteLine(response);
 
         // Run in streaming mode.
-        IAsyncEnumerable<AgentRunResponseUpdate> updates = agent.RunStreamingAsync("Tell me a joke about a pirate.")
+        IAsyncEnumerable<AgentRunResponseUpdate> updates = agent.RunStreamingAsync("Tell me a joke about a pirate.");
         await foreach (var update in updates)
         {
             Console.Write(update);
