@@ -5,7 +5,7 @@ This means that to make the docs easier to understand for users, we have a [Powe
 The script strips out any pivots that are for a different language to the target.
 
 Therefore, write your docs in the [docs-templates](./docs-templates/) folder and then
-generate the language-specific versions by just running the powershell script.
+generate the language-specific versions by just running the PowerShell script.
 
 ```powershell
 .\generate-language-specific-docs.ps1
