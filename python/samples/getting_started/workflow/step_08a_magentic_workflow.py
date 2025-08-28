@@ -54,14 +54,6 @@ async def main() -> None:
         chat_client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
     )
 
-    # async with ChatClientAgent(
-    #     name="CoderAgent",
-    #     description="A helpful assistant that writes and executes code to process and analyze data.",
-    #     instructions="You solve questions using code. Please provide detailed analysis and computation process.",
-    #     chat_client=OpenAIAssistantsClient(),
-    #     tools=HostedCodeInterpreterTool(),
-    # ) as coder_agent:
-
     coder_agent = ChatClientAgent(
         name="CoderAgent",
         description="A helpful assistant that writes and executes code to process and analyze data.",
