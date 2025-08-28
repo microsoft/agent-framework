@@ -2,7 +2,8 @@
 
 using System;
 
-namespace Microsoft.Extensions.AI.Agents.ChatCompletion;
+namespace Microsoft.Extensions.AI.Agents;
+
 internal static class AgentDefinitionExtensions
 {
     internal static ChatClientAgentOptions ToChatClientAgentOptions(this AgentDefinition agentDefinition)
