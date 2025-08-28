@@ -46,7 +46,7 @@ client = AzureOpenAIChatCompletionClient(
     api_version="2024-09-01-preview",
     api_key="sk-xxx",
 )
-response = client.create(
+response = await client.create(
     messages=[UserMessage(content="hello world", source="user")]
 )
 ```
@@ -60,7 +60,7 @@ client = OpenAIChatClient(
     ai_model_id="gpt-4o", # pulled from OPENAI_CHAT_MODEL_ID if parameter is not provided
     api_key="sk-xxx" # pulled from OPENAI_API_KEY if parameter is not provided
 )
-response = client.get_response(messages="hello world")
+response = await client.get_response(messages="hello world")
 ```
 
 Azure OpenAI:
@@ -72,7 +72,7 @@ client = AzureChatClient(
     endpoint="https://<your-endpoint>.openai.azure.com/", # pulled from AZURE_OPENAI_ENDPOINT if parameter is not provided
     api_key="sk-xxx" # pulled from AZURE_OPENAI_API_KEY if parameter is not provided
 )
-response = client.get_response(messages="hello world")
+response = await client.get_response(messages="hello world")
 ```
 
 ### Client Configuration
@@ -110,7 +110,12 @@ client = OpenAIChatClient.from_dict(config)
 
 ### Input Types
 
-AutoGen uses distinct message types between their clients and chat agents. Clients accept a list of `LLMMessage` types, which is a union of `SystemMessage`, `UserMessage`, `AssistantMessage`, and `FunctionExecutionResultMessage`. Each message type serves a unique purpose and are not interchangeable. Agents on the other hand accept strings or any object or list of objects inherited from the `BaseChatMessage` type.
+AutoGen uses distinct message types between their clients and chat agents. Clients accept a list of `LLMMessage` types, which is a union of `SystemMessage`, `UserMessage`, `AssistantMessage`, and `FunctionExecutionResultMessage`. Each message type serves a unique purpose and are not interchangeable. Agents on the other hand accept strings or any object or list of objects inherited from the `BaseChatMessage` type. The default provided message types are: `StructuredMessage`, `TextMessage`, `StopMessage`, `HandoffMessage`, `ToolCallSummaryMessage`, and `MultiModalMessage`.
+
+Agent Framework on the other hand uses the same type across both clients and chat agents. In both cases, the accepted types are strings, list of strings, `ChatMessage`, or list of `ChatMessage`. `ChatMessage` itself contains a list of contents, which can be of types `TextContent`, `DataContent`, `TextReasoningContent`, `UriContent`, `FunctionCallContent`, `FunctionResultContent`, `ErrorContent`, `UsageContent`, `HostedFileContent`, or `HostedVectorStoreContent`.
+
+### Output Types
+
 
 
 ## Chat Agent
