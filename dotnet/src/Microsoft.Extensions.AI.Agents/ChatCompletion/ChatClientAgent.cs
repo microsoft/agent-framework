@@ -9,6 +9,8 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.Diagnostics;
 
+#pragma warning disable S3358 // Ternary operators should not be nested
+
 namespace Microsoft.Extensions.AI.Agents;
 
 /// <summary>
@@ -33,12 +35,12 @@ public sealed class ChatClientAgent : AIAgent
     public ChatClientAgent(IChatClient chatClient, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null)
         : this(
               chatClient,
-              new ChatClientAgentOptions()
+              new ChatClientAgentOptions
               {
                   Name = name,
                   Description = description,
                   Instructions = instructions,
-                  ChatOptions = tools is null ? null : new ChatOptions()
+                  ChatOptions = tools is null ? null : new ChatOptions
                   {
                       Tools = tools,
                   }
@@ -55,7 +57,7 @@ public sealed class ChatClientAgent : AIAgent
     /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
     public ChatClientAgent(IChatClient chatClient, ChatClientAgentOptions options, ILoggerFactory? loggerFactory = null)
     {
-        Throw.IfNull(chatClient);
+        _ = Throw.IfNull(chatClient);
 
         // Options must be cloned since ChatClientAgentOptions is mutable.
         this._agentOptions = options?.Clone();
@@ -65,13 +67,14 @@ public sealed class ChatClientAgent : AIAgent
         // Get the type of the chat client before wrapping it as an agent invoking chat client.
         this._chatClientType = chatClient.GetType();
 
-        this.ChatClient = chatClient.AsAgentInvokingChatClient();
+        // If the user has not opted out of using our default decorators, we wrap the chat client.
+        this.ChatClient = options?.UseProvidedChatClientAsIs is true ? chatClient : chatClient.AsAgentInvokedChatClient();
 
         this._logger = (loggerFactory ?? chatClient.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance).CreateLogger<ChatClientAgent>();
     }
 
     /// <summary>
-    /// The underlying chat client used by the agent to invoke chat completions.
+    /// Gets the underlying chat client used by the agent to invoke chat completions.
     /// </summary>
     public IChatClient ChatClient { get; }
 
@@ -101,7 +104,7 @@ public sealed class ChatClientAgent : AIAgent
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        Throw.IfNull(messages);
+        _ = Throw.IfNull(messages);
 
         (AgentThread safeThread, ChatOptions? chatOptions, List<ChatMessage> threadMessages) =
             await this.PrepareThreadAndMessagesAsync(thread, messages, options, cancellationToken).ConfigureAwait(false);
@@ -190,15 +193,17 @@ public sealed class ChatClientAgent : AIAgent
 
     /// <inheritdoc/>
     public override object? GetService(Type serviceType, object? serviceKey = null)
-        => base.GetService(serviceType, serviceKey)
-            ?? (serviceType == typeof(AIAgentMetadata) ? this._agentMetadata
-            : serviceType == typeof(IChatClient) ? this.ChatClient
-            : this.ChatClient.GetService(serviceType, serviceKey));
+    {
+        return base.GetService(serviceType, serviceKey)
+        ?? (serviceType == typeof(AIAgentMetadata) ? this._agentMetadata
+        : serviceType == typeof(IChatClient) ? this.ChatClient
+        : this.ChatClient.GetService(serviceType, serviceKey));
+    }
 
     /// <inheritdoc/>
     public override AgentThread GetNewThread()
     {
-        var thread = new AgentThread() { MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke() };
+        var thread = new AgentThread { MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke() };
         return thread;
     }
 
@@ -235,6 +240,7 @@ public sealed class ChatClientAgent : AIAgent
         requestChatOptions.AllowMultipleToolCalls ??= this._agentOptions.ChatOptions.AllowMultipleToolCalls;
         requestChatOptions.ConversationId ??= this._agentOptions.ChatOptions.ConversationId;
         requestChatOptions.FrequencyPenalty ??= this._agentOptions.ChatOptions.FrequencyPenalty;
+        requestChatOptions.Instructions ??= this._agentOptions.ChatOptions.Instructions;
         requestChatOptions.MaxOutputTokens ??= this._agentOptions.ChatOptions.MaxOutputTokens;
         requestChatOptions.ModelId ??= this._agentOptions.ChatOptions.ModelId;
         requestChatOptions.PresencePenalty ??= this._agentOptions.ChatOptions.PresencePenalty;
@@ -250,7 +256,7 @@ public sealed class ChatClientAgent : AIAgent
         {
             foreach (var propertyKey in this._agentOptions.ChatOptions.AdditionalProperties.Keys)
             {
-                requestChatOptions.AdditionalProperties.TryAdd(propertyKey, this._agentOptions.ChatOptions.AdditionalProperties[propertyKey]);
+                _ = requestChatOptions.AdditionalProperties.TryAdd(propertyKey, this._agentOptions.ChatOptions.AdditionalProperties[propertyKey]);
             }
         }
         else
@@ -326,7 +332,7 @@ public sealed class ChatClientAgent : AIAgent
     /// <param name="runOptions">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A tuple containing the thread, chat options, and thread messages.</returns>
-    private async Task<(AgentThread, ChatOptions?, List<ChatMessage>)> PrepareThreadAndMessagesAsync(
+    private async Task<(AgentThread AgentThread, ChatOptions? ChatOptions, List<ChatMessage> ThreadMessages)> PrepareThreadAndMessagesAsync(
         AgentThread? thread,
         IReadOnlyCollection<ChatMessage> inputMessages,
         AgentRunOptions? runOptions,
@@ -343,21 +349,27 @@ public sealed class ChatClientAgent : AIAgent
             threadMessages.Add(message);
         }
 
-        // Update the messages with agent instructions.
-        this.UpdateThreadMessagesWithAgentInstructions(threadMessages, runOptions);
-
         // Add the input messages to the end of thread messages.
         threadMessages.AddRange(inputMessages);
 
         // If a user provided two different thread ids, via the thread object and options, we should throw
         // since we don't know which one to use.
-        if (!string.IsNullOrWhiteSpace(thread.ConversationId) && !string.IsNullOrWhiteSpace(chatOptions?.ConversationId) && thread.ConversationId != chatOptions.ConversationId)
+        if (!string.IsNullOrWhiteSpace(thread.ConversationId) && !string.IsNullOrWhiteSpace(chatOptions?.ConversationId) && thread.ConversationId != chatOptions!.ConversationId)
         {
             throw new InvalidOperationException(
-                $"The {nameof(chatOptions.ConversationId)} provided via {nameof(Microsoft.Extensions.AI.ChatOptions)} is different to the id of the provided {nameof(AgentThread)}. Only one thread id can be used for a run.");
+                $"""
+                The {nameof(chatOptions.ConversationId)} provided via {nameof(Microsoft.Extensions.AI.ChatOptions)} is different to the id of the provided {nameof(AgentThread)}.
+                Only one id can be used for a run.
+                """);
         }
 
-        // Only clone and update ChatOptions if we have an id on the thread and we don't have the same one already in ChatOptions.
+        if (!string.IsNullOrWhiteSpace(this.Instructions))
+        {
+            chatOptions ??= new();
+            chatOptions.Instructions = string.IsNullOrWhiteSpace(chatOptions.Instructions) ? this.Instructions : $"{this.Instructions}\n{chatOptions.Instructions}";
+        }
+
+        // Only create or update ChatOptions if we have an id on the thread and we don't have the same one already in ChatOptions.
         if (!string.IsNullOrWhiteSpace(thread.ConversationId) && thread.ConversationId != chatOptions?.ConversationId)
         {
             chatOptions ??= new();
@@ -373,7 +385,9 @@ public sealed class ChatClientAgent : AIAgent
         {
             // We were passed a thread that is service managed, but we got no conversation id back from the chat client,
             // meaning the service doesn't support service managed threads, so the thread cannot be used with this service.
+#pragma warning disable S2302 // "nameof" should be used - False positive.
             throw new InvalidOperationException("Service did not return a valid conversation id when using a service managed thread.");
+#pragma warning restore S2302 // "nameof" should be used
         }
 
         if (!string.IsNullOrWhiteSpace(responseConversationId))
@@ -388,14 +402,6 @@ public sealed class ChatClientAgent : AIAgent
             // the thread has no MessageStore yet, and we have a custom messages store, we should update the thread
             // with the custom MessageStore so that it has somewhere to store the chat history.
             thread.MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke();
-        }
-    }
-
-    private void UpdateThreadMessagesWithAgentInstructions(List<ChatMessage> threadMessages, AgentRunOptions? options)
-    {
-        if (!string.IsNullOrWhiteSpace(this.Instructions))
-        {
-            threadMessages.Insert(0, new(ChatRole.System, this.Instructions) { AuthorName = this.Name });
         }
     }
 
