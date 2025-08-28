@@ -189,7 +189,7 @@ class Executor(AFBaseModel):
                     if isinstance(response, RequestResponse):
                         # Add automatic correlation info to the response
                         correlated_response = RequestResponse[RequestInfoMessage, Any].with_correlation(
-                            response,  # pyright: ignore[reportUnknownArgumentType]
+                            response,
                             request.data,
                             request.request_id,
                         )
@@ -203,15 +203,15 @@ class Executor(AFBaseModel):
                                 target_id=request.sub_workflow_id,
                                 data=SubWorkflowResponse(
                                     request_id=request.request_id,
-                                    data=correlated_response.data,  # pyright: ignore[reportUnknownMemberType]
+                                    data=correlated_response.data,
                                 ),
                             )
                             await ctx.send_message(response_message)
                         else:
                             # Forward WITH CONTEXT PRESERVED
                             # Update the data if interceptor provided a modified request
-                            if correlated_response.forward_request:  # pyright: ignore[reportUnknownMemberType]
-                                request.data = correlated_response.forward_request  # pyright: ignore[reportUnknownMemberType]
+                            if correlated_response.forward_request:
+                                request.data = correlated_response.forward_request
 
                             # Send the inner request to RequestInfoExecutor to create external request
                             from ._runner_context import Message

@@ -3,6 +3,7 @@
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
 
+import pytest
 from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
@@ -180,6 +181,58 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
     assert isinstance(getattr(completed, "data", None), ChatMessage)
 
 
+async def test_magentic_plan_review_approve_with_comments_replans_and_proceeds():
+    class CountingManager(FakeManager):
+        # Declare as a model field so assignment is allowed under Pydantic
+        replan_count: int = 0
+
+        def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+            super().__init__(*args, **kwargs)
+
+        async def replan(self, magentic_context: MagenticContext) -> ChatMessage:  # type: ignore[override]
+            self.replan_count += 1
+            return await super().replan(magentic_context)
+
+    manager = CountingManager(max_round_count=10)
+    wf = (
+        MagenticBuilder()
+        .participants(agentA=_DummyExec("agentA"))
+        .with_standard_manager(manager)
+        .with_plan_review()
+        .build()
+    )
+
+    # Wait for the initial plan review request
+    req_event: RequestInfoEvent | None = None
+    async for ev in wf.run_streaming("do work"):
+        if isinstance(ev, RequestInfoEvent) and ev.request_type is MagenticPlanReviewRequest:
+            req_event = ev
+    assert req_event is not None
+
+    # Reply APPROVE with comments (no edited text). Expect one replan and no second review round.
+    saw_second_review = False
+    completed: WorkflowCompletedEvent | None = None
+    async for ev in wf.send_responses_streaming({
+        req_event.request_id: MagenticPlanReviewReply(
+            decision=MagenticPlanReviewDecision.APPROVE,
+            comments="Looks good; consider Z",
+        )
+    }):
+        if isinstance(ev, RequestInfoEvent) and ev.request_type is MagenticPlanReviewRequest:
+            saw_second_review = True
+        if isinstance(ev, WorkflowCompletedEvent):
+            completed = ev
+            break
+
+    assert completed is not None
+    assert manager.replan_count >= 1
+    assert saw_second_review is False
+    # Replan from FakeManager updates facts/plan to include A2 / Do Z
+    assert manager.task_ledger is not None
+    combined_text = (manager.task_ledger.facts.text or "") + (manager.task_ledger.plan.text or "")
+    assert ("A2" in combined_text) or ("Do Z" in combined_text)
+
+
 async def test_magentic_orchestrator_round_limit_produces_partial_result():
     manager = FakeManager(max_round_count=1)
     manager.satisfied_after_signoff = False
@@ -257,7 +310,7 @@ async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
     assert "updated" in combined2.text or "new step" in combined2.text
 
 
-async def test_standard_manager_progress_ledger_success_and_fallback():
+async def test_standard_manager_progress_ledger_success_and_error():
     mgr = StandardMagenticManager(chat_client=_StubChatClient())
     ctx = MagenticContext(
         task=ChatMessage(role=ChatRole.USER, text="task"),
@@ -279,14 +332,13 @@ async def test_standard_manager_progress_ledger_success_and_fallback():
     ledger = await mgr.create_progress_ledger(ctx.model_copy(deep=True))
     assert ledger.next_speaker.answer == "alice"
 
-    # Fallback path: invalid JSON triggers default ledger
+    # Error path: invalid JSON now raises to avoid emitting planner-oriented instructions to agents
     async def fake_complete_bad(messages: list[ChatMessage]) -> ChatMessage:
         return ChatMessage(role=ChatRole.ASSISTANT, text="not-json")
 
     mgr._complete = fake_complete_bad  # type: ignore[attr-defined]
-    ledger2 = await mgr.create_progress_ledger(ctx.model_copy(deep=True))
-    assert ledger2.is_request_satisfied.answer is False
-    assert isinstance(ledger2.instruction_or_question.answer, str)
+    with pytest.raises(RuntimeError):
+        await mgr.create_progress_ledger(ctx.model_copy(deep=True))
 
 
 class InvokeOnceManager(MagenticManagerBase):

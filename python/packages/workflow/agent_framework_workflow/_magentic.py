@@ -16,7 +16,7 @@ from uuid import uuid4
 from agent_framework import AgentRunResponse, AgentRunResponseUpdate, ChatClient, ChatMessage, ChatRole
 from agent_framework._agents import AgentBase, AIAgent
 from agent_framework._pydantic import AFBaseModel
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
 
 from ._events import WorkflowCompletedEvent, WorkflowEvent
 from ._executor import Executor, RequestInfoMessage, RequestResponse, handler
@@ -436,7 +436,7 @@ def _extract_json(text: str) -> dict[str, Any]:
     raise ValueError("Unable to parse JSON from model output.")
 
 
-TModel = TypeVar("TModel", bound=BaseModel)
+TModel = TypeVar("TModel", bound=AFBaseModel)
 
 
 def _pd_validate(model: type[TModel], data: dict[str, Any]) -> TModel:
@@ -449,7 +449,7 @@ def _pd_validate(model: type[TModel], data: dict[str, Any]) -> TModel:
 # region Magentic Manager
 
 
-class MagenticManagerBase(BaseModel, ABC):
+class MagenticManagerBase(AFBaseModel, ABC):
     """Base class for the Magentic One manager."""
 
     max_stall_count: Annotated[int, Field(description="Max number of stalls before a reset.", ge=0)] = 3
@@ -506,6 +506,8 @@ class StandardMagenticManager(MagenticManagerBase):
     progress_ledger_prompt: str = ORCHESTRATOR_PROGRESS_LEDGER_PROMPT
     final_answer_prompt: str = ORCHESTRATOR_FINAL_ANSWER_PROMPT
 
+    progress_ledger_retry_count: int = Field(default=3)
+
     def __init__(
         self,
         chat_client: ChatClient,
@@ -522,6 +524,7 @@ class StandardMagenticManager(MagenticManagerBase):
         max_stall_count: int = 3,
         max_reset_count: int | None = None,
         max_round_count: int | None = None,
+        progress_ledger_retry_count: int | None = None,
     ) -> None:
         """Initialize the Standard Magentic Manager.
 
@@ -539,6 +542,7 @@ class StandardMagenticManager(MagenticManagerBase):
             max_stall_count: Maximum number of stalls allowed.
             max_reset_count: Maximum number of resets allowed.
             max_round_count: Maximum number of rounds allowed.
+            progress_ledger_retry_count: Maximum number of retries for the progress ledger.
         """
         args: dict[str, Any] = {
             "chat_client": chat_client,
@@ -563,6 +567,8 @@ class StandardMagenticManager(MagenticManagerBase):
             args["progress_ledger_prompt"] = progress_ledger_prompt
         if final_answer_prompt is not None:
             args["final_answer_prompt"] = final_answer_prompt
+        if progress_ledger_retry_count is not None:
+            args["progress_ledger_retry_count"] = progress_ledger_retry_count
 
         super().__init__(**args)
 
@@ -699,34 +705,21 @@ class StandardMagenticManager(MagenticManagerBase):
         # Include full context to help the model decide current stage, with small retry loop
         attempts = 0
         last_error: Exception | None = None
-        while attempts < 2:
+        while attempts < self.progress_ledger_retry_count:
             raw = await self._complete([*magentic_context.chat_history, user_message])
             try:
                 ledger_dict = _extract_json(raw.text)
                 return _pd_validate(MagenticProgressLedger, ledger_dict)
-            except Exception as ex:  # parse error or schema mismatch
+            except Exception as ex:
                 last_error = ex
                 attempts += 1
-                logger.warning("Progress ledger JSON parse failed (attempt %s/2): %s", attempts, ex)
+                logger.warning(f"Progress ledger JSON parse failed (attempt {attempts}/2): {ex}")
                 if attempts < 2:
                     # brief backoff before one more try
                     await asyncio.sleep(0.25 * attempts)
 
-        # Final conservative fallback if retries failed
-        logger.warning("Progress ledger parse failed after retries. Using conservative fallback: first agent.")
-        fallback_next = agent_names[0]
-        return MagenticProgressLedger(
-            is_request_satisfied=MagenticProgressLedgerItem(
-                reason=f"Fallback due to parsing error: {last_error}",
-                answer=False,
-            ),
-            is_in_loop=MagenticProgressLedgerItem(reason="Fallback", answer=False),
-            is_progress_being_made=MagenticProgressLedgerItem(reason="Fallback", answer=True),
-            next_speaker=MagenticProgressLedgerItem(reason="Fallback", answer=fallback_next),
-            instruction_or_question=MagenticProgressLedgerItem(
-                reason="Fallback",
-                answer="Provide a concrete next step with sufficient detail to move the task forward.",
-            ),
+        raise RuntimeError(
+            f"Progress ledger parse failed after {self.progress_ledger_retry_count} attempt(s): {last_error}"
         )
 
     async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:
@@ -910,6 +903,8 @@ class MagenticOrchestratorExecutor(Executor):
             human = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.REVISE, comments="")
 
         if human.decision == MagenticPlanReviewDecision.APPROVE:
+            # Close the review loop on approval (no further plan review requests this run)
+            self._require_plan_signoff = False
             # If the user supplied an edited plan, adopt it
             if human.edited_plan_text:
                 # Update the manager's internal ledger and rebuild the combined message
@@ -928,6 +923,14 @@ class MagenticOrchestratorExecutor(Executor):
                     text=combined,
                     author_name=MAGENTIC_MANAGER_NAME,
                 )
+            # If approved with comments but no edited text, apply comments via replan and proceed (no extra review)
+            elif human.comments:
+                # Record the human feedback for grounding
+                self._context.chat_history.append(
+                    ChatMessage(role=ChatRole.USER, text=f"Human plan feedback: {human.comments}")
+                )
+                # Ask the manager to replan based on comments; proceed immediately
+                self._task_ledger = await self._manager.replan(self._context.model_copy(deep=True))
 
             # Record the signed-off plan (no broadcast)
             if self._task_ledger:
@@ -947,7 +950,7 @@ class MagenticOrchestratorExecutor(Executor):
         # Otherwise, REVISION round
         self._plan_review_round += 1
         if self._plan_review_round > self._max_plan_review_rounds:
-            logger.info("Magentic Orchestrator: Max plan review rounds reached. Proceeding with current plan.")
+            logger.warning("Magentic Orchestrator: Max plan review rounds reached. Proceeding with current plan.")
             # Stop any further plan review requests for the rest of this run
             self._require_plan_signoff = False
             # Add a clear note to the conversation so users know review is closed
@@ -1052,7 +1055,12 @@ class MagenticOrchestratorExecutor(Executor):
         logger.info("Magentic Orchestrator: Inner loop - round %s", ctx.round_count)
 
         # Create progress ledger using the manager
-        current_progress_ledger = await self._manager.create_progress_ledger(ctx.model_copy(deep=True))
+        try:
+            current_progress_ledger = await self._manager.create_progress_ledger(ctx.model_copy(deep=True))
+        except Exception as ex:
+            logger.warning("Magentic Orchestrator: Progress ledger creation failed, triggering reset: %s", ex)
+            await self._reset_and_replan(context)
+            return
 
         logger.debug(
             "Progress evaluation: satisfied=%s, next=%s",
