@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import Agent, McpStreamableHttpTool
+from agent_framework import ChatClientAgent, McpStreamableHttpTool
 from agent_framework.openai import OpenAIChatClient
 
 
@@ -18,7 +18,7 @@ async def mcp_tools_on_run_level() -> None:
             name="Microsoft Learn MCP",
             url="https://learn.microsoft.com/api/mcp",
         ) as mcp_server,
-        Agent(
+        ChatClientAgent(
             chat_client=OpenAIChatClient(),
             name="DocsAgent",
             instructions="You are a helpful assistant that can help with microsoft documentation questions.",
@@ -39,7 +39,7 @@ async def mcp_tools_on_run_level() -> None:
 
 async def mcp_tools_on_agent_level() -> None:
     """Example showing tools defined when creating the agent."""
-    print("=== Tools Defined on Agent Level ===")
+    print("=== Tools Defined on ChatClientAgent Level ===")
 
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime

@@ -3,7 +3,7 @@
 from random import randint
 from typing import Annotated
 
-from agent_framework import Agent, ChatClientBuilder
+from agent_framework import ChatClientBuilder
 from agent_framework.openai import OpenAIResponsesClient
 
 
@@ -76,7 +76,7 @@ async def agent_with_chat_client_builder():
     """
     print("Agent with Chat Client Builder")
 
-    agent = Agent(chat_client=ChatClientBuilder(OpenAIResponsesClient).open_telemetry, tools=get_weather)
+    agent = ChatClientAgent(chat_client=ChatClientBuilder(OpenAIResponsesClient).open_telemetry, tools=get_weather)
 
     print((await agent.run("Hello, what's the weather in Amsterdam?")).text)
     # response: The weather in Amsterdam is sunny with a high of 25°C.

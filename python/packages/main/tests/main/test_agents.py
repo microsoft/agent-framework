@@ -7,13 +7,13 @@ from uuid import uuid4
 from pytest import fixture, raises
 
 from agent_framework import (
-    Agent,
     AgentProtocol,
     AgentRunResponse,
     AgentRunResponseUpdate,
     AgentThread,
     AgentThreadType,
     ChatClient,
+    ChatClientAgent,
     ChatClientBase,
     ChatMessage,
     ChatOptions,
@@ -31,7 +31,7 @@ class MockAgentThread(AgentThread):
         pass
 
 
-# Mock Agent implementation for testing
+# Mock ChatClientAgent implementation for testing
 class MockAgent(AgentProtocol):
     @property
     def id(self) -> str:
@@ -194,13 +194,13 @@ async def test_chat_client_agent_thread_on_new_messages_in_memory() -> None:
 
 
 def test_chat_client_agent_type(chat_client: ChatClient) -> None:
-    chat_client_agent = Agent(chat_client=chat_client)
+    chat_client_agent = ChatClientAgent(chat_client=chat_client)
     assert isinstance(chat_client_agent, AgentProtocol)
 
 
 async def test_chat_client_agent_init(chat_client: ChatClient) -> None:
     agent_id = str(uuid4())
-    agent = Agent(chat_client=chat_client, id=agent_id, description="Test")
+    agent = ChatClientAgent(chat_client=chat_client, id=agent_id, description="Test")
 
     assert agent.id == agent_id
     assert agent.name is None
@@ -210,16 +210,16 @@ async def test_chat_client_agent_init(chat_client: ChatClient) -> None:
 
 async def test_chat_client_agent_init_with_name(chat_client: ChatClient) -> None:
     agent_id = str(uuid4())
-    agent = Agent(chat_client=chat_client, id=agent_id, name="Test Agent", description="Test")
+    agent = ChatClientAgent(chat_client=chat_client, id=agent_id, name="Test ChatClientAgent", description="Test")
 
     assert agent.id == agent_id
-    assert agent.name == "Test Agent"
+    assert agent.name == "Test ChatClientAgent"
     assert agent.description == "Test"
-    assert agent.display_name == "Test Agent"  # Display name is the name if present
+    assert agent.display_name == "Test ChatClientAgent"  # Display name is the name if present
 
 
 async def test_chat_client_agent_run(chat_client: ChatClient) -> None:
-    agent = Agent(chat_client=chat_client)
+    agent = ChatClientAgent(chat_client=chat_client)
 
     result = await agent.run("Hello")
 
@@ -227,7 +227,7 @@ async def test_chat_client_agent_run(chat_client: ChatClient) -> None:
 
 
 async def test_chat_client_agent_run_streaming(chat_client: ChatClient) -> None:
-    agent = Agent(chat_client=chat_client)
+    agent = ChatClientAgent(chat_client=chat_client)
 
     result = await AgentRunResponse.from_agent_response_generator(agent.run_streaming("Hello"))
 
@@ -235,7 +235,7 @@ async def test_chat_client_agent_run_streaming(chat_client: ChatClient) -> None:
 
 
 async def test_chat_client_agent_get_new_thread(chat_client: ChatClient) -> None:
-    agent = Agent(chat_client=chat_client)
+    agent = ChatClientAgent(chat_client=chat_client)
     thread = agent.get_new_thread()
 
     assert isinstance(thread, AgentThread)
@@ -243,7 +243,7 @@ async def test_chat_client_agent_get_new_thread(chat_client: ChatClient) -> None
 
 
 async def test_chat_client_agent_prepare_thread_and_messages(chat_client: ChatClient) -> None:
-    agent = Agent(chat_client=chat_client)
+    agent = ChatClientAgent(chat_client=chat_client)
     message = ChatMessage(role=ChatRole.USER, text="Hello")
     thread = AgentThread(messages=[message])
 
@@ -265,7 +265,7 @@ async def test_chat_client_agent_prepare_thread_and_messages(chat_client: ChatCl
 
 
 async def test_chat_client_agent_validate_or_create_thread(chat_client: ChatClient) -> None:
-    agent = Agent(chat_client=chat_client)
+    agent = ChatClientAgent(chat_client=chat_client)
     thread = None
 
     result_thread = agent._validate_or_create_thread_type(  # type: ignore[reportPrivateUsage]
@@ -283,7 +283,7 @@ async def test_chat_client_agent_update_thread_id() -> None:
             conversation_id="123",
         )
     )
-    agent = Agent(chat_client=chat_client)
+    agent = ChatClientAgent(chat_client=chat_client)
     thread = agent.get_new_thread()
 
     result = await agent.run("Hello", thread=thread)
@@ -295,7 +295,7 @@ async def test_chat_client_agent_update_thread_id() -> None:
 
 
 async def test_chat_client_agent_update_thread_messages(chat_client: ChatClient) -> None:
-    agent = Agent(chat_client=chat_client)
+    agent = ChatClientAgent(chat_client=chat_client)
     thread = agent.get_new_thread()
 
     result = await agent.run("Hello", thread=thread)
@@ -312,7 +312,7 @@ async def test_chat_client_agent_update_thread_messages(chat_client: ChatClient)
 
 
 async def test_chat_client_agent_update_thread_conversation_id_missing(chat_client: ChatClient) -> None:
-    agent = Agent(chat_client=chat_client)
+    agent = ChatClientAgent(chat_client=chat_client)
     thread = AgentThread(id="123")
 
     with raises(AgentExecutionException, match="Service did not return a valid conversation id"):
@@ -321,7 +321,7 @@ async def test_chat_client_agent_update_thread_conversation_id_missing(chat_clie
 
 async def test_chat_client_agent_default_author_name(chat_client: ChatClient) -> None:
     # Name is not specified here, so default name should be used
-    agent = Agent(chat_client=chat_client)
+    agent = ChatClientAgent(chat_client=chat_client)
 
     result = await agent.run("Hello")
     assert result.text == "test response"
@@ -330,7 +330,7 @@ async def test_chat_client_agent_default_author_name(chat_client: ChatClient) ->
 
 async def test_chat_client_agent_author_name_as_agent_name(chat_client: ChatClient) -> None:
     # Name is specified here, so it should be used as author name
-    agent = Agent(chat_client=chat_client, name="TestAgent")
+    agent = ChatClientAgent(chat_client=chat_client, name="TestAgent")
 
     result = await agent.run("Hello")
     assert result.text == "test response"
@@ -345,7 +345,7 @@ async def test_chat_client_agent_author_name_is_used_from_response() -> None:
             ]
         )
     )
-    agent = Agent(chat_client=chat_client)
+    agent = ChatClientAgent(chat_client=chat_client)
 
     result = await agent.run("Hello")
     assert result.text == "test response"

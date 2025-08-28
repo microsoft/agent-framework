@@ -42,11 +42,11 @@ TThreadType = TypeVar("TThreadType", bound="AgentThread")
 # region AgentThread
 
 __all__ = [
-    "Agent",
     "AgentBase",
     "AgentProtocol",
     "AgentThread",
     "AgentThreadType",
+    "ChatClientAgent",
     "ChatClientAgentThread",
     "MessagesRetrievableThread",
     "agent",
@@ -316,7 +316,7 @@ class ChatClientAgentThread(AgentThread):
 
 
 @use_agent_telemetry
-class Agent(AgentBase):
+class ChatClientAgent(AgentBase):
     """A Chat Client Agent."""
 
     AGENT_SYSTEM_NAME: ClassVar[str] = "microsoft.agent_framework"
@@ -716,7 +716,7 @@ class Agent(AgentBase):
         await self._notify_thread_of_new_messages(thread, input_messages)
         await self._notify_thread_of_new_messages(thread, response.messages)
 
-    def get_new_thread(self) -> AgentThread:
+    def get_new_thread(self) -> ChatClientAgentThread:
         return ChatClientAgentThread()
 
     def _update_thread_with_type_and_conversation_id(

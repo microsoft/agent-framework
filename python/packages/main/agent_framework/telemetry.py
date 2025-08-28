@@ -18,7 +18,7 @@ from ._pydantic import AFBaseSettings
 if TYPE_CHECKING:  # pragma: no cover
     from opentelemetry.util._decorator import _AgnosticContextManager  # type: ignore[reportPrivateUsage]
 
-    from ._agents import Agent, AgentProtocol, AgentThread
+    from ._agents import AgentProtocol, AgentThread, ChatClientAgent
     from ._clients import ChatClient
     from ._tools import AIFunction
     from ._types import (
@@ -31,7 +31,7 @@ if TYPE_CHECKING:  # pragma: no cover
     )
 
 TChatClient = TypeVar("TChatClient", bound="ChatClient")
-TAgent = TypeVar("TAgent", bound="Agent")
+TAgent = TypeVar("TAgent", bound="ChatClientAgent")
 
 tracer = get_tracer("agent_framework")
 logger = get_logger()
@@ -536,7 +536,7 @@ def _set_chat_response_output(
             )
 
 
-# region Agent
+# region ChatClientAgent
 
 
 def _trace_agent_run(
@@ -550,7 +550,7 @@ def _trace_agent_run(
 
     @functools.wraps(run_func)
     async def wrap_run(
-        self: "Agent",
+        self: "ChatClientAgent",
         messages: "str | ChatMessage | list[str] | list[ChatMessage] | None" = None,
         *,
         thread: "AgentThread | None" = None,
@@ -601,7 +601,7 @@ def _trace_agent_run_streaming(
 
     @functools.wraps(run_func)
     async def wrap_run_streaming(
-        self: "Agent",
+        self: "ChatClientAgent",
         messages: "str | ChatMessage | list[str] | list[ChatMessage] | None" = None,
         *,
         thread: "AgentThread | None" = None,

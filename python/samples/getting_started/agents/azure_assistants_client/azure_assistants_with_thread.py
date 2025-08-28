@@ -4,7 +4,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import Agent, AgentThread
+from agent_framework import AgentThread
 from agent_framework.azure import AzureAssistantsClient
 from azure.identity import DefaultAzureCredential
 from pydantic import Field
@@ -22,7 +22,7 @@ async def example_with_automatic_thread_creation() -> None:
     """Example showing automatic thread creation (service-managed thread)."""
     print("=== Automatic Thread Creation Example ===")
 
-    async with Agent(
+    async with ChatClientAgent(
         chat_client=AzureAssistantsClient(ad_credential=DefaultAzureCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
@@ -46,7 +46,7 @@ async def example_with_thread_persistence() -> None:
     print("=== Thread Persistence Example ===")
     print("Using the same thread across multiple conversations to maintain context.\n")
 
-    async with Agent(
+    async with ChatClientAgent(
         chat_client=AzureAssistantsClient(ad_credential=DefaultAzureCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
@@ -82,7 +82,7 @@ async def example_with_existing_thread_id() -> None:
     # First, create a conversation and capture the thread ID
     existing_thread_id = None
 
-    async with Agent(
+    async with ChatClientAgent(
         chat_client=AzureAssistantsClient(ad_credential=DefaultAzureCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
@@ -102,7 +102,7 @@ async def example_with_existing_thread_id() -> None:
         print("\n--- Continuing with the same thread ID in a new agent instance ---")
 
         # Create a new agent instance but use the existing thread ID
-        async with Agent(
+        async with ChatClientAgent(
             chat_client=AzureAssistantsClient(thread_id=existing_thread_id, ad_credential=DefaultAzureCredential()),
             instructions="You are a helpful weather agent.",
             tools=get_weather,

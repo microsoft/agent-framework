@@ -26,7 +26,7 @@ from ._types import (
 from .telemetry import OpenTelemetryChatClient
 
 if TYPE_CHECKING:
-    from ._agents import Agent
+    from ._agents import ChatClientAgent
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -651,7 +651,7 @@ class ChatClientBase(AFBaseModel, ABC):
         | list[MutableMapping[str, Any]]
         | None = None,
         **kwargs: Any,
-    ) -> "Agent":
+    ) -> "ChatClientAgent":
         """Create an agent with the given name and instructions.
 
         Args:
@@ -659,14 +659,14 @@ class ChatClientBase(AFBaseModel, ABC):
             instructions: The instructions for the agent.
             tools: Optional list of tools to associate with the agent.
             **kwargs: Additional keyword arguments to pass to the agent.
-                See Agent for all the available options.
+                See ChatClientAgent for all the available options.
 
         Returns:
-            An instance of Agent.
+            An instance of ChatClientAgent.
         """
-        from ._agents import Agent
+        from ._agents import ChatClientAgent
 
-        return Agent(chat_client=self, name=name, instructions=instructions, tools=tools, **kwargs)
+        return ChatClientAgent(chat_client=self, name=name, instructions=instructions, tools=tools, **kwargs)
 
 
 # region ChatClientBuilder

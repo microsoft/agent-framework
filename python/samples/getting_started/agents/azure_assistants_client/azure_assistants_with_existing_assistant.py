@@ -5,7 +5,7 @@ import os
 from random import randint
 from typing import Annotated
 
-from agent_framework import Agent
+from agent_framework import ChatClientAgent
 from agent_framework.azure import AzureAssistantsClient
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from openai import AsyncAzureOpenAI
@@ -37,7 +37,7 @@ async def main() -> None:
     )
 
     try:
-        async with Agent(
+        async with ChatClientAgent(
             chat_client=AzureAssistantsClient(async_client=client, assistant_id=created_assistant.id),
             instructions="You are a helpful weather agent.",
             tools=get_weather,
