@@ -1,5 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+// This sample demonstrates how to use a ChatClientAgent with function tools.
+// It shows both non-streaming and streaming agent interactions using menu-related tools.
+
 using System;
 using System.ComponentModel;
 using Azure.AI.OpenAI;
@@ -15,12 +18,18 @@ var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT
 static string GetWeather([Description("The location to get the weather for.")] string location)
     => $"The weather in {location} is cloudy with a high of 15°C.";
 
+// Create the chat client and agent, and provide the function tool to the agent.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
      .GetChatClient(deploymentName)
-     .CreateAIAgent(
-        instructions: "You are a helpful assistant, you can help the user with weather information.",
-        tools: [AIFunctionFactory.Create(GetWeather)]);
+     .CreateAIAgent(instructions: "You are a helpful assistant", tools: [AIFunctionFactory.Create(GetWeather)]);
 
-Console.WriteLine(await agent.RunAsync("What's the weather in Amsterdam?"));
+// Non-streaming agent interaction with function tools.
+Console.WriteLine(await agent.RunAsync("What is the weather like in Amsterdam?"));
+
+// Streaming agent interaction with function tools.
+await foreach (var update in agent.RunStreamingAsync("What is the weather like in Amsterdam?"))
+{
+    Console.WriteLine(update);
+}

@@ -1,79 +1,82 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable CA1869 // Cache and reuse 'JsonSerializerOptions' instances
+
+// This sample shows how to create and use a simple AI agent with a conversation that can be persisted to disk.
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using Azure.AI.OpenAI;
+using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.VectorData;
 using Microsoft.SemanticKernel.Connectors.InMemory;
+using OpenAI;
+using SampleApp;
 
-namespace Steps;
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
-/// <summary>
-/// Demonstrates how to store the chat history of a thread in a 3rd party store when using <see cref="ChatClientAgent"/>.
-/// </summary>
-public sealed class Step09_ChatClientAgent_3rdPartyThreadStorage(ITestOutputHelper output) : AgentSample(output)
+const string JokerName = "Joker";
+const string JokerInstructions = "You are good at telling jokes.";
+
+// Create a vector store to store the chat messages in.
+// Replace this with a vector store implementation of your choice if you want to persist the chat history to disk.
+VectorStore vectorStore = new InMemoryVectorStore();
+
+// Create the agent
+AIAgent agent = new AzureOpenAIClient(
+    new Uri(endpoint),
+    new AzureCliCredential())
+     .GetChatClient(deploymentName)
+     .CreateAIAgent(new ChatClientAgentOptions
+     {
+         Name = JokerName,
+         Instructions = JokerInstructions,
+         ChatMessageStoreFactory = () =>
+         {
+             // Create a new chat message store for this agent that stores the messages in a vector store.
+             // Each thread must get its own copy of the VectorChatMessageStore, since the store
+             // also contains the id that the thread is stored under.
+             return new VectorChatMessageStore(vectorStore);
+         }
+     });
+
+// Start a new thread for the agent conversation.
+AgentThread thread = agent.GetNewThread();
+
+// Run the agent with the thread that stores conversation history in the vector store.
+Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", thread));
+
+// Serialize the thread state, so it can be stored for later use.
+// Since the chat history is stored in the vector store, the serialized thread
+// only contains the guid that the messages are stored under in the vector store.
+JsonElement serializedThread = await thread.SerializeAsync();
+
+Console.WriteLine("\n--- Serialized thread ---\n");
+Console.WriteLine(JsonSerializer.Serialize(serializedThread, new JsonSerializerOptions { WriteIndented = true }));
+
+// The serialized thread can now be saved to a database, file, or any other storage mechanism
+// and loaded again later.
+
+// Deserialize the thread state after loading from storage.
+AgentThread resumedThread = await agent.DeserializeThreadAsync(serializedThread);
+
+// Run the agent with the thread that stores conversation history in the vector store a second time.
+Console.WriteLine(await agent.RunAsync("Now tell the same joke in the voice of a pirate, and add some emojis to the joke.", resumedThread));
+
+namespace SampleApp
 {
-    private const string JokerName = "Joker";
-    private const string JokerInstructions = "You are good at telling jokes.";
-
-    /// <summary>
-    /// Demonstrate storage of the chat history of a thread in a 3rd party store when using <see cref="ChatClientAgent"/>.
-    /// </summary>
-    /// <remarks>
-    /// Note that this is only supported for services that do not already store the chat history in their own service.
-    /// </remarks>
-    [Theory]
-    [InlineData(ChatClientProviders.AzureOpenAI)]
-    [InlineData(ChatClientProviders.OpenAIResponses_InMemoryMessageThread)]
-    public async Task ThirdPartyStorageThread(ChatClientProviders provider)
-    {
-        VectorStore vectorStore = new InMemoryVectorStore();
-
-        // Define the options for the chat client agent.
-        var agentOptions = new ChatClientAgentOptions
-        {
-            Name = JokerName,
-            Instructions = JokerInstructions,
-            ChatMessageStoreFactory = () =>
-            {
-                // Create a new chat message store for this agent that stores the messages in a vector store.
-                // Each thread must get its own copy of the VectorChatMessageStore, since the store
-                // also contains the id that the thread is stored under.
-                return new VectorChatMessageStore(vectorStore);
-            }
-        };
-
-        // Get the chat client to use for the agent.
-        using var chatClient = base.GetChatClient(provider, agentOptions);
-
-        // Define the agent
-        var agent = new ChatClientAgent(chatClient, agentOptions);
-
-        // Start a new thread for the agent conversation.
-        AgentThread thread = agent.GetNewThread();
-
-        // Respond to user input
-        Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", thread));
-
-        // Serialize the thread state, so it can be stored for later use.
-        // Since the chat history is stored in the vector store, the serialized there
-        // only contains the guid that the messages are stored under in the vector store.
-        JsonElement serializedThread = await thread.SerializeAsync();
-
-        // The serialized thread can now be saved to a database, file, or any other storage mechanism
-        // and loaded again later.
-
-        // Deserialize the thread state after loading from storage.
-        AgentThread resumedThread = await agent.DeserializeThreadAsync(serializedThread);
-
-        Console.WriteLine(await agent.RunAsync("Now tell the same joke in the voice of a pirate, and add some emojis to the joke.", resumedThread));
-    }
-
     /// <summary>
     /// A sample implementation of <see cref="IChatMessageStore"/> that stores chat messages in a vector store.
     /// </summary>
     /// <param name="vectorStore">The vector store to store the messages in.</param>
-    private sealed class VectorChatMessageStore(VectorStore vectorStore) : IChatMessageStore
+    internal sealed class VectorChatMessageStore(VectorStore vectorStore) : IChatMessageStore
     {
         private string? _threadId;
 

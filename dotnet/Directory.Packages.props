@@ -72,6 +72,8 @@
     <PackageVersion Include="Microsoft.Agents.CopilotStudio.Client" Version="1.1.151" />
     <PackageVersion Include="A2A" Version="0.1.0-preview.2" />
     <PackageVersion Include="A2A.AspNetCore" Version="0.1.0-preview.2" />
+    <!-- Inference SDKs -->
+    <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.9.0" />
     <!-- Identity -->
     <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.74.1" />
     <!-- Test -->
