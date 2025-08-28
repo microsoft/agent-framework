@@ -4,6 +4,7 @@ import asyncio
 
 from agent_framework.openai import OpenAIChatClient
 
+
 async def main():
     chat_client = OpenAIChatClient()
 
@@ -14,6 +15,7 @@ async def main():
         await task
     except asyncio.CancelledError:
         print("Request was cancelled")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
