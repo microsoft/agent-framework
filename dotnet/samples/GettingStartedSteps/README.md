@@ -7,7 +7,7 @@ While the functionality can be used with any agent type, these samples use Azure
 and use ChatCompletion as the type of service.
 
 For other samples that demonstrate how to create and configure each type of agent that come with the agent framework,
-see the [Agent setup](../AgentSetup/README.md) samples.
+see the [How to create an AIAgent for each provider](../HowToCreateAnAIAgentByProvider/README.md) samples.
 
 ## Getting started steps prerequisites
 
