@@ -32,6 +32,7 @@
   </Folder>
   <Folder Name="/Samples/HowToCreateAnAIAgentByProvider/">
     <File Path="samples/HowToCreateAnAIAgentByProvider/README.md" />
+    <Project Path="samples/HowToCreateAnAIAgentByProvider/AIAgent_With_A2A/AIAgent_With_A2A.csproj" />
     <Project Path="samples/HowToCreateAnAIAgentByProvider/AIAgent_With_AzureFoundry/AIAgent_With_AzureFoundry.csproj" />
     <Project Path="samples/HowToCreateAnAIAgentByProvider/AIAgent_With_AzureOpenAIChatCompletion/AIAgent_With_AzureOpenAIChatCompletion.csproj" />
     <Project Path="samples/HowToCreateAnAIAgentByProvider/AIAgent_With_AzureOpenAIResponses/AIAgent_With_AzureOpenAIResponses.csproj" />
