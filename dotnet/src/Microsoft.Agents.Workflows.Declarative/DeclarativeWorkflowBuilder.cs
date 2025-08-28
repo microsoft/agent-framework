@@ -48,7 +48,7 @@ public static class DeclarativeWorkflowBuilder
         Func<TInput, ChatMessage>? inputTransform = null)
         where TInput : notnull
     {
-        BotElement rootElement = YamlSerializer.Deserialize<BotElement>(yamlReader) ?? throw new DeclarativeModelException("Unable to parse workflow.");
+        BotElement rootElement = YamlSerializer.Deserialize<BotElement>(yamlReader) ?? throw new DeclarativeModelException("Workflow undefined.");
 
         // ISSUE #486 - Use "Workflow" element for Foundry.
         if (rootElement is not AdaptiveDialog workflowElement)
