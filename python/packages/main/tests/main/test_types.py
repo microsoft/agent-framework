@@ -389,7 +389,7 @@ def test_function_approval_request_and_response_creation():
     fc = FunctionCallContent(call_id="call-1", name="do_something", arguments={"a": 1})
     req = FunctionApprovalRequestContent(id="req-1", function_call=fc)
 
-    assert req.type == "function_approval"
+    assert req.type == "function_approval_request"
     assert req.function_call == fc
     assert req.id == "req-1"
     assert isinstance(req, AIContent)
