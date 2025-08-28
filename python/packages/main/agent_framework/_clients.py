@@ -392,6 +392,27 @@ class BaseChatClient(AFBaseModel, ABC):
             return_messages.append(msg)
         return return_messages
 
+    @staticmethod
+    def _normalize_tools(
+        tools: AITool
+        | list[AITool]
+        | Callable[..., Any]
+        | list[Callable[..., Any]]
+        | MutableMapping[str, Any]
+        | list[MutableMapping[str, Any]]
+        | None = None,
+    ) -> list[AITool | dict[str, Any] | Callable[..., Any]]:
+        """Normalize the tools input to a list of tools."""
+        final_tools: list[AITool | dict[str, Any] | Callable[..., Any]] = []
+        if not tools:
+            return final_tools
+        for tool in tools if isinstance(tools, list) else [tools]:  # type: ignore[reportUnknownType]
+            if isinstance(tool, McpTool):
+                final_tools.extend(tool.functions)  # type: ignore
+                continue
+            final_tools.append(tool)  # type: ignore
+        return final_tools
+
     # region Internal methods to be implemented by the derived classes
 
     @abstractmethod
@@ -494,14 +515,6 @@ class BaseChatClient(AFBaseModel, ABC):
         Returns:
             A chat response from the model.
         """
-        final_tools: list[AITool | dict[str, Any] | Callable[..., Any]] = []
-        normalized_tools = [] if tools is None else tools if isinstance(tools, list) else [tools]
-        for tool in normalized_tools:
-            if isinstance(tool, McpTool):
-                final_tools.extend(tool.functions)  # type: ignore
-            else:
-                final_tools.append(tool)  # type: ignore
-
         # Should we merge chat options instead of ignoring the input params?
         if "chat_options" in kwargs:
             chat_options = kwargs.pop("chat_options")
@@ -522,7 +535,7 @@ class BaseChatClient(AFBaseModel, ABC):
                 temperature=temperature,
                 top_p=top_p,
                 tool_choice=tool_choice,
-                tools=final_tools,  # type: ignore
+                tools=self._normalize_tools(tools),  # type: ignore
                 user=user,
                 additional_properties=additional_properties or {},
             )
@@ -581,13 +594,6 @@ class BaseChatClient(AFBaseModel, ABC):
         Yields:
             A stream representing the response(s) from the LLM.
         """
-        final_tools: list[AITool | dict[str, Any] | Callable[..., Any]] = []
-        normalized_tools = [] if tools is None else tools if isinstance(tools, list) else [tools]
-        for tool in normalized_tools:
-            if isinstance(tool, McpTool):
-                final_tools.extend(tool.functions)  # type: ignore
-            else:
-                final_tools.append(tool)  # type: ignore
         # Should we merge chat options instead of ignoring the input params?
         if "chat_options" in kwargs:
             chat_options = kwargs.pop("chat_options")
@@ -608,7 +614,7 @@ class BaseChatClient(AFBaseModel, ABC):
                 temperature=temperature,
                 top_p=top_p,
                 tool_choice=tool_choice,
-                tools=tools,  # type: ignore
+                tools=self._normalize_tools(tools),  # type: ignore
                 user=user,
                 additional_properties=additional_properties or {},
                 **kwargs,

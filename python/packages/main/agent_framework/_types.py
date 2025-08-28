@@ -1152,7 +1152,7 @@ class FunctionApprovalResponseContent(UserInputResponseContent):
 class FunctionApprovalRequestContent(UserInputRequestContent):
     """Represents a request for user approval of a function call."""
 
-    type: Literal["function_approval"] = "function_approval"  # type: ignore[assignment]
+    type: Literal["function_approval_request"] = "function_approval_request"  # type: ignore[assignment]
     function_call: FunctionCallContent
 
     def __init__(

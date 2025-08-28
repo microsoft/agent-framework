@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
@@ -15,6 +16,8 @@ from agent_framework import (
 from agent_framework._tools import _parse_inputs
 from agent_framework.exceptions import ToolException
 from agent_framework.telemetry import GenAIAttributes
+
+# region AIFunction and ai_function decorator tests
 
 
 def test_ai_function_decorator():
@@ -298,7 +301,7 @@ async def test_ai_function_invoke_invalid_pydantic_args():
         await invalid_args_test.invoke(arguments=wrong_args)
 
 
-# Tests for HostedCodeInterpreterTool and _parse_inputs
+# region HostedCodeInterpreterTool and _parse_inputs
 
 
 def test_hosted_code_interpreter_tool_default():
@@ -516,14 +519,15 @@ def test_hosted_code_interpreter_tool_with_unknown_input():
         HostedCodeInterpreterTool(inputs={"hosted_file": "file-single"})
 
 
-def test_hosted_mcp_tool_with_specific_approval_mode_and_headers():
+# region HostedMcpTool tests
+
+
+def test_hosted_mcp_tool_with_other_fields():
     """Test creating a HostedMcpTool with a specific approval dict, headers and additional properties."""
-    approval_mode = {"always_require_approval": ["toolA"], "never_require_approval": ["toolB"]}
     tool = HostedMcpTool(
         name="mcp-tool",
         url="https://mcp.example",
-        approval_mode=approval_mode,
-        allowed_tools={"toolA", "toolC"},
+        description="A test MCP tool",
         headers={"x": "y"},
         additional_properties={"p": 1},
     )
@@ -531,15 +535,86 @@ def test_hosted_mcp_tool_with_specific_approval_mode_and_headers():
     assert tool.name == "mcp-tool"
     # pydantic AnyUrl preserves as string-like
     assert str(tool.url).startswith("https://")
-    # approval_mode accepted as dict-typed specific mode
-    assert isinstance(tool.approval_mode, dict)
-    assert "always_require_approval" in tool.approval_mode
-    assert tool.allowed_tools == {"toolA", "toolC"}
     assert tool.headers == {"x": "y"}
     assert tool.additional_properties == {"p": 1}
+    assert tool.description == "A test MCP tool"
+
+
+@pytest.mark.parametrize(
+    "approval_mode",
+    [
+        "always_require",
+        "never_require",
+        {
+            "always_require_approval": {"toolA"},
+            "never_require_approval": {"toolB"},
+        },
+        {
+            "always_require_approval": ["toolA"],
+            "never_require_approval": ("toolB",),
+        },
+    ],
+    ids=["always_require", "never_require", "specific", "specific_with_parsing"],
+)
+def test_hosted_mcp_tool_with_approval_mode(approval_mode: str | dict[str, Any]):
+    """Test creating a HostedMcpTool with a specific approval dict, headers and additional properties."""
+    tool = HostedMcpTool(name="mcp-tool", url="https://mcp.example", approval_mode=approval_mode)
+
+    assert tool.name == "mcp-tool"
+    # pydantic AnyUrl preserves as string-like
+    assert str(tool.url).startswith("https://")
+    if not isinstance(approval_mode, dict):
+        assert tool.approval_mode == approval_mode
+    else:
+        # approval_mode parsed to sets
+        assert isinstance(tool.approval_mode["always_require_approval"], set)
+        assert isinstance(tool.approval_mode["never_require_approval"], set)
+        assert "toolA" in tool.approval_mode["always_require_approval"]
+        assert "toolB" in tool.approval_mode["never_require_approval"]
 
 
 def test_hosted_mcp_tool_invalid_approval_mode_raises():
     """Invalid approval_mode string should raise ServiceInitializationError."""
     with pytest.raises(ToolException):
         HostedMcpTool(name="bad", url="https://x", approval_mode="invalid_mode")
+
+
+@pytest.mark.parametrize(
+    "tools",
+    [
+        {"toolA", "toolB"},
+        ("toolA", "toolB"),
+        ["toolA", "toolB"],
+        ["toolA", "toolB", "toolA"],
+    ],
+    ids=[
+        "set",
+        "tuple",
+        "list",
+        "list_with_duplicates",
+    ],
+)
+def test_hosted_mcp_tool_with_allowed_tools(tools: list[str] | tuple[str, ...] | set[str]):
+    """Test creating a HostedMcpTool with a list of allowed tools."""
+    tool = HostedMcpTool(
+        name="mcp-tool",
+        url="https://mcp.example",
+        allowed_tools=tools,
+    )
+
+    assert tool.name == "mcp-tool"
+    # pydantic AnyUrl preserves as string-like
+    assert str(tool.url).startswith("https://")
+    # approval_mode parsed to set
+    assert isinstance(tool.allowed_tools, set)
+    assert tool.allowed_tools == {"toolA", "toolB"}
+
+
+def test_hosted_mcp_tool_with_dict_of_allowed_tools():
+    """Test creating a HostedMcpTool with a dict of allowed tools."""
+    with pytest.raises(ToolException):
+        HostedMcpTool(
+            name="mcp-tool",
+            url="https://mcp.example",
+            allowed_tools={"toolA": "Tool A", "toolC": "Tool C"},
+        )

@@ -18,13 +18,17 @@ async def handle_approvals_without_thread(query: str, agent: "AIAgent"):
     while len(result.user_input_requests) > 0:
         new_inputs: list[Any] = [query]
         for user_input_needed in result.user_input_requests:
-            if user_input_needed.type == "function_approval":
+            if user_input_needed.type == "function_approval_request":
                 print(
                     f"User Input Request for function from {agent.name}: {user_input_needed.function_call.name}"
                     f" with arguments: {user_input_needed.function_call.arguments}"
                 )
                 new_inputs.append(ChatMessage(role="assistant", contents=[user_input_needed]))
-                new_inputs.append(ChatMessage(role="user", contents=[user_input_needed.create_response(True)]))
+                user_approval = input("Approve function call? (y/n): ")
+                new_inputs.append(
+                    ChatMessage(role="user", contents=[user_input_needed.create_response(user_approval.lower() == "y")])
+                )
+
             else:
                 print(f"Other user input requested: {user_input_needed.type}")
         result = await agent.run(new_inputs)
@@ -39,12 +43,15 @@ async def handle_approvals_with_thread(query: str, agent: "AIAgent", thread: "Ag
     while len(result.user_input_requests) > 0:
         new_input: list[Any] = []
         for user_input_needed in result.user_input_requests:
-            if user_input_needed.type == "function_approval":
+            if user_input_needed.type == "function_approval_request":
                 print(
                     f"User Input Request for function from {agent.name}: {user_input_needed.function_call.name}"
                     f" with arguments: {user_input_needed.function_call.arguments}"
                 )
-                new_input.append(ChatMessage(role="user", contents=[user_input_needed.create_response(True)]))
+                user_approval = input("Approve function call? (y/n): ")
+                new_input.append(
+                    ChatMessage(role="user", contents=[user_input_needed.create_response(user_approval.lower() == "y")])
+                )
             else:
                 print(f"Other user input requested: {user_input_needed.type}")
         result = await agent.run(new_input, thread=thread, store=True)
@@ -63,18 +70,23 @@ async def handle_approvals_with_thread_streaming(query: str, agent: "AIAgent", t
         async for update in agent.run_streaming(new_input, thread=thread, store=True):
             if update.user_input_requests:
                 for user_input_needed in update.user_input_requests:
-                    if user_input_needed.type == "function_approval":
+                    if user_input_needed.type == "function_approval_request":
                         print(
                             f"User Input Request for function from {agent.name}: {user_input_needed.function_call.name}"
                             f" with arguments: {user_input_needed.function_call.arguments}"
                         )
-                        new_input.append(ChatMessage(role="user", contents=[user_input_needed.create_response(True)]))
+                        user_approval = input("Approve function call? (y/n): ")
+                        new_input.append(
+                            ChatMessage(
+                                role="user", contents=[user_input_needed.create_response(user_approval.lower() == "y")]
+                            )
+                        )
                         new_input_added = True
             else:
                 yield update
 
 
-async def run_hosted_mcp_wo_thread() -> None:
+async def run_hosted_mcp_without_thread_and_specific_approval() -> None:
     """Example showing Mcp Tools with approvals without using a thread."""
     print("=== Mcp with approvals and without thread ===")
 
@@ -87,8 +99,9 @@ async def run_hosted_mcp_wo_thread() -> None:
         tools=HostedMcpTool(
             name="Microsoft Learn MCP",
             url="https://learn.microsoft.com/api/mcp",
-            # we require approval for all function calls
-            approval_mode={"specific": {"never_require_approval": ["microsoft_docs_search"]}},
+            # we don't require approval for microsoft_docs_search tool calls
+            # but we do for any other tool
+            approval_mode={"never_require_approval": ["microsoft_docs_search"]},
         ),
     ) as agent:
         # First query
@@ -104,7 +117,7 @@ async def run_hosted_mcp_wo_thread() -> None:
         print(f"{agent.name}: {result2}\n")
 
 
-async def run_hosted_mcp_wo_approval() -> None:
+async def run_hosted_mcp_without_approval() -> None:
     """Example showing Mcp Tools without approvals."""
     print("=== Mcp without approvals ===")
 
@@ -205,10 +218,10 @@ async def run_hosted_mcp_with_thread_streaming() -> None:
 async def main() -> None:
     print("=== OpenAI Responses Client Agent with Hosted Mcp Tools Examples ===\n")
 
+    await run_hosted_mcp_without_approval()
+    await run_hosted_mcp_without_thread_and_specific_approval()
     await run_hosted_mcp_with_thread_streaming()
     await run_hosted_mcp_with_thread()
-    await run_hosted_mcp_wo_thread()
-    await run_hosted_mcp_wo_approval()
 
 
 if __name__ == "__main__":
