@@ -61,7 +61,7 @@ internal sealed class A2AAgent : AIAgent
         // Linking the message to the existing conversation, if any.
         a2aMessage.ContextId = thread?.ConversationId;
 
-        this._logger.LogA2AAgentInvokingAgent(nameof(RunStreamingAsync), this.Id, this.Name);
+        this._logger.LogA2AAgentInvokingAgent(nameof(RunAsync), this.Id, this.Name);
 
         var a2aResponse = await this._a2aClient.SendMessageAsync(new MessageSendParams { Message = a2aMessage }, cancellationToken).ConfigureAwait(false);
 

@@ -95,6 +95,8 @@ internal class AIAgentHostExecutor : Executor
         IAsyncEnumerable<AgentRunResponseUpdate> agentStream = this._agent.RunStreamingAsync(this._pendingMessages, this.EnsureThread(context));
 
         List<AgentRunResponseUpdate> updates = new();
+        ChatMessage? currentStreamingMessage = null;
+
         await foreach (AgentRunResponseUpdate update in agentStream.ConfigureAwait(false))
         {
             if (emitEvents)
@@ -108,18 +110,32 @@ internal class AIAgentHostExecutor : Executor
             // workflow.
 
             updates.Add(update);
-            ChatMessage message = new(update.Role ?? ChatRole.Assistant, update.Contents)
-            {
-                AuthorName = update.AuthorName,
-                CreatedAt = update.CreatedAt,
-                MessageId = update.MessageId,
-                RawRepresentation = update.RawRepresentation,
-                AdditionalProperties = update.AdditionalProperties
-            };
 
-            await context.SendMessageAsync(message).ConfigureAwait(false);
+            if (currentStreamingMessage == null || currentStreamingMessage.MessageId != update.MessageId)
+            {
+                await PublishCurrentMessageAsync().ConfigureAwait(false);
+                currentStreamingMessage = new(update.Role ?? ChatRole.Assistant, update.Contents)
+                {
+                    AuthorName = update.AuthorName,
+                    CreatedAt = update.CreatedAt,
+                    MessageId = update.MessageId,
+                    RawRepresentation = update.RawRepresentation,
+                    AdditionalProperties = update.AdditionalProperties
+                };
+            }
         }
 
+        await PublishCurrentMessageAsync().ConfigureAwait(false);
         await context.SendMessageAsync(token).ConfigureAwait(false);
+
+        async ValueTask PublishCurrentMessageAsync()
+        {
+            if (currentStreamingMessage != null)
+            {
+                await context.SendMessageAsync(currentStreamingMessage).ConfigureAwait(false);
+            }
+
+            currentStreamingMessage = null;
+        }
     }
 }

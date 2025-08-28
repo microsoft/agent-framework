@@ -29,13 +29,17 @@ internal class UpdateKey(ScopeId scopeId, string key)
         return $"{this.ScopeId}/{this.Key}";
     }
 
+    public bool IsMatchingScope(ScopeId scopeId, bool strict = false)
+    {
+        return this.ScopeId == scopeId && (!strict || this.ScopeId.ExecutorId == scopeId.ExecutorId);
+    }
+
     public override bool Equals(object? obj)
     {
         if (obj is UpdateKey other)
         {
             // Unlike ScopeId, UpdateKey is equal only if both the Executor and ScopeName are the same
-            return this.ScopeId.ExecutorId == other.ScopeId.ExecutorId &&
-                   this.ScopeId.ScopeName == other.ScopeId.ScopeName &&
+            return this.IsMatchingScope(other.ScopeId, strict: true) &&
                    this.Key == other.Key;
         }
 
