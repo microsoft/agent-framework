@@ -11,7 +11,7 @@ namespace Microsoft.Extensions.AI.Agents.A2A.UnitTests;
 public sealed class A2AClientExtensionsTests
 {
     [Fact]
-    public void CreateAIAgent_WithAllParameters_ReturnsA2AAgentWithSpecifiedProperties()
+    public void GetAIAgent_WithAllParameters_ReturnsA2AAgentWithSpecifiedProperties()
     {
         // Arrange
         var a2aClient = new A2AClient(new Uri("http://test-endpoint"));
@@ -22,7 +22,7 @@ public sealed class A2AClientExtensionsTests
         const string TestDisplayName = "Test Display Name";
 
         // Act
-        var agent = a2aClient.CreateAIAgent(TestId, TestName, TestDescription, TestDisplayName);
+        var agent = a2aClient.GetAIAgent(TestId, TestName, TestDescription, TestDisplayName);
 
         // Assert
         Assert.NotNull(agent);

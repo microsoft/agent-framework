@@ -26,7 +26,7 @@ public sealed class AIAgent_With_A2AAgent(ITestOutputHelper output) : AgentSampl
     {
         A2AClient a2aClient = new(TestConfiguration.A2A.AgentEndpoint!);
 
-        AIAgent agent = a2aClient.CreateAIAgent();
+        AIAgent agent = a2aClient.GetAIAgent();
 
         // Run in non-streaming mode.
         AgentRunResponse response = await agent.RunAsync("Tell me a joke about a pirate.");
@@ -49,7 +49,7 @@ public sealed class AIAgent_With_A2AAgent(ITestOutputHelper output) : AgentSampl
     {
         A2ACardResolver agentCardResolver = new(TestConfiguration.A2A.AgentHost!);
 
-        AIAgent agent = await agentCardResolver.CreateAIAgentAsync();
+        AIAgent agent = await agentCardResolver.GetAIAgentAsync();
 
         // Run in non-streaming mode.
         AgentRunResponse response = await agent.RunAsync("Tell me a joke about a pirate.");
@@ -72,7 +72,7 @@ public sealed class AIAgent_With_A2AAgent(ITestOutputHelper output) : AgentSampl
     {
         A2AClient a2aClient = new(TestConfiguration.A2A.AgentEndpoint!);
 
-        AIAgent agent = a2aClient.CreateAIAgent();
+        AIAgent agent = a2aClient.GetAIAgent();
 
         // Run in non-streaming mode.
         AgentThread thread = agent.GetNewThread();

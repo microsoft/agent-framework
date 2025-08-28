@@ -21,7 +21,7 @@ namespace Microsoft.Extensions.AI.Agents.A2A;
 public static class A2AClientExtensions
 {
     /// <summary>
-    /// Creates an AI agent from an <see cref="A2AClient"/>.
+    /// Retrieves an instance of <see cref="AIAgent"/> for an existing A2A agent.
     /// </summary>
     /// <remarks>
     /// This method can be used to create AI agents for A2A agents whose hosts support the
@@ -35,7 +35,7 @@ public static class A2AClientExtensions
     /// <param name="displayName">The display name of the agent.</param>
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
     /// <returns>An <see cref="AIAgent"/> instance backed by the A2A agent.</returns>
-    public static AIAgent CreateAIAgent(this A2AClient client, string? id = null, string? name = null, string? description = null, string? displayName = null, ILoggerFactory? loggerFactory = null)
+    public static AIAgent GetAIAgent(this A2AClient client, string? id = null, string? name = null, string? description = null, string? displayName = null, ILoggerFactory? loggerFactory = null)
     {
         return new A2AAgent(client, id, name, description, displayName, loggerFactory);
     }

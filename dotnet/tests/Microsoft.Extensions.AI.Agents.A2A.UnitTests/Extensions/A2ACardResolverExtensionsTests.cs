@@ -30,7 +30,7 @@ public sealed class A2ACardResolverExtensionsTests : IDisposable
     }
 
     [Fact]
-    public async Task CreateAIAgentAsync_WithValidAgentCard_ReturnsAIAgentAsync()
+    public async Task GetAIAgentAsync_WithValidAgentCard_ReturnsAIAgentAsync()
     {
         // Arrange
         this._handler.ResponsesToReturn.Enqueue(new AgentCard
@@ -41,7 +41,7 @@ public sealed class A2ACardResolverExtensionsTests : IDisposable
         });
 
         // Act
-        var agent = await this._resolver.CreateAIAgentAsync();
+        var agent = await this._resolver.GetAIAgentAsync();
 
         // Assert
         Assert.NotNull(agent);
@@ -68,7 +68,7 @@ public sealed class A2ACardResolverExtensionsTests : IDisposable
             Parts = new List<Part> { new TextPart { Text = "Response" } },
         });
 
-        var agent = await this._resolver.CreateAIAgentAsync(this._httpClient);
+        var agent = await this._resolver.GetAIAgentAsync(this._httpClient);
 
         // Act
         await agent.RunAsync("Test input");
