@@ -13,6 +13,7 @@ from agent_framework.workflow import (
     handler,
 )
 
+# Import the new sub-workflow types directly from the implementation package
 try:
     from agent_framework_workflow import (
         RequestInfoMessage,
@@ -126,14 +127,14 @@ class ResourceRequester(Executor):
         ctx: WorkflowContext[ResourceRequest | PolicyCheckRequest],
     ) -> None:
         """Process a list of resource requests."""
-        print(f"Sub-workflow processing {len(requests)} requests")
+        print(f"🏭 Sub-workflow processing {len(requests)} requests")
         self._request_count += len(requests)
 
         for req_data in requests:
             req_type = req_data.get("request_type", "resource")
 
             if req_type == "resource":
-                print(f" >>> Requesting resource: {req_data.get('type', 'cpu')} x{req_data.get('amount', 1)}")
+                print(f"  📦 Requesting resource: {req_data.get('type', 'cpu')} x{req_data.get('amount', 1)}")
                 request = ResourceRequest(
                     resource_type=req_data.get("type", "cpu"),
                     amount=req_data.get("amount", 1),
@@ -189,7 +190,7 @@ class ResourceRequester(Executor):
     def _collect_results(self) -> bool:
         """Collect and summarize results."""
         self._request_count -= 1
-        print(f"Sub-workflow completed request ({self._request_count} remaining)")
+        print(f"📊 Sub-workflow completed request ({self._request_count} remaining)")
         return self._request_count == 0
 
 
@@ -210,7 +211,7 @@ class ResourceCache(Executor):
         self, request: ResourceRequest, ctx: WorkflowContext[None]
     ) -> RequestResponse[ResourceRequest, ResourceResponse]:
         """Intercept RESOURCE requests and check cache first."""
-        print(f"CACHE interceptor checking: {request.amount} {request.resource_type}")
+        print(f"🏪 CACHE interceptor checking: {request.amount} {request.resource_type}")
 
         available = self.cache.get(request.resource_type, 0)
 
@@ -218,7 +219,7 @@ class ResourceCache(Executor):
             # We can satisfy from cache
             self.cache[request.resource_type] -= request.amount
             response = ResourceResponse(resource_type=request.resource_type, allocated=request.amount, source="cache")
-            print(f"  Cache satisfied: {request.amount} {request.resource_type}")
+            print(f"  ✅ Cache satisfied: {request.amount} {request.resource_type}")
             self.results.append(response)
             return RequestResponse[ResourceRequest, ResourceResponse].handled(response)
 
@@ -260,14 +261,14 @@ class PolicyEngine(Executor):
         self, request: PolicyCheckRequest, ctx: WorkflowContext[None]
     ) -> RequestResponse[PolicyCheckRequest, PolicyResponse]:
         """Intercept POLICY requests and apply rules."""
-        print(f" POLICY interceptor checking: {request.amount} {request.resource_type}, policy={request.policy_type}")
+        print(f"🛡️  POLICY interceptor checking: {request.amount} {request.resource_type}, policy={request.policy_type}")
 
         quota_limit = self.quota.get(request.resource_type, 0)
 
         if request.policy_type == "quota":
             if request.amount <= quota_limit:
                 response = PolicyResponse(approved=True, reason=f"Within quota ({quota_limit})")
-                print(f"  Policy approved: {request.amount} <= {quota_limit}")
+                print(f"  ✅ Policy approved: {request.amount} <= {quota_limit}")
                 self.results.append(response)
                 return RequestResponse[PolicyCheckRequest, PolicyResponse].handled(response)
             # Exceeds quota - forward to external for review
@@ -285,7 +286,7 @@ class PolicyEngine(Executor):
         """Collect policy results from external requests that were forwarded."""
         if response.data:
             self.results.append(response.data)
-            print(f"   Policy received external response: {response.data.approved} - {response.data.reason}")
+            print(f"🛡️  🌐 Policy received external response: {response.data.approved} - {response.data.reason}")
 
 
 class Coordinator(Executor):
@@ -308,7 +309,7 @@ class Coordinator(Executor):
 
 async def main() -> None:
     """Demonstrate parallel request interception patterns."""
-    print("Starting Sub-Workflow Parallel Request Interception Demo...")
+    print("🚀 Starting Sub-Workflow Parallel Request Interception Demo...")
     print("=" * 60)
 
     # 5. Create the sub-workflow
@@ -360,7 +361,7 @@ async def main() -> None:
         {"request_type": "policy", "type": "cpu", "amount": 1, "policy_type": "security"},  # Unknown policy -> external
     ]
 
-    print(f"Testing with {len(test_requests)} mixed requests:")
+    print(f"🧪 Testing with {len(test_requests)} mixed requests:")
     for i, req in enumerate(test_requests, 1):
         req_icon = "📦" if req["request_type"] == "resource" else "🛡️"
         print(
@@ -370,13 +371,13 @@ async def main() -> None:
     print("=" * 70)
 
     # 8. Run the workflow
-    print("Running workflow...")
+    print("🎬 Running workflow...")
     result = await main_workflow.run(test_requests)
 
     # 9. Handle any external requests that couldn't be intercepted
     request_events = result.get_request_info_events()
     if request_events:
-        print(f"\nHandling {len(request_events)} external request(s)...")
+        print(f"\n🌐 Handling {len(request_events)} external request(s)...")
 
         external_responses: dict[str, Any] = {}
         for event in request_events:
@@ -391,28 +392,29 @@ async def main() -> None:
                 # Handle PolicyCheckRequest - create PolicyResponse
                 policy_response = PolicyResponse(approved=True, reason="External policy service approved")
                 external_responses[event.request_id] = policy_response
-                print(f"  🔒 External policy: {'APPROVED' if policy_response.approved else 'DENIED'}")
+                print(f"  🔒 External policy: {'✅ APPROVED' if policy_response.approved else '❌ DENIED'}")
 
         await main_workflow.send_responses(external_responses)
     else:
-        print("\nAll requests were intercepted internally!")
+        print("\n🎯 All requests were intercepted internally!")
 
     # 10. Show results and analysis
     print("\n" + "=" * 70)
-    print("RESULTS ANALYSIS")
+    print("📊 RESULTS ANALYSIS")
     print("=" * 70)
 
-    print(f"\nCache Results ({len(cache.results)} handled):")
+    print(f"\n🏪 Cache Results ({len(cache.results)} handled):")
     for result in cache.results:
-        print(f"{result.allocated} {result.resource_type} from {result.source}")
+        print(f"  ✅ {result.allocated} {result.resource_type} from {result.source}")
 
-    print(f"\nPolicy Results ({len(policy.results)} handled):")
+    print(f"\n🛡️  Policy Results ({len(policy.results)} handled):")
     for result in policy.results:
-        print(f"  Approved: {result.approved} - {result.reason}")
+        status_icon = "✅" if result.approved else "❌"
+        print(f"  {status_icon} Approved: {result.approved} - {result.reason}")
 
     print("\n💾 Final Cache State:")
     for resource, amount in cache.cache.items():
-        print(f"  {resource}: {amount} remaining")
+        print(f"  📦 {resource}: {amount} remaining")
 
     print("\n📈 Summary:")
     print(f"  🎯 Total requests: {len(test_requests)}")

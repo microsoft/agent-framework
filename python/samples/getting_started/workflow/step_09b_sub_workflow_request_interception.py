@@ -107,12 +107,12 @@ class EmailValidator(Executor):
         domain = request.email.split("@")[1] if "@" in request.email else ""
 
         if not domain:
-            print(f"Invalid email format: {request.email}")
+            print(f"❌ Invalid email format: {request.email}")
             result = ValidationResult(email=request.email, is_valid=False, reason="Invalid email format")
             await ctx.add_event(WorkflowCompletedEvent(data=result))
             return
 
-        print(f"Sub-workflow requesting domain check for: {domain}")
+        print(f"🌐 Sub-workflow requesting domain check for: {domain}")
         # Request domain check
         domain_check = DomainCheckRequest(domain=domain)
         # Store the pending email with the request_id for correlation
@@ -147,7 +147,7 @@ class EmailValidator(Executor):
                 is_valid=approved,
                 reason="Domain approved" if approved else "Domain not approved",
             )
-            print(f"Sub-workflow completing validation for: {email}")
+            print(f"✅ Sub-workflow completing validation for: {email}")
             await ctx.add_event(WorkflowCompletedEvent(data=result))
 
 
@@ -169,7 +169,7 @@ class SmartEmailOrchestrator(Executor):
     @handler
     async def start_validation(self, emails: list[str], ctx: WorkflowContext[EmailValidationRequest]) -> None:
         """Start validating a batch of emails."""
-        print(f"Starting validation of {len(emails)} email addresses")
+        print(f"📧 Starting validation of {len(emails)} email addresses")
         print("=" * 60)
         for email in emails:
             print(f"📤 Sending '{email}' to sub-workflow for validation")
@@ -181,9 +181,9 @@ class SmartEmailOrchestrator(Executor):
         self, request: DomainCheckRequest, ctx: WorkflowContext[Any]
     ) -> RequestResponse[DomainCheckRequest, bool]:
         """Intercept domain check requests from sub-workflows."""
-        print(f"Parent intercepting domain check for: {request.domain}")
+        print(f"🔍 Parent intercepting domain check for: {request.domain}")
         if request.domain in self.approved_domains:
-            print(f"Domain '{request.domain}' is pre-approved locally!")
+            print(f"✅ Domain '{request.domain}' is pre-approved locally!")
             return RequestResponse[DomainCheckRequest, bool].handled(True)
         print(f"❓ Domain '{request.domain}' unknown, forwarding to external service...")
         return RequestResponse[DomainCheckRequest, bool].forward()
@@ -191,7 +191,8 @@ class SmartEmailOrchestrator(Executor):
     @handler
     async def collect_result(self, result: ValidationResult, ctx: WorkflowContext[None]) -> None:
         """Collect validation results. It comes from the sub-workflow emitted WorkflowCompletionEvent's data field."""
-        print(f"Validation result: {result.email} -> {result.reason}")
+        status_icon = "✅" if result.is_valid else "❌"
+        print(f"📥 {status_icon} Validation result: {result.email} -> {result.reason}")
         self._results.append(result)
 
     @property
@@ -202,7 +203,7 @@ class SmartEmailOrchestrator(Executor):
 
 async def run_example() -> None:
     """Run the sub-workflow example."""
-    print("Setting up sub-workflow with request interception...")
+    print("🚀 Setting up sub-workflow with request interception...")
     print()
 
     # 4. Build the sub-workflow
@@ -248,10 +249,10 @@ async def run_example() -> None:
     # 8. Handle any external requests
     request_events = result.get_request_info_events()
     if request_events:
-        print(f"\nHandling {len(request_events)} external request(s)...")
+        print(f"\n🌐 Handling {len(request_events)} external request(s)...")
         for event in request_events:
             if event.data and hasattr(event.data, "domain"):
-                print(f"External domain check needed for: {event.data.domain}")
+                print(f"🔍 External domain check needed for: {event.data.domain}")
 
         # Simulate external responses
         external_responses: dict[str, bool] = {}
@@ -261,7 +262,7 @@ async def run_example() -> None:
                 domain = event.data.domain
                 # Let's say unknown.org is actually approved externally
                 approved = domain == "unknown.org"
-                print(f"External service response for '{domain}': {'APPROVED' if approved else 'REJECTED'}")
+                print(f"🌐 External service response for '{domain}': {'APPROVED' if approved else 'REJECTED'}")
                 external_responses[event.request_id] = approved
 
         # 9. Send external responses
@@ -273,7 +274,7 @@ async def run_example() -> None:
     print("\n📊 Final Results Summary:")
     print("=" * 60)
     for result in orchestrator.results:
-        status = "VALID" if result.is_valid else "!! INVALID !!"
+        status = "✅ VALID" if result.is_valid else "❌ INVALID"
         print(f"{status} {result.email}: {result.reason}")
 
     print(f"\n🏁 Processed {len(orchestrator.results)} emails total")

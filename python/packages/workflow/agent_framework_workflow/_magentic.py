@@ -16,15 +16,16 @@ from uuid import uuid4
 from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
+    AIAgent,
     ChatClient,
     ChatMessage,
     ChatRole,
     FunctionCallContent,
     FunctionResultContent,
 )
-from agent_framework._agents import AgentBase, AIAgent
+from agent_framework._agents import AgentBase
 from agent_framework._pydantic import AFBaseModel
-from pydantic import ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ._events import WorkflowCompletedEvent, WorkflowEvent
 from ._executor import Executor, RequestInfoMessage, RequestResponse, handler
@@ -590,7 +591,12 @@ class StandardMagenticManager(MagenticManagerBase):
         if task_ledger is not None:
             self.task_ledger = task_ledger
 
-    async def _complete(self, messages: list[ChatMessage]) -> ChatMessage:
+    async def _complete(
+        self,
+        messages: list[ChatMessage],
+        *,
+        response_format: type[BaseModel] | None = None,
+    ) -> ChatMessage:
         """Call the underlying ChatClient directly and return the last assistant message.
 
         If manager instructions are provided, they are injected as a SYSTEM message
@@ -604,7 +610,7 @@ class StandardMagenticManager(MagenticManagerBase):
         request_messages.extend(messages)
 
         # Invoke the chat client non-streaming API
-        response = await self.chat_client.get_response(request_messages)
+        response = await self.chat_client.get_response(request_messages, response_format=response_format)
         try:
             out_messages: list[ChatMessage] | None = list(response.messages)  # type: ignore[assignment]
         except Exception:
@@ -721,16 +727,21 @@ class StandardMagenticManager(MagenticManagerBase):
         attempts = 0
         last_error: Exception | None = None
         while attempts < self.progress_ledger_retry_count:
-            raw = await self._complete([*magentic_context.chat_history, user_message])
+            raw = await self._complete(
+                [*magentic_context.chat_history, user_message],
+                response_format=MagenticProgressLedger,
+            )
             try:
                 ledger_dict = _extract_json(raw.text)
                 return _pd_validate(MagenticProgressLedger, ledger_dict)
             except Exception as ex:
                 last_error = ex
                 attempts += 1
-                logger.warning(f"Progress ledger JSON parse failed (attempt {attempts}/2): {ex}")
-                if attempts < 2:
-                    # brief backoff before one more try
+                logger.warning(
+                    f"Progress ledger JSON parse failed (attempt {attempts}/{self.progress_ledger_retry_count}): {ex}"
+                )
+                if attempts < self.progress_ledger_retry_count:
+                    # brief backoff before next try
                     await asyncio.sleep(0.25 * attempts)
 
         raise RuntimeError(
@@ -1251,7 +1262,7 @@ class MagenticAgentExecutor(Executor):
 
     def __init__(
         self,
-        agent: AgentBase | Executor,
+        agent: AIAgent | Executor,
         agent_id: str,
         agent_response_callback: Callable[[str, ChatMessage], Awaitable[None]] | None = None,
         streaming_agent_response_callback: Callable[[str, AgentRunResponseUpdate, bool], Awaitable[None]] | None = None,
@@ -1292,10 +1303,10 @@ class MagenticAgentExecutor(Executor):
 
         Uses SYSTEM role if the agent supports it, otherwise falls back to USER.
         """
-        # Check if the agent has a chat_client that might support SYSTEM messages
-        if hasattr(self._agent, "chat_client"):
-            # Most modern chat clients support SYSTEM messages
-            # The agent framework's ChatClientAgent handles SYSTEM messages properly
+        # Only AgentBase-derived agents are assumed to support SYSTEM messages reliably.
+        from agent_framework import AgentBase as _AF_AgentBase  # local import to avoid cycles
+
+        if isinstance(self._agent, _AF_AgentBase) and hasattr(self._agent, "chat_client"):
             return ChatRole.SYSTEM
         # For other agent types or when we can't determine support, use USER
         return ChatRole.USER
@@ -1321,10 +1332,19 @@ class MagenticAgentExecutor(Executor):
         # Add the orchestrator's instruction as a USER message so the agent treats it as the prompt
         if message.instruction:
             self._chat_history.append(ChatMessage(role=ChatRole.USER, text=message.instruction))
-
         try:
-            # Invoke the agent
-            response = await self._invoke_agent()
+            # If the participant is not an invokable AgentBase, return a no-op response.
+            from agent_framework import AgentBase as _AF_AgentBase  # local import to avoid cycles
+
+            if not isinstance(self._agent, _AF_AgentBase):
+                response = ChatMessage(
+                    role=ChatRole.ASSISTANT,
+                    text=f"{self._agent_id} is a workflow executor and cannot be invoked directly.",
+                    author_name=self._agent_id,
+                )
+            else:
+                # Invoke the agent
+                response = await self._invoke_agent()
             self._chat_history.append(response)
 
             # Send response back to orchestrator
@@ -1347,13 +1367,12 @@ class MagenticAgentExecutor(Executor):
 
     async def _invoke_agent(self) -> ChatMessage:
         """Invoke the wrapped agent and return a response."""
-        if not isinstance(self._agent, AIAgent):
-            raise TypeError("Agent must be an instance of AIAgent")
-
         logger.debug(f"Agent {self._agent_id}: Running with {len(self._chat_history)} messages")
 
         updates: list[AgentRunResponseUpdate] = []
-        async for update in self._agent.run_streaming(messages=self._chat_history):  # type: ignore[attr-defined]
+        # The wrapped participant is guaranteed to be an AgentBase when this is called.
+        agent = cast("AIAgent", self._agent)
+        async for update in agent.run_streaming(messages=self._chat_history):  # type: ignore[attr-defined]
             updates.append(update)
             if self._streaming_agent_response_callback is not None:
                 with contextlib.suppress(Exception):
@@ -1403,7 +1422,7 @@ class MagenticBuilder:
     """High-level builder for creating Magentic One workflows."""
 
     def __init__(self) -> None:
-        self._participants: dict[str, AgentBase | Executor] = {}
+        self._participants: dict[str, AIAgent | Executor] = {}
         self._manager: MagenticManagerBase | None = None
         self._exception_callback: Callable[[Exception], None] | None = None
         self._result_callback: Callable[[ChatMessage], Awaitable[None]] | None = None
@@ -1416,8 +1435,8 @@ class MagenticBuilder:
         self._unified_callback: CallbackSink | None = None
         self._callback_mode: MagenticCallbackMode | None = None
 
-    def participants(self, **participants: AgentBase | Executor) -> Self:
-        """Add participants (agents or executors) to the workflow."""
+    def participants(self, **participants: AIAgent | Executor) -> Self:
+        """Add participants (agents) to the workflow."""
         self._participants.update(participants)
         return self
 

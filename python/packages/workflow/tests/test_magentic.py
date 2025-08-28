@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
+from typing import Any
 
 import pytest
 from agent_framework import (
@@ -280,7 +281,7 @@ class _StubChatClient(AFChatClient):
 async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
     mgr = StandardMagenticManager(chat_client=_StubChatClient())
 
-    async def fake_complete_plan(messages: list[ChatMessage]) -> ChatMessage:
+    async def fake_complete_plan(messages: list[ChatMessage], **kwargs: Any) -> ChatMessage:
         # Return a different response depending on call order length
         if any("FACTS" in (m.text or "") for m in messages):
             return ChatMessage(role=ChatRole.ASSISTANT, text="- step A\n- step B")
@@ -300,7 +301,7 @@ async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
     assert any(t in combined.text for t in ("- step A", "- step B", "- step"))
 
     # Now replan with new outputs
-    async def fake_complete_replan(messages: list[ChatMessage]) -> ChatMessage:
+    async def fake_complete_replan(messages: list[ChatMessage], **kwargs: Any) -> ChatMessage:
         if any("Please briefly explain" in (m.text or "") for m in messages):
             return ChatMessage(role=ChatRole.ASSISTANT, text="- new step")
         return ChatMessage(role=ChatRole.ASSISTANT, text="GIVEN OR VERIFIED FACTS\n- updated")
@@ -318,7 +319,7 @@ async def test_standard_manager_progress_ledger_success_and_error():
     )
 
     # Success path: valid JSON
-    async def fake_complete_ok(messages: list[ChatMessage]) -> ChatMessage:
+    async def fake_complete_ok(messages: list[ChatMessage], **kwargs: Any) -> ChatMessage:
         json_text = (
             '{"is_request_satisfied": {"reason": "r", "answer": false}, '
             '"is_in_loop": {"reason": "r", "answer": false}, '
@@ -333,7 +334,7 @@ async def test_standard_manager_progress_ledger_success_and_error():
     assert ledger.next_speaker.answer == "alice"
 
     # Error path: invalid JSON now raises to avoid emitting planner-oriented instructions to agents
-    async def fake_complete_bad(messages: list[ChatMessage]) -> ChatMessage:
+    async def fake_complete_bad(messages: list[ChatMessage], **kwargs: Any) -> ChatMessage:
         return ChatMessage(role=ChatRole.ASSISTANT, text="not-json")
 
     mgr._complete = fake_complete_bad  # type: ignore[attr-defined]

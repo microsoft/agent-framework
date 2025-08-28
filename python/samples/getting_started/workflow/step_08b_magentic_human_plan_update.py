@@ -5,7 +5,7 @@ import logging
 from typing import cast
 
 from agent_framework import ChatClientAgent, HostedCodeInterpreterTool
-from agent_framework.openai import OpenAIAssistantsClient, OpenAIChatClient
+from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
 from agent_framework_workflow import (
     MagenticAgentDeltaEvent,
     MagenticAgentMessageEvent,
@@ -58,130 +58,131 @@ async def main() -> None:
         chat_client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
     )
 
-    async with ChatClientAgent(
+    coder_agent = ChatClientAgent(
         name="CoderAgent",
         description="A helpful assistant that writes and executes code to process and analyze data.",
         instructions="You solve questions using code. Please provide detailed analysis and computation process.",
-        chat_client=OpenAIAssistantsClient(),
+        chat_client=OpenAIResponsesClient(),
         tools=HostedCodeInterpreterTool(),
-    ) as coder_agent:
-        # Callbacks
-        def on_exception(exception: Exception) -> None:
-            print(f"Exception occurred: {exception}")
-            logger.exception("Workflow exception", exc_info=exception)
+    )
 
-        # Unified callback
-        async def on_event(event: MagenticCallbackEvent) -> None:
-            nonlocal last_stream_agent_id, stream_line_open
-            if isinstance(event, MagenticOrchestratorMessageEvent):
-                print(f"\n[ORCH:{event.kind}]\n\n{getattr(event.message, 'text', '')}\n{'-' * 26}")
-            elif isinstance(event, MagenticAgentDeltaEvent):
-                if last_stream_agent_id != event.agent_id or not stream_line_open:
-                    if stream_line_open:
-                        print()
-                    print(f"\n[STREAM:{event.agent_id}]: ", end="", flush=True)
-                    last_stream_agent_id = event.agent_id
-                    stream_line_open = True
-                print(event.text, end="", flush=True)
-            elif isinstance(event, MagenticAgentMessageEvent):
+    # Callbacks
+    def on_exception(exception: Exception) -> None:
+        print(f"Exception occurred: {exception}")
+        logger.exception("Workflow exception", exc_info=exception)
+
+    # Unified callback
+    async def on_event(event: MagenticCallbackEvent) -> None:
+        nonlocal last_stream_agent_id, stream_line_open
+        if isinstance(event, MagenticOrchestratorMessageEvent):
+            print(f"\n[ORCH:{event.kind}]\n\n{getattr(event.message, 'text', '')}\n{'-' * 26}")
+        elif isinstance(event, MagenticAgentDeltaEvent):
+            if last_stream_agent_id != event.agent_id or not stream_line_open:
                 if stream_line_open:
-                    print(" (final)")
-                    stream_line_open = False
                     print()
-                msg = event.message
-                if msg is not None:
-                    response_text = (msg.text or "").replace("\n", " ")
-                    print(f"\n[AGENT:{event.agent_id}] {msg.role.value}\n\n{response_text}\n{'-' * 26}")
-            elif isinstance(event, MagenticFinalResultEvent):
-                print("\n" + "=" * 50)
-                print("FINAL RESULT:")
-                print("=" * 50)
-                if event.message is not None:
-                    print(event.message.text)
-                print("=" * 50)
+                print(f"\n[STREAM:{event.agent_id}]: ", end="", flush=True)
+                last_stream_agent_id = event.agent_id
+                stream_line_open = True
+            print(event.text, end="", flush=True)
+        elif isinstance(event, MagenticAgentMessageEvent):
+            if stream_line_open:
+                print(" (final)")
+                stream_line_open = False
+                print()
+            msg = event.message
+            if msg is not None:
+                response_text = (msg.text or "").replace("\n", " ")
+                print(f"\n[AGENT:{event.agent_id}] {msg.role.value}\n\n{response_text}\n{'-' * 26}")
+        elif isinstance(event, MagenticFinalResultEvent):
+            print("\n" + "=" * 50)
+            print("FINAL RESULT:")
+            print("=" * 50)
+            if event.message is not None:
+                print(event.message.text)
+            print("=" * 50)
 
-        print("\nBuilding Magentic Workflow...")
+    print("\nBuilding Magentic Workflow...")
 
-        last_stream_agent_id: str | None = None
-        stream_line_open: bool = False
+    last_stream_agent_id: str | None = None
+    stream_line_open: bool = False
 
-        workflow = (
-            MagenticBuilder()
-            .participants(researcher=researcher_agent, coder=coder_agent)
-            .on_exception(on_exception)
-            .on_event(on_event, mode=MagenticCallbackMode.STREAMING)
-            .with_standard_manager(
-                chat_client=OpenAIChatClient(),
-                max_round_count=10,
-                max_stall_count=3,
-                max_reset_count=2,
-            )
-            .with_plan_review()
-            .build()
+    workflow = (
+        MagenticBuilder()
+        .participants(researcher=researcher_agent, coder=coder_agent)
+        .on_exception(on_exception)
+        .on_event(on_event, mode=MagenticCallbackMode.STREAMING)
+        .with_standard_manager(
+            chat_client=OpenAIChatClient(),
+            max_round_count=10,
+            max_stall_count=3,
+            max_reset_count=2,
         )
+        .with_plan_review()
+        .build()
+    )
 
-        task = (
-            "I am preparing a report on the energy efficiency of different machine learning model architectures. "
-            "Compare the estimated training and inference energy consumption of ResNet-50, BERT-base, and GPT-2 "
-            "on standard datasets (e.g., ImageNet for ResNet, GLUE for BERT, WebText for GPT-2). "
-            "Then, estimate the CO2 emissions associated with each, assuming training on an Azure Standard_NC6s_v3 "
-            "VM for 24 hours. Provide tables for clarity, and recommend the most energy-efficient model "
-            "per task type (image classification, text classification, and text generation)."
-        )
+    task = (
+        "I am preparing a report on the energy efficiency of different machine learning model architectures. "
+        "Compare the estimated training and inference energy consumption of ResNet-50, BERT-base, and GPT-2 "
+        "on standard datasets (e.g., ImageNet for ResNet, GLUE for BERT, WebText for GPT-2). "
+        "Then, estimate the CO2 emissions associated with each, assuming training on an Azure Standard_NC6s_v3 "
+        "VM for 24 hours. Provide tables for clarity, and recommend the most energy-efficient model "
+        "per task type (image classification, text classification, and text generation)."
+    )
 
-        print(f"\nTask: {task}")
-        print("\nStarting workflow execution...")
+    print(f"\nTask: {task}")
+    print("\nStarting workflow execution...")
 
-        try:
-            completion_event: WorkflowCompletedEvent | None = None
-            pending_request: RequestInfoEvent | None = None
+    try:
+        completion_event: WorkflowCompletedEvent | None = None
+        pending_request: RequestInfoEvent | None = None
 
-            while True:
-                # Phase 1: run until either completion or a HIL request
-                if pending_request is None:
-                    async for event in workflow.run_streaming(task):
-                        print(f"Event: {event}")
+        while True:
+            # Phase 1: run until either completion or a HIL request
+            if pending_request is None:
+                async for event in workflow.run_streaming(task):
+                    print(f"Event: {event}")
 
-                        if isinstance(event, WorkflowCompletedEvent):
-                            completion_event = event
+                    if isinstance(event, WorkflowCompletedEvent):
+                        completion_event = event
 
-                        if isinstance(event, RequestInfoEvent) and event.request_type is MagenticPlanReviewRequest:
-                            pending_request = event
-                            review_req = cast(MagenticPlanReviewRequest, event.data)
-                            if review_req.plan_text:
-                                print(f"\n=== PLAN REVIEW REQUEST ===\n{review_req.plan_text}\n")
+                    if isinstance(event, RequestInfoEvent) and event.request_type is MagenticPlanReviewRequest:
+                        pending_request = event
+                        review_req = cast(MagenticPlanReviewRequest, event.data)
+                        if review_req.plan_text:
+                            print(f"\n=== PLAN REVIEW REQUEST ===\n{review_req.plan_text}\n")
 
-                # Break if completed
-                if completion_event is not None:
-                    data = getattr(completion_event, "data", None)
-                    preview = getattr(data, "text", None) or (str(data) if data is not None else "")
-                    print(f"Workflow completed with result:\n\n{preview}")
+            # Break if completed
+            if completion_event is not None:
+                data = getattr(completion_event, "data", None)
+                preview = getattr(data, "text", None) or (str(data) if data is not None else "")
+                print(f"Workflow completed with result:\n\n{preview}")
 
-                # Phase 2: respond to the pending plan review (HIL) request
-                if pending_request is not None:
-                    # For demo purposes we approve as-is. Replace this with UI input
-                    # to collect a human decision/comments/edited plan.
-                    reply = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)
+            # Phase 2: respond to the pending plan review (HIL) request
+            if pending_request is not None:
+                # For demo purposes we approve as-is. Replace this with UI input
+                # to collect a human decision/comments/edited plan.
+                reply = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)
 
-                    async for event in workflow.send_responses_streaming({pending_request.request_id: reply}):
-                        print(f"Event: {event}")
+                async for event in workflow.send_responses_streaming({pending_request.request_id: reply}):
+                    print(f"Event: {event}")
 
-                        if isinstance(event, WorkflowCompletedEvent):
-                            completion_event = event
+                    if isinstance(event, WorkflowCompletedEvent):
+                        completion_event = event
 
-                        if isinstance(event, RequestInfoEvent) and event.request_type is MagenticPlanReviewRequest:
-                            # Another review cycle requested; keep pending
-                            pending_request = event
-                            review_req = cast(MagenticPlanReviewRequest, event.data)
-                            if review_req.plan_text:
-                                print(f"\n=== PLAN REVIEW REQUEST ===\n{review_req.plan_text}\n")
-                        else:
-                            # Clear pending if no immediate new request
-                            pending_request = None
+                    if isinstance(event, RequestInfoEvent) and event.request_type is MagenticPlanReviewRequest:
+                        # Another review cycle requested; keep pending
+                        pending_request = event
+                        review_req = cast(MagenticPlanReviewRequest, event.data)
+                        if review_req.plan_text:
+                            print(f"\n=== PLAN REVIEW REQUEST ===\n{review_req.plan_text}\n")
+                    else:
+                        # Clear pending if no immediate new request
+                        pending_request = None
 
-        except Exception as e:
-            print(f"Workflow execution failed: {e}")
-            on_exception(e)
+    except Exception as e:
+        print(f"Workflow execution failed: {e}")
+        on_exception(e)
 
 
 if __name__ == "__main__":
