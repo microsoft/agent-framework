@@ -13,7 +13,15 @@ from enum import Enum
 from typing import Annotated, Any, Literal, Protocol, TypeVar, Union, cast
 from uuid import uuid4
 
-from agent_framework import AgentRunResponse, AgentRunResponseUpdate, ChatClient, ChatMessage, ChatRole
+from agent_framework import (
+    AgentRunResponse,
+    AgentRunResponseUpdate,
+    ChatClient,
+    ChatMessage,
+    ChatRole,
+    FunctionCallContent,
+    FunctionResultContent,
+)
 from agent_framework._agents import AgentBase, AIAgent
 from agent_framework._pydantic import AFBaseModel
 from pydantic import ConfigDict, Field
@@ -66,8 +74,15 @@ class MagenticOrchestratorMessageEvent:
 @dataclass
 class MagenticAgentDeltaEvent:
     source: Literal["agent"] = "agent"
-    agent_id: str = ""
-    text: str = ""
+    agent_id: str | None = None
+    text: str | None = None
+    # Optional: function/tool streaming payloads
+    function_call_id: str | None = None
+    function_call_name: str | None = None
+    function_call_arguments: Any | None = None
+    function_result_id: str | None = None
+    function_result: Any | None = None
+    role: ChatRole | None = None
 
 
 @dataclass
@@ -1536,7 +1551,8 @@ class MagenticBuilder:
 
             async def _on_agent_delta(agent_id: str, update: AgentRunResponseUpdate, is_final: bool) -> None:
                 if mode == MagenticCallbackMode.STREAMING:
-                    # Extract a text chunk robustly
+                    # TODO(evmattso): Make sure we surface other non-text streaming items
+                    # (or per-type events) and plumb through consumers.
                     chunk: str | None = getattr(update, "text", None)
                     if not chunk:
                         with contextlib.suppress(Exception):
@@ -1544,7 +1560,36 @@ class MagenticBuilder:
                             chunk = "".join(getattr(c, "text", "") for c in contents) or None
                     if chunk:
                         with contextlib.suppress(Exception):
-                            await unified(MagenticAgentDeltaEvent(agent_id=agent_id, text=chunk))
+                            await unified(
+                                MagenticAgentDeltaEvent(
+                                    agent_id=agent_id,
+                                    text=chunk,
+                                    role=getattr(update, "role", None),
+                                )
+                            )
+                    # Emit function call/result items if present on the update
+                    with contextlib.suppress(Exception):
+                        content_items = getattr(update, "contents", []) or []
+                        for item in content_items:
+                            if isinstance(item, FunctionCallContent):
+                                await unified(
+                                    MagenticAgentDeltaEvent(
+                                        agent_id=agent_id,
+                                        function_call_id=getattr(item, "call_id", None),
+                                        function_call_name=getattr(item, "name", None),
+                                        function_call_arguments=getattr(item, "arguments", None),
+                                        role=getattr(update, "role", None),
+                                    )
+                                )
+                            elif isinstance(item, FunctionResultContent):
+                                await unified(
+                                    MagenticAgentDeltaEvent(
+                                        agent_id=agent_id,
+                                        function_result_id=getattr(item, "call_id", None),
+                                        function_result=getattr(item, "result", None),
+                                        role=getattr(update, "role", None),
+                                    )
+                                )
                 # final aggregation handled by _on_agent_final via agent_response_callback
 
             # Override delegates for orchestrator and agent callbacks
