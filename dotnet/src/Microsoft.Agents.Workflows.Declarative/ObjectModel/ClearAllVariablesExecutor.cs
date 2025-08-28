@@ -10,7 +10,8 @@ using Microsoft.Bot.ObjectModel.Abstractions;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class ClearAllVariablesExecutor(ClearAllVariables model) : DeclarativeActionExecutor<ClearAllVariables>(model)
+internal sealed class ClearAllVariablesExecutor(ClearAllVariables model, DeclarativeWorkflowState state)
+    : DeclarativeActionExecutor<ClearAllVariables>(model, state)
 {
     protected override ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {

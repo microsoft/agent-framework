@@ -15,11 +15,12 @@ public class FormulaValueExtensionsTests
     public void BooleanValue()
     {
         BooleanValue formulaValue = FormulaValue.New(true);
-        BooleanDataValue dataValue = formulaValue.ToDataValue();
-        Assert.Equal(formulaValue.Value, dataValue.Value);
+        DataValue dataValue = formulaValue.ToDataValue();
+        BooleanDataValue typedValue = Assert.IsType<BooleanDataValue>(dataValue);
+        Assert.Equal(formulaValue.Value, typedValue.Value);
 
         BooleanValue formulaCopy = Assert.IsType<BooleanValue>(dataValue.ToFormulaValue());
-        Assert.Equal(dataValue.Value, formulaCopy.Value);
+        Assert.Equal(typedValue.Value, formulaCopy.Value);
 
         Assert.Equal(bool.TrueString, formulaValue.Format());
     }
@@ -30,11 +31,12 @@ public class FormulaValueExtensionsTests
         StringValue formulaValue = FormulaValue.New("test value");
         Assert.Equal(StringDataType.Instance, formulaValue.GetDataType());
 
-        StringDataValue dataValue = formulaValue.ToDataValue();
-        Assert.Equal(formulaValue.Value, dataValue.Value);
+        DataValue dataValue = formulaValue.ToDataValue();
+        StringDataValue typedValue = Assert.IsType<StringDataValue>(dataValue);
+        Assert.Equal(formulaValue.Value, typedValue.Value);
 
-        StringValue formulaCopy = Assert.IsType<StringValue>(dataValue.ToFormulaValue());
-        Assert.Equal(dataValue.Value, formulaCopy.Value);
+        StringValue formulaCopy = Assert.IsType<StringValue>(typedValue.ToFormulaValue());
+        Assert.Equal(typedValue.Value, formulaCopy.Value);
 
         Assert.Equal(formulaValue.Value, formulaValue.Format());
     }
@@ -45,11 +47,12 @@ public class FormulaValueExtensionsTests
         DecimalValue formulaValue = FormulaValue.New(45.3m);
         Assert.Equal(NumberDataType.Instance, formulaValue.GetDataType());
 
-        NumberDataValue dataValue = formulaValue.ToDataValue();
-        Assert.Equal(formulaValue.Value, dataValue.Value);
+        DataValue dataValue = formulaValue.ToDataValue();
+        NumberDataValue typedValue = Assert.IsType<NumberDataValue>(dataValue);
+        Assert.Equal(formulaValue.Value, typedValue.Value);
 
-        DecimalValue formulaCopy = Assert.IsType<DecimalValue>(dataValue.ToFormulaValue());
-        Assert.Equal(dataValue.Value, formulaCopy.Value);
+        DecimalValue formulaCopy = Assert.IsType<DecimalValue>(typedValue.ToFormulaValue());
+        Assert.Equal(typedValue.Value, formulaCopy.Value);
 
         Assert.Equal("45.3", formulaValue.Format());
     }
@@ -60,11 +63,12 @@ public class FormulaValueExtensionsTests
         NumberValue formulaValue = FormulaValue.New(3.1415926535897);
         Assert.Equal(FloatDataType.Instance, formulaValue.GetDataType());
 
-        FloatDataValue dataValue = formulaValue.ToDataValue();
-        Assert.Equal(formulaValue.Value, dataValue.Value);
+        DataValue dataValue = formulaValue.ToDataValue();
+        FloatDataValue typedValue = Assert.IsType<FloatDataValue>(dataValue);
+        Assert.Equal(formulaValue.Value, typedValue.Value);
 
-        NumberValue formulaCopy = Assert.IsType<NumberValue>(dataValue.ToFormulaValue());
-        Assert.Equal(dataValue.Value, formulaCopy.Value);
+        NumberValue formulaCopy = Assert.IsType<NumberValue>(typedValue.ToFormulaValue());
+        Assert.Equal(typedValue.Value, formulaCopy.Value);
 
         Assert.Equal("3.1415926535897", formulaValue.Format());
     }
@@ -95,11 +99,12 @@ public class FormulaValueExtensionsTests
         DateValue formulaValue = FormulaValue.NewDateOnly(timestamp);
         Assert.Equal(DataType.Date, formulaValue.GetDataType());
 
-        DateDataValue dataValue = formulaValue.ToDataValue();
-        Assert.Equal(formulaValue.GetConvertedValue(TimeZoneInfo.Utc), dataValue.Value);
+        DataValue dataValue = formulaValue.ToDataValue();
+        DateDataValue typedValue = Assert.IsType<DateDataValue>(dataValue);
+        Assert.Equal(formulaValue.GetConvertedValue(TimeZoneInfo.Utc), typedValue.Value);
 
         DateValue formulaCopy = Assert.IsType<DateValue>(dataValue.ToFormulaValue());
-        Assert.Equal(dataValue.Value, formulaCopy.GetConvertedValue(TimeZoneInfo.Utc));
+        Assert.Equal(typedValue.Value, formulaCopy.GetConvertedValue(TimeZoneInfo.Utc));
 
         Assert.Equal($"{timestamp}", formulaValue.Format());
     }
@@ -111,11 +116,12 @@ public class FormulaValueExtensionsTests
         DateTimeValue formulaValue = FormulaValue.New(timestamp);
         Assert.Equal(DataType.DateTime, formulaValue.GetDataType());
 
-        DateTimeDataValue dataValue = formulaValue.ToDataValue();
-        Assert.Equal(formulaValue.GetConvertedValue(TimeZoneInfo.Utc), dataValue.Value);
+        DataValue dataValue = formulaValue.ToDataValue();
+        DateTimeDataValue typedValue = Assert.IsType<DateTimeDataValue>(dataValue);
+        Assert.Equal(formulaValue.GetConvertedValue(TimeZoneInfo.Utc), typedValue.Value);
 
-        DateTimeValue formulaCopy = Assert.IsType<DateTimeValue>(dataValue.ToFormulaValue());
-        Assert.Equal(dataValue.Value, formulaCopy.GetConvertedValue(TimeZoneInfo.Utc));
+        DateTimeValue formulaCopy = Assert.IsType<DateTimeValue>(typedValue.ToFormulaValue());
+        Assert.Equal(typedValue.Value, formulaCopy.GetConvertedValue(TimeZoneInfo.Utc));
 
         Assert.Equal($"{timestamp}", formulaValue.Format());
     }
@@ -126,11 +132,12 @@ public class FormulaValueExtensionsTests
         TimeValue formulaValue = FormulaValue.New(TimeSpan.Parse("10:35"));
         Assert.Equal(DataType.Time, formulaValue.GetDataType());
 
-        TimeDataValue dataValue = formulaValue.ToDataValue();
-        Assert.Equal(formulaValue.Value, dataValue.Value);
+        DataValue dataValue = formulaValue.ToDataValue();
+        TimeDataValue typedValue = Assert.IsType<TimeDataValue>(dataValue);
+        Assert.Equal(formulaValue.Value, typedValue.Value);
 
-        TimeValue formulaCopy = Assert.IsType<TimeValue>(dataValue.ToFormulaValue());
-        Assert.Equal(dataValue.Value, formulaCopy.Value);
+        TimeValue formulaCopy = Assert.IsType<TimeValue>(typedValue.ToFormulaValue());
+        Assert.Equal(typedValue.Value, formulaCopy.Value);
 
         Assert.Equal("10:35:00", formulaValue.Format());
     }
@@ -144,7 +151,7 @@ public class FormulaValueExtensionsTests
             new NamedValue("FieldC", FormulaValue.New("Value3")));
         Assert.Equal(DataType.EmptyRecord, formulaValue.GetDataType());
 
-        RecordDataValue dataValue = formulaValue.ToDataValue();
+        RecordDataValue dataValue = formulaValue.ToRecord();
         Assert.Equal(formulaValue.Fields.Count(), dataValue.Properties.Count);
         foreach (KeyValuePair<string, DataValue> property in dataValue.Properties)
         {
@@ -178,7 +185,7 @@ public class FormulaValueExtensionsTests
             new NamedValue("FieldC", FormulaValue.New("Value3")));
         TableValue formulaValue = TableValue.NewTable(recordValue.Type, [recordValue]);
 
-        TableDataValue dataValue = formulaValue.ToDataValue();
+        TableDataValue dataValue = formulaValue.ToTable();
         Assert.Equal(formulaValue.Rows.Count(), dataValue.Values.Length);
 
         TableValue formulaCopy = Assert.IsType<TableValue>(dataValue.ToFormulaValue(), exactMatch: false);

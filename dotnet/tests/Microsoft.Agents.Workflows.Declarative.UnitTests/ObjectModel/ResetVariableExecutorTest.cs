@@ -26,7 +26,7 @@ public sealed class ResetVariableExecutorTest(ITestOutputHelper output) : Workfl
                 FormatVariablePath("MyVar1"));
 
         // Act
-        ResetVariableExecutor action = new(model);
+        ResetVariableExecutor action = new(model, this.GetState());
         await this.Execute(action);
 
         // Assert
@@ -47,7 +47,7 @@ public sealed class ResetVariableExecutorTest(ITestOutputHelper output) : Workfl
                 FormatVariablePath("NoVar"));
 
         // Act
-        ResetVariableExecutor action = new(model);
+        ResetVariableExecutor action = new(model, this.GetState());
         await this.Execute(action);
 
         // Assert

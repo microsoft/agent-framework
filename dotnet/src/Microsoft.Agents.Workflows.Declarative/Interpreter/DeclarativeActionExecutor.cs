@@ -1,23 +1,25 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
-using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.Workflows.Reflection;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.PowerFx.Types;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
-internal sealed record class ExecutionResultMessage(string ExecutorId, object? Result = null);
+internal sealed record class DeclarativeExecutorResult(string ExecutorId, object? Result = null);
 
-internal abstract class DeclarativeActionExecutor<TAction>(TAction model) :
-    WorkflowActionExecutor(model)
+internal abstract class DeclarativeActionExecutor<TAction>(TAction model, DeclarativeWorkflowState state) :
+    WorkflowActionExecutor(model, state)
     where TAction : DialogAction
 {
     public new TAction Model => (TAction)base.Model;
@@ -25,14 +27,20 @@ internal abstract class DeclarativeActionExecutor<TAction>(TAction model) :
 
 internal abstract class WorkflowActionExecutor :
     ReflectingExecutor<WorkflowActionExecutor>,
-    IMessageHandler<ExecutionResultMessage>
+    IMessageHandler<DeclarativeExecutorResult>
 {
     public const string RootActionId = "(root)";
 
-    private string? _parentId;
-    private DeclarativeWorkflowState? _state;
+    private static readonly ImmutableHashSet<string> s_mutableScopes =
+        new HashSet<string>
+        {
+                VariableScopeNames.Topic,
+                VariableScopeNames.Global,
+        }.ToImmutableHashSet();
 
-    protected WorkflowActionExecutor(DialogAction model)
+    private string? _parentId;
+
+    protected WorkflowActionExecutor(DialogAction model, DeclarativeWorkflowState state)
         : base(model.Id.Value)
     {
         if (!model.HasRequiredProperties)
@@ -41,6 +49,7 @@ internal abstract class WorkflowActionExecutor :
         }
 
         this.Model = model;
+        this.State = state;
     }
 
     public DialogAction Model { get; }
@@ -49,16 +58,10 @@ internal abstract class WorkflowActionExecutor :
 
     internal ILogger Logger { get; set; } = NullLogger<WorkflowActionExecutor>.Instance;
 
-    internal DeclarativeWorkflowOptions? Options { get; set; }
-
-    protected DeclarativeWorkflowState State
-    {
-        get => this._state ?? throw new WorkflowExecutionException("Context not assigned");
-        private set { this._state = value; }
-    }
+    protected DeclarativeWorkflowState State { get; }
 
     /// <inheritdoc/>
-    public async ValueTask HandleAsync(ExecutionResultMessage message, IWorkflowContext context)
+    public async ValueTask HandleAsync(DeclarativeExecutorResult message, IWorkflowContext context)
     {
         if (this.Model.Disabled)
         {
@@ -66,15 +69,11 @@ internal abstract class WorkflowActionExecutor :
             return;
         }
 
-        WorkflowScopes scopes = await context.GetScopedStateAsync(default).ConfigureAwait(false);
-        this.State = new DeclarativeWorkflowState(this.Options.CreateRecalcEngine(), scopes);
-
         try
         {
             object? result = await this.ExecuteAsync(context, cancellationToken: default).ConfigureAwait(false);
 
-            await context.SetScopedStateAsync(scopes, default).ConfigureAwait(false);
-            await context.SendMessageAsync(new ExecutionResultMessage(this.Id, result)).ConfigureAwait(false);
+            await context.SendMessageAsync(new DeclarativeExecutorResult(this.Id, result)).ConfigureAwait(false);
         }
         catch (WorkflowExecutionException exception)
         {
@@ -90,15 +89,14 @@ internal abstract class WorkflowActionExecutor :
 
     protected abstract ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default);
 
-    protected void AssignTarget(PropertyPath targetPath, FormulaValue result)
+    protected async ValueTask AssignAsync(PropertyPath targetPath, FormulaValue result, IWorkflowContext context)
     {
-        if (!VariableScopeNames.Global.Equals(targetPath.VariableScopeName, StringComparison.OrdinalIgnoreCase) &&
-            !VariableScopeNames.Topic.Equals(targetPath.VariableScopeName, StringComparison.OrdinalIgnoreCase))
+        if (!s_mutableScopes.Contains(Throw.IfNull(targetPath.VariableScopeName)))
         {
-            throw new UnsupportedVariableException($"Unsupported variable scope: {targetPath.VariableScopeName}");
+            throw new InvalidScopeException($"Invalid scope: {targetPath.VariableScopeName}");
         }
 
-        this.State.Set(targetPath, result);
+        await this.State.SetAsync(targetPath, result, context).ConfigureAwait(false);
 
 #if DEBUG
         string? resultValue = result.Format();

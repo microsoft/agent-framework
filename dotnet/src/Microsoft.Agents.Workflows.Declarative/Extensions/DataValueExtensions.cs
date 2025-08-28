@@ -37,8 +37,8 @@ internal static class DataValueExtensions
         {
             null => FormulaType.Blank,
             BooleanDataType => FormulaType.Boolean,
-            NumberDataType => FormulaType.Number,
-            FloatDataType => FormulaType.Decimal,
+            NumberDataType => FormulaType.Decimal,
+            FloatDataType => FormulaType.Number,
             StringDataType => FormulaType.String,
             DateTimeDataType => FormulaType.DateTime,
             DateDataType => FormulaType.Date,

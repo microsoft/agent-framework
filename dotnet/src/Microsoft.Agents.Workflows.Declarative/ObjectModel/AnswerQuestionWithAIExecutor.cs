@@ -16,7 +16,8 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, WorkflowAgentProvider agentProvider) : DeclarativeActionExecutor<AnswerQuestionWithAI>(model)
+internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, WorkflowAgentProvider agentProvider, DeclarativeWorkflowState state)
+    : DeclarativeActionExecutor<AnswerQuestionWithAI>(model, state)
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
@@ -86,7 +87,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, W
         AgentRunResponse agentResponse = agentResponseUpdates.ToAgentRunResponse();
 
         ChatMessage response = agentResponse.Messages.Last();
-        this.State.SetLastMessage(response);
+        await this.State.SetLastMessageAsync(context, response).ConfigureAwait(false);
         if (this.Model.AutoSend)
         {
             await context.AddEventAsync(new DeclarativeWorkflowMessageEvent(response, agentResponse.Usage)).ConfigureAwait(false);
@@ -97,18 +98,18 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, W
         {
             if (this.Model.AutoSend) // ISSUE #485: Conversation implicitly managed until updated OM is available.
             {
-                this.State.SetConversationId(conversationId);
+                await this.State.SetConversationIdAsync(context, conversationId).ConfigureAwait(false);
             }
             else
             {
-                this.State.SetInternalConversationId(conversationId);
+                await this.State.SetInternalConversationIdAsync(context, conversationId).ConfigureAwait(false);
             }
         }
 
         PropertyPath? variablePath = this.Model.Variable?.Path;
         if (variablePath is not null)
         {
-            this.AssignTarget(variablePath, response.ToRecord());
+            await this.AssignAsync(variablePath, response.ToRecord(), context).ConfigureAwait(false);
         }
 
         return default;

@@ -13,7 +13,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class EditTableExecutor(EditTable model) : DeclarativeActionExecutor<EditTable>(model)
+internal sealed class EditTableExecutor(EditTable model, DeclarativeWorkflowState state) : DeclarativeActionExecutor<EditTable>(model, state)
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
@@ -33,7 +33,7 @@ internal sealed class EditTableExecutor(EditTable model) : DeclarativeActionExec
                 EvaluationResult<DataValue> addResult = this.State.ExpressionEngine.GetValue(addItemValue);
                 RecordValue newRecord = BuildRecord(tableValue.Type.ToRecord(), addResult.Value.ToFormulaValue());
                 await tableValue.AppendAsync(newRecord, cancellationToken).ConfigureAwait(false);
-                this.AssignTarget(variablePath, newRecord);
+                await this.AssignAsync(variablePath, newRecord, context).ConfigureAwait(false);
                 break;
             case TableChangeType.Remove:
                 ValueExpression removeItemValue = Throw.IfNull(this.Model.Value, $"{nameof(this.Model)}.{nameof(this.Model.Value)}");
@@ -41,19 +41,19 @@ internal sealed class EditTableExecutor(EditTable model) : DeclarativeActionExec
                 if (removeResult.Value is TableDataValue removeItemTable)
                 {
                     await tableValue.RemoveAsync(removeItemTable?.Values.Select(row => row.ToRecordValue()), all: true, cancellationToken).ConfigureAwait(false);
-                    this.AssignTarget(variablePath, RecordValue.Empty());
+                    await this.AssignAsync(variablePath, RecordValue.Empty(), context).ConfigureAwait(false);
                 }
                 break;
             case TableChangeType.Clear:
                 await tableValue.ClearAsync(cancellationToken).ConfigureAwait(false);
-                this.AssignTarget(variablePath, FormulaValue.NewBlank());
+                await this.AssignAsync(variablePath, FormulaValue.NewBlank(), context).ConfigureAwait(false);
                 break;
             case TableChangeType.TakeFirst:
                 RecordValue? firstRow = tableValue.Rows.FirstOrDefault()?.Value;
                 if (firstRow is not null)
                 {
                     await tableValue.RemoveAsync([firstRow], all: true, cancellationToken).ConfigureAwait(false);
-                    this.AssignTarget(variablePath, firstRow);
+                    await this.AssignAsync(variablePath, firstRow, context).ConfigureAwait(false);
                 }
                 break;
             case TableChangeType.TakeLast:
@@ -61,7 +61,7 @@ internal sealed class EditTableExecutor(EditTable model) : DeclarativeActionExec
                 if (lastRow is not null)
                 {
                     await tableValue.RemoveAsync([lastRow], all: true, cancellationToken).ConfigureAwait(false);
-                    this.AssignTarget(variablePath, lastRow);
+                    await this.AssignAsync(variablePath, lastRow, context).ConfigureAwait(false);
                 }
                 break;
         }

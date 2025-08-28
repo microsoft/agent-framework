@@ -9,21 +9,22 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class SetTextVariableExecutor(SetTextVariable model) : DeclarativeActionExecutor<SetTextVariable>(model)
+internal sealed class SetTextVariableExecutor(SetTextVariable model, DeclarativeWorkflowState state)
+    : DeclarativeActionExecutor<SetTextVariable>(model, state)
 {
-    protected override ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         PropertyPath variablePath = Throw.IfNull(this.Model.Variable?.Path, $"{nameof(this.Model)}.{nameof(model.Variable)}");
 
         if (this.Model.Value is null)
         {
-            this.AssignTarget(variablePath, FormulaValue.NewBlank());
+            await this.AssignAsync(variablePath, FormulaValue.NewBlank(), context).ConfigureAwait(false);
         }
         else
         {
             FormulaValue expressionResult = FormulaValue.New(this.State.Format(this.Model.Value));
 
-            this.AssignTarget(variablePath, expressionResult);
+            await this.AssignAsync(variablePath, expressionResult, context).ConfigureAwait(false);
         }
 
         return default;

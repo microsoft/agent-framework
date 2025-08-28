@@ -17,7 +17,7 @@ public sealed class SetVariableExecutorTest(ITestOutputHelper output) : Workflow
     public void InvalidModel()
     {
         // Arrange, Act, Assert
-        Assert.Throws<WorkflowModelException>(() => new SetVariableExecutor(new SetVariable()));
+        Assert.Throws<WorkflowModelException>(() => new SetVariableExecutor(new SetVariable(), this.GetState()));
     }
 
     [Fact]
@@ -183,7 +183,7 @@ public sealed class SetVariableExecutorTest(ITestOutputHelper output) : Workflow
         this.Scopes.Set(variableName, FormulaValue.New(33));
 
         // Act
-        SetVariableExecutor action = new(model);
+        SetVariableExecutor action = new(model, this.GetState());
         await this.Execute(action);
 
         // Assert

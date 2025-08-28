@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Globalization;
+using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Bot.ObjectModel;
@@ -47,49 +48,49 @@ internal static class SystemScope
         yield return Names.UserLanguage;
     }
 
-    public static void InitializeSystem(this WorkflowScopes scopes, ChatMessage inputMessage)
+    public static void InitializeSystem(this WorkflowScopes scopes)
     {
-        scopes.Set(Names.Activity, VariableScopeNames.System, RecordValue.Empty());
-        scopes.Set(Names.Bot, VariableScopeNames.System, RecordValue.Empty());
+        scopes.Set(Names.Activity, RecordValue.Empty(), VariableScopeNames.System);
+        scopes.Set(Names.Bot, RecordValue.Empty(), VariableScopeNames.System);
 
-        scopes.Set(Names.LastMessage, VariableScopeNames.System, inputMessage.ToRecord());
-        Set(Names.LastMessageId, inputMessage.MessageId);
-        Set(Names.LastMessageText, inputMessage.Text);
+        scopes.Set(Names.LastMessage, FormulaType.String.NewBlank(), VariableScopeNames.System);
+        Set(Names.LastMessageId);
+        Set(Names.LastMessageText);
 
         scopes.Set(
             Names.Conversation,
-            VariableScopeNames.System,
             RecordValue.NewRecordFromFields(
                 new NamedValue("Id", FormulaType.String.NewBlank()),
                 new NamedValue("LocalTimeZone", FormulaValue.New(TimeZoneInfo.Local.StandardName)),
                 new NamedValue("LocalTimeZoneOffset", FormulaValue.New(TimeZoneInfo.Local.GetUtcOffset(DateTime.UtcNow))),
-                new NamedValue("InTestMode", FormulaValue.New(false))));
-        scopes.Set(Names.ConversationId, VariableScopeNames.System, FormulaType.String.NewBlank());
-        scopes.Set(Names.InternalId, VariableScopeNames.System, FormulaType.String.NewBlank());
+                new NamedValue("InTestMode", FormulaValue.New(false))),
+            VariableScopeNames.System);
+        scopes.Set(Names.ConversationId, FormulaType.String.NewBlank(), VariableScopeNames.System);
+        scopes.Set(Names.InternalId, FormulaType.String.NewBlank(), VariableScopeNames.System);
 
         scopes.Set(
             Names.Recognizer,
-            VariableScopeNames.System,
             RecordValue.NewRecordFromFields(
                 new NamedValue("Id", FormulaType.String.NewBlank()),
-                new NamedValue("Text", FormulaType.String.NewBlank())));
+                new NamedValue("Text", FormulaType.String.NewBlank())),
+            VariableScopeNames.System);
 
         scopes.Set(
             Names.User,
-            VariableScopeNames.System,
             RecordValue.NewRecordFromFields(
-                new NamedValue("Language", StringValue.New(CultureInfo.CurrentCulture.TwoLetterISOLanguageName))));
-        scopes.Set(Names.UserLanguage, VariableScopeNames.System, StringValue.New(CultureInfo.CurrentCulture.TwoLetterISOLanguageName));
+                new NamedValue("Language", StringValue.New(CultureInfo.CurrentCulture.TwoLetterISOLanguageName))),
+            VariableScopeNames.System);
+        scopes.Set(Names.UserLanguage, StringValue.New(CultureInfo.CurrentCulture.TwoLetterISOLanguageName), VariableScopeNames.System);
 
-        void Set(string key, string? value)
+        void Set(string key, string? value = null)
         {
             if (string.IsNullOrEmpty(value))
             {
-                scopes.Set(key, VariableScopeNames.System, FormulaType.String.NewBlank());
+                scopes.Set(key, FormulaType.String.NewBlank(), VariableScopeNames.System);
             }
             else
             {
-                scopes.Set(key, VariableScopeNames.System, FormulaValue.New(value));
+                scopes.Set(key, FormulaValue.New(value), VariableScopeNames.System);
             }
         }
     }
@@ -97,31 +98,24 @@ internal static class SystemScope
     public static FormulaValue GetConversationId(this DeclarativeWorkflowState state) =>
         state.Get(VariableScopeNames.System, Names.ConversationId);
 
-    public static void SetConversationId(this DeclarativeWorkflowState state, string conversationId)
+    public static async ValueTask SetConversationIdAsync(this DeclarativeWorkflowState state, IWorkflowContext context, string conversationId)
     {
         RecordValue conversation = (RecordValue)state.Get(VariableScopeNames.System, Names.Conversation);
         conversation.UpdateField("Id", FormulaValue.New(conversationId));
-        state.Set(VariableScopeNames.System, Names.Conversation, conversation);
-        state.Set(VariableScopeNames.System, Names.ConversationId, FormulaValue.New(conversationId));
+        await state.SetAsync(VariableScopeNames.System, Names.Conversation, conversation, context).ConfigureAwait(false);
+        await state.SetAsync(VariableScopeNames.System, Names.ConversationId, FormulaValue.New(conversationId), context).ConfigureAwait(false);
     }
 
     public static FormulaValue GetInternalConversationId(this DeclarativeWorkflowState state) =>
         state.Get(VariableScopeNames.System, Names.InternalId);
 
-    public static void SetInternalConversationId(this DeclarativeWorkflowState state, string conversationId) =>
-        state.Set(VariableScopeNames.System, Names.InternalId, FormulaValue.New(conversationId));
+    public static ValueTask SetInternalConversationIdAsync(this DeclarativeWorkflowState state, IWorkflowContext context, string conversationId) =>
+        state.SetAsync(VariableScopeNames.System, Names.InternalId, FormulaValue.New(conversationId), context);
 
-    public static void SetLastMessage(this WorkflowScopes scopes, ChatMessage message)
+    public static async ValueTask SetLastMessageAsync(this DeclarativeWorkflowState state, IWorkflowContext context, ChatMessage message)
     {
-        scopes.Set(Names.LastMessage, VariableScopeNames.System, message.ToRecord());
-        scopes.Set(Names.LastMessageId, VariableScopeNames.System, message.MessageId is null ? FormulaValue.NewBlank(FormulaType.String) : FormulaValue.New(message.MessageId));
-        scopes.Set(Names.LastMessageText, VariableScopeNames.System, FormulaValue.New(message.Text));
-    }
-
-    public static void SetLastMessage(this DeclarativeWorkflowState state, ChatMessage message)
-    {
-        state.Set(VariableScopeNames.System, Names.LastMessage, message.ToRecord());
-        state.Set(VariableScopeNames.System, Names.LastMessageId, message.MessageId is null ? FormulaValue.NewBlank(FormulaType.String) : FormulaValue.New(message.MessageId));
-        state.Set(VariableScopeNames.System, Names.LastMessageText, FormulaValue.New(message.Text));
+        await state.SetAsync(VariableScopeNames.System, Names.LastMessage, message.ToRecord(), context).ConfigureAwait(false);
+        await state.SetAsync(VariableScopeNames.System, Names.LastMessageId, message.MessageId is null ? FormulaValue.NewBlank(FormulaType.String) : FormulaValue.New(message.MessageId), context).ConfigureAwait(false);
+        await state.SetAsync(VariableScopeNames.System, Names.LastMessageText, FormulaValue.New(message.Text), context).ConfigureAwait(false);
     }
 }

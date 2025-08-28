@@ -196,12 +196,13 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
                         Actions = [unsupportedAction]
                     }
             };
+        AdaptiveDialog dialog = dialogBuilder.Build();
 
         WorkflowScopes scopes = new();
         Mock<WorkflowAgentProvider> mockAgentProvider = new(MockBehavior.Strict);
-        DeclarativeWorkflowOptions workflowContext = new(mockAgentProvider.Object);
-        WorkflowActionVisitor visitor = new(new RootExecutor(), workflowContext);
-        WorkflowElementWalker walker = new(dialogBuilder.Build(), visitor);
+        DeclarativeWorkflowOptions options = new(mockAgentProvider.Object);
+        WorkflowActionVisitor visitor = new(new RootExecutor(), new DeclarativeWorkflowState(RecalcEngineFactory.Create()), options);
+        WorkflowElementWalker walker = new(dialog, visitor);
         Assert.True(visitor.HasUnsupportedActions);
     }
 
@@ -245,7 +246,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         {
             if (workflowEvent is ExecutorInvokeEvent invokeEvent)
             {
-                ExecutionResultMessage? message = invokeEvent.Data as ExecutionResultMessage;
+                DeclarativeExecutorResult? message = invokeEvent.Data as DeclarativeExecutorResult;
                 this.Output.WriteLine($"EXEC: {invokeEvent.ExecutorId} << {message?.ExecutorId ?? "?"} [{message?.Result ?? "-"}]");
             }
             else if (workflowEvent is DeclarativeWorkflowMessageEvent messageEvent)

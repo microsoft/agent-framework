@@ -20,6 +20,8 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
 {
     internal WorkflowScopes Scopes { get; } = new();
 
+    internal DeclarativeWorkflowState GetState() => new(RecalcEngineFactory.Create(), this.Scopes);
+
     protected ActionId CreateActionId() => new($"{this.GetType().Name}_{Guid.NewGuid():N}");
 
     protected string FormatDisplayName(string name) => $"{this.GetType().Name}_{name}";
@@ -76,8 +78,7 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
     {
         public async ValueTask HandleAsync(WorkflowScopes message, IWorkflowContext context)
         {
-            await context.SetScopedStateAsync(message, default).ConfigureAwait(false);
-            await context.SendMessageAsync(new ExecutionResultMessage(this.Id)).ConfigureAwait(false);
+            await context.SendMessageAsync(new DeclarativeExecutorResult(this.Id)).ConfigureAwait(false);
         }
     }
 }

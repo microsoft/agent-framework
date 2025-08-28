@@ -239,7 +239,7 @@ internal class WorkflowExpressionEngine : IExpressionEngine
 
         try
         {
-            return new EvaluationResult<TValue?>(ObjectExpressionParser<TValue>.Parse(formulaValue.ToDataValue()), expressionResult.Sensitivity);
+            return new EvaluationResult<TValue?>(ObjectExpressionParser<TValue>.Parse(formulaValue.ToRecord()), expressionResult.Sensitivity);
         }
         catch (Exception exception)
         {
@@ -282,7 +282,7 @@ internal class WorkflowExpressionEngine : IExpressionEngine
             throw new InvalidExpressionOutputTypeException(value.GetDataType(), DataType.TableFromEnumerable<TValue>());
         }
 
-        TableDataValue tableDataValue = tableValue.ToDataValue();
+        TableDataValue tableDataValue = tableValue.ToTable();
         try
         {
             List<TValue> list = [];

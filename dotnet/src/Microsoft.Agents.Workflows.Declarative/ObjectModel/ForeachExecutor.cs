@@ -24,15 +24,15 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
     private int _index;
     private FormulaValue[] _values;
 
-    public ForeachExecutor(Foreach model)
-        : base(model)
+    public ForeachExecutor(Foreach model, DeclarativeWorkflowState state)
+        : base(model, state)
     {
         this._values = [];
     }
 
     public bool HasValue { get; private set; }
 
-    protected override ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         this._index = 0;
 
@@ -54,29 +54,29 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
             }
         }
 
-        this.Reset();
+        await this.ResetAsync(context, cancellationToken).ConfigureAwait(false);
 
         return default;
     }
 
-    public void TakeNext()
+    public async ValueTask TakeNextAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         if (this.HasValue = this._index < this._values.Length)
         {
             FormulaValue value = this._values[this._index];
 
-            this.State.Set(Throw.IfNull(this.Model.Value), value);
+            await this.State.SetAsync(Throw.IfNull(this.Model.Value), value, context).ConfigureAwait(false);
 
             if (this.Model.Index is not null)
             {
-                this.State.Set(this.Model.Index.Path, FormulaValue.New(this._index));
+                await this.State.SetAsync(this.Model.Index.Path, FormulaValue.New(this._index), context).ConfigureAwait(false);
             }
 
             this._index++;
         }
     }
 
-    public void Reset()
+    public async ValueTask ResetAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         this.State.Reset(Throw.IfNull(this.Model.Value));
         if (this.Model.Index is not null)

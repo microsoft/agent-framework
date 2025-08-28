@@ -3,7 +3,9 @@
 using System;
 using System.IO;
 using System.Linq;
+using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Yaml;
 using Microsoft.Extensions.AI;
@@ -48,7 +50,7 @@ public static class DeclarativeWorkflowBuilder
     {
         BotElement rootElement = YamlSerializer.Deserialize<BotElement>(yamlReader) ?? throw new UnknownActionException("Unable to parse workflow.");
 
-        // ISSUE #486 - Use "Workflow" element for Foundry specific.
+        // ISSUE #486 - Use "Workflow" element for Foundry.
         if (rootElement is not AdaptiveDialog workflowElement)
         {
             throw new UnknownActionException($"Unsupported root element: {rootElement.GetType().Name}. Expected an {nameof(AdaptiveDialog)}.");
@@ -56,12 +58,15 @@ public static class DeclarativeWorkflowBuilder
 
         string rootId = WorkflowActionVisitor.RootId(workflowElement.BeginDialog?.Id.Value ?? "workflow");
 
+        WorkflowScopes scopes = new();
+        scopes.Initialize(WrapWithBot(workflowElement));
+        DeclarativeWorkflowState state = new(options.CreateRecalcEngine(), scopes);
         DeclarativeWorkflowExecutor<TInput> rootExecutor =
             new(rootId,
-                WrapWithBot(workflowElement),
+                state,
                 message => inputTransform?.Invoke(message) ?? DefaultTransform(message));
 
-        WorkflowActionVisitor visitor = new(rootExecutor, options);
+        WorkflowActionVisitor visitor = new(rootExecutor, state, options);
         WorkflowElementWalker walker = new(rootElement, visitor);
 
         return walker.GetWorkflow<TInput>();

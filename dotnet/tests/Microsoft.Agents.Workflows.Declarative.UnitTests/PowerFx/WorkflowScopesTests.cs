@@ -47,7 +47,7 @@ public class WorkflowScopesTests
         // Arrange
         WorkflowScopes scopes = new();
         FormulaValue testValue = FormulaValue.New("test");
-        scopes.Set("key1", VariableScopeNames.Topic, testValue);
+        scopes.Set("key1", testValue, VariableScopeNames.Topic);
 
         // Act
         RecordValue record = scopes.BuildRecord(VariableScopeNames.Topic);
@@ -67,19 +67,19 @@ public class WorkflowScopesTests
         FormulaValue testValue = FormulaValue.New("test");
 
         // Act & Assert
-        scopes.Set("envKey", VariableScopeNames.Environment, testValue);
+        scopes.Set("envKey", testValue, VariableScopeNames.Environment);
         RecordValue envRecord = scopes.BuildRecord(VariableScopeNames.Environment);
         Assert.Single(envRecord.Fields);
 
-        scopes.Set("topicKey", VariableScopeNames.Topic, testValue);
+        scopes.Set("topicKey", testValue, VariableScopeNames.Topic);
         RecordValue topicRecord = scopes.BuildRecord(VariableScopeNames.Topic);
         Assert.Single(topicRecord.Fields);
 
-        scopes.Set("globalKey", VariableScopeNames.Global, testValue);
+        scopes.Set("globalKey", testValue, VariableScopeNames.Global);
         RecordValue globalRecord = scopes.BuildRecord(VariableScopeNames.Global);
         Assert.Single(globalRecord.Fields);
 
-        scopes.Set("systemKey", VariableScopeNames.System, testValue);
+        scopes.Set("systemKey", testValue, VariableScopeNames.System);
         RecordValue systemRecord = scopes.BuildRecord(VariableScopeNames.System);
         Assert.Single(systemRecord.Fields);
     }
@@ -90,7 +90,7 @@ public class WorkflowScopesTests
         // Arrange
         WorkflowScopes scopes = new();
         FormulaValue testValue = FormulaValue.New("test");
-        scopes.Set("key1", VariableScopeNames.Topic, testValue);
+        scopes.Set("key1", testValue, VariableScopeNames.Topic);
 
         // Act
         FormulaValue result = scopes.Get("key1");
@@ -105,7 +105,7 @@ public class WorkflowScopesTests
         // Arrange
         WorkflowScopes scopes = new();
         FormulaValue testValue = FormulaValue.New("test");
-        scopes.Set("key1", VariableScopeNames.Global, testValue);
+        scopes.Set("key1", testValue, VariableScopeNames.Global);
 
         // Act
         FormulaValue result = scopes.Get("key1", VariableScopeNames.Global);
@@ -137,7 +137,7 @@ public class WorkflowScopesTests
         FormulaValue testValue = FormulaValue.New("test");
 
         // Act
-        scopes.Set("key1", VariableScopeNames.System, testValue);
+        scopes.Set("key1", testValue, VariableScopeNames.System);
 
         // Assert
         FormulaValue result = scopes.Get("key1", VariableScopeNames.System);
@@ -153,8 +153,8 @@ public class WorkflowScopesTests
         FormulaValue newValue = FormulaValue.New("new");
 
         // Act
-        scopes.Set("key1", VariableScopeNames.Topic, initialValue);
-        scopes.Set("key1", VariableScopeNames.Topic, newValue);
+        scopes.Set("key1", initialValue, VariableScopeNames.Topic);
+        scopes.Set("key1", newValue, VariableScopeNames.Topic);
 
         // Assert
         FormulaValue result = scopes.Get("key1", VariableScopeNames.Topic);

@@ -13,7 +13,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class EditTableV2Executor(EditTableV2 model) : DeclarativeActionExecutor<EditTableV2>(model)
+internal sealed class EditTableV2Executor(EditTableV2 model, DeclarativeWorkflowState state) : DeclarativeActionExecutor<EditTableV2>(model, state)
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
@@ -32,12 +32,12 @@ internal sealed class EditTableV2Executor(EditTableV2 model) : DeclarativeAction
             EvaluationResult<DataValue> expressionResult = this.State.ExpressionEngine.GetValue(addItemValue);
             RecordValue newRecord = BuildRecord(tableValue.Type.ToRecord(), expressionResult.Value.ToFormulaValue());
             await tableValue.AppendAsync(newRecord, cancellationToken).ConfigureAwait(false);
-            this.AssignTarget(variablePath, newRecord);
+            await this.AssignAsync(variablePath, newRecord, context).ConfigureAwait(false);
         }
         else if (changeType is ClearItemsOperation)
         {
             await tableValue.ClearAsync(cancellationToken).ConfigureAwait(false);
-            this.AssignTarget(variablePath, FormulaValue.NewBlank());
+            await this.AssignAsync(variablePath, FormulaValue.NewBlank(), context).ConfigureAwait(false);
         }
         else if (changeType is RemoveItemOperation removeItemOperation)
         {
@@ -46,7 +46,7 @@ internal sealed class EditTableV2Executor(EditTableV2 model) : DeclarativeAction
             if (expressionResult.Value.ToFormulaValue() is TableValue removeItemTable)
             {
                 await tableValue.RemoveAsync(removeItemTable?.Rows.Select(row => row.Value), all: true, cancellationToken).ConfigureAwait(false);
-                this.AssignTarget(variablePath, FormulaValue.NewBlank());
+                await this.AssignAsync(variablePath, FormulaValue.NewBlank(), context).ConfigureAwait(false);
             }
         }
         else if (changeType is TakeLastItemOperation)
@@ -55,7 +55,7 @@ internal sealed class EditTableV2Executor(EditTableV2 model) : DeclarativeAction
             if (lastRow is not null)
             {
                 await tableValue.RemoveAsync([lastRow], all: true, cancellationToken).ConfigureAwait(false);
-                this.AssignTarget(variablePath, lastRow);
+                await this.AssignAsync(variablePath, lastRow, context).ConfigureAwait(false);
             }
         }
         else if (changeType is TakeFirstItemOperation)
@@ -64,7 +64,7 @@ internal sealed class EditTableV2Executor(EditTableV2 model) : DeclarativeAction
             if (firstRow is not null)
             {
                 await tableValue.RemoveAsync([firstRow], all: true, cancellationToken).ConfigureAwait(false);
-                this.AssignTarget(variablePath, firstRow);
+                await this.AssignAsync(variablePath, firstRow, context).ConfigureAwait(false);
             }
         }
 

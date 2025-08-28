@@ -24,7 +24,7 @@ public sealed class SetTextVariableExecutorTest(ITestOutputHelper output) : Work
                 "Text variable value");
 
         // Act
-        SetTextVariableExecutor action = new(model);
+        SetTextVariableExecutor action = new(model, this.GetState());
         await this.Execute(action);
 
         // Assert
@@ -45,7 +45,7 @@ public sealed class SetTextVariableExecutorTest(ITestOutputHelper output) : Work
                 "New value");
 
         // Act
-        SetTextVariableExecutor action = new(model);
+        SetTextVariableExecutor action = new(model, this.GetState());
         await this.Execute(action);
 
         // Assert

@@ -26,14 +26,14 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
         public static string Else(ConditionGroup model) => model.ElseActions.Id.Value ?? $"{model.Id}_Else";
     }
 
-    public ConditionGroupExecutor(ConditionGroup model)
-        : base(model)
+    public ConditionGroupExecutor(ConditionGroup model, DeclarativeWorkflowState state)
+        : base(model, state)
     {
     }
 
     public bool IsMatch(ConditionItem conditionItem, object? result)
     {
-        if (result is not ExecutionResultMessage message)
+        if (result is not DeclarativeExecutorResult message)
         {
             return false;
         }
@@ -43,7 +43,7 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
 
     public bool IsElse(object? result)
     {
-        if (result is not ExecutionResultMessage message)
+        if (result is not DeclarativeExecutorResult message)
         {
             return false;
         }

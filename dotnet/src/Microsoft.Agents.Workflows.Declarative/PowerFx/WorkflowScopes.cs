@@ -1,10 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
-using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;
@@ -14,7 +12,7 @@ namespace Microsoft.Agents.Workflows.Declarative.PowerFx;
 /// <summary>
 /// Contains all action scopes for a process.
 /// </summary>
-internal sealed class WorkflowScopes : IEnumerable<WorkflowScope>
+internal sealed class WorkflowScopes
 {
     // ISSUE #488 - Update default scope for workflows to `Workflow` (instead of `Topic`)
     public const string DefaultScopeName = VariableScopeNames.Topic;
@@ -36,9 +34,21 @@ internal sealed class WorkflowScopes : IEnumerable<WorkflowScope>
         }
     }
 
-    IEnumerator IEnumerable.GetEnumerator() => this.GetEnumerator();
+    public FormulaValue Get(string variableName, string? scopeName = null)
+    {
+        if (this._scopes[scopeName ?? WorkflowScopes.DefaultScopeName].TryGetValue(variableName, out FormulaValue? value))
+        {
+            return value;
+        }
 
-    public IEnumerator<WorkflowScope> GetEnumerator() => this._scopes.Values.GetEnumerator();
+        return FormulaValue.NewBlank();
+    }
+
+    public void Clear(string scopeName) => this._scopes[scopeName].Reset();
+
+    public void Reset(string variableName, string? scopeName = null) => this._scopes[scopeName ?? WorkflowScopes.DefaultScopeName].Reset(variableName);
+
+    public void Set(string variableName, FormulaValue value, string? scopeName = null) => this._scopes[scopeName ?? WorkflowScopes.DefaultScopeName][variableName] = value;
 
     public RecordValue BuildRecord(string scopeName) => this._scopes[scopeName].BuildRecord();
 
@@ -76,37 +86,4 @@ internal sealed class WorkflowScopes : IEnumerable<WorkflowScope>
             engine.UpdateVariable(scopeName, scopeRecord);
         }
     }
-
-    public FormulaValue Get(string variableName, string? scopeName = null)
-    {
-        if (this._scopes[scopeName ?? WorkflowScopes.DefaultScopeName].TryGetValue(variableName, out FormulaValue? value))
-        {
-            return value;
-        }
-
-        return FormulaValue.NewBlank();
-    }
-
-    public void Clear(string scopeName)
-    {
-        foreach (string variableName in this._scopes[scopeName].Keys.ToArray())
-        {
-            FormulaType variableType = this._scopes[scopeName][variableName].Type;
-            this.Set(variableName, scopeName, variableType.NewBlank());
-        }
-    }
-
-    public void Reset(string variableName) => this.Reset(variableName, WorkflowScopes.DefaultScopeName);
-
-    public void Reset(string variableName, string scopeName)
-    {
-        if (this._scopes[scopeName].TryGetValue(variableName, out FormulaValue? value))
-        {
-            this.Set(variableName, scopeName, FormulaValue.NewBlank(value.Type));
-        }
-    }
-
-    public void Set(string variableName, FormulaValue value) => this.Set(variableName, WorkflowScopes.DefaultScopeName, value);
-
-    public void Set(string variableName, string scopeName, FormulaValue value) => this._scopes[scopeName][variableName] = value;
 }

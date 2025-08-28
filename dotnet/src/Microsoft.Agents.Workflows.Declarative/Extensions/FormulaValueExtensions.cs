@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
@@ -8,6 +9,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
+using BindingFlags = System.Reflection.BindingFlags;
 using BlankType = Microsoft.PowerFx.Types.BlankType;
 
 namespace Microsoft.Agents.Workflows.Declarative.Extensions;
@@ -16,20 +18,60 @@ internal static class FormulaValueExtensions
 {
     private static readonly JsonSerializerOptions s_options = new() { WriteIndented = true };
 
+    public static FormulaValue NewBlank(this FormulaType? type) => FormulaValue.NewBlank(type ?? FormulaType.Blank);
+
+    public static FormulaValue ToFormulaValue(this object? value)
+    {
+        Type? type = value?.GetType();
+        return value switch
+        {
+            null => FormulaValue.NewBlank(),
+            bool booleanValue => FormulaValue.New(booleanValue),
+            int decimalValue => FormulaValue.New(decimalValue),
+            long decimalValue => FormulaValue.New(decimalValue),
+            float decimalValue => FormulaValue.New(decimalValue),
+            decimal decimalValue => FormulaValue.New(decimalValue),
+            double numberValue => FormulaValue.New(numberValue),
+            string stringValue => FormulaValue.New(stringValue),
+            DateTime dateonlyValue when dateonlyValue.TimeOfDay == TimeSpan.Zero => FormulaValue.NewDateOnly(dateonlyValue),
+            DateTime datetimeValue => FormulaValue.New(datetimeValue),
+            TimeSpan timeValue => FormulaValue.New(timeValue),
+            object when typeof(IEnumerable).IsAssignableFrom(type) => ((IEnumerable)value).ToTableValue(type),
+            _ => value.ToRecordValue(type),
+        };
+    }
+
+    public static FormulaType ToFormulaType(this Type? type) =>
+        type switch
+        {
+            null => FormulaType.Blank,
+            Type when type == typeof(bool) => FormulaType.Boolean,
+            Type when type == typeof(int) => FormulaType.Decimal,
+            Type when type == typeof(long) => FormulaType.Decimal,
+            Type when type == typeof(float) => FormulaType.Decimal,
+            Type when type == typeof(decimal) => FormulaType.Decimal,
+            Type when type == typeof(double) => FormulaType.Number,
+            Type when type == typeof(string) => FormulaType.String,
+            Type when type == typeof(DateTime) => FormulaType.DateTime,
+            Type when type == typeof(TimeSpan) => FormulaType.Time,
+            Type when typeof(IEnumerable).IsAssignableFrom(type) => type.ToTableType(),
+            _ => type.ToRecordType(),
+        };
+
     public static DataValue ToDataValue(this FormulaValue value) =>
         value switch
         {
-            BooleanValue booleanValue => booleanValue.ToDataValue(),
-            DecimalValue decimalValue => decimalValue.ToDataValue(),
-            NumberValue numberValue => numberValue.ToDataValue(),
-            DateValue dateValue => dateValue.ToDataValue(),
-            DateTimeValue datetimeValue => datetimeValue.ToDataValue(),
-            TimeValue timeValue => timeValue.ToDataValue(),
-            StringValue stringValue => stringValue.ToDataValue(),
-            BlankValue blankValue => blankValue.ToDataValue(),
-            VoidValue voidValue => voidValue.ToDataValue(),
-            TableValue tableValue => tableValue.ToDataValue(),
-            RecordValue recordValue => recordValue.ToDataValue(),
+            BooleanValue booleanValue => BooleanDataValue.Create(booleanValue.Value),
+            DecimalValue decimalValue => NumberDataValue.Create(decimalValue.Value),
+            NumberValue numberValue => FloatDataValue.Create(numberValue.Value),
+            DateValue dateValue => DateDataValue.Create(dateValue.GetConvertedValue(TimeZoneInfo.Utc)),
+            DateTimeValue datetimeValue => DateTimeDataValue.Create(datetimeValue.GetConvertedValue(TimeZoneInfo.Utc)),
+            TimeValue timeValue => TimeDataValue.Create(timeValue.Value),
+            StringValue stringValue => StringDataValue.Create(stringValue.Value),
+            BlankValue blankValue => DataValue.Blank(),
+            VoidValue voidValue => DataValue.Blank(),
+            RecordValue recordValue => recordValue.ToRecord(),
+            TableValue tableValue => tableValue.ToTable(),
             _ => throw new NotSupportedException($"Unsupported FormulaValue type: {value.GetType().Name}"),
         };
 
@@ -54,7 +96,7 @@ internal static class FormulaValueExtensions
             _ => DataType.Unspecified,
         };
 
-    public static DataType GetDataType(this FormulaType type) =>
+    public static DataType ToDataType(this FormulaType type) =>
         type switch
         {
             null => DataType.Blank,
@@ -95,22 +137,10 @@ internal static class FormulaValueExtensions
             _ => $"[{value.GetType().Name}]",
         };
 
-    public static FormulaValue NewBlank(this FormulaType? type) => FormulaValue.NewBlank(type ?? FormulaType.Blank);
+    public static TableDataValue ToTable(this TableValue value) =>
+        TableDataValue.TableFromRecords(value.Rows.Select(row => row.Value.ToRecord()).ToImmutableArray());
 
-    public static BooleanDataValue ToDataValue(this BooleanValue value) => BooleanDataValue.Create(value.Value);
-    public static NumberDataValue ToDataValue(this DecimalValue value) => NumberDataValue.Create(value.Value);
-    public static FloatDataValue ToDataValue(this NumberValue value) => FloatDataValue.Create(value.Value);
-    public static DateTimeDataValue ToDataValue(this DateTimeValue value) => DateTimeDataValue.Create(value.GetConvertedValue(TimeZoneInfo.Utc));
-    public static DateDataValue ToDataValue(this DateValue value) => DateDataValue.Create(value.GetConvertedValue(TimeZoneInfo.Utc));
-    public static TimeDataValue ToDataValue(this TimeValue value) => TimeDataValue.Create(value.Value);
-    public static DataValue ToDataValue(this BlankValue _) => BlankDataValue.Blank();
-    public static DataValue ToDataValue(this VoidValue _) => BlankDataValue.Blank();
-    public static StringDataValue ToDataValue(this StringValue value) => StringDataValue.Create(value.Value);
-
-    public static TableDataValue ToDataValue(this TableValue value) =>
-        TableDataValue.TableFromRecords(value.Rows.Select(row => row.Value.ToDataValue()).ToImmutableArray());
-
-    public static RecordDataValue ToDataValue(this RecordValue value) =>
+    public static RecordDataValue ToRecord(this RecordValue value) =>
         RecordDataValue.RecordFromFields(value.OriginalFields.Select(field => field.GetKeyValuePair()).ToImmutableArray());
 
     public static RecordDataType ToDataType(this RecordType record)
@@ -118,7 +148,7 @@ internal static class FormulaValueExtensions
         RecordDataType recordType = new();
         foreach (string fieldName in record.FieldNames)
         {
-            recordType.Properties.Add(fieldName, PropertyInfo.Create(record.GetFieldType(fieldName).GetDataType()));
+            recordType.Properties.Add(fieldName, PropertyInfo.Create(record.GetFieldType(fieldName).ToDataType()));
         }
         return recordType;
     }
@@ -128,9 +158,85 @@ internal static class FormulaValueExtensions
         TableDataType tableType = new();
         foreach (string fieldName in table.FieldNames)
         {
-            tableType.Properties.Add(fieldName, PropertyInfo.Create(table.GetFieldType(fieldName).GetDataType()));
+            tableType.Properties.Add(fieldName, PropertyInfo.Create(table.GetFieldType(fieldName).ToDataType()));
         }
         return tableType;
+    }
+
+    private static RecordType ToRecordType(this Type? type)
+    {
+        RecordType recordType = RecordType.Empty();
+
+        if (type is not null)
+        {
+#pragma warning disable IL2070 // might not behave correctly in a trimmed deployment. // %%% REFLECTION
+            foreach ((string Name, Type Type) property in
+                     type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                        .Select(property => (property.Name, property.PropertyType)))
+#pragma warning restore IL2070 // might not behave correctly in a trimmed deployment.
+            {
+                recordType.Add(property.Name, property.Type.ToFormulaType());
+            }
+        }
+
+        return recordType;
+    }
+
+    private static RecordValue ToRecordValue(this object value, Type? type)
+    {
+        type ??= value.GetType();
+
+        if (value is not RecordValue recordValue)
+        {
+#pragma warning disable IL2070 // might not behave correctly in a trimmed deployment. // %%% REFLECTION
+            IEnumerable<NamedValue> propertyValues =
+                type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                    .Select(property => new NamedValue(property.Name, property.GetValue(value).ToFormulaValue()));
+#pragma warning restore IL2070 // might not behave correctly in a trimmed deployment.
+            recordValue = FormulaValue.NewRecordFromFields(propertyValues);
+        }
+
+        return recordValue;
+    }
+
+    private static TableType ToTableType(this Type type)
+    {
+        TableType tableType = TableType.Empty();
+
+        Type? elementType = type.GetElementType() ?? type.GetGenericArguments().FirstOrDefault();
+        if (elementType is not null)
+        {
+#pragma warning disable IL2070 // might not behave correctly in a trimmed deployment. // %%% REFLECTION
+            foreach ((string Name, Type Type) property in
+                     type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                        .Select(property => (property.Name, property.PropertyType)))
+#pragma warning restore IL2070 // might not behave correctly in a trimmed deployment.
+            {
+                tableType.Add(property.Name, property.Type.ToFormulaType());
+            }
+        }
+
+        return tableType;
+    }
+
+    private static TableValue ToTableValue(this IEnumerable value, Type type)
+    {
+        Type? elementType = type.GetElementType() ?? type.GetGenericArguments().FirstOrDefault();
+
+        if (type is null)
+        {
+            return FormulaValue.NewTable(RecordType.EmptySealed());
+        }
+
+        return FormulaValue.NewTable(elementType.ToRecordType(), GetRecords());
+
+        IEnumerable<RecordValue> GetRecords()
+        {
+            foreach (object elementValue in value)
+            {
+                yield return elementValue.ToRecordValue(elementType);
+            }
+        }
     }
 
     private static KeyValuePair<string, DataValue> GetKeyValuePair(this NamedValue value) => new(value.Name, value.Value.ToDataValue());

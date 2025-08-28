@@ -22,7 +22,7 @@ public sealed class SendActivityExecutorTest(ITestOutputHelper output) : Workflo
                 "Test activity message");
 
         // Act
-        SendActivityExecutor action = new(model);
+        SendActivityExecutor action = new(model, this.GetState());
         WorkflowEvent[] events = await this.Execute(action);
 
         // Assert

@@ -25,7 +25,7 @@ public sealed class ClearAllVariablesExecutorTest(ITestOutputHelper output) : Wo
                 VariablesToClear.ConversationScopedVariables);
 
         // Act
-        ClearAllVariablesExecutor action = new(model);
+        ClearAllVariablesExecutor action = new(model, this.GetState());
         await this.Execute(action);
 
         // Assert
@@ -43,7 +43,7 @@ public sealed class ClearAllVariablesExecutorTest(ITestOutputHelper output) : Wo
                 VariablesToClear.UserScopedVariables);
 
         // Act
-        ClearAllVariablesExecutor action = new(model);
+        ClearAllVariablesExecutor action = new(model, this.GetState());
         await this.Execute(action);
 
         // Assert

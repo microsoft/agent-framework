@@ -1,6 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
@@ -12,6 +17,14 @@ namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
 internal sealed class DeclarativeWorkflowState
 {
+    private static readonly ImmutableHashSet<string> s_mutableScopes =
+        new HashSet<string>
+        {
+            VariableScopeNames.Topic,
+            VariableScopeNames.Global,
+            VariableScopeNames.System,
+        }.ToImmutableHashSet();
+
     private readonly RecalcEngine _engine;
     private readonly WorkflowScopes _scopes;
     private WorkflowExpressionEngine? _expressionEngine;
@@ -48,17 +61,38 @@ internal sealed class DeclarativeWorkflowState
     public FormulaValue Get(string scope, string varName) =>
         this._scopes.Get(varName, scope);
 
-    public void Set(PropertyPath variablePath, FormulaValue value) =>
-        this.Set(Throw.IfNull(variablePath.VariableScopeName), Throw.IfNull(variablePath.VariableName), value);
+    public ValueTask SetAsync(PropertyPath variablePath, FormulaValue value, IWorkflowContext context) =>
+        this.SetAsync(Throw.IfNull(variablePath.VariableScopeName), Throw.IfNull(variablePath.VariableName), value, context);
 
-    public void Set(string scopeName, string varName, FormulaValue value)
+    public async ValueTask SetAsync(string scopeName, string varName, FormulaValue value, IWorkflowContext context)
     {
-        this._scopes.Set(varName, scopeName, value);
+        if (!s_mutableScopes.Contains(scopeName))
+        {
+            throw new InvalidScopeException($"Invalid scope: {scopeName}");
+        }
 
+        this._scopes.Set(varName, value, scopeName);
         this._scopes.Bind(this._engine, scopeName);
+
+        await context.QueueStateUpdateAsync(varName, value.ToObject(), scopeName).ConfigureAwait(false);
     }
 
     public string? Format(IEnumerable<TemplateLine> template) => this._engine.Format(template);
 
     public string? Format(TemplateLine? line) => this._engine.Format(line);
+
+    public async ValueTask RestoreAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {
+        await Task.WhenAll(s_mutableScopes.Select(scopeName => ReadScopeAsync(scopeName).AsTask())).ConfigureAwait(false);
+
+        async ValueTask ReadScopeAsync(string scopeName)
+        {
+            HashSet<string> keys = await context.ReadStateKeysAsync(scopeName).ConfigureAwait(false);
+            foreach (string key in keys)
+            {
+                object? value = await context.ReadStateAsync<object>(key, scopeName).ConfigureAwait(false);
+                this._scopes.Set(key, value.ToFormulaValue(), scopeName);
+            }
+        }
+    }
 }

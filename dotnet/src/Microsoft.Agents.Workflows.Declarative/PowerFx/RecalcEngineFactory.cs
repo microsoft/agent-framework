@@ -16,7 +16,7 @@ internal static class RecalcEngineFactory
 
         foreach (string scopeName in VariableScopeNames.AllScopes)
         {
-            engine.UpdateVariable(scopeName, FormulaValue.NewBlank());
+            engine.UpdateVariable(scopeName, RecordValue.Empty());
         }
 
         return engine;

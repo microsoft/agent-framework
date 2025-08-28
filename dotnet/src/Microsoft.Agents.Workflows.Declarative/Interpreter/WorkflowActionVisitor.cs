@@ -13,15 +13,18 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 {
     private readonly WorkflowBuilder _workflowBuilder;
     private readonly DeclarativeWorkflowModel _workflowModel;
-    private readonly DeclarativeWorkflowOptions _options;
+    private readonly DeclarativeWorkflowOptions _workflowOptions;
+    private readonly DeclarativeWorkflowState _workflowState;
 
     public WorkflowActionVisitor(
         Executor rootAction,
-        DeclarativeWorkflowOptions workflowContext)
+        DeclarativeWorkflowState state,
+        DeclarativeWorkflowOptions options)
     {
-        this._workflowModel = new DeclarativeWorkflowModel(rootAction);
         this._workflowBuilder = new WorkflowBuilder(rootAction);
-        this._options = workflowContext;
+        this._workflowModel = new DeclarativeWorkflowModel(rootAction);
+        this._workflowOptions = options;
+        this._workflowState = state;
     }
 
     public bool HasUnsupportedActions { get; private set; }
@@ -93,7 +96,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        ConditionGroupExecutor action = new(item);
+        ConditionGroupExecutor action = new(item, this._workflowState);
         this.ContinueWith(action);
         this.ContinuationFor(action.Id, action.ParentId);
 
@@ -134,10 +137,10 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        ForeachExecutor action = new(item);
+        ForeachExecutor action = new(item, this._workflowState);
         string loopId = ForeachExecutor.Steps.Next(action.Id);
         this.ContinueWith(action, condition: null, CompletionHandler); // Foreach
-        this.ContinueWith(this.CreateStep(loopId, action.TakeNext), action.Id); // Loop Increment
+        this.ContinueWith(this.CreateStep(loopId, action.TakeNextAsync), action.Id); // Loop Increment
         string continuationId = this.ContinuationFor(action.Id, action.ParentId); // Action continuation
         this._workflowModel.AddLink(loopId, continuationId, (_) => !action.HasValue);
         DelegateActionExecutor startAction = this.CreateStep(ForeachExecutor.Steps.Start(action.Id)); // Action start
@@ -147,7 +150,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         void CompletionHandler()
         {
             string endActionsId = ForeachExecutor.Steps.End(action.Id); // Loop continuation
-            this.ContinueWith(this.CreateStep(endActionsId, action.Reset), action.Id);
+            this.ContinueWith(this.CreateStep(endActionsId, action.ResetAsync), action.Id);
             this._workflowModel.AddLink(endActionsId, loopId);
         }
     }
@@ -193,63 +196,63 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        this.ContinueWith(new AnswerQuestionWithAIExecutor(item, this._options.AgentProvider));
+        this.ContinueWith(new AnswerQuestionWithAIExecutor(item, this._workflowOptions.AgentProvider, this._workflowState));
     }
 
     protected override void Visit(SetVariable item)
     {
         this.Trace(item);
 
-        this.ContinueWith(new SetVariableExecutor(item));
+        this.ContinueWith(new SetVariableExecutor(item, this._workflowState));
     }
 
     protected override void Visit(SetTextVariable item)
     {
         this.Trace(item);
 
-        this.ContinueWith(new SetTextVariableExecutor(item));
+        this.ContinueWith(new SetTextVariableExecutor(item, this._workflowState));
     }
 
     protected override void Visit(ClearAllVariables item)
     {
         this.Trace(item);
 
-        this.ContinueWith(new ClearAllVariablesExecutor(item));
+        this.ContinueWith(new ClearAllVariablesExecutor(item, this._workflowState));
     }
 
     protected override void Visit(ResetVariable item)
     {
         this.Trace(item);
 
-        this.ContinueWith(new ResetVariableExecutor(item));
+        this.ContinueWith(new ResetVariableExecutor(item, this._workflowState));
     }
 
     protected override void Visit(EditTable item)
     {
         this.Trace(item);
 
-        this.ContinueWith(new EditTableExecutor(item));
+        this.ContinueWith(new EditTableExecutor(item, this._workflowState));
     }
 
     protected override void Visit(EditTableV2 item)
     {
         this.Trace(item);
 
-        this.ContinueWith(new EditTableV2Executor(item));
+        this.ContinueWith(new EditTableV2Executor(item, this._workflowState));
     }
 
     protected override void Visit(ParseValue item)
     {
         this.Trace(item);
 
-        this.ContinueWith(new ParseValueExecutor(item));
+        this.ContinueWith(new ParseValueExecutor(item, this._workflowState));
     }
 
     protected override void Visit(SendActivity item)
     {
         this.Trace(item);
 
-        this.ContinueWith(new SendActivityExecutor(item));
+        this.ContinueWith(new SendActivityExecutor(item, this._workflowState));
     }
 
     #region Not supported
@@ -436,8 +439,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         Func<object?, bool>? condition = null,
         Action? completionHandler = null)
     {
-        executor.Logger = this._options.LoggerFactory.CreateLogger(executor.Id);
-        executor.Options = this._options;
+        executor.Logger = this._workflowOptions.LoggerFactory.CreateLogger(executor.Id);
         this.ContinueWith(executor, executor.ParentId, condition, completionHandler);
     }
 
@@ -471,7 +473,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     private void RestartAfter(string actionId, string parentId) =>
         this._workflowModel.AddNode(this.CreateStep($"{actionId}_Continue"), parentId);
 
-    private DelegateActionExecutor CreateStep(string actionId, Action? stepAction = null)
+    private DelegateActionExecutor CreateStep(string actionId, DelegateAction? stepAction = null)
     {
         DelegateActionExecutor stepExecutor = new(actionId, stepAction);
 

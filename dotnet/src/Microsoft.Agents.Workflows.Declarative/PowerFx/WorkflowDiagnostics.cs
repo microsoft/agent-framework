@@ -7,7 +7,6 @@ using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.Bot.ObjectModel.Analysis;
 using Microsoft.Bot.ObjectModel.PowerFx;
-using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.Workflows.Declarative.PowerFx;
@@ -16,9 +15,9 @@ internal static class WorkflowDiagnostics
 {
     private static readonly WorkflowFeatureConfiguration s_semanticFeatureConfig = new();
 
-    public static void Initialize(this WorkflowScopes scopes, AdaptiveDialog workflowElement, ChatMessage inputMessage)
+    public static void Initialize<TElement>(this WorkflowScopes scopes, TElement workflowElement) where TElement : BotElement, IDialogBase
     {
-        scopes.InitializeSystem(inputMessage);
+        scopes.InitializeSystem();
 
         SemanticModel semanticModel = workflowElement.GetSemanticModel(new PowerFxExpressionChecker(s_semanticFeatureConfig), s_semanticFeatureConfig);
         scopes.InitializeEnvironment(semanticModel);
@@ -31,7 +30,7 @@ internal static class WorkflowDiagnostics
         {
             string? environmentValue = Environment.GetEnvironmentVariable(variableName);
             FormulaValue variableValue = string.IsNullOrEmpty(environmentValue) ? FormulaType.String.NewBlank() : FormulaValue.New(environmentValue);
-            scopes.Set(variableName, VariableScopeNames.Environment, variableValue);
+            scopes.Set(variableName, variableValue, VariableScopeNames.Environment);
         }
     }
 
@@ -54,7 +53,7 @@ internal static class WorkflowDiagnostics
                 }
             }
 
-            scopes.Set(variableDiagnostic.Path.VariableName, variableDiagnostic.Path.VariableScopeName ?? WorkflowScopes.DefaultScopeName, defaultValue);
+            scopes.Set(variableDiagnostic.Path.VariableName, defaultValue, variableDiagnostic.Path.VariableScopeName ?? WorkflowScopes.DefaultScopeName);
         }
     }
 
