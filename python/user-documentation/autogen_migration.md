@@ -10,9 +10,13 @@ This guide will focus on translating the various components from `AutoGen 0.4+` 
 
 ## Package structure
 
-AutoGen is broken down into several component packages, including `autogen_agentchat`, `autogen_core`, `autogen_ext`, etc. Objects are also nested into logical subpackages.
+AutoGen is broken down into several component packages, including `autogen_agentchat`, `autogen_core`, `autogen_ext`, etc. Objects are also nested into logical subpackages. Its packages encapsulate two different layers of abstraction. `autogen_core` contains the core functionality of building clients and agents, and making requests and getting responses. `autogen_ext` provides vendor extensions for specific models such as `openai` or `azure`.
+
+A higher layer of abstraction, which facilitates multi-agent workflows, is provided by the `autogen_agentchat` package.
 
 The Agent Framework package structure opts toward a flatter structure. The packages are broken into the core package, and several sub-packages; such as `azure`, `openai`, `workflow`, etc. However, each package's contents can and should be accessed through the `agent_framework` namespace and installed using the provided extra to ensure all dependencies are present and have the right versions. However this does mean that for example, `AzureChatClient` can be accessed with either `agent_framework_azure.AzureChatClient` or `agent_framework.azure.AzureChatClient`. Most objects, outside of specific components like exceptions or telemetry functionality, are contained within the top level package.
+
+Agent Framework likewise provides two layers of abstraction. Core functionality is provided by the main `agent_framework` package. Vendor extensions are provided by their associated package such as `openai` or `azure`. And the high level abstractions for multi-agent workflows and orchestration is provided by the `workflow` package.
 
 ## Model Client
 
@@ -215,8 +219,8 @@ AutoGen differentiates client inputs, agent inputs, agent responses, and events 
 - `UserMessage`: General message used to convey messages from the end user or information that does not fit into other message types
 
 `BaseChatMessage`: A base class. Default provided child classes are
-- `StructuredMessage`: Contains a user-defined response object. Used in models that support structured outputs
 - `TextMessage`: Contains text
+- `StructuredMessage`: Contains a user-defined response object. Used in models that support structured outputs
 - `StopMessage`: Indicating the end of a conversation
 - `HandoffMessage`: Message requesting handoff of a conversation to another agent
 - `ToolCallSummaryMessage`: Contains a tool call's inputs and outputs
