@@ -90,7 +90,7 @@ public class EdgeRunnerTests
             ? (targetMatch.Value ? "executor2" : "executor1")
             : null;
 
-        FanOutEdgeData edgeData = new("executor!", ["executor2", "executor3"], assigner);
+        FanOutEdgeData edgeData = new("executor1", ["executor2", "executor3"], assigner);
         FanOutEdgeRunner runner = new(runContext, edgeData);
 
         MessageEnvelope envelope = new("test", targetId: targetId);
