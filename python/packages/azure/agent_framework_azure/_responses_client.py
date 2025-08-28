@@ -94,15 +94,16 @@ class AzureResponsesClient(AzureOpenAIConfigBase, OpenAIResponsesClientBase):
             raise ServiceInitializationError(f"Failed to validate settings: {exc}") from exc
 
         if not azure_openai_settings.responses_deployment_name:
-            raise ServiceInitializationError("responses_deployment_name is required.")
-        if not azure_openai_settings.api_version:
-            raise ServiceInitializationError("api_version is required.")
+            raise ServiceInitializationError(
+                "Azure OpenAI deployment name is required. Set via 'deployment_name' parameter "
+                "or 'AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME' environment variable."
+            )
 
         super().__init__(
             deployment_name=azure_openai_settings.responses_deployment_name,
             endpoint=azure_openai_settings.endpoint,
             base_url=azure_openai_settings.base_url,
-            api_version=azure_openai_settings.api_version,
+            api_version=azure_openai_settings.api_version,  # type: ignore
             api_key=azure_openai_settings.api_key.get_secret_value() if azure_openai_settings.api_key else None,
             ad_token=ad_token,
             ad_token_provider=ad_token_provider,
