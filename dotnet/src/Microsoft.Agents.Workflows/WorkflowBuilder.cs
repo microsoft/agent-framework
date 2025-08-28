@@ -50,8 +50,32 @@ public class WorkflowBuilder
         }
         else if (!executorish.IsUnbound)
         {
-            // If we already have an executor with this ID, we need to update it (todo: should we throw on double binding?)
-            this._executors[executorish.Id] = executorish.Registration;
+            ExecutorRegistration incoming = executorish.Registration;
+            // If there is already a bound executor with this ID, we need to validate (to best efforts)
+            // that the two are matching (at least based on type)
+            if (this._executors.TryGetValue(executorish.Id, out ExecutorRegistration? existing))
+            {
+                if (existing.ExecutorType != incoming.ExecutorType)
+                {
+                    throw new InvalidOperationException(
+                        $"Cannot bind executor with ID '{executorish.Id}' because an executor with the same ID but a different type ({existing.ExecutorType.Name} vs {incoming.ExecutorType.Name}) is already bound.");
+                }
+
+                if (existing.RawExecutorishData != null &&
+                    !object.ReferenceEquals(existing.RawExecutorishData, incoming.RawExecutorishData))
+                {
+                    throw new InvalidOperationException(
+                        $"Cannot bind executor with ID '{executorish.Id}' because an executor with the same ID but different instance is already bound.");
+                }
+            }
+            else
+            {
+                this._executors[executorish.Id] = executorish.Registration;
+                if (this._unboundExecutors.Contains(executorish.Id))
+                {
+                    this._unboundExecutors.Remove(executorish.Id);
+                }
+            }
         }
 
         if (executorish.ExecutorType == ExecutorIsh.Type.InputPort)

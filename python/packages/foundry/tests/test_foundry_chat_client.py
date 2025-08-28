@@ -24,7 +24,7 @@ from azure.ai.agents.models import (
     ThreadRun,
 )
 from azure.core.credentials_async import AsyncTokenCredential
-from azure.identity.aio import DefaultAzureCredential
+from azure.identity.aio import AzureCliCredential
 from pydantic import Field, ValidationError
 
 from agent_framework_foundry import FoundryChatClient, FoundrySettings
@@ -133,7 +133,7 @@ def test_foundry_chat_client_init_missing_project_endpoint() -> None:
                 agent_id=None,
                 project_endpoint=None,  # Missing endpoint
                 model_deployment_name="test-model",
-                async_ad_credential=AsyncMock(spec=AsyncTokenCredential),
+                async_credential=AsyncMock(spec=AsyncTokenCredential),
             )
 
 
@@ -153,7 +153,7 @@ def test_foundry_chat_client_init_missing_model_deployment_for_agent_creation() 
                 agent_id=None,  # No existing agent
                 project_endpoint="https://test.com",
                 model_deployment_name=None,  # Missing for agent creation
-                async_ad_credential=AsyncMock(spec=AsyncTokenCredential),
+                async_credential=AsyncMock(spec=AsyncTokenCredential),
             )
 
 
@@ -187,14 +187,14 @@ def test_foundry_chat_client_from_dict(mock_ai_project_client: MagicMock) -> Non
 
 
 def test_foundry_chat_client_init_missing_credential(foundry_unit_test_env: dict[str, str]) -> None:
-    """Test FoundryChatClient.__init__ when async_ad_credential is missing and no client provided."""
+    """Test FoundryChatClient.__init__ when async_credential is missing and no client provided."""
     with pytest.raises(ServiceInitializationError, match="Azure AD credential is required when client is not provided"):
         FoundryChatClient(
             client=None,
             agent_id="existing-agent",
             project_endpoint=foundry_unit_test_env["FOUNDRY_PROJECT_ENDPOINT"],
             model_deployment_name=foundry_unit_test_env["FOUNDRY_MODEL_DEPLOYMENT_NAME"],
-            async_ad_credential=None,  # Missing credential
+            async_credential=None,  # Missing credential
         )
 
 
@@ -208,7 +208,7 @@ def test_foundry_chat_client_init_validation_error(mock_azure_credential: MagicM
             FoundryChatClient(
                 project_endpoint="https://test.com",
                 model_deployment_name="test-model",
-                async_ad_credential=mock_azure_credential,
+                async_credential=mock_azure_credential,
             )
 
 
@@ -662,7 +662,7 @@ def get_weather(
 @skip_if_foundry_integration_tests_disabled
 async def test_foundry_chat_client_get_response() -> None:
     """Test Foundry Chat Client response."""
-    async with FoundryChatClient(async_ad_credential=DefaultAzureCredential()) as foundry_chat_client:
+    async with FoundryChatClient(async_credential=AzureCliCredential()) as foundry_chat_client:
         assert isinstance(foundry_chat_client, ChatClient)
 
         messages: list[ChatMessage] = []
@@ -686,7 +686,7 @@ async def test_foundry_chat_client_get_response() -> None:
 @skip_if_foundry_integration_tests_disabled
 async def test_foundry_chat_client_get_response_tools() -> None:
     """Test Foundry Chat Client response with tools."""
-    async with FoundryChatClient(async_ad_credential=DefaultAzureCredential()) as foundry_chat_client:
+    async with FoundryChatClient(async_credential=AzureCliCredential()) as foundry_chat_client:
         assert isinstance(foundry_chat_client, ChatClient)
 
         messages: list[ChatMessage] = []
@@ -707,7 +707,7 @@ async def test_foundry_chat_client_get_response_tools() -> None:
 @skip_if_foundry_integration_tests_disabled
 async def test_foundry_chat_client_streaming() -> None:
     """Test Foundry Chat Client streaming response."""
-    async with FoundryChatClient(async_ad_credential=DefaultAzureCredential()) as foundry_chat_client:
+    async with FoundryChatClient(async_credential=AzureCliCredential()) as foundry_chat_client:
         assert isinstance(foundry_chat_client, ChatClient)
 
         messages: list[ChatMessage] = []
@@ -737,7 +737,7 @@ async def test_foundry_chat_client_streaming() -> None:
 @skip_if_foundry_integration_tests_disabled
 async def test_foundry_chat_client_streaming_tools() -> None:
     """Test Foundry Chat Client streaming response with tools."""
-    async with FoundryChatClient(async_ad_credential=DefaultAzureCredential()) as foundry_chat_client:
+    async with FoundryChatClient(async_credential=AzureCliCredential()) as foundry_chat_client:
         assert isinstance(foundry_chat_client, ChatClient)
 
         messages: list[ChatMessage] = []
