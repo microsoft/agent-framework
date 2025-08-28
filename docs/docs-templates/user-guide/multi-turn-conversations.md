@@ -20,19 +20,17 @@ Some underlying threads may be persistently created in an underlying service, wh
 ::: zone pivot="programming-language-csharp"
 
 ```csharp
-// Create a new thread
+// Create a new thread.
 AgentThread thread = agent.GetNewThread();
-// Run the agent with the thread
+// Run the agent with the thread.
 var response = await agent.RunAsync("Hello, how are you?", thread);
 
-// Run an agent with a temporary thread
+// Run an agent with a temporary thread.
 response = await agent.RunAsync("Hello, how are you?");
 ```
 
 ::: zone-end
 ::: zone pivot="programming-language-python"
-::: zone-end
-::: zone pivot="programming-language-java"
 ::: zone-end
 
 ### AgentThread Storage
@@ -47,9 +45,9 @@ themselves.
 ::: zone pivot="programming-language-csharp"
 
 ```csharp
-// Create a new thread
+// Create a new thread.
 AgentThread thread = agent.GetNewThread();
-// Run the agent with the thread
+// Run the agent with the thread.
 var response = await agent.RunAsync("Hello, how are you?", thread);
 
 // Serialize the thread for storage.
@@ -57,14 +55,12 @@ JsonElement serializedThread = await thread.SerializeAsync();
 // Deserialize the thread state after loading from storage.
 AgentThread resumedThread = await agent.DeserializeThreadAsync(serializedThread);
 
-// Run the agent with the resumed thread
+// Run the agent with the resumed thread.
 var response = await agent.RunAsync("Hello, how are you?", resumedThread);
 ```
 
 ::: zone-end
 ::: zone pivot="programming-language-python"
-::: zone-end
-::: zone pivot="programming-language-java"
 ::: zone-end
 
 ## Agent/AgentThread relationship

@@ -33,8 +33,6 @@ For examples on how to construct `ChatClientAgents` with various `IChatClient` i
 ::: zone-end
 ::: zone pivot="programming-language-python"
 ::: zone-end
-::: zone pivot="programming-language-java"
-::: zone-end
 
 ## Complex custom agents
 

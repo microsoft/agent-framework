@@ -46,5 +46,3 @@ For more details and more advanced scenarios, see [Getting Started Steps](../../
 ## Coming Soon
 
 ::: zone-end
-::: zone pivot="programming-language-java"
-::: zone-end

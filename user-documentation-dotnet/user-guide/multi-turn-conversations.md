@@ -18,12 +18,12 @@ The differences between the underlying threading models are abstracted away via 
 Some underlying threads may be persistently created in an underlying service, where the service requires this, e.g. Foundry Agents or OpenAI Responses. Any cleanup or deletion of these threads is the responsibility of the user.
 
 ```csharp
-// Create a new thread
+// Create a new thread.
 AgentThread thread = agent.GetNewThread();
-// Run the agent with the thread
+// Run the agent with the thread.
 var response = await agent.RunAsync("Hello, how are you?", thread);
 
-// Run an agent with a temporary thread
+// Run an agent with a temporary thread.
 response = await agent.RunAsync("Hello, how are you?");
 ```
 
@@ -38,9 +38,9 @@ For cases where the conversation history is managed in-memory, the serialized `A
 themselves.
 
 ```csharp
-// Create a new thread
+// Create a new thread.
 AgentThread thread = agent.GetNewThread();
-// Run the agent with the thread
+// Run the agent with the thread.
 var response = await agent.RunAsync("Hello, how are you?", thread);
 
 // Serialize the thread for storage.
@@ -48,7 +48,7 @@ JsonElement serializedThread = await thread.SerializeAsync();
 // Deserialize the thread state after loading from storage.
 AgentThread resumedThread = await agent.DeserializeThreadAsync(serializedThread);
 
-// Run the agent with the resumed thread
+// Run the agent with the resumed thread.
 var response = await agent.RunAsync("Hello, how are you?", resumedThread);
 ```
 
