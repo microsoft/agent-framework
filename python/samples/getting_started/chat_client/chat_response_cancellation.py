@@ -7,7 +7,7 @@ from agent_framework.openai import OpenAIChatClient
 
 async def main() -> None:
     """
-    Demonstrates cancelling a chat response request after 1 second.
+    Demonstrates cancelling a chat request after 1 second.
     Creates a task for the chat request, waits briefly, then cancels it to show proper cleanup.
 
     Configuration:
