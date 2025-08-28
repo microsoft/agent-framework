@@ -54,46 +54,50 @@ internal sealed class A2AAgent : AIAgent
     /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        var parameters = new MessageSendParams
-        {
-            Message = ConvertToA2AMessage(messages, thread)
-        };
+        ValidateInputMessages(messages);
+
+        Message a2aMessage = messages.ToA2AMessage();
+
+        // Linking the message to the existing conversation, if any.
+        a2aMessage.ContextId = thread?.ConversationId;
 
         this._logger.LogA2AAgentInvokingAgent(nameof(RunStreamingAsync), this.Id, this.Name);
 
-        var response = await this._a2aClient.SendMessageAsync(parameters, cancellationToken).ConfigureAwait(false);
+        var a2aResponse = await this._a2aClient.SendMessageAsync(new MessageSendParams { Message = a2aMessage }, cancellationToken).ConfigureAwait(false);
 
         this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, this.Name);
 
-        if (response is Message message)
+        if (a2aResponse is Message message)
         {
             UpdateThreadConversationId(thread, message);
 
             return new AgentRunResponse
             {
-                Messages = [ConvertToChatMessage(message)],
+                Messages = [message.ToChatMessage()],
                 RawRepresentation = message
             };
         }
 
-        throw new InvalidOperationException($"Only message responses are supported from A2A agents. Received: {response.GetType().FullName ?? "null"}");
+        throw new InvalidOperationException($"Only message responses are supported from A2A agents. Received: {a2aResponse.GetType().FullName ?? "null"}");
     }
 
     /// <inheritdoc/>
     public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var parameters = new MessageSendParams
-        {
-            Message = ConvertToA2AMessage(messages, thread)
-        };
+        ValidateInputMessages(messages);
+
+        Message a2aMessage = messages.ToA2AMessage();
+
+        // Linking the message to the existing conversation, if any.
+        a2aMessage.ContextId = thread?.ConversationId;
 
         this._logger.LogA2AAgentInvokingAgent(nameof(RunStreamingAsync), this.Id, this.Name);
 
-        var sseEvents = this._a2aClient.SendMessageStreamAsync(parameters, cancellationToken).ConfigureAwait(false);
+        var a2aSseEvents = this._a2aClient.SendMessageStreamAsync(new MessageSendParams { Message = a2aMessage }, cancellationToken).ConfigureAwait(false);
 
         this._logger.LogAgentChatClientInvokedAgent(nameof(RunStreamingAsync), this.Id, this.Name);
 
-        await foreach (var sseEvent in sseEvents)
+        await foreach (var sseEvent in a2aSseEvents)
         {
             if (sseEvent.Data is not Message message)
             {
@@ -125,9 +129,9 @@ internal sealed class A2AAgent : AIAgent
     /// <inheritdoc/>
     public override string? Description => this._description ?? base.Description;
 
-    private static Message ConvertToA2AMessage(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread)
+    private static void ValidateInputMessages(IReadOnlyCollection<ChatMessage> messages)
     {
-        List<Part> allParts = [];
+        _ = Throw.IfNull(messages);
 
         foreach (var message in messages)
         {
@@ -135,36 +139,7 @@ internal sealed class A2AAgent : AIAgent
             {
                 throw new ArgumentException($"All input messages for A2A agents must have the role '{ChatRole.User}'. Found '{message.Role}'.", nameof(messages));
             }
-
-            if (message.Contents.ToA2AParts() is { Count: > 0 } ps)
-            {
-                allParts.AddRange(ps);
-            }
         }
-
-        return new Message
-        {
-            MessageId = Guid.NewGuid().ToString(),
-            Role = MessageRole.User,
-            Parts = allParts,
-            // Linking the message to the existing conversation, if any.
-            ContextId = thread?.ConversationId,
-        };
-    }
-
-    private static ChatMessage ConvertToChatMessage(Message message)
-    {
-        List<AIContent>? aiContents = null;
-
-        foreach (var part in message.Parts)
-        {
-            (aiContents ??= []).Add(part.ToAIContent());
-        }
-
-        return new ChatMessage(ChatRole.Assistant, aiContents)
-        {
-            AdditionalProperties = message.Metadata.ToAdditionalProperties(),
-        };
     }
 
     private static void UpdateThreadConversationId(AgentThread? thread, Message message)
