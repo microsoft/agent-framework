@@ -2,6 +2,7 @@
 
 import importlib.metadata
 
+from ._agent import WorkflowAgent, WorkflowAgentThread
 from ._checkpoint import (
     CheckpointStorage,
     FileCheckpointStorage,
@@ -132,6 +133,8 @@ __all__ = [
     "TypeCompatibilityError",
     "ValidationTypeEnum",
     "Workflow",
+    "WorkflowAgent",
+    "WorkflowAgentThread",
     "WorkflowBuilder",
     "WorkflowCheckpoint",
     "WorkflowCompletedEvent",
