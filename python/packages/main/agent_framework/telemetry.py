@@ -513,7 +513,7 @@ def _log_messages(
     """Log messages with extra information."""
     for index, message in enumerate(messages):
         logger.info(
-            json.dumps({"message": message.model_dump_json(exclude_none=True), "index": index}),
+            message.model_dump_json(exclude_none=True),
             extra={
                 OtelAttr.EVENT_NAME: ROLE_EVENT_MAP.get(message.role.value),
                 OtelAttr.SYSTEM: model_provider,
@@ -527,12 +527,8 @@ def _set_response_output(
     response: "ChatResponse",
 ) -> None:
     """Set the response for a given span."""
-    first_completion = response.messages[0]
-
     # Set the response ID
-    if response_id := (
-        first_completion.additional_properties.get("id") if first_completion.additional_properties is not None else None
-    ):
+    if response_id := response.response_id:
         span.set_attribute(OtelAttr.RESPONSE_ID, response_id)
 
     # Set the finish reason

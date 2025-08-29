@@ -29,7 +29,7 @@ from pydantic import (
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
 from ._tools import AITool, ai_function
-from .exceptions import AgentFrameworkException
+from .exceptions import TypeAdditionException
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -250,7 +250,7 @@ def _process_update(
         ):
             try:
                 message.contents[-1] += content
-            except AgentFrameworkException:
+            except TypeAdditionException:
                 message.contents.append(content)
         elif isinstance(content, UsageContent):
             if response.usage_details is None:
@@ -941,7 +941,7 @@ class FunctionCallContent(AIContent):
         if not isinstance(other, FunctionCallContent):
             raise TypeError("Incompatible type")
         if other.call_id and self.call_id != other.call_id:
-            raise AgentFrameworkException("Incompatible function call contents")
+            raise TypeAdditionException("Incompatible function call contents", log_level=None)
         if not self.arguments:
             arguments = other.arguments
         elif not other.arguments:

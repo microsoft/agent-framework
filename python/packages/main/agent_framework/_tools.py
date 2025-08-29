@@ -319,6 +319,7 @@ class AIFunction(AIToolBase, Generic[ArgsT, ReturnT]):
                 raise
             finally:
                 duration = perf_counter() - starting_time_stamp
+                current_span.set_attribute(OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION, duration)
                 self._invocation_duration_histogram.record(duration, attributes=hist_attributes)
                 logger.info("Function duration: %fs", duration)
 
