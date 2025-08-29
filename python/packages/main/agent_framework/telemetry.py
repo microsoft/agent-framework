@@ -18,7 +18,7 @@ from ._pydantic import AFBaseSettings
 if TYPE_CHECKING:  # pragma: no cover
     from opentelemetry.util._decorator import _AgnosticContextManager  # type: ignore[reportPrivateUsage]
 
-    from ._agents import AgentProtocol, ChatClientAgent
+    from ._agents import AIAgent, ChatClientAgent
     from ._clients import ChatClient
     from ._threads import AgentThread
     from ._tools import AIFunction
@@ -657,7 +657,7 @@ def use_agent_telemetry(cls: type[TAgent]) -> type[TAgent]:
 def _get_agent_run_span(
     *,
     operation_name: str,
-    agent: "AgentProtocol",
+    agent: "AIAgent",
     system: str,
     thread: "AgentThread | None",
     **kwargs: Any,

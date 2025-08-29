@@ -40,10 +40,9 @@ async def builder_with_custom_function_and_telemetry():
     # response: The weather in Amsterdam is cloudy with a high of 23°C.
 
 
-async def builder_wo():
+async def builder_without_decorators():
     print("Builder without decorators.")
     chat_client = ChatClientBuilder(OpenAIResponsesClient).build()
-
     print(
         (await chat_client.get_response("Hello, what's the weather in Amsterdam?", tools=get_weather))
         .messages[0]
@@ -85,7 +84,7 @@ async def agent_with_chat_client_builder():
 async def run() -> None:
     await agent_with_chat_client_builder()
     await builder_with_function_and_telemetry()
-    await builder_wo()
+    await builder_without_decorators()
     await builder_as_context_manager()
 
 

@@ -6,7 +6,6 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import ChatClientAgent
-from agent_framework.foundry import FoundryChatClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
@@ -32,12 +31,11 @@ async def main() -> None:
         created_agent = await client.agents.create_agent(
             model=os.environ["FOUNDRY_MODEL_DEPLOYMENT_NAME"], name="WeatherAgent"
         )
-
         try:
             async with ChatClientAgent(
                 # passing in the client is optional here, so if you take the agent_id from the portal
                 # you can use it directly without the two lines above.
-                chat_client=FoundryChatClient(client=client, agent_id=created_agent.id),
+                chat_client=client.as_chat_client(),
                 instructions="You are a helpful weather agent.",
                 tools=get_weather,
             ) as agent:

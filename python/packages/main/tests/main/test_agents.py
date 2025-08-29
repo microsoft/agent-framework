@@ -7,10 +7,10 @@ from uuid import uuid4
 from pytest import fixture, raises
 
 from agent_framework import (
-    AgentProtocol,
     AgentRunResponse,
     AgentRunResponseUpdate,
     AgentThread,
+    AIAgent,
     ChatClient,
     ChatClientAgent,
     ChatClientBase,
@@ -31,7 +31,7 @@ class MockAgentThread(AgentThread):
 
 
 # Mock ChatClientAgent implementation for testing
-class MockAgent(AgentProtocol):
+class MockAgent(AIAgent):
     @property
     def id(self) -> str:
         return str(uuid4())
@@ -108,7 +108,7 @@ def agent_thread() -> AgentThread:
 
 
 @fixture
-def agent() -> AgentProtocol:
+def agent() -> AIAgent:
     return MockAgent()
 
 
@@ -121,17 +121,17 @@ def test_agent_thread_type(agent_thread: AgentThread) -> None:
     assert isinstance(agent_thread, AgentThread)
 
 
-def test_agent_type(agent: AgentProtocol) -> None:
-    assert isinstance(agent, AgentProtocol)
+def test_agent_type(agent: AIAgent) -> None:
+    assert isinstance(agent, AIAgent)
 
 
-async def test_agent_run(agent: AgentProtocol) -> None:
+async def test_agent_run(agent: AIAgent) -> None:
     response = await agent.run("test")
     assert response.messages[0].role == ChatRole.ASSISTANT
     assert response.messages[0].text == "Response"
 
 
-async def test_agent_run_streaming(agent: AgentProtocol) -> None:
+async def test_agent_run_streaming(agent: AIAgent) -> None:
     async def collect_updates(updates: AsyncIterable[AgentRunResponseUpdate]) -> list[AgentRunResponseUpdate]:
         return [u async for u in updates]
 
@@ -142,7 +142,7 @@ async def test_agent_run_streaming(agent: AgentProtocol) -> None:
 
 def test_chat_client_agent_type(chat_client: ChatClient) -> None:
     chat_client_agent = ChatClientAgent(chat_client=chat_client)
-    assert isinstance(chat_client_agent, AgentProtocol)
+    assert isinstance(chat_client_agent, AIAgent)
 
 
 async def test_chat_client_agent_init(chat_client: ChatClient) -> None:

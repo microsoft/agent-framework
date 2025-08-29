@@ -39,14 +39,14 @@ logger = get_logger("agent_framework")
 
 TThreadType = TypeVar("TThreadType", bound="AgentThread")
 
-__all__ = ["AgentBase", "AgentProtocol", "ChatClientAgent", "agent"]
+__all__ = ["AIAgent", "AgentBase", "ChatClientAgent", "agent"]
 
 
 # region Agent Protocol
 
 
 @runtime_checkable
-class AgentProtocol(Protocol):
+class AIAgent(Protocol):
     """A protocol for an agent that can be invoked."""
 
     @property
@@ -675,16 +675,16 @@ def agent(
     description: str | None = None,
     instructions: str | None = None,
     **kwargs: Any,
-) -> "AgentProtocol":
+) -> "AIAgent":
     """Create a simple agent out of a function."""
 
     def decorator(
         func: Callable[..., Awaitable[AgentRunResponse]] | Callable[..., AsyncIterable[AgentRunResponseUpdate]],
-    ) -> "AgentProtocol":
+    ) -> "AIAgent":
         @wraps(func)
         def wrapper(
             f: Callable[..., Awaitable[AgentRunResponse]] | Callable[..., AsyncIterable[AgentRunResponseUpdate]],
-        ) -> "AgentProtocol":
+        ) -> "AIAgent":
             agent_name = name or f.__name__
             agent_description = description or f.__doc__
             agent_instructions = instructions or "You are a agent."

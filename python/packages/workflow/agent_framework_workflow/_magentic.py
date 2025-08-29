@@ -14,9 +14,9 @@ from typing import Annotated, Any, Literal, Protocol, TypeVar, Union, cast
 from uuid import uuid4
 
 from agent_framework import (
-    AgentProtocol,
     AgentRunResponse,
     AgentRunResponseUpdate,
+    AIAgent,
     ChatClient,
     ChatMessage,
     ChatRole,
@@ -1262,7 +1262,7 @@ class MagenticAgentExecutor(Executor):
 
     def __init__(
         self,
-        agent: AgentProtocol | Executor,
+        agent: AIAgent | Executor,
         agent_id: str,
         agent_response_callback: Callable[[str, ChatMessage], Awaitable[None]] | None = None,
         streaming_agent_response_callback: Callable[[str, AgentRunResponseUpdate, bool], Awaitable[None]] | None = None,
@@ -1371,7 +1371,7 @@ class MagenticAgentExecutor(Executor):
 
         updates: list[AgentRunResponseUpdate] = []
         # The wrapped participant is guaranteed to be an AgentBase when this is called.
-        agent = cast("AgentProtocol", self._agent)
+        agent = cast("AIAgent", self._agent)
         async for update in agent.run_streaming(messages=self._chat_history):  # type: ignore[attr-defined]
             updates.append(update)
             if self._streaming_agent_response_callback is not None:
@@ -1422,7 +1422,7 @@ class MagenticBuilder:
     """High-level builder for creating Magentic One workflows."""
 
     def __init__(self) -> None:
-        self._participants: dict[str, AgentProtocol | Executor] = {}
+        self._participants: dict[str, AIAgent | Executor] = {}
         self._manager: MagenticManagerBase | None = None
         self._exception_callback: Callable[[Exception], None] | None = None
         self._result_callback: Callable[[ChatMessage], Awaitable[None]] | None = None
@@ -1435,7 +1435,7 @@ class MagenticBuilder:
         self._unified_callback: CallbackSink | None = None
         self._callback_mode: MagenticCallbackMode | None = None
 
-    def participants(self, **participants: AgentProtocol | Executor) -> Self:
+    def participants(self, **participants: AIAgent | Executor) -> Self:
         """Add participants (agents) to the workflow."""
         self._participants.update(participants)
         return self

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar, Union, get_args, get_or
 if TYPE_CHECKING:
     from ._workflow import Workflow
 
-from agent_framework import AgentProtocol, AgentRunResponse, AgentRunResponseUpdate, AgentThread, ChatMessage
+from agent_framework import AgentRunResponse, AgentRunResponseUpdate, AgentThread, AIAgent, ChatMessage
 from agent_framework._pydantic import AFBaseModel
 from pydantic import Field
 
@@ -749,7 +749,7 @@ class AgentExecutor(Executor):
 
     def __init__(
         self,
-        agent: AgentProtocol,
+        agent: AIAgent,
         *,
         agent_thread: AgentThread | None = None,
         streaming: bool = False,
