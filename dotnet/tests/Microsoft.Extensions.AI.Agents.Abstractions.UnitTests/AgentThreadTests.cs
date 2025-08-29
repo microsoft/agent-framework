@@ -59,8 +59,10 @@ public class AgentThreadTests
     public void SetConversationIdThrowsWhenMessageStoreIsSet()
     {
         // Arrange
-        var thread = new AgentThread();
-        thread.MessageStore = new InMemoryChatMessageStore();
+        var thread = new AgentThread
+        {
+            MessageStore = new InMemoryChatMessageStore()
+        };
 
         // Act & Assert
         var exception = Assert.Throws<InvalidOperationException>(() => thread.ConversationId = "new-thread-id");
@@ -72,8 +74,10 @@ public class AgentThreadTests
     public void SetChatMessageStoreThrowsWhenConversationIdIsSet()
     {
         // Arrange
-        var thread = new AgentThread();
-        thread.ConversationId = "existing-thread-id";
+        var thread = new AgentThread
+        {
+            ConversationId = "existing-thread-id"
+        };
         var store = new InMemoryChatMessageStore();
 
         // Act & Assert
@@ -149,6 +153,8 @@ public class AgentThreadTests
 
         // Act
         await thread.OnNewMessagesAsync(messages, CancellationToken.None);
+        Assert.Equal("thread-123", thread.ConversationId);
+        Assert.Null(thread.MessageStore);
     }
 
     [Fact]
