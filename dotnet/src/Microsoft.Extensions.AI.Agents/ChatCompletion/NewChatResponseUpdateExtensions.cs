@@ -30,12 +30,10 @@ public static class NewChatResponseUpdateExtensions
     /// <param name="status">The new status to assign.</param>
     public static void SetResponseStatus(this ChatResponseUpdate update, NewResponseStatus? status)
     {
-        if (update is null)
+        if (status is not null)
         {
-            throw new ArgumentNullException(nameof(update));
+            (update.AdditionalProperties ??= [])["Status"] = status;
         }
-
-        (update.AdditionalProperties ??= [])["Status"] = status;
     }
 
     /// <summary>

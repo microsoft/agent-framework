@@ -24,39 +24,42 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
     {
         this._openAIResponseClient = new OpenAIClient(s_config.ApiKey).GetOpenAIResponseClient(s_config.ChatModelId);
 
-        this._chatClient = this._openAIResponseClient.AsNewIChatClient();
+        this._chatClient = this._openAIResponseClient
+            .AsNewIChatClient()
+            .AsBuilder()
+            .UseFunctionInvocation()
+            .Build();
     }
 
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task ItShouldRespectAwaitRunPropertySpecifiedInChatOptionsAsync(bool awaitRun)
+    public async Task GetStreamingResponseAsync_WithBackgroundModeProvidedViaOptions_ReturnsExpectedResponseAsync(bool awaitRun)
     {
         // Arrange
-        var options = new ChatOptions();
+        ChatOptions options = new();
         options.SetAwaitRunResult(awaitRun);
 
         List<NewResponseStatus> statuses = [];
         string responseText = "";
 
         // Act
-        var response = this._chatClient.GetStreamingResponseAsync(new ChatMessage(ChatRole.System, "Always respond with 'Computer says no', even if there was no user input."), options);
-
-        await foreach (var item in response)
+        await foreach (var update in this._chatClient.GetStreamingResponseAsync("What is the capital of France?", options))
         {
-            if (item.GetResponseStatus() is { } status)
+            if (update.GetResponseStatus() is { } status)
             {
                 statuses.Add(status);
             }
 
-            responseText += item;
+            responseText += update;
         }
 
         // Assert
-        Assert.Contains("Computer says no", responseText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Paris", responseText, StringComparison.OrdinalIgnoreCase);
 
         if (awaitRun)
         {
+            Assert.DoesNotContain(NewResponseStatus.Queued, statuses);
             Assert.Contains(NewResponseStatus.InProgress, statuses);
             Assert.Contains(NewResponseStatus.Completed, statuses);
         }
@@ -71,34 +74,35 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task ItShouldRespectAwaitRunParameterSpecifiedAtInitializationAsync(bool awaitRun)
+    public async Task GetStreamingResponseAsync_WithBackgroundModeProvidedAtInitialization_ReturnsExpectedResponseAsync(bool awaitRun)
     {
         // Arrange
-        using var client = this._openAIResponseClient.AsNewIChatClient(awaitRun: awaitRun);
-
-        var options = new ChatOptions();
+        using IChatClient client = this._openAIResponseClient
+            .AsNewIChatClient(awaitRun: awaitRun)
+            .AsBuilder()
+            .UseFunctionInvocation()
+            .Build();
 
         List<NewResponseStatus> statuses = [];
         string responseText = "";
 
         // Act
-        var response = client.GetStreamingResponseAsync(new ChatMessage(ChatRole.System, "Always respond with 'Computer says no', even if there was no user input."), options);
-
-        await foreach (var item in response)
+        await foreach (var update in client.GetStreamingResponseAsync("What is the capital of France?"))
         {
-            if (item.GetResponseStatus() is { } status)
+            if (update.GetResponseStatus() is { } status)
             {
                 statuses.Add(status);
             }
 
-            responseText += item;
+            responseText += update;
         }
 
         // Assert
-        Assert.Contains("Computer says no", responseText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Paris", responseText, StringComparison.OrdinalIgnoreCase);
 
         if (awaitRun)
         {
+            Assert.DoesNotContain(NewResponseStatus.Queued, statuses);
             Assert.Contains(NewResponseStatus.InProgress, statuses);
             Assert.Contains(NewResponseStatus.Completed, statuses);
         }
@@ -110,12 +114,13 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         }
     }
 
-    [Fact]
-    public async Task ItShouldStartConversationInBackgroundAndContinueItInBackgroundFromSpecifiedPointAsync()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task GetStreamingResponseAsync_HavingReturnedInitialResponse_AllowsToContinueItAsync(bool continueInBackground)
     {
         // Part 1: Start the background run and get the first part of the response.
-        // Arrange
-        var options = new ChatOptions();
+        ChatOptions options = new();
         options.SetAwaitRunResult(false);
 
         List<NewResponseStatus> statuses = [];
@@ -123,43 +128,73 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         int? sequenceNumber = null;
         string? responseId = null;
 
-        // Act
-        var response = this._chatClient.GetStreamingResponseAsync(new ChatMessage(ChatRole.System, "Always respond with 'Computer says no', even if there was no user input."), options);
-
-        await foreach (var item in response)
+        await foreach (var update in this._chatClient.GetStreamingResponseAsync("What is the capital of France?", options))
         {
-            if (item.GetResponseStatus() is { } status)
+            if (update.GetResponseStatus() is { } status)
             {
                 statuses.Add(status);
             }
 
-            responseText += item;
+            responseText += update;
 
-            // Capture the sequence number of the first update with content so we can continue
-            // getting the rest of the response from the same point in the test below.
-            if (!string.IsNullOrEmpty(item.ToString()))
-            {
-                responseId = item.ResponseId;
-                sequenceNumber = item.GetSequenceNumber();
-                break;
-            }
+            // Capture the response id and sequence number of the first event so we can continue
+            // getting the rest of the events starting from the same point in the test below.
+            responseId = update.ResponseId;
+            sequenceNumber = update.GetSequenceNumber();
+            break;
         }
 
-        // Assert
+        Assert.Contains(NewResponseStatus.Queued, statuses);
         Assert.NotNull(responseText);
         Assert.NotNull(sequenceNumber);
         Assert.NotNull(responseId);
 
-        // Part 2: Continue getting the rest of the response from the saved point in the background.
-        // Arrange
+        // Part 2: Continue getting the rest of the response from the saved point
+        options.SetAwaitRunResult(!continueInBackground);
         options.ConversationId = responseId;
         options.SetPreviousResponseId(responseId);
         options.SetStartAfter(sequenceNumber.Value);
+        statuses.Clear();
 
-        // Act Get the rest of the conversation from the saved point
-        response = this._chatClient.GetStreamingResponseAsync([], options);
+        await foreach (var item in this._chatClient.GetStreamingResponseAsync([], options))
+        {
+            if (item.GetResponseStatus() is { } status)
+            {
+                statuses.Add(status);
+            }
 
-        await foreach (var item in response)
+            responseText += item;
+        }
+
+        Assert.Contains("Paris", responseText);
+
+        if (continueInBackground)
+        {
+            Assert.Contains(NewResponseStatus.Queued, statuses);
+            Assert.Contains(NewResponseStatus.InProgress, statuses);
+            Assert.Contains(NewResponseStatus.Completed, statuses);
+        }
+        else
+        {
+            Assert.DoesNotContain(NewResponseStatus.Queued, statuses);
+            Assert.Contains(NewResponseStatus.InProgress, statuses);
+            Assert.Contains(NewResponseStatus.Completed, statuses);
+        }
+    }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_WithFunctionCalling_AndBackgroundModeDisabled_CallsFunctionAsync()
+    {
+        // Arrange
+        ChatOptions options = new();
+        options.SetAwaitRunResult(true);
+        options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
+
+        List<NewResponseStatus> statuses = [];
+        string responseText = "";
+
+        // Act
+        await foreach (var item in this._chatClient.GetStreamingResponseAsync("What time is it?", options))
         {
             if (item.GetResponseStatus() is { } status)
             {
@@ -170,60 +205,55 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         }
 
         // Assert
-        Assert.Contains("Computer says no", responseText, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(NewResponseStatus.Queued, statuses);
+        Assert.Contains("5:43", responseText);
         Assert.Contains(NewResponseStatus.InProgress, statuses);
         Assert.Contains(NewResponseStatus.Completed, statuses);
     }
 
-    [Fact]
-    public async Task ItShouldStartConversationInBackgroundAndContinueItInNonBackgroundFromSpecifiedPointAsync()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task GetStreamingResponseAsync_WithFunctionCalling_HavingReturnedInitialResponse_AllowsToContinueItAsync(bool continueInBackground)
     {
-        // Part 1: Start the background run and get the first event of the response.
-        // Arrange
-        var options = new ChatOptions();
+        // Part 1: Start the background run.
+        ChatOptions options = new();
         options.SetAwaitRunResult(false);
+        options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
 
         List<NewResponseStatus> statuses = [];
         string responseText = "";
         int? sequenceNumber = null;
         string? responseId = null;
 
-        // Act
-        var response = this._chatClient.GetStreamingResponseAsync(new ChatMessage(ChatRole.System, "Always respond with 'Computer says no', even if there was no user input."), options);
-
-        await foreach (var item in response)
+        await foreach (var update in this._chatClient.GetStreamingResponseAsync("What time is it?", options))
         {
-            if (item.GetResponseStatus() is { } status)
+            if (update.GetResponseStatus() is { } status)
             {
                 statuses.Add(status);
             }
 
+            responseText += update;
+
             // Capture the response id and sequence number of the first event so we can continue
             // getting the rest of the events starting from the same point in the test below.
-            responseId = item.ResponseId;
-            sequenceNumber = item.GetSequenceNumber();
+            responseId = update.ResponseId;
+            sequenceNumber = update.GetSequenceNumber();
             break;
         }
 
-        // Assert
-        Assert.NotNull(sequenceNumber);
-        Assert.Equal(0, sequenceNumber);
-        Assert.NotNull(responseId);
         Assert.Contains(NewResponseStatus.Queued, statuses);
+        Assert.NotNull(responseText);
+        Assert.NotNull(sequenceNumber);
+        Assert.NotNull(responseId);
 
-        // Part 2: Continue getting the rest of the response from the saved point in non-background mode.
-        // Arrange
-        statuses.Clear();
-        options.SetAwaitRunResult(true);
+        // Part 2: Continue getting the rest of the response from the saved point
+        options.SetAwaitRunResult(!continueInBackground);
         options.ConversationId = responseId;
         options.SetPreviousResponseId(responseId);
         options.SetStartAfter(sequenceNumber.Value);
+        statuses.Clear();
 
-        // Act Get the rest of the conversation from the saved point
-        response = this._chatClient.GetStreamingResponseAsync([], options);
-
-        await foreach (var item in response)
+        await foreach (var item in this._chatClient.GetStreamingResponseAsync([], options))
         {
             if (item.GetResponseStatus() is { } status)
             {
@@ -233,23 +263,32 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
             responseText += item;
         }
 
-        // Assert
-        Assert.Contains("Computer says no", responseText, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain(NewResponseStatus.Queued, statuses);
-        Assert.Contains(NewResponseStatus.InProgress, statuses);
-        Assert.Contains(NewResponseStatus.Completed, statuses);
+        Assert.Contains("5:43", responseText);
+
+        if (continueInBackground)
+        {
+            Assert.Contains(NewResponseStatus.Queued, statuses);
+            Assert.Contains(NewResponseStatus.InProgress, statuses);
+            Assert.Contains(NewResponseStatus.Completed, statuses);
+        }
+        else
+        {
+            Assert.DoesNotContain(NewResponseStatus.Queued, statuses);
+            Assert.Contains(NewResponseStatus.InProgress, statuses);
+            Assert.Contains(NewResponseStatus.Completed, statuses);
+        }
     }
 
     [Fact]
-    public async Task ItShouldCancelRunAsync()
+    public async Task CancelRunAsync_WhenCalled_CancelsRunAsync()
     {
         // Arrange
-        var options = new ChatOptions();
+        ChatOptions options = new();
         options.SetAwaitRunResult(false);
 
         INewRunnableChatClient runnableChatClient = this._chatClient.GetService<INewRunnableChatClient>()!;
 
-        IAsyncEnumerable<ChatResponseUpdate> streamingResponse = runnableChatClient.GetStreamingResponseAsync("What is the capital of France.", options);
+        IAsyncEnumerable<ChatResponseUpdate> streamingResponse = runnableChatClient.GetStreamingResponseAsync("What is the capital of France?", options);
 
         var responseId = (await streamingResponse.ElementAtAsync(0)).ResponseId;
 
@@ -264,7 +303,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
     }
 
     [Fact]
-    public async Task ItShouldDeleteRunAsync()
+    public async Task DeleteRunAsync_WhenCalled_DeletesRunAsync()
     {
         // Arrange
         var options = new ChatOptions();
@@ -272,7 +311,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
 
         INewRunnableChatClient runnableChatClient = this._chatClient.GetService<INewRunnableChatClient>()!;
 
-        IAsyncEnumerable<ChatResponseUpdate> streamingResponse = runnableChatClient.GetStreamingResponseAsync("What is the capital of France.", options);
+        IAsyncEnumerable<ChatResponseUpdate> streamingResponse = runnableChatClient.GetStreamingResponseAsync("What is the capital of France?", options);
 
         var responseId = (await streamingResponse.ElementAtAsync(0)).ResponseId;
 

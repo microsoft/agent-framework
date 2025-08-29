@@ -22,20 +22,24 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
     {
         this._openAIResponseClient = new OpenAIClient(s_config.ApiKey).GetOpenAIResponseClient(s_config.ChatModelId);
 
-        this._chatClient = this._openAIResponseClient.AsNewIChatClient();
+        this._chatClient = this._openAIResponseClient
+            .AsNewIChatClient()
+            .AsBuilder()
+            .UseFunctionInvocation()
+            .Build();
     }
 
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task ItShouldRespectAwaitRunPropertySpecifiedInChatOptionsAsync(bool awaitRun)
+    public async Task GetResponseAsync_WithBackgroundModeProvidedViaOptions_ReturnsExpectedResponseAsync(bool awaitRun)
     {
         // Arrange
-        var options = new ChatOptions();
+        ChatOptions options = new();
         options.SetAwaitRunResult(awaitRun);
 
         // Act
-        var response = await this._chatClient.GetResponseAsync("What is the capital of France.", options);
+        ChatResponse response = await this._chatClient.GetResponseAsync("What is the capital of France?", options);
 
         // Assert
         Assert.NotNull(response);
@@ -56,15 +60,17 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task ItShouldRespectAwaitRunParameterSpecifiedAtInitializationAsync(bool awaitRun)
+    public async Task GetResponseAsync_WithBackgroundModeProvidedAtInitialization_ReturnsExpectedResponseAsync(bool awaitRun)
     {
         // Arrange
-        using var client = this._openAIResponseClient.AsNewIChatClient(awaitRun: awaitRun);
-
-        var options = new ChatOptions();
+        using IChatClient client = this._openAIResponseClient
+            .AsNewIChatClient(awaitRun: awaitRun)
+            .AsBuilder()
+            .UseFunctionInvocation()
+            .Build();
 
         // Act
-        var response = await client.GetResponseAsync("What is the capital of France.", options);
+        ChatResponse response = await client.GetResponseAsync("What is the capital of France?");
 
         // Assert
         Assert.NotNull(response);
@@ -83,42 +89,35 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
     }
 
     [Fact]
-    public async Task ItShouldStartBackgroundRunAndNotPollUntilRunCompletesAsync()
+    public async Task GetResponseAsync_HavingReturnedInitialResponse_AllowsCallerToPollAsync()
     {
         // Part 1: Start the background run.
-        // Arrange
-        var options = new ChatOptions();
+        ChatOptions options = new();
         options.SetAwaitRunResult(false);
 
-        // Act
-        var response = await this._chatClient.GetResponseAsync("What is the capital of France.", options);
+        ChatResponse response = await this._chatClient.GetResponseAsync("What is the capital of France?", options);
 
-        // Assert
         Assert.NotNull(response);
         Assert.Empty(response.Messages);
         Assert.NotNull(response.ResponseId);
         Assert.Equal(NewResponseStatus.Queued, response.GetResponseStatus());
 
-        // Part 2: Manually poll for completion.
-        // Arrange
-        options.ConversationId = response.ResponseId;
-        options.SetPreviousResponseId(response.ResponseId);
-
+        // Part 2: Poll for completion.
         int attempts = 0;
 
-        // Act
-        while (response.GetResponseStatus() != NewResponseStatus.Completed && ++attempts < 5)
+        while (response.GetResponseStatus() is { } status &&
+            (status == NewResponseStatus.Completed || status == NewResponseStatus.Queued) &&
+            ++attempts < 5)
         {
+            options.ConversationId = response.ResponseId;
+            options.SetPreviousResponseId(response.ResponseId!);
+
             response = await this._chatClient.GetResponseAsync([], options);
 
-            if (response.GetResponseStatus() != NewResponseStatus.Completed)
-            {
-                // Wait for the response to be processed
-                await Task.Delay(2000);
-            }
+            // Wait for the response to be processed
+            await Task.Delay(2000);
         }
 
-        // Assert
         Assert.NotNull(response);
         Assert.Single(response.Messages);
         Assert.Contains("Paris", response.Text);
@@ -127,32 +126,26 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
     }
 
     [Fact]
-    public async Task ItShouldStartBackgroundRunAndPollUntilRunCompletesAsync()
+    public async Task GetResponseAsync_HavingReturnedInitialResponse_CanDoPollingItselfAsync()
     {
-        // Part 1: Start a background run
-        // Arrange
-        var options = new ChatOptions();
+        // Part 1: Start the background run.
+        ChatOptions options = new();
         options.SetAwaitRunResult(false);
 
-        // Act
-        var response = await this._chatClient.GetResponseAsync("What is the capital of France.", options);
+        ChatResponse response = await this._chatClient.GetResponseAsync("What is the capital of France?", options);
 
-        // Assert
         Assert.NotNull(response);
         Assert.Empty(response.Messages);
         Assert.NotNull(response.ResponseId);
         Assert.Equal(NewResponseStatus.Queued, response.GetResponseStatus());
 
         // Part 2: Wait for completion.
-        // Arrange
         options.ConversationId = response.ResponseId;
         options.SetPreviousResponseId(response.ResponseId);
         options.SetAwaitRunResult(true);
 
-        // Act
         response = await this._chatClient.GetResponseAsync([], options);
 
-        // Assert
         Assert.NotNull(response);
         Assert.Single(response.Messages);
         Assert.Contains("Paris", response.Text);
@@ -161,15 +154,93 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
     }
 
     [Fact]
-    public async Task ItShouldCancelRunAsync()
+    public async Task GetResponseAsync_WithFunctionCalling_AndBackgroundModeDisabled_CallsFunctionAsync()
     {
         // Arrange
-        var options = new ChatOptions();
+        ChatOptions options = new();
+        options.SetAwaitRunResult(true);
+        options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
+
+        // Act
+        ChatResponse response = await this._chatClient.GetResponseAsync("What time is it?", options);
+
+        // Assert
+        Assert.Contains("5:43", response.Text);
+    }
+
+    [Fact]
+    public async Task GetResponseAsync_WithFunctionCalling_HavingReturnedInitialResponse_AllowsCallerPollAsync()
+    {
+        // Part 1: Start the background run.
+        ChatOptions options = new();
+        options.SetAwaitRunResult(false);
+        options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
+
+        ChatResponse response = await this._chatClient.GetResponseAsync("What time is it?", options);
+
+        Assert.NotNull(response);
+        Assert.Empty(response.Messages);
+        Assert.NotNull(response.ResponseId);
+        Assert.Equal(NewResponseStatus.Queued, response.GetResponseStatus());
+
+        // Part 2: Poll for completion.
+        int attempts = 0;
+
+        while (response.GetResponseStatus() is { } status &&
+            (status == NewResponseStatus.Completed || status == NewResponseStatus.Queued) &&
+            ++attempts < 5)
+        {
+            options.ConversationId = response.ResponseId;
+            options.SetPreviousResponseId(response.ResponseId!);
+
+            response = await this._chatClient.GetResponseAsync([], options);
+
+            // Wait for the response to be processed
+            await Task.Delay(2000);
+        }
+
+        Assert.Contains("5:43", response.Text);
+    }
+
+    [Fact]
+    public async Task GetResponseAsync_WithFunctionCalling_HavingReturnedInitialResponse_CanDoPollingItselfAsync()
+    {
+        // Part 1: Start the background run.
+        ChatOptions options = new();
+        options.SetAwaitRunResult(false);
+        options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
+
+        ChatResponse response = await this._chatClient.GetResponseAsync("What time is it?", options);
+
+        Assert.NotNull(response);
+        Assert.Empty(response.Messages);
+        Assert.NotNull(response.ResponseId);
+        Assert.Equal(NewResponseStatus.Queued, response.GetResponseStatus());
+
+        // Part 2: Wait for completion.
+        options.ConversationId = response.ResponseId;
+        options.SetPreviousResponseId(response.ResponseId);
+        options.SetAwaitRunResult(true);
+
+        response = await this._chatClient.GetResponseAsync([], options);
+
+        Assert.NotNull(response);
+        Assert.Equal(3, response.Messages.Count);
+        Assert.Contains("5:43", response.Text);
+        Assert.NotNull(response.ResponseId);
+        Assert.Equal(NewResponseStatus.Completed, response.GetResponseStatus());
+    }
+
+    [Fact]
+    public async Task CancelRunAsync_WhenCalled_CancelsRunAsync()
+    {
+        // Arrange
+        ChatOptions options = new();
         options.SetAwaitRunResult(false);
 
         INewRunnableChatClient runnableChatClient = this._chatClient.GetService<INewRunnableChatClient>()!;
 
-        var response = await runnableChatClient.GetResponseAsync("What is the capital of France.", options);
+        ChatResponse response = await runnableChatClient.GetResponseAsync("What is the capital of France?", options);
 
         // Act
         response = await runnableChatClient.CancelRunAsync(response.ResponseId!);
@@ -182,15 +253,15 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
     }
 
     [Fact]
-    public async Task ItShouldDeleteRunAsync()
+    public async Task DeleteRunAsync_WhenCalled_DeletesRunAsync()
     {
         // Arrange
-        var options = new ChatOptions();
+        ChatOptions options = new();
         options.SetAwaitRunResult(false);
 
         INewRunnableChatClient runnableChatClient = this._chatClient.GetService<INewRunnableChatClient>()!;
 
-        var response = await runnableChatClient.GetResponseAsync("What is the capital of France.", options);
+        ChatResponse response = await runnableChatClient.GetResponseAsync("What is the capital of France?", options);
 
         // Act
         response = await runnableChatClient.DeleteRunAsync(response.ResponseId!);
