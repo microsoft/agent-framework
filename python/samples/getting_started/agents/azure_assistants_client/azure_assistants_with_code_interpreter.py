@@ -35,7 +35,7 @@ def get_code_interpreter_chunk(chunk: AgentRunResponseUpdate) -> str | None:
 
 async def main() -> None:
     """Example showing how to use the HostedCodeInterpreterTool with Azure OpenAI Assistants."""
-    print("=== Azure OpenAI Assistants ChatClientAgent with Code Interpreter Example ===")
+    print("=== Azure OpenAI Assistants Agent with Code Interpreter Example ===")
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.

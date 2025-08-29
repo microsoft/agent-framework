@@ -58,7 +58,7 @@ async def tools_on_run_level() -> None:
     """Example showing tools passed to the run method."""
     print("=== Tools Passed to Run Method ===")
 
-    # ChatClientAgent created without tools
+    # Agent created without tools
     async with ChatClientAgent(
         chat_client=OpenAIAssistantsClient(),
         instructions="You are a helpful assistant.",

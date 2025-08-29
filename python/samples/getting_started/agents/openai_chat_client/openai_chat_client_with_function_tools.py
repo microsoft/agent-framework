@@ -105,7 +105,7 @@ async def mixed_tools_example() -> None:
         query,
         tools=[get_time],  # Additional tools for this specific query
     )
-    print(f"ChatClientAgent: {result}\n")
+    print(f"Agent: {result}\n")
 
 
 async def main() -> None:

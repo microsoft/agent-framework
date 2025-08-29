@@ -39,7 +39,7 @@ async def mcp_tools_on_run_level() -> None:
 
 async def mcp_tools_on_agent_level() -> None:
     """Example showing tools defined when creating the agent."""
-    print("=== Tools Defined on ChatClientAgent Level ===")
+    print("=== Tools Defined on Agent Level ===")
 
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
