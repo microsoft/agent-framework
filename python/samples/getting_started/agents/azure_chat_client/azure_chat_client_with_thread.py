@@ -94,7 +94,6 @@ async def example_with_existing_thread_messages() -> None:
 
     # Start a conversation and build up message history
     thread = agent.get_new_thread()
-    assert isinstance(thread, AgentThread)  # Ensure we have the right type
 
     query1 = "What's the weather in Paris?"
     print(f"User: {query1}")
