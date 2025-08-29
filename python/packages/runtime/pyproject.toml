@@ -72,18 +72,18 @@ disallow_untyped_decorators = true
 disallow_any_unimported = true
 
 [tool.bandit]
-targets = ["agent_runtime"]
+targets = ["agent_framework_runtime"]
 exclude_dirs = ["tests"]
 
 [tool.poe]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
 [tool.poe.tasks]
-mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_runtime"
-test = "pytest --cov=agent_runtime --cov-report=term-missing:skip-covered tests"
+mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_runtime"
+test = "pytest --cov=agent_framework_runtime --cov-report=term-missing:skip-covered tests"
 
 [tool.uv.build-backend]
-module-name = "agent_runtime"
+module-name = "agent_framework_runtime"
 module-root = ""
 
 [build-system]
