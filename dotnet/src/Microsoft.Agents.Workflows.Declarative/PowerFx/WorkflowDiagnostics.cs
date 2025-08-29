@@ -7,6 +7,7 @@ using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.Bot.ObjectModel.Analysis;
 using Microsoft.Bot.ObjectModel.PowerFx;
+using Microsoft.Extensions.Configuration;
 using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.Workflows.Declarative.PowerFx;
@@ -15,20 +16,20 @@ internal static class WorkflowDiagnostics
 {
     private static readonly WorkflowFeatureConfiguration s_semanticFeatureConfig = new();
 
-    public static void Initialize<TElement>(this WorkflowScopes scopes, TElement workflowElement) where TElement : BotElement, IDialogBase
+    public static void Initialize<TElement>(this WorkflowScopes scopes, TElement workflowElement, IConfiguration? configuration) where TElement : BotElement, IDialogBase
     {
         scopes.InitializeSystem();
 
         SemanticModel semanticModel = workflowElement.GetSemanticModel(new PowerFxExpressionChecker(s_semanticFeatureConfig), s_semanticFeatureConfig);
-        scopes.InitializeEnvironment(semanticModel);
+        scopes.InitializeEnvironment(semanticModel, configuration);
         scopes.InitializeDefaults(semanticModel, workflowElement.SchemaName.Value);
     }
 
-    private static void InitializeEnvironment(this WorkflowScopes scopes, SemanticModel semanticModel)
+    private static void InitializeEnvironment(this WorkflowScopes scopes, SemanticModel semanticModel, IConfiguration? configuration)
     {
         foreach (string variableName in semanticModel.GetAllEnvironmentVariablesReferencedInTheBot())
         {
-            string? environmentValue = Environment.GetEnvironmentVariable(variableName);
+            string? environmentValue = configuration is not null ? configuration[variableName] : Environment.GetEnvironmentVariable(variableName);
             FormulaValue variableValue = string.IsNullOrEmpty(environmentValue) ? FormulaType.String.NewBlank() : FormulaValue.New(environmentValue);
             scopes.Set(variableName, variableValue, VariableScopeNames.Environment);
         }

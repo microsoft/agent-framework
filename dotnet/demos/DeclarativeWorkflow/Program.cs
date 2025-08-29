@@ -20,14 +20,16 @@ namespace Demo.DeclarativeWorkflow;
 /// HOW TO: Create a workflow from a declartive (yaml based) definition.
 /// </summary>
 /// <remarks>
+/// <b>Configuration</b>
+/// Define FOUNDRY_PROJECT_ENDPOINT as a user-secret or environment variable that
+/// points to your Foundry project endpoint.
+/// <b>Usage</b>
 /// Provide the path to the workflow definition file as the first argument.
 /// All other arguments are intepreted as a queue of inputs.
 /// When no input is queued, interactive input is requested from the console.
 /// </remarks>
 internal sealed class Program
 {
-    private const string DefaultWorkflow = "HelloWorld.yaml";
-
     public static async Task Main(string[] args)
     {
         Program program = new(args);
@@ -42,7 +44,11 @@ internal sealed class Program
         Stopwatch timer = Stopwatch.StartNew();
 
         // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
-        DeclarativeWorkflowOptions options = new(new FoundryAgentProvider(this.FoundryEndpoint, new AzureCliCredential()));
+        DeclarativeWorkflowOptions options =
+            new(new FoundryAgentProvider(this.FoundryEndpoint, new AzureCliCredential()))
+            {
+                Configuration = this.Configuration
+            };
         Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>(this.WorkflowFile, options);
 
         Notify($"\nWORKFLOW: Defined {timer.Elapsed}");
@@ -56,6 +62,9 @@ internal sealed class Program
 
         Notify("\nWORKFLOW: Done!");
     }
+
+    private const string DefaultWorkflow = "HelloWorld.yaml";
+    private const string ConfigKeyFoundryEndpoint = "FOUNDRY_PROJECT_ENDPOINT";
 
     private static readonly Dictionary<string, string> s_nameCache = [];
     private static readonly HashSet<string> s_fileCache = [];
@@ -73,7 +82,7 @@ internal sealed class Program
 
         this.Configuration = InitializeConfig();
 
-        this.FoundryEndpoint = this.Configuration["AzureAI:Endpoint"] ?? throw new InvalidOperationException("Undefined configuration: AzureAI:Endpoint");
+        this.FoundryEndpoint = this.Configuration[ConfigKeyFoundryEndpoint] ?? throw new InvalidOperationException($"Undefined configuration setting: {ConfigKeyFoundryEndpoint}");
         this.FoundryClient = new PersistentAgentsClient(this.FoundryEndpoint, new AzureCliCredential());
     }
 
@@ -183,7 +192,12 @@ internal sealed class Program
 
         if (!File.Exists(workflowFile) && !Path.IsPathFullyQualified(workflowFile))
         {
-            workflowFile = Path.Combine(@"..\..\..\..\..\..\Workflows", workflowFile);
+            string? repoFolder = GetRepoFolder();
+            if (repoFolder is not null)
+            {
+                workflowFile = Path.Combine(repoFolder, "Workflows", workflowFile);
+                workflowFile = Path.ChangeExtension(workflowFile, ".yaml");
+            }
         }
 
         if (!File.Exists(workflowFile))
@@ -192,6 +206,23 @@ internal sealed class Program
         }
 
         return workflowFile;
+
+        static string? GetRepoFolder()
+        {
+            DirectoryInfo? current = new(Directory.GetCurrentDirectory());
+
+            while (current is not null)
+            {
+                if (Directory.Exists(Path.Combine(current.FullName, ".git")))
+                {
+                    return current.FullName;
+                }
+
+                current = current.Parent;
+            }
+
+            return null;
+        }
     }
 
     private string GetWorkflowInput()

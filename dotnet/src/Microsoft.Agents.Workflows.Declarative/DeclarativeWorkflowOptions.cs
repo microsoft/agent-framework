@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.Diagnostics;
@@ -15,6 +16,11 @@ public sealed class DeclarativeWorkflowOptions(WorkflowAgentProvider agentProvid
     /// Defines the agent provider.
     /// </summary>
     public WorkflowAgentProvider AgentProvider { get; } = Throw.IfNull(agentProvider, nameof(agentProvider));
+
+    /// <summary>
+    /// Defines the configuration settings for the workflow.
+    /// </summary>
+    public IConfiguration? Configuration { get; init; }
 
     /// <summary>
     /// Optionally identifies a continued workflow conversation.
