@@ -3,7 +3,7 @@
 import inspect
 from collections.abc import Awaitable, Callable
 from functools import wraps
-from time import perf_counter
+from time import perf_counter, time_ns
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field, PrivateAttr, create_model
 
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
-from .telemetry import GenAIAttributes, start_as_current_span
+from .telemetry import OtelAttr, set_exception, start_as_current_span
 
 if TYPE_CHECKING:
     from ._types import AIContents
@@ -267,7 +267,7 @@ class AIFunction(AIToolBase, Generic[ArgsT, ReturnT]):
     input_model: type[ArgsT]
     _invocation_duration_histogram: metrics.Histogram = PrivateAttr(
         default_factory=lambda: meter.create_histogram(
-            GenAIAttributes.MEASUREMENT_FUNCTION_INVOCATION_DURATION.value,
+            OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION,
             unit="s",
             description="Measures the duration of a function's execution",
         )
@@ -287,7 +287,7 @@ class AIFunction(AIToolBase, Generic[ArgsT, ReturnT]):
 
         Args:
             arguments: A Pydantic model instance containing the arguments for the function.
-            kwargs: keyword arguments to pass to the function, will not be used if `args` is provided.
+            kwargs: keyword arguments to pass to the function, will not be used if `arguments` is provided.
         """
         tool_call_id = kwargs.pop("tool_call_id", None)
         if arguments is not None:
@@ -297,11 +297,13 @@ class AIFunction(AIToolBase, Generic[ArgsT, ReturnT]):
         logger.info(f"Function name: {self.name}")
         logger.debug(f"Function arguments: {kwargs}")
         with start_as_current_span(
-            tracer, self, metadata={"tool_call_id": tool_call_id, "kwargs": kwargs}
+            tracer=tracer,
+            function=self,
+            tool_call_id=tool_call_id,
         ) as current_span:
-            attributes: dict[str, Any] = {
-                GenAIAttributes.MEASUREMENT_FUNCTION_TAG_NAME.value: self.name,
-                GenAIAttributes.TOOL_CALL_ID.value: tool_call_id,
+            hist_attributes: dict[str, Any] = {
+                OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME: self.name,
+                OtelAttr.TOOL_CALL_ID: tool_call_id or "unknown",
             }
             starting_time_stamp = perf_counter()
             try:
@@ -311,16 +313,14 @@ class AIFunction(AIToolBase, Generic[ArgsT, ReturnT]):
                 logger.debug(f"Function result: {result or 'None'}")
                 return result  # type: ignore[reportReturnType]
             except Exception as exception:
-                attributes[GenAIAttributes.ERROR_TYPE.value] = type(exception).__name__
-                current_span.record_exception(exception)
-                current_span.set_attribute(GenAIAttributes.ERROR_TYPE.value, type(exception).__name__)
-                current_span.set_status(trace.StatusCode.ERROR, description=str(exception))
+                set_exception(current_span, exception, time_ns())
                 logger.error(f"Function failed. Error: {exception}")
+                hist_attributes[OtelAttr.ERROR_TYPE] = str(type(exception))
                 raise
             finally:
                 duration = perf_counter() - starting_time_stamp
-                self._invocation_duration_histogram.record(duration, attributes=attributes)
-                logger.info("Function completed. Duration: %fs", duration)
+                self._invocation_duration_histogram.record(duration, attributes=hist_attributes)
+                logger.info("Function duration: %fs", duration)
 
     def parameters(self) -> dict[str, Any]:
         """Create the json schema of the parameters."""

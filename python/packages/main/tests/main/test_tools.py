@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from agent_framework import AIFunction, AITool, HostedCodeInterpreterTool, ai_function
 from agent_framework._tools import _parse_inputs
-from agent_framework.telemetry import GenAIAttributes
+from agent_framework.telemetry import OtelAttr
 
 
 def test_ai_function_decorator():
@@ -113,8 +113,8 @@ async def test_ai_function_invoke_telemetry_enabled():
         call_args = mock_histogram.record.call_args
         assert call_args[0][0] > 0  # duration should be positive
         attributes = call_args[1]["attributes"]
-        assert attributes[GenAIAttributes.MEASUREMENT_FUNCTION_TAG_NAME.value] == "telemetry_test_tool"
-        assert attributes[GenAIAttributes.TOOL_CALL_ID.value] == "test_call_id"
+        assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "telemetry_test_tool"
+        assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
 
 
 async def test_ai_function_invoke_telemetry_with_pydantic_args():
@@ -190,7 +190,7 @@ async def test_ai_function_invoke_telemetry_with_exception():
         mock_histogram.record.assert_called_once()
         call_args = mock_histogram.record.call_args
         attributes = call_args[1]["attributes"]
-        assert attributes[GenAIAttributes.ERROR_TYPE.value] == "ValueError"
+        assert attributes[OtelAttr.ERROR_TYPE] == "ValueError"
 
 
 async def test_ai_function_invoke_telemetry_async_function():
@@ -229,7 +229,7 @@ async def test_ai_function_invoke_telemetry_async_function():
         mock_histogram.record.assert_called_once()
         call_args = mock_histogram.record.call_args
         attributes = call_args[1]["attributes"]
-        assert attributes[GenAIAttributes.MEASUREMENT_FUNCTION_TAG_NAME.value] == "async_telemetry_test"
+        assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "async_telemetry_test"
 
 
 async def test_ai_function_invoke_telemetry_no_tool_call_id():
@@ -268,7 +268,7 @@ async def test_ai_function_invoke_telemetry_no_tool_call_id():
         mock_histogram.record.assert_called_once()
         call_args = mock_histogram.record.call_args
         attributes = call_args[1]["attributes"]
-        assert attributes[GenAIAttributes.TOOL_CALL_ID.value] is None
+        assert attributes[OtelAttr.TOOL_CALL_ID] is None
 
 
 async def test_ai_function_invoke_invalid_pydantic_args():

@@ -3,10 +3,11 @@
 import argparse
 import asyncio
 import logging
+from contextlib import suppress
 from random import randint
 from typing import Annotated, Literal
 
-from agent_framework import ai_function
+from agent_framework import ChatClientBuilder, __version__, ai_function
 from agent_framework.openai import OpenAIChatClient
 from azure.monitor.opentelemetry import configure_azure_monitor
 from opentelemetry import trace
@@ -147,15 +148,16 @@ def set_up_metrics():
     set_meter_provider(meter_provider)
 
 
-def get_weather(
+async def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
     """Get the weather for a given location."""
+    await asyncio.sleep(randint(0, 10) / 10.0)  # Simulate a network call
     conditions = ["sunny", "cloudy", "rainy", "stormy"]
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
-async def run_chat_client(stream: bool = False) -> None:
+async def run_chat_client(stream: bool = False, function_calling_outside: bool = False) -> None:
     """Run an AI service.
 
     This function runs an AI service and prints the output.
@@ -165,30 +167,69 @@ async def run_chat_client(stream: bool = False) -> None:
     The telemetry will include information about the AI service execution.
 
     Args:
-        stream (bool): Whether to use streaming for the plugin
-    """
+        stream: Whether to use streaming for the plugin
+        function_calling_outside: Whether to wrap the function calling outside the telemetry
+            The difference between these is subtle but important.
+            See more info below.
 
-    tracer = trace.get_tracer(__name__)
-    with tracer.start_as_current_span(
-        "Scenario: Chat Client Stream" if stream else "Scenario: Chat Client", kind=SpanKind.CLIENT
-    ) as current_span:
-        print("Running scenario: Chat Client" if not stream else "Running scenario: Chat Client Stream")
-        try:
-            client = OpenAIChatClient()
-            message = "What's the weather in Amsterdam and in Paris?"
-            print(f"User: {message}")
-            if stream:
-                print("Assistant: ", end="")
-                async for chunk in client.get_streaming_response(message, tools=get_weather):
-                    if str(chunk):
-                        print(str(chunk), end="")
-                print("")
-            else:
-                response = await client.get_response(message, tools=get_weather)
-                print(f"Assistant: {response}")
-        except Exception as e:
-            current_span.record_exception(e)
-            print(f"Error running AI service: {e}")
+    Remarks:
+        When function calling is outside the open telemetry loop
+        each of the call to the model is handled as a seperate span,
+        while when the open telemetry is put last, a single span
+        is shown, which might include one or more rounds of function calling.
+
+        So for the scenario below, with one function call result, and then a second `get_response` with those results,
+        giving back a final result, you get the following:
+        function_calling_outside == True:
+            1 Client span, with 4 children:
+                2 Internal span with gen_ai.operation.name=chat
+                2 Internal span with gen_ai.operation.name=execute_tool
+            In this case there is one chat span, followed by two simultanous (and almost instant) execute_tool spans,
+            followed by another chat span
+        function_calling_outside == False:
+            1 Client span, with 1 child:
+                1 Internal span with gen_ai.operation.name=chat, with 2 children:
+                    2 Internal spans with gen_ai.operation.name=execute_tool
+            In this case the Client span and the child are almost the same length.
+        The total time for the client span is pretty much the same for both methods.
+    """
+    if function_calling_outside:
+        client = (
+            ChatClientBuilder(OpenAIChatClient())
+            .open_telemetry_with(enable_otel_diagnostics_sensitive=True)
+            .function_calling.build()
+        )
+        scenario_name = (
+            "Chat Client Stream - Otel around function call loop"
+            if stream
+            else "Chat Client - Otel around function call loop"
+        )
+    else:
+        client = (
+            ChatClientBuilder(OpenAIChatClient())
+            .function_calling.open_telemetry_with(enable_otel_diagnostics_sensitive=True)
+            .build()
+        )
+        scenario_name = (
+            "Chat Client Stream - Otel within function call loop"
+            if stream
+            else "Chat Client - Otel within function call loop"
+        )
+
+    tracer = trace.get_tracer("agent_framework", __version__)
+    with tracer.start_as_current_span(name=f"Scenario: {scenario_name}", kind=SpanKind.CLIENT):
+        print("Running scenario:", scenario_name)
+        message = "What's the weather in Amsterdam and in Paris?"
+        print(f"User: {message}")
+        if stream:
+            print("Assistant: ", end="")
+            async for chunk in client.get_streaming_response(message, tools=get_weather):
+                if str(chunk):
+                    print(str(chunk), end="")
+            print("")
+        else:
+            response = await client.get_response(message, tools=get_weather)
+            print(f"Assistant: {response}")
 
 
 async def run_ai_function() -> None:
@@ -202,16 +243,12 @@ async def run_ai_function() -> None:
     and the AI service execution.
     """
 
-    tracer = trace.get_tracer(__name__)
-    with tracer.start_as_current_span("Scenario: AI Function", kind=SpanKind.CLIENT) as current_span:
+    tracer = trace.get_tracer("agent_framework", __version__)
+    with tracer.start_as_current_span("Scenario: AI Function", kind=SpanKind.CLIENT):
         print("Running scenario: AI Function")
-        try:
-            func = ai_function(get_weather)
-            weather = await func.invoke(location="Amsterdam")
-            print(f"Weather in Amsterdam:\n{weather}")
-        except Exception as e:
-            current_span.record_exception(e)
-            print(f"Error running kernel plugin: {e}")
+        func = ai_function(get_weather)
+        weather = await func.invoke(location="Amsterdam")
+        print(f"Weather in Amsterdam:\n{weather}")
 
 
 async def main(scenario: Literal["chat_client", "chat_client_stream", "ai_function", "all"] = "all"):
@@ -221,17 +258,24 @@ async def main(scenario: Literal["chat_client", "chat_client_stream", "ai_functi
     set_up_tracing()
     set_up_metrics()
 
-    tracer = trace.get_tracer("agent_framework")
+    tracer = trace.get_tracer("agent_framework", __version__)
     with tracer.start_as_current_span("Scenario's", kind=SpanKind.CLIENT) as current_span:
         print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
 
         # Scenarios where telemetry is collected in the SDK, from the most basic to the most complex.
-        if scenario == "chat_client" or scenario == "all":
-            await run_chat_client(stream=False)
-        if scenario == "chat_client_stream" or scenario == "all":
-            await run_chat_client(stream=True)
         if scenario == "ai_function" or scenario == "all":
-            await run_ai_function()
+            with suppress(Exception):
+                await run_ai_function()
+        if scenario == "chat_client_stream" or scenario == "all":
+            with suppress(Exception):
+                await run_chat_client(stream=True, function_calling_outside=True)
+            with suppress(Exception):
+                await run_chat_client(stream=True, function_calling_outside=False)
+        if scenario == "chat_client" or scenario == "all":
+            with suppress(Exception):
+                await run_chat_client(stream=False, function_calling_outside=True)
+            with suppress(Exception):
+                await run_chat_client(stream=False, function_calling_outside=False)
 
 
 if __name__ == "__main__":

@@ -82,10 +82,10 @@ async def agent_with_chat_client_builder():
 
 
 async def run() -> None:
-    await agent_with_chat_client_builder()
     await builder_with_function_and_telemetry()
-    await builder_without_decorators()
-    await builder_as_context_manager()
+    # await agent_with_chat_client_builder()
+    # await builder_without_decorators()
+    # await builder_as_context_manager()
 
 
 if __name__ == "__main__":

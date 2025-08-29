@@ -22,7 +22,7 @@ from agent_framework.telemetry import (
     TELEMETRY_DISABLED_ENV_VAR,
     USER_AGENT_KEY,
     ChatMessageListTimestampFilter,
-    GenAIAttributes,
+    OtelAttr,
     prepend_agent_framework_to_user_agent,
     start_as_current_span,
     use_telemetry,
@@ -78,20 +78,20 @@ def test_app_info_when_telemetry_disabled():
 
 def test_role_event_map():
     """Test that ROLE_EVENT_MAP contains expected mappings."""
-    assert ROLE_EVENT_MAP["system"] == GenAIAttributes.SYSTEM_MESSAGE.value
-    assert ROLE_EVENT_MAP["user"] == GenAIAttributes.USER_MESSAGE.value
-    assert ROLE_EVENT_MAP["assistant"] == GenAIAttributes.ASSISTANT_MESSAGE.value
-    assert ROLE_EVENT_MAP["tool"] == GenAIAttributes.TOOL_MESSAGE.value
+    assert ROLE_EVENT_MAP["system"] == OtelAttr.SYSTEM_MESSAGE
+    assert ROLE_EVENT_MAP["user"] == OtelAttr.USER_MESSAGE
+    assert ROLE_EVENT_MAP["assistant"] == OtelAttr.ASSISTANT_MESSAGE
+    assert ROLE_EVENT_MAP["tool"] == OtelAttr.TOOL_MESSAGE
 
 
 def test_enum_values():
-    """Test that GenAIAttributes enum has expected values."""
-    assert GenAIAttributes.OPERATION.value == "gen_ai.operation.name"
-    assert GenAIAttributes.SYSTEM.value == "gen_ai.system"
-    assert GenAIAttributes.MODEL.value == "gen_ai.request.model"
-    assert GenAIAttributes.CHAT_COMPLETION_OPERATION.value == "chat"
-    assert GenAIAttributes.TOOL_EXECUTION_OPERATION.value == "execute_tool"
-    assert GenAIAttributes.AGENT_INVOKE_OPERATION.value == "invoke_agent"
+    """Test that OtelAttr enum has expected values."""
+    assert OtelAttr.OPERATION == "gen_ai.operation.name"
+    assert OtelAttr.SYSTEM == "gen_ai.system"
+    assert OtelAttr.MODEL == "gen_ai.request.model"
+    assert OtelAttr.CHAT_COMPLETION_OPERATION == "chat"
+    assert OtelAttr.TOOL_EXECUTION_OPERATION == "execute_tool"
+    assert OtelAttr.AGENT_INVOKE_OPERATION == "invoke_agent"
 
 
 # region Test prepend_agent_framework_to_user_agent
@@ -239,9 +239,9 @@ def test_start_span_basic():
     assert call_args[0][0] == "execute_tool test_function"
 
     attributes = call_args[1]["attributes"]
-    assert attributes[GenAIAttributes.OPERATION.value] == GenAIAttributes.TOOL_EXECUTION_OPERATION.value
-    assert attributes[GenAIAttributes.TOOL_NAME.value] == "test_function"
-    assert attributes[GenAIAttributes.TOOL_DESCRIPTION.value] == "Test function description"
+    assert attributes[OtelAttr.OPERATION.value] == OtelAttr.TOOL_EXECUTION_OPERATION
+    assert attributes[OtelAttr.TOOL_NAME] == "test_function"
+    assert attributes[OtelAttr.TOOL_DESCRIPTION] == "Test function description"
 
 
 def test_start_span_with_metadata():
@@ -260,7 +260,7 @@ def test_start_span_with_metadata():
 
     call_args = mock_tracer.start_as_current_span.call_args
     attributes = call_args[1]["attributes"]
-    assert attributes[GenAIAttributes.TOOL_CALL_ID.value] == "test_call_123"
+    assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_123"
 
 
 def test_start_span_without_description():
@@ -277,7 +277,7 @@ def test_start_span_without_description():
 
     call_args = mock_tracer.start_as_current_span.call_args
     attributes = call_args[1]["attributes"]
-    assert GenAIAttributes.TOOL_DESCRIPTION.value not in attributes
+    assert OtelAttr.TOOL_DESCRIPTION not in attributes
 
 
 def test_start_span_empty_metadata():
@@ -294,7 +294,7 @@ def test_start_span_empty_metadata():
 
     call_args = mock_tracer.start_as_current_span.call_args
     attributes = call_args[1]["attributes"]
-    assert GenAIAttributes.TOOL_CALL_ID.value not in attributes
+    assert OtelAttr.TOOL_CALL_ID not in attributes
 
 
 # region Test use_telemetry decorator
@@ -600,7 +600,7 @@ def test_start_as_current_span_with_none_metadata():
     assert result == mock_span
     call_args = mock_tracer.start_as_current_span.call_args
     attributes = call_args[1]["attributes"]
-    assert GenAIAttributes.TOOL_CALL_ID.value not in attributes
+    assert OtelAttr.TOOL_CALL_ID not in attributes
 
 
 def test_prepend_user_agent_with_none_value():
@@ -998,7 +998,5 @@ async def test_agent_run_with_exception_handling(mock_chat_client_agent, model_d
 
         # Verify error was recorded
         # Check that both error attributes were set on the span
-        mock_span.set_attribute.assert_called_once_with(
-            GenAIAttributes.ERROR_TYPE.value, str(type(RuntimeError("Agent run error")))
-        )
+        mock_span.set_attribute.assert_called_once_with(OtelAttr.ERROR_TYPE, str(type(RuntimeError("Agent run error"))))
         mock_span.set_status.assert_called_once_with(StatusCode.ERROR, repr(RuntimeError("Agent run error")))
