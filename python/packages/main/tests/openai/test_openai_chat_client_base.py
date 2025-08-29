@@ -162,6 +162,8 @@ async def test_scmc_chat_options(
         messages=chat_history,
     ):
         assert isinstance(msg, ChatResponseUpdate)
+        assert msg.message_id is not None
+        assert msg.response_id is not None
     mock_create.assert_awaited_once_with(
         model=openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
         stream=True,

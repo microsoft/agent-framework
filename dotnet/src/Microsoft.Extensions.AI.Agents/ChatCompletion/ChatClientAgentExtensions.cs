@@ -33,7 +33,7 @@ public static class ChatClientAgentExtensions
         Throw.IfNull(agent);
         Throw.IfNull(messages);
 
-        return agent.RunAsync(messages, thread, new ChatClientAgentRunOptions(agentRunOptions, chatOptions), cancellationToken);
+        return agent.RunAsync(messages, thread, new ChatClientAgentRunOptions(chatOptions), cancellationToken);
     }
 
     /// <summary>
@@ -80,7 +80,7 @@ public static class ChatClientAgentExtensions
         Throw.IfNull(agent);
         Throw.IfNull(messages);
 
-        return agent.RunStreamingAsync(messages, thread, new ChatClientAgentRunOptions(agentRunOptions, chatOptions), cancellationToken);
+        return agent.RunStreamingAsync(messages, thread, new ChatClientAgentRunOptions(chatOptions), cancellationToken);
     }
 
     /// <summary>

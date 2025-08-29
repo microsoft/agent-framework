@@ -16,7 +16,7 @@ The samples are subdivided into the following categories:
 - [Getting Started Steps](./GettingStartedSteps/README.md): Basic steps to get started with the agent framework.
   These samples demonstrate the fundamental concepts and functionalities of the agent framework when using the
   `ChatClientAgent` and can be used with any underlying service that the `ChatClientAgent` supports.
-- [Agent setup](./AgentSetup/README.md): Samples that demonstrate how to create and configure each type of agent that come with the agent framework.
+- [How to create an AIAgent for each provider](./HowToCreateAnAIAgentByProvider/README.md): Shows how to create an AIAgent instance for a selection of providers.
 - [Agent specific features](./AgentSpecificFeatures/README.md): Samples that showcase features specific to each type of agent.
 
 ## Prerequisites

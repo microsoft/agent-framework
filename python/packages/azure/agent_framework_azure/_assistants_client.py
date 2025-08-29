@@ -86,7 +86,10 @@ class AzureAssistantsClient(OpenAIAssistantsClient):
             raise ServiceInitializationError("Failed to create Azure OpenAI settings.", ex) from ex
 
         if not azure_openai_settings.chat_deployment_name:
-            raise ServiceInitializationError("The Azure OpenAI deployment name is required.")
+            raise ServiceInitializationError(
+                "Azure OpenAI deployment name is required. Set via 'deployment_name' parameter "
+                "or 'AZURE_OPENAI_CHAT_DEPLOYMENT_NAME' environment variable."
+            )
 
         # Handle authentication: try API key first, then AD token, then Entra ID
         if (
