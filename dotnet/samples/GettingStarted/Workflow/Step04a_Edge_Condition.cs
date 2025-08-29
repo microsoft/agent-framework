@@ -64,6 +64,8 @@ public class Step04a_Edge_Condition(ITestOutputHelper output) : WorkflowSample(o
         [JsonPropertyName("reason")]
         public string Reason { get; set; } = string.Empty;
 
+        // The agent has to include the email content in the detection result.
+        // This is necessary for the email assistant to generate a proper response.
         [JsonPropertyName("email_content")]
         public string EmailContent { get; set; } = string.Empty;
     }
