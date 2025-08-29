@@ -94,7 +94,7 @@ internal class AIAgentHostExecutor : Executor
         bool emitEvents = token.EmitEvents.HasValue ? token.EmitEvents.Value : this._emitEvents;
         IAsyncEnumerable<AgentRunResponseUpdate> agentStream = this._agent.RunStreamingAsync(this._pendingMessages, this.EnsureThread(context));
 
-        List<AgentRunResponseUpdate> updates = new();
+        List<AIContent> updates = new();
         ChatMessage? currentStreamingMessage = null;
 
         await foreach (AgentRunResponseUpdate update in agentStream.ConfigureAwait(false))
@@ -109,8 +109,6 @@ internal class AIAgentHostExecutor : Executor
             // providing some mechanisms to help the user complete the request, or route it out of the
             // workflow.
 
-            updates.Add(update);
-
             if (currentStreamingMessage == null || currentStreamingMessage.MessageId != update.MessageId)
             {
                 await PublishCurrentMessageAsync().ConfigureAwait(false);
@@ -123,6 +121,8 @@ internal class AIAgentHostExecutor : Executor
                     AdditionalProperties = update.AdditionalProperties
                 };
             }
+
+            updates.AddRange(update.Contents);
         }
 
         await PublishCurrentMessageAsync().ConfigureAwait(false);
@@ -132,6 +132,9 @@ internal class AIAgentHostExecutor : Executor
         {
             if (currentStreamingMessage != null)
             {
+                currentStreamingMessage.Contents = updates;
+                updates = [];
+
                 await context.SendMessageAsync(currentStreamingMessage).ConfigureAwait(false);
             }
 
