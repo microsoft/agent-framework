@@ -5,6 +5,7 @@
     <File Path="../Create.ps1" />
     <File Path="../ManagerAgent.yaml" />
     <File Path="../QuestionAgent.yaml" />
+    <File Path="../README.md" />
     <File Path="../StudentAgent.yaml" />
     <File Path="../TeacherAgent.yaml" />
     <File Path="../WeatherAgent.yaml" />
