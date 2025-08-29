@@ -32,6 +32,11 @@ internal class EdgeMap
                 _ => throw new NotSupportedException($"Unsupported edge type: {edge.EdgeType}")
             };
 
+            if (edgeRunner is FanInEdgeRunner fanInRunner)
+            {
+                this._fanInState[edge.Data.Connection] = fanInRunner.CreateState();
+            }
+
             this._edgeRunners[edge.Data.Connection] = edgeRunner;
         }
 
