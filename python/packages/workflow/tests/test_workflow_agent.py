@@ -15,8 +15,7 @@ from agent_framework import (
     FunctionResultContent,
     TextContent,
 )
-
-from agent_framework_workflow import (
+from agent_framework.workflow import (
     AgentRunEvent,
     AgentRunStreamingEvent,
     Executor,
