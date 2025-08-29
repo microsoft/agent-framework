@@ -23,6 +23,11 @@
     <Project Path="samples/SemanticKernelMigration/OpenAIAssistants/Step03_DependencyInjection/OpenAIAssistants_Step03_DependencyInjection.csproj" />
     <Project Path="samples/SemanticKernelMigration/OpenAIAssistants/Step04_CodeInterpreter/OpenAIAssistants_Step04_CodeInterpreter.csproj" />
   </Folder>
+  <Folder Name="/Samples/SemanticKernelMigration/AzureOpenAI/">
+    <Project Path="samples/SemanticKernelMigration/AzureOpenAI/Step01_Basics/AzureOpenAI_Step01_Basics.csproj" />
+    <Project Path="samples/SemanticKernelMigration/AzureOpenAI/Step02_ToolCall/AzureOpenAI_Step02_ToolCall.csproj" />
+    <Project Path="samples/SemanticKernelMigration/AzureOpenAI/Step03_DependencyInjection/AzureOpenAI_Step03_DependencyInjection.csproj" />
+  </Folder>
   <Folder Name="/Samples/SemanticKernelMigration/OpenAI/">
     <Project Path="samples/SemanticKernelMigration/OpenAI/Step01_Basics/OpenAI_Step01_Basics.csproj" />
     <Project Path="samples/SemanticKernelMigration/OpenAI/Step02_ToolCall/OpenAI_Step02_ToolCall.csproj" />

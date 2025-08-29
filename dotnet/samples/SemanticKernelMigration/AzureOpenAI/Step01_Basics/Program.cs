@@ -1,13 +1,15 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Azure.AI.OpenAI;
+using Azure.Identity;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Agents;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
 using OpenAI;
 
-var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
-var modelId = System.Environment.GetEnvironmentVariable("OPENAI_MODELID") ?? "gpt-4o";
+var endpoint = Environment.GetEnvironmentVariable("AZUREOPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZUREOPENAI_ENDPOINT is not set.");
+var deploymentName = System.Environment.GetEnvironmentVariable("AZUREOPENAI_DEPLOYMENT_NAME") ?? "gpt-4o";
 var userInput = "Tell me a joke about a pirate.";
 
 Console.WriteLine($"User Input: {userInput}");
@@ -19,7 +21,7 @@ async Task SKAgent()
 {
     Console.WriteLine("\n=== SK Agent ===\n");
 
-    var builder = Kernel.CreateBuilder().AddOpenAIChatClient(modelId, apiKey);
+    var builder = Kernel.CreateBuilder().AddAzureOpenAIChatClient(deploymentName, endpoint, new AzureCliCredential());
 
     var agent = new ChatCompletionAgent()
     {
@@ -48,7 +50,7 @@ async Task AFAgent()
 {
     Console.WriteLine("\n=== AF Agent ===\n");
 
-    var agent = new OpenAIClient(apiKey).GetChatClient(modelId)
+    var agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName)
         .CreateAIAgent(name: "Joker", instructions: "You are good at telling jokes.");
 
     var thread = agent.GetNewThread();

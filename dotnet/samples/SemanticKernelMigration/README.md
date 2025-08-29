@@ -326,6 +326,7 @@ The migration samples are organized into three categories, each demonstrating di
 |Category|Description|
 |---|---|
 |[AzureAIFoundry](./AzureAIFoundry/)|Azure OpenAI service integration samples|
+|[AzureOpenAI](./AzureOpenAI/)|Direct Azure OpenAI API integration samples|
 |[OpenAI](./OpenAI/)|Direct OpenAI API integration samples|
 |[OpenAIAssistants](./OpenAIAssistants/)|OpenAI Assistant API integration samples|
 
