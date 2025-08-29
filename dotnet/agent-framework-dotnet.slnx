@@ -59,6 +59,11 @@
     <Project Path="samples/HowToCreateAnAIAgentByProvider/AIAgent_With_OpenAIChatCompletion/AIAgent_With_OpenAIChatCompletion.csproj" />
     <Project Path="samples/HowToCreateAnAIAgentByProvider/AIAgent_With_OpenAIResponses/AIAgent_With_OpenAIResponses.csproj" />
   </Folder>
+  <Folder Name="/Samples/SemanticKernelMigration/OpenAIResponses/">
+    <Project Path="samples/SemanticKernelMigration/OpenAIResponses/Step01_Basics/OpenAIResponses_Step01_Basics.csproj" />
+    <Project Path="samples/SemanticKernelMigration/OpenAIResponses/Step02_ToolCall/OpenAIResponses_Step02_ToolCall.csproj" />
+    <Project Path="samples/SemanticKernelMigration/OpenAIResponses/Step03_DependencyInjection/OpenAIResponses_Step03_DependencyInjection.csproj" />
+  </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
     <File Path=".gitignore" />
