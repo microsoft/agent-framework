@@ -250,6 +250,8 @@ async def test_openai_chat_client_streaming() -> None:
     async for chunk in response:
         assert chunk is not None
         assert isinstance(chunk, ChatResponseUpdate)
+        assert chunk.message_id is not None
+        assert chunk.response_id is not None
         for content in chunk.contents:
             if isinstance(content, TextContent) and content.text:
                 full_message += content.text
