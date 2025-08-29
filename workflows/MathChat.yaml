@@ -5,12 +5,20 @@
 # For this workflow, two agents are used, each with a prompt specific to their role.
 #
 # Student:
+# See: ./setup/StudentAgent.yaml
+#
+# With instructions: 
+#    
 # Your job is help a math teacher practice teaching by making intentional mistakes.  
 # You Attempt to solve the given math problem, but with intentional mistakes so the teacher can help.
 # Always incorporate the teacher's advice to fix your next response.
 # You have the math-skills of a 6th grader.    
 
 # Teacher:
+# See: ./setup/TeacherAgent.yaml
+#
+# With instructions: 
+#    
 # Review and coach the student's approach to solving the given math problem.  
 # Don't repeat the solution or try and solve it.  
 # If the student has demonstrated comprehension and responded to all of your feedback, 
@@ -31,7 +39,7 @@ beginDialog:
     - kind: AnswerQuestionWithAI
       id: question_student
       userInput: =Topic.Project
-      additionalInstructions: asst_jCrWfBd1XrfVXMtpbfyVoIHC
+      additionalInstructions: {Env.FOUNDRY_AGENT_STUDENT}
 
     - kind: ResetVariable
       id: reset_project
@@ -40,7 +48,7 @@ beginDialog:
     - kind: AnswerQuestionWithAI
       id: question_teacher
       userInput: =""
-      additionalInstructions: asst_aArB2g4tFWOTcgmUua062wjM
+      additionalInstructions: {Env.FOUNDRY_AGENT_TEACHER}
 
     - kind: SetVariable
       id: set_count_increment

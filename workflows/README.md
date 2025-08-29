@@ -1,7 +1,7 @@
 # No-Code Workflows
 
 This folder contains sample workflow definitions than be ran using the
-[Declarative Workflow](./dotnet/demos/DeclarativeWorkflow) demo.
+[Declarative Workflow](../dotnet/demos/DeclarativeWorkflow) demo.
 
 Each workflow is defined in a single YAML file and contains 
 comments with additional information specific to that workflow.
@@ -16,3 +16,12 @@ Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>("HelloWorld
 Workflows may also be hosted in your _Azure Foundry Project_.
 
 > _Python_ support in the works!
+
+#### Agents
+
+The sample workflows rely on agents defined in your Azure Foundry Project.
+
+To create agents, run the [`Create.ps1`](./setup) script.
+This will create the agents used in the sample workflows in your Azure Foundry Project and format a script you can copy and use to configure your environment.
+
+> Note: `Create.ps1` relies upon the `FOUNDRY_PROJECT_ENDPOINT` setting.  See [README.md](../dotnet/demos/DeclarativeWorkflow/README.md) from the demo for configuration details.
