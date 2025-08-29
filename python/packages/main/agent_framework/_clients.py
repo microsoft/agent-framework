@@ -10,13 +10,12 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, runt
 
 from pydantic import BaseModel
 
-from agent_framework import AIContents
-
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
 from ._threads import ChatMessageStore
 from ._tools import AIFunction, AITool, ai_function
 from ._types import (
+    AIContents,
     ChatMessage,
     ChatOptions,
     ChatResponse,
@@ -413,7 +412,7 @@ class ChatClient(Protocol):
         ...
 
 
-def _prepare_messages(messages: str | ChatMessage | list[str] | list[ChatMessage]) -> MutableSequence[ChatMessage]:
+def _prepare_messages(messages: str | ChatMessage | list[str] | list[ChatMessage]) -> list[ChatMessage]:
     """Turn the allowed input into a list of chat messages."""
     if isinstance(messages, str):
         return [ChatMessage(role="user", text=messages)]

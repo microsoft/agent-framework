@@ -183,6 +183,8 @@ async def run_chat_client(stream: bool = False, function_calling_outside: bool =
         function_calling_outside == True:
             1 Client span, with 4 children:
                 2 Internal span with gen_ai.operation.name=chat
+                    The first has finish_reason "tool_calls"
+                    The second has finish_reason "stop"
                 2 Internal span with gen_ai.operation.name=execute_tool
             In this case there is one chat span, followed by two simultanous (and almost instant) execute_tool spans,
             followed by another chat span
@@ -190,6 +192,7 @@ async def run_chat_client(stream: bool = False, function_calling_outside: bool =
             1 Client span, with 1 child:
                 1 Internal span with gen_ai.operation.name=chat, with 2 children:
                     2 Internal spans with gen_ai.operation.name=execute_tool
+                    and the finish_reason is "stop"
             In this case the Client span and the child are almost the same length.
         The total time for the client span is pretty much the same for both methods.
     """

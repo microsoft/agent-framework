@@ -315,22 +315,21 @@ def _trace_get_response(
             record_exception=False,
             set_status_on_exception=False,
         ) as current_span:
-            _set_response_input(
-                model_provider=model_provider,
-                messages=messages,
-                model_diagnostics=model_diagnostics,
-            )
+            if model_diagnostics.SENSITIVE_EVENTS_ENABLED:
+                from ._clients import _prepare_messages
+
+                _log_messages(
+                    model_provider=model_provider,
+                    messages=_prepare_messages(messages),
+                )
             try:
                 response = await get_response_func(messages=messages, **kwargs)
             except Exception as exception:
                 set_exception(span=current_span, exception=exception, timestamp=time_ns())
                 raise
-            _set_response_output(
-                span=current_span,
-                response=response,
-                model_provider=model_provider,
-                model_diagnostics=model_diagnostics,
-            )
+            _set_response_output(span=current_span, response=response)
+            if model_diagnostics.SENSITIVE_EVENTS_ENABLED:
+                _log_messages(model_provider=model_provider, messages=response.messages)
             return response
 
     # Mark the wrapper decorator as a chat completion decorator
@@ -378,11 +377,13 @@ def _trace_get_streaming_response(
             record_exception=False,
             set_status_on_exception=False,
         ) as current_span:
-            _set_response_input(
-                model_provider=model_provider,
-                messages=messages,
-                model_diagnostics=model_diagnostics,
-            )
+            if model_diagnostics.SENSITIVE_EVENTS_ENABLED:
+                from ._clients import _prepare_messages
+
+                _log_messages(
+                    model_provider=model_provider,
+                    messages=_prepare_messages(messages),
+                )
             try:
                 async for update in get_streaming_response_func(messages=messages, **kwargs):
                     all_updates.append(update)
@@ -393,12 +394,13 @@ def _trace_get_streaming_response(
             from ._types import ChatResponse
 
             response = ChatResponse.from_chat_response_updates(all_updates)
-            _set_response_output(
-                span=current_span,
-                response=response,
-                model_provider=model_provider,
-                model_diagnostics=model_diagnostics,
-            )
+            _set_response_output(span=current_span, response=response)
+
+            if model_diagnostics.SENSITIVE_EVENTS_ENABLED:
+                _log_messages(
+                    model_provider=model_provider,
+                    messages=response.messages,
+                )
 
     # Mark the wrapper decorator as a streaming chat completion decorator
     wrap_get_streaming_response.__model_diagnostics_streaming_chat_completion__ = True  # type: ignore
@@ -504,35 +506,25 @@ def _get_response_span(
     return span
 
 
-def _set_response_input(
+def _log_messages(
     model_provider: str,
-    messages: "str | ChatMessage | list[str] | list[ChatMessage]",
-    model_diagnostics: ModelDiagnosticSettings,
+    messages: "list[ChatMessage]",
 ) -> None:
-    """Set the input for a chat response.
-
-    The logs will be associated to the current span.
-    """
-    if model_diagnostics.SENSITIVE_EVENTS_ENABLED:
-        from ._clients import _prepare_messages
-
-        for idx, message in enumerate(_prepare_messages(messages)):
-            event_name = ROLE_EVENT_MAP.get(message.role.value)
-            logger.info(
-                message.model_dump_json(exclude_none=True),
-                extra={
-                    OtelAttr.EVENT_NAME: event_name,
-                    OtelAttr.SYSTEM: model_provider,
-                    ChatMessageListTimestampFilter.INDEX_KEY: idx,
-                },
-            )
+    """Log messages with extra information."""
+    for index, message in enumerate(messages):
+        logger.info(
+            json.dumps({"message": message.model_dump_json(exclude_none=True), "index": index}),
+            extra={
+                OtelAttr.EVENT_NAME: ROLE_EVENT_MAP.get(message.role.value),
+                OtelAttr.SYSTEM: model_provider,
+                ChatMessageListTimestampFilter.INDEX_KEY: index,
+            },
+        )
 
 
 def _set_response_output(
     span: Span,
     response: "ChatResponse",
-    model_provider: str,
-    model_diagnostics: ModelDiagnosticSettings,
 ) -> None:
     """Set the response for a given span."""
     first_completion = response.messages[0]
@@ -545,7 +537,7 @@ def _set_response_output(
 
     # Set the finish reason
     if finish_reason := response.finish_reason:
-        span.set_attribute(OtelAttr.FINISH_REASONS, [finish_reason])  # type: ignore[reportArgumentType]
+        span.set_attribute(OtelAttr.FINISH_REASONS, [finish_reason.value])  # type: ignore[reportArgumentType]
 
     # Set usage attributes
     if usage := response.usage_details:
@@ -553,21 +545,6 @@ def _set_response_output(
             span.set_attribute(OtelAttr.INPUT_TOKENS, usage.input_token_count)
         if usage.output_token_count:
             span.set_attribute(OtelAttr.OUTPUT_TOKENS, usage.output_token_count)
-
-    # Set the completion event
-    if model_diagnostics.SENSITIVE_EVENTS_ENABLED:
-        for completion in response.messages:
-            full_response: dict[str, Any] = {
-                "message": completion.model_dump(exclude_none=True),
-            }
-            full_response["index"] = response.response_id
-            logger.info(
-                json.dumps(full_response),
-                extra={
-                    OtelAttr.EVENT_NAME.value: OtelAttr.CHOICE,
-                    OtelAttr.SYSTEM: model_provider,
-                },
-            )
 
 
 # region Agent
