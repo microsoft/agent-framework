@@ -2,7 +2,7 @@
 
 import importlib.metadata
 
-from ._agent import WorkflowAgent, WorkflowAgentThread
+from ._agent import WorkflowAgent, WorkflowThread
 from ._checkpoint import (
     CheckpointStorage,
     FileCheckpointStorage,
@@ -134,7 +134,6 @@ __all__ = [
     "ValidationTypeEnum",
     "Workflow",
     "WorkflowAgent",
-    "WorkflowAgentThread",
     "WorkflowBuilder",
     "WorkflowCheckpoint",
     "WorkflowCompletedEvent",
@@ -143,6 +142,7 @@ __all__ = [
     "WorkflowExecutor",
     "WorkflowRunResult",
     "WorkflowStartedEvent",
+    "WorkflowThread",
     "WorkflowValidationError",
     "WorkflowViz",
     "__version__",
@@ -158,3 +158,5 @@ import contextlib
 with contextlib.suppress(AttributeError, TypeError, ValueError):
     # Rebuild WorkflowExecutor to resolve Workflow forward reference
     WorkflowExecutor.model_rebuild()
+    # Rebuild WorkflowAgent to resolve Workflow forward reference
+    WorkflowAgent.model_rebuild()

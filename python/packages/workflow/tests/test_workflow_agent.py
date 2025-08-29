@@ -23,10 +23,10 @@ from agent_framework_workflow import (
     RequestInfoEvent,
     RequestInfoMessage,
     WorkflowAgent,
-    WorkflowAgentThread,
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
+    WorkflowThread,
     handler,
 )
 
@@ -103,12 +103,12 @@ class MockAgent(AIAgent):
         return AgentThread()
 
 
-class TestWorkflowAgentThread:
-    """Test cases for WorkflowAgentThread."""
+class TestWorkflowThread:
+    """Test cases for WorkflowThread."""
 
     def test_init(self):
-        """Test WorkflowAgentThread initialization."""
-        thread = WorkflowAgentThread(workflow_id="test_workflow", run_id="test_run", workflow_name="Test Workflow")
+        """Test WorkflowThread initialization."""
+        thread = WorkflowThread(workflow_id="test_workflow", run_id="test_run", workflow_name="Test Workflow")
 
         assert thread.workflow_id == "test_workflow"
         assert thread.run_id == "test_run"
@@ -128,9 +128,9 @@ class TestWorkflowAgent:
 
         assert agent.name == "Test Workflow Agent"
         assert agent.description == "A test workflow agent"
-        assert agent._workflow is workflow
-        assert isinstance(agent._active_runs, dict)
-        assert len(agent._active_runs) == 0
+        assert agent.workflow is workflow
+        assert isinstance(agent.active_runs, dict)
+        assert len(agent.active_runs) == 0
 
     def test_generate_run_id(self):
         """Test run ID generation."""
@@ -152,7 +152,7 @@ class TestWorkflowAgent:
         agent = WorkflowAgent(workflow=workflow, name="Test Agent")
         thread = agent.get_new_thread()
 
-        assert isinstance(thread, WorkflowAgentThread)
+        assert isinstance(thread, WorkflowThread)
         assert thread.workflow_id == agent.id
         assert thread.workflow_name == agent.name
         assert thread.run_id.startswith(agent.id)
@@ -256,7 +256,7 @@ class TestWorkflowAgent:
         assert len(updates) >= 0
 
         # Check active runs tracking - should be cleaned up
-        assert len(agent._active_runs) == 0
+        assert len(agent.active_runs) == 0
 
     @pytest.mark.asyncio
     async def test_run_non_streaming(self):
@@ -349,13 +349,13 @@ class TestWorkflowAgent:
             request_data=test_request,
         )
 
-        agent._pending_requests["cleanup_test"] = request_event
+        agent.pending_requests["cleanup_test"] = request_event
 
         # Run the agent (should clean up pending requests)
         await agent.run("Hello")
 
         # Verify cleanup occurred
-        assert "cleanup_test" not in agent._pending_requests
+        assert "cleanup_test" not in agent.pending_requests
 
     @pytest.mark.asyncio
     async def test_workflow_with_chat_message_input(self):
@@ -377,7 +377,7 @@ class TestWorkflowAgent:
         agent = WorkflowAgent(workflow=workflow)
 
         # Initially no pending requests
-        assert len(agent._pending_requests) == 0
+        assert len(agent.pending_requests) == 0
 
         # Create a mock RequestInfoEvent
         from agent_framework_workflow import RequestInfoEvent
@@ -402,9 +402,9 @@ class TestWorkflowAgent:
         update = await agent._convert_workflow_event_to_agent_update(request_event, thread)
 
         # Verify the request is now pending
-        assert len(agent._pending_requests) == 1
-        assert "test_req_123" in agent._pending_requests
-        assert agent._pending_requests["test_req_123"] is request_event
+        assert len(agent.pending_requests) == 1
+        assert "test_req_123" in agent.pending_requests
+        assert agent.pending_requests["test_req_123"] is request_event
 
         # Verify the update contains a function call
         assert update is not None
@@ -422,9 +422,10 @@ class TestWorkflowAgent:
         )
 
         # Extract function result responses
-        responses = await agent._extract_function_result_responses([response_message])
+        responses, other_messages = await agent._extract_function_result_responses([response_message])
 
         # Should find the response
         assert len(responses) == 1
+        assert len(other_messages) == 0  # No other messages in this case
         assert responses[0][0] == "test_req_123"
         assert responses[0][1] == "User provided response"

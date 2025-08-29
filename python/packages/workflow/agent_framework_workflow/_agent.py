@@ -10,6 +10,7 @@ from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
     AgentThread,
+    AIContents,
     ChatMessage,
     ChatMessageList,
     ChatRole,
@@ -34,8 +35,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class WorkflowAgentThread(AgentThread):
-    """Custom thread for workflow agents that tracks workflow execution state."""
+class WorkflowThread(AgentThread):
+    """Custom thread for workflows that tracks workflow execution state."""
 
     workflow_id: str = Field(default="", description="The unique identifier for the workflow")
     run_id: str = Field(default="", description="The unique identifier for this workflow run")
@@ -49,7 +50,7 @@ class WorkflowAgentThread(AgentThread):
         workflow_name: str | None = None,
         **kwargs: Any,
     ) -> None:
-        """Initialize the workflow agent thread.
+        """Initialize the workflow thread.
 
         Args:
             workflow_id: The unique identifier for the workflow.
@@ -91,9 +92,15 @@ class WorkflowAgent(AgentBase):
     agent-based systems.
     """
 
+    workflow: "Workflow | None" = Field(default=None, description="The workflow to wrap as an agent")
+    active_runs: dict[str, Any] = Field(default_factory=dict, description="Track running workflows by run_id")
+    pending_requests: dict[str, RequestInfoEvent] = Field(
+        default_factory=dict, description="Track pending request info events"
+    )
+
     def __init__(
         self,
-        workflow: "Workflow[list[ChatMessage]]",
+        workflow: "Workflow",
         *,
         id: str | None = None,
         name: str | None = None,
@@ -111,10 +118,13 @@ class WorkflowAgent(AgentBase):
         """
         if id is None:
             id = f"WorkflowAgent_{uuid.uuid4().hex[:8]}"
+        # Initialize with standard AgentBase parameters first
         super().__init__(id=id, name=name, description=description, **kwargs)
-        self._workflow = workflow
-        self._active_runs: dict[str, Any] = {}  # Track running workflows by run_id
-        self._pending_requests: dict[str, RequestInfoEvent] = {}  # Track pending request info events
+
+        # Set additional fields directly
+        object.__setattr__(self, "workflow", workflow)
+        object.__setattr__(self, "active_runs", {})
+        object.__setattr__(self, "pending_requests", {})
 
     def _generate_run_id(self) -> str:
         """Generate a unique run ID for this workflow execution.
@@ -124,14 +134,14 @@ class WorkflowAgent(AgentBase):
         """
         return f"{self.id}_{uuid.uuid4().hex[:8]}"
 
-    def get_new_thread(self) -> WorkflowAgentThread:
-        """Create a new workflow agent thread.
+    def get_new_thread(self) -> WorkflowThread:
+        """Create a new workflow thread.
 
         Returns:
-            A new WorkflowAgentThread instance.
+            A new WorkflowThread instance.
         """
         run_id = self._generate_run_id()
-        return WorkflowAgentThread(
+        return WorkflowThread(
             workflow_id=self.id,
             run_id=run_id,
             workflow_name=self.name,
@@ -140,13 +150,13 @@ class WorkflowAgent(AgentBase):
     async def _prepare_workflow_messages(
         self,
         input_messages: list[ChatMessage],
-        thread: WorkflowAgentThread,
+        thread: WorkflowThread,
     ) -> list[ChatMessage]:
         """Prepare messages for workflow execution using bookmark system.
 
         Args:
             input_messages: New input messages to process.
-            thread: The workflow agent thread.
+            thread: The workflow thread.
 
         Returns:
             List of messages to send to the workflow.
@@ -166,38 +176,58 @@ class WorkflowAgent(AgentBase):
     async def _extract_function_result_responses(
         self,
         messages: list[ChatMessage],
-    ) -> list[tuple[str, Any]]:
-        """Extract function result responses from input messages.
+    ) -> tuple[list[tuple[str, Any]], list[ChatMessage]]:
+        """Extract function result responses from input messages and separate other messages.
 
         Args:
             messages: Input messages that may contain function results.
 
         Returns:
-            List of (request_id, response_data) tuples for pending requests.
+            Tuple of:
+            - List of (request_id, response_data) tuples for pending requests
+            - List of non-function-result messages that should be preserved for next run
         """
         responses = []
+        other_messages = []
+
         for message in messages:
+            non_function_contents: list[AIContents] = []
+
             for content in message.contents:
                 if isinstance(content, FunctionResultContent):
                     request_id = content.call_id
-
                     # Check if we have a pending request for this call_id
-                    if request_id in self._pending_requests:
+                    if request_id in self.pending_requests:
                         response_data = content.result if hasattr(content, "result") else str(content)
                         responses.append((request_id, response_data))
+                    else:
+                        # Function result for unknown request - treat as non-function content
+                        non_function_contents.append(content)
+                else:
+                    non_function_contents.append(content)
 
-        return responses
+            # If message has non-function contents, preserve it for next run
+            if non_function_contents:
+                preserved_message = ChatMessage(
+                    role=message.role,
+                    contents=non_function_contents,
+                    author_name=message.author_name,
+                    message_id=message.message_id,
+                )
+                other_messages.append(preserved_message)
+
+        return responses, other_messages
 
     async def _convert_workflow_event_to_agent_update(
         self,
         event: WorkflowEvent,
-        thread: WorkflowAgentThread,
+        thread: WorkflowThread,
     ) -> AgentRunResponseUpdate | None:
         """Convert workflow events to agent response updates.
 
         Args:
             event: The workflow event to convert.
-            thread: The workflow agent thread.
+            thread: The workflow thread.
 
         Returns:
             An AgentRunResponseUpdate if the event should be converted, None otherwise.
@@ -223,7 +253,7 @@ class WorkflowAgent(AgentBase):
 
             case RequestInfoEvent(request_id=request_id):
                 # Store the pending request for later correlation
-                self._pending_requests[request_id] = event
+                self.pending_requests[request_id] = event
 
                 # Convert to function call content
                 function_call = FunctionCallContent(
@@ -240,13 +270,13 @@ class WorkflowAgent(AgentBase):
 
     async def _update_thread_bookmark(
         self,
-        thread: WorkflowAgentThread,
+        thread: WorkflowThread,
         workflow_messages: list[ChatMessage],
     ) -> None:
         """Update the thread bookmark after workflow processing.
 
         Args:
-            thread: The workflow agent thread.
+            thread: The workflow thread.
             workflow_messages: Messages that were sent to the workflow.
         """
         # Update bookmark to mark messages as processed
@@ -335,13 +365,13 @@ class WorkflowAgent(AgentBase):
             AgentRunResponseUpdate objects representing the workflow execution progress.
         """
         try:
-            # Ensure we have a WorkflowAgentThread
+            # Ensure we have a WorkflowThread
             if thread is None:
                 thread = self.get_new_thread()
-            elif not isinstance(thread, WorkflowAgentThread):
-                # Convert regular AgentThread to WorkflowAgentThread
+            elif not isinstance(thread, WorkflowThread):
+                # Convert regular AgentThread to WorkflowThread
                 run_id = self._generate_run_id()
-                workflow_thread = WorkflowAgentThread(
+                workflow_thread = WorkflowThread(
                     workflow_id=self.id,
                     run_id=run_id,
                     workflow_name=self.name,
@@ -367,35 +397,55 @@ class WorkflowAgent(AgentBase):
                         elif isinstance(msg, ChatMessage):
                             input_messages.append(msg)
 
-            # Prepare workflow messages using bookmark system
-            workflow_messages = await self._prepare_workflow_messages(input_messages, thread)
+            # Extract function result responses and separate other messages first
+            function_responses, other_messages = await self._extract_function_result_responses(input_messages)
 
-            # Extract function result responses before starting/continuing workflow
-            function_responses = await self._extract_function_result_responses(input_messages)
+            # Prepare workflow messages using bookmark system
+            # For continuation runs with function responses, we don't send new workflow messages
+            workflow_messages = []
+            if not (function_responses and thread.run_id in self.active_runs):
+                workflow_messages = await self._prepare_workflow_messages(input_messages, thread)
 
             # Track this workflow run
-            self._active_runs[thread.run_id] = thread
+            self.active_runs[thread.run_id] = thread
 
             try:
-                # Check if this is a continuation of existing workflow (has pending requests)
-                if function_responses and thread.run_id in self._active_runs:
-                    # This is a continuation - we need to resume existing workflow with responses
-                    # For now, we'll send the workflow messages and let the workflow handle responses
-                    # The proper approach would be to integrate with the workflow's request-response system
+                # Ensure workflow is not None
+                if self.workflow is None:
+                    raise ValueError("Workflow not initialized")
+
+                # Determine the event stream based on whether we have function responses
+                if function_responses and thread.run_id in self.active_runs:
+                    # This is a continuation - use send_responses_streaming to send function responses back
                     logger.info(f"Continuing workflow with {len(function_responses)} responses")
 
+                    # Warn about other messages that will be ignored during continuation
+                    if other_messages:
+                        logger.warning(
+                            f"During workflow continuation, {len(other_messages)} non-function-result messages "
+                            f"are being ignored and will need to be sent in the next run. "
+                            f"Consider sending function responses separately from other messages."
+                        )
+
+                    # Convert function responses to dict format expected by send_responses_streaming
+                    response_dict = {request_id: response_data for request_id, response_data in function_responses}
                     # Clear the pending requests that we're responding to
                     for request_id, _ in function_responses:
-                        self._pending_requests.pop(request_id, None)
+                        self.pending_requests.pop(request_id, None)
 
-                # Execute workflow with streaming
-                async for event in self._workflow.run_streaming(workflow_messages):
+                    event_stream = self.workflow.send_responses_streaming(response_dict)
+                else:
+                    # Execute workflow with streaming (initial run or no function responses)
+                    event_stream = self.workflow.run_streaming(workflow_messages)
+
+                # Process events from the stream
+                async for event in event_stream:
                     # Convert workflow event to agent update
                     update = await self._convert_workflow_event_to_agent_update(event, thread)
                     if update is not None:
                         yield update
 
-                    # If this is a completed event, update thread bookmark
+                    # If this is a completed event, update thread bookmark and handle preserved messages
                     if isinstance(event, WorkflowCompletedEvent):
                         await self._update_thread_bookmark(thread, workflow_messages)
                         # Add final messages to thread if any
@@ -406,13 +456,18 @@ class WorkflowAgent(AgentBase):
                         ):
                             await thread._message_store.add_messages(event.data)
 
+                        # If we had other messages during continuation, add them to thread for next run
+                        if other_messages and function_responses and thread._message_store is not None:
+                            logger.info(f"Adding {len(other_messages)} preserved messages to thread for next run")
+                            await thread._message_store.add_messages(other_messages)
+
             finally:
                 # Clean up active run tracking
-                self._active_runs.pop(thread.run_id, None)
+                self.active_runs.pop(thread.run_id, None)
                 # Clean up any remaining pending requests for this thread
-                pending_to_remove = list(self._pending_requests.keys())
+                pending_to_remove = list(self.pending_requests.keys())
                 for req_id in pending_to_remove:
-                    self._pending_requests.pop(req_id, None)
+                    self.pending_requests.pop(req_id, None)
 
         except Exception as e:
             logger.error(f"Error in workflow agent execution: {e}", exc_info=True)
