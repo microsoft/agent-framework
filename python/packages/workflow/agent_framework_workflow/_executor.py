@@ -78,27 +78,44 @@ class Executor(AFBaseModel):
         Returns:
             An awaitable that resolves to the result of the execution.
         """
+        # Create processing span for tracing (gracefully handles disabled tracing)
+        from ._telemetry import workflow_tracer
+
+        source_trace_contexts = getattr(context, "_trace_contexts", None)
+        source_span_ids = getattr(context, "_source_span_ids", None)
+
         # Handle case where Message wrapper is passed instead of raw data
+        from ._runner_context import Message
 
-        # Lazy registration for SubWorkflowRequestInfo if we have interceptors
-        if self._request_interceptors and message.__class__.__name__ == "SubWorkflowRequestInfo":
-            # Directly handle SubWorkflowRequestInfo
+        if isinstance(message, Message):
+            message = message.data
+
+        with workflow_tracer.create_processing_span(
+            self.id,
+            self.__class__.__name__,
+            type(message).__name__,
+            source_trace_contexts=source_trace_contexts,
+            source_span_ids=source_span_ids,
+        ):
+            # Lazy registration for SubWorkflowRequestInfo if we have interceptors
+            if self._request_interceptors and message.__class__.__name__ == "SubWorkflowRequestInfo":
+                # Directly handle SubWorkflowRequestInfo
+                await context.add_event(ExecutorInvokeEvent(self.id))
+                await self._handle_sub_workflow_request(message, context)
+                await context.add_event(ExecutorCompletedEvent(self.id))
+                return
+
+            handler: Callable[[Any, WorkflowContext[Any]], Any] | None = None
+            for message_type in self._handlers:
+                if is_instance_of(message, message_type):
+                    handler = self._handlers[message_type]
+                    break
+
+            if handler is None:
+                raise RuntimeError(f"Executor {self.__class__.__name__} cannot handle message of type {type(message)}.")
             await context.add_event(ExecutorInvokeEvent(self.id))
-            await self._handle_sub_workflow_request(message, context)
+            await handler(message, context)
             await context.add_event(ExecutorCompletedEvent(self.id))
-            return
-
-        handler: Callable[[Any, WorkflowContext[Any]], Any] | None = None
-        for message_type in self._handlers:
-            if is_instance_of(message, message_type):
-                handler = self._handlers[message_type]
-                break
-
-        if handler is None:
-            raise RuntimeError(f"Executor {self.__class__.__name__} cannot handle message of type {type(message)}.")
-        await context.add_event(ExecutorInvokeEvent(self.id))
-        await handler(message, context)
-        await context.add_event(ExecutorCompletedEvent(self.id))
 
     def _discover_handlers(self) -> None:
         """Discover message handlers and request interceptors in the executor class."""
@@ -188,23 +205,21 @@ class Executor(AFBaseModel):
                     # Check if interceptor handled it or needs to forward
                     if isinstance(response, RequestResponse):
                         # Add automatic correlation info to the response
-                        correlated_response = RequestResponse._with_correlation(
-                            response, request.data, request.request_id
+                        correlated_response = RequestResponse[RequestInfoMessage, Any].with_correlation(
+                            response,
+                            request.data,
+                            request.request_id,
                         )
 
                         if correlated_response.is_handled:
                             # Send response back to sub-workflow
-                            from ._runner_context import Message
-
-                            response_message = Message(
-                                source_id=self.id,
-                                target_id=request.sub_workflow_id,
-                                data=SubWorkflowResponse(
+                            await ctx.send_message(
+                                SubWorkflowResponse(
                                     request_id=request.request_id,
                                     data=correlated_response.data,
                                 ),
+                                target_id=request.sub_workflow_id,
                             )
-                            await ctx.send_message(response_message)
                         else:
                             # Forward WITH CONTEXT PRESERVED
                             # Update the data if interceptor provided a modified request
@@ -212,13 +227,7 @@ class Executor(AFBaseModel):
                                 request.data = correlated_response.forward_request
 
                             # Send the inner request to RequestInfoExecutor to create external request
-                            from ._runner_context import Message
-
-                            forward_message = Message(
-                                source_id=self.id,
-                                data=request,
-                            )
-                            await ctx.send_message(forward_message)
+                            await ctx.send_message(request)
                     else:
                         # Legacy support: direct return means handled
                         await ctx.send_message(
@@ -232,10 +241,7 @@ class Executor(AFBaseModel):
 
         # No interceptor found - forward inner request to RequestInfoExecutor
         # This sends the original request to RequestInfoExecutor
-        from ._runner_context import Message
-
-        passthrough_message = Message(source_id=self.id, data=request.data)
-        await ctx.send_message(passthrough_message)
+        await ctx.send_message(request.data)
 
     def can_handle(self, message: Any) -> bool:
         """Check if the executor can handle a given message type.
@@ -257,23 +263,8 @@ class Executor(AFBaseModel):
 ExecutorT = TypeVar("ExecutorT", bound="Executor")
 
 
-@overload
 def handler(
     func: Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]],
-) -> Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]]: ...
-
-
-@overload
-def handler(
-    func: None = None,
-) -> Callable[
-    [Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]]],
-    Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]],
-]: ...
-
-
-def handler(
-    func: Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]] | None = None,
 ) -> (
     Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]]
     | Callable[
@@ -370,7 +361,7 @@ def handler(
             return await func(self, message, ctx)
 
         # Preserve the original function signature for introspection during validation
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(AttributeError, TypeError):
             wrapper.__signature__ = sig  # type: ignore[attr-defined]
 
         wrapper._handler_spec = {  # type: ignore
@@ -382,14 +373,24 @@ def handler(
 
         return wrapper
 
-    if func is None:
-        return decorator
     return decorator(func)
 
 
 # endregion: Handler Decorator
 
+
 # region Request/Response Types
+@dataclass
+class RequestInfoMessage:
+    """Base class for all request messages in workflows.
+
+    Any message that should be routed to the RequestInfoExecutor for external
+    handling must inherit from this class. This ensures type safety and makes
+    the request/response pattern explicit.
+    """
+
+    request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+
 
 TRequest = TypeVar("TRequest", bound="RequestInfoMessage")
 TResponse = TypeVar("TResponse")
@@ -411,7 +412,7 @@ class RequestResponse(Generic[TRequest, TResponse]):
     request_id: str | None = None  # Added for tracking
 
     @classmethod
-    def handled(cls, data: TResponse) -> "RequestResponse[Any, TResponse]":
+    def handled(cls, data: TResponse) -> "RequestResponse[TRequest, TResponse]":
         """Create a response indicating the request was handled.
 
         Correlation info (original_request, request_id) will be added automatically
@@ -420,17 +421,19 @@ class RequestResponse(Generic[TRequest, TResponse]):
         return cls(is_handled=True, data=data)
 
     @classmethod
-    def forward(cls, modified_request: Any = None) -> "RequestResponse[Any, Any]":
+    def forward(cls, modified_request: Any = None) -> "RequestResponse[TRequest, TResponse]":
         """Create a response indicating the request should be forwarded."""
         return cls(is_handled=False, forward_request=modified_request)
 
     @staticmethod
-    def _with_correlation(
-        original_response: "RequestResponse[Any, TResponse]", original_request: TRequest, request_id: str
+    def with_correlation(
+        original_response: "RequestResponse[TRequest, TResponse]",
+        original_request: TRequest,
+        request_id: str,
     ) -> "RequestResponse[TRequest, TResponse]":
-        """Internal method to add correlation info to a response.
+        """Add correlation info to a response.
 
-        This is called automatically by the framework and should not be used directly.
+        This is called automatically by the framework when processing intercepted requests.
         """
         return RequestResponse(
             is_handled=original_response.is_handled,
@@ -451,7 +454,7 @@ class SubWorkflowRequestInfo:
 
     request_id: str  # Original request ID from sub-workflow
     sub_workflow_id: str  # ID of the WorkflowExecutor that sent this
-    data: Any  # The actual request data
+    data: RequestInfoMessage  # The actual request data
 
 
 @dataclass
@@ -595,6 +598,122 @@ def intercepts_request(
 
 # endregion: Intercepts Request Decorator
 
+# region Request Info Executor
+
+
+class RequestInfoExecutor(Executor):
+    """Built-in executor that handles request/response patterns in workflows.
+
+    This executor acts as a gateway for external information requests. When it receives
+    a request message, it saves the request details and emits a RequestInfoEvent. When
+    a response is provided externally, it emits the response as a message.
+    """
+
+    def __init__(self, id: str | None = None):
+        """Initialize the RequestInfoExecutor with an optional custom ID.
+
+        Args:
+            id: Optional custom ID for this RequestInfoExecutor. If not provided,
+                a unique ID will be generated.
+        """
+        import uuid
+
+        executor_id = id or f"request_info_{uuid.uuid4().hex[:8]}"
+        super().__init__(id=executor_id)
+        self._request_events: dict[str, RequestInfoEvent] = {}
+        self._sub_workflow_contexts: dict[str, dict[str, str]] = {}
+
+    @handler
+    async def run(self, message: RequestInfoMessage, ctx: WorkflowContext[None]) -> None:
+        """Run the RequestInfoExecutor with the given message."""
+        source_executor_id = ctx.get_source_executor_id()
+
+        event = RequestInfoEvent(
+            request_id=message.request_id,
+            source_executor_id=source_executor_id,
+            request_type=type(message),
+            request_data=message,
+        )
+        self._request_events[message.request_id] = event
+        await ctx.add_event(event)
+
+    @handler
+    async def handle_sub_workflow_request(
+        self,
+        message: SubWorkflowRequestInfo,
+        ctx: WorkflowContext[None],
+    ) -> None:
+        """Handle forwarded sub-workflow request.
+
+        This method handles requests that were forwarded from parent workflows
+        because they couldn't be handled locally.
+        """
+        # When called directly from runner, we need to use the sub_workflow_id as the source
+        source_executor_id = message.sub_workflow_id
+
+        # Store context for routing response back
+        self._sub_workflow_contexts[message.request_id] = {
+            "sub_workflow_id": message.sub_workflow_id,
+            "parent_executor_id": source_executor_id,
+        }
+
+        # Create event for external handling - preserve the SubWorkflowRequestInfo wrapper
+        event = RequestInfoEvent(
+            request_id=message.request_id,  # Use original request ID
+            source_executor_id=source_executor_id,
+            request_type=type(message.data),  # Type of the wrapped data # type: ignore
+            request_data=message.data,  # The wrapped request data
+        )
+        self._request_events[message.request_id] = event
+        await ctx.add_event(event)
+
+    async def handle_response(
+        self,
+        response_data: Any,
+        request_id: str,
+        ctx: WorkflowContext[Any],
+    ) -> None:
+        """Handle a response to a request.
+
+        Args:
+            request_id: The ID of the request to which this response corresponds.
+            response_data: The data returned in the response.
+            ctx: The workflow context for sending the response.
+        """
+        if request_id not in self._request_events:
+            raise ValueError(f"No request found with ID: {request_id}")
+
+        event = self._request_events.pop(request_id)
+
+        # Check if this was a forwarded sub-workflow request
+        if request_id in self._sub_workflow_contexts:
+            context = self._sub_workflow_contexts.pop(request_id)
+
+            # Send back to sub-workflow that made the original request
+            await ctx.send_message(
+                SubWorkflowResponse(
+                    request_id=request_id,
+                    data=response_data,
+                ),
+                target_id=context["sub_workflow_id"],
+            )
+        else:
+            # Regular response - send directly back to source
+            # Create a correlated response that includes both the response data and original request
+            if not isinstance(event.data, RequestInfoMessage):
+                raise TypeError(f"Expected RequestInfoMessage, got {type(event.data)}")
+            correlated_response = RequestResponse[RequestInfoMessage, Any].handled(response_data)
+            correlated_response = RequestResponse[RequestInfoMessage, Any].with_correlation(
+                correlated_response,
+                event.data,
+                request_id,
+            )
+
+            await ctx.send_message(correlated_response, target_id=event.source_executor_id)
+
+
+# endregion: Request Info Executor
+
 # region Agent Executor
 
 
@@ -680,132 +799,6 @@ class AgentExecutor(Executor):
 # endregion: Agent Executor
 
 
-# region Request Info Executor
-
-
-@dataclass
-class RequestInfoMessage:
-    """Base class for all request messages in workflows.
-
-    Any message that should be routed to the RequestInfoExecutor for external
-    handling must inherit from this class. This ensures type safety and makes
-    the request/response pattern explicit.
-    """
-
-    request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-
-
-# Note: SubWorkflowRequestInfo, SubWorkflowResponse, and RequestResponse
-# have been moved before intercepts_request decorator
-
-
-class RequestInfoExecutor(Executor):
-    """Built-in executor that handles request/response patterns in workflows.
-
-    This executor acts as a gateway for external information requests. When it receives
-    a request message, it saves the request details and emits a RequestInfoEvent. When
-    a response is provided externally, it emits the response as a message.
-    """
-
-    def __init__(self, id: str | None = None):
-        """Initialize the RequestInfoExecutor with an optional custom ID.
-
-        Args:
-            id: Optional custom ID for this RequestInfoExecutor. If not provided,
-                a unique ID will be generated.
-        """
-        import uuid
-
-        executor_id = id or f"request_info_{uuid.uuid4().hex[:8]}"
-        super().__init__(id=executor_id)
-        self._request_events: dict[str, RequestInfoEvent] = {}
-        self._sub_workflow_contexts: dict[str, dict[str, str]] = {}
-
-    @handler
-    async def run(self, message: RequestInfoMessage, ctx: WorkflowContext[None]) -> None:
-        """Run the RequestInfoExecutor with the given message."""
-        source_executor_id = ctx.get_source_executor_id()
-
-        event = RequestInfoEvent(
-            request_id=message.request_id,
-            source_executor_id=source_executor_id,
-            request_type=type(message),
-            request_data=message,
-        )
-        self._request_events[message.request_id] = event
-        await ctx.add_event(event)
-
-    @handler
-    async def handle_sub_workflow_request(
-        self,
-        message: SubWorkflowRequestInfo,
-        ctx: WorkflowContext[None],
-    ) -> None:
-        """Handle forwarded sub-workflow request.
-
-        This method handles requests that were forwarded from parent workflows
-        because they couldn't be handled locally.
-        """
-        # When called directly from runner, we need to use the sub_workflow_id as the source
-        source_executor_id = message.sub_workflow_id
-
-        # Store context for routing response back
-        self._sub_workflow_contexts[message.request_id] = {
-            "sub_workflow_id": message.sub_workflow_id,
-            "parent_executor_id": source_executor_id,
-        }
-
-        # Create event for external handling - preserve the SubWorkflowRequestInfo wrapper
-        event = RequestInfoEvent(
-            request_id=message.request_id,  # Use original request ID
-            source_executor_id=source_executor_id,
-            request_type=type(message.data),  # SubWorkflowRequestInfo type
-            request_data=message.data,  # The full SubWorkflowRequestInfo
-        )
-        self._request_events[message.request_id] = event
-        await ctx.add_event(event)
-
-    async def handle_response(
-        self,
-        response_data: Any,
-        request_id: str,
-        ctx: WorkflowContext[Any],
-    ) -> None:
-        """Handle a response to a request.
-
-        Args:
-            request_id: The ID of the request to which this response corresponds.
-            response_data: The data returned in the response.
-            ctx: The workflow context for sending the response.
-        """
-        if request_id not in self._request_events:
-            raise ValueError(f"No request found with ID: {request_id}")
-
-        event = self._request_events.pop(request_id)
-
-        # Check if this was a forwarded sub-workflow request
-        if request_id in self._sub_workflow_contexts:
-            context = self._sub_workflow_contexts.pop(request_id)
-
-            # Send back to sub-workflow that made the original request
-            await ctx.send_message(
-                SubWorkflowResponse(
-                    request_id=request_id,
-                    data=response_data,
-                ),
-                target_id=context["sub_workflow_id"],
-            )
-        else:
-            # Regular response - send directly back to source
-            # Create a correlated response that includes both the response data and original request
-            correlated_response = RequestResponse.handled(response_data)
-            correlated_response = RequestResponse._with_correlation(correlated_response, event.data, request_id)
-
-            await ctx.send_message(correlated_response, target_id=event.source_executor_id)
-
-
-# endregion: Request Info Executor
-
 # region Workflow Executor
 
 
@@ -817,15 +810,19 @@ class WorkflowExecutor(Executor):
     are intercepted by parent workflows.
     """
 
-    def __init__(self, workflow: "Workflow", id: str | None = None):
+    workflow: "Workflow" = Field(description="The workflow to execute as a sub-workflow")
+
+    def __init__(self, workflow: "Workflow", id: str | None = None, **kwargs: Any):
         """Initialize the WorkflowExecutor.
 
         Args:
             workflow: The workflow to execute as a sub-workflow.
             id: Optional unique identifier for this executor.
+            **kwargs: Additional keyword arguments passed to the parent constructor.
         """
-        super().__init__(id)
-        self._workflow = workflow
+        kwargs.update({"workflow": workflow})
+        super().__init__(id, **kwargs)
+
         # Track pending external responses by request_id
         self._pending_responses: dict[str, Any] = {}  # request_id -> response_data
         # Track workflow state for proper resumption - support multiple concurrent requests
@@ -857,7 +854,7 @@ class WorkflowExecutor(Executor):
 
         try:
             # Run the sub-workflow and collect all events
-            events = [event async for event in self._workflow.run_streaming(input_data)]
+            events = [event async for event in self.workflow.run_streaming(input_data)]
 
             # Count requests and initialize response tracking
             request_count = 0
@@ -889,6 +886,8 @@ class WorkflowExecutor(Executor):
                     self._pending_requests[event.request_id] = event.data
 
                     # Wrap request with routing context and send to parent
+                    if not isinstance(event.data, RequestInfoMessage):
+                        raise TypeError(f"Expected RequestInfoMessage, got {type(event.data)}")
                     wrapped_request = SubWorkflowRequestInfo(
                         request_id=event.request_id,
                         sub_workflow_id=self.id,
@@ -941,7 +940,7 @@ class WorkflowExecutor(Executor):
             responses_to_send = dict(self._collected_responses)
             self._collected_responses.clear()  # Clear for next batch
 
-            result_events = [event async for event in self._workflow.send_responses_streaming(responses_to_send)]
+            result_events = [event async for event in self.workflow.send_responses_streaming(responses_to_send)]
 
             # Process the result events
             new_request_count = 0
@@ -957,6 +956,8 @@ class WorkflowExecutor(Executor):
                     self._pending_requests[event.request_id] = event.data
 
                     # Send the new request to parent
+                    if not isinstance(event.data, RequestInfoMessage):
+                        raise TypeError(f"Expected RequestInfoMessage, got {type(event.data)}")
                     wrapped_request = SubWorkflowRequestInfo(
                         request_id=event.request_id,
                         sub_workflow_id=self.id,

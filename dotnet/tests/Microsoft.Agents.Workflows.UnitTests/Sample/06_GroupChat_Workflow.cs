@@ -12,7 +12,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 
-namespace Microsoft.Agents.Workflows.UnitTests.Sample;
+namespace Microsoft.Agents.Workflows.Sample;
 
 internal static class Step6EntryPoint
 {

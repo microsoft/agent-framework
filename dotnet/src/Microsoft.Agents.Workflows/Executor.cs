@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Execution;
 
@@ -109,6 +110,22 @@ public abstract class Executor : IIdentified
 
         return result.Result;
     }
+
+    /// <summary>
+    /// Invoked before a checkpoint is saved, allowing custom pre-save logic in derived classes.
+    /// </summary>
+    /// <param name="context">The workflow context.</param>
+    /// <returns>A ValueTask representing the asynchronous operation.</returns>
+    /// <param name="cancellation"></param>
+    protected internal virtual ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellation = default) => default;
+
+    /// <summary>
+    /// Invoked after a checkpoint is loaded, allowing custom post-load logic in derived classes.
+    /// </summary>
+    /// <param name="context">The workflow context.</param>
+    /// <returns>A ValueTask representing the asynchronous operation.</returns>
+    /// <param name="cancellation"></param>
+    protected internal virtual ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellation = default) => default;
 
     /// <summary>
     /// A set of <see cref="Type"/>s, representing the messages this executor can handle.

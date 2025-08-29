@@ -37,6 +37,28 @@ from ._executor import (
     handler,
     intercepts_request,
 )
+from ._magentic import (
+    MagenticAgentDeltaEvent,
+    MagenticAgentExecutor,
+    MagenticAgentMessageEvent,
+    MagenticBuilder,
+    MagenticCallbackEvent,
+    MagenticCallbackMode,
+    MagenticContext,
+    MagenticFinalResultEvent,
+    MagenticManagerBase,
+    MagenticOrchestratorExecutor,
+    MagenticOrchestratorMessageEvent,
+    MagenticPlanReviewDecision,
+    MagenticPlanReviewReply,
+    MagenticPlanReviewRequest,
+    MagenticProgressLedger,
+    MagenticProgressLedgerItem,
+    MagenticRequestMessage,
+    MagenticResponseMessage,
+    MagenticStartMessage,
+    StandardMagenticManager,
+)
 from ._runner_context import (
     InProcRunnerContext,
     Message,
@@ -79,12 +101,32 @@ __all__ = [
     "GraphConnectivityError",
     "InMemoryCheckpointStorage",
     "InProcRunnerContext",
+    "MagenticAgentDeltaEvent",
+    "MagenticAgentExecutor",
+    "MagenticAgentMessageEvent",
+    "MagenticBuilder",
+    "MagenticCallbackEvent",
+    "MagenticCallbackMode",
+    "MagenticContext",
+    "MagenticFinalResultEvent",
+    "MagenticManagerBase",
+    "MagenticOrchestratorExecutor",
+    "MagenticOrchestratorMessageEvent",
+    "MagenticPlanReviewDecision",
+    "MagenticPlanReviewReply",
+    "MagenticPlanReviewRequest",
+    "MagenticProgressLedger",
+    "MagenticProgressLedgerItem",
+    "MagenticRequestMessage",
+    "MagenticResponseMessage",
+    "MagenticStartMessage",
     "Message",
     "RequestInfoEvent",
     "RequestInfoExecutor",
     "RequestInfoMessage",
     "RequestResponse",
     "RunnerContext",
+    "StandardMagenticManager",
     "SubWorkflowRequestInfo",
     "SubWorkflowResponse",
     "TypeCompatibilityError",
@@ -105,3 +147,11 @@ __all__ = [
     "intercepts_request",
     "validate_workflow_graph",
 ]
+
+
+# Rebuild models to resolve forward references after all imports are complete
+import contextlib
+
+with contextlib.suppress(AttributeError, TypeError, ValueError):
+    # Rebuild WorkflowExecutor to resolve Workflow forward reference
+    WorkflowExecutor.model_rebuild()
