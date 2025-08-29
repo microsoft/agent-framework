@@ -73,6 +73,7 @@ async Task AFAgent()
         Console.Write(update);
     }
 
+    var yes = agent.GetService<AssistantClient>() is not null;
     // Clean up
     await assistantClient.DeleteThreadAsync(thread.ConversationId);
     await assistantClient.DeleteAssistantAsync(agent.Id);
