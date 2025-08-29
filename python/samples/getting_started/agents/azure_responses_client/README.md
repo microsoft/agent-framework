@@ -7,6 +7,7 @@ This folder contains examples demonstrating different ways to create and use age
 | File | Description |
 |------|-------------|
 | [`azure_responses_client_basic.py`](azure_responses_client_basic.py) | The simplest way to create an agent using `ChatClientAgent` with `AzureResponsesClient`. Shows both streaming and non-streaming responses for structured response generation with Azure OpenAI models. |
+| [`azure_responses_client_with_explicit_settings.py`](azure_responses_client_with_explicit_settings.py) | Shows how to initialize an agent with a specific responses client, configuring settings explicitly including endpoint and deployment name. |
 | [`azure_responses_client_with_function_tools.py`](azure_responses_client_with_function_tools.py) | Demonstrates how to use function tools with agents. Shows both agent-level tools (defined when creating the agent) and query-level tools (provided with specific queries). |
 | [`azure_responses_client_with_code_interpreter.py`](azure_responses_client_with_code_interpreter.py) | Shows how to use the HostedCodeInterpreterTool with Azure agents to write and execute Python code. Includes helper methods for accessing code interpreter data from response chunks. |
 | [`azure_responses_client_with_thread.py`](azure_responses_client_with_thread.py) | Demonstrates thread management with Azure agents, including automatic thread creation for stateless conversations and explicit thread management for maintaining conversation context across multiple interactions. |
