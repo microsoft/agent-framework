@@ -1,15 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable
-from dataclasses import dataclass
 from typing import Any
 
 import pytest
 from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
-    AgentThread,
-    AIAgent,
     ChatMessage,
     ChatRole,
     FunctionResultContent,
@@ -19,412 +15,198 @@ from agent_framework.workflow import (
     AgentRunEvent,
     AgentRunStreamingEvent,
     Executor,
-    RequestInfoEvent,
+    RequestInfoExecutor,
     RequestInfoMessage,
     WorkflowAgent,
     WorkflowBuilder,
-    WorkflowCompletedEvent,
     WorkflowContext,
-    WorkflowThread,
     handler,
 )
 
 
-@dataclass
-class SimpleMessage:
-    """A simple message for testing."""
+class SimpleExecutor(Executor):
+    """Simple executor that emits AgentRunEvent or AgentRunStreamingEvent."""
 
-    content: str
+    response_text: str
+    emit_streaming: bool = False
 
-
-class EchoExecutor(Executor):
-    """A simple executor for testing that echoes messages."""
+    def __init__(self, id: str, response_text: str, emit_streaming: bool = False):
+        super().__init__(id=id, response_text=response_text, emit_streaming=emit_streaming)
 
     @handler
-    async def handle_message(self, message: list[ChatMessage], ctx: WorkflowContext[ChatMessage]) -> None:
-        # Echo the first message back
-        if message:
-            response_message = ChatMessage(
-                role=ChatRole.ASSISTANT, contents=[TextContent(text=f"Echo: {message[0].contents[0].text}")]
+    async def handle_message(self, message: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
+        input_text = (
+            message[0].contents[0].text if message and isinstance(message[0].contents[0], TextContent) else "no input"
+        )
+        await self._process_message(input_text, ctx)
+
+    async def _process_message(self, input_text: str, ctx: WorkflowContext[list[ChatMessage]]) -> None:
+        response_text = f"{self.response_text}: {input_text}"
+
+        # Create response message for both streaming and non-streaming cases
+        response_message = ChatMessage(role=ChatRole.ASSISTANT, contents=[TextContent(text=response_text)])
+
+        if self.emit_streaming:
+            # Emit streaming update
+            streaming_update = AgentRunResponseUpdate(
+                contents=[TextContent(text=response_text)],
+                role=ChatRole.ASSISTANT,
             )
-            await ctx.send_message(response_message)
-            await ctx.add_event(WorkflowCompletedEvent(data=[response_message]))
+            await ctx.add_event(AgentRunStreamingEvent(executor_id=self.id, data=streaming_update))
         else:
-            await ctx.add_event(WorkflowCompletedEvent(data=[]))
+            # Emit agent run event
+            agent_response = AgentRunResponse(messages=[response_message])
+            await ctx.add_event(AgentRunEvent(executor_id=self.id, data=agent_response))
+
+        # Pass message to next executor if any (for both streaming and non-streaming)
+        await ctx.send_message([response_message])
 
 
-class MockAgent(AIAgent):
-    """Mock agent implementation for testing."""
+class RequestingExecutor(Executor):
+    """Executor that sends RequestInfoMessage to trigger RequestInfoEvent."""
 
-    def __init__(self, response_text: str = "Mock response"):
-        self._response_text = response_text
-        self._id = "mock_agent"
+    @handler
+    async def handle_message(self, _: list[ChatMessage], ctx: WorkflowContext[RequestInfoMessage]) -> None:
+        # Send a RequestInfoMessage to trigger the request info process
+        await ctx.send_message(RequestInfoMessage())
 
-    @property
-    def id(self) -> str:
-        return self._id
-
-    @property
-    def name(self) -> str | None:
-        return "Mock Agent"
-
-    @property
-    def display_name(self) -> str:
-        return "Mock Agent"
-
-    @property
-    def description(self) -> str | None:
-        return "A mock agent for testing"
-
-    async def run(
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AgentRunResponse:
-        response_message = ChatMessage(role=ChatRole.ASSISTANT, contents=[TextContent(text=self._response_text)])
-        return AgentRunResponse(messages=[response_message])
-
-    def run_streaming(
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
-        return self._run_streaming_impl(messages, thread, **kwargs)
-
-    async def _run_streaming_impl(self, messages, thread, **kwargs) -> AsyncIterable[AgentRunResponseUpdate]:
-        yield AgentRunResponseUpdate(contents=[TextContent(text=self._response_text)], role=ChatRole.ASSISTANT)
-
-    def get_new_thread(self) -> AgentThread:
-        return AgentThread()
-
-
-class TestWorkflowThread:
-    """Test cases for WorkflowThread."""
-
-    def test_init(self):
-        """Test WorkflowThread initialization."""
-        thread = WorkflowThread(workflow_id="test_workflow", run_id="test_run", workflow_name="Test Workflow")
-
-        assert thread.workflow_id == "test_workflow"
-        assert thread.run_id == "test_run"
-        assert thread.workflow_name == "Test Workflow"
-        assert thread.message_bookmark == 0
+    @handler
+    async def handle_request_response(self, _: Any, ctx: WorkflowContext[ChatMessage]) -> None:
+        # Handle the response and emit completion response
+        response_message = ChatMessage(
+            role=ChatRole.ASSISTANT, contents=[TextContent(text="Request completed successfully")]
+        )
+        agent_response = AgentRunResponse(messages=[response_message])
+        await ctx.add_event(AgentRunEvent(executor_id=self.id, data=agent_response))
 
 
 class TestWorkflowAgent:
-    """Test cases for WorkflowAgent."""
+    """Test cases for WorkflowAgent end-to-end functionality."""
 
-    def test_init(self):
-        """Test WorkflowAgent initialization."""
-        # Create a simple workflow
-        workflow = WorkflowBuilder().set_start_executor(EchoExecutor()).build()
+    @pytest.mark.asyncio
+    async def test_end_to_end_basic_workflow(self):
+        """Test basic end-to-end workflow execution with 2 executors emitting AgentRunEvent."""
+        # Create workflow with two executors
+        executor1 = SimpleExecutor(id="executor1", response_text="Step1", emit_streaming=False)
+        executor2 = SimpleExecutor(id="executor2", response_text="Step2", emit_streaming=False)
 
-        agent = WorkflowAgent(workflow=workflow, name="Test Workflow Agent", description="A test workflow agent")
-
-        assert agent.name == "Test Workflow Agent"
-        assert agent.description == "A test workflow agent"
-        assert agent.workflow is workflow
-        assert isinstance(agent.active_runs, dict)
-        assert len(agent.active_runs) == 0
-
-    def test_generate_run_id(self):
-        """Test run ID generation."""
-        workflow = WorkflowBuilder().set_start_executor(EchoExecutor()).build()
-
-        agent = WorkflowAgent(workflow=workflow)
-
-        run_id1 = agent._generate_run_id()
-        run_id2 = agent._generate_run_id()
-
-        assert run_id1 != run_id2
-        assert run_id1.startswith(agent.id)
-        assert run_id2.startswith(agent.id)
-
-    def test_get_new_thread(self):
-        """Test creation of new workflow thread."""
-        workflow = WorkflowBuilder().set_start_executor(EchoExecutor()).build()
+        workflow = WorkflowBuilder().set_start_executor(executor1).add_edge(executor1, executor2).build()
 
         agent = WorkflowAgent(workflow=workflow, name="Test Agent")
-        thread = agent.get_new_thread()
 
-        assert isinstance(thread, WorkflowThread)
-        assert thread.workflow_id == agent.id
-        assert thread.workflow_name == agent.name
-        assert thread.run_id.startswith(agent.id)
+        # Execute workflow end-to-end
+        result = await agent.run("Hello World")
 
-    @pytest.mark.asyncio
-    async def test_prepare_workflow_messages_no_input(self):
-        """Test preparing workflow messages with no input."""
-        workflow = WorkflowBuilder().set_start_executor(EchoExecutor()).build()
+        # Verify we got responses from both executors
+        assert isinstance(result, AgentRunResponse)
+        assert len(result.messages) >= 2, f"Expected at least 2 messages, got {len(result.messages)}"
 
-        agent = WorkflowAgent(workflow=workflow)
-        thread = agent.get_new_thread()
+        # Find messages from each executor
+        step1_messages = []
+        step2_messages = []
 
-        messages = await agent._prepare_workflow_messages([], thread)
-        assert messages == []
+        for message in result.messages:
+            first_content = message.contents[0]
+            if isinstance(first_content, TextContent):
+                text = first_content.text
+                if text.startswith("Step1:"):
+                    step1_messages.append(message)
+                elif text.startswith("Step2:"):
+                    step2_messages.append(message)
 
-    @pytest.mark.asyncio
-    async def test_prepare_workflow_messages_with_input(self):
-        """Test preparing workflow messages with input."""
-        workflow = WorkflowBuilder().set_start_executor(EchoExecutor()).build()
+        # Verify both executors produced output
+        assert len(step1_messages) >= 1, "Should have received message from Step1 executor"
+        assert len(step2_messages) >= 1, "Should have received message from Step2 executor"
 
-        agent = WorkflowAgent(workflow=workflow)
-        thread = agent.get_new_thread()
-
-        input_messages = [ChatMessage(role=ChatRole.USER, contents=[TextContent(text="Hello")])]
-        messages = await agent._prepare_workflow_messages(input_messages, thread)
-
-        # Should include the input message
-        assert len(messages) == 1
-        assert messages[0].contents[0].text == "Hello"
+        # Verify the processing worked for both
+        step1_text = step1_messages[0].contents[0].text
+        step2_text = step2_messages[0].contents[0].text
+        assert "Step1: Hello World" in step1_text
+        assert "Step2: Step1: Hello World" in step2_text
 
     @pytest.mark.asyncio
-    async def test_convert_agent_run_streaming_event(self):
-        """Test conversion of AgentRunStreamingEvent."""
-        workflow = WorkflowBuilder().set_start_executor(EchoExecutor()).build()
+    async def test_end_to_end_basic_workflow_streaming(self):
+        """Test end-to-end workflow with streaming executor that emits AgentRunStreamingEvent."""
+        # Create a single streaming executor
+        executor1 = SimpleExecutor(id="stream1", response_text="Streaming1", emit_streaming=True)
+        executor2 = SimpleExecutor(id="stream2", response_text="Streaming2", emit_streaming=True)
 
-        agent = WorkflowAgent(workflow=workflow)
-        thread = agent.get_new_thread()
+        # Create workflow with just one executor
+        workflow = WorkflowBuilder().set_start_executor(executor1).add_edge(executor1, executor2).build()
 
-        update = AgentRunResponseUpdate(contents=[TextContent(text="Test content")], role=ChatRole.ASSISTANT)
-        event = AgentRunStreamingEvent(executor_id="test_executor", data=update)
+        agent = WorkflowAgent(workflow=workflow, name="Streaming Test Agent")
 
-        result = await agent._convert_workflow_event_to_agent_update(event, thread)
-
-        assert result is update
-
-    @pytest.mark.asyncio
-    async def test_convert_agent_run_event(self):
-        """Test conversion of AgentRunEvent."""
-        workflow = WorkflowBuilder().set_start_executor(EchoExecutor()).build()
-
-        agent = WorkflowAgent(workflow=workflow)
-        thread = agent.get_new_thread()
-
-        response = AgentRunResponse(
-            messages=[ChatMessage(role=ChatRole.ASSISTANT, contents=[TextContent(text="Test response")])]
-        )
-        event = AgentRunEvent(executor_id="test_executor", data=response)
-
-        result = await agent._convert_workflow_event_to_agent_update(event, thread)
-
-        assert result is not None
-        assert len(result.contents) == 1
-        assert result.contents[0].text == "Test response"
-        assert result.role == ChatRole.ASSISTANT
-
-    @pytest.mark.asyncio
-    async def test_convert_request_info_event(self):
-        """Test conversion of RequestInfoEvent."""
-        workflow = WorkflowBuilder().set_start_executor(EchoExecutor()).build()
-
-        agent = WorkflowAgent(workflow=workflow)
-        thread = agent.get_new_thread()
-
-        # Create a RequestInfoEvent with proper constructor arguments
-        event = RequestInfoEvent(
-            request_id="req123", source_executor_id="test_executor", request_type=str, request_data="Test request"
-        )
-
-        result = await agent._convert_workflow_event_to_agent_update(event, thread)
-
-        assert result is not None
-        assert result.role == ChatRole.ASSISTANT
-        assert len(result.contents) == 1
-        function_call = result.contents[0]
-        assert function_call.name == "request_info"
-        assert function_call.call_id == "req123"
-
-    @pytest.mark.asyncio
-    async def test_run_streaming_basic(self):
-        """Test basic streaming execution."""
-        workflow = WorkflowBuilder().set_start_executor(EchoExecutor()).build()
-
-        agent = WorkflowAgent(workflow=workflow)
-
-        # Execute streaming
+        # Execute workflow streaming to capture streaming events
         updates = []
-        async for update in agent.run_streaming("Hello"):
+        async for update in agent.run_streaming("Test input"):
             updates.append(update)
 
-        # Should have at least the completion
-        assert len(updates) >= 0
+        # Should have received at least one streaming update
+        assert len(updates) >= 2, f"Expected at least 2 updates, got {len(updates)}"
 
-        # Check active runs tracking - should be cleaned up
-        assert len(agent.active_runs) == 0
-
-    @pytest.mark.asyncio
-    async def test_run_non_streaming(self):
-        """Test non-streaming execution."""
-        workflow = WorkflowBuilder().set_start_executor(EchoExecutor()).build()
-
-        agent = WorkflowAgent(workflow=workflow)
-
-        # Execute non-streaming
-        result = await agent.run("Hello")
-
-        # Verify result
-        assert isinstance(result, AgentRunResponse)
-        # The EchoExecutor should echo the message
-        assert len(result.messages) >= 0
+        # Verify we got a streaming update
+        assert updates[0].contents is not None
+        first_content = updates[0].contents[0]
+        second_content = updates[1].contents[0]
+        assert isinstance(first_content, TextContent)
+        assert "Streaming1: Test input" in first_content.text
+        assert isinstance(second_content, TextContent)
+        assert "Streaming2: Streaming1: Test input" in second_content.text
 
     @pytest.mark.asyncio
-    async def test_run_with_existing_thread(self):
-        """Test execution with an existing thread."""
-        workflow = WorkflowBuilder().set_start_executor(EchoExecutor()).build()
+    async def test_end_to_end_request_info_handling(self):
+        """Test end-to-end workflow with RequestInfoEvent handling."""
+        # Create workflow with requesting executor -> request info executor (no cycle)
+        requesting_executor = RequestingExecutor(id="requester")
+        request_info_executor = RequestInfoExecutor()
 
-        agent = WorkflowAgent(workflow=workflow)
-        thread = agent.get_new_thread()
-
-        # Execute with existing thread
-        result = await agent.run("Hello", thread=thread)
-
-        assert isinstance(result, AgentRunResponse)
-
-    @pytest.mark.asyncio
-    async def test_run_with_string_input(self):
-        """Test execution with string input."""
-        workflow = WorkflowBuilder().set_start_executor(EchoExecutor()).build()
-
-        agent = WorkflowAgent(workflow=workflow)
-
-        result = await agent.run("Hello World")
-        assert isinstance(result, AgentRunResponse)
-
-    @pytest.mark.asyncio
-    async def test_run_with_multiple_string_inputs(self):
-        """Test execution with multiple string inputs."""
-        workflow = WorkflowBuilder().set_start_executor(EchoExecutor()).build()
-
-        agent = WorkflowAgent(workflow=workflow)
-
-        result = await agent.run(["Hello", "World"])
-        assert isinstance(result, AgentRunResponse)
-
-    @pytest.mark.asyncio
-    async def test_error_handling(self):
-        """Test error handling during workflow execution."""
-
-        # Create a workflow that will cause an error
-        class ErrorExecutor(Executor):
-            @handler
-            async def handle_message(self, message: list[ChatMessage], ctx: WorkflowContext[ChatMessage]) -> None:
-                raise ValueError("Test error")
-
-        workflow = WorkflowBuilder().set_start_executor(ErrorExecutor()).build()
-
-        agent = WorkflowAgent(workflow=workflow)
-
-        # Should propagate as AgentExecutionException
-        from agent_framework.exceptions import AgentExecutionException
-
-        with pytest.raises(AgentExecutionException):
-            await agent.run("Hello")
-
-    @pytest.mark.asyncio
-    async def test_pending_request_cleanup(self):
-        """Test that pending requests are cleaned up after workflow completion."""
-        workflow = WorkflowBuilder().set_start_executor(EchoExecutor()).build()
-
-        agent = WorkflowAgent(workflow=workflow)
-
-        # Manually add a pending request to test cleanup
-        from agent_framework_workflow import RequestInfoEvent
-
-        class TestRequestMessage(RequestInfoMessage):
-            def __init__(self, message: str):
-                super().__init__()
-                self.message = message
-
-        test_request = TestRequestMessage("Test")
-        request_event = RequestInfoEvent(
-            request_id="cleanup_test",
-            source_executor_id="test_executor",
-            request_type=TestRequestMessage,
-            request_data=test_request,
+        workflow = (
+            WorkflowBuilder()
+            .set_start_executor(requesting_executor)
+            .add_edge(requesting_executor, request_info_executor)
+            .build()
         )
 
-        agent.pending_requests["cleanup_test"] = request_event
+        agent = WorkflowAgent(workflow=workflow, name="Request Test Agent")
 
-        # Run the agent (should clean up pending requests)
-        await agent.run("Hello")
+        # Execute workflow streaming to get request info event
+        updates = []
+        async for update in agent.run_streaming("Start request"):
+            updates.append(update)
+        # Should have received a function call for the request info
+        assert len(updates) > 0
 
-        # Verify cleanup occurred
-        assert "cleanup_test" not in agent.pending_requests
+        # Find the function call update (RequestInfoEvent converted to function call)
+        function_call_update = None
+        for update in updates:
+            if update.contents and hasattr(update.contents[0], "name") and update.contents[0].name == "request_info":
+                function_call_update = update
+                break
 
-    @pytest.mark.asyncio
-    async def test_workflow_with_chat_message_input(self):
-        """Test workflow execution with ChatMessage input."""
-        workflow = WorkflowBuilder().set_start_executor(EchoExecutor()).build()
+        assert function_call_update is not None, "Should have received a request_info function call"
+        function_call = function_call_update.contents[0]
 
-        agent = WorkflowAgent(workflow=workflow)
-
-        input_message = ChatMessage(role=ChatRole.USER, contents=[TextContent(text="Test message")])
-
-        result = await agent.run(input_message)
-        assert isinstance(result, AgentRunResponse)
-
-    @pytest.mark.asyncio
-    async def test_request_response_cycle_tracking(self):
-        """Test that RequestInfoEvent creates pending requests and FunctionResultContent resolves them."""
-        workflow = WorkflowBuilder().set_start_executor(EchoExecutor()).build()
-
-        agent = WorkflowAgent(workflow=workflow)
-
-        # Initially no pending requests
-        assert len(agent.pending_requests) == 0
-
-        # Create a mock RequestInfoEvent
-        from agent_framework_workflow import RequestInfoEvent
-
-        # Create a simple RequestInfoMessage
-        class TestRequestMessage(RequestInfoMessage):
-            def __init__(self, message: str):
-                super().__init__()
-                self.message = message
-
-        test_request = TestRequestMessage("Need user input")
-        request_event = RequestInfoEvent(
-            request_id="test_req_123",
-            source_executor_id="test_executor",
-            request_type=TestRequestMessage,
-            request_data=test_request,
-        )
-
-        thread = agent.get_new_thread()
-
-        # Convert the event to agent update (this should store the pending request)
-        update = await agent._convert_workflow_event_to_agent_update(request_event, thread)
-
-        # Verify the request is now pending
-        assert len(agent.pending_requests) == 1
-        assert "test_req_123" in agent.pending_requests
-        assert agent.pending_requests["test_req_123"] is request_event
-
-        # Verify the update contains a function call
-        assert update is not None
-        assert len(update.contents) == 1
-        function_call = update.contents[0]
-        assert hasattr(function_call, "call_id")
-        assert hasattr(function_call, "name")
-        assert function_call.call_id == "test_req_123"
+        # Verify the function call has expected structure
+        assert function_call.call_id is not None
         assert function_call.name == "request_info"
+        assert isinstance(function_call.arguments, dict)
+        assert "request_id" in function_call.arguments
 
-        # Now simulate user providing a response
+        # Verify the request is tracked in pending_requests
+        assert len(agent.pending_requests) == 1
+        assert function_call.call_id in agent.pending_requests
+
+        # Now provide a function result response to test continuation
         response_message = ChatMessage(
             role=ChatRole.USER,
-            contents=[FunctionResultContent(call_id="test_req_123", result="User provided response")],
+            contents=[FunctionResultContent(call_id=function_call.call_id, result="User provided answer")],
         )
 
-        # Extract function result responses
-        responses, other_messages = await agent._extract_function_result_responses([response_message])
+        # Continue the workflow with the response
+        continuation_result = await agent.run(response_message)
 
-        # Should find the response
-        assert len(responses) == 1
-        assert len(other_messages) == 0  # No other messages in this case
-        assert responses[0][0] == "test_req_123"
-        assert responses[0][1] == "User provided response"
+        # Should complete successfully
+        assert isinstance(continuation_result, AgentRunResponse)
+
+        # Verify cleanup - pending requests should be cleared after function response handling
+        assert len(agent.pending_requests) == 0

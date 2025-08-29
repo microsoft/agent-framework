@@ -25,7 +25,6 @@ from ._events import (
     AgentRunEvent,
     AgentRunStreamingEvent,
     RequestInfoEvent,
-    WorkflowCompletedEvent,
     WorkflowEvent,
 )
 
@@ -445,29 +444,18 @@ class WorkflowAgent(AgentBase):
                     if update is not None:
                         yield update
 
-                    # If this is a completed event, update thread bookmark and handle preserved messages
-                    if isinstance(event, WorkflowCompletedEvent):
-                        await self._update_thread_bookmark(thread, workflow_messages)
-                        # Add final messages to thread if any
-                        if (
-                            hasattr(event, "data")
-                            and isinstance(event.data, list)
-                            and thread._message_store is not None
-                        ):
-                            await thread._message_store.add_messages(event.data)
+                # Update thread bookmark after workflow processing completes
+                await self._update_thread_bookmark(thread, workflow_messages)
 
-                        # If we had other messages during continuation, add them to thread for next run
-                        if other_messages and function_responses and thread._message_store is not None:
-                            logger.info(f"Adding {len(other_messages)} preserved messages to thread for next run")
-                            await thread._message_store.add_messages(other_messages)
+                # If we had other messages during continuation, add them to thread for next run
+                if other_messages and function_responses and thread._message_store is not None:
+                    logger.info(f"Adding {len(other_messages)} preserved messages to thread for next run")
+                    await thread._message_store.add_messages(other_messages)
 
             finally:
                 # Clean up active run tracking
                 self.active_runs.pop(thread.run_id, None)
-                # Clean up any remaining pending requests for this thread
-                pending_to_remove = list(self.pending_requests.keys())
-                for req_id in pending_to_remove:
-                    self.pending_requests.pop(req_id, None)
+                # Note: Don't clean up pending_requests here as they may be needed for continuation
 
         except Exception as e:
             logger.error(f"Error in workflow agent execution: {e}", exc_info=True)
