@@ -205,7 +205,7 @@ public class AgentThread
         }
 
         // If we don't have any IChatMessageStore state return here.
-        if (state?.StoreState is null || state?.StoreState?.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+        if (state?.StoreState is null || state?.StoreState.Value.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
         {
             return;
         }
@@ -219,7 +219,7 @@ public class AgentThread
         await this._messageStore.DeserializeStateAsync(state!.StoreState.Value, jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
     }
 
-    internal class ThreadState
+    internal sealed class ThreadState
     {
         public string? ConversationId { get; set; }
 
