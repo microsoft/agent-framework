@@ -32,7 +32,7 @@ if TYPE_CHECKING:  # pragma: no cover
     )
 
 TChatClient = TypeVar("TChatClient", bound="ChatClient")
-TAgent = TypeVar("TAgent", bound="ChatClientAgent")
+TChatClientAgent = TypeVar("TChatClientAgent", bound="ChatClientAgent")
 
 tracer = get_tracer("agent_framework")
 logger = get_logger()
@@ -645,7 +645,7 @@ def _trace_agent_run_streaming(
     return wrap_run_streaming
 
 
-def use_agent_telemetry(cls: type[TAgent]) -> type[TAgent]:
+def use_agent_telemetry(cls: type[TChatClientAgent]) -> type[TChatClientAgent]:
     """Class decorator that enables telemetry for an agent."""
     if run := getattr(cls, "run", None):
         cls.run = _trace_agent_run(run)  # type: ignore

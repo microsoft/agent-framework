@@ -30,7 +30,7 @@ class MockAgentThread(AgentThread):
     pass
 
 
-# Mock ChatClientAgent implementation for testing
+# Mock Agent implementation for testing
 class MockAgent(AIAgent):
     @property
     def id(self) -> str:
@@ -157,12 +157,12 @@ async def test_chat_client_agent_init(chat_client: ChatClient) -> None:
 
 async def test_chat_client_agent_init_with_name(chat_client: ChatClient) -> None:
     agent_id = str(uuid4())
-    agent = ChatClientAgent(chat_client=chat_client, id=agent_id, name="Test ChatClientAgent", description="Test")
+    agent = ChatClientAgent(chat_client=chat_client, id=agent_id, name="Test Agent", description="Test")
 
     assert agent.id == agent_id
-    assert agent.name == "Test ChatClientAgent"
+    assert agent.name == "Test Agent"
     assert agent.description == "Test"
-    assert agent.display_name == "Test ChatClientAgent"  # Display name is the name if present
+    assert agent.display_name == "Test Agent"  # Display name is the name if present
 
 
 async def test_chat_client_agent_run(chat_client: ChatClient) -> None:

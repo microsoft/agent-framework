@@ -164,7 +164,7 @@ asyncio.run(main())
 
 You can explore additional agent samples [here](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/agents).
 
-## 5. Multi-ChatClientAgent Orchestration
+## 5. Multi-Agent Orchestration
 
 Coordinate multiple agents to collaborate on complex tasks using orchestration patterns:
 

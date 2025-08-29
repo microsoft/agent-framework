@@ -263,7 +263,7 @@ The package follows a flat import structure:
 
 - **Core**: Import directly from `agent_framework`
   ```python
-  from agent_framework import Agent, ai_function
+  from agent_framework import AIAgent, ai_function
   ```
 
 - **Components**: Import from `agent_framework.<component>`

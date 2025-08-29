@@ -617,11 +617,11 @@ def test_prepend_user_agent_with_none_value():
 
 
 def test_agent_decorator_with_valid_class():
-    """Test that agent decorator works with a valid Agent-like class."""
+    """Test that agent decorator works with a valid ChatClientAgent-like class."""
     from agent_framework.telemetry import use_agent_telemetry
 
     # Create a mock class with the required methods
-    class MockAgent:
+    class MockChatClientAgent:
         AGENT_SYSTEM_NAME = "test_agent_system"
 
         def __init__(self):
@@ -640,7 +640,7 @@ def test_agent_decorator_with_valid_class():
             return gen()
 
     # Apply the decorator
-    decorated_class = use_agent_telemetry(MockAgent)
+    decorated_class = use_agent_telemetry(MockChatClientAgent)
 
     # Check that the methods were wrapped
     assert hasattr(decorated_class.run, "__model_diagnostics_agent_run__")
@@ -691,7 +691,7 @@ def mock_chat_client_agent():
     """Create a mock chat client agent for testing."""
     from agent_framework import AgentRunResponse, ChatMessage, ChatRole, UsageDetails
 
-    class MockAgent:
+    class MockChatClientAgent:
         AGENT_SYSTEM_NAME = "test_agent_system"
 
         def __init__(self):
@@ -714,7 +714,7 @@ def mock_chat_client_agent():
             yield AgentRunResponseUpdate(text="Hello", role=ChatRole.ASSISTANT)
             yield AgentRunResponseUpdate(text=" from agent", role=ChatRole.ASSISTANT)
 
-    return MockAgent()
+    return MockChatClientAgent()
 
 
 @pytest.mark.parametrize("model_diagnostic_settings", [(False, False)], indirect=True)
