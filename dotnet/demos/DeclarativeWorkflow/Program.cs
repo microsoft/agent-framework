@@ -240,6 +240,7 @@ internal sealed class Program
     private static IConfigurationRoot InitializeConfig() =>
         new ConfigurationBuilder()
             .AddUserSecrets(Assembly.GetExecutingAssembly())
+            .AddEnvironmentVariables()
             .Build();
 
     private static void Notify(string message)
