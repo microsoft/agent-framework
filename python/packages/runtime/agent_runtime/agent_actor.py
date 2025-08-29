@@ -14,6 +14,7 @@ class ActorId:
     instance_id: str
 
     def __str__(self) -> str:
+        """Return the string representation of the actor ID."""
         return f"{self.type_name}/{self.instance_id}"
 
 
