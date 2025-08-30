@@ -2,7 +2,7 @@
 
 import importlib.metadata
 
-from ._agent import WorkflowAgent, WorkflowThread
+from ._agent import WorkflowAgent
 from ._checkpoint import (
     CheckpointStorage,
     FileCheckpointStorage,
@@ -15,7 +15,7 @@ from ._const import (
 from ._edge import Case, Default
 from ._events import (
     AgentRunEvent,
-    AgentRunStreamingEvent,
+    AgentRunUpdateEvent,
     ExecutorCompletedEvent,
     ExecutorEvent,
     ExecutorInvokeEvent,
@@ -89,7 +89,7 @@ __all__ = [
     "AgentExecutorRequest",
     "AgentExecutorResponse",
     "AgentRunEvent",
-    "AgentRunStreamingEvent",
+    "AgentRunUpdateEvent",
     "Case",
     "CheckpointStorage",
     "Default",
@@ -142,7 +142,6 @@ __all__ = [
     "WorkflowExecutor",
     "WorkflowRunResult",
     "WorkflowStartedEvent",
-    "WorkflowThread",
     "WorkflowValidationError",
     "WorkflowViz",
     "__version__",

@@ -18,7 +18,7 @@ from pydantic import Field
 
 from ._events import (
     AgentRunEvent,
-    AgentRunStreamingEvent,
+    AgentRunUpdateEvent,
     ExecutorCompletedEvent,
     ExecutorInvokeEvent,
     RequestInfoEvent,
@@ -783,7 +783,7 @@ class AgentExecutor(Executor):
                     thread=self._agent_thread,
                 ):
                     updates.append(update)
-                    await ctx.add_event(AgentRunStreamingEvent(self.id, update))
+                    await ctx.add_event(AgentRunUpdateEvent(self.id, update))
                 response = AgentRunResponse.from_agent_run_response_updates(updates)
             else:
                 response = await self._agent.run(

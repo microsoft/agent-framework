@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import uuid
 from typing import Any
 
 import pytest
@@ -12,8 +13,7 @@ from agent_framework import (
     TextContent,
 )
 from agent_framework.workflow import (
-    AgentRunEvent,
-    AgentRunStreamingEvent,
+    AgentRunUpdateEvent,
     Executor,
     RequestInfoExecutor,
     RequestInfoMessage,
@@ -38,25 +38,16 @@ class SimpleExecutor(Executor):
         input_text = (
             message[0].contents[0].text if message and isinstance(message[0].contents[0], TextContent) else "no input"
         )
-        await self._process_message(input_text, ctx)
-
-    async def _process_message(self, input_text: str, ctx: WorkflowContext[list[ChatMessage]]) -> None:
         response_text = f"{self.response_text}: {input_text}"
 
         # Create response message for both streaming and non-streaming cases
         response_message = ChatMessage(role=ChatRole.ASSISTANT, contents=[TextContent(text=response_text)])
 
-        if self.emit_streaming:
-            # Emit streaming update
-            streaming_update = AgentRunResponseUpdate(
-                contents=[TextContent(text=response_text)],
-                role=ChatRole.ASSISTANT,
-            )
-            await ctx.add_event(AgentRunStreamingEvent(executor_id=self.id, data=streaming_update))
-        else:
-            # Emit agent run event
-            agent_response = AgentRunResponse(messages=[response_message])
-            await ctx.add_event(AgentRunEvent(executor_id=self.id, data=agent_response))
+        # Emit update event.
+        streaming_update = AgentRunResponseUpdate(
+            contents=[TextContent(text=response_text)], role=ChatRole.ASSISTANT, message_id=str(uuid.uuid4())
+        )
+        await ctx.add_event(AgentRunUpdateEvent(executor_id=self.id, data=streaming_update))
 
         # Pass message to next executor if any (for both streaming and non-streaming)
         await ctx.send_message([response_message])
@@ -73,11 +64,12 @@ class RequestingExecutor(Executor):
     @handler
     async def handle_request_response(self, _: Any, ctx: WorkflowContext[ChatMessage]) -> None:
         # Handle the response and emit completion response
-        response_message = ChatMessage(
-            role=ChatRole.ASSISTANT, contents=[TextContent(text="Request completed successfully")]
+        update = AgentRunResponseUpdate(
+            contents=[TextContent(text="Request completed successfully")],
+            role=ChatRole.ASSISTANT,
+            message_id=str(uuid.uuid4()),
         )
-        agent_response = AgentRunResponse(messages=[response_message])
-        await ctx.add_event(AgentRunEvent(executor_id=self.id, data=agent_response))
+        await ctx.add_event(AgentRunUpdateEvent(executor_id=self.id, data=update))
 
 
 class TestWorkflowAgent:
