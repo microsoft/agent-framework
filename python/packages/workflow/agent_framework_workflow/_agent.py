@@ -4,7 +4,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterable
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypedDict
 
 from agent_framework import (
     AgentBase,
@@ -16,6 +16,7 @@ from agent_framework import (
     FunctionCallContent,
     FunctionResultContent,
     TextContent,
+    UsageDetails,
 )
 from agent_framework._pydantic import AFBaseModel
 from agent_framework.exceptions import AgentExecutionException
@@ -31,6 +32,13 @@ if TYPE_CHECKING:
     from ._workflow import Workflow
 
 logger = logging.getLogger(__name__)
+
+
+class _ResponseState(TypedDict):
+    """State for grouping response updates by message_id."""
+
+    by_msg: dict[str, list[AgentRunResponseUpdate]]
+    dangling: list[AgentRunResponseUpdate]
 
 
 class WorkflowAgent(AgentBase):
@@ -101,7 +109,7 @@ class WorkflowAgent(AgentBase):
             response_updates.append(update)
 
         # Convert updates to final response.
-        response = self.merge_updates(response_updates)
+        response = self.merge_updates(response_updates, response_id)
 
         # Notify thread of new messages (both input and response messages)
         await self._notify_thread_of_new_messages(thread, input_messages)
@@ -136,7 +144,7 @@ class WorkflowAgent(AgentBase):
             yield update
 
         # Convert updates to final response.
-        response = self.merge_updates(response_updates)
+        response = self.merge_updates(response_updates, response_id)
 
         # Notify thread of new messages (both input and response messages)
         await self._notify_thread_of_new_messages(thread, input_messages)
@@ -273,8 +281,8 @@ class WorkflowAgent(AgentBase):
         return function_responses
 
     @staticmethod
-    def merge_updates(updates: list[AgentRunResponseUpdate]) -> AgentRunResponse:
-        """Merge multiple AgentRunResponseUpdates from workflow into an AgentRunResponse."""
+    def merge_updates(updates: list[AgentRunResponseUpdate], response_id: str) -> AgentRunResponse:
+        """Merge AgentRunResponseUpdates from workflow into an AgentRunResponse with the given response_id."""
         # Mirror the .NET MessageMerger behavior used by WorkflowHostAgent.
         # 1) Partition updates by response_id. Within each response_id, further group by message_id
         #    while keeping a dangling bucket for updates without message_id.
@@ -282,17 +290,18 @@ class WorkflowAgent(AgentBase):
         # 3) Sort those responses by created_at (None last), then aggregate them: concat messages, prefer
         #    latest created_at, merge additional_properties, and sum usage_details. Also collect raw reps.
         # 4) Append messages from the top-level dangling updates (without response_id) at the end.
+        # The final result is a single AgentRunResponse with all messages merged in the correct order.
 
         # Grouping state per response_id
-        states: dict[str, dict[str, list[AgentRunResponseUpdate]] | list[AgentRunResponseUpdate]] = {}
+        states: dict[str, _ResponseState] = {}
         # Keep a simple global dangling list for updates with no response_id
         global_dangling: list[AgentRunResponseUpdate] = []
 
         for u in updates:
             if u.response_id:
-                state = states.setdefault(u.response_id, {"by_msg": {}, "dangling": []})  # type: ignore[reportGeneralTypeIssues]
-                by_msg: dict[str, list[AgentRunResponseUpdate]] = state["by_msg"]  # type: ignore[reportTypedDictNotRequiredAccess]
-                dangling: list[AgentRunResponseUpdate] = state["dangling"]  # type: ignore[reportTypedDictNotRequiredAccess]
+                state = states.setdefault(u.response_id, {"by_msg": {}, "dangling": []})
+                by_msg = state["by_msg"]
+                dangling = state["dangling"]
                 if u.message_id:
                     by_msg.setdefault(u.message_id, []).append(u)
                 else:
@@ -301,8 +310,6 @@ class WorkflowAgent(AgentBase):
                 global_dangling.append(u)
 
         # Helper: safe parse of created_at for ordering (None last)
-        from datetime import datetime
-
         def _parse_dt(value: str | None) -> tuple[int, datetime | str | None]:
             if not value:
                 return (1, None)  # None goes last
@@ -315,6 +322,14 @@ class WorkflowAgent(AgentBase):
             except Exception:
                 # Fallback to string compare if parsing fails
                 return (0, v)
+
+        # Helper: sum usage details
+        def _sum_usage(a: UsageDetails | None, b: UsageDetails | None):
+            if a is None:
+                return b
+            if b is None:
+                return a
+            return a + b
 
         # Helper: merge two AgentRunResponse objects (same response_id)
         def _merge_responses(current: AgentRunResponse | None, incoming: AgentRunResponse) -> AgentRunResponse:
@@ -334,32 +349,25 @@ class WorkflowAgent(AgentBase):
                 else:
                     raw_list.append(incoming.raw_representation)
 
-            def _sum_usage(a: Any | None, b: Any | None):
-                if a is None:
-                    return b
-                if b is None:
-                    return a
-                # UsageDetails implements __add__
-                try:
-                    return a + b  # type: ignore[operator]
-                except Exception:
-                    return a
-
             return AgentRunResponse(
                 messages=(current.messages or []) + (incoming.messages or []),
                 response_id=current.response_id or incoming.response_id,
                 created_at=incoming.created_at or current.created_at,
-                usage_details=_sum_usage(current.usage_details, incoming.usage_details),  # type: ignore[assignment]
+                usage_details=_sum_usage(current.usage_details, incoming.usage_details),
                 raw_representation=raw_list if raw_list else None,
                 additional_properties=incoming.additional_properties or current.additional_properties,
             )
 
         final_messages: list[ChatMessage] = []
+        merged_usage: UsageDetails | None = None
+        latest_created_at: str | None = None
+        merged_additional_properties: dict[str, Any] | None = None
+        raw_representations: list[object] = []
 
         # Process grouped response_id states
-        for response_id, state in states.items():
-            by_msg = state["by_msg"]  # type: ignore[reportTypedDictNotRequiredAccess]
-            dangling = state["dangling"]  # type: ignore[reportTypedDictNotRequiredAccess]
+        for grouped_response_id, state in states.items():
+            by_msg = state["by_msg"]
+            dangling = state["dangling"]
 
             per_message_responses: list[AgentRunResponse] = []
             for _, msg_updates in by_msg.items():
@@ -375,17 +383,56 @@ class WorkflowAgent(AgentBase):
             aggregated: AgentRunResponse | None = None
             for resp in per_message_responses:
                 # Ensure response_id consistency when available
-                if resp.response_id and response_id and resp.response_id != response_id:
+                if resp.response_id and grouped_response_id and resp.response_id != grouped_response_id:
                     # If mismatch, prefer the grouping key (keep current.response_id)
-                    resp.response_id = response_id
+                    resp.response_id = grouped_response_id
                 aggregated = _merge_responses(aggregated, resp)
 
             if aggregated:
                 final_messages.extend(aggregated.messages)
+                # Aggregate metadata from this response
+                if aggregated.usage_details:
+                    merged_usage = _sum_usage(merged_usage, aggregated.usage_details)
+                if aggregated.created_at and (
+                    not latest_created_at or _parse_dt(aggregated.created_at) > _parse_dt(latest_created_at)
+                ):
+                    latest_created_at = aggregated.created_at
+                if aggregated.additional_properties:
+                    if merged_additional_properties is None:
+                        merged_additional_properties = {}
+                    merged_additional_properties.update(aggregated.additional_properties)
+                if aggregated.raw_representation:
+                    if isinstance(aggregated.raw_representation, list):
+                        raw_representations.extend(aggregated.raw_representation)
+                    else:
+                        raw_representations.append(aggregated.raw_representation)
 
         # Append global dangling messages (no response_id)
         if global_dangling:
             flattened = AgentRunResponse.from_agent_run_response_updates(global_dangling)
             final_messages.extend(flattened.messages)
+            # Also aggregate metadata from dangling updates
+            if flattened.usage_details:
+                merged_usage = _sum_usage(merged_usage, flattened.usage_details)
+            if flattened.created_at and (
+                not latest_created_at or _parse_dt(flattened.created_at) > _parse_dt(latest_created_at)
+            ):
+                latest_created_at = flattened.created_at
+            if flattened.additional_properties:
+                if merged_additional_properties is None:
+                    merged_additional_properties = {}
+                merged_additional_properties.update(flattened.additional_properties)
+            if flattened.raw_representation:
+                if isinstance(flattened.raw_representation, list):
+                    raw_representations.extend(flattened.raw_representation)
+                else:
+                    raw_representations.append(flattened.raw_representation)
 
-        return AgentRunResponse(messages=final_messages)
+        return AgentRunResponse(
+            messages=final_messages,
+            response_id=response_id,
+            created_at=latest_created_at,
+            usage_details=merged_usage,
+            raw_representation=raw_representations if raw_representations else None,
+            additional_properties=merged_additional_properties,
+        )
