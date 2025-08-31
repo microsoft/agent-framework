@@ -238,7 +238,7 @@ class TestWorkflowAgent:
         workflow = WorkflowBuilder().set_start_executor(executor).build()
 
         # Try to create an agent with unsupported input types
-        with pytest.raises(ValueError, match="Workflow's start executor cannot handle agent input types:"):
+        with pytest.raises(ValueError, match="Workflow's start executor cannot handle list\\[ChatMessage\\]"):
             workflow.as_agent()
 
 

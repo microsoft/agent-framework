@@ -73,14 +73,12 @@ class WorkflowAgent(AgentBase):
         kwargs["workflow"] = workflow
 
         # Validate the workflow's start executor can handle agent-facing message inputs
-        # Acceptable types: ChatMessage, list[ChatMessage], or str
         start_executor = workflow.get_start_executor()
         if start_executor is None:
             raise ValueError("Workflow's start executor is not defined.")
 
-        agent_input_types: list[type] = [ChatMessage, list[ChatMessage], str]
-        if not any(start_executor.can_handle_type(t) for t in agent_input_types):
-            raise ValueError(f"Workflow's start executor cannot handle agent input types: {agent_input_types}")
+        if not start_executor.can_handle_type(list[ChatMessage]):
+            raise ValueError("Workflow's start executor cannot handle list[ChatMessage]")
 
         super().__init__(id=id, name=name, description=description, **kwargs)
 
