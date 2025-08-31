@@ -34,10 +34,6 @@ repos:
     hooks:
       - id: pyupgrade
         name: Upgrade Python syntax
-        args: [--py310-plus]
-        # Avoid rewriting typing.Type -> built-in type in files that rely on Type to prevent
-        # conflicts with BaseModel fields named "type". Exclude the executor to preserve Type[Any].
-        exclude: ^python/packages/workflow/agent_framework_workflow/_executor.py$
   - repo: local
     hooks:
       - id: poe-check
