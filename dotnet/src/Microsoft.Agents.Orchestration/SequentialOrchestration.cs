@@ -38,7 +38,6 @@ public sealed partial class SequentialOrchestration : OrchestratingAgent
 
         // Append the new messages to the checkpoint state
         List<ChatMessage> allMessages = [.. state.Messages, .. newMessages];
-
         return this.ResumeAsync(state.Index, allMessages, context, cancellationToken);
     }
 

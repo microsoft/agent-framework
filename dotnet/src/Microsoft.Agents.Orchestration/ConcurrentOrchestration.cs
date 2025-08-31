@@ -67,7 +67,6 @@ public partial class ConcurrentOrchestration : OrchestratingAgent
 
         // Append the new messages to the checkpoint state
         List<ChatMessage> allMessages = [.. state.Messages, .. newMessages];
-
         return this.ResumeAsync(allMessages, state.Completed, context, cancellationToken);
     }
 

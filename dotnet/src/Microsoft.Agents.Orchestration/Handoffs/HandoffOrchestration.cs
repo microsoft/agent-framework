@@ -72,9 +72,7 @@ public sealed partial class HandoffOrchestration : OrchestratingAgent
 
         // Append the new messages to the checkpoint state
         List<ChatMessage> allMessages = [.. state.AllMessages, .. newMessages];
-        int originalMessageCount = state.OriginalMessageCount + newMessages.Count;
-
-        return this.ResumeAsync(nextAgent, allMessages, originalMessageCount, context, cancellationToken);
+        return this.ResumeAsync(nextAgent, allMessages, state.OriginalMessageCount, context, cancellationToken);
     }
 
     /// <inheritdoc />

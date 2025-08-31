@@ -57,9 +57,7 @@ public sealed partial class GroupChatOrchestration : OrchestratingAgent
 
         // Append the new messages to the checkpoint state
         List<ChatMessage> allMessages = [.. state.AllMessages, .. newMessages];
-        int originalMessageCount = state.OriginalMessageCount + newMessages.Count;
-
-        return this.ResumeAsync(allMessages, originalMessageCount, context, cancellationToken);
+        return this.ResumeAsync(allMessages, state.OriginalMessageCount, context, cancellationToken);
     }
 
     private async Task<AgentRunResponse> ResumeAsync(
