@@ -34,6 +34,7 @@ repos:
     hooks:
       - id: pyupgrade
         name: Upgrade Python syntax
+        args: [--py310-plus]
   - repo: local
     hooks:
       - id: poe-check
