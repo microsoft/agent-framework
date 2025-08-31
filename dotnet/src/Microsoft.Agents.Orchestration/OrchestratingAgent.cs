@@ -135,7 +135,7 @@ public abstract partial class OrchestratingAgent : AIAgent
         JsonElement? checkpoint = await this.ReadCheckpointAsync(context, cancellationToken).ConfigureAwait(false);
         Task<AgentRunResponse> completion = checkpoint is null ?
             this.RunCoreAsync(messages, context, cancellationToken) :
-            this.ResumeCoreAsync(checkpoint.Value, context, cancellationToken);
+            this.ResumeCoreAsync(checkpoint.Value, messages, context, cancellationToken);
 
         if (logger.IsEnabled(LogLevel.Trace))
         {
@@ -157,9 +157,10 @@ public abstract partial class OrchestratingAgent : AIAgent
     /// Resumes processing of the orchestration.
     /// </summary>
     /// <param name="checkpointState">The last checkpoint state available from which to resume the operation.</param>
+    /// <param name="newMessages">The new messages to be processed in addition to the checkpoint state.</param>
     /// <param name="context">The context for this operation.</param>
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
-    protected abstract Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, OrchestratingAgentContext context, CancellationToken cancellationToken);
+    protected abstract Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, IReadOnlyCollection<ChatMessage> newMessages, OrchestratingAgentContext context, CancellationToken cancellationToken);
 
     /// <summary>
     /// Runs the agent with input messages and respond with both streamed and regular messages.
