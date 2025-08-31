@@ -208,6 +208,8 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
                 contents=[UsageContent(details=self._usage_details_from_openai(chunk.usage), raw_representation=chunk)],
                 ai_model_id=chunk.model,
                 additional_properties=chunk_metadata,
+                response_id=chunk.id,
+                message_id=chunk.id,
             )
         contents: list[AIContents] = []
         finish_reason: ChatFinishReason | None = None
@@ -227,6 +229,8 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
             additional_properties=chunk_metadata,
             finish_reason=finish_reason,
             raw_representation=chunk,
+            response_id=chunk.id,
+            message_id=chunk.id,
         )
 
     def _usage_details_from_openai(self, usage: CompletionUsage) -> UsageDetails:

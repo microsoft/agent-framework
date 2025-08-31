@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Moq;
@@ -114,7 +113,7 @@ public class ChatClientAgentTests
         ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
 
         // Act
-        await agent.RunAsync([new(ChatRole.User, "test")], chatOptions: chatOptions);
+        await agent.RunAsync([new(ChatRole.User, "test")], options: new ChatClientAgentRunOptions(chatOptions));
 
         // Assert
         mockService.Verify(
@@ -320,7 +319,7 @@ public class ChatClientAgentTests
         AgentThread thread = new() { ConversationId = "ConvId" };
 
         // Act & Assert
-        var response = await agent.RunAsync([new(ChatRole.User, "test")], thread, chatOptions: chatOptions);
+        var response = await agent.RunAsync([new(ChatRole.User, "test")], thread, options: new ChatClientAgentRunOptions(chatOptions));
         Assert.NotNull(response);
     }
 
@@ -340,7 +339,7 @@ public class ChatClientAgentTests
         AgentThread thread = new() { ConversationId = "ThreadId" };
 
         // Act & Assert
-        await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([new(ChatRole.User, "test")], thread, chatOptions: chatOptions));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([new(ChatRole.User, "test")], thread, options: new ChatClientAgentRunOptions(chatOptions)));
     }
 
     /// <summary>
@@ -363,7 +362,7 @@ public class ChatClientAgentTests
         AgentThread thread = new() { ConversationId = "ConvId" };
 
         // Act
-        await agent.RunAsync([new(ChatRole.User, "test")], thread, chatOptions: chatOptions);
+        await agent.RunAsync([new(ChatRole.User, "test")], thread, options: new ChatClientAgentRunOptions(chatOptions));
 
         // Assert
         Assert.Null(chatOptions.ConversationId);
@@ -757,7 +756,7 @@ public class ChatClientAgentTests
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
 
         // Act
-        await agent.RunAsync(messages, chatOptions: requestChatOptions);
+        await agent.RunAsync(messages, options: new ChatClientAgentRunOptions(requestChatOptions));
 
         // Assert
         Assert.NotNull(capturedChatOptions);
@@ -780,21 +779,21 @@ public class ChatClientAgentTests
             Temperature = 0.7f,
             TopP = 0.9f,
             ModelId = "agent-model",
-            AdditionalProperties = new AdditionalPropertiesDictionary() { ["key"] = "agent-value" }
+            AdditionalProperties = new AdditionalPropertiesDictionary { ["key"] = "agent-value" }
         };
         var requestChatOptions = new ChatOptions
         {
+            // TopP and ModelId not set, should use agent values
             MaxOutputTokens = 200,
             Temperature = 0.3f,
-            AdditionalProperties = new AdditionalPropertiesDictionary() { ["key"] = "request-value" },
+            AdditionalProperties = new AdditionalPropertiesDictionary { ["key"] = "request-value" },
             Instructions = "request instructions"
-            // TopP and ModelId not set, should use agent values
         };
         var expectedChatOptionsMerge = new ChatOptions
         {
             MaxOutputTokens = 200, // Request value takes priority
             Temperature = 0.3f, // Request value takes priority
-            AdditionalProperties = new AdditionalPropertiesDictionary() { ["key"] = "request-value" }, // Request value takes priority
+            AdditionalProperties = new AdditionalPropertiesDictionary { ["key"] = "request-value" }, // Request value takes priority
             TopP = 0.9f, // Agent value used when request doesn't specify
             ModelId = "agent-model", // Agent value used when request doesn't specify
             Instructions = "test instructions\nrequest instructions" // Request is in addition to agent instructions
@@ -819,7 +818,7 @@ public class ChatClientAgentTests
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
 
         // Act
-        await agent.RunAsync(messages, chatOptions: requestChatOptions);
+        await agent.RunAsync(messages, options: new ChatClientAgentRunOptions(requestChatOptions));
 
         // Assert
         Assert.NotNull(capturedChatOptions);
@@ -898,12 +897,13 @@ public class ChatClientAgentTests
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
 
         // Act
-        await agent.RunAsync(messages, chatOptions: requestChatOptions);
+        await agent.RunAsync(messages, options: new ChatClientAgentRunOptions(requestChatOptions));
 
         // Assert
         Assert.NotNull(capturedChatOptions);
         Assert.NotNull(capturedChatOptions.Tools);
         Assert.Equal(2, capturedChatOptions.Tools.Count);
+
         // Request tools should come first, then agent tools
         Assert.Contains(requestTool, capturedChatOptions.Tools);
         Assert.Contains(agentTool, capturedChatOptions.Tools);
@@ -924,8 +924,8 @@ public class ChatClientAgentTests
         };
         var requestChatOptions = new ChatOptions
         {
-            MaxOutputTokens = 100
             // No Tools specified
+            MaxOutputTokens = 100
         };
 
         Mock<IChatClient> mockService = new();
@@ -947,7 +947,7 @@ public class ChatClientAgentTests
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
 
         // Act
-        await agent.RunAsync(messages, chatOptions: requestChatOptions);
+        await agent.RunAsync(messages, options: new ChatClientAgentRunOptions(requestChatOptions));
 
         // Assert
         Assert.NotNull(capturedChatOptions);
@@ -994,7 +994,7 @@ public class ChatClientAgentTests
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
 
         // Act
-        await agent.RunAsync(messages, chatOptions: requestChatOptions);
+        await agent.RunAsync(messages, options: new ChatClientAgentRunOptions(requestChatOptions));
 
         // Assert
         Assert.NotNull(capturedChatOptions);
@@ -1029,6 +1029,7 @@ public class ChatClientAgentTests
             MaxOutputTokens = 200,
             Temperature = 0.3f,
             Instructions = "request instructions",
+
             // Other properties not set, should use agent values
             StopSequences = ["request-stop"]
         };
@@ -1072,7 +1073,7 @@ public class ChatClientAgentTests
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
 
         // Act
-        await agent.RunAsync(messages, chatOptions: requestChatOptions);
+        await agent.RunAsync(messages, options: new ChatClientAgentRunOptions(requestChatOptions));
 
         // Assert
         Assert.NotNull(capturedChatOptions);
@@ -1148,6 +1149,7 @@ public class ChatClientAgentTests
         // Assert
         Assert.NotNull(result);
         Assert.IsAssignableFrom<IChatClient>(result);
+
         // Note: The result will be the AgentInvokedChatClient wrapper, not the original mock
         Assert.Equal("AgentInvokedChatClient", result.GetType().Name);
     }
@@ -1490,7 +1492,7 @@ public class ChatClientAgentTests
             s => s.GetStreamingResponseAsync(
                 It.IsAny<IEnumerable<ChatMessage>>(),
                 It.IsAny<ChatOptions>(),
-                It.IsAny<CancellationToken>())).Returns(returnUpdates.ToAsyncEnumerable());
+                It.IsAny<CancellationToken>())).Returns(ToAsyncEnumerableAsync(returnUpdates));
 
         ChatClientAgent agent =
             new(mockService.Object, options: new()
@@ -1499,10 +1501,15 @@ public class ChatClientAgentTests
             });
 
         // Act
-        var result = await agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "Hello")]).ToArrayAsync();
+        var updates = agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "Hello")]);
+        List<AgentRunResponseUpdate> result = [];
+        await foreach (var update in updates)
+        {
+            result.Add(update);
+        }
 
         // Assert
-        Assert.Equal(2, result.Length);
+        Assert.Equal(2, result.Count);
         Assert.Equal("wh", result[0].Text);
         Assert.Equal("at?", result[1].Text);
 
@@ -1516,4 +1523,13 @@ public class ChatClientAgentTests
     }
 
     #endregion
+
+    private static async IAsyncEnumerable<T> ToAsyncEnumerableAsync<T>(IEnumerable<T> values)
+    {
+        await Task.Yield();
+        foreach (var update in values)
+        {
+            yield return update;
+        }
+    }
 }
