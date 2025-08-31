@@ -225,6 +225,22 @@ class TestWorkflowAgent:
         assert isinstance(agent_no_name, WorkflowAgent)
         assert agent_no_name.workflow is workflow
 
+    def test_workflow_as_agent_cannot_handle_agent_inputs(self) -> None:
+        """Test that Workflow.as_agent() raises an error if the start executor cannot handle agent inputs."""
+
+        class _Executor(Executor):
+            @handler
+            async def handle_bool(self, message: bool, context: WorkflowContext[Any]) -> None:
+                raise ValueError("Unsupported message type")
+
+        # Create a simple workflow
+        executor = _Executor()
+        workflow = WorkflowBuilder().set_start_executor(executor).build()
+
+        # Try to create an agent with unsupported input types
+        with pytest.raises(ValueError, match="Workflow's start executor cannot handle agent input types:"):
+            workflow.as_agent()
+
 
 class TestWorkflowAgentMergeUpdates:
     """Test cases specifically for the WorkflowAgent.merge_updates static method."""

@@ -7,7 +7,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from types import UnionType
-from typing import TYPE_CHECKING, Any, Generic, TypeVar, Union, get_args, get_origin, overload
+from typing import TYPE_CHECKING, Any, Generic, Type, TypeVar, Union, get_args, get_origin, overload
 
 if TYPE_CHECKING:
     from ._workflow import Workflow
@@ -253,6 +253,17 @@ class Executor(AFBaseModel):
             True if the executor can handle the message type, False otherwise.
         """
         return any(is_instance_of(message, message_type) for message_type in self._handlers)
+
+    def can_handle_type(self, message_type: Type[Any]) -> bool:
+        """Check if the executor can handle a given message type.
+
+        Args:
+            message_type: The message type to check.
+
+        Returns:
+            True if the executor can handle the message type, False otherwise.
+        """
+        return message_type in self._handlers
 
 
 # endregion: Executor
