@@ -4,7 +4,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterable
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, ClassVar, TypedDict
+from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
 
 from agent_framework import (
     AgentBase,
@@ -32,13 +32,6 @@ if TYPE_CHECKING:
     from ._workflow import Workflow
 
 logger = logging.getLogger(__name__)
-
-
-class _ResponseState(TypedDict):
-    """State for grouping response updates by message_id."""
-
-    by_msg: dict[str, list[AgentRunResponseUpdate]]
-    dangling: list[AgentRunResponseUpdate]
 
 
 class WorkflowAgent(AgentBase):
@@ -231,7 +224,7 @@ class WorkflowAgent(AgentBase):
             case AgentRunUpdateEvent(data=update):
                 # Direct pass-through of update in an agent streaming event
                 if update:
-                    return update
+                    return cast(AgentRunResponseUpdate, update)
                 return None
 
             case RequestInfoEvent(request_id=request_id):
@@ -280,69 +273,116 @@ class WorkflowAgent(AgentBase):
                         )
         return function_responses
 
+    class _ResponseState(TypedDict):
+        """State for grouping response updates by message_id."""
+
+        by_msg: dict[str, list[AgentRunResponseUpdate]]
+        dangling: list[AgentRunResponseUpdate]
+
     @staticmethod
     def merge_updates(updates: list[AgentRunResponseUpdate], response_id: str) -> AgentRunResponse:
-        """Merge AgentRunResponseUpdates from workflow into an AgentRunResponse with the given response_id."""
-        # Mirror the .NET MessageMerger behavior used by WorkflowHostAgent.
-        # 1) Partition updates by response_id. Within each response_id, further group by message_id
-        #    while keeping a dangling bucket for updates without message_id.
-        # 2) For each response_id, turn each message_id group into an AgentRunResponse, plus one for dangling.
-        # 3) Sort those responses by created_at (None last), then aggregate them: concat messages, prefer
-        #    latest created_at, merge additional_properties, and sum usage_details. Also collect raw reps.
-        # 4) Append messages from the top-level dangling updates (without response_id) at the end.
-        # The final result is a single AgentRunResponse with all messages merged in the correct order.
+        """Merge streaming updates into a single AgentRunResponse.
 
-        # Grouping state per response_id
-        states: dict[str, _ResponseState] = {}
-        # Keep a simple global dangling list for updates with no response_id
-        global_dangling: list[AgentRunResponseUpdate] = []
+        Behavior:
+        - Group updates by response_id; within each group, group by message_id and keep a
+            per-group dangling bucket for updates with no message_id.
+        - Convert each group (per message and dangling) into an intermediate AgentRunResponse
+            using AgentRunResponse.from_agent_run_response_updates.
+        - Sort those responses by created_at (valid timestamps before None) and merge them by:
+            concatenating messages chronologically, summing UsageDetails, preferring the latest
+            created_at and additional_properties, and collecting raw_representation values into a list.
+        - Handle updates that have no response_id at all at the end ("global dangling").
+
+        Args:
+            updates: The list of AgentRunResponseUpdate objects to merge.
+            response_id: The response identifier to set on the returned AgentRunResponse.
+
+        Returns:
+            An AgentRunResponse with messages in processing order and aggregated metadata.
+
+        Notes:
+            - Input updates are not mutated.
+            - Intermediate responses with a response_id different from their group key are coerced
+                to the group key for consistency. The returned response_id is always the provided
+                response_id parameter.
+        """
+        # PHASE 1: GROUP UPDATES BY RESPONSE_ID AND MESSAGE_ID
+        # ===================================================
+        # We partition all updates into a two-level hierarchy:
+        # 1. First level: group by response_id (updates from the same response)
+        # 2. Second level: within each response_id, group by message_id (updates for the same message)
+        # 3. Special case: updates without message_id go into a "dangling" bucket per response
+        # 4. Global special case: updates without response_id go into global_dangling
+
+        states: dict[str, WorkflowAgent._ResponseState] = {}  # response_id -> {by_msg, dangling}
+        global_dangling: list[AgentRunResponseUpdate] = []  # updates with no response_id at all
 
         for u in updates:
             if u.response_id:
+                # This update belongs to a specific response - group it appropriately
                 state = states.setdefault(u.response_id, {"by_msg": {}, "dangling": []})
-                by_msg = state["by_msg"]
-                dangling = state["dangling"]
+                by_msg = state["by_msg"]  # message_id -> list of updates for that message
+                dangling = state["dangling"]  # updates with no message_id for this response
+
                 if u.message_id:
+                    # This update is part of a specific message - group with other updates for same message
                     by_msg.setdefault(u.message_id, []).append(u)
                 else:
+                    # This update has a response_id but no message_id - goes into response's dangling bucket
                     dangling.append(u)
             else:
+                # This update has no response_id at all - goes into global dangling bucket
                 global_dangling.append(u)
 
-        # Helper: safe parse of created_at for ordering (None last)
+        # HELPER FUNCTIONS FOR SORTING AND MERGING
+        # ========================================
+
         def _parse_dt(value: str | None) -> tuple[int, datetime | str | None]:
+            """Parse created_at timestamp for sorting.
+
+            Returns (priority, parsed_value) where priority=0 means valid timestamp (sorts first),
+            priority=1 means None/invalid (sorts last).
+            """
             if not value:
-                return (1, None)  # None goes last
+                return (1, None)  # None goes last in sort order
+
             v = value
-            # Normalize trailing Z to +00:00 for fromisoformat
+            # Normalize ISO8601 format: trailing Z -> +00:00 for Python's fromisoformat()
             if v.endswith("Z"):
                 v = v[:-1] + "+00:00"
+
             try:
+                # Parse as proper datetime for chronological ordering
                 return (0, datetime.fromisoformat(v))
             except Exception:
-                # Fallback to string compare if parsing fails
+                # If parsing fails, fall back to string comparison (still sort before None)
                 return (0, v)
 
-        # Helper: sum usage details
-        def _sum_usage(a: UsageDetails | None, b: UsageDetails | None):
+        def _sum_usage(a: UsageDetails | None, b: UsageDetails | None) -> UsageDetails | None:
+            """Combine usage details from two responses. UsageDetails implements __add__ for proper aggregation."""
             if a is None:
                 return b
             if b is None:
                 return a
-            return a + b
+            return a + b  # UsageDetails has __add__ method for token count aggregation
 
-        # Helper: merge two AgentRunResponse objects (same response_id)
         def _merge_responses(current: AgentRunResponse | None, incoming: AgentRunResponse) -> AgentRunResponse:
-            if current is None:
-                return incoming
+            """Merge two AgentRunResponse objects that belong to the same logical response.
 
-            # raw_representation: collect as a list preserving order
+            Combines messages, prefers latest metadata, and aggregates usage/raw_representation.
+            """
+            if current is None:
+                return incoming  # First response becomes the base
+
+            # Collect raw representations as a list to preserve execution history
             raw_list: list[object] = []
+            # Add current response's raw data
             if current.raw_representation is not None:
                 if isinstance(current.raw_representation, list):
-                    raw_list.extend(current.raw_representation)
+                    raw_list.extend(current.raw_representation)  # Already a list, extend it
                 else:
-                    raw_list.append(current.raw_representation)
+                    raw_list.append(current.raw_representation)  # Single item, append it
+            # Add incoming response's raw data
             if incoming.raw_representation is not None:
                 if isinstance(incoming.raw_representation, list):
                     raw_list.extend(incoming.raw_representation)
@@ -350,68 +390,101 @@ class WorkflowAgent(AgentBase):
                     raw_list.append(incoming.raw_representation)
 
             return AgentRunResponse(
+                # Concatenate all messages in chronological order
                 messages=(current.messages or []) + (incoming.messages or []),
+                # Keep consistent response_id (prefer current, fall back to incoming)
                 response_id=current.response_id or incoming.response_id,
+                # Prefer latest timestamp (incoming is processed later, so likely newer)
                 created_at=incoming.created_at or current.created_at,
+                # Sum token usage from both responses
                 usage_details=_sum_usage(current.usage_details, incoming.usage_details),
+                # Preserve execution history as list
                 raw_representation=raw_list if raw_list else None,
+                # Prefer incoming properties (latest take precedence)
                 additional_properties=incoming.additional_properties or current.additional_properties,
             )
 
-        final_messages: list[ChatMessage] = []
-        merged_usage: UsageDetails | None = None
-        latest_created_at: str | None = None
-        merged_additional_properties: dict[str, Any] | None = None
-        raw_representations: list[object] = []
+        # PHASE 2: CONVERT GROUPED UPDATES TO RESPONSES AND MERGE
+        # =======================================================
+        # Initialize containers for final aggregated metadata
+        final_messages: list[ChatMessage] = []  # All messages from all responses
+        merged_usage: UsageDetails | None = None  # Aggregated token usage
+        latest_created_at: str | None = None  # Latest timestamp across all responses
+        merged_additional_properties: dict[str, Any] | None = None  # Merged properties
+        raw_representations: list[object] = []  # All raw representations
 
-        # Process grouped response_id states
-        for grouped_response_id, state in states.items():
-            by_msg = state["by_msg"]
-            dangling = state["dangling"]
+        # Process each response_id group separately
+        for grouped_response_id in states:
+            state = states[grouped_response_id]
+            by_msg = state["by_msg"]  # message_id -> list of updates
+            dangling = state["dangling"]  # updates with no message_id
 
+            # PHASE 2A: Convert each message group to AgentRunResponse
             per_message_responses: list[AgentRunResponse] = []
+
+            # Convert each message_id group into a single AgentRunResponse
             for _, msg_updates in by_msg.items():
                 if msg_updates:
+                    # Use built-in method to merge updates for the same message
                     per_message_responses.append(AgentRunResponse.from_agent_run_response_updates(msg_updates))
+
+            # Also convert dangling updates (no message_id) to a response
             if dangling:
                 per_message_responses.append(AgentRunResponse.from_agent_run_response_updates(dangling))
 
-            # Sort by created_at (None last)
+            # PHASE 2B: Sort responses chronologically within this response_id group
+            # This ensures messages appear in the correct temporal order
             per_message_responses.sort(key=lambda r: _parse_dt(r.created_at))
 
-            # Aggregate
+            # PHASE 2C: Merge all responses for this response_id into single response
             aggregated: AgentRunResponse | None = None
             for resp in per_message_responses:
-                # Ensure response_id consistency when available
+                # Ensure response_id consistency - fix any mismatches
                 if resp.response_id and grouped_response_id and resp.response_id != grouped_response_id:
-                    # If mismatch, prefer the grouping key (keep current.response_id)
+                    # Prefer the grouping key (which came from the updates themselves)
                     resp.response_id = grouped_response_id
+                # Progressively merge this response with the accumulated result
                 aggregated = _merge_responses(aggregated, resp)
 
+            # PHASE 2D: Add this response_id group's results to final aggregation
             if aggregated:
+                # Add all messages from this response_id group to final output
                 final_messages.extend(aggregated.messages)
-                # Aggregate metadata from this response
+
+                # Aggregate metadata across ALL response_id groups
+                # Usage: sum token counts from all responses
                 if aggregated.usage_details:
                     merged_usage = _sum_usage(merged_usage, aggregated.usage_details)
+
+                # Timestamp: keep the latest timestamp seen across all responses
                 if aggregated.created_at and (
                     not latest_created_at or _parse_dt(aggregated.created_at) > _parse_dt(latest_created_at)
                 ):
                     latest_created_at = aggregated.created_at
+
+                # Additional properties: merge all dictionaries (later ones win on conflicts)
                 if aggregated.additional_properties:
                     if merged_additional_properties is None:
                         merged_additional_properties = {}
                     merged_additional_properties.update(aggregated.additional_properties)
+
+                # Raw representations: collect everything as a list to preserve history
                 if aggregated.raw_representation:
                     if isinstance(aggregated.raw_representation, list):
                         raw_representations.extend(aggregated.raw_representation)
                     else:
                         raw_representations.append(aggregated.raw_representation)
 
-        # Append global dangling messages (no response_id)
+        # PHASE 3: HANDLE GLOBAL DANGLING UPDATES (NO RESPONSE_ID)
+        # ========================================================
+        # These are updates that have no response_id at all - they get appended at the very end
         if global_dangling:
+            # Convert the global dangling updates to a single response
             flattened = AgentRunResponse.from_agent_run_response_updates(global_dangling)
+            # Add their messages to the final output (they go at the end)
             final_messages.extend(flattened.messages)
-            # Also aggregate metadata from dangling updates
+
+            # Also aggregate their metadata into the final result
             if flattened.usage_details:
                 merged_usage = _sum_usage(merged_usage, flattened.usage_details)
             if flattened.created_at and (
@@ -428,11 +501,15 @@ class WorkflowAgent(AgentBase):
                 else:
                     raw_representations.append(flattened.raw_representation)
 
+        # PHASE 4: CONSTRUCT FINAL RESPONSE WITH INPUT RESPONSE_ID
+        # ========================================================
+        # Create the final AgentRunResponse using the provided response_id parameter
+        # and all the aggregated data from the various update groups
         return AgentRunResponse(
-            messages=final_messages,
-            response_id=response_id,
-            created_at=latest_created_at,
-            usage_details=merged_usage,
-            raw_representation=raw_representations if raw_representations else None,
-            additional_properties=merged_additional_properties,
+            messages=final_messages,  # All messages in processing order
+            response_id=response_id,  # Use the input parameter, not update response_ids
+            created_at=latest_created_at,  # Latest timestamp across all updates
+            usage_details=merged_usage,  # Aggregated token usage
+            raw_representation=raw_representations if raw_representations else None,  # Execution history
+            additional_properties=merged_additional_properties,  # Merged properties
         )
