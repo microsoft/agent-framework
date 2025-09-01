@@ -222,11 +222,11 @@ async def main() -> None:
     # Create the workflow agent with an underlying reflection workflow.
     agent = (
         WorkflowBuilder()
-        .add_edge(worker, reviewer)
-        .add_edge(reviewer, worker)
+        .add_edge(worker, reviewer)  # <--- This edge allows the worker to send requests to the reviewer
+        .add_edge(reviewer, worker)  # <--- This edge allows the reviewer to send feedback back to the worker
         .set_start_executor(worker)
         .build()
-        .as_agent()
+        .as_agent()  # Convert the workflow to an agent.
     )
 
     print("🎯 Running workflow agent with user query...")

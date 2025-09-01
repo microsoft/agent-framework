@@ -241,6 +241,8 @@ class WorkflowAgent(AgentBase):
                 self.pending_requests[request_id] = event
 
                 # Convert to function call content
+                # TODO(ekzhu): update this to FunctionApprovalRequestContent
+                # monitor: https://github.com/microsoft/agent-framework/issues/285
                 function_call = FunctionCallContent(
                     call_id=request_id,
                     name=self.REQUEST_INFO_FUNCTION_NAME,
@@ -262,6 +264,8 @@ class WorkflowAgent(AgentBase):
         function_responses: dict[str, Any] = {}
         for message in input_messages:
             for content in message.contents:
+                # TODO(ekzhu): update this to FunctionApprovalResponseContent
+                # monitor: https://github.com/microsoft/agent-framework/issues/285
                 if isinstance(content, FunctionResultContent):
                     request_id = content.call_id
                     # Check if we have a pending request for this call_id
