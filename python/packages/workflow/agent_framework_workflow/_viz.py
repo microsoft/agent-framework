@@ -324,7 +324,7 @@ class WorkflowViz:
     def _emit_sub_workflows_mermaid(self, wf: Workflow, lines: list[str], indent: str) -> None:
         try:
             from ._executor import WorkflowExecutor  # type: ignore
-        except Exception:  # pragma: no cover
+        except ImportError:  # pragma: no cover
             return
 
         def _san(s: str) -> str:
