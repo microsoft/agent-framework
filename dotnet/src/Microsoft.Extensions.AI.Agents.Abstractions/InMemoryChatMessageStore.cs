@@ -12,7 +12,7 @@ namespace Microsoft.Extensions.AI.Agents;
 /// <summary>
 /// Represents an in-memory store for chat messages associated with a specific thread.
 /// </summary>
-internal class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageStore
+internal sealed class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageStore
 {
     private readonly List<ChatMessage> _messages = new();
 
@@ -114,7 +114,7 @@ internal class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageStore
     IEnumerator IEnumerable.GetEnumerator()
         => this.GetEnumerator();
 
-    internal class StoreState
+    internal sealed class StoreState
     {
         public IList<ChatMessage> Messages { get; set; } = new List<ChatMessage>();
     }

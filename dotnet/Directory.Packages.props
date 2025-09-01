@@ -17,7 +17,7 @@
     <PackageVersion Include="Aspire.Hosting.Azure.CosmosDB" Version="9.4.1" />
     <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="9.4.1" />
     <PackageVersion Include="Aspire.Hosting.Testing" Version="9.4.1" />
-    <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.1" />
+    <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.3" />
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.3.0-beta.1" />
     <PackageVersion Include="Azure.Identity" Version="1.14.2" />
     <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="9.6.0" />
@@ -67,7 +67,11 @@
     <PackageVersion Include="Microsoft.Extensions.Logging.Testing" Version="9.0.8" />
     <PackageVersion Include="Microsoft.Extensions.Options" Version="9.0.8" />
     <!-- Vector Stores -->
-    <PackageVersion Include="Microsoft.SemanticKernel.Connectors.InMemory" Version="1.61.0-preview" />
+    <PackageVersion Include="Microsoft.SemanticKernel.Connectors.InMemory" Version="1.64.0-preview" />
+    <PackageVersion Include="Microsoft.SemanticKernel" Version="1.64.0" />
+    <PackageVersion Include="Microsoft.SemanticKernel.Agents.Core" Version="1.64.0" />
+    <PackageVersion Include="Microsoft.SemanticKernel.Agents.OpenAI" Version="1.64.0-preview" />
+    <PackageVersion Include="Microsoft.SemanticKernel.Agents.AzureAI" Version="1.64.0-preview" />
     <!-- Agent SDKs -->
     <PackageVersion Include="Microsoft.Agents.CopilotStudio.Client" Version="1.1.151" />
     <PackageVersion Include="A2A" Version="0.1.0-preview.2" />

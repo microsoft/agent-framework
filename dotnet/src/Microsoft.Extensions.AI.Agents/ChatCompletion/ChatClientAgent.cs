@@ -55,7 +55,7 @@ public sealed class ChatClientAgent : AIAgent
     /// <param name="chatClient">The chat client to use for invoking the agent.</param>
     /// <param name="options">Full set of options to configure the agent.</param>
     /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
-    public ChatClientAgent(IChatClient chatClient, ChatClientAgentOptions options, ILoggerFactory? loggerFactory = null)
+    public ChatClientAgent(IChatClient chatClient, ChatClientAgentOptions? options, ILoggerFactory? loggerFactory = null)
     {
         _ = Throw.IfNull(chatClient);
 
@@ -68,7 +68,7 @@ public sealed class ChatClientAgent : AIAgent
         this._chatClientType = chatClient.GetType();
 
         // If the user has not opted out of using our default decorators, we wrap the chat client.
-        this.ChatClient = options?.UseProvidedChatClientAsIs is true ? chatClient : chatClient.AsAgentInvokedChatClient();
+        this.ChatClient = options?.UseProvidedChatClientAsIs is true ? chatClient : chatClient.AsAgentInvokedChatClient(options);
 
         this._logger = (loggerFactory ?? chatClient.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance).CreateLogger<ChatClientAgent>();
     }
@@ -231,7 +231,7 @@ public sealed class ChatClientAgent : AIAgent
         // If no request chat options were provided, use the agent's chat options clone.
         if (requestChatOptions is null)
         {
-            return this._agentOptions?.ChatOptions?.Clone();
+            return this._agentOptions?.ChatOptions.Clone();
         }
 
         // If both are present, we need to merge them.
