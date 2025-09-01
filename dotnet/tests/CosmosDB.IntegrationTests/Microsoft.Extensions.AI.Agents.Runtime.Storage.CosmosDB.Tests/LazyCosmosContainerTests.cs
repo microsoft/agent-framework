@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json;
+using CosmosDB.Testing.AppHost;
 using Microsoft.Azure.Cosmos;
 
 namespace Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests;
@@ -25,7 +26,7 @@ public class LazyCosmosContainerTests
     {
         // Arrange
         using var cts = new CancellationTokenSource(s_defaultTimeout);
-        var lazyContainer = new LazyCosmosContainer(this._fixture.Container);
+        await using var lazyContainer = new LazyCosmosContainer(this._fixture.Container);
 
         // Act
         var result = await lazyContainer.GetContainerAsync();
@@ -39,7 +40,7 @@ public class LazyCosmosContainerTests
     {
         // Arrange
         using var cts = new CancellationTokenSource(s_defaultTimeout);
-        var lazyContainer = new LazyCosmosContainer(this._fixture.Container);
+        await using var lazyContainer = new LazyCosmosContainer(this._fixture.Container);
 
         // Act
         var result1 = await lazyContainer.GetContainerAsync();
@@ -52,7 +53,7 @@ public class LazyCosmosContainerTests
         Assert.Same(this._fixture.Container, result1);
     }
 
-    [Fact]
+    [SkipOnEmulatorFact]
     public async Task GetContainerAsync_WithCosmosClient_ShouldInitializeAndWorkCorrectlyAsync()
     {
         // Arrange
@@ -61,7 +62,7 @@ public class LazyCosmosContainerTests
 
         // Create a unique container name for this test
         var testContainerName = $"LazyContainerTest_{Guid.NewGuid():N}";
-        var lazyContainer = new LazyCosmosContainer(this._fixture.CosmosClient, CosmosDBTestConstants.TestCosmosDbDatabaseName, testContainerName);
+        await using var lazyContainer = new LazyCosmosContainer(this._fixture.CosmosClient, CosmosDBTestConstants.TestCosmosDbDatabaseName, testContainerName);
 
         try
         {
@@ -74,7 +75,7 @@ public class LazyCosmosContainerTests
 
             // Verify the container can perform basic operations
             var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
-            var storage = new CosmosActorStateStorage(lazyContainer);
+            await using var storage = new CosmosActorStateStorage(lazyContainer);
 
             var key = "testKey";
             var value = JsonSerializer.SerializeToElement("testValue");
@@ -111,7 +112,7 @@ public class LazyCosmosContainerTests
 
         // Create a unique container name for this test
         var testContainerName = $"LazyContainerTest_{Guid.NewGuid():N}";
-        var lazyContainer = new LazyCosmosContainer(this._fixture.CosmosClient, CosmosDBTestConstants.TestCosmosDbDatabaseName, testContainerName);
+        await using var lazyContainer = new LazyCosmosContainer(this._fixture.CosmosClient, CosmosDBTestConstants.TestCosmosDbDatabaseName, testContainerName);
 
         try
         {
@@ -148,7 +149,7 @@ public class LazyCosmosContainerTests
 
         // Create a unique container name for this test
         var testContainerName = $"LazyContainerTest_{Guid.NewGuid():N}";
-        var lazyContainer = new LazyCosmosContainer(this._fixture.CosmosClient, CosmosDBTestConstants.TestCosmosDbDatabaseName, testContainerName);
+        await using var lazyContainer = new LazyCosmosContainer(this._fixture.CosmosClient, CosmosDBTestConstants.TestCosmosDbDatabaseName, testContainerName);
 
         try
         {
@@ -211,7 +212,7 @@ public class LazyCosmosContainerTests
         Assert.Throws<ArgumentNullException>(() => new LazyCosmosContainer(this._fixture.CosmosClient, "test-db", null!));
     }
 
-    [Fact]
+    [SkipOnEmulatorFact]
     public async Task LazyCosmosContainer_WithInternalConstructor_ShouldWorkWithCosmosActorStateStorageAsync()
     {
         // Arrange
@@ -220,12 +221,12 @@ public class LazyCosmosContainerTests
 
         // Create a unique container name for this test
         var testContainerName = $"LazyContainerTest_{Guid.NewGuid():N}";
-        var lazyContainer = new LazyCosmosContainer(this._fixture.CosmosClient, CosmosDBTestConstants.TestCosmosDbDatabaseName, testContainerName);
+        await using var lazyContainer = new LazyCosmosContainer(this._fixture.CosmosClient, CosmosDBTestConstants.TestCosmosDbDatabaseName, testContainerName);
 
         try
         {
             // Act - Create storage using the internal constructor (like DI would)
-            var storage = new CosmosActorStateStorage(lazyContainer);
+            await using var storage = new CosmosActorStateStorage(lazyContainer);
             var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
 
             var key = "testKey";
@@ -277,7 +278,7 @@ public class LazyCosmosContainerTests
 
         // Use an invalid database name that should cause Cosmos to reject it
         var invalidDatabaseName = new string('a', 256); // Database names have limits
-        var lazyContainer = new LazyCosmosContainer(this._fixture.CosmosClient, invalidDatabaseName, "test-container");
+        await using var lazyContainer = new LazyCosmosContainer(this._fixture.CosmosClient, invalidDatabaseName, "test-container");
 
         // Act & Assert
         await Assert.ThrowsAsync<CosmosException>(async () => await lazyContainer.GetContainerAsync());

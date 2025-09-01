@@ -5,7 +5,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework.foundry import FoundryChatClient
-from azure.identity.aio import DefaultAzureCredential
+from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
 
@@ -23,9 +23,11 @@ async def non_streaming_example() -> None:
 
     # Since no Agent ID is provided, the agent will be automatically created
     # and deleted after getting a response
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
     async with (
-        DefaultAzureCredential() as credential,
-        FoundryChatClient(async_ad_credential=credential).create_agent(
+        AzureCliCredential() as credential,
+        FoundryChatClient(async_credential=credential).create_agent(
             name="WeatherAgent",
             instructions="You are a helpful weather agent.",
             tools=get_weather,
@@ -43,9 +45,11 @@ async def streaming_example() -> None:
 
     # Since no Agent ID is provided, the agent will be automatically created
     # and deleted after getting a response
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
     async with (
-        DefaultAzureCredential() as credential,
-        FoundryChatClient(async_ad_credential=credential).create_agent(
+        AzureCliCredential() as credential,
+        FoundryChatClient(async_credential=credential).create_agent(
             name="WeatherAgent",
             instructions="You are a helpful weather agent.",
             tools=get_weather,

@@ -8,16 +8,23 @@ namespace Microsoft.Agents.Workflows.Sample;
 
 internal static class Step1EntryPoint
 {
+    public static Workflow<string> WorkflowInstance
+    {
+        get
+        {
+            UppercaseExecutor uppercase = new();
+            ReverseTextExecutor reverse = new();
+
+            WorkflowBuilder builder = new(uppercase);
+            builder.AddEdge(uppercase, reverse);
+
+            return builder.Build<string>();
+        }
+    }
+
     public static async ValueTask RunAsync(TextWriter writer)
     {
-        UppercaseExecutor uppercase = new();
-        ReverseTextExecutor reverse = new();
-
-        WorkflowBuilder builder = new(uppercase);
-        builder.AddEdge(uppercase, reverse);
-
-        Workflow<string> workflow = builder.Build<string>();
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, "Hello, World!").ConfigureAwait(false);
+        StreamingRun run = await InProcessExecution.StreamAsync(WorkflowInstance, "Hello, World!").ConfigureAwait(false);
 
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
