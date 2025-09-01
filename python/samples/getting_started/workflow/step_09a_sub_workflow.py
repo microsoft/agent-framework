@@ -13,6 +13,7 @@ from agent_framework.workflow import (
     WorkflowExecutor,
     handler,
 )
+from agent_framework_workflow._viz import WorkflowViz
 
 """
 The following sample demonstrates basic sub-workflows.
@@ -177,6 +178,10 @@ async def main():
         .add_edge(workflow_executor, orchestrator)
         .build()
     )
+
+    # Visualize the workflow using an SVG.
+    filename = WorkflowViz(main_workflow).export(format="svg")
+    print(f"🖼️ Workflow visualization saved to: {filename}")
 
     # Step 3: Test data - various text strings
     test_texts = [
