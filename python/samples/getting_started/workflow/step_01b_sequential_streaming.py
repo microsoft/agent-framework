@@ -12,9 +12,14 @@ from agent_framework.workflow import (
 )
 
 """
-The following sample demonstrates a basic workflow with two executors
-that process a string in sequence. The first executor converts the
-input string to uppercase, and the second executor reverses the string.
+Sequential Workflow (streaming)
+
+What it does:
+- Same as step_01a but streams events as they occur.
+- Useful to observe `ExecutorInvokeEvent` and `WorkflowCompletedEvent`.
+
+Prerequisites:
+- No external services required.
 """
 
 

@@ -15,33 +15,14 @@ from agent_framework.workflow import (
 )
 
 """
-The following sample demonstrates basic sub-workflows.
+Sub-Workflows (Basics)
 
-This sample shows how to:
-1. Create workflows that execute other workflows as sub-workflows
-2. Pass data between parent and sub-workflows
-3. Collect results from sub-workflows
+What it does:
+- Shows how a parent workflow invokes a sub-workflow via `WorkflowExecutor` and collects results.
+- Example: parent orchestrates multiple text processors that count words/characters.
 
-The example simulates a simple text processing system where:
-- Sub-workflows process individual text strings (count words, characters)
-- Parent workflow orchestrates multiple sub-workflows and collects results
-
-Key concepts demonstrated:
-- WorkflowExecutor: Wraps a workflow to make it behave as an executor
-- Sub-workflow isolation: Sub-workflows work independently
-- Result collection: Parent workflows can gather outputs from sub-workflows
-
-Simple flow visualization:
-
-  Parent Orchestrator
-      |
-      |  TextProcessingRequest(text, task_id)
-      v
-    [ Sub-workflow: WorkflowExecutor(TextProcessor) ]
-      |
-      |  WorkflowCompletedEvent(TextProcessingResult)
-      v
-  Parent collects results and summarizes
+Prerequisites:
+- No external services required.
 """
 
 

@@ -61,7 +61,7 @@ def _is_pydantic_model(obj: Any) -> bool:
     We avoid hard dependencies by duck-typing on model_dump/model_validate.
     """
     try:
-        return hasattr(obj, "model_dump") and hasattr(obj.__class__, "model_validate")
+        return hasattr(obj, "model_dump") and hasattr(type(obj), "model_validate")
     except Exception:
         return False
 
@@ -76,7 +76,7 @@ def _encode_checkpoint_value(value: Any) -> Any:
     """
     # Pydantic (AFBaseModel) handling
     if _is_pydantic_model(value):
-        cls = value.__class__
+        cls = type(value)
         return {
             _PYDANTIC_MARKER: f"{cls.__module__}:{cls.__name__}",
             "value": value.model_dump(mode="json"),
@@ -84,7 +84,7 @@ def _encode_checkpoint_value(value: Any) -> Any:
 
     # Dataclasses (e.g., AgentExecutorRequest/Response)
     if is_dataclass(value):
-        cls = value.__class__
+        cls = type(value)
         # Build field mapping without collapsing nested dataclasses
         raw = {f.name: _encode_checkpoint_value(getattr(value, f.name)) for f in fields(value)}
         return {

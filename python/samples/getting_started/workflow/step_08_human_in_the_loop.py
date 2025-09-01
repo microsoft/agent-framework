@@ -1,16 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""
-Human-in-the-loop (HITL) guessing game with an AgentExecutor + checkpointing.
-
-Flow:
-- TurnManager starts the game by prompting an agent to guess a number (1-10).
-- After each agent guess, TurnManager asks a human for feedback via RequestInfoExecutor
-    ("higher", "lower", or "correct").
-- The workflow pauses and emits a RequestInfoEvent; we show the latest checkpoint ID so you
-    can resume the workflow later. You can also set CHECKPOINT_ID env var to start from a prior checkpoint.
-"""
-
 import asyncio
 import os
 import re
@@ -36,6 +25,19 @@ from agent_framework.workflow import (
 )
 from agent_framework_workflow import AgentRunEvent
 from azure.identity import AzureCliCredential
+
+"""
+Human-in-the-loop (HITL) Guessing Game (with Agent + Checkpointing)
+
+What it does:
+- An agent guesses numbers; a human provides feedback via `RequestInfoExecutor`.
+- Emits `RequestInfoEvent`s, persists checkpoints, and supports resume by checkpoint ID.
+
+Prerequisites:
+- Azure AI/ Azure OpenAI for `AzureChatClient` agent.
+- Authentication via `azure-identity` — uses `AzureCliCredential()` (run `az login`).
+- Filesystem access to write checkpoints (local temp folder).
+"""
 
 
 # Request type sent to the RequestInfoExecutor for human feedback

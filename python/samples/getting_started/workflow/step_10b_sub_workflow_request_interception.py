@@ -1,7 +1,24 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
+from dataclasses import dataclass
+from typing import Any
+
+from agent_framework_workflow import (
+    Executor,
+    RequestInfoExecutor,
+    RequestInfoMessage,
+    RequestResponse,
+    WorkflowBuilder,
+    WorkflowCompletedEvent,
+    WorkflowContext,
+    WorkflowExecutor,
+    handler,
+    intercepts_request,
+)
+
 """
-The following sample demonstrates sub-workflows with request interception and conditional forwarding.
+Sub‑Workflows with Request Interception
 
 This sample shows how to:
 1. Create workflows that execute other workflows as sub-workflows
@@ -27,6 +44,9 @@ Key concepts demonstrated:
 - External request routing: RequestInfoExecutor handles forwarded external requests
 - Sub-workflow isolation: Sub-workflows work normally without knowing they're nested
 
+Prerequisites:
+- No external services required (external calls are simulated via `RequestInfoExecutor`).
+
 Simple flow visualization:
 
   Parent Orchestrator (@intercepts_request)
@@ -43,23 +63,6 @@ Simple flow visualization:
                                 v
                      Response routed back to sub-workflow using request_id
 """
-
-import asyncio
-from dataclasses import dataclass
-from typing import Any
-
-from agent_framework_workflow import (
-    Executor,
-    RequestInfoExecutor,
-    RequestInfoMessage,
-    RequestResponse,
-    WorkflowBuilder,
-    WorkflowCompletedEvent,
-    WorkflowContext,
-    WorkflowExecutor,
-    handler,
-    intercepts_request,
-)
 
 
 # 1. Define domain-specific message types

@@ -36,6 +36,9 @@ except ImportError:
 """
 This sample demonstrates the PROPER pattern for request interception.
 
+Prerequisites:
+- No external services required (external handling simulated via `RequestInfoExecutor`).
+
 Key principles:
 1. Only ONE executor intercepts a given request type from a specific sub-workflow
 2. Different executors can intercept DIFFERENT request types from the same sub-workflow

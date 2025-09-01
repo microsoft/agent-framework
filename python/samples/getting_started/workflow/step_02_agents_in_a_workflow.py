@@ -12,9 +12,15 @@ from agent_framework.workflow import (
 from azure.identity import AzureCliCredential
 
 """
-The following sample demonstrates a basic workflow with two executors
-that process a string in sequence. The first executor converts the
-input string to uppercase, and the second executor reverses the string.
+Agents In A Workflow
+
+What it does:
+- Wraps two Azure agents in `AgentExecutor`s (writer -> reviewer) and streams their runs.
+- Demonstrates building and running a simple agent-to-agent pipeline.
+
+Prerequisites:
+- Azure AI/ Azure OpenAI configured for `AzureChatClient`.
+- Authentication via `azure-identity` — this sample uses `AzureCliCredential()` (run `az login`).
 """
 
 

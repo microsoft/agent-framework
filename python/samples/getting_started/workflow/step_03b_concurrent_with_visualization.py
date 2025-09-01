@@ -1,14 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""
-An easy fan-out/fan-in sample:
-
-- Fan-out: A dispatcher forwards the same prompt to multiple domain agents (research, marketing, legal).
-- Fan-in: An aggregator collects all agent responses and produces a single consolidated result.
-
-This keeps the pattern simple and focused on the workflow mechanics without extra back-and-forth.
-"""
-
 import asyncio
 from dataclasses import dataclass
 from typing import Any
@@ -24,9 +15,24 @@ from agent_framework.workflow import (
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
+    WorkflowViz,
     handler,
 )
 from azure.identity import AzureCliCredential
+
+"""
+Concurrent (Fan-out/Fan-in) with Agents + Visualization
+
+What it does:
+- Fan-out: dispatch the same prompt to multiple domain agents (research, marketing, legal).
+- Fan-in: aggregate their responses into one consolidated output.
+- Visualization: generate Mermaid and GraphViz representations via `WorkflowViz` and optionally export SVG.
+
+Prerequisites:
+- Azure AI/ Azure OpenAI for `AzureChatClient` agents.
+- Authentication via `azure-identity` — uses `AzureCliCredential()` (run `az login`).
+- For visualization export: `pip install agent-framework-workflow[viz]` and install GraphViz binaries.
+"""
 
 
 class DispatchToExperts(Executor):
@@ -138,6 +144,24 @@ async def main() -> None:
         .add_fan_in_edges([researcher, marketer, legal], aggregator)
         .build()
     )
+
+    # 2.5) Generate workflow visualization
+    print("Generating workflow visualization...")
+    viz = WorkflowViz(workflow)
+    # Print out the mermaid string.
+    print("Mermaid string: \n=======")
+    print(viz.to_mermaid())
+    print("=======")
+    # Print out the DiGraph string.
+    print("DiGraph string: \n=======")
+    print(viz.to_digraph())
+    print("=======")
+    try:
+        # Export the DiGraph visualization as SVG.
+        svg_file = viz.export(format="svg")
+        print(f"SVG file saved to: {svg_file}")
+    except ImportError:
+        print("Tip: Install 'viz' extra to export workflow visualization: pip install agent-framework-workflow[viz]")
 
     # 3) Run with a single prompt
     completion: WorkflowCompletedEvent | None = None

@@ -3,7 +3,12 @@
 import asyncio
 from enum import Enum
 
+from agent_framework import ChatMessage, ChatRole
+from agent_framework.azure import AzureChatClient
 from agent_framework.workflow import (
+    AgentExecutor,
+    AgentExecutorRequest,
+    AgentExecutorResponse,
     Executor,
     ExecutorCompletedEvent,
     WorkflowBuilder,
@@ -11,11 +16,18 @@ from agent_framework.workflow import (
     WorkflowContext,
     handler,
 )
+from azure.identity import AzureCliCredential
 
 """
-The following sample demonstrates a basic workflow with two executors
-where one executor guesses a number and the other executor judges the
-guess iteratively.
+Simple Loop (with an Agent Judge)
+
+What it does:
+- Guesser performs a binary search; judge is an agent that returns ABOVE/BELOW/MATCHED.
+- Demonstrates feedback loops in workflows with agent steps.
+
+Prerequisites:
+- Azure AI/ Azure OpenAI for `AzureChatClient` agent.
+- Authentication via `azure-identity` — uses `AzureCliCredential()` (run `az login`).
 """
 
 
@@ -66,39 +78,67 @@ class GuessNumberExecutor(Executor):
             await ctx.send_message(self._guess)
 
 
-class JudgeExecutor(Executor):
-    """An executor that judges the guessed number."""
+class SubmitToJudgeAgent(Executor):
+    """Send the numeric guess to a judge agent which replies ABOVE/BELOW/MATCHED."""
 
-    def __init__(self, target: int, id: str | None = None):
-        """Initialize the executor with a target number."""
+    def __init__(self, judge_agent_id: str, target: int, id: str | None = None):
         super().__init__(id=id)
+        self._judge_agent_id = judge_agent_id
         self._target = target
 
     @handler
-    async def judge(self, number: int, ctx: WorkflowContext[NumberSignal]) -> None:
-        """Judge the guessed number."""
-        if number == self._target:
-            result = NumberSignal.MATCHED
-        elif number < self._target:
-            result = NumberSignal.ABOVE
-        else:
-            result = NumberSignal.BELOW
+    async def submit(self, guess: int, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
+        prompt = (
+            "You are a number judge. Given a target number and a guess, reply with exactly one token:"
+            " 'MATCHED' if guess == target, 'ABOVE' if the target is above the guess, or 'BELOW' if the target is below.\n"
+            f"Target: {self._target}\nGuess: {guess}\nResponse:"
+        )
+        await ctx.send_message(
+            AgentExecutorRequest(messages=[ChatMessage(ChatRole.USER, text=prompt)], should_respond=True),
+            target_id=self._judge_agent_id,
+        )
 
-        await ctx.send_message(result)
+
+class ParseJudgeResponse(Executor):
+    """Parse AgentExecutorResponse into NumberSignal for the loop."""
+
+    @handler
+    async def parse(self, response: AgentExecutorResponse, ctx: WorkflowContext[NumberSignal]) -> None:
+        text = response.agent_run_response.text.strip().upper()
+        if "MATCHED" in text:
+            await ctx.send_message(NumberSignal.MATCHED)
+        elif "ABOVE" in text and "BELOW" not in text:
+            await ctx.send_message(NumberSignal.ABOVE)
+        else:
+            await ctx.send_message(NumberSignal.BELOW)
 
 
 async def main():
     """Main function to run the workflow."""
     # Step 1: Create the executors.
     guess_number_executor = GuessNumberExecutor((1, 100))
-    judge_executor = JudgeExecutor(30)
+
+    # Agent judge setup
+    chat_client = AzureChatClient(credential=AzureCliCredential())
+    judge_agent = AgentExecutor(
+        chat_client.create_agent(
+            instructions=(
+                "You strictly respond with one of: MATCHED, ABOVE, BELOW based on the given target and guess."
+            )
+        ),
+        id="judge_agent",
+    )
+    submit_to_judge = SubmitToJudgeAgent(judge_agent_id=judge_agent.id, target=30, id="submit_judge")
+    parse_judge = ParseJudgeResponse(id="parse_judge")
 
     # Step 2: Build the workflow with the defined edges.
     # This time we are creating a loop in the workflow.
     workflow = (
         WorkflowBuilder()
-        .add_edge(guess_number_executor, judge_executor)
-        .add_edge(judge_executor, guess_number_executor)
+        .add_edge(guess_number_executor, submit_to_judge)
+        .add_edge(submit_to_judge, judge_agent)
+        .add_edge(judge_agent, parse_judge)
+        .add_edge(parse_judge, guess_number_executor)
         .set_start_executor(guess_number_executor)
         .build()
     )

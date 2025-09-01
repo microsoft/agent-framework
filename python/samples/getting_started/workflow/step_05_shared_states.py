@@ -1,29 +1,35 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Shared state across executors: store an email once, reuse it downstream.
-
-This sample mirrors the .NET "shared states" example in a Pythonic way:
-- The first executor generates an email ID and stores the email content in shared state.
-- A spam detection result with that ID is routed conditionally.
-- If not spam, the assistant retrieves the email content from shared state to draft a reply,
-  which is then "sent" by the final executor. If spam, a handler marks it as spam.
-
-Key concept: WorkflowContext exposes get_shared_state/set_shared_state for cross-executor data.
-"""
-
 import asyncio
 from dataclasses import dataclass
 from uuid import uuid4
 
+from agent_framework import ChatMessage, ChatRole
+from agent_framework.azure import AzureChatClient
 from agent_framework.workflow import (
+    AgentExecutor,
+    AgentExecutorRequest,
+    AgentExecutorResponse,
     Executor,
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
     handler,
 )
+from azure.identity import AzureCliCredential
 
-# "Scoped" key prefix to emulate scoping (like .NET's EmailState scope)
+"""
+Shared State (with an Agent Reply)
+
+What it does:
+- Stores email content once in shared state; downstream steps read it by ID.
+- Branches on spam detection; NOT_SPAM path calls a reply agent and finalizes; SPAM path marks it.
+
+Prerequisites:
+- Azure AI/ Azure OpenAI for `AzureChatClient` reply agent.
+- Authentication via `azure-identity` — uses `AzureCliCredential()` (run `az login`).
+"""
+
 EMAIL_STATE_PREFIX = "email:"
 
 
@@ -42,13 +48,6 @@ class Email:
 
     email_id: str
     email_content: str
-
-
-@dataclass
-class EmailResponse:
-    """Assistant-generated response that will be sent by the sender executor."""
-
-    response: str
 
 
 class SpamDetectionExecutor(Executor):
@@ -72,35 +71,40 @@ class SpamDetectionExecutor(Executor):
         await ctx.send_message(DetectionResult(is_spam=is_spam, reason=reason, email_id=new_email.email_id))
 
 
-class EmailAssistantExecutor(Executor):
-    """Draft a professional reply by retrieving the original email from shared state."""
+class SubmitToReplyAgent(Executor):
+    """Read stored email and submit an AgentExecutorRequest to the reply agent."""
+
+    def __init__(self, reply_agent_id: str, id: str | None = None):
+        super().__init__(id=id)
+        self._reply_agent_id = reply_agent_id
 
     @handler
-    async def draft(self, detection: DetectionResult, ctx: WorkflowContext[EmailResponse]) -> None:
+    async def submit(self, detection: DetectionResult, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
         if detection.is_spam:
             raise RuntimeError("This executor should only handle non-spam messages.")
 
         email: Email = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{detection.email_id}")
 
-        # Keep it simple and deterministic for a sample; no external LLM calls here.
-        body = email.email_content.strip().replace("\n", " ")
-        reply = (
-            "Hello,\n\n"
-            "Thanks for your message. Here's an initial, professional reply draft "
-            'based on the original email: "'
-            f"{body}"
-            '"\n\nBest regards,\nYour Assistant'
+        user_msg = ChatMessage(
+            ChatRole.USER,
+            text=(
+                "Please draft a concise, professional reply to the following email.\n\n"
+                f"Email:\n{email.email_content.strip()}"
+            ),
         )
 
-        await ctx.send_message(EmailResponse(response=reply))
+        await ctx.send_message(
+            AgentExecutorRequest(messages=[user_msg], should_respond=True),
+            target_id=self._reply_agent_id,
+        )
 
 
-class SendEmailExecutor(Executor):
-    """Simulate sending the email by emitting a WorkflowCompletedEvent."""
+class FinalizeAndSendExecutor(Executor):
+    """Convert the agent response to a final completion event (simulate sending)."""
 
     @handler
-    async def send(self, response: EmailResponse, ctx: WorkflowContext[None]) -> None:
-        await ctx.add_event(WorkflowCompletedEvent(f"Email sent: {response.response}"))
+    async def send(self, response: AgentExecutorResponse, ctx: WorkflowContext[None]) -> None:
+        await ctx.add_event(WorkflowCompletedEvent(f"Email sent: {response.agent_run_response.text}"))
 
 
 class HandleSpamExecutor(Executor):
@@ -118,19 +122,30 @@ async def main() -> None:
     # Simple keyword-based spam detection for demo purposes
     spam_keywords = ["winner", "lottery", "free", "offer", "advertisement", "click here", "spam"]
 
+    # Create Azure agent client and a reply agent
+    chat_client = AzureChatClient(credential=AzureCliCredential())
+
+    reply_agent = AgentExecutor(
+        chat_client.create_agent(
+            instructions=("You are a helpful email assistant. Draft concise, professional replies.")
+        ),
+        id="reply_agent",
+    )
+
     # Create executors
     spam_detector = SpamDetectionExecutor(spam_keywords, id="spam_detector")
-    email_assistant = EmailAssistantExecutor(id="email_assistant")
-    sender = SendEmailExecutor(id="send_email")
+    submitter = SubmitToReplyAgent(reply_agent_id=reply_agent.id, id="submit_reply_agent")
+    sender = FinalizeAndSendExecutor(id="send_email")
     spam_handler = HandleSpamExecutor(id="handle_spam")
 
     # Build the workflow with conditional routing, showcasing shared state usage
     workflow = (
         WorkflowBuilder()
         .set_start_executor(spam_detector)
-        .add_edge(spam_detector, email_assistant, condition=lambda res: not res.is_spam)
-        .add_edge(email_assistant, sender)
+        .add_edge(spam_detector, submitter, condition=lambda res: not res.is_spam)
         .add_edge(spam_detector, spam_handler, condition=lambda res: res.is_spam)
+        .add_edge(submitter, reply_agent)
+        .add_edge(reply_agent, sender)
         .build()
     )
 

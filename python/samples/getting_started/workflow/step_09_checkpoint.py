@@ -5,7 +5,12 @@ import os
 from pathlib import Path
 from typing import Any
 
+from agent_framework import ChatMessage, ChatRole
+from agent_framework.azure import AzureChatClient
 from agent_framework.workflow import (
+    AgentExecutor,
+    AgentExecutorRequest,
+    AgentExecutorResponse,
     Executor,
     FileCheckpointStorage,
     WorkflowBuilder,
@@ -13,23 +18,20 @@ from agent_framework.workflow import (
     WorkflowContext,
     handler,
 )
+from azure.identity import AzureCliCredential
 
 """
-Demonstrates workflow checkpointing, shared state, and resumption at superstep boundaries.
+Checkpointing & Resume (with an Agent Stage)
 
-Flow:
-1) UpperCaseExecutor: "hello world" -> "HELLO WORLD" (writes shared_state: original_input, upper_output)
-2) ReverseTextExecutor: "HELLO WORLD" -> "DLROW OLLEH"
-3) LowerCaseExecutor: "DLROW OLLEH" -> "dlrow olleh" (reads shared_state, emits WorkflowCompletedEvent)
+What it does:
+- Demonstrates checkpointing and resume at superstep boundaries with shared state.
+- Flow: UpperCase -> Reverse -> SubmitToLowerAgent -> LowerAgent (AgentExecutor) -> Finalize.
+- Resumes from the checkpoint after Reverse to run only the agent + finalize stages.
 
-Initial run checkpoints:
-- after_initial_execution: messages from upper_case_executor
-- superstep_1: messages from reverse_text_executor
-- superstep_2: no messages (final events only)
-
-Resume:
-- Resume from the checkpoint containing "DLROW OLLEH" (superstep_1); only LowerCaseExecutor runs.
-- Iteration continues from the checkpoint; one checkpoint is created after the resumed superstep.
+Prerequisites:
+- Azure AI/ Azure OpenAI for `AzureChatClient` agent.
+- Authentication via `azure-identity` — uses `AzureCliCredential()` (run `az login`).
+- Filesystem access to write checkpoints (local temp folder).
 """
 
 # Define the temporary directory for storing checkpoints
@@ -57,21 +59,36 @@ class UpperCaseExecutor(Executor):
         await ctx.send_message(result)
 
 
-class LowerCaseExecutor(Executor):
+class SubmitToLowerAgent(Executor):
+    """Prepare AgentExecutorRequest to lower-case the text and keep shared-state visibility."""
+
+    def __init__(self, agent_id: str, id: str | None = None):
+        super().__init__(id=id)
+        self._agent_id = agent_id
+
     @handler
-    async def to_lower_case(self, text: str, ctx: WorkflowContext[Any]) -> None:
-        result = text.lower()
-        print(f"LowerCaseExecutor: '{text}' -> '{result}'")
-        # Read from shared_state written by UpperCaseExecutor
+    async def submit(self, text: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
+        # Read from shared_state written by UpperCaseExecutor (for demo visibility)
         orig = await ctx.get_shared_state("original_input")
         upper = await ctx.get_shared_state("upper_output")
-        print(f"LowerCaseExecutor (shared_state): original_input='{orig}', upper_output='{upper}'")
+        print(f"LowerAgent (shared_state): original_input='{orig}', upper_output='{upper}'")
+
+        prompt = f"Convert the following text to lowercase. Return ONLY the transformed text.\n\nText: {text}"
+        await ctx.send_message(
+            AgentExecutorRequest(messages=[ChatMessage(ChatRole.USER, text=prompt)], should_respond=True),
+            target_id=self._agent_id,
+        )
+
+
+class FinalizeFromAgent(Executor):
+    @handler
+    async def finalize(self, response: AgentExecutorResponse, ctx: WorkflowContext[Any]) -> None:
+        result = response.agent_run_response.text or ""
         # Persist executor state into checkpointable context
         prev = await ctx.get_state() or {}
         count = int(prev.get("count", 0)) + 1
         await ctx.set_state({
             "count": count,
-            "last_input": text,
             "last_output": result,
             "final": True,
         })
@@ -121,14 +138,25 @@ async def main():
 
     upper_case_executor = UpperCaseExecutor(id="upper_case_executor")
     reverse_text_executor = ReverseTextExecutor(id="reverse_text_executor")
-    lower_case_executor = LowerCaseExecutor(id="lower_case_executor")
+    # Agent for lower-casing
+    chat_client = AzureChatClient(credential=AzureCliCredential())
+    lower_agent = AgentExecutor(
+        chat_client.create_agent(
+            instructions=("You transform text to lowercase. Reply with ONLY the transformed text.")
+        ),
+        id="lower_agent",
+    )
+    submit_lower = SubmitToLowerAgent(agent_id=lower_agent.id, id="submit_lower")
+    finalize = FinalizeFromAgent(id="finalize")
 
     checkpoint_storage = FileCheckpointStorage(storage_path=TEMP_DIR)
 
     workflow = (
         WorkflowBuilder(max_iterations=5)
         .add_edge(upper_case_executor, reverse_text_executor)
-        .add_edge(reverse_text_executor, lower_case_executor)
+        .add_edge(reverse_text_executor, submit_lower)
+        .add_edge(submit_lower, lower_agent)
+        .add_edge(lower_agent, finalize)
         .set_start_executor(upper_case_executor)
         .with_checkpointing(checkpoint_storage=checkpoint_storage)
         .build()
@@ -173,7 +201,9 @@ async def main():
     new_workflow = (
         WorkflowBuilder(max_iterations=5)
         .add_edge(upper_case_executor, reverse_text_executor)
-        .add_edge(reverse_text_executor, lower_case_executor)
+        .add_edge(reverse_text_executor, submit_lower)
+        .add_edge(submit_lower, lower_agent)
+        .add_edge(lower_agent, finalize)
         .set_start_executor(upper_case_executor)
         .build()
     )
@@ -192,23 +222,23 @@ async def main():
     ReverseTextExecutor: 'HELLO WORLD' -> 'DLROW OLLEH'
     Event: ExecutorInvokeEvent(executor_id=reverse_text_executor)
     Event: ExecutorCompletedEvent(executor_id=reverse_text_executor)
-    LowerCaseExecutor: 'DLROW OLLEH' -> 'dlrow olleh'
-    LowerCaseExecutor (shared_state): original_input='hello world', upper_output='HELLO WORLD'
-    Event: ExecutorInvokeEvent(executor_id=lower_case_executor)
+    LowerAgent (shared_state): original_input='hello world', upper_output='HELLO WORLD'
+    Event: ExecutorInvokeEvent(executor_id=submit_lower)
+    Event: ExecutorInvokeEvent(executor_id=lower_agent)
+    Event: ExecutorInvokeEvent(executor_id=finalize)
     Event: WorkflowCompletedEvent(data=dlrow olleh)
-    Event: ExecutorCompletedEvent(executor_id=lower_case_executor)
 
     Checkpoint summary:
     - dfc63e72-8e8d-454f-9b6d-0d740b9062e6 | label='after_initial_execution' | iter=0 | messages=1 | states=['upper_case_executor'] | shared_state: original_input='hello world', upper_output='HELLO WORLD'
     - a78c345a-e5d9-45ba-82c0-cb725452d91b | label='superstep_1' | iter=1 | messages=1 | states=['reverse_text_executor', 'upper_case_executor'] | shared_state: original_input='hello world', upper_output='HELLO WORLD'
-    - 637c1dbd-a525-4404-9583-da03980537a2 | label='superstep_2' | iter=2 | messages=0 | states=['lower_case_executor', 'reverse_text_executor', 'upper_case_executor'] | shared_state: original_input='hello world', upper_output='HELLO WORLD'
+    - 637c1dbd-a525-4404-9583-da03980537a2 | label='superstep_2' | iter=2 | messages=0 | states=['finalize', 'lower_agent', 'reverse_text_executor', 'submit_lower', 'upper_case_executor'] | shared_state: original_input='hello world', upper_output='HELLO WORLD'
 
     Resuming from checkpoint: a78c345a-e5d9-45ba-82c0-cb725452d91b
-    LowerCaseExecutor: 'DLROW OLLEH' -> 'dlrow olleh'
-    LowerCaseExecutor (shared_state): original_input='hello world', upper_output='HELLO WORLD'
-    Resumed Event: ExecutorInvokeEvent(executor_id=lower_case_executor)
+    LowerAgent (shared_state): original_input='hello world', upper_output='HELLO WORLD'
+    Resumed Event: ExecutorInvokeEvent(executor_id=submit_lower)
+    Resumed Event: ExecutorInvokeEvent(executor_id=lower_agent)
+    Resumed Event: ExecutorInvokeEvent(executor_id=finalize)
     Resumed Event: WorkflowCompletedEvent(data=dlrow olleh)
-    Resumed Event: ExecutorCompletedEvent(executor_id=lower_case_executor)
     """  # noqa: E501
 
 

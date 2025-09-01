@@ -11,9 +11,14 @@ from agent_framework.workflow import (
 )
 
 """
-The following sample demonstrates a basic workflow with two executors
-that process a string in sequence. The first executor converts the
-input string to uppercase, and the second executor reverses the string.
+Sequential Workflow (basic)
+
+What it does:
+- Two executors run in sequence: uppercase then reverse.
+- Emits a WorkflowCompletedEvent with the final result.
+
+Prerequisites:
+- No external services required.
 """
 
 

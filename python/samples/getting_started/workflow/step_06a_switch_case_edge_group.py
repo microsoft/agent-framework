@@ -2,8 +2,14 @@
 
 import asyncio
 from dataclasses import dataclass
+from typing import Any
 
+from agent_framework import ChatMessage, ChatRole
+from agent_framework.azure import AzureChatClient
 from agent_framework.workflow import (
+    AgentExecutor,
+    AgentExecutorRequest,
+    AgentExecutorResponse,
     Case,
     Default,
     Executor,
@@ -12,12 +18,18 @@ from agent_framework.workflow import (
     WorkflowContext,
     handler,
 )
+from azure.identity import AzureCliCredential
 
 """
-The following sample demonstrates a basic workflow with two executors
-that detect spam messages and respond accordingly. The first executor
-checks if the input string is spam, and depending on the result, the
-workflow takes different paths.
+Switch-Case Edge Group (with Agent Classifier)
+
+What it does:
+- Classifies email with an agent, parses the result, and branches using `add_switch_case_edge_group`.
+- Demonstrates `Case`/`Default` behavior with an agent-produced boolean.
+
+Prerequisites:
+- Azure AI/ Azure OpenAI for `AzureChatClient` agent.
+- Authentication via `azure-identity` — uses `AzureCliCredential()` (run `az login`).
 """
 
 
@@ -29,20 +41,20 @@ class SpamDetectorResponse:
     is_spam: bool = False
 
 
-class SpamDetector(Executor):
-    """An executor that determines if a message is spam."""
+class SubmitToSpamClassifier(Executor):
+    """Wrap email string into AgentExecutorRequest and send to classifier by target_id."""
 
-    def __init__(self, spam_keywords: list[str], id: str | None = None):
-        """Initialize the executor with spam keywords."""
+    def __init__(self, classifier_id: str, id: str | None = None):
         super().__init__(id=id)
-        self._spam_keywords = spam_keywords
+        self._classifier_id = classifier_id
 
     @handler
-    async def handle_email(self, email: str, ctx: WorkflowContext[SpamDetectorResponse]) -> None:
-        """Determine if the input string is spam."""
-        result = any(keyword in email.lower() for keyword in self._spam_keywords)
-
-        await ctx.send_message(SpamDetectorResponse(email=email, is_spam=result))
+    async def submit(self, email: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
+        user_msg = ChatMessage(ChatRole.USER, text=email)
+        await ctx.send_message(
+            AgentExecutorRequest(messages=[user_msg], should_respond=True),
+            target_id=self._classifier_id,
+        )
 
 
 class SendResponse(Executor):
@@ -85,22 +97,44 @@ class RemoveSpam(Executor):
         await ctx.add_event(WorkflowCompletedEvent("Spam message removed."))
 
 
+class ParseAndRoute(Executor):
+    """Parse AgentExecutorResponse into SpamDetectorResponse for routing."""
+
+    @handler
+    async def route(self, response: AgentExecutorResponse, ctx: WorkflowContext[Any]) -> None:
+        text = response.agent_run_response.text.strip().upper()
+        is_spam = "SPAM" in text and "NOT_SPAM" not in text
+        await ctx.send_message(SpamDetectorResponse(email="<redacted>", is_spam=is_spam))
+
+
 async def main():
     """Main function to run the workflow."""
-    # Keyword based spam detection
-    spam_keywords = ["spam", "advertisement", "offer"]
+    # Create agent classifier
+    chat_client = AzureChatClient(credential=AzureCliCredential())
+    spam_classifier = AgentExecutor(
+        chat_client.create_agent(
+            instructions=(
+                "You are an email spam classifier. Given ONLY the email body, respond with exactly one token: "
+                "'SPAM' or 'NOT_SPAM'."
+            )
+        ),
+        id="spam_classifier",
+    )
 
     # Step 1: Create the executors.
-    spam_detector = SpamDetector(spam_keywords, id="spam_detector")
+    submitter = SubmitToSpamClassifier(spam_classifier.id, id="submitter")
     send_response = SendResponse(id="send_response")
     remove_spam = RemoveSpam(id="remove_spam")
+    router = ParseAndRoute(id="router")
 
     # Step 2: Build the workflow with the defined edges with conditions.
     workflow = (
         WorkflowBuilder()
-        .set_start_executor(spam_detector)
+        .set_start_executor(submitter)
+        .add_edge(submitter, spam_classifier)
+        .add_edge(spam_classifier, router)
         .add_switch_case_edge_group(
-            spam_detector,
+            router,
             [
                 Case(condition=lambda x: x.is_spam, target=remove_spam),
                 Default(target=send_response),
