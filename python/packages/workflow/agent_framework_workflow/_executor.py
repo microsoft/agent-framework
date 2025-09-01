@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import contextlib
 import functools
 import inspect
@@ -7,7 +9,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from types import UnionType
-from typing import TYPE_CHECKING, Any, Generic, Type, TypeVar, Union, get_args, get_origin, overload
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, Union, get_args, get_origin, overload
 
 if TYPE_CHECKING:
     from ._workflow import Workflow
@@ -39,7 +41,7 @@ class Executor(AFBaseModel):
         min_length=1,
         description="Unique identifier for the executor",
     )
-    type: str = Field(default="", description="The type of executor, corresponding to the class name")
+    type_: str = Field(default="", alias="type", description="The type of executor, corresponding to the class name")
 
     def __init__(self, id: str | None = None, **kwargs: Any) -> None:
         """Initialize the executor with a unique identifier.
@@ -163,7 +165,7 @@ class Executor(AFBaseModel):
 
     async def _handle_sub_workflow_request(
         self,
-        request: "SubWorkflowRequestInfo",
+        request: SubWorkflowRequestInfo,
         ctx: WorkflowContext[Any],
     ) -> None:
         """Automatic routing to @intercepts_request methods.
@@ -254,7 +256,7 @@ class Executor(AFBaseModel):
         """
         return any(is_instance_of(message, message_type) for message_type in self._handlers)
 
-    def can_handle_type(self, message_type: Type[Any]) -> bool:
+    def can_handle_type(self, message_type: type[Any]) -> bool:
         """Check if the executor can handle a given message type.
 
         Args:
@@ -423,7 +425,7 @@ class RequestResponse(Generic[TRequest, TResponse]):
     request_id: str | None = None  # Added for tracking
 
     @classmethod
-    def handled(cls, data: TResponse) -> "RequestResponse[TRequest, TResponse]":
+    def handled(cls, data: TResponse) -> RequestResponse[TRequest, TResponse]:
         """Create a response indicating the request was handled.
 
         Correlation info (original_request, request_id) will be added automatically
@@ -432,16 +434,16 @@ class RequestResponse(Generic[TRequest, TResponse]):
         return cls(is_handled=True, data=data)
 
     @classmethod
-    def forward(cls, modified_request: Any = None) -> "RequestResponse[TRequest, TResponse]":
+    def forward(cls, modified_request: Any = None) -> RequestResponse[TRequest, TResponse]:
         """Create a response indicating the request should be forwarded."""
         return cls(is_handled=False, forward_request=modified_request)
 
     @staticmethod
     def with_correlation(
-        original_response: "RequestResponse[TRequest, TResponse]",
+        original_response: RequestResponse[TRequest, TResponse],
         original_request: TRequest,
         request_id: str,
-    ) -> "RequestResponse[TRequest, TResponse]":
+    ) -> RequestResponse[TRequest, TResponse]:
         """Add correlation info to a response.
 
         This is called automatically by the framework when processing intercepted requests.
@@ -821,9 +823,9 @@ class WorkflowExecutor(Executor):
     are intercepted by parent workflows.
     """
 
-    workflow: "Workflow" = Field(description="The workflow to execute as a sub-workflow")
+    workflow: Workflow = Field(description="The workflow to execute as a sub-workflow")
 
-    def __init__(self, workflow: "Workflow", id: str | None = None, **kwargs: Any):
+    def __init__(self, workflow: Workflow, id: str | None = None, **kwargs: Any):
         """Initialize the WorkflowExecutor.
 
         Args:
