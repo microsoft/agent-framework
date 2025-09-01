@@ -61,8 +61,9 @@
   </Folder>
   <Folder Name="/Samples/SemanticKernelMigration/OpenAIResponses/">
     <Project Path="samples/SemanticKernelMigration/OpenAIResponses/Step01_Basics/OpenAIResponses_Step01_Basics.csproj" />
-    <Project Path="samples/SemanticKernelMigration/OpenAIResponses/Step02_ToolCall/OpenAIResponses_Step02_ToolCall.csproj" />
-    <Project Path="samples/SemanticKernelMigration/OpenAIResponses/Step03_DependencyInjection/OpenAIResponses_Step03_DependencyInjection.csproj" />
+    <Project Path="samples/SemanticKernelMigration/OpenAIResponses/Step02_ReasoningModel/OpenAIResponses_Step02_ReasoningModel.csproj" />
+    <Project Path="samples/SemanticKernelMigration/OpenAIResponses/Step03_ToolCall/OpenAIResponses_Step03_ToolCall.csproj" />
+    <Project Path="samples/SemanticKernelMigration/OpenAIResponses/Step04_DependencyInjection/OpenAIResponses_Step04_DependencyInjection.csproj" />
   </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
