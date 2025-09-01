@@ -50,9 +50,13 @@ class CheckpointState(TypedDict):
     max_iterations: int
 
 
-# --- Checkpoint serialization helpers ---
+# Checkpoint serialization helpers
 _PYDANTIC_MARKER = "__af_pydantic_model__"
 _DATACLASS_MARKER = "__af_dataclass__"
+
+# Guards to prevent runaway recursion while encoding arbitrary user data
+_MAX_ENCODE_DEPTH = 100
+_CYCLE_SENTINEL = "<cycle>"
 
 
 def _is_pydantic_model(obj: Any) -> bool:
@@ -70,37 +74,83 @@ def _encode_checkpoint_value(value: Any) -> Any:
     """Recursively encode values into JSON-serializable structures.
 
     - Pydantic models -> { _PYDANTIC_MARKER: "module:Class", value: model_dump(mode="json") }
+    - dataclass instances -> { _DATACLASS_MARKER: "module:Class", value: {field: encoded} }
     - dict -> encode keys as str and values recursively
     - list/tuple/set -> list of encoded items
     - other -> returned as-is if already JSON-serializable
+
+    Includes cycle and depth protection to avoid infinite recursion.
     """
-    # Pydantic (AFBaseModel) handling
-    if _is_pydantic_model(value):
-        cls = type(value)
-        return {
-            _PYDANTIC_MARKER: f"{cls.__module__}:{cls.__name__}",
-            "value": value.model_dump(mode="json"),
-        }
 
-    # Dataclasses (e.g., AgentExecutorRequest/Response)
-    if is_dataclass(value):
-        cls = type(value)
-        # Build field mapping without collapsing nested dataclasses
-        raw = {f.name: _encode_checkpoint_value(getattr(value, f.name)) for f in fields(value)}
-        return {
-            _DATACLASS_MARKER: f"{cls.__module__}:{cls.__name__}",
-            "value": raw,
-        }
+    def _enc(v: Any, stack: set[int], depth: int) -> Any:
+        # Depth guard
+        if depth > _MAX_ENCODE_DEPTH:
+            logger.debug(f"Max encode depth reached at depth={depth} for type={type(v)}")
+            return "<max_depth>"
 
-    # Collections
-    if isinstance(value, dict):
-        # JSON keys must be strings; coerce others via str()
-        return {str(k): _encode_checkpoint_value(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [_encode_checkpoint_value(v) for v in list(value)]
+        # Pydantic (AFBaseModel) handling
+        if _is_pydantic_model(v):
+            cls = type(v)
+            try:
+                return {
+                    _PYDANTIC_MARKER: f"{cls.__module__}:{cls.__name__}",
+                    "value": v.model_dump(mode="json"),
+                }
+            except Exception as exc:  # best-effort fallback
+                logger.debug("Pydantic model_dump failed for %s: %s", cls, exc)
+                return str(v)
 
-    # Primitives are fine as-is
-    return value
+        # Dataclasses (instances only)
+        if is_dataclass(v) and not isinstance(v, type):
+            oid = id(v)
+            if oid in stack:
+                logger.debug("Cycle detected while encoding dataclass %s", type(v))
+                return _CYCLE_SENTINEL
+            stack.add(oid)
+            try:
+                cls = type(v)
+                raw = {f.name: _enc(getattr(v, f.name), stack, depth + 1) for f in fields(v)}
+                return {
+                    _DATACLASS_MARKER: f"{cls.__module__}:{cls.__name__}",
+                    "value": raw,
+                }
+            finally:
+                stack.remove(oid)
+
+        # Collections
+        if isinstance(v, dict):
+            oid = id(v)
+            if oid in stack:
+                logger.debug("Cycle detected while encoding dict")
+                return _CYCLE_SENTINEL
+            stack.add(oid)
+            try:
+                # JSON keys must be strings; coerce others via str()
+                return {str(k): _enc(val, stack, depth + 1) for k, val in v.items()}
+            finally:
+                stack.remove(oid)
+
+        if isinstance(v, (list, tuple, set)):
+            oid = id(v)
+            if oid in stack:
+                logger.debug("Cycle detected while encoding iterable type=%s", type(v))
+                return _CYCLE_SENTINEL
+            stack.add(oid)
+            try:
+                return [_enc(item, stack, depth + 1) for item in list(v)]
+            finally:
+                stack.remove(oid)
+
+        # Primitives (or unknown objects): ensure JSON-serializable
+        if isinstance(v, (str, int, float, bool)) or v is None:
+            return v
+        # Fallback: stringify unknown objects to avoid JSON serialization errors
+        try:
+            return str(v)
+        except Exception:
+            return f"<{type(v).__name__}>"
+
+    return _enc(value, set(), 0)
 
 
 def _decode_checkpoint_value(value: Any) -> Any:
