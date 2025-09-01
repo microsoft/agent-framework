@@ -32,7 +32,7 @@ What it does:
   A human approves or edits the plan via `RequestInfoEvent` before execution.
 
 - researcher: ChatClientAgent backed by OpenAIChatClient (web/search-capable model)
-- coder: ChatClientAgent backed by OpenAIAssistantsClient with the Hosted Code Interpreter tool
+- coder: ChatClientAgent backed by OpenAIResponsesClient with the Hosted Code Interpreter tool
 
 Key behaviors demonstrated:
 - with_plan_review(): requests a PlanReviewRequest before coordination begins

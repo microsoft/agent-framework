@@ -164,7 +164,7 @@ async def main():
         "Hello world! This is a simple test.",
         "Python is a powerful programming language used for many applications.",
         "Short text.",
-        "This is a longer text with multiple sentences. It contains more words and characters. We use it to test our text processing workflow.",
+        "This is a longer text with multiple sentences. It contains more words and characters. We use it to test our text processing workflow.",  # noqa: E501
         "",  # Empty string
         "   Spaces   around   text   ",
     ]

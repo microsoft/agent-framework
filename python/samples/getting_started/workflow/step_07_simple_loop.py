@@ -90,7 +90,8 @@ class SubmitToJudgeAgent(Executor):
     async def submit(self, guess: int, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
         prompt = (
             "You are a number judge. Given a target number and a guess, reply with exactly one token:"
-            " 'MATCHED' if guess == target, 'ABOVE' if the target is above the guess, or 'BELOW' if the target is below.\n"
+            " 'MATCHED' if guess == target, 'ABOVE' if the target is above the guess,"
+            " or 'BELOW' if the target is below.\n"
             f"Target: {self._target}\nGuess: {guess}\nResponse:"
         )
         await ctx.send_message(
