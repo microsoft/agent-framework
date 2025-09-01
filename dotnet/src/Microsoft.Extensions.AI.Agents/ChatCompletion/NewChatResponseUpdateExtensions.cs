@@ -73,7 +73,7 @@ public static class NewChatResponseUpdateExtensions
     /// </remarks>
     /// <param name="update">The <see cref="ChatResponseUpdate"/> instance to modify.</param>
     /// <param name="sequenceNumber">The sequence number to set.</param>
-    public static void SetSequenceNumber(this ChatResponseUpdate update, int? sequenceNumber)
+    public static void SetSequenceNumber(this ChatResponseUpdate update, string? sequenceNumber)
     {
         if (update is null)
         {
@@ -92,19 +92,17 @@ public static class NewChatResponseUpdateExtensions
     /// Therefore, please expect a breaking change if you are using this method directly in your code.
     /// </remarks>
     /// <param name="update">The <see cref="ChatResponseUpdate"/> instance to read from.</param>
-    /// <returns>The sequence number if it exists; otherwise, <c>null</c>.</returns>
-    public static int? GetSequenceNumber(this ChatResponseUpdate update)
+    /// <returns>The sequence id if it exists; otherwise, <c>null</c>.</returns>
+    public static string? GetSequenceNumber(this ChatResponseUpdate update)
     {
         if (update is null)
         {
             throw new ArgumentNullException(nameof(update));
         }
 
-        if (update.AdditionalProperties is not null &&
-            update.AdditionalProperties.TryGetValue("SequenceNumber", out var value) &&
-            value is int sequenceNumber)
+        if (update.AdditionalProperties is not null && update.AdditionalProperties.TryGetValue("SequenceNumber", out var value))
         {
-            return sequenceNumber;
+            return value as string;
         }
 
         return null;

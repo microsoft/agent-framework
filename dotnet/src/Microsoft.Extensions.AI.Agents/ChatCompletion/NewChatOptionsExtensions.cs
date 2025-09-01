@@ -63,10 +63,10 @@ public static class NewChatOptionsExtensions
     /// Therefore, please expect a breaking change if you are using this method directly in your code.
     /// </remarks>
     /// <param name="options">The chat options to modify.</param>
-    /// <param name="startAfterId">The identifier of the update to start after.</param>
-    public static void SetStartAfter(this ChatOptions options, int startAfterId)
+    /// <param name="startAfter">The identifier of the update to start generating responses after.</param>
+    public static void SetStartAfter(this ChatOptions options, string startAfter)
     {
-        (options.AdditionalProperties ??= [])["RunAfter"] = startAfterId;
+        (options.AdditionalProperties ??= [])["StartAfter"] = startAfter;
     }
 
     /// <summary>
@@ -78,12 +78,12 @@ public static class NewChatOptionsExtensions
     /// Therefore, please expect a breaking change if you are using this method directly in your code.
     /// </remarks>
     /// <param name="options">The chat options.</param>
-    /// <returns>>The identifier of the update to start after, or <c>null</c> if not set.</returns>
-    public static int? GetStartAfter(this ChatOptions options)
+    /// <returns>>The identifier of the update to start generating responses after, or <c>null</c> if not set.</returns>
+    public static string? GetStartAfter(this ChatOptions options)
     {
         if (options.AdditionalProperties is { } additionalProperties &&
-            additionalProperties.TryGetValue("RunAfter", out object? value) &&
-            value is int startAfter)
+            additionalProperties.TryGetValue("StartAfter", out object? value) &&
+            value is string startAfter)
         {
             return startAfter;
         }

@@ -256,8 +256,10 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
         // a new response instead of fetching the previous one.
         if (options?.GetPreviousResponseId() is { } prevResponseId && !messages.Any(m => m.Contents.OfType<FunctionResultContent>().Any()))
         {
+            var startingAfter = options.GetStartAfter() is { } startAfter ? int.Parse(startAfter) : (int?)null;
+
             // If previous response id is provided, and no functions are involved, get the response by id.
-            streamingUpdates = _responseClient.GetResponseStreamingAsync(prevResponseId, options?.GetStartAfter(), cancellationToken);
+            streamingUpdates = _responseClient.GetResponseStreamingAsync(prevResponseId, startingAfter, cancellationToken);
         }
         else
         {
@@ -297,7 +299,7 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
                 };
 
                 update.SetResponseStatus(responseStatus);
-                update.SetSequenceNumber(streamingUpdate.SequenceNumber);
+                update.SetSequenceNumber(streamingUpdate.SequenceNumber.ToString());
 
                 return update;
             }

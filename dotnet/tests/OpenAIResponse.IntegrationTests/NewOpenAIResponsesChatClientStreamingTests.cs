@@ -125,7 +125,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
 
         List<NewResponseStatus> statuses = [];
         string responseText = "";
-        int? sequenceNumber = null;
+        string? sequenceNumber = null;
         string? responseId = null;
 
         await foreach (var update in this._chatClient.GetStreamingResponseAsync("What is the capital of France?", options))
@@ -153,7 +153,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         options.SetAwaitRunResult(!continueInBackground);
         options.ConversationId = responseId;
         options.SetPreviousResponseId(responseId);
-        options.SetStartAfter(sequenceNumber.Value);
+        options.SetStartAfter(sequenceNumber);
         statuses.Clear();
 
         await foreach (var item in this._chatClient.GetStreamingResponseAsync([], options))
@@ -222,7 +222,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
 
         List<NewResponseStatus> statuses = [];
         string responseText = "";
-        int? sequenceNumber = null;
+        string? sequenceNumber = null;
         string? responseId = null;
 
         await foreach (var update in this._chatClient.GetStreamingResponseAsync("What time is it?", options))
@@ -250,7 +250,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         options.SetAwaitRunResult(!continueInBackground);
         options.ConversationId = responseId;
         options.SetPreviousResponseId(responseId);
-        options.SetStartAfter(sequenceNumber.Value);
+        options.SetStartAfter(sequenceNumber);
         statuses.Clear();
 
         await foreach (var item in this._chatClient.GetStreamingResponseAsync([], options))
@@ -289,7 +289,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         options.SetAwaitRunResult(false);
         options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
 
-        int? sequenceNumber = null;
+        string? sequenceNumber = null;
         string? responseId = null;
 
         await foreach (var update in this._chatClient.GetStreamingResponseAsync("What time is it?", options))
@@ -318,7 +318,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         options.SetAwaitRunResult(!continueInBackground);
         options.ConversationId = responseId;
         options.SetPreviousResponseId(responseId);
-        options.SetStartAfter(sequenceNumber.Value);
+        options.SetStartAfter(sequenceNumber);
 
         await foreach (var item in chatClient.GetStreamingResponseAsync([], options))
         {
