@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Azure.AI.OpenAI;
+using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.DependencyInjection;
@@ -8,8 +10,8 @@ using OpenAI;
 
 #pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
-var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
-var modelId = System.Environment.GetEnvironmentVariable("OPENAI_MODELID") ?? "gpt-4o";
+var endpoint = Environment.GetEnvironmentVariable("AZUREOPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZUREOPENAI_ENDPOINT is not set.");
+var deploymentName = System.Environment.GetEnvironmentVariable("AZUREOPENAI_DEPLOYMENT_NAME") ?? "gpt-4o";
 var userInput = "Tell me a joke about a pirate.";
 
 Console.WriteLine($"User Input: {userInput}");
@@ -23,7 +25,8 @@ async Task SKAgent()
 
     var serviceCollection = new ServiceCollection();
     serviceCollection.AddTransient<Microsoft.SemanticKernel.Agents.Agent>((sp)
-        => new OpenAIResponseAgent(new OpenAIClient(apiKey).GetOpenAIResponseClient(modelId))
+        => new OpenAIResponseAgent(new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+        .GetOpenAIResponseClient(deploymentName))
         {
             Name = "Joker",
             Instructions = "You are good at telling jokes."
@@ -41,8 +44,8 @@ async Task AFAgent()
     Console.WriteLine("\n=== AF Agent ===\n");
 
     var serviceCollection = new ServiceCollection();
-    serviceCollection.AddTransient((sp) => new OpenAIClient(apiKey)
-        .GetChatClient(modelId)
+    serviceCollection.AddTransient((sp) => new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+        .GetChatClient(deploymentName)
         .CreateAIAgent(name: "Joker", instructions: "You are good at telling jokes."));
 
     await using ServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();

@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.ComponentModel;
+using Azure.AI.OpenAI;
+using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Agents.OpenAI;
@@ -8,8 +10,8 @@ using OpenAI;
 
 #pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
-var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
-var modelId = System.Environment.GetEnvironmentVariable("OPENAI_MODELID") ?? "gpt-4o";
+var endpoint = Environment.GetEnvironmentVariable("AZUREOPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZUREOPENAI_ENDPOINT is not set.");
+var deploymentName = System.Environment.GetEnvironmentVariable("AZUREOPENAI_DEPLOYMENT_NAME") ?? "gpt-4o";
 var userInput = "What is the weather like in Amsterdam?";
 
 Console.WriteLine($"User Input: {userInput}");
@@ -24,9 +26,8 @@ await AFAgent();
 
 async Task SKAgent()
 {
-    var builder = Kernel.CreateBuilder().AddOpenAIChatClient(modelId, apiKey);
-
-    OpenAIResponseAgent agent = new(new OpenAIClient(apiKey).GetOpenAIResponseClient(modelId));
+    OpenAIResponseAgent agent = new(new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+        .GetOpenAIResponseClient(deploymentName));
 
     // Initialize plugin and add to the agent's Kernel (same as direct Kernel usage).
     agent.Kernel.Plugins.Add(KernelPluginFactory.CreateFromFunctions("KernelPluginName", [KernelFunctionFactory.CreateFromMethod(GetWeather)]));
@@ -44,9 +45,9 @@ async Task SKAgent()
 
 async Task AFAgent()
 {
-    var agent = new OpenAIClient(apiKey).GetChatClient(modelId).CreateAIAgent(
-        instructions: "You are a helpful assistant",
-        tools: [AIFunctionFactory.Create(GetWeather)]);
+    var agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+        .GetChatClient(deploymentName)
+        .CreateAIAgent(instructions: "You are a helpful assistant", tools: [AIFunctionFactory.Create(GetWeather)]);
 
     Console.WriteLine("\n=== AF Agent Response ===\n");
 
