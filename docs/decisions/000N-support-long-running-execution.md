@@ -954,16 +954,26 @@ To support streaming resumption, the following model changes are required:
 All the chat clients supporting the streaming resumption will need to return the `SequenceNumber` property as part of the `ChatResponseUpdate` class and 
 honor the `StartAfter` property of the `ChatOptions` class.
 
-### Identified Limitations
+### Function Calling
 
-Function calls over streaming are communicated to chat clients through a series of updates. Chat clients track these updates in their internal state to
-build function call contents, which are then returned to the function calling chat client that eventually invokes them.
+Function calls over streaming are communicated to chat clients through a series of updates. Chat clients accumulate these updates in their internal state to build
+the function call content once the last update has been received. The completed function call content is then returned to the function-calling chat client, 
+which eventually invokes it.
 
-Since chat clients maintain function call updates in their internal state, resuming streaming from a specific function calling update can be impossible if the resumption 
-is requested using a chat client that doesn't have the previous updates for that function call. This situation can occur if a host suspends execution during function 
-calling streaming and later resumes from a specific update in the stream. Since chat clients don't persist their internal state, they won't have the previous updates 
-needed for resuming and continuing that function call, causing the function call to fail.
- 
+Since chat clients keep function call updates in their internal state, resuming streaming from a specific update can be impossible if the resumption request 
+is made using a chat client that does not have the previous updates stored. This situation can occur if a host suspends execution during an ongoing function call 
+stream and later resumes from that particular update. Because chat clients' internal state is not persisted, they will lack the prior updates needed to continue 
+the function call, leading to a failure in resumption.
+
+To address this issue, chat clients can only return sequence numbers for updates that are resumable. For updates that cannot be resumed from, chat clients can 
+return the sequence number of the most recent update received before the non-resumable one. This allows callers to resume from that earlier update,
+even if it means re-processing some updates that have already been handled.
+
+Chat clients will continue returning the sequence number of the last resumable update until a new resumable update becomes available. For example, a chat client might 
+keep returning sequence number 2, corresponding to the last resumable update received before an update for the first function call. Once **all** function call updates 
+are received and processed, and the model returns a non-function call response, the chat client will then return a sequence number, say 10, which corresponds to the 
+first non-function call update. 
+
 ### Decision Outcome
 TBD
 
