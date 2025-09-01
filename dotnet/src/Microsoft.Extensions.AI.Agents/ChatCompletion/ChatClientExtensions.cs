@@ -18,7 +18,7 @@ internal static class ChatClientExtensions
             chatBuilder.UseAgentInvocation();
         }
 
-        if (chatClient.GetService<NewFunctionInvokingChatClient>() is null)
+        if (chatClient.GetService<FunctionInvokingChatClient>() is null && chatClient.GetService<NewFunctionInvokingChatClient>() is null)
         {
             _ = chatBuilder.Use((IChatClient innerClient, IServiceProvider services) =>
             {
@@ -33,7 +33,17 @@ internal static class ChatClientExtensions
         if (options?.ChatOptions?.Tools is { Count: > 0 })
         {
             // When tools are provided in the constructor, set the tools for the whole lifecycle of the chat client
-            agentChatClient.GetService<NewFunctionInvokingChatClient>()!.AdditionalTools = options.ChatOptions.Tools;
+            var newFunctionService = agentChatClient.GetService<NewFunctionInvokingChatClient>();
+            var oldFunctionService = agentChatClient.GetService<FunctionInvokingChatClient>();
+
+            if (newFunctionService is not null)
+            {
+                newFunctionService.AdditionalTools = options.ChatOptions.Tools;
+            }
+            else
+            {
+                oldFunctionService!.AdditionalTools = options.ChatOptions.Tools;
+            }
         }
 
         return agentChatClient;
