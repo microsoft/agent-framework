@@ -8,7 +8,8 @@ on:
       - "python/**"
 
 env:
-  UV_SEMVER: "0.8.x"
+  # Configure a constant location for the uv cache
+  UV_CACHE_DIR: /tmp/.uv-cache
 
 jobs:
   pre-commit:
@@ -24,21 +25,19 @@ jobs:
       run:
         working-directory: ./python
     env:
-      # Configure a constant location for the uv cache
-      UV_CACHE_DIR: /tmp/.uv-cache
       UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v4
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
-          version: ${{ env.UV_SEMVER }}
+          version-file: "python/pyproject.toml"
           enable-cache: true
           cache-suffix: ${{ runner.os }}-${{ matrix.python-version }}
           cache-dependency-glob: "**/uv.lock"
       - name: Install the project
         run: uv sync --all-extras --dev
-      - uses: actions/cache@v3
+      - uses: actions/cache@v4
         with:
           path: ~/.cache/pre-commit
           key: pre-commit|${{ matrix.python-version }}|${{ hashFiles('python/.pre-commit-config.yaml') }}

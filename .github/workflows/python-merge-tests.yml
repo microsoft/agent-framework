@@ -17,7 +17,6 @@ env:
   # Configure a constant location for the uv cache
   UV_CACHE_DIR: /tmp/.uv-cache
   RUN_INTEGRATION_TESTS: "true"
-  UV_SEMVER: "0.8.x"
 
 jobs:
   paths-filter:
@@ -58,7 +57,9 @@ jobs:
     env:
       UV_PYTHON: ${{ matrix.python-version }}
       OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI__RESPONSESMODELID }}
       OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
+      LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
       PACKAGE_NAME: "main"
     defaults:
       run:
@@ -68,7 +69,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
-          version: ${{ env.UV_SEMVER }}
+          version-file: "python/pyproject.toml"
           enable-cache: true
           cache-suffix: ${{ runner.os }}-${{ matrix.python-version }}
           cache-dependency-glob: "**/uv.lock"
@@ -112,7 +113,8 @@ jobs:
     env:
       UV_PYTHON: ${{ matrix.python-version }}
       AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
-      AZURE_OPENAI_ENDPOINT: ${{ secrets.AZUREOPENAI__ENDPOINT }}
+      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
       PACKAGE_NAME: "azure"
     defaults:
       run:
@@ -122,7 +124,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
-          version: ${{ env.UV_SEMVER }}
+          version-file: "python/pyproject.toml"
           enable-cache: true
           cache-suffix: ${{ runner.os }}-${{ matrix.python-version }}
           cache-dependency-glob: "**/uv.lock"
@@ -183,7 +185,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
-          version: ${{ env.UV_SEMVER }}
+          version-file: "python/pyproject.toml"
           enable-cache: true
           cache-suffix: ${{ runner.os }}-${{ matrix.python-version }}
           cache-dependency-glob: "**/uv.lock"

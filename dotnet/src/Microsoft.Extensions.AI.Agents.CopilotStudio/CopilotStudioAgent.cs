@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -25,6 +26,8 @@ public class CopilotStudioAgent : AIAgent
     /// </summary>
     public CopilotClient Client { get; }
 
+    private readonly static AIAgentMetadata s_agentMetadata = new("copilot-studio");
+
     /// <summary>
     /// Initializes a new instance of the <see cref="CopilotStudioAgent"/> class.
     /// </summary>
@@ -33,14 +36,7 @@ public class CopilotStudioAgent : AIAgent
     public CopilotStudioAgent(CopilotClient client, ILoggerFactory? loggerFactory = null)
     {
         this.Client = client;
-
         this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<CopilotStudioAgent>();
-    }
-
-    /// <inheritdoc/>
-    public override AgentThread GetNewThread()
-    {
-        return new CopilotStudioAgentThread();
     }
 
     /// <inheritdoc/>
@@ -54,12 +50,12 @@ public class CopilotStudioAgent : AIAgent
 
         // Ensure that we have a valid thread to work with.
         // If the thread ID is null, we need to start a new conversation and set the thread ID accordingly.
-        CopilotStudioAgentThread copilotStudioAgentThread = base.ValidateOrCreateThreadType(thread, () => new CopilotStudioAgentThread());
-        copilotStudioAgentThread.Id ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
+        thread ??= this.GetNewThread();
+        thread.ConversationId ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
 
         // Invoke the Copilot Studio agent with the provided messages.
         string question = string.Join("\n", messages.Select(m => m.Text));
-        var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, copilotStudioAgentThread.Id, cancellationToken), streaming: false, this._logger);
+        var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, thread.ConversationId, cancellationToken), streaming: false, this._logger);
         var responseMessagesList = new List<ChatMessage>();
         await foreach (var message in responseMessages.ConfigureAwait(false))
         {
@@ -87,12 +83,12 @@ public class CopilotStudioAgent : AIAgent
 
         // Ensure that we have a valid thread to work with.
         // If the thread ID is null, we need to start a new conversation and set the thread ID accordingly.
-        CopilotStudioAgentThread copilotStudioAgentThread = base.ValidateOrCreateThreadType(thread, () => new CopilotStudioAgentThread());
-        copilotStudioAgentThread.Id ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
+        thread ??= this.GetNewThread();
+        thread.ConversationId ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
 
         // Invoke the Copilot Studio agent with the provided messages.
         string question = string.Join("\n", messages.Select(m => m.Text));
-        var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, copilotStudioAgentThread.Id, cancellationToken), streaming: true, this._logger);
+        var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, thread.ConversationId, cancellationToken), streaming: true, this._logger);
 
         // Enumerate the response messages
         await foreach (ChatMessage message in responseMessages.ConfigureAwait(false))
@@ -130,4 +126,11 @@ public class CopilotStudioAgent : AIAgent
 
         return conversationId!;
     }
+
+    /// <inheritdoc/>
+    public override object? GetService(Type serviceType, object? serviceKey = null)
+        => base.GetService(serviceType, serviceKey)
+           ?? (serviceType == typeof(CopilotClient) ? this.Client
+            : serviceType == typeof(AIAgentMetadata) ? s_agentMetadata
+            : null);
 }
