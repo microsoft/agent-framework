@@ -927,7 +927,41 @@ TBD: Explore this further if the option is selected.
 TBD
 
 ## 5. Streaming Support
-TBD
+
+All analyzed APIs that support long-running executions also support streaming. 
+
+Some of them allow resuming streaming from a specific point in the stream, while others don't:
+
+| API                     | Can Resume Streaming                 | Model                                                                                                      |
+|-------------------------|--------------------------------------|------------------------------------------------------------------------------------------------------------|
+| OpenAI Responses        | Yes                                  | StreamingResponseUpdate.**SequenceNumber** &  GetResponseStreamingAsync(responseId, **startingAfter**, ct) |
+| Azure AI Foundry Agents | TBD                                  |          																				                  |
+| A2A                     | Implementation dependent<sup>1</sup> |          																				                  |
+
+<sup>1</sup> The [A2A specification](https://github.com/a2aproject/A2A/blob/main/docs/topics/streaming-and-async.md#1-streaming-with-server-sent-events-sse)
+allows an A2A agent implementation to decide how to handle streaming resumption: _If a client's SSE connection breaks prematurely while 
+a task is still active (and the server hasn't sent a final: true event for that phase), the client can attempt to reconnect to the stream using the tasks/resubscribe RPC method. 
+The server's behavior regarding missed events during the disconnection period (e.g., whether it backfills or only sends new updates) is implementation-dependent._
+
+### Required Changes
+
+To support streaming resumption, the following model changes are required:
+
+- The `ChatOptions` class needs to be extended with a new `StartAfter` property that will identify an update to resume streaming from and to start generating responses after.
+- The `ChatResponseUpdate` class needs to be extended with a new `SequenceNumber` property that will identify the update number within the stream.
+
+All the chat clients supporting the streaming resumption will need to return the `SequenceNumber` property as part of the `ChatResponseUpdate` class and 
+honor the `StartAfter` property of the `ChatOptions` class.
+
+### Identified Limitations
+
+Function calls over streaming are communicated to chat clients through a series of updates. Chat clients track these updates in their internal state to
+build function call contents, which are then returned to the function calling chat client that eventually invokes them.
+
+Since chat clients maintain function call updates in their internal state, resuming streaming from a specific function calling update can be impossible if the resumption 
+is requested using a chat client that doesn't have the previous updates for that function call. This situation can occur if a host suspends execution during function 
+calling streaming and later resumes from a specific update in the stream. Since chat clients don't persist their internal state, they won't have the previous updates 
+needed for resuming and continuing that function call, causing the function call to fail.
  
 ### Decision Outcome
 TBD
