@@ -250,7 +250,7 @@ class WorkflowViz:
         # Lazy import to avoid any potential import cycles
         try:
             from ._executor import WorkflowExecutor  # type: ignore
-        except Exception:  # pragma: no cover - best-effort; if unavailable, skip subgraphs
+        except ImportError:  # pragma: no cover - best-effort; if unavailable, skip subgraphs
             return
 
         for exec_id, exec_obj in wf.executors.items():
