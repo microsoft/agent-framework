@@ -40,7 +40,7 @@ For more details and more advanced scenarios, see [Getting Started Steps](../../
 
 ## (Optional) Installing Packages
 
-Packages with be published to [NuGet](https://www.nuget.org/) when the Agent Framework public preview is released. 
+Packages will be published to [NuGet](https://www.nuget.org/) when the Agent Framework public preview is released. 
 In the meantime nightly builds of the Agent Framework are available [here](https://github.com/orgs/microsoft/packages?repo_name=agent-framework).
 
 To download nightly builds follow the following steps:
