@@ -12,12 +12,12 @@ internal class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData edgeData
 
     public FanInEdgeState CreateState() => new(this.EdgeData);
 
-    public async ValueTask<object?> ChaseAsync(string sourceId, MessageEnvelope envelope, FanInEdgeState state, IStepTracer? tracer)
+    public async ValueTask<IEnumerable<object?>> ChaseAsync(string sourceId, MessageEnvelope envelope, FanInEdgeState state, IStepTracer? tracer)
     {
         if (envelope.TargetId != null && this.EdgeData.SinkId != envelope.TargetId)
         {
             // This message is not for us.
-            return null;
+            return [];
         }
 
         object message = envelope.Message;
@@ -25,18 +25,23 @@ internal class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData edgeData
         if (releasedMessages is null)
         {
             // Not ready to process yet.
-            return null;
+            return [];
         }
 
         Executor target = await this.RunContext.EnsureExecutorAsync(this.EdgeData.SinkId, tracer)
-                                                   .ConfigureAwait(false);
+                                               .ConfigureAwait(false);
 
-        if (target.CanHandle(message.GetType()))
+        List<Task<object?>> messageTasks = [];
+
+        foreach (var messageTask in releasedMessages)
         {
-            tracer?.TraceActivated(target.Id);
-            return await target.ExecuteAsync(message, envelope.MessageType, this.BoundContext)
-                               .ConfigureAwait(false);
+            if (target.CanHandle(messageTask.GetType()))
+            {
+                tracer?.TraceActivated(target.Id);
+                messageTasks.Add(target.ExecuteAsync(messageTask, envelope.MessageType, this.BoundContext).AsTask());
+            }
         }
-        return null;
+
+        return await Task.WhenAll(messageTasks.ToArray()).ConfigureAwait(false);
     }
 }

@@ -138,10 +138,6 @@ class AgentThread(AFBaseModel):
 
         self._message_store = message_store
 
-    async def list_messages(self) -> list[ChatMessage] | None:
-        """Retrieves any messages stored in ChatMessageStore of the thread, otherwise returns an empty collection."""
-        return await self._message_store.list_messages() if self._message_store is not None else None
-
     async def serialize(self, **kwargs: Any) -> dict[str, Any]:
         """Serializes the current object's state.
 

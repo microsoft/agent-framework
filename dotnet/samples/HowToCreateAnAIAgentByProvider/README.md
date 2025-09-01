@@ -1,0 +1,55 @@
+# Creating an AIAgent instance for various providers
+
+These samples show how to create an AIAgent instance using various providers.
+This is not an exhaustive list, but shows a variety of the more popular options.
+
+For other samples that demonstrate how to use AIAgent instances,
+see the [Getting Started Steps](../GettingStartedSteps/README.md) samples.
+
+## Prerequisites
+
+See the README.md for each sample for the prerequisites for that sample.
+## Samples
+
+|Sample|Description|
+|---|---|
+|[Creating an AIAgent with AzureFoundry](./AIAgent_With_AzureFoundry/)|This sample demonstrates how to create an Azure Foundry agent and expose it as an AIAgent|
+|[Creating an AIAgent with Azure OpenAI ChatCompletion](./AIAgent_With_AzureOpenAIChatCompletion/)|This sample demonstrates how to create an AIAgent using Azure OpenAI ChatCompletion as the underlying inference service|
+|[Creating an AIAgent with Azure OpenAI Responses](./AIAgent_With_AzureOpenAIResponses/)|This sample demonstrates how to create an AIAgent using Azure OpenAI Responses as the underlying inference service|
+|[Creating an AIAgent with ONNX](./AIAgent_With_ONNX/)|This sample demonstrates how to create an AIAgent using ONNX as the underlying inference service|
+|[Creating an AIAgent with OpenAI ChatCompletion](./AIAgent_With_OpenAIChatCompletion/)|This sample demonstrates how to create an AIAgent using OpenAI ChatCompletion as the underlying inference service|
+|[Creating an AIAgent with OpenAI Responses](./AIAgent_With_OpenAIResponses/)|This sample demonstrates how to create an AIAgent using OpenAI Responses as the underlying inference service|
+
+## Running the samples from the console
+
+To run the samples, navigate to the desired sample directory, e.g.
+
+```powershell
+cd AIAgent_With_AzureOpenAIChatCompletion
+```
+
+Set the required environment variables as documented in the sample readme.
+If the variables are not set, you will be prompted for the values when running the samples.
+Execute the following command to build the sample:
+
+```powershell
+dotnet build
+```
+
+Execute the following command to run the sample:
+
+```powershell
+dotnet run --no-build
+```
+
+Or just build and run in one step:
+
+```powershell
+dotnet run
+```
+
+## Running the samples from Visual Studio
+
+Open the solution in Visual Studio and set the desired sample project as the startup project. Then, run the project using the built-in debugger or by pressing `F5`.
+
+You will be prompted for any required environment variables if they are not already set.

@@ -55,7 +55,7 @@ public sealed class ChatClientAgent : AIAgent
     /// <param name="chatClient">The chat client to use for invoking the agent.</param>
     /// <param name="options">Full set of options to configure the agent.</param>
     /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
-    public ChatClientAgent(IChatClient chatClient, ChatClientAgentOptions options, ILoggerFactory? loggerFactory = null)
+    public ChatClientAgent(IChatClient chatClient, ChatClientAgentOptions? options, ILoggerFactory? loggerFactory = null)
     {
         _ = Throw.IfNull(chatClient);
 
@@ -68,7 +68,7 @@ public sealed class ChatClientAgent : AIAgent
         this._chatClientType = chatClient.GetType();
 
         // If the user has not opted out of using our default decorators, we wrap the chat client.
-        this.ChatClient = options?.UseProvidedChatClientAsIs is true ? chatClient : chatClient.AsAgentInvokedChatClient();
+        this.ChatClient = options?.UseProvidedChatClientAsIs is true ? chatClient : chatClient.AsAgentInvokedChatClient(options);
 
         this._logger = (loggerFactory ?? chatClient.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance).CreateLogger<ChatClientAgent>();
     }
@@ -122,7 +122,7 @@ public sealed class ChatClientAgent : AIAgent
         this.UpdateThreadWithTypeAndConversationId(safeThread, chatResponse.ConversationId);
 
         // Only notify the thread of new messages if the chatResponse was successful to avoid inconsistent messages state in the thread.
-        await this.NotifyThreadOfNewMessagesAsync(safeThread, messages, cancellationToken).ConfigureAwait(false);
+        await NotifyThreadOfNewMessagesAsync(safeThread, messages, cancellationToken).ConfigureAwait(false);
 
         // Ensure that the author name is set for each message in the response.
         foreach (ChatMessage chatResponseMessage in chatResponse.Messages)
@@ -133,7 +133,7 @@ public sealed class ChatClientAgent : AIAgent
         // Convert the chat response messages to a valid IReadOnlyCollection for notification signatures below.
         var chatResponseMessages = chatResponse.Messages as IReadOnlyCollection<ChatMessage> ?? [.. chatResponse.Messages];
 
-        await this.NotifyThreadOfNewMessagesAsync(safeThread, chatResponseMessages, cancellationToken).ConfigureAwait(false);
+        await NotifyThreadOfNewMessagesAsync(safeThread, chatResponseMessages, cancellationToken).ConfigureAwait(false);
 
         return new(chatResponse) { AgentId = this.Id };
     }
@@ -186,9 +186,9 @@ public sealed class ChatClientAgent : AIAgent
         this.UpdateThreadWithTypeAndConversationId(safeThread, chatResponse.ConversationId);
 
         // To avoid inconsistent state we only notify the thread of the input messages if no error occurs after the initial request.
-        await this.NotifyThreadOfNewMessagesAsync(safeThread, inputMessages, cancellationToken).ConfigureAwait(false);
+        await NotifyThreadOfNewMessagesAsync(safeThread, inputMessages, cancellationToken).ConfigureAwait(false);
 
-        await this.NotifyThreadOfNewMessagesAsync(safeThread, chatResponseMessages, cancellationToken).ConfigureAwait(false);
+        await NotifyThreadOfNewMessagesAsync(safeThread, chatResponseMessages, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
@@ -231,7 +231,7 @@ public sealed class ChatClientAgent : AIAgent
         // If no request chat options were provided, use the agent's chat options clone.
         if (requestChatOptions is null)
         {
-            return this._agentOptions?.ChatOptions?.Clone();
+            return this._agentOptions?.ChatOptions.Clone();
         }
 
         // If both are present, we need to merge them.

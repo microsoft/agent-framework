@@ -131,9 +131,7 @@ def test_foundry_chat_client_init_missing_project_endpoint() -> None:
         mock_settings_instance.agent_name = "test-agent"
         mock_settings.return_value = mock_settings_instance
 
-        with pytest.raises(
-            ServiceInitializationError, match="Project endpoint is required when client is not provided"
-        ):
+        with pytest.raises(ServiceInitializationError, match="project endpoint is required"):
             FoundryChatClient(
                 client=None,
                 agent_id=None,
@@ -153,7 +151,7 @@ def test_foundry_chat_client_init_missing_model_deployment_for_agent_creation() 
         mock_settings_instance.agent_name = "test-agent"
         mock_settings.return_value = mock_settings_instance
 
-        with pytest.raises(ServiceInitializationError, match="Model deployment name is required for agent creation"):
+        with pytest.raises(ServiceInitializationError, match="model deployment name is required"):
             FoundryChatClient(
                 client=None,
                 agent_id=None,  # No existing agent
@@ -194,7 +192,7 @@ def test_foundry_chat_client_from_dict(mock_ai_project_client: MagicMock) -> Non
 
 def test_foundry_chat_client_init_missing_credential(foundry_unit_test_env: dict[str, str]) -> None:
     """Test FoundryChatClient.__init__ when async_credential is missing and no client provided."""
-    with pytest.raises(ServiceInitializationError, match="Azure AD credential is required when client is not provided"):
+    with pytest.raises(ServiceInitializationError, match="Azure credential is required when client is not provided"):
         FoundryChatClient(
             client=None,
             agent_id="existing-agent",
