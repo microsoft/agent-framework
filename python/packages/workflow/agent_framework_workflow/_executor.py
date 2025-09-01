@@ -1,7 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from __future__ import annotations
-
 import contextlib
 import functools
 import inspect
@@ -54,8 +52,8 @@ class Executor(AFBaseModel):
         executor_id = f"{self.__class__.__name__}/{uuid.uuid4()}" if id is None else id
 
         kwargs.update({"id": executor_id})
-        if "type" not in kwargs:
-            kwargs["type"] = self.__class__.__name__
+        if "type" not in kwargs and "type_" not in kwargs:
+            kwargs["type_"] = self.__class__.__name__
 
         super().__init__(**kwargs)
 
@@ -165,7 +163,7 @@ class Executor(AFBaseModel):
 
     async def _handle_sub_workflow_request(
         self,
-        request: SubWorkflowRequestInfo,
+        request: "SubWorkflowRequestInfo",
         ctx: WorkflowContext[Any],
     ) -> None:
         """Automatic routing to @intercepts_request methods.
@@ -425,7 +423,7 @@ class RequestResponse(Generic[TRequest, TResponse]):
     request_id: str | None = None  # Added for tracking
 
     @classmethod
-    def handled(cls, data: TResponse) -> RequestResponse[TRequest, TResponse]:
+    def handled(cls, data: TResponse) -> "RequestResponse[TRequest, TResponse]":
         """Create a response indicating the request was handled.
 
         Correlation info (original_request, request_id) will be added automatically
@@ -434,16 +432,16 @@ class RequestResponse(Generic[TRequest, TResponse]):
         return cls(is_handled=True, data=data)
 
     @classmethod
-    def forward(cls, modified_request: Any = None) -> RequestResponse[TRequest, TResponse]:
+    def forward(cls, modified_request: Any = None) -> "RequestResponse[TRequest, TResponse]":
         """Create a response indicating the request should be forwarded."""
         return cls(is_handled=False, forward_request=modified_request)
 
     @staticmethod
     def with_correlation(
-        original_response: RequestResponse[TRequest, TResponse],
+        original_response: "RequestResponse[TRequest, TResponse]",
         original_request: TRequest,
         request_id: str,
-    ) -> RequestResponse[TRequest, TResponse]:
+    ) -> "RequestResponse[TRequest, TResponse]":
         """Add correlation info to a response.
 
         This is called automatically by the framework when processing intercepted requests.
@@ -823,9 +821,9 @@ class WorkflowExecutor(Executor):
     are intercepted by parent workflows.
     """
 
-    workflow: Workflow = Field(description="The workflow to execute as a sub-workflow")
+    workflow: "Workflow" = Field(description="The workflow to execute as a sub-workflow")
 
-    def __init__(self, workflow: Workflow, id: str | None = None, **kwargs: Any):
+    def __init__(self, workflow: "Workflow", id: str | None = None, **kwargs: Any):
         """Initialize the WorkflowExecutor.
 
         Args:
