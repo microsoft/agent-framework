@@ -13,11 +13,11 @@ were local agents. These are supported using various `AIAgent` subclasses.
 
 The samples are subdivided into the following categories:
 
-- [Getting Started Steps](./GettingStartedSteps/README.md): Basic steps to get started with the agent framework.
+- [Getting Started - Agents](./GettingStarted/Agents/README.md): Basic steps to get started with the agent framework.
   These samples demonstrate the fundamental concepts and functionalities of the agent framework when using the
-  `ChatClientAgent` and can be used with any underlying service that the `ChatClientAgent` supports.
-- [How to create an AIAgent for each provider](./HowToCreateAnAIAgentByProvider/README.md): Shows how to create an AIAgent instance for a selection of providers.
-- [Agent specific features](./AgentSpecificFeatures/README.md): Samples that showcase features specific to each type of agent.
+  `AIAgent` and can be used with any underlying service that provides an `AIAgent` implementation.
+- [Getting Started - Agent Providers](./GettingStarted/AgentProviders/README.md): Shows how to create an AIAgent instance for a selection of providers.
+- [Getting Started - Agent Telemetry](./GettingStarted/AgentOpenTelemetry/README.md): Demo which showcases the integration of OpenTelemetry with the Microsoft Agent Framework using Azure OpenAI and .NET Aspire Dashboard for telemetry visualization.
 
 ## Prerequisites
 
