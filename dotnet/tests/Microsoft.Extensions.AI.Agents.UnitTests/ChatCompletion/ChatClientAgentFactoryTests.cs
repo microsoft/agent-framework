@@ -217,7 +217,7 @@ public class ChatClientAgentFactoryTests
     {
         // Arrange
         var factory = new ChatClientAgentFactory();
-        var agentDefinition = new AgentDefinition { Type = agentType };
+        var agentDefinition = new AgentDefinition { Type = agentType! };
         var options = new AgentCreationOptions
         {
             ChatClient = this._mockChatClient.Object,
@@ -276,7 +276,7 @@ public class ChatClientAgentFactoryTests
     {
         // Arrange
         var factory = new ChatClientAgentFactory();
-        var agentDefinition = new AgentDefinition { Type = null };
+        var agentDefinition = new AgentDefinition { Type = null! };
 
         // Act
         var result = factory.IsSupported(agentDefinition);

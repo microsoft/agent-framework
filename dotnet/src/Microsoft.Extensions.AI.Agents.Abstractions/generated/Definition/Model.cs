@@ -1,11 +1,38 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 using System;
 using System.Collections.Generic;
 
 namespace Microsoft.Extensions.AI.Agents;
 
+#pragma warning disable RCS1037 // Remove trailing white-space
 /// <summary>
-/// Represents an instance of Model.
+/// /// Model for defining the structure and behavior of AI agents.
+/// Yaml Example:
+/// ```yaml
+/// name: Basic Prompt
+/// description: A basic prompt that uses the GPT-3 chat API to answer questions
+/// model:
+///   id: gpt-35-turbo
+///   connection:
+///     provider: azure
+///     type: chat
+///     endpoint: https://{your-custom-endpoint}.openai.azure.com/
+/// ```
+/// 
+/// A shorthand representation of the model configuration can also be constructed as
+/// follows:
+/// ```yaml
+/// name: Basic Prompt
+/// description: A basic prompt that uses the GPT-3 chat API to answer questions
+/// model: gpt-35-turbo
+/// ```
+/// This will be expanded as follows:
+/// ```yaml
+/// name: Basic Prompt
+/// description: A basic prompt that uses the GPT-3 chat API to answer questions
+/// model:
+///   id: gpt-35-turbo
+/// ```.
 /// </summary>
 public sealed class Model
 {
@@ -25,14 +52,15 @@ public sealed class Model
         Id = props.GetValueOrDefault<string>("id") ?? throw new ArgumentException("Properties must contain a property named: id", nameof(props));
         Connection = props.GetValueOrDefault<Connection?>("connection");
     }
-
+    
     /// <summary>
     /// The unique identifier of the model
     /// </summary>
     public string Id { get; set; } = string.Empty;
-
+    
     /// <summary>
     /// The connection configuration for the model
     /// </summary>
     public Connection? Connection { get; set; }
 }
+#pragma warning restore RCS1037 // Remove trailing white-space

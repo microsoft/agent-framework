@@ -1,11 +1,14 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 using System;
 using System.Collections.Generic;
 
 namespace Microsoft.Extensions.AI.Agents;
 
+#pragma warning disable RCS1037 // Remove trailing white-space
 /// <summary>
-/// Represents an instance of Connection.
+/// /// Connection configuration for AI agents.
+/// `provider`, `type`, and `endpoint` are required properties here,
+/// but this section can accept additional via options..
 /// </summary>
 public sealed class Connection
 {
@@ -27,24 +30,25 @@ public sealed class Connection
         Endpoint = props.GetValueOrDefault<string>("endpoint") ?? throw new ArgumentException("Properties must contain a property named: endpoint", nameof(props));
         Options = props.GetValueOrDefault<Options?>("options");
     }
-
+    
     /// <summary>
     /// The unique provider of the connection
     /// </summary>
     public string Provider { get; set; } = string.Empty;
-
+    
     /// <summary>
     /// The type of connection used to tell the runtime how to load and execute the agent
     /// </summary>
     public string Type { get; set; } = string.Empty;
-
+    
     /// <summary>
     /// The endpoint URL for the connection
     /// </summary>
     public string Endpoint { get; set; } = string.Empty;
-
+    
     /// <summary>
     /// Additional options for model execution
     /// </summary>
     public Options? Options { get; set; }
 }
+#pragma warning restore RCS1037 // Remove trailing white-space
