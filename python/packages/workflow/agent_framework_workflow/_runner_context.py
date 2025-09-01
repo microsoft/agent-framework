@@ -1,9 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import importlib
 import logging
 import uuid
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from typing import Any, Protocol, TypedDict, TypeVar, runtime_checkable
 
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
@@ -47,6 +48,109 @@ class CheckpointState(TypedDict):
     executor_states: dict[str, dict[str, Any]]
     iteration_count: int
     max_iterations: int
+
+
+# --- Checkpoint serialization helpers ---
+_PYDANTIC_MARKER = "__af_pydantic_model__"
+_DATACLASS_MARKER = "__af_dataclass__"
+
+
+def _is_pydantic_model(obj: Any) -> bool:
+    """Best-effort check for Pydantic v2 models (e.g., AFBaseModel).
+
+    We avoid hard dependencies by duck-typing on model_dump/model_validate.
+    """
+    try:
+        return hasattr(obj, "model_dump") and hasattr(obj.__class__, "model_validate")
+    except Exception:
+        return False
+
+
+def _encode_checkpoint_value(value: Any) -> Any:
+    """Recursively encode values into JSON-serializable structures.
+
+    - Pydantic models -> { _PYDANTIC_MARKER: "module:Class", value: model_dump(mode="json") }
+    - dict -> encode keys as str and values recursively
+    - list/tuple/set -> list of encoded items
+    - other -> returned as-is if already JSON-serializable
+    """
+    # Pydantic (AFBaseModel) handling
+    if _is_pydantic_model(value):
+        cls = value.__class__
+        return {
+            _PYDANTIC_MARKER: f"{cls.__module__}:{cls.__name__}",
+            "value": value.model_dump(mode="json"),
+        }
+
+    # Dataclasses (e.g., AgentExecutorRequest/Response)
+    if is_dataclass(value):
+        cls = value.__class__
+        # Build field mapping without collapsing nested dataclasses
+        raw = {f.name: _encode_checkpoint_value(getattr(value, f.name)) for f in fields(value)}
+        return {
+            _DATACLASS_MARKER: f"{cls.__module__}:{cls.__name__}",
+            "value": raw,
+        }
+
+    # Collections
+    if isinstance(value, dict):
+        # JSON keys must be strings; coerce others via str()
+        return {str(k): _encode_checkpoint_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_encode_checkpoint_value(v) for v in list(value)]
+
+    # Primitives are fine as-is
+    return value
+
+
+def _decode_checkpoint_value(value: Any) -> Any:
+    """Recursively decode values previously encoded by _encode_checkpoint_value."""
+    if isinstance(value, dict):
+        # Pydantic marker handling
+        if _PYDANTIC_MARKER in value and "value" in value:
+            type_key = value.get(_PYDANTIC_MARKER)
+            raw = value.get("value")
+            if isinstance(type_key, str):
+                try:
+                    module_name, class_name = type_key.split(":", 1)
+                    module = importlib.import_module(module_name)
+                    cls = getattr(module, class_name)
+                    if hasattr(cls, "model_validate"):
+                        return cls.model_validate(raw)
+                except Exception as exc:
+                    # Fallback to returning the raw dict if import/validation fails
+                    logger.debug(
+                        "Failed to decode pydantic model %s: %s; returning raw value",
+                        type_key,
+                        exc,
+                    )
+        # Regular dict or encoded dataclass: decode recursively
+        if _DATACLASS_MARKER in value and "value" in value:
+            type_key = value.get(_DATACLASS_MARKER)
+            raw = value.get("value")
+            if isinstance(type_key, str):
+                try:
+                    module_name, class_name = type_key.split(":", 1)
+                    module = importlib.import_module(module_name)
+                    cls = getattr(module, class_name)
+                    # Rehydrate dataclass (or plain class) via **kwargs
+                    decoded_raw = _decode_checkpoint_value(raw)
+                    if isinstance(decoded_raw, dict):
+                        return cls(**decoded_raw)
+                except Exception as exc:
+                    logger.debug(
+                        "Failed to decode dataclass %s: %s; returning raw value",
+                        type_key,
+                        exc,
+                    )
+            # Fallback to decoded raw value
+            return _decode_checkpoint_value(raw)
+
+        # Regular dict: decode recursively
+        return {k: _decode_checkpoint_value(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_decode_checkpoint_value(v) for v in value]
+    return value
 
 
 @runtime_checkable
@@ -285,7 +389,7 @@ class InProcRunnerContext:
         for source_id, message_list in self._messages.items():
             serializable_messages[source_id] = [
                 {
-                    "data": msg.data,
+                    "data": _encode_checkpoint_value(msg.data),
                     "source_id": msg.source_id,
                     "target_id": msg.target_id,
                     "trace_contexts": msg.trace_contexts,
@@ -295,8 +399,8 @@ class InProcRunnerContext:
             ]
         return {
             "messages": serializable_messages,
-            "shared_state": self._shared_state,
-            "executor_states": self._executor_states,
+            "shared_state": _encode_checkpoint_value(self._shared_state),
+            "executor_states": _encode_checkpoint_value(self._executor_states),
             "iteration_count": self._iteration_count,
             "max_iterations": self._max_iterations,
         }
@@ -307,7 +411,7 @@ class InProcRunnerContext:
         for source_id, message_list in messages_data.items():
             self._messages[source_id] = [
                 Message(
-                    data=msg.get("data"),
+                    data=_decode_checkpoint_value(msg.get("data")),
                     source_id=msg.get("source_id", ""),
                     target_id=msg.get("target_id"),
                     trace_contexts=msg.get("trace_contexts"),
@@ -315,7 +419,7 @@ class InProcRunnerContext:
                 )
                 for msg in message_list
             ]
-        self._shared_state = state.get("shared_state", {})
-        self._executor_states = state.get("executor_states", {})
+        self._shared_state = _decode_checkpoint_value(state.get("shared_state", {}))
+        self._executor_states = _decode_checkpoint_value(state.get("executor_states", {}))
         self._iteration_count = state.get("iteration_count", 0)
         self._max_iterations = state.get("max_iterations", 100)
