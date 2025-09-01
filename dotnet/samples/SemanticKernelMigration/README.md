@@ -312,6 +312,12 @@ $env:AZURE_FOUNDRY_PROJECT_ENDPOINT = "https://<your-project>-resource.services.
 $env:OPENAI_API_KEY = "sk-..."
 ```
 
+**For Azure OpenAI and Azure OpenAI Assistants projects:**
+```powershell
+$env:AZUREOPENAI_ENDPOINT = "https://<your-project>.cognitiveservices.azure.com/"
+$env:AZUREOPENAI_DEPLOYMENT_NAME = "gpt-4o" # Optional, defaults to gpt-4o
+```
+
 **Optional debug mode:**
 ```powershell
 $env:AF_SHOW_ALL_DEMO_SETTING_VALUES = "Y"
@@ -326,6 +332,8 @@ The migration samples are organized into three categories, each demonstrating di
 |Category|Description|
 |---|---|
 |[AzureAIFoundry](./AzureAIFoundry/)|Azure OpenAI service integration samples|
+|[AzureOpenAI](./AzureOpenAI/)|Direct Azure OpenAI API integration samples|
+|[AzureOpenAIAssistants](./AzureOpenAIAssistants/)|Azure OpenAI Assistants API integration samples|
 |[OpenAI](./OpenAI/)|Direct OpenAI API integration samples|
 |[OpenAIAssistants](./OpenAIAssistants/)|OpenAI Assistant API integration samples|
 
@@ -352,5 +360,12 @@ dotnet run
 
 # OpenAI Responses Examples
 cd "OpenAIResponses\Step01_Basics"
+
+# Azure OpenAI Examples
+cd "AzureOpenAI\Step01_Basics"
+dotnet run
+
+# Azure OpenAI Assistants Examples
+cd "AzureOpenAIAssistants\Step01_Basics"
 dotnet run
 ```

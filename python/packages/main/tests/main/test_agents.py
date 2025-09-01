@@ -227,8 +227,9 @@ async def test_chat_client_agent_update_thread_messages(chat_client: ChatClient)
     assert result.text == "test response"
 
     assert thread.service_thread_id is None
+    assert thread.message_store is not None
 
-    chat_messages: list[ChatMessage] | None = await thread.list_messages()
+    chat_messages: list[ChatMessage] = await thread.message_store.list_messages()
 
     assert chat_messages is not None
     assert len(chat_messages) == 2
