@@ -1,8 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+
 from agent_framework import HostedWebSearchTool
 from agent_framework.openai import OpenAIResponsesClient
+
 
 async def main() -> None:
     client = OpenAIResponsesClient()
@@ -34,6 +36,7 @@ async def main() -> None:
             tool_choice="auto",
         )
         print(f"Assistant: {response}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

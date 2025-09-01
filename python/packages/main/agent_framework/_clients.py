@@ -90,7 +90,7 @@ def _tool_call_non_streaming(
         response: ChatResponse | None = None
         fcc_messages: list[ChatMessage] = []
         for attempt_idx in range(getattr(self, "__maximum_iterations_per_request", 10)):
-            response = await func(self, messages=messages, chat_options=chat_options)
+            response = await func(self, messages=messages, chat_options=chat_options, **kwargs)
             # if there are function calls, we will handle them first
             function_results = {
                 it.call_id for it in response.messages[0].contents if isinstance(it, FunctionResultContent)
@@ -499,6 +499,7 @@ class ChatClientBase(AFBaseModel, ABC):
         Returns:
             A chat response from the model.
         """
+        # Should we merge chat options instead of ignoring the input params?
         if "chat_options" in kwargs:
             chat_options = kwargs.pop("chat_options")
             if not isinstance(chat_options, ChatOptions):
@@ -579,6 +580,7 @@ class ChatClientBase(AFBaseModel, ABC):
         Yields:
             A stream representing the response(s) from the LLM.
         """
+        # Should we merge chat options instead of ignoring the input params?
         if "chat_options" in kwargs:
             chat_options = kwargs.pop("chat_options")
             if not isinstance(chat_options, ChatOptions):

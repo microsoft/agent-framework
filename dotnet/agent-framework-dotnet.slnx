@@ -8,7 +8,39 @@
     <Project Path="demos/AgentOpenTelemetry/AgentOpenTelemetry.csproj" />
     <Project Path="demos/MinimalConsole/MinimalConsole.csproj" />
   </Folder>
+  <Folder Name="/Samples/SemanticKernelMigration/">
+    <File Path="samples/SemanticKernelMigration/README.md" />
+  </Folder>
+  <Folder Name="/Samples/SemanticKernelMigration/AzureAIFoundry/">
+    <Project Path="samples/SemanticKernelMigration/AzureAIFoundry/Step01_Basics/AzureAIFoundry_Step01_Basics.csproj" />
+    <Project Path="samples/SemanticKernelMigration/AzureAIFoundry/Step02_ToolCall/AzureAIFoundry_Step02_ToolCall.csproj" />
+    <Project Path="samples/SemanticKernelMigration/AzureAIFoundry/Step03_DependencyInjection/AzureAIFoundry_Step03_DependencyInjection.csproj" />
+    <Project Path="samples/SemanticKernelMigration/AzureAIFoundry/Step04_CodeInterpreter/AzureAIFoundry_Step04_CodeInterpreter.csproj" />
+  </Folder>
+  <Folder Name="/Samples/SemanticKernelMigration/OpenAIAssistants/">
+    <Project Path="samples/SemanticKernelMigration/OpenAIAssistants/Step01_Basics/OpenAIAssistants_Step01_Basics.csproj" />
+    <Project Path="samples/SemanticKernelMigration/OpenAIAssistants/Step02_ToolCall/OpenAIAssistants_Step02_ToolCall.csproj" />
+    <Project Path="samples/SemanticKernelMigration/OpenAIAssistants/Step03_DependencyInjection/OpenAIAssistants_Step03_DependencyInjection.csproj" />
+    <Project Path="samples/SemanticKernelMigration/OpenAIAssistants/Step04_CodeInterpreter/OpenAIAssistants_Step04_CodeInterpreter.csproj" />
+  </Folder>
+  <Folder Name="/Samples/SemanticKernelMigration/AzureOpenAI/">
+    <Project Path="samples/SemanticKernelMigration/AzureOpenAI/Step01_Basics/AzureOpenAI_Step01_Basics.csproj" />
+    <Project Path="samples/SemanticKernelMigration/AzureOpenAI/Step02_ToolCall/AzureOpenAI_Step02_ToolCall.csproj" />
+    <Project Path="samples/SemanticKernelMigration/AzureOpenAI/Step03_DependencyInjection/AzureOpenAI_Step03_DependencyInjection.csproj" />
+  </Folder>
+  <Folder Name="/Samples/SemanticKernelMigration/AzureOpenAIAssistants/">
+    <Project Path="samples/SemanticKernelMigration/AzureOpenAIAssistants/Step01_Basics/AzureOpenAIAssistants_Step01_Basics.csproj" />
+    <Project Path="samples/SemanticKernelMigration/AzureOpenAIAssistants/Step02_ToolCall/AzureOpenAIAssistants_Step02_ToolCall.csproj" />
+    <Project Path="samples/SemanticKernelMigration/AzureOpenAIAssistants/Step03_DependencyInjection/AzureOpenAIAssistants_Step03_DependencyInjection.csproj" />
+    <Project Path="samples/SemanticKernelMigration/AzureOpenAIAssistants/Step04_CodeInterpreter/AzureOpenAIAssistants_Step04_CodeInterpreter.csproj" />
+  </Folder>
+  <Folder Name="/Samples/SemanticKernelMigration/OpenAI/">
+    <Project Path="samples/SemanticKernelMigration/OpenAI/Step01_Basics/OpenAI_Step01_Basics.csproj" />
+    <Project Path="samples/SemanticKernelMigration/OpenAI/Step02_ToolCall/OpenAI_Step02_ToolCall.csproj" />
+    <Project Path="samples/SemanticKernelMigration/OpenAI/Step03_DependencyInjection/OpenAI_Step03_DependencyInjection.csproj" />
+  </Folder>
   <Folder Name="/Samples/">
+    <File Path="samples/README.md" />
     <Project Path="samples/GettingStarted/GettingStarted.csproj" />
   </Folder>
   <Folder Name="/Samples/AgentWebChat/">
@@ -16,6 +48,28 @@
     <Project Path="samples/AgentWebChat/AgentWebChat.AppHost/AgentWebChat.AppHost.csproj" />
     <Project Path="samples/AgentWebChat/AgentWebChat.ServiceDefaults/AgentWebChat.ServiceDefaults.csproj" />
     <Project Path="samples/AgentWebChat/AgentWebChat.Web/AgentWebChat.Web.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStartedSteps/">
+    <File Path="samples/GettingStartedSteps/README.md" />
+    <Project Path="samples/GettingStartedSteps/Step01_ChatClientAgent_Running/Step01_ChatClientAgent_Running.csproj" />
+    <Project Path="samples/GettingStartedSteps/Step02_ChatClientAgent_MultiturnConversation/Step02_ChatClientAgent_MultiturnConversation.csproj" />
+    <Project Path="samples/GettingStartedSteps/Step03_ChatClientAgent_UsingFunctionTools/Step03_ChatClientAgent_UsingFunctionTools.csproj" />
+    <Project Path="samples/GettingStartedSteps/Step04_ChatClientAgent_UsingFunctionToolsWithApprovals/Step04_ChatClientAgent_UsingFunctionToolsWithApprovals.csproj" />
+    <Project Path="samples/GettingStartedSteps/Step05_ChatClientAgent_StructuredOutput/Step05_ChatClientAgent_StructuredOutput.csproj" />
+    <Project Path="samples/GettingStartedSteps/Step06_ChatClientAgent_PersistedConversations/Step06_ChatClientAgent_PersistedConversations.csproj" />
+    <Project Path="samples/GettingStartedSteps/Step07_ChatClientAgent_3rdPartyThreadStorage/Step07_ChatClientAgent_3rdPartyThreadStorage.csproj" />
+    <Project Path="samples/GettingStartedSteps/Step08_ChatClientAgent_Telemetry/Step08_ChatClientAgent_Telemetry.csproj" />
+    <Project Path="samples/GettingStartedSteps/Step09_ChatClientAgent_DependencyInjection/Step09_ChatClientAgent_DependencyInjection.csproj" />
+  </Folder>
+  <Folder Name="/Samples/HowToCreateAnAIAgentByProvider/">
+    <File Path="samples/HowToCreateAnAIAgentByProvider/README.md" />
+    <Project Path="samples/HowToCreateAnAIAgentByProvider/AIAgent_With_A2A/AIAgent_With_A2A.csproj" />
+    <Project Path="samples/HowToCreateAnAIAgentByProvider/AIAgent_With_AzureFoundry/AIAgent_With_AzureFoundry.csproj" />
+    <Project Path="samples/HowToCreateAnAIAgentByProvider/AIAgent_With_AzureOpenAIChatCompletion/AIAgent_With_AzureOpenAIChatCompletion.csproj" />
+    <Project Path="samples/HowToCreateAnAIAgentByProvider/AIAgent_With_AzureOpenAIResponses/AIAgent_With_AzureOpenAIResponses.csproj" />
+    <Project Path="samples/HowToCreateAnAIAgentByProvider/AIAgent_With_ONNX/AIAgent_With_ONNX.csproj" />
+    <Project Path="samples/HowToCreateAnAIAgentByProvider/AIAgent_With_OpenAIChatCompletion/AIAgent_With_OpenAIChatCompletion.csproj" />
+    <Project Path="samples/HowToCreateAnAIAgentByProvider/AIAgent_With_OpenAIResponses/AIAgent_With_OpenAIResponses.csproj" />
   </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
@@ -28,7 +82,12 @@
   <Folder Name="/Solution Items/.github/workflows/">
     <File Path="../.github/workflows/dotnet-build-and-test.yml" />
     <File Path="../.github/workflows/dotnet-check-coverage.ps1" />
+    <File Path="../.github/workflows/dotnet-cosmosdb-integration-tests.yml" />
     <File Path="../.github/workflows/dotnet-format.yml" />
+  </Folder>
+  <Folder Name="/Solution Items/demos/">
+    <File Path="demos/.editorconfig" />
+    <File Path="demos/Directory.Build.props" />
   </Folder>
   <Folder Name="/Solution Items/docs/" />
   <Folder Name="/Solution Items/docs/decisions/">
@@ -87,6 +146,10 @@
     <File Path="src/LegacySupport/TrimAttributes/UnconditionalSuppressMessageAttribute.cs" />
   </Folder>
   <Folder Name="/Solution Items/src/Shared/" />
+  <Folder Name="/Solution Items/src/Shared/Demos/">
+    <File Path="src/Shared/Demos/README.md" />
+    <File Path="src/Shared/Demos/SampleEnvironment.cs" />
+  </Folder>
   <Folder Name="/Solution Items/src/Shared/IntegrationTests/">
     <File Path="src/Shared/IntegrationTests/AzureAIConfiguration.cs" />
     <File Path="src/Shared/IntegrationTests/OpenAIConfiguration.cs" />
@@ -110,9 +173,12 @@
   <Folder Name="/src/">
     <Project Path="src/Microsoft.Agents.Orchestration/Microsoft.Agents.Orchestration.csproj" />
     <Project Path="src/Microsoft.Agents.Workflows/Microsoft.Agents.Workflows.csproj" />
+    <Project Path="src/Microsoft.Extensions.AI.Agents.A2A/Microsoft.Extensions.AI.Agents.A2A.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.Abstractions/Microsoft.Extensions.AI.Agents.Abstractions.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.AzureAI/Microsoft.Extensions.AI.Agents.AzureAI.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.CopilotStudio/Microsoft.Extensions.AI.Agents.CopilotStudio.csproj" />
+    <Project Path="src/Microsoft.Extensions.AI.Agents.Hosting.A2A.AspNetCore/Microsoft.Extensions.AI.Agents.Hosting.A2A.AspNetCore.csproj" />
+    <Project Path="src/Microsoft.Extensions.AI.Agents.Hosting.A2A/Microsoft.Extensions.AI.Agents.Hosting.A2A.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.Hosting/Microsoft.Extensions.AI.Agents.Hosting.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.OpenAI/Microsoft.Extensions.AI.Agents.OpenAI.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.Runtime.Abstractions/Microsoft.Extensions.AI.Agents.Runtime.Abstractions.csproj" />
@@ -121,6 +187,10 @@
     <Project Path="src/Microsoft.Extensions.AI.Agents/Microsoft.Extensions.AI.Agents.csproj" />
   </Folder>
   <Folder Name="/Tests/" />
+  <Folder Name="/Tests/Cosmos/">
+    <Project Path="tests/CosmosDB.IntegrationTests/CosmosDB.Testing.AppHost/CosmosDB.Testing.AppHost.csproj" />
+    <Project Path="tests/CosmosDB.IntegrationTests/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests.csproj" />
+  </Folder>
   <Folder Name="/Tests/IntegrationTests/">
     <Project Path="tests/AgentConformance.IntegrationTests/AgentConformance.IntegrationTests.csproj" />
     <Project Path="tests/AzureAIAgentsPersistent.IntegrationTests/AzureAIAgentsPersistent.IntegrationTests.csproj" />
@@ -132,7 +202,9 @@
   <Folder Name="/Tests/UnitTests/">
     <Project Path="tests/Microsoft.Agents.Orchestration.UnitTests/Microsoft.Agents.Orchestration.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.Workflows.UnitTests/Microsoft.Agents.Workflows.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Extensions.AI.Agents.A2A.UnitTests/Microsoft.Extensions.AI.Agents.A2A.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Extensions.AI.Agents.Abstractions.UnitTests/Microsoft.Extensions.AI.Agents.Abstractions.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Extensions.AI.Agents.Hosting.A2A.Tests/Microsoft.Extensions.AI.Agents.Hosting.A2A.Tests.csproj" Id="2a1c544d-237d-4436-8732-ba0c447ac06b" />
     <Project Path="tests/Microsoft.Extensions.AI.Agents.Hosting.UnitTests/Microsoft.Extensions.AI.Agents.Hosting.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Extensions.AI.Agents.Runtime.Abstractions.UnitTests/Microsoft.Extensions.AI.Agents.Runtime.Abstractions.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Extensions.AI.Agents.UnitTests/Microsoft.Extensions.AI.Agents.UnitTests.csproj" />

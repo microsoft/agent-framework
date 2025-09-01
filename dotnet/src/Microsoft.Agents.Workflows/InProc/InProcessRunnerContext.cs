@@ -2,9 +2,11 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+
+using Microsoft.Agents.Workflows.Checkpointing;
 using Microsoft.Agents.Workflows.Execution;
 using Microsoft.Agents.Workflows.Specialized;
 using Microsoft.Extensions.Logging;
@@ -15,27 +17,28 @@ namespace Microsoft.Agents.Workflows.InProc;
 internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
 {
     private StepContext _nextStep = new();
-    private readonly Dictionary<string, ExecutorProvider<Executor>> _executorProviders;
+    private readonly Dictionary<string, ExecutorRegistration> _executorRegistrations;
     private readonly Dictionary<string, Executor> _executors = new();
     private readonly Dictionary<string, ExternalRequest> _externalRequests = new();
 
     public InProcessRunnerContext(Workflow workflow, ILogger? logger = null)
     {
-        this._executorProviders = Throw.IfNull(workflow).ExecutorProviders;
+        this._executorRegistrations = Throw.IfNull(workflow).Registrations;
     }
 
-    public async ValueTask<Executor> EnsureExecutorAsync(string executorId)
+    public async ValueTask<Executor> EnsureExecutorAsync(string executorId, IStepTracer? tracer)
     {
         if (!this._executors.TryGetValue(executorId, out var executor))
         {
-            if (!this._executorProviders.TryGetValue(executorId, out var provider))
+            if (!this._executorRegistrations.TryGetValue(executorId, out var registration))
             {
                 throw new InvalidOperationException($"Executor with ID '{executorId}' is not registered.");
             }
 
-            this._executors[executorId] = executor = provider();
+            this._executors[executorId] = executor = registration.Provider();
+            tracer?.TraceActivated(executorId);
 
-            if (executor is RequestInputExecutor requestInputExecutor)
+            if (executor is RequestInfoExecutor requestInputExecutor)
             {
                 requestInputExecutor.AttachRequestSink(this);
             }
@@ -44,11 +47,19 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
         return executor;
     }
 
-    public ValueTask AddExternalMessageAsync([NotNull] object message)
+    public ValueTask AddExternalMessageUntypedAsync(object message)
     {
         Throw.IfNull(message);
 
-        this._nextStep.MessagesFor(ExecutorIdentity.None).Add(message);
+        this._nextStep.MessagesFor(ExecutorIdentity.None).Add(new MessageEnvelope(message));
+        return default;
+    }
+
+    public ValueTask AddExternalMessageAsync<T>(T message)
+    {
+        Throw.IfNull(message);
+
+        this._nextStep.MessagesFor(ExecutorIdentity.None).Add(new MessageEnvelope(message, declaredType: typeof(T)));
         return default;
     }
 
@@ -66,9 +77,9 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
         return default;
     }
 
-    public ValueTask SendMessageAsync(string executorId, object message)
+    public ValueTask SendMessageAsync(string sourceId, object message, string? targetId = null)
     {
-        this._nextStep.MessagesFor(executorId).Add(message);
+        this._nextStep.MessagesFor(sourceId).Add(new MessageEnvelope(message, targetId: targetId));
         return default;
     }
 
@@ -92,12 +103,79 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
     private class BoundContext(InProcessRunnerContext<TExternalInput> RunnerContext, string ExecutorId) : IWorkflowContext
     {
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent) => RunnerContext.AddEventAsync(workflowEvent);
-        public ValueTask SendMessageAsync(object message) => RunnerContext.SendMessageAsync(ExecutorId, message);
+        public ValueTask SendMessageAsync(object message, string? targetId = null) => RunnerContext.SendMessageAsync(ExecutorId, message, targetId);
+
+        public ValueTask<T?> ReadStateAsync<T>(string key, string? scopeName = null)
+            => RunnerContext.StateManager.ReadStateAsync<T>(ExecutorId, scopeName, key);
+
+        public ValueTask<HashSet<string>> ReadStateKeysAsync(string? scopeName = null)
+            => RunnerContext.StateManager.ReadKeysAsync(ExecutorId, scopeName);
 
         public ValueTask QueueStateUpdateAsync<T>(string key, T? value, string? scopeName = null)
             => RunnerContext.StateManager.WriteStateAsync(ExecutorId, scopeName, key, value);
 
-        public ValueTask<T?> ReadStateAsync<T>(string key, string? scopeName = null)
-            => RunnerContext.StateManager.ReadStateAsync<T>(ExecutorId, scopeName, key);
+        public ValueTask QueueClearScopeAsync(string? scopeName = null)
+            => RunnerContext.StateManager.ClearStateAsync(ExecutorId, scopeName);
+    }
+
+    internal Task PrepareForCheckpointAsync(CancellationToken cancellation = default)
+    {
+        return Task.WhenAll(this._executors.Values.Select(executor => executor.OnCheckpointingAsync(this.Bind(executor.Id), cancellation).AsTask()));
+    }
+
+    internal Task NotifyCheckpointLoadedAsync(CancellationToken cancellationToken = default)
+    {
+        return Task.WhenAll(this._executors.Values.Select(executor => executor.OnCheckpointRestoredAsync(this.Bind(executor.Id), cancellationToken).AsTask()));
+    }
+
+    internal ValueTask<RunnerStateData> ExportStateAsync()
+    {
+        if (this.QueuedEvents.Count > 0)
+        {
+            throw new InvalidOperationException("Cannot export state when there are queued events. Please process or clear the events before exporting state.");
+        }
+
+        Dictionary<ExecutorIdentity, List<ExportedState>> queuedMessages = this._nextStep.ExportMessages();
+
+        RunnerStateData result = new(queuedMessages, this._externalRequests.Values.ToList());
+
+        return new(result);
+    }
+
+    internal async ValueTask RepublishUnservicedRequestsAsync(CancellationToken cancellation = default)
+    {
+        if (this.HasUnservicedRequests)
+        {
+            foreach (string requestId in this._externalRequests.Keys)
+            {
+                await this.AddEventAsync(new RequestInfoEvent(this._externalRequests[requestId]))
+                          .ConfigureAwait(false);
+            }
+        }
+    }
+
+    internal ValueTask ImportStateAsync(Checkpoint checkpoint)
+    {
+        if (this.QueuedEvents.Count > 0)
+        {
+            throw new InvalidOperationException("Cannot import state when there are queued events. Please process or clear the events before importing state.");
+        }
+
+        RunnerStateData importedState = checkpoint.RunnerData;
+
+        this._nextStep = new StepContext();
+        this._nextStep.ImportMessages(importedState.QueuedMessages);
+
+        this._externalRequests.Clear();
+
+        foreach (ExternalRequest request in importedState.OutstandingRequests)
+        {
+            // TODO: Reduce the amount of data we need to store in the checkpoint by not storing the entire request object.
+            // For example, the Port object is not needed - we should be able to reconstruct it from the ID and the workflow
+            // definition.
+            this._externalRequests[request.RequestId] = request;
+        }
+
+        return default;
     }
 }
