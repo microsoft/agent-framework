@@ -14,6 +14,7 @@
     <ProjectReference Include="..\..\..\src\Microsoft.Extensions.AI.Agents.Runtime.Abstractions\Microsoft.Extensions.AI.Agents.Runtime.Abstractions.csproj" />
     <ProjectReference Include="..\..\..\src\Microsoft.Extensions.AI.Agents.Runtime\Microsoft.Extensions.AI.Agents.Runtime.csproj" />
     <ProjectReference Include="..\..\..\src\Microsoft.Extensions.AI.Agents\Microsoft.Extensions.AI.Agents.csproj" />
+    <ProjectReference Include="..\..\..\src\Microsoft.Extensions.AI.Agents.Hosting.A2A.AspNetCore\Microsoft.Extensions.AI.Agents.Hosting.A2A.AspNetCore.csproj" />
     <ProjectReference Include="..\..\..\src\Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB\Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.csproj" />
     <ProjectReference Include="..\AgentWebChat.ServiceDefaults\AgentWebChat.ServiceDefaults.csproj" />
   </ItemGroup>
@@ -29,7 +30,13 @@
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
     <PackageReference Include="Microsoft.AspNetCore.OpenAPI" />
     <PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" />
-    <PackageReference Include="System.Net.ServerSentEvents" />
   </ItemGroup>
+
+  <!-- A2A dependency -->
+  <ItemGroup>
+    <PackageReference Include="System.Net.ServerSentEvents" VersionOverride="10.0.0-preview.5.25277.114" />
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" VersionOverride="10.0.0-preview.5.25277.114" />
+  </ItemGroup>
+  <!-- A2A dependency -->
 
 </Project>

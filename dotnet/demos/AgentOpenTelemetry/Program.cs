@@ -97,7 +97,7 @@ logger.LogInformation("OTLP endpoint configured: {OtlpEndpoint}", otlpEndpoint);
 logger.LogDebug("Service name: {ServiceName}, Source name: {SourceName}", ServiceName, SourceName);
 
 // Create the chat client
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT", EnvironmentVariableTarget.Machine) ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT environment variable is not set.");
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT environment variable is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 logger.LogInformation("Initializing Azure OpenAI client with endpoint: {Endpoint}", endpoint);
