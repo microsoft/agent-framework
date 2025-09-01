@@ -279,6 +279,55 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task GetStreamingResponseAsync_WithFunctionCallingInterrupted_AllowsToContinueItAsync(bool continueInBackground)
+    {
+        // Part 1: Start the background run.
+        ChatOptions options = new();
+        options.SetAwaitRunResult(false);
+        options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
+
+        int? sequenceNumber = null;
+        string? responseId = null;
+
+        await foreach (var update in this._chatClient.GetStreamingResponseAsync("What time is it?", options))
+        {
+            // Stop processing updates as soon as we see the function call update received
+            if (update.RawRepresentation is StreamingResponseOutputItemAddedUpdate)
+            {
+                // Capture the response id and sequence number of the event so we can continue
+                // getting the rest of the events starting from the same point in the test below.
+                responseId = update.ResponseId;
+                sequenceNumber = update.GetSequenceNumber();
+                break;
+            }
+        }
+
+        Assert.NotNull(sequenceNumber);
+        Assert.NotNull(responseId);
+
+        // Part 2: Continue getting the rest of the response from the saved point using a new client that does not have the previous state containing the first part of function call.
+        using IChatClient chatClient = this._openAIResponseClient
+            .AsNewIChatClient()
+            .AsBuilder()
+            .UseFunctionInvocation()
+            .Build();
+        string responseText = "";
+        options.SetAwaitRunResult(!continueInBackground);
+        options.ConversationId = responseId;
+        options.SetPreviousResponseId(responseId);
+        options.SetStartAfter(sequenceNumber.Value);
+
+        await foreach (var item in chatClient.GetStreamingResponseAsync([], options))
+        {
+            responseText += item;
+        }
+
+        Assert.Contains("5:43", responseText);
+    }
+
     [Fact]
     public async Task CancelRunAsync_WhenCalled_CancelsRunAsync()
     {
