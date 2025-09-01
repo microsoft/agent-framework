@@ -96,6 +96,10 @@ async def main() -> None:
     print("Query: 'Write code for parallel reading 1 million files on disk and write to a sorted output file.'")
     print("-" * 50)
 
+    # NOTE: you can also run the workflow directly, i.e., without the as_agent().
+    # Then, you will need to handle RequestInfoEvent and send response to the workflow
+    # using send_response().
+
     # Run the agent.
     response = await agent.run(
         "Write code for parallel reading 1 million Files on disk and write to a sorted output file."
