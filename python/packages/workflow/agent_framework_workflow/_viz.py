@@ -1,11 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Workflow visualization module using graphviz.
-
-Adds support for visualizing sub-workflows hosted by WorkflowExecutor by
-rendering nested clusters (DOT) and subgraphs (Mermaid).
-"""
-
 import hashlib
 import re
 import tempfile
@@ -17,6 +11,8 @@ from ._edge import FanInEdgeGroup
 from ._workflow import Workflow
 
 # Import of WorkflowExecutor is performed lazily inside methods to avoid cycles
+
+"""Workflow visualization module using graphviz."""
 
 
 class WorkflowViz:
