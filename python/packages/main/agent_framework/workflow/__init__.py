@@ -22,6 +22,13 @@ _IMPORTS = [
     "AgentRunStreamingEvent",
     "handler",
     "AgentExecutor",
+    "MagenticAgentDeltaEvent",
+    "MagenticCallbackEvent",
+    "MagenticCallbackMode",
+    "MagenticAgentMessageEvent",
+    "MagenticFinalResultEvent",
+    "MagenticManagerBase",
+    "MagenticOrchestratorMessageEvent",
     "AgentExecutorRequest",
     "AgentExecutorResponse",
     "RequestInfoExecutor",
@@ -40,6 +47,12 @@ _IMPORTS = [
     "SubWorkflowResponse",
     "WorkflowExecutor",
     "intercepts_request",
+    "MagenticBuilder",
+    "PlanReviewDecision",
+    "PlanReviewReply",
+    "PlanReviewRequest",
+    "RequestInfoEvent",
+    "StandardMagenticManager",
 ]
 
 

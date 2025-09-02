@@ -122,7 +122,9 @@ class TestAgentThread:
         store = ChatMessageList(sample_messages)
         thread = AgentThread(message_store=store)
 
-        messages: list[ChatMessage] | None = await thread.list_messages()
+        assert thread.message_store is not None
+
+        messages: list[ChatMessage] = await thread.message_store.list_messages()
 
         assert messages is not None
         assert len(messages) == 3
@@ -134,9 +136,7 @@ class TestAgentThread:
         """Test get_messages when no message_store is set."""
         thread = AgentThread()
 
-        messages: list[ChatMessage] | None = await thread.list_messages()
-
-        assert messages is None
+        assert thread.message_store is None
 
     async def test_on_new_messages_with_service_thread_id(self, sample_message: ChatMessage) -> None:
         """Test _on_new_messages when service_thread_id is set (should do nothing)."""

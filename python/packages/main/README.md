@@ -1,6 +1,7 @@
 # Get Started with Microsoft Agent Framework
 
 Highlights
+
 - Flexible Agent Framework: build, orchestrate, and deploy AI agents and multi-agent systems
 - Multi-Agent Orchestration: Group chat, sequential, concurrent, and handoff patterns
 - Plugin Ecosystem: Extend with native functions, OpenAPI, Model Context Protocol (MCP), and more
@@ -22,6 +23,7 @@ pip install agent-framework[azure,foundry]
 ```
 
 Supported Platforms:
+
 - Python: 3.10+
 - OS: Windows, macOS, Linux
 
@@ -32,6 +34,7 @@ Set as environment variables, or create a .env file at your project root:
 ```bash
 OPENAI_API_KEY=sk-...
 OPENAI_CHAT_MODEL_ID=...
+OPENAI_RESPONSES_MODEL_ID=...
 ...
 AZURE_OPENAI_API_KEY=...
 AZURE_OPENAI_ENDPOINT=...

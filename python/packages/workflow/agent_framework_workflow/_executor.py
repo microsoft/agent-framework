@@ -206,7 +206,7 @@ class Executor(AFBaseModel):
                     if isinstance(response, RequestResponse):
                         # Add automatic correlation info to the response
                         correlated_response = RequestResponse[RequestInfoMessage, Any].with_correlation(
-                            response,  # pyright: ignore[reportUnknownArgumentType]
+                            response,
                             request.data,
                             request.request_id,
                         )
@@ -431,9 +431,9 @@ class RequestResponse(Generic[TRequest, TResponse]):
         original_request: TRequest,
         request_id: str,
     ) -> "RequestResponse[TRequest, TResponse]":
-        """Internal method to add correlation info to a response.
+        """Add correlation info to a response.
 
-        This is called automatically by the framework and should not be used directly.
+        This is called automatically by the framework when processing intercepted requests.
         """
         return RequestResponse(
             is_handled=original_response.is_handled,
@@ -661,8 +661,8 @@ class RequestInfoExecutor(Executor):
         event = RequestInfoEvent(
             request_id=message.request_id,  # Use original request ID
             source_executor_id=source_executor_id,
-            request_type=type(message.data),  # SubWorkflowRequestInfo type
-            request_data=message.data,  # The full SubWorkflowRequestInfo
+            request_type=type(message.data),  # Type of the wrapped data # type: ignore
+            request_data=message.data,  # The wrapped request data
         )
         self._request_events[message.request_id] = event
         await ctx.add_event(event)

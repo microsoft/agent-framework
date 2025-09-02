@@ -101,10 +101,9 @@ async def example_with_existing_thread_messages() -> None:
     print(f"Agent: {result1.text}")
 
     # The thread now contains the conversation history in memory
-    messages = await thread.list_messages()
-
-    message_count = len(messages or [])
-    print(f"Thread contains {message_count} messages")
+    if thread.message_store:
+        messages = await thread.message_store.list_messages()
+        print(f"Thread contains {len(messages or [])} messages")
 
     print("\n--- Continuing with the same thread in a new agent instance ---")
 
@@ -125,8 +124,7 @@ async def example_with_existing_thread_messages() -> None:
     print("\n--- Alternative: Creating a new thread from existing messages ---")
 
     # You can also create a new thread from existing messages
-    messages = await thread.list_messages()
-
+    messages = await thread.message_store.list_messages() if thread.message_store else []
     new_thread = AgentThread(message_store=ChatMessageList(messages))
 
     query3 = "How does the Paris weather compare to London?"
