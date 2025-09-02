@@ -74,57 +74,6 @@ def _infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> list[type]:
     return [t]
 
 
-def _validate_function_signature(func: Callable[..., Any]) -> tuple[type, Any]:
-    """Validate the function signature and return (message_type, ctx_annotation).
-
-    Requirements:
-    - async function
-    - exactly two parameters: (message, ctx)
-    - message parameter must have a type annotation
-    - ctx must be annotated as WorkflowContext[TOut]
-    """
-    if not inspect.iscoroutinefunction(func):
-        raise TypeError("@executor expects an async function (use 'async def').")
-
-    sig = inspect.signature(func)
-    params = list(sig.parameters.values())
-    if len(params) != 2:
-        raise ValueError("@executor functions must have exactly two parameters: (message, ctx).")
-
-    msg_param = params[0]
-    ctx_param = params[1]
-
-    if msg_param.annotation is inspect.Parameter.empty:
-        raise ValueError("@executor function's first parameter must have a type annotation for the message.")
-
-    message_type = msg_param.annotation
-
-    if ctx_param.annotation is inspect.Parameter.empty:
-        raise ValueError("@executor function's second parameter must be annotated as WorkflowContext[T].")
-
-    ctx_ann = ctx_param.annotation
-    origin = get_origin(ctx_ann)
-    # Allow unsubscripted WorkflowContext to be flagged here for clarity
-    if origin is None:
-        if ctx_ann is WorkflowContext:
-            raise ValueError(
-                "@executor requires WorkflowContext[T] with a concrete T (use WorkflowContext[None] if no outputs)."
-            )
-        raise ValueError(f"@executor function ctx parameter must be WorkflowContext[T], got {ctx_ann}.")
-
-    if origin is not WorkflowContext:
-        raise ValueError(f"@executor function ctx parameter must be WorkflowContext[T], got {ctx_ann}.")
-
-    # Ensure T is provided (could be Any/None/Union, validator downstream handles semantics)
-    t_args = get_args(ctx_ann)
-    if not t_args:
-        raise ValueError(
-            "@executor requires WorkflowContext[T] with a concrete T (use WorkflowContext[None] if no outputs)."
-        )
-
-    return message_type, ctx_ann
-
-
 class FunctionExecutor(Executor):
     """Executor that wraps a user-defined function.
 
