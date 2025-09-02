@@ -56,7 +56,9 @@ response = await agent.run("Hello, how are you?", thread=resumed_thread)
 For in-memory threads, you can provide a custom message store implementation to control how messages are stored and retrieved:
 
 ```python
-from agent_framework import AgentThread, ChatMessageList
+from agent_framework import AgentThread, ChatMessageList, ChatClientAgent
+from agent_framework.foundry import FoundryChatClient
+from azure.identity.aio import AzureCliCredential
 
 # Using the default in-memory message store
 thread = AgentThread(message_store=ChatMessageList())
@@ -68,19 +70,20 @@ thread = agent.get_new_thread()
 def custom_message_store_factory():
     return ChatMessageList()  # or your custom implementation
 
-agent = ChatClientAgent(
-    chat_client=OpenAIChatClient(),
-    instructions="You are a helpful assistant",
-    chat_message_store_factory=custom_message_store_factory
-)
+async with AzureCliCredential() as credential:
+    agent = ChatClientAgent(
+        chat_client=FoundryChatClient(async_credential=credential),
+        instructions="You are a helpful assistant",
+        chat_message_store_factory=custom_message_store_factory
+    )
 ```
 
 ## Agent/AgentThread relationship
 
 `AIAgent` instances are stateless and the same agent instance can be used with multiple `AgentThread` instances.
 
-Not all agents support all thread types though. For example if you are using a `ChatClientAgent` with the responses service, `AgentThread` instances created by this agent, will not work with a `ChatClientAgent` using the Foundry Agent service.
-This is because these services both support saving the conversation history in the service, and the `AgentThread`
+Not all agents support all thread types though. For example if you are using a `ChatClientAgent` with different Foundry services, `AgentThread` instances created by one agent may not work with a different `ChatClientAgent` using a different Foundry Agent service.
+This is because these services support saving the conversation history in the service, and the `AgentThread`
 only has a reference to this service managed thread.
 
 It is therefore considered unsafe to use an `AgentThread` instance that was created by one agent with a different agent instance, unless you are aware of the underlying threading model and its implications.
@@ -91,32 +94,41 @@ Here's a complete example showing how to maintain context across multiple intera
 
 ```python
 from agent_framework import ChatClientAgent, AgentThread
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
+from azure.identity.aio import AzureCliCredential
 
-async def multi_turn_example():
-    agent = OpenAIChatClient().create_agent(
-        instructions="You are a helpful assistant"
-    )
-    
-    # Create a thread to maintain conversation context
-    thread = agent.get_new_thread()
-    
-    # First interaction
-    response1 = await agent.run("My name is Alice", thread=thread)
-    print(f"Agent: {response1.text}")
-    
-    # Second interaction - agent remembers the name
-    response2 = await agent.run("What's my name?", thread=thread)
-    print(f"Agent: {response2.text}")  # Should mention "Alice"
-    
-    # Serialize thread for storage
-    serialized = await thread.serialize()
-    
-    # Later, deserialize and continue conversation
-    new_thread = await agent.deserialize_thread(serialized)
-    response3 = await agent.run("What did we talk about?", thread=new_thread)
-    print(f"Agent: {response3.text}")  # Should remember previous context
+async def foundry_multi_turn_example():
+    async with (
+        AzureCliCredential() as credential,
+        ChatClientAgent(
+            chat_client=FoundryChatClient(async_credential=credential),
+            instructions="You are a helpful assistant"
+        ) as agent
+    ):
+        # Create a thread for persistent conversation
+        thread = agent.get_new_thread()
+        
+        # First interaction
+        response1 = await agent.run("My name is Alice", thread=thread)
+        print(f"Agent: {response1.text}")
+        
+        # Second interaction - agent remembers the name
+        response2 = await agent.run("What's my name?", thread=thread)
+        print(f"Agent: {response2.text}")  # Should mention "Alice"
+        
+        # Serialize thread for storage
+        serialized = await thread.serialize()
+        
+        # Later, deserialize and continue conversation
+        new_thread = await agent.deserialize_thread(serialized)
+        response3 = await agent.run("What did we talk about?", thread=new_thread)
+        print(f"Agent: {response3.text}")  # Should remember previous context
 ```
+
+For complete threading examples, see:
+- [Foundry with threads](../../../python/samples/getting_started/agents/foundry/foundry_with_thread.py)
+- [Custom message store](../../../python/samples/getting_started/threads/custom_chat_message_store_thread.py)
+- [Suspend and resume threads](../../../python/samples/getting_started/threads/suspend_resume_thread.py)
 
 ## Threading support by service / protocol
 

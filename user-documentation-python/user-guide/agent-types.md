@@ -23,23 +23,35 @@ To create one of these agents, simply construct a `ChatClientAgent` using the ch
 
 ```python
 from agent_framework import ChatClientAgent
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
+from azure.identity.aio import AzureCliCredential
 
-agent = ChatClientAgent(
-    chat_client=OpenAIChatClient(),
-    instructions="You are a helpful assistant"
-)
+async with (
+    AzureCliCredential() as credential,
+    ChatClientAgent(
+        chat_client=FoundryChatClient(async_credential=credential),
+        instructions="You are a helpful assistant"
+    ) as agent
+):
+    response = await agent.run("Hello!")
 ```
 
 Alternatively, you can use the convenience method on the chat client:
 
 ```python
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
+from azure.identity.aio import AzureCliCredential
 
-agent = OpenAIChatClient().create_agent(
-    instructions="You are a helpful assistant"
-)
+async with AzureCliCredential() as credential:
+    agent = FoundryChatClient(async_credential=credential).create_agent(
+        instructions="You are a helpful assistant"
+    )
 ```
+
+For detailed examples, see:
+- [Basic Foundry agent](../../../python/samples/getting_started/agents/foundry/foundry_basic.py)
+- [Foundry with explicit settings](../../../python/samples/getting_started/agents/foundry/foundry_with_explicit_settings.py)
+- [Using existing Foundry agent](../../../python/samples/getting_started/agents/foundry/foundry_with_existing_agent.py)
 
 ### Function Tools
 
@@ -47,16 +59,25 @@ You can provide function tools to agents for enhanced capabilities:
 
 ```python
 from typing import Annotated
+from pydantic import Field
+from azure.identity.aio import AzureCliCredential
 
-def get_weather(location: Annotated[str, "The location to get the weather for."]) -> str:
+def get_weather(location: Annotated[str, Field(description="The location to get the weather for.")]) -> str:
     """Get the weather for a given location."""
     return f"The weather in {location} is sunny with a high of 25°C."
 
-agent = OpenAIChatClient().create_agent(
-    instructions="You are a helpful weather assistant.",
-    tools=get_weather
-)
+async with (
+    AzureCliCredential() as credential,
+    FoundryChatClient(async_credential=credential).create_agent(
+        instructions="You are a helpful weather assistant.",
+        tools=get_weather
+    ) as agent
+):
+    response = await agent.run("What's the weather in Seattle?")
 ```
+
+For complete examples with function tools, see:
+- [Foundry with function tools](../../../python/samples/getting_started/agents/foundry/foundry_with_function_tools.py)
 
 ### Streaming Responses
 
@@ -73,29 +94,31 @@ async for chunk in agent.run_streaming("What's the weather like in Portland?"):
         print(chunk.text, end="", flush=True)
 ```
 
-### MCP (Model Context Protocol) Tools
+For streaming examples, see:
+- [Foundry streaming examples](../../../python/samples/getting_started/agents/foundry/foundry_basic.py)
 
-The framework supports MCP tools for enhanced agent capabilities:
+### Code Interpreter Tools
+
+Foundry agents support hosted code interpreter tools for executing Python code:
 
 ```python
-from agent_framework import McpStreamableHttpTool
+from agent_framework import ChatClientAgent, HostedCodeInterpreterTool
+from agent_framework.foundry import FoundryChatClient
+from azure.identity.aio import AzureCliCredential
 
-# Tools can be provided at agent creation
-agent = OpenAIChatClient().create_agent(
-    instructions="You are a helpful assistant.",
-    tools=McpStreamableHttpTool(
-        name="Microsoft Learn MCP",
-        url="https://learn.microsoft.com/api/mcp"
-    )
-)
-
-# Or provided at runtime
-mcp_tool = McpStreamableHttpTool(
-    name="Microsoft Learn MCP", 
-    url="https://learn.microsoft.com/api/mcp"
-)
-response = await agent.run("How to create Azure storage?", tools=mcp_tool)
+async with (
+    AzureCliCredential() as credential,
+    ChatClientAgent(
+        chat_client=FoundryChatClient(async_credential=credential),
+        instructions="You are a helpful assistant that can execute Python code.",
+        tools=HostedCodeInterpreterTool()
+    ) as agent
+):
+    response = await agent.run("Calculate the factorial of 100 using Python")
 ```
+
+For code interpreter examples, see:
+- [Foundry with code interpreter](../../../python/samples/getting_started/agents/foundry/foundry_with_code_interpreter.py)
 
 ## Custom agents
 
