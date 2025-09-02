@@ -12,7 +12,6 @@ from agent_framework.workflow import (
     WorkflowContext,
     handler,
 )
-from agent_framework_workflow._viz import WorkflowViz
 
 # Import the new sub-workflow types directly from the implementation package
 try:
@@ -350,10 +349,6 @@ async def main() -> None:
         .add_edge(workflow_executor, main_request_info)  # Sub-workflow forwards to main
         .build()
     )
-
-    # Visualization.
-    filename = WorkflowViz(main_workflow).export(format="svg")
-    print(f"🖼️ Workflow visualization saved to: {filename}")
 
     # 7. Test with various requests (mixed resource and policy)
     test_requests = [

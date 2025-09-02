@@ -60,7 +60,6 @@ from agent_framework_workflow import (
     handler,
     intercepts_request,
 )
-from agent_framework_workflow._viz import WorkflowViz
 
 
 # 1. Define domain-specific message types
@@ -236,10 +235,6 @@ async def run_example() -> None:
         .add_edge(main_request_info, workflow_executor)  # Route external responses to sub-workflow
         .build()
     )
-
-    # Visualization.
-    filename = WorkflowViz(main_workflow).export(format="svg")
-    print(f"🖼️ Workflow visualization saved to: {filename}")
 
     # 6. Prepare test inputs: known domain, unknown domain
     test_emails = [
