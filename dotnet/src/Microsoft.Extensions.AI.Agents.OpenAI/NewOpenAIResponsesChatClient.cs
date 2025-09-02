@@ -4,7 +4,6 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
-using System.ClientModel;
 using System.ClientModel.Primitives;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
@@ -247,7 +246,7 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
         var openAIResponseItems = ToOpenAIResponseItems(messages, options);
         var openAIOptions = ToOpenAIResponseCreationOptions(options);
 
-        AsyncCollectionResult<StreamingResponseUpdate> streamingUpdates;
+        IAsyncEnumerable<StreamingResponseUpdate> streamingUpdates;
 
         // Previous response id, provided by a caller, indicates that the caller is interested in the status/result of a previously
         // created response rather than creating a new one. However, for scenarios where functions are involved, we can't just
@@ -265,6 +264,14 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
         {
             // Otherwise, create a new response.
             streamingUpdates = _responseClient.CreateResponseStreamingAsync(openAIResponseItems, openAIOptions, cancellationToken);
+
+            // If not awaiting the run result, and not returning status/result for requested response,
+            // return sequence containing the first update from the original response so the caller
+            // will get run id and status.
+            if (!ShouldAwaitRunResult(options) && options?.GetPreviousResponseId() is null)
+            {
+                streamingUpdates = GetEnumerableWithFirstItemAsync(streamingUpdates, cancellationToken);
+            }
         }
 
         return FromOpenAIStreamingResponseUpdatesAsync(streamingUpdates, openAIOptions, cancellationToken);
@@ -312,17 +319,6 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
                     conversationId = options.StoredOutputEnabled is false ? null : responseId;
                     modelId = createdUpdate.Response.Model;
                     responseStatus = ToResponseStatus(createdUpdate.Response.Status);
-                    goto default;
-
-                case StreamingResponseQueuedUpdate queuedUpdate:
-                    // Adapting event of response started in background mode but continued in non-background mode.
-                    // Non-background mode doesn't have `Queued` status so skipping this event.
-                    if (options.Background is false)
-                    {
-                        continue;
-                    }
-
-                    responseStatus = ToResponseStatus(queuedUpdate.Response.Status);
                     goto default;
 
                 case StreamingResponseInProgressUpdate inProgressUpdate:
@@ -884,6 +880,16 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
             ResponseStatus.Failed => (NewResponseStatus?)NewResponseStatus.Failed,
             _ => throw new ArgumentOutOfRangeException(nameof(status), status, "Unknown response status."),
         };
+    }
+
+    /// <summary>Returns an async enumerable that yields only the first item from the provided async enumerable.</summary>
+    private async IAsyncEnumerable<StreamingResponseUpdate> GetEnumerableWithFirstItemAsync(IAsyncEnumerable<StreamingResponseUpdate> streamingUpdates, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await foreach (var update in streamingUpdates.WithCancellation(cancellationToken))
+        {
+            yield return update;
+            break;
+        }
     }
 
     /// <summary>POCO representing function calling info.</summary>

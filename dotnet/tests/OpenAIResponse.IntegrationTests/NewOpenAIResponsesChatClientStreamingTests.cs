@@ -55,19 +55,17 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         }
 
         // Assert
-        Assert.Contains("Paris", responseText, StringComparison.OrdinalIgnoreCase);
-
         if (awaitRun)
         {
             Assert.DoesNotContain(NewResponseStatus.Queued, statuses);
             Assert.Contains(NewResponseStatus.InProgress, statuses);
             Assert.Contains(NewResponseStatus.Completed, statuses);
+            Assert.Contains("Paris", responseText, StringComparison.OrdinalIgnoreCase);
         }
         else
         {
+            Assert.Single(statuses);
             Assert.Contains(NewResponseStatus.Queued, statuses);
-            Assert.Contains(NewResponseStatus.InProgress, statuses);
-            Assert.Contains(NewResponseStatus.Completed, statuses);
         }
     }
 
@@ -98,19 +96,17 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         }
 
         // Assert
-        Assert.Contains("Paris", responseText, StringComparison.OrdinalIgnoreCase);
-
         if (awaitRun)
         {
             Assert.DoesNotContain(NewResponseStatus.Queued, statuses);
             Assert.Contains(NewResponseStatus.InProgress, statuses);
             Assert.Contains(NewResponseStatus.Completed, statuses);
+            Assert.Contains("Paris", responseText, StringComparison.OrdinalIgnoreCase);
         }
         else
         {
+            Assert.Single(statuses);
             Assert.Contains(NewResponseStatus.Queued, statuses);
-            Assert.Contains(NewResponseStatus.InProgress, statuses);
-            Assert.Contains(NewResponseStatus.Completed, statuses);
         }
     }
 
@@ -143,7 +139,6 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
             responseId = update.ResponseId;
             conversationId = update.ConversationId;
             sequenceNumber = update.GetSequenceNumber();
-            break;
         }
 
         Assert.Contains(NewResponseStatus.Queued, statuses);
@@ -173,7 +168,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
 
         if (continueInBackground)
         {
-            Assert.Contains(NewResponseStatus.Queued, statuses);
+            Assert.DoesNotContain(NewResponseStatus.Queued, statuses);
             Assert.Contains(NewResponseStatus.InProgress, statuses);
             Assert.Contains(NewResponseStatus.Completed, statuses);
         }
@@ -243,7 +238,6 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
             responseId = update.ResponseId;
             conversationId = update.ConversationId;
             sequenceNumber = update.GetSequenceNumber();
-            break;
         }
 
         Assert.Contains(NewResponseStatus.Queued, statuses);
@@ -309,7 +303,6 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
                 responseId = update.ResponseId;
                 sequenceNumber = update.GetSequenceNumber();
                 conversationId = update.ConversationId;
-                break;
             }
         }
 
