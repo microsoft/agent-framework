@@ -1,8 +1,8 @@
 # Microsoft Agent Framework Multi-Turn Conversations and Threading
 
-The Microsoft Agent Framework provides built-in support for managing multi-turn conversations with AI agents. This includes maintaining context across multiple interactions. Different agent types and underlying services that are used to build agents may support different threading types, and the agent framework abstracts these differences away, providing a consistent interface for developers.
+The Microsoft Agent Framework provides built-in support for managing multi-turn conversations with AI agents. This includes maintaining context across multiple interactions. Different agent types and underlying services that are used to build agents may support different threading types, and the Agent Framework abstracts these differences away, providing a consistent interface for developers.
 
-For example, when using a ChatClientAgent based on a foundry agent, the conversation history is persisted in the service. While, when using a ChatClientAgent based on chat completion with gpt-4.1 the conversation history is in-memory and managed by the agent.
+For example, when using a `ChatClientAgent` based on a Foundry agent, the conversation history is persisted in the service. While, when using a `ChatClientAgent` based on chat completion with gpt-4, the conversation history is in-memory and managed by the agent.
 
 The differences between the underlying threading models are abstracted away via the `AgentThread` type.
 
@@ -12,11 +12,20 @@ The differences between the underlying threading models are abstracted away via 
 
 `AgentThread` instances can be created in two ways:
 
-1. By calling `GetNewThread` on the agent.
+1. By calling `get_new_thread()` on the agent.
 1. By running the agent and not providing an `AgentThread`. In this case the agent will create a throwaway `AgentThread` with an underlying thread which will only be used for the duration of the run.
 
 Some underlying threads may be persistently created in an underlying service, where the service requires this, e.g. Foundry Agents or OpenAI Responses. Any cleanup or deletion of these threads is the responsibility of the user.
 
+```python
+# Create a new thread.
+thread = agent.get_new_thread()
+# Run the agent with the thread.
+response = await agent.run("Hello, how are you?", thread=thread)
+
+# Run an agent with a temporary thread.
+response = await agent.run("Hello, how are you?")
+```
 
 ### AgentThread Storage
 
@@ -27,6 +36,44 @@ id of the thread in the service.
 For cases where the conversation history is managed in-memory, the serialized `AgentThread` will contain the messages
 themselves.
 
+```python
+# Create a new thread.
+thread = agent.get_new_thread()
+# Run the agent with the thread.
+response = await agent.run("Hello, how are you?", thread=thread)
+
+# Serialize the thread for storage.
+serialized_thread = await thread.serialize()
+# Deserialize the thread state after loading from storage.
+resumed_thread = await agent.deserialize_thread(serialized_thread)
+
+# Run the agent with the resumed thread.
+response = await agent.run("Hello, how are you?", thread=resumed_thread)
+```
+
+### Custom Message Stores
+
+For in-memory threads, you can provide a custom message store implementation to control how messages are stored and retrieved:
+
+```python
+from agent_framework import AgentThread, ChatMessageList
+
+# Using the default in-memory message store
+thread = AgentThread(message_store=ChatMessageList())
+
+# Or let the agent create one automatically
+thread = agent.get_new_thread()
+
+# You can also provide a custom message store factory when creating the agent
+def custom_message_store_factory():
+    return ChatMessageList()  # or your custom implementation
+
+agent = ChatClientAgent(
+    chat_client=OpenAIChatClient(),
+    instructions="You are a helpful assistant",
+    chat_message_store_factory=custom_message_store_factory
+)
+```
 
 ## Agent/AgentThread relationship
 
@@ -38,6 +85,39 @@ only has a reference to this service managed thread.
 
 It is therefore considered unsafe to use an `AgentThread` instance that was created by one agent with a different agent instance, unless you are aware of the underlying threading model and its implications.
 
+## Practical Multi-Turn Example
+
+Here's a complete example showing how to maintain context across multiple interactions:
+
+```python
+from agent_framework import ChatClientAgent, AgentThread
+from agent_framework.openai import OpenAIChatClient
+
+async def multi_turn_example():
+    agent = OpenAIChatClient().create_agent(
+        instructions="You are a helpful assistant"
+    )
+    
+    # Create a thread to maintain conversation context
+    thread = agent.get_new_thread()
+    
+    # First interaction
+    response1 = await agent.run("My name is Alice", thread=thread)
+    print(f"Agent: {response1.text}")
+    
+    # Second interaction - agent remembers the name
+    response2 = await agent.run("What's my name?", thread=thread)
+    print(f"Agent: {response2.text}")  # Should mention "Alice"
+    
+    # Serialize thread for storage
+    serialized = await thread.serialize()
+    
+    # Later, deserialize and continue conversation
+    new_thread = await agent.deserialize_thread(serialized)
+    response3 = await agent.run("What did we talk about?", thread=new_thread)
+    print(f"Agent: {response3.text}")  # Should remember previous context
+```
+
 ## Threading support by service / protocol
 
 | Service | Threading Support |
@@ -47,4 +127,3 @@ It is therefore considered unsafe to use an `AgentThread` instance that was crea
 | OpenAI ChatCompletion | In-memory threads |
 | OpenAI Assistants | Service managed threads |
 | A2A | Service managed threads |
-
