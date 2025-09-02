@@ -26,6 +26,11 @@ dependencies = [
     "agent-framework",
 ]
 
+[project.optional-dependencies]
+viz = [
+    "graphviz>=0.20.0",
+]
+
 [tool.uv]
 prerelease = "if-necessary-or-explicit"
 environments = [

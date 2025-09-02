@@ -13,8 +13,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests.AppHost\Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests.AppHost.csproj" />
     <ProjectReference Include="..\..\..\src\Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB\Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.csproj" />
+    <ProjectReference Include="..\CosmosDB.Testing.AppHost\CosmosDB.Testing.AppHost.csproj" />
   </ItemGroup>
 
   <ItemGroup>

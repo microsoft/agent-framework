@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Generic;
 using System.Threading.Tasks;
 
 namespace Microsoft.Agents.Workflows;
@@ -21,8 +22,11 @@ public interface IWorkflowContext
     /// Queues a message to be sent to connected executors. The message will be sent during the next SuperStep.
     /// </summary>
     /// <param name="message">The message to be sent.</param>
+    /// <param name="targetId">An optional identifier of the target executor. If null, the message is sent to all connected
+    /// executors. If the target executor is not connected from this executor via an edge, it will still not receive the
+    /// message.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
-    ValueTask SendMessageAsync(object message);
+    ValueTask SendMessageAsync(object message, string? targetId = null);
 
     /// <summary>
     /// Reads a state value from the workflow's state store. If no scope is provided, the executor's private
@@ -30,9 +34,17 @@ public interface IWorkflowContext
     /// </summary>
     /// <typeparam name="T">The type of the state value.</typeparam>
     /// <param name="key">The key of the state value.</param>
-    /// <param name="scopeName">The name of the scope.</param>
+    /// <param name = "scopeName" > An optional name that specifies the scope to read.If null, the default scope is
+    /// used.</param>
     /// <returns>A <see cref="ValueTask{T}"/> representing the asynchronous operation.</returns>
     ValueTask<T?> ReadStateAsync<T>(string key, string? scopeName = null);
+
+    /// <summary>
+    /// Asynchronously reads all state keys within the specified scope.
+    /// </summary>
+    /// <param name="scopeName">An optional name that specifies the scope to read. If null, the default scope is
+    /// used.</param>
+    ValueTask<HashSet<string>> ReadStateKeysAsync(string? scopeName = null);
 
     /// <summary>
     /// Asynchronously updates the state of a queue entry identified by the specified key and optional scope.
@@ -45,8 +57,21 @@ public interface IWorkflowContext
     /// <param name="key">The unique identifier for the queue entry to update. Cannot be null or empty.</param>
     /// <param name="value">The value to set for the queue entry. If null, the entry's state may be cleared or reset depending on
     /// implementation.</param>
-    /// <param name="scopeName">An optional name that specifies the scope within which the queue entry resides. If null, the default scope is
+    /// <param name="scopeName">An optional name that specifies the scope to update. If null, the default scope is
     /// used.</param>
     /// <returns>A ValueTask that represents the asynchronous update operation.</returns>
     ValueTask QueueStateUpdateAsync<T>(string key, T? value, string? scopeName = null);
+
+    /// <summary>
+    /// Asynchronously clears all state entries within the specified scope.
+    ///
+    /// This semantically equivalent to retrieving all keys in the scope and deleting them one-by-one.
+    /// </summary>
+    /// <remarks>
+    /// Subsequent reads by this executor will not find any entries in the cleared scope. Other executors will only
+    /// see the cleared state starting from the next SuperStep.
+    /// </remarks>
+    /// <param name="scopeName">An optional name that specifies the scope to clear. If null, the default scope is used.</param>
+    /// <returns>A ValueTask that represents the asynchronous clear operation.</returns>
+    ValueTask QueueClearScopeAsync(string? scopeName = null);
 }

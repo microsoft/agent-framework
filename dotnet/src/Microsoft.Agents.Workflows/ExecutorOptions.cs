@@ -12,7 +12,7 @@ public sealed class ExecutorOptions
     /// </summary>
     public static ExecutorOptions Default { get; } = new();
 
-    private ExecutorOptions() { }
+    internal ExecutorOptions() { }
 
     /// <summary>
     /// If <see langword="true"/>, the result of a message handler that returns a value will be sent as a message to the workflow.
