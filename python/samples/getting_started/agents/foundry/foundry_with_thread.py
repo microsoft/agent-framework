@@ -6,7 +6,7 @@ from typing import Annotated
 
 from agent_framework import AgentThread, ChatClientAgent
 from agent_framework.foundry import FoundryChatClient
-from azure.identity.aio import DefaultAzureCredential
+from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
 
@@ -22,25 +22,27 @@ async def example_with_automatic_thread_creation() -> None:
     """Example showing automatic thread creation (service-managed thread)."""
     print("=== Automatic Thread Creation Example ===")
 
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
     async with (
-        DefaultAzureCredential() as credential,
+        AzureCliCredential() as credential,
         ChatClientAgent(
-            chat_client=FoundryChatClient(async_ad_credential=credential),
+            chat_client=FoundryChatClient(async_credential=credential),
             instructions="You are a helpful weather agent.",
             tools=get_weather,
         ) as agent,
     ):
         # First conversation - no thread provided, will be created automatically
-        query1 = "What's the weather like in Seattle?"
-        print(f"User: {query1}")
-        result1 = await agent.run(query1)
-        print(f"Agent: {result1.text}")
+        first_query = "What's the weather like in Seattle?"
+        print(f"User: {first_query}")
+        first_result = await agent.run(first_query)
+        print(f"Agent: {first_result.text}")
 
         # Second conversation - still no thread provided, will create another new thread
-        query2 = "What was the last city I asked about?"
-        print(f"\nUser: {query2}")
-        result2 = await agent.run(query2)
-        print(f"Agent: {result2.text}")
+        second_query = "What was the last city I asked about?"
+        print(f"\nUser: {second_query}")
+        second_result = await agent.run(second_query)
+        print(f"Agent: {second_result.text}")
         print("Note: Each call creates a separate thread, so the agent doesn't remember previous context.\n")
 
 
@@ -49,10 +51,12 @@ async def example_with_thread_persistence() -> None:
     print("=== Thread Persistence Example ===")
     print("Using the same thread across multiple conversations to maintain context.\n")
 
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
     async with (
-        DefaultAzureCredential() as credential,
+        AzureCliCredential() as credential,
         ChatClientAgent(
-            chat_client=FoundryChatClient(async_ad_credential=credential),
+            chat_client=FoundryChatClient(async_credential=credential),
             instructions="You are a helpful weather agent.",
             tools=get_weather,
         ) as agent,
@@ -61,22 +65,22 @@ async def example_with_thread_persistence() -> None:
         thread = agent.get_new_thread()
 
         # First conversation
-        query1 = "What's the weather like in Tokyo?"
-        print(f"User: {query1}")
-        result1 = await agent.run(query1, thread=thread)
-        print(f"Agent: {result1.text}")
+        first_query = "What's the weather like in Tokyo?"
+        print(f"User: {first_query}")
+        first_result = await agent.run(first_query, thread=thread)
+        print(f"Agent: {first_result.text}")
 
         # Second conversation using the same thread - maintains context
-        query2 = "How about London?"
-        print(f"\nUser: {query2}")
-        result2 = await agent.run(query2, thread=thread)
-        print(f"Agent: {result2.text}")
+        second_query = "How about London?"
+        print(f"\nUser: {second_query}")
+        second_result = await agent.run(second_query, thread=thread)
+        print(f"Agent: {second_result.text}")
 
         # Third conversation - agent should remember both previous cities
-        query3 = "Which of the cities I asked about has better weather?"
-        print(f"\nUser: {query3}")
-        result3 = await agent.run(query3, thread=thread)
-        print(f"Agent: {result3.text}")
+        third_query = "Which of the cities I asked about has better weather?"
+        print(f"\nUser: {third_query}")
+        third_result = await agent.run(third_query, thread=thread)
+        print(f"Agent: {third_result.text}")
         print("Note: The agent remembers context from previous messages in the same thread.\n")
 
 
@@ -88,20 +92,22 @@ async def example_with_existing_thread_id() -> None:
     # First, create a conversation and capture the thread ID
     existing_thread_id = None
 
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
     async with (
-        DefaultAzureCredential() as credential,
+        AzureCliCredential() as credential,
         ChatClientAgent(
-            chat_client=FoundryChatClient(async_ad_credential=credential),
+            chat_client=FoundryChatClient(async_credential=credential),
             instructions="You are a helpful weather agent.",
             tools=get_weather,
         ) as agent,
     ):
         # Start a conversation and get the thread ID
         thread = agent.get_new_thread()
-        query1 = "What's the weather in Paris?"
-        print(f"User: {query1}")
-        result1 = await agent.run(query1, thread=thread)
-        print(f"Agent: {result1.text}")
+        first_query = "What's the weather in Paris?"
+        print(f"User: {first_query}")
+        first_result = await agent.run(first_query, thread=thread)
+        print(f"Agent: {first_result.text}")
 
         # The thread ID is set after the first response
         existing_thread_id = thread.service_thread_id
@@ -112,9 +118,9 @@ async def example_with_existing_thread_id() -> None:
 
         # Create a new agent instance but use the existing thread ID
         async with (
-            DefaultAzureCredential() as credential,
+            AzureCliCredential() as credential,
             ChatClientAgent(
-                chat_client=FoundryChatClient(thread_id=existing_thread_id, async_ad_credential=credential),
+                chat_client=FoundryChatClient(thread_id=existing_thread_id, async_credential=credential),
                 instructions="You are a helpful weather agent.",
                 tools=get_weather,
             ) as agent,
@@ -122,10 +128,10 @@ async def example_with_existing_thread_id() -> None:
             # Create a thread with the existing ID
             thread = AgentThread(service_thread_id=existing_thread_id)
 
-            query2 = "What was the last city I asked about?"
-            print(f"User: {query2}")
-            result2 = await agent.run(query2, thread=thread)
-            print(f"Agent: {result2.text}")
+            second_query = "What was the last city I asked about?"
+            print(f"User: {second_query}")
+            second_result = await agent.run(second_query, thread=thread)
+            print(f"Agent: {second_result.text}")
             print("Note: The agent continues the conversation from the previous thread.\n")
 
 

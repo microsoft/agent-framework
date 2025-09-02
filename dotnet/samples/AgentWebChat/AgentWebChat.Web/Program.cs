@@ -15,8 +15,19 @@ builder.Services.AddRazorComponents()
 
 builder.Services.AddOutputCache();
 
-builder.Services.AddHttpClient<IActorClient, HttpActorClient>(client => client.BaseAddress = new("https+http://agenthost"));
-builder.Services.AddHttpClient<AgentDiscoveryClient>(client => client.BaseAddress = new("https+http://agenthost"));
+// This URL uses "https+http://" to indicate HTTPS is preferred over HTTP.
+// Learn more about service discovery scheme resolution at https://aka.ms/dotnet/sdschemes.
+Uri baseAddress = new("https+http://agenthost");
+
+// for some reason does not resolve with `apiservice` url
+Uri a2aAddress = new("http://localhost:5390/a2a");
+
+builder.Services.AddHttpClient<AgentDiscoveryClient>(client => client.BaseAddress = baseAddress);
+builder.Services.AddHttpClient<IActorClient, HttpActorClient>(client => client.BaseAddress = baseAddress);
+builder.Services.AddSingleton<A2AActorClient>(sp =>
+{
+    return new A2AActorClient(sp.GetRequiredService<ILogger<A2AActorClient>>(), a2aAddress);
+});
 
 var app = builder.Build();
 

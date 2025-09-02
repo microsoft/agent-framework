@@ -1,10 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+
 from agent_framework import HostedFileSearchTool, HostedVectorStoreContent
 from agent_framework.openai import OpenAIResponsesClient
 
 # Helper functions
+
 
 async def create_vector_store(client: OpenAIResponsesClient) -> tuple[str, HostedVectorStoreContent]:
     """Create a vector store with sample documents."""
@@ -55,6 +57,7 @@ async def main() -> None:
         )
         print(f"Assistant: {response}")
     await delete_vector_store(client, file_id, vector_store.vector_store_id)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
