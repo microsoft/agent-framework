@@ -4,7 +4,16 @@ import asyncio
 
 from agent_framework.openai import OpenAIChatClient
 
-async def main():
+
+async def main() -> None:
+    """
+    Demonstrates cancelling a chat request after 1 second.
+    Creates a task for the chat request, waits briefly, then cancels it to show proper cleanup.
+
+    Configuration:
+    - OpenAI model ID: Use "ai_model_id" parameter or "OPENAI_CHAT_MODEL_ID" environment variable
+    - OpenAI API key: Use "api_key" parameter or "OPENAI_API_KEY" environment variable
+    """
     chat_client = OpenAIChatClient()
 
     try:
@@ -14,6 +23,7 @@ async def main():
         await task
     except asyncio.CancelledError:
         print("Request was cancelled")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

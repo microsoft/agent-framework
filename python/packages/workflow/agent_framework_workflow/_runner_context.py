@@ -24,6 +24,22 @@ class Message:
     source_id: str
     target_id: str | None = None
 
+    # OpenTelemetry trace context fields for message propagation
+    # These are plural to support fan-in scenarios where multiple messages are aggregated
+    trace_contexts: list[dict[str, str]] | None = None  # W3C Trace Context headers from multiple sources
+    source_span_ids: list[str] | None = None  # Publishing span IDs for linking from multiple sources
+
+    # Backward compatibility properties
+    @property
+    def trace_context(self) -> dict[str, str] | None:
+        """Get the first trace context for backward compatibility."""
+        return self.trace_contexts[0] if self.trace_contexts else None
+
+    @property
+    def source_span_id(self) -> str | None:
+        """Get the first source span ID for backward compatibility."""
+        return self.source_span_ids[0] if self.source_span_ids else None
+
 
 class CheckpointState(TypedDict):
     messages: dict[str, list[dict[str, Any]]]
@@ -268,7 +284,14 @@ class InProcRunnerContext:
         serializable_messages: dict[str, list[dict[str, Any]]] = {}
         for source_id, message_list in self._messages.items():
             serializable_messages[source_id] = [
-                {"data": msg.data, "source_id": msg.source_id, "target_id": msg.target_id} for msg in message_list
+                {
+                    "data": msg.data,
+                    "source_id": msg.source_id,
+                    "target_id": msg.target_id,
+                    "trace_contexts": msg.trace_contexts,
+                    "source_span_ids": msg.source_span_ids,
+                }
+                for msg in message_list
             ]
         return {
             "messages": serializable_messages,
@@ -287,6 +310,8 @@ class InProcRunnerContext:
                     data=msg.get("data"),
                     source_id=msg.get("source_id", ""),
                     target_id=msg.get("target_id"),
+                    trace_contexts=msg.get("trace_contexts"),
+                    source_span_ids=msg.get("source_span_ids"),
                 )
                 for msg in message_list
             ]

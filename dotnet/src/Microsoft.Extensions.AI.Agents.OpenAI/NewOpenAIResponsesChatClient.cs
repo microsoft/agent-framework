@@ -12,6 +12,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Responses;
 
@@ -28,6 +29,9 @@ namespace Microsoft.Extensions.AI;
 [ExcludeFromCodeCoverage]
 internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
 {
+    /// <summary>Type info for serializing and deserializing arbitrary JSON objects.</summary>
+    private static readonly JsonTypeInfo s_jsonTypeInfo = AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(object));
+
     /// <summary>Metadata about the client.</summary>
     private readonly ChatClientMetadata _metadata;
 
@@ -435,8 +439,24 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
                     break;
 
                 default:
+                {
+                    // Capture streaming thinking contents
+                    if (streamingUpdate.GetType().Name == "InternalResponseReasoningSummaryTextDeltaEvent")
+                    {
+                        var updateJson = JsonSerializer.Deserialize<JsonElement>(
+                            JsonSerializer.Serialize(streamingUpdate, s_jsonTypeInfo),
+                            OpenAIJsonContext2.Default.JsonElement);
+
+                        if (updateJson.TryGetProperty("delta", out var deltaProperty))
+                        {
+                            yield return CreateUpdate(new TextReasoningContent(deltaProperty.GetString()));
+                            break;
+                        }
+                    }
+
                     yield return CreateUpdate();
                     break;
+                }
             }
         }
     }
