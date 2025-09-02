@@ -1,0 +1,21 @@
+dirs: 
+  - .
+ignorePatterns:
+  - pattern: "/github/"
+  - pattern: "./actions"
+  - pattern: "./blob"
+  - pattern: "./issues"
+  - pattern: "./discussions"
+  - pattern: "./pulls"
+  - pattern: "https:\/\/platform.openai.com"
+excludedDirs:
+  # Exclude folders that contain documents with links prone to becoming broken and temporarily unavailable. This should be removed when the link checker is implemented as a background job that does not block PRs.
+  - ./docs/decisions
+baseUrl: https://github.com/microsoft/agent-framework/
+aliveStatusCodes: 
+  - 200
+  - 206
+  - 429
+  - 500
+  - 503
+useGitIgnore: true
