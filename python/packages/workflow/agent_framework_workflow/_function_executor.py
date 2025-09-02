@@ -238,7 +238,7 @@ def executor(
         @executor
         async def process_data(data: str):
             # Process data without sending messages
-            return processed_data
+            print(processed_data)
 
     Returns:
         An Executor instance that can be wired into a Workflow.
