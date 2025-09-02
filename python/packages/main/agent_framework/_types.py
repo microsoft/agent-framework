@@ -15,7 +15,7 @@ from collections.abc import (
     Sequence,
 )
 from copy import deepcopy
-from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, overload
+from typing import Annotated, Any, ClassVar, Generic, Literal, TypeAlias, TypeVar, overload
 
 from pydantic import (
     BaseModel,
@@ -100,6 +100,7 @@ __all__ = [
     "GeneratedEmbeddings",
     "HostedFileContent",
     "HostedVectorStoreContent",
+    "ResponseStatus",
     "SpeechToTextOptions",
     "TextContent",
     "TextReasoningContent",
@@ -1307,6 +1308,57 @@ class ChatMessage(AFBaseModel):
 # region ChatResponse
 
 
+ResponseStatusStr: TypeAlias = Literal["completed", "failed", "in_progress", "cancelled", "queued", "incomplete"]
+
+
+class ResponseStatus(AFBaseModel):
+    """Describes the status of the response.
+
+    Attributes:
+        value: The string representation of the status.
+
+    Properties:
+        COMPLETED: The request has been completed successfully. Messages are attached to the response
+        FAILED: The request has failed.
+        IN_PROGRESS: The request is in progress. No messages are attached to the response
+        CANCELLED: The request has been cancelled.
+        QUEUED: the request is queued for processing.
+        INCOMPLETE: The response is incomplete.
+
+    """
+
+    value: ResponseStatusStr = Field(..., kw_only=False)
+
+    COMPLETED: ClassVar[Self]  # type: ignore[assignment]
+    """The request has been completed successfully."""
+    FAILED: ClassVar[Self]  # type: ignore[assignment]
+    """The request has failed."""
+    IN_PROGRESS: ClassVar[Self]  # type: ignore[assignment]
+    """The request is in progress."""
+    CANCELLED: ClassVar[Self]  # type: ignore[assignment]
+    """The request has been cancelled."""
+    QUEUED: ClassVar[Self]  # type: ignore[assignment]
+    """The request is queued."""
+    INCOMPLETE: ClassVar[Self]  # type: ignore[assignment]
+    """The request is incomplete."""
+
+    def __str__(self) -> str:
+        """Returns the string representation of the role."""
+        return self.value
+
+    def __repr__(self) -> str:
+        """Returns the string representation of the role."""
+        return f"ResponseStatus(value={self.value!r})"
+
+
+ResponseStatus.COMPLETED = ResponseStatus(value="completed")  # type: ignore[assignment]
+ResponseStatus.FAILED = ResponseStatus(value="failed")  # type: ignore[assignment]
+ResponseStatus.IN_PROGRESS = ResponseStatus(value="in_progress")  # type: ignore[assignment]
+ResponseStatus.CANCELLED = ResponseStatus(value="cancelled")  # type: ignore[assignment]
+ResponseStatus.QUEUED = ResponseStatus(value="queued")  # type: ignore[assignment]
+ResponseStatus.INCOMPLETE = ResponseStatus(value="incomplete")  # type: ignore[assignment]
+
+
 class ChatResponse(AFBaseModel):
     """Represents the response to a chat request.
 
@@ -1344,6 +1396,7 @@ class ChatResponse(AFBaseModel):
     """Any additional properties associated with the chat response."""
     raw_representation: Any | None = None
     """The raw representation of the chat response from an underlying implementation."""
+    status: ResponseStatus | None = None
 
     @overload
     def __init__(
@@ -1359,6 +1412,7 @@ class ChatResponse(AFBaseModel):
         value: Any | None = None,
         response_format: type[BaseModel] | None = None,
         additional_properties: dict[str, Any] | None = None,
+        status: ResponseStatus | ResponseStatusStr | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
     ) -> None:
@@ -1376,6 +1430,7 @@ class ChatResponse(AFBaseModel):
             response_format: Optional response format for the chat response.
             messages: List of ChatMessage objects to include in the response.
             additional_properties: Optional additional properties associated with the chat response.
+            status: Optional status of the chat response.
             raw_representation: Optional raw representation of the chat response from an underlying implementation.
             **kwargs: Any additional keyword arguments.
         """
@@ -1395,6 +1450,7 @@ class ChatResponse(AFBaseModel):
         response_format: type[BaseModel] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
+        status: ResponseStatus | ResponseStatusStr | None = None,
         **kwargs: Any,
     ) -> None:
         """Initializes a ChatResponse with the provided parameters.
@@ -1410,6 +1466,7 @@ class ChatResponse(AFBaseModel):
             value: Optional value of the structured output.
             response_format: Optional response format for the chat response.
             additional_properties: Optional additional properties associated with the chat response.
+            status: Optional status of the chat response.
             raw_representation: Optional raw representation of the chat response from an underlying implementation.
             **kwargs: Any additional keyword arguments.
 
@@ -1429,6 +1486,7 @@ class ChatResponse(AFBaseModel):
         value: Any | None = None,
         response_format: type[BaseModel] | None = None,
         additional_properties: dict[str, Any] | None = None,
+        status: ResponseStatus | ResponseStatusStr | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
     ) -> None:
@@ -1452,6 +1510,7 @@ class ChatResponse(AFBaseModel):
             usage_details=usage_details,  # type: ignore[reportCallIssue]
             value=value,  # type: ignore[reportCallIssue]
             additional_properties=additional_properties,  # type: ignore[reportCallIssue]
+            status=ResponseStatus(value=status) if isinstance(status, str) else status,  # type: ignore[reportCallIssue]
             raw_representation=raw_representation,  # type: ignore[reportCallIssue]
             **kwargs,
         )
@@ -1551,6 +1610,10 @@ class ChatResponseUpdate(AFBaseModel):
 
     additional_properties: dict[str, Any] | None = None
     """Any additional properties associated with the chat response update."""
+
+    sequence_number: int | None = None
+    """The sequence number of the response update. Only available for long running requests."""
+
     raw_representation: Any | None = None
     """The raw representation of the chat response update from an underlying implementation."""
 
@@ -1568,6 +1631,7 @@ class ChatResponseUpdate(AFBaseModel):
         created_at: CreatedAtT | None = None,
         finish_reason: ChatFinishReason | None = None,
         additional_properties: dict[str, Any] | None = None,
+        sequence_number: int | None = None,
         raw_representation: Any | None = None,
     ) -> None:
         """Initializes a ChatResponseUpdate with the provided parameters."""
@@ -1586,6 +1650,7 @@ class ChatResponseUpdate(AFBaseModel):
         created_at: CreatedAtT | None = None,
         finish_reason: ChatFinishReason | None = None,
         additional_properties: dict[str, Any] | None = None,
+        sequence_number: int | None = None,
         raw_representation: Any | None = None,
     ) -> None:
         """Initializes a ChatResponseUpdate with the provided parameters."""
@@ -1604,6 +1669,7 @@ class ChatResponseUpdate(AFBaseModel):
         created_at: CreatedAtT | None = None,
         finish_reason: ChatFinishReason | None = None,
         additional_properties: dict[str, Any] | None = None,
+        sequence_number: int | None = None,
         raw_representation: Any | None = None,
     ) -> None:
         """Initializes a ChatResponseUpdate with the provided parameters."""
@@ -1627,6 +1693,7 @@ class ChatResponseUpdate(AFBaseModel):
             raw_representation=raw_representation,  # type: ignore[reportCallIssue]
             response_id=response_id,  # type: ignore[reportCallIssue]
             role=role,  # type: ignore[reportCallIssue]
+            sequence_number=sequence_number,  # type: ignore[reportCallIssue]
         )
 
     @property
