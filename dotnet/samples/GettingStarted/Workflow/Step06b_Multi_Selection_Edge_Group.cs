@@ -13,7 +13,7 @@ namespace Workflow;
 /// <summary>
 /// This sample demonstrates multi-selection routing where one executor can trigger multiple downstream executors.
 ///
-/// Building on the switch-case pattern from Step04c, this workflow adds intelligent multi-path routing
+/// Building on the switch-case pattern from Step06a, this workflow adds intelligent multi-path routing
 /// based on email analysis results. Instead of routing to just one executor, the workflow can now
 /// trigger multiple executors simultaneously when certain conditions are met.
 ///
@@ -26,7 +26,7 @@ namespace Workflow;
 /// This pattern is powerful for workflows that need parallel processing based on data characteristics,
 /// such as triggering different analytics pipelines or multiple notification systems.
 /// </summary>
-public class Step04d_Multi_Selection_Edge_Group(ITestOutputHelper output) : WorkflowSample(output)
+public class Step06b_Multi_Selection_Edge_Group(ITestOutputHelper output) : WorkflowSample(output)
 {
     private const string EmailStateScope = "EmailState";
     private const int LongEmailThreshold = 100;

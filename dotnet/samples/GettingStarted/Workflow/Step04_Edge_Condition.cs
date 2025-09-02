@@ -24,7 +24,7 @@ namespace Workflow;
 /// Edge conditions enable workflows to make intelligent routing decisions, allowing you to
 /// build sophisticated automation that responds differently based on the data being processed.
 /// </summary>
-public class Step04a_Edge_Condition(ITestOutputHelper output) : WorkflowSample(output)
+public class Step04_Edge_Condition(ITestOutputHelper output) : WorkflowSample(output)
 {
     [Fact]
     public async Task RunAsync()
