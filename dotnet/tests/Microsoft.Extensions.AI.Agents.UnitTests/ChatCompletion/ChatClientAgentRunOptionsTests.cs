@@ -5,62 +5,13 @@ namespace Microsoft.Extensions.AI.Agents.UnitTests.ChatCompletion;
 public class ChatClientAgentRunOptionsTests
 {
     /// <summary>
-    /// Verify that ChatClientAgentRunOptions constructor works with null source and null chatOptions.
+    /// Verify that ChatClientAgentRunOptions constructor works with null chatOptions.
     /// </summary>
     [Fact]
-    public void ConstructorWorksWithNullSourceAndNullChatOptions()
+    public void ConstructorWorksWithNullChatOptions()
     {
         // Act
         var runOptions = new ChatClientAgentRunOptions();
-
-        // Assert
-        Assert.Null(runOptions.ChatOptions);
-    }
-
-    /// <summary>
-    /// Verify that ChatClientAgentRunOptions constructor works with null source and provided chatOptions.
-    /// </summary>
-    [Fact]
-    public void ConstructorWorksWithNullSourceAndProvidedChatOptions()
-    {
-        // Arrange
-        var chatOptions = new ChatOptions { MaxOutputTokens = 100 };
-
-        // Act
-        var runOptions = new ChatClientAgentRunOptions(null, chatOptions);
-
-        // Assert
-        Assert.Same(chatOptions, runOptions.ChatOptions);
-    }
-
-    /// <summary>
-    /// Verify that ChatClientAgentRunOptions constructor copies properties from source AgentRunOptions.
-    /// </summary>
-    [Fact]
-    public void ConstructorCopiesPropertiesFromSourceAgentRunOptions()
-    {
-        // Arrange
-        var sourceRunOptions = new AgentRunOptions();
-        var chatOptions = new ChatOptions { MaxOutputTokens = 200 };
-
-        // Act
-        var runOptions = new ChatClientAgentRunOptions(sourceRunOptions, chatOptions);
-
-        // Assert
-        Assert.Same(chatOptions, runOptions.ChatOptions);
-    }
-
-    /// <summary>
-    /// Verify that ChatClientAgentRunOptions constructor works with source but null chatOptions.
-    /// </summary>
-    [Fact]
-    public void ConstructorWorksWithSourceButNullChatOptions()
-    {
-        // Arrange
-        var sourceRunOptions = new AgentRunOptions();
-
-        // Act
-        var runOptions = new ChatClientAgentRunOptions(sourceRunOptions, null);
 
         // Assert
         Assert.Null(runOptions.ChatOptions);
@@ -74,7 +25,7 @@ public class ChatClientAgentRunOptionsTests
     {
         // Arrange
         var chatOptions = new ChatOptions { MaxOutputTokens = 100 };
-        var runOptions = new ChatClientAgentRunOptions(null, chatOptions);
+        var runOptions = new ChatClientAgentRunOptions(chatOptions);
         chatOptions.MaxOutputTokens = 200; // Change the property to verify mutability
 
         // Act & Assert

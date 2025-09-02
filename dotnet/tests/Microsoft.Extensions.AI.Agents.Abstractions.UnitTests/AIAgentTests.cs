@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable S3717 // Track use of "NotImplementedException"
+
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -44,7 +46,7 @@ public class AIAgentTests
                 this._agentThreadMock.Object,
                 It.IsAny<AgentRunOptions?>(),
                 It.IsAny<CancellationToken>()))
-            .Returns(this._invokeStreamingResponses.ToAsyncEnumerable());
+            .Returns(ToAsyncEnumerableAsync(this._invokeStreamingResponses));
     }
 
     /// <summary>
@@ -370,7 +372,7 @@ public class AIAgentTests
             AgentRunOptions? options = null,
             CancellationToken cancellationToken = default)
         {
-            throw new System.NotImplementedException();
+            throw new NotImplementedException();
         }
 
         public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
@@ -379,7 +381,16 @@ public class AIAgentTests
             AgentRunOptions? options = null,
             CancellationToken cancellationToken = default)
         {
-            throw new System.NotImplementedException();
+            throw new NotImplementedException();
+        }
+    }
+
+    private static async IAsyncEnumerable<T> ToAsyncEnumerableAsync<T>(IEnumerable<T> values)
+    {
+        await Task.Yield();
+        foreach (var update in values)
+        {
+            yield return update;
         }
     }
 }

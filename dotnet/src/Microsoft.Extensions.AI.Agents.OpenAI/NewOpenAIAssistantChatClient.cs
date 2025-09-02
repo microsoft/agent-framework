@@ -28,11 +28,10 @@ using OpenAI.Assistants;
 
 namespace Microsoft.Extensions.AI;
 
-/// <summary>Represents an <see cref="IChatClient"/> for an Azure.AI.Agents.Persistent <see cref="AssistantClient"/>.</summary>
-public sealed class NewOpenAIAssistantChatClient : IChatClient
+/// <summary>Represents an <see cref="IChatClient"/> for an OpenAI <see cref="AssistantClient"/>.</summary>
+internal sealed class NewOpenAIAssistantsChatClient : IChatClient
 {
     /// <summary>The underlying <see cref="AssistantClient" />.</summary>
-#pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
     private readonly AssistantClient _client;
 
     /// <summary>Metadata for the client.</summary>
@@ -47,8 +46,8 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
     /// <summary>List of tools associated with the assistant.</summary>
     private IReadOnlyList<ToolDefinition>? _assistantTools;
 
-    /// <summary>Initializes a new instance of the <see cref="NewOpenAIAssistantChatClient"/> class for the specified <see cref="AssistantClient"/>.</summary>
-    public NewOpenAIAssistantChatClient(AssistantClient assistantClient, string assistantId, string? defaultThreadId = null)
+    /// <summary>Initializes a new instance of the <see cref="OpenAIAssistantsChatClient"/> class for the specified <see cref="AssistantClient"/>.</summary>
+    public NewOpenAIAssistantsChatClient(AssistantClient assistantClient, string assistantId, string? defaultThreadId)
     {
         _client = Throw.IfNull(assistantClient);
         _assistantId = Throw.IfNullOrWhitespace(assistantId);
@@ -65,6 +64,13 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
         _metadata = new("openai", providerUrl);
     }
 
+    /// <summary>Initializes a new instance of the <see cref="OpenAIAssistantsChatClient"/> class for the specified <see cref="AssistantClient"/>.</summary>
+    public NewOpenAIAssistantsChatClient(AssistantClient assistantClient, Assistant assistant, string? defaultThreadId)
+        : this(assistantClient, Throw.IfNull(assistant).Id, defaultThreadId)
+    {
+        _assistantTools = assistant.Tools;
+    }
+
     /// <inheritdoc />
     public object? GetService(Type serviceType, object? serviceKey = null) =>
         serviceType is null ? throw new ArgumentNullException(nameof(serviceType)) :
@@ -75,76 +81,18 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
         null;
 
     /// <inheritdoc />
-    public Task<ChatResponse> GetResponseAsync(
-        IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
-        GetStreamingResponseAsync(messages, options, cancellationToken).ToChatResponseAsync(cancellationToken);
-
-    private ToolResources? CreateToolResources(ChatOptions? options)
+    public async Task<ChatResponse> GetResponseAsync(
+        IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
     {
-        if (options is null)
-        {
-            return null;
-        }
+        // Changing the original implementation to provide a RawRepresentation as a list of RawRepresentations of the updates.
+        // This wouldn't be needed if the API Change Proposal below is accepted:
+        // https://github.com/dotnet/extensions/issues/6746
+        var updates = await GetStreamingResponseAsync(messages, options, cancellationToken).ToListAsync(cancellationToken).ConfigureAwait(false);
+        var response = updates.ToChatResponse();
 
-        if (options.Tools is { Count: > 0 } tools)
-        {
-            FileSearchToolResources? fileSearchResources = null;
-            CodeInterpreterToolResources? codeInterpreterResources = null;
-            // The caller can provide tools in the supplied ThreadAndRunOptions. Augment it with any supplied via ChatOptions.Tools.
-            foreach (AITool tool in tools)
-            {
-                switch (tool)
-                {
-                    case HostedCodeInterpreterTool codeTool:
-
-                        if (codeTool.Inputs is { Count: > 0 })
-                        {
-                            codeInterpreterResources ??= new();
-                            foreach (var input in codeTool.Inputs)
-                            {
-                                switch (input)
-                                {
-                                    case HostedFileContent fileContent:
-                                        // Use the file ID from the HostedFileContent.
-                                        codeInterpreterResources.FileIds.Add(fileContent.FileId);
-                                        break;
-                                }
-                            }
-                        }
-
-                        break;
-
-                    case HostedFileSearchTool fileSearchTool:
-
-                        // Handle file IDs for file search tool
-                        if (fileSearchTool.Inputs is { Count: > 0 })
-                        {
-                            fileSearchResources ??= new();
-
-                            foreach (var input in fileSearchTool.Inputs)
-                            {
-                                switch (input)
-                                {
-                                    case HostedVectorStoreContent vectorStoreContent:
-                                        // Use the vector store ID from the HostedVectorStoreContent.
-                                        fileSearchResources.VectorStoreIds.Add(vectorStoreContent.VectorStoreId);
-                                        break;
-                                }
-                            }
-                        }
-
-                        break;
-                }
-            }
-
-            return new ToolResources
-            {
-                CodeInterpreter = codeInterpreterResources,
-                FileSearch = fileSearchResources,
-            };
-        }
-
-        return null;
+        // Expose all the raw representations of the updates.
+        response.RawRepresentation = updates.Select(u => u.RawRepresentation).ToArray();
+        return response;
     }
 
     /// <inheritdoc />
@@ -310,7 +258,7 @@ public sealed class NewOpenAIAssistantChatClient : IChatClient
                         {
                             if (textUpdate.Contents.Count == 0)
                             {
-                                // Create a empty chunk of text content to hold the annotation.
+                                // In case a chunk doesn't have text content, create one with empty text to hold the annotation.
                                 textUpdate.Contents.Add(new TextContent(string.Empty));
                             }
 
@@ -755,4 +703,20 @@ internal static class OpenAIClientExtensions2
 
         return functionParameters;
     }
+}
+
+/// <summary>
+/// Temporary extension methods to assist with creating proposed <see cref="IChatClient"/> changed instances
+/// </summary>
+public static class OpenAIAssistantsExtensions
+{
+    /// <summary>
+    /// Creates a new instance of an <see cref="IChatClient"/> configured for the specified assistant.
+    /// </summary>
+    /// <param name="client">The <see cref="AssistantClient"/> instance used to initialize the chat client. Cannot be <see langword="null"/>.</param>
+    /// <param name="assistantId">The unique identifier of the assistant. Cannot be <see langword="null"/> or whitespace.</param>
+    /// <param name="defaultThreadId">The optional default thread identifier for the chat client. Can be <see langword="null"/>.</param>
+    /// <returns>A new <see cref="IChatClient"/> instance configured with the specified assistant and optional default thread.</returns>
+    public static IChatClient AsNewIChatClient(this AssistantClient client, string assistantId, string? defaultThreadId = null) =>
+        new NewOpenAIAssistantsChatClient(Throw.IfNull(client), Throw.IfNullOrWhitespace(assistantId), defaultThreadId);
 }
