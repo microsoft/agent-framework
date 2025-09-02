@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import asyncio
 import sys
 from collections.abc import AsyncIterable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
 from datetime import datetime
@@ -92,12 +91,16 @@ class OpenAIResponsesClientBase(OpenAIHandler, RunnableChatClient):
         # We filter out the unsupported options.
         return {key: value for key, value in kwargs.items() if value is not None}
 
+    # background and store are forced to be true for now to prevent too many options permutations
+    # Setting them to false causes problems with multiple rounds of tool calls
+    # We can't set them to default true because it gets ignored here
     @overload
     async def get_response(
         self,
         *,
         message_id: str,
-        background: bool | None = None,
+        background: Literal[True],
+        store: Literal[True],
         include: list["ResponseIncludable"] | None = None,
         **kwargs: Any,
     ) -> ChatResponse: ...
@@ -239,8 +242,11 @@ class OpenAIResponsesClientBase(OpenAIHandler, RunnableChatClient):
     def get_streaming_response(
         self,
         *,
+        # Be careful with this id since it conflicts with another variable name in ChatOptions
         conversation_id: str,
         sequence_number: int | None = None,
+        background: Literal[True],
+        store: Literal[True],
         tools: AITool
         | list[AITool]
         | Callable[..., Any]
@@ -418,12 +424,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, RunnableChatClient):
                 chat_options.conversation_id = response.id if chat_options.store is True else None
             else:
                 response = await self.client.responses.retrieve(message_id)
-                # Is this a reasonable thing to do?
-                # If background is True, treat this as a polling call. Otherwise wait until we have the response
-                if not chat_options.additional_properties.get("background", False):
-                    while response.status in {"queued", "in_progress"}:
-                        await asyncio.sleep(2)
-                        response = await self.client.responses.retrieve(message_id)
+
             if response.status != "completed":
                 # TODO(peterychang): Do something interesting with failed responses
                 return ChatResponse(
@@ -462,7 +463,6 @@ class OpenAIResponsesClientBase(OpenAIHandler, RunnableChatClient):
         function_call_ids: dict[int, tuple[str, str]] = {}  # output_index: (call_id, name)
         try:
             if conversation_id:
-                chat_options.additional_properties["background"] = True
                 args: dict[str, Any] = {
                     "response_id": conversation_id,
                 }
@@ -953,7 +953,6 @@ class OpenAIResponsesClientBase(OpenAIHandler, RunnableChatClient):
                 # call_id for the result needs to be the same as the call_id for the function call
                 args: dict[str, Any] = {
                     "call_id": content.call_id,
-                    "id": call_id_to_id.get(content.call_id),
                     "type": "function_call_output",
                 }
                 if content.result:

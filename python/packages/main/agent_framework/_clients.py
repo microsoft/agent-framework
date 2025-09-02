@@ -92,6 +92,8 @@ def _tool_call_non_streaming(
         fcc_messages: list[ChatMessage] = []
         for attempt_idx in range(getattr(self, "__maximum_iterations_per_request", 10)):
             response = await func(self, messages=messages, chat_options=chat_options, **kwargs)
+            if message_id := kwargs.pop("message_id", None):
+                chat_options.additional_properties["previous_response_id"] = message_id
             if not response.messages:
                 return response
             # if there are function calls, we will handle them first
@@ -175,6 +177,9 @@ def _tool_call_streaming(
                     all_messages.append(update)
                     function_call_returned = True
                 yield update
+
+            if conversation_id := kwargs.pop("conversation_id", None):
+                chat_options.additional_properties["previous_response_id"] = conversation_id
 
             if not function_call_returned:
                 return
