@@ -23,15 +23,15 @@ Before you begin, ensure you have the following prerequisites:
 
 |Sample|Description|
 |---|---|
-|[Running a simple agent](./Agents_Step01_Running/)|This sample demonstrates how to create and run a basic agent with instructions|
-|[Multi-turn conversation with a simple agent](./Agents_Step02_MultiturnConversation/)|This sample demonstrates how to implement a multi-turn conversation with a simple agent|
-|[Using function tools with a simple agent](./Agents_Step03_UsingFunctionTools/)|This sample demonstrates how to use function tools with a simple agent|
-|[Using function tools with approvals](./Agents_Step04_UsingFunctionToolsWithApprovals/)|This sample demonstrates how to use function tools where approvals require human in the loop approvals before execution|
-|[Structured output with a simple agent](./Agents_Step05_StructuredOutput/)|This sample demonstrates how to use structured output with a simple agent|
-|[Persisted conversations with a simple agent](./Agents_Step06_PersistedConversations/)|This sample demonstrates how to persist conversations and reload them later. This is useful for cases where an agent is hosted in a stateless service|
-|[3rd party thread storage with a simple agent](./Agents_Step07_3rdPartyThreadStorage/)|This sample demonstrates how to store conversation history in a 3rd party storage solution|
-|[Telemetry with a simple agent](./Agents_Step08_Telemetry/)|This sample demonstrates how to add telemetry to a simple agent|
-|[Dependency injection with a simple agent](./Agents_Step09_DependencyInjection/)|This sample demonstrates how to add and resolve an agent with a dependency injection container|
+|[Running a simple agent](./Agent_Step01_Running/)|This sample demonstrates how to create and run a basic agent with instructions|
+|[Multi-turn conversation with a simple agent](./Agent_Step02_MultiturnConversation/)|This sample demonstrates how to implement a multi-turn conversation with a simple agent|
+|[Using function tools with a simple agent](./Agent_Step03_UsingFunctionTools/)|This sample demonstrates how to use function tools with a simple agent|
+|[Using function tools with approvals](./Agent_Step04_UsingFunctionToolsWithApprovals/)|This sample demonstrates how to use function tools where approvals require human in the loop approvals before execution|
+|[Structured output with a simple agent](./Agent_Step05_StructuredOutput/)|This sample demonstrates how to use structured output with a simple agent|
+|[Persisted conversations with a simple agent](./Agent_Step06_PersistedConversations/)|This sample demonstrates how to persist conversations and reload them later. This is useful for cases where an agent is hosted in a stateless service|
+|[3rd party thread storage with a simple agent](./Agent_Step07_3rdPartyThreadStorage/)|This sample demonstrates how to store conversation history in a 3rd party storage solution|
+|[Telemetry with a simple agent](./Agent_Step08_Telemetry/)|This sample demonstrates how to add telemetry to a simple agent|
+|[Dependency injection with a simple agent](./Agent_Step09_DependencyInjection/)|This sample demonstrates how to add and resolve an agent with a dependency injection container|
 
 ## Running the samples from the console
 

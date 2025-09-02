@@ -334,8 +334,10 @@ The migration samples are organized into three categories, each demonstrating di
 |[AzureAIFoundry](./AzureAIFoundry/)|Azure OpenAI service integration samples|
 |[AzureOpenAI](./AzureOpenAI/)|Direct Azure OpenAI API integration samples|
 |[AzureOpenAIAssistants](./AzureOpenAIAssistants/)|Azure OpenAI Assistants API integration samples|
+|[AzureOpenAIResponses](./AzureOpenAIResponses/)|Azure OpenAI Responses API integration samples|
 |[OpenAI](./OpenAI/)|Direct OpenAI API integration samples|
-|[OpenAIAssistants](./OpenAIAssistants/)|OpenAI Assistant API integration samples|
+|[OpenAIAssistants](./OpenAIAssistants/)|OpenAI Assistants API integration samples|
+|[OpenAIResponses](./OpenAIResponses/)|OpenAI Responses API integration samples|
 
 ## Running the samples from the console
 
