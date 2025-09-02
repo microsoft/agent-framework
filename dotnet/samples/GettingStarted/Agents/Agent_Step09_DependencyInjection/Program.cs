@@ -38,7 +38,7 @@ builder.Services.AddSingleton<AIAgent>((sp) => new ChatClientAgent(
     options: sp.GetRequiredService<ChatClientAgentOptions>()));
 
 // Add a sample service that will use the agent to respond to user input.
-builder.Services.AddHostedService<SampleApp.SampleService>();
+builder.Services.AddHostedService<SampleService>();
 
 // Create a cancellation token and source to pass to the sample service that can
 // be used to signal shutdown of the application.
@@ -50,50 +50,47 @@ builder.Services.AddKeyedSingleton("AppShutdown", appShutdownCancellationTokenSo
 using IHost host = builder.Build();
 await host.RunAsync(appShutdownCancellationToken).ConfigureAwait(false);
 
-namespace SampleApp
+/// <summary>
+/// A sample service that uses an AI agent to respond to user input.
+/// </summary>
+internal sealed class SampleService(AIAgent agent, [FromKeyedServices("AppShutdown")] CancellationTokenSource appShutdownCancellationTokenSource) : IHostedService
 {
-    /// <summary>
-    /// A sample service that uses an AI agent to respond to user input.
-    /// </summary>
-    internal sealed class SampleService(AIAgent agent, [FromKeyedServices("AppShutdown")] CancellationTokenSource appShutdownCancellationTokenSource) : IHostedService
+    private AgentThread? _thread;
+
+    public async Task StartAsync(CancellationToken cancellationToken)
     {
-        private AgentThread? _thread;
-
-        public async Task StartAsync(CancellationToken cancellationToken)
-        {
-            // Create a thread that will be used for the entirety of the service lifetime so that the user can ask follow up questions.
-            this._thread = agent.GetNewThread();
-            _ = this.RunAsync(cancellationToken);
-        }
-
-        public async Task RunAsync(CancellationToken cancellationToken)
-        {
-            // Delay a little to allow the service to finish starting.
-            await Task.Delay(100, cancellationToken);
-
-            while (cancellationToken.IsCancellationRequested is false)
-            {
-                Console.WriteLine("\nAgent: Ask me to tell you a joke about a specific topic. To exit just press Ctrl+C or enter without any input.\n");
-                Console.Write("> ");
-                var input = Console.ReadLine();
-
-                // If the user enters no input, signal the application to shut down.
-                if (string.IsNullOrWhiteSpace(input))
-                {
-                    appShutdownCancellationTokenSource.Cancel();
-                    break;
-                }
-
-                // Stream the output to the console as it is generated.
-                await foreach (var update in agent.RunStreamingAsync(input, this._thread!, cancellationToken: cancellationToken))
-                {
-                    Console.Write(update);
-                }
-
-                Console.WriteLine();
-            }
-        }
-
-        public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        // Create a thread that will be used for the entirety of the service lifetime so that the user can ask follow up questions.
+        this._thread = agent.GetNewThread();
+        _ = this.RunAsync(cancellationToken);
     }
+
+    public async Task RunAsync(CancellationToken cancellationToken)
+    {
+        // Delay a little to allow the service to finish starting.
+        await Task.Delay(100, cancellationToken);
+
+        while (cancellationToken.IsCancellationRequested is false)
+        {
+            Console.WriteLine("\nAgent: Ask me to tell you a joke about a specific topic. To exit just press Ctrl+C or enter without any input.\n");
+            Console.Write("> ");
+            var input = Console.ReadLine();
+
+            // If the user enters no input, signal the application to shut down.
+            if (string.IsNullOrWhiteSpace(input))
+            {
+                appShutdownCancellationTokenSource.Cancel();
+                break;
+            }
+
+            // Stream the output to the console as it is generated.
+            await foreach (var update in agent.RunStreamingAsync(input, this._thread!, cancellationToken: cancellationToken))
+            {
+                Console.Write(update);
+            }
+
+            Console.WriteLine();
+        }
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }

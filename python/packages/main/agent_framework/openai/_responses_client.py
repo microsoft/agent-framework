@@ -789,7 +789,6 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                 # call_id for the result needs to be the same as the call_id for the function call
                 args: dict[str, Any] = {
                     "call_id": content.call_id,
-                    "id": call_id_to_id.get(content.call_id),
                     "type": "function_call_output",
                 }
                 if content.result:
