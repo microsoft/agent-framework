@@ -64,6 +64,7 @@ agent-framework = { workspace = true }
 agent-framework-azure = { workspace = true }
 agent-framework-foundry = { workspace = true }
 agent-framework-workflow = { workspace = true }
+agent-framework-runtime = { workspace = true }
 
 [tool.ruff]
 line-length = 120
