@@ -231,7 +231,7 @@ public sealed class ChatClientAgent : AIAgent
         // If no request chat options were provided, use the agent's chat options clone.
         if (requestChatOptions is null)
         {
-            return this._agentOptions?.ChatOptions?.Clone();
+            return this._agentOptions?.ChatOptions.Clone();
         }
 
         // If both are present, we need to merge them.
