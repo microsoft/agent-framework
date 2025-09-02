@@ -3,6 +3,7 @@
 import asyncio
 import os
 from pathlib import Path
+from typing import Any
 
 from agent_framework.workflow import (
     Executor,
@@ -38,8 +39,8 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 
 
 class UpperCaseExecutor(Executor):
-    @handler(output_types=[str])
-    async def to_upper_case(self, text: str, ctx: WorkflowContext) -> None:
+    @handler
+    async def to_upper_case(self, text: str, ctx: WorkflowContext[str]) -> None:
         result = text.upper()
         print(f"UpperCaseExecutor: '{text}' -> '{result}'")
         # Persist executor state into checkpointable context
@@ -57,8 +58,8 @@ class UpperCaseExecutor(Executor):
 
 
 class LowerCaseExecutor(Executor):
-    @handler(output_types=[str])
-    async def to_lower_case(self, text: str, ctx: WorkflowContext) -> None:
+    @handler
+    async def to_lower_case(self, text: str, ctx: WorkflowContext[Any]) -> None:
         result = text.lower()
         print(f"LowerCaseExecutor: '{text}' -> '{result}'")
         # Read from shared_state written by UpperCaseExecutor
@@ -82,8 +83,8 @@ class ReverseTextExecutor(Executor):
         """Initialize the executor with an ID."""
         super().__init__(id=id)
 
-    @handler(output_types=[str])
-    async def reverse_text(self, text: str, ctx: WorkflowContext) -> None:
+    @handler
+    async def reverse_text(self, text: str, ctx: WorkflowContext[str]) -> None:
         result = text[::-1]
         print(f"ReverseTextExecutor: '{text}' -> '{result}'")
         # Persist executor state into checkpointable context

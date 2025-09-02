@@ -6,7 +6,7 @@ from typing import Annotated
 
 from agent_framework import ChatResponse
 from agent_framework.azure import AzureResponsesClient
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 from pydantic import BaseModel, Field
 
 
@@ -26,7 +26,9 @@ class OutputStruct(BaseModel):
 
 
 async def main() -> None:
-    client = AzureResponsesClient(ad_credential=DefaultAzureCredential())
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
+    client = AzureResponsesClient(credential=AzureCliCredential())
     message = "What's the weather in Amsterdam and in Paris?"
     stream = True
     print(f"User: {message}")

@@ -45,7 +45,7 @@ public sealed class Edge
     /// <seealso cref="DirectEdgeData"/>
     /// <seealso cref="FanOutEdgeData"/>
     /// <seealso cref="FanInEdgeData"/>
-    public object Data { get; init; }
+    public EdgeData Data { get; init; }
 
     internal Edge(DirectEdgeData data)
     {

@@ -1,20 +1,29 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import os
+from typing import Annotated
+from unittest.mock import MagicMock, patch
 
 import pytest
+from openai import BadRequestError
 
 from agent_framework import (
+    AgentRunResponse,
+    AgentRunResponseUpdate,
+    AITool,
     ChatClient,
+    ChatClientAgent,
     ChatMessage,
+    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     HostedWebSearchTool,
     TextContent,
     ai_function,
 )
-from agent_framework.exceptions import ServiceInitializationError
+from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
 from agent_framework.openai import OpenAIChatClient
+from agent_framework.openai._exceptions import OpenAIContentFilterException
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
@@ -121,6 +130,44 @@ def test_serialize_with_org_id(openai_unit_test_env: dict[str, str]) -> None:
     assert "User-Agent" not in dumped_settings["default_headers"]
 
 
+async def test_content_filter_exception_handling(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that content filter errors are properly handled."""
+    client = OpenAIChatClient()
+    messages = [ChatMessage(role="user", text="test message")]
+
+    # Create a mock BadRequestError with content_filter code
+    mock_response = MagicMock()
+    mock_error = BadRequestError(
+        message="Content filter error", response=mock_response, body={"error": {"code": "content_filter"}}
+    )
+    mock_error.code = "content_filter"
+
+    # Mock the client to raise the content filter error
+    with (
+        patch.object(client.client.chat.completions, "create", side_effect=mock_error),
+        pytest.raises(OpenAIContentFilterException),
+    ):
+        await client._inner_get_response(messages=messages, chat_options=ChatOptions())  # type: ignore
+
+
+def test_unsupported_tool_handling(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that unsupported tool types are handled correctly."""
+    client = OpenAIChatClient()
+
+    # Create a mock AITool that's not an AIFunction
+    unsupported_tool = MagicMock(spec=AITool)
+    unsupported_tool.__class__.__name__ = "UnsupportedAITool"
+
+    # This should ignore the unsupported AITool and return empty list
+    result = client._chat_to_tool_spec([unsupported_tool])  # type: ignore
+    assert result == []
+
+    # Also test with a non-AITool that should be converted to dict
+    dict_tool = {"type": "function", "name": "test"}
+    result = client._chat_to_tool_spec([dict_tool])  # type: ignore
+    assert result == [dict_tool]
+
+
 @ai_function
 def get_story_text() -> str:
     """Returns a story about Emily and David."""
@@ -130,6 +177,12 @@ def get_story_text() -> str:
         "groundbreaking phenomenon in glaciology that could potentially reshape our understanding "
         "of climate change."
     )
+
+
+@ai_function
+def get_weather(location: str) -> str:
+    """Get the current weather for a location."""
+    return f"The weather in {location} is sunny and 72°F."
 
 
 @skip_if_openai_integration_tests_disabled
@@ -207,6 +260,8 @@ async def test_openai_chat_client_streaming() -> None:
     async for chunk in response:
         assert chunk is not None
         assert isinstance(chunk, ChatResponseUpdate)
+        assert chunk.message_id is not None
+        assert chunk.response_id is not None
         for content in chunk.contents:
             if isinstance(content, TextContent) and content.text:
                 full_message += content.text
@@ -332,3 +387,183 @@ async def test_openai_chat_client_web_search_streaming() -> None:
             if isinstance(content, TextContent) and content.text:
                 full_message += content.text
     assert "Seattle" in full_message
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_chat_client_agent_basic_run():
+    """Test OpenAI chat client agent basic run functionality with OpenAIChatClient."""
+    async with ChatClientAgent(
+        chat_client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
+    ) as agent:
+        # Test basic run
+        response = await agent.run("Hello! Please respond with 'Hello World' exactly.")
+
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+        assert "hello world" in response.text.lower()
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_chat_client_agent_basic_run_streaming():
+    """Test OpenAI chat client agent basic streaming functionality with OpenAIChatClient."""
+    async with ChatClientAgent(
+        chat_client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
+    ) as agent:
+        # Test streaming run
+        full_text = ""
+        async for chunk in agent.run_streaming("Please respond with exactly: 'This is a streaming response test.'"):
+            assert isinstance(chunk, AgentRunResponseUpdate)
+            if chunk.text:
+                full_text += chunk.text
+
+        assert len(full_text) > 0
+        assert "streaming response test" in full_text.lower()
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_chat_client_agent_thread_persistence():
+    """Test OpenAI chat client agent thread persistence across runs with OpenAIChatClient."""
+    async with ChatClientAgent(
+        chat_client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
+        instructions="You are a helpful assistant with good memory.",
+    ) as agent:
+        # Create a new thread that will be reused
+        thread = agent.get_new_thread()
+
+        # First interaction
+        response1 = await agent.run("My name is Alice. Remember this.", thread=thread)
+
+        assert isinstance(response1, AgentRunResponse)
+        assert response1.text is not None
+
+        # Second interaction - test memory
+        response2 = await agent.run("What is my name?", thread=thread)
+
+        assert isinstance(response2, AgentRunResponse)
+        assert response2.text is not None
+        assert "alice" in response2.text.lower()
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_chat_client_agent_existing_thread():
+    """Test OpenAI chat client agent with existing thread to continue conversations across agent instances."""
+    # First conversation - capture the thread
+    preserved_thread = None
+
+    async with ChatClientAgent(
+        chat_client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
+        instructions="You are a helpful assistant with good memory.",
+    ) as first_agent:
+        # Start a conversation and capture the thread
+        thread = first_agent.get_new_thread()
+        first_response = await first_agent.run("My name is Alice. Remember this.", thread=thread)
+
+        assert isinstance(first_response, AgentRunResponse)
+        assert first_response.text is not None
+
+        # Preserve the thread for reuse
+        preserved_thread = thread
+
+    # Second conversation - reuse the thread in a new agent instance
+    if preserved_thread:
+        async with ChatClientAgent(
+            chat_client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
+            instructions="You are a helpful assistant with good memory.",
+        ) as second_agent:
+            # Reuse the preserved thread
+            second_response = await second_agent.run("What is my name?", thread=preserved_thread)
+
+            assert isinstance(second_response, AgentRunResponse)
+            assert second_response.text is not None
+            assert "alice" in second_response.text.lower()
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_chat_client_agent_level_tool_persistence():
+    """Test that agent-level tools persist across multiple runs with OpenAI Chat Client."""
+
+    async with ChatClientAgent(
+        chat_client=OpenAIChatClient(ai_model_id="gpt-4.1"),
+        instructions="You are a helpful assistant that uses available tools.",
+        tools=[get_weather],  # Agent-level tool
+    ) as agent:
+        # First run - agent-level tool should be available
+        first_response = await agent.run("What's the weather like in Chicago?")
+
+        assert isinstance(first_response, AgentRunResponse)
+        assert first_response.text is not None
+        # Should use the agent-level weather tool
+        assert any(term in first_response.text.lower() for term in ["chicago", "sunny", "72"])
+
+        # Second run - agent-level tool should still be available (persistence test)
+        second_response = await agent.run("What's the weather in Miami?")
+
+        assert isinstance(second_response, AgentRunResponse)
+        assert second_response.text is not None
+        # Should use the agent-level weather tool again
+        assert any(term in second_response.text.lower() for term in ["miami", "sunny", "72"])
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_chat_client_run_level_tool_isolation():
+    """Test that run-level tools are isolated to specific runs and don't persist with OpenAI Chat Client."""
+    # Counter to track how many times the weather tool is called
+    call_count = 0
+
+    @ai_function
+    async def get_weather_with_counter(location: Annotated[str, "The location as a city name"]) -> str:
+        """Get the current weather in a given location."""
+        nonlocal call_count
+        call_count += 1
+        return f"The weather in {location} is sunny and 72°F."
+
+    async with ChatClientAgent(
+        chat_client=OpenAIChatClient(ai_model_id="gpt-4.1"),
+        instructions="You are a helpful assistant.",
+    ) as agent:
+        # First run - use run-level tool
+        first_response = await agent.run(
+            "What's the weather like in Chicago?",
+            tools=[get_weather_with_counter],  # Run-level tool
+        )
+
+        assert isinstance(first_response, AgentRunResponse)
+        assert first_response.text is not None
+        # Should use the run-level weather tool (call count should be 1)
+        assert call_count == 1
+        assert any(term in first_response.text.lower() for term in ["chicago", "sunny", "72"])
+
+        # Second run - run-level tool should NOT persist (key isolation test)
+        second_response = await agent.run("What's the weather like in Miami?")
+
+        assert isinstance(second_response, AgentRunResponse)
+        assert second_response.text is not None
+        # Should NOT use the weather tool since it was only run-level in previous call
+        # Call count should still be 1 (no additional calls)
+        assert call_count == 1
+
+
+async def test_exception_message_includes_original_error_details() -> None:
+    """Test that exception messages include original error details in the new format."""
+    client = OpenAIChatClient(ai_model_id="test-model", api_key="test-key")
+    messages = [ChatMessage(role="user", text="test message")]
+
+    mock_response = MagicMock()
+    original_error_message = "Invalid API request format"
+    mock_error = BadRequestError(
+        message=original_error_message,
+        response=mock_response,
+        body={"error": {"code": "invalid_request", "message": original_error_message}},
+    )
+    mock_error.code = "invalid_request"
+
+    with (
+        patch.object(client.client.chat.completions, "create", side_effect=mock_error),
+        pytest.raises(ServiceResponseException) as exc_info,
+    ):
+        await client._inner_get_response(messages=messages, chat_options=ChatOptions())  # type: ignore
+
+    exception_message = str(exc_info.value)
+    assert "service failed to complete the prompt:" in exception_message
+    assert original_error_message in exception_message
