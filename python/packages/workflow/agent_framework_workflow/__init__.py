@@ -2,6 +2,14 @@
 
 import importlib.metadata
 
+from ._callback import (
+    AgentDeltaEvent,
+    AgentMessageEvent,
+    CallbackEvent,
+    CallbackMode,
+    FinalResultEvent,
+    OrchestratorMessageEvent,
+)
 from ._checkpoint import (
     CheckpointStorage,
     FileCheckpointStorage,
@@ -37,6 +45,7 @@ from ._executor import (
     handler,
     intercepts_request,
 )
+from ._handoff import HandoffBuilder
 from ._magentic import (
     MagenticAgentDeltaEvent,
     MagenticAgentExecutor,
@@ -84,11 +93,15 @@ except importlib.metadata.PackageNotFoundError:
 
 __all__ = [
     "DEFAULT_MAX_ITERATIONS",
+    "AgentDeltaEvent",
     "AgentExecutor",
     "AgentExecutorRequest",
     "AgentExecutorResponse",
+    "AgentMessageEvent",
     "AgentRunEvent",
     "AgentRunStreamingEvent",
+    "CallbackEvent",
+    "CallbackMode",
     "Case",
     "CheckpointStorage",
     "Default",
@@ -98,7 +111,9 @@ __all__ = [
     "ExecutorEvent",
     "ExecutorInvokeEvent",
     "FileCheckpointStorage",
+    "FinalResultEvent",
     "GraphConnectivityError",
+    "HandoffBuilder",
     "InMemoryCheckpointStorage",
     "InProcRunnerContext",
     "MagenticAgentDeltaEvent",
@@ -121,6 +136,7 @@ __all__ = [
     "MagenticResponseMessage",
     "MagenticStartMessage",
     "Message",
+    "OrchestratorMessageEvent",
     "RequestInfoEvent",
     "RequestInfoExecutor",
     "RequestInfoMessage",

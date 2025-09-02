@@ -53,6 +53,13 @@ _IMPORTS = [
     "PlanReviewRequest",
     "RequestInfoEvent",
     "StandardMagenticManager",
+    "CallbackMode",
+    "CallbackEvent",
+    "AgentDeltaEvent",
+    "AgentMessageEvent",
+    "FinalResultEvent",
+    "OrchestratorMessageEvent",
+    "HandoffBuilder",
 ]
 
 
