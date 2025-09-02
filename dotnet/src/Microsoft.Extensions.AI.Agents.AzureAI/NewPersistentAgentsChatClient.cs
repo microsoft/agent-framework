@@ -9,6 +9,7 @@
 
 #nullable enable
 
+using System.Collections;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
@@ -19,7 +20,7 @@ using Microsoft.Extensions.AI;
 namespace Azure.AI.Agents.Persistent
 {
     /// <summary>Represents an <see cref="IChatClient"/> for an Azure.AI.Agents.Persistent <see cref="PersistentAgentsClient"/>.</summary>
-    public partial class NewPersistentAgentsChatClient : IChatClient
+    internal partial class NewPersistentAgentsChatClient : IChatClient
     {
         /// <summary>The name of the chat client provider.</summary>
         private const string ProviderName = "azure";
@@ -42,14 +43,8 @@ namespace Azure.AI.Agents.Persistent
         /// <summary>Initializes a new instance of the <see cref="PersistentAgentsChatClient"/> class for the specified <see cref="PersistentAgentsClient"/>.</summary>
         public NewPersistentAgentsChatClient(PersistentAgentsClient client, string agentId, string? defaultThreadId = null)
         {
-            if (client is null)
-            {
-                throw new ArgumentNullException(nameof(client));
-            }
-            if (string.IsNullOrWhiteSpace(agentId))
-            {
-                throw new ArgumentException("Value cannot be empty or contain only white-space characters.", nameof(agentId));
-            }
+            Argument.AssertNotNull(client, nameof(client));
+            Argument.AssertNotNullOrWhiteSpace(agentId, nameof(agentId));
 
             _client = client;
             _agentId = agentId;
@@ -57,11 +52,6 @@ namespace Azure.AI.Agents.Persistent
 
             _metadata = new(ProviderName);
         }
-
-        /// <summary>
-        /// Initializes a new instance of the <see cref="NewPersistentAgentsChatClient"/> class.
-        /// </summary>
-        public NewPersistentAgentsChatClient() { }
 
         /// <inheritdoc />
         public virtual object? GetService(Type serviceType, object? serviceKey = null) =>
@@ -73,18 +63,25 @@ namespace Azure.AI.Agents.Persistent
             null;
 
         /// <inheritdoc />
-        public virtual Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
-            GetStreamingResponseAsync(messages, options, cancellationToken).ToChatResponseAsync(cancellationToken);
+        public virtual async Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            // Changing the original implementation to provide a RawRepresentation as a list of RawRepresentations of the updates.
+            // This wouldn't be needed if the API Change Proposal below is accepted:
+            // https://github.com/dotnet/extensions/issues/6746
+            var updates = await GetStreamingResponseAsync(messages, options, cancellationToken).ToListAsync(cancellationToken).ConfigureAwait(false);
+            var response = updates.ToChatResponse();
+
+            // Expose all the raw representations of the updates.
+            response.RawRepresentation = updates.Select(u => u.RawRepresentation).ToArray();
+            return response;
+        }
 
         /// <inheritdoc />
         public virtual async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
             IEnumerable<ChatMessage> messages, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            if (messages is null)
-            {
-                throw new ArgumentNullException(nameof(messages));
-            }
+            Argument.AssertNotNull(messages, nameof(messages));
 
             // Extract necessary state from messages and options.
             (ThreadAndRunOptions runOptions, List<FunctionResultContent>? toolResults) =
@@ -113,7 +110,8 @@ namespace Azure.AI.Agents.Persistent
 
             // Submit the request.
             IAsyncEnumerable<StreamingUpdate> updates;
-            if (threadRun is not null &&
+            if (toolResults is not null &&
+                threadRun is not null &&
                 ConvertFunctionResultsToToolOutput(toolResults, out List<ToolOutput>? toolOutputs) is { } toolRunId &&
                 toolRunId == threadRun.Id)
             {
@@ -139,24 +137,32 @@ namespace Azure.AI.Agents.Persistent
                 }
 
                 // Now create a new run and stream the results.
+                CreateRunStreamingOptions opts = new()
+                {
+                    OverrideModelName = runOptions.OverrideModelName,
+                    OverrideInstructions = runOptions.OverrideInstructions,
+                    AdditionalInstructions = null,
+                    AdditionalMessages = runOptions.ThreadOptions.Messages,
+                    OverrideTools = runOptions.OverrideTools,
+                    ToolResources = runOptions.ToolResources,
+                    Temperature = runOptions.Temperature,
+                    TopP = runOptions.TopP,
+                    MaxPromptTokens = runOptions.MaxPromptTokens,
+                    MaxCompletionTokens = runOptions.MaxCompletionTokens,
+                    TruncationStrategy = runOptions.TruncationStrategy,
+                    ToolChoice = runOptions.ToolChoice,
+                    ResponseFormat = runOptions.ResponseFormat,
+                    ParallelToolCalls = runOptions.ParallelToolCalls,
+                    Metadata = runOptions.Metadata
+                };
+
+                // This method added for compatibility, before the include parameter support was enabled.
                 updates = _client!.Runs.CreateRunStreamingAsync(
                     threadId: threadId,
                     agentId: _agentId,
-                    overrideModelName: runOptions.OverrideModelName,
-                    overrideInstructions: runOptions.OverrideInstructions,
-                    additionalInstructions: null,
-                    additionalMessages: runOptions.ThreadOptions.Messages,
-                    overrideTools: runOptions.OverrideTools,
-                    temperature: runOptions.Temperature,
-                    topP: runOptions.TopP,
-                    maxPromptTokens: runOptions.MaxPromptTokens,
-                    maxCompletionTokens: runOptions.MaxCompletionTokens,
-                    truncationStrategy: runOptions.TruncationStrategy,
-                    toolChoice: runOptions.ToolChoice,
-                    responseFormat: runOptions.ResponseFormat,
-                    parallelToolCalls: runOptions.ParallelToolCalls,
-                    metadata: runOptions.Metadata,
-                    cancellationToken);
+                    options: opts,
+                    cancellationToken: cancellationToken
+                );
             }
 
             // Process each update.
@@ -208,18 +214,58 @@ namespace Azure.AI.Agents.Persistent
                         break;
 
                     case MessageContentUpdate mcu:
-                        yield return new(mcu.Role == MessageRole.User ? ChatRole.User : ChatRole.Assistant, mcu.Text)
+                        ChatResponseUpdate textUpdate = new(mcu.Role == MessageRole.User ? ChatRole.User : ChatRole.Assistant, mcu.Text)
                         {
+                            AuthorName = _agentId,
                             ConversationId = threadId,
                             MessageId = responseId,
                             RawRepresentation = mcu,
                             ResponseId = responseId,
                         };
+
+                        // Add any annotations from the text update. The OpenAI Assistants API does not support passing these back
+                        // into the model (MessageContent.FromXx does not support providing annotations), so they end up being one way and are dropped
+                        // on subsequent requests.
+                        if (mcu.TextAnnotation is { } tau)
+                        {
+                            string? fileId = null;
+                            string? toolName = null;
+                            if (!string.IsNullOrWhiteSpace(tau.InputFileId))
+                            {
+                                fileId = tau.InputFileId;
+                                toolName = "file_search";
+                            }
+                            else if (!string.IsNullOrWhiteSpace(tau.OutputFileId))
+                            {
+                                fileId = tau.OutputFileId;
+                                toolName = "code_interpreter";
+                            }
+
+                            if (fileId is not null)
+                            {
+                                if (textUpdate.Contents.Count == 0)
+                                {
+                                    // In case a chunk doesn't have text content, create one with empty text to hold the annotation.
+                                    textUpdate.Contents.Add(new TextContent(string.Empty));
+                                }
+
+                                (((TextContent)textUpdate.Contents[0]).Annotations ??= []).Add(new CitationAnnotation
+                                {
+                                    RawRepresentation = tau,
+                                    AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = tau.StartIndex, EndIndex = tau.EndIndex }],
+                                    FileId = fileId,
+                                    ToolName = toolName,
+                                });
+                            }
+                        }
+
+                        yield return textUpdate;
                         break;
 
                     default:
                         yield return new ChatResponseUpdate
                         {
+                            AuthorName = _agentId,
                             ConversationId = threadId,
                             MessageId = responseId,
                             RawRepresentation = update,
@@ -315,7 +361,10 @@ namespace Azure.AI.Agents.Persistent
                                 break;
 
                             case HostedFileSearchTool fileSearchTool:
-                                toolDefinitions.Add(new FileSearchToolDefinition());
+                                toolDefinitions.Add(new FileSearchToolDefinition()
+                                {
+                                    FileSearch = new() { MaxNumResults = fileSearchTool.MaximumResultCount }
+                                });
 
                                 if (fileSearchTool.Inputs is { Count: > 0 })
                                 {
@@ -324,13 +373,11 @@ namespace Azure.AI.Agents.Persistent
                                         switch (input)
                                         {
                                             case HostedVectorStoreContent hostedVectorStore:
-                                                // If the input is a HostedFileContent, we can use its ID directly.
                                                 (toolResources ??= new() { FileSearch = new() }).FileSearch.VectorStoreIds.Add(hostedVectorStore.VectorStoreId);
                                                 break;
                                         }
                                     }
                                 }
-
                                 break;
 
                             case HostedWebSearchTool webSearch when webSearch.AdditionalProperties?.TryGetValue("connectionId", out object? connectionId) is true:
@@ -356,13 +403,16 @@ namespace Azure.AI.Agents.Persistent
                     switch (options.ToolMode)
                     {
                         case NoneChatToolMode:
-                            runOptions.ToolChoice = BinaryData.FromString("none");
+                            runOptions.ToolChoice = BinaryData.FromString("\"none\"");
                             break;
 
                         case RequiredChatToolMode required:
                             runOptions.ToolChoice = required.RequiredFunctionName is string functionName ?
                                 BinaryData.FromString($$"""{"type": "function", "function": {"name": "{{functionName}}"} }""") :
                                 BinaryData.FromString("required");
+                            break;
+                        case AutoChatToolMode:
+                            runOptions.ToolChoice = BinaryData.FromString("\"auto\"");
                             break;
                     }
                 }
@@ -401,6 +451,10 @@ namespace Azure.AI.Agents.Persistent
                         {
                             runOptions.ResponseFormat = BinaryData.FromString("""{ "type": "json_object" }""");
                         }
+                    }
+                    else if (options.ResponseFormat is ChatResponseFormatText textFormat)
+                    {
+                        runOptions.ResponseFormat = BinaryData.FromString("""{ "type": "text" }""");
                     }
                 }
             }
@@ -510,7 +564,6 @@ namespace Azure.AI.Agents.Persistent
                     // We need to extract the run ID and ensure that the ToolOutput we send back to Azure
                     // is only the call ID.
                     string[]? runAndCallIDs;
-#pragma warning disable CA1031 // Do not catch general exception types
                     try
                     {
                         runAndCallIDs = JsonSerializer.Deserialize(frc.CallId, AgentsChatClientJsonContext.Default.StringArray);
@@ -519,7 +572,6 @@ namespace Azure.AI.Agents.Persistent
                     {
                         continue;
                     }
-#pragma warning restore CA1031 // Do not catch general exception types
 
                     if (runAndCallIDs is null ||
                         runAndCallIDs.Length != 2 ||
@@ -544,5 +596,121 @@ namespace Azure.AI.Agents.Persistent
         [JsonSerializable(typeof(string[]))]
         [JsonSerializable(typeof(IDictionary<string, object>))]
         private sealed partial class AgentsChatClientJsonContext : JsonSerializerContext;
+    }
+
+    internal static class Argument
+    {
+        public static void AssertNotNull<T>(T value, string name)
+        {
+            if (value is null)
+            {
+                throw new ArgumentNullException(name);
+            }
+        }
+
+        public static void AssertNotNull<T>(T? value, string name)
+        where T : struct
+        {
+            if (!value.HasValue)
+            {
+                throw new ArgumentNullException(name);
+            }
+        }
+
+        public static void AssertNotNullOrEmpty<T>(IEnumerable<T> value, string name)
+        {
+            if (value is null)
+            {
+                throw new ArgumentNullException(name);
+            }
+            if (value is ICollection<T> collectionOfT && collectionOfT.Count == 0)
+            {
+                throw new ArgumentException("Value cannot be an empty collection.", name);
+            }
+            if (value is ICollection collection && collection.Count == 0)
+            {
+                throw new ArgumentException("Value cannot be an empty collection.", name);
+            }
+            using IEnumerator<T> e = value.GetEnumerator();
+            if (!e.MoveNext())
+            {
+                throw new ArgumentException("Value cannot be an empty collection.", name);
+            }
+        }
+
+        public static void AssertNotNullOrEmpty(string value, string name)
+        {
+            if (value is null)
+            {
+                throw new ArgumentNullException(name);
+            }
+            if (value.Length == 0)
+            {
+                throw new ArgumentException("Value cannot be an empty string.", name);
+            }
+        }
+
+        public static void AssertNotNullOrWhiteSpace(string value, string name)
+        {
+            if (value is null)
+            {
+                throw new ArgumentNullException(name);
+            }
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                throw new ArgumentException("Value cannot be empty or contain only white-space characters.", name);
+            }
+        }
+
+        public static void AssertNotDefault<T>(ref T value, string name)
+        where T : struct, IEquatable<T>
+        {
+            if (value.Equals(default))
+            {
+                throw new ArgumentException("Value cannot be empty.", name);
+            }
+        }
+
+        public static void AssertInRange<T>(T value, T minimum, T maximum, string name)
+        where T : notnull, IComparable<T>
+        {
+            if (minimum.CompareTo(value) > 0)
+            {
+                throw new ArgumentOutOfRangeException(name, "Value is less than the minimum allowed.");
+            }
+            if (maximum.CompareTo(value) < 0)
+            {
+                throw new ArgumentOutOfRangeException(name, "Value is greater than the maximum allowed.");
+            }
+        }
+
+        public static void AssertEnumDefined(Type enumType, object value, string name)
+        {
+            if (!Enum.IsDefined(enumType, value))
+            {
+                throw new ArgumentException($"Value not defined for {enumType.FullName}.", name);
+            }
+        }
+
+        public static T CheckNotNull<T>(T value, string name)
+        where T : class
+        {
+            AssertNotNull(value, name);
+            return value;
+        }
+
+        public static string CheckNotNullOrEmpty(string value, string name)
+        {
+            AssertNotNullOrEmpty(value, name);
+            return value;
+        }
+
+        public static void AssertNull<T>(T value, string name, string? message = null)
+        {
+            if (value != null)
+            {
+                throw new ArgumentException(message ?? "Value must be null.", name);
+            }
+        }
     }
 }
