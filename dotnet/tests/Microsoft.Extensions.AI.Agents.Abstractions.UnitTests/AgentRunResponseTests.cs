@@ -259,7 +259,7 @@ public class AgentRunResponseTests
         var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, JsonSerializer.Serialize(expectedResult, TestJsonSerializerContext.Default.Animal)));
 
         // Act.
-        var animal = response.Deserialize<Animal>(TestJsonSerializerContext.Default.Options);
+        response.TryDeserialize<Animal>(TestJsonSerializerContext.Default.Options, out Animal? animal);
 
         // Assert.
         Assert.NotNull(animal);

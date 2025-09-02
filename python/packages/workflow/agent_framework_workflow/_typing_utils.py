@@ -50,5 +50,29 @@ def is_instance_of(data: Any, target_type: type) -> bool:
             for key, value in data.items()  # type: ignore
         )
 
+    # Case 6: target_type is RequestResponse[T, U] - validate generic parameters
+    if origin and hasattr(origin, "__name__") and origin.__name__ == "RequestResponse":
+        if not isinstance(data, origin):
+            return False
+        # Validate generic parameters for RequestResponse[TRequest, TResponse]
+        if len(args) >= 2:
+            request_type, response_type = args[0], args[1]
+            # Check if the original_request matches TRequest and data matches TResponse
+            if (
+                hasattr(data, "original_request")
+                and data.original_request is not None
+                and not is_instance_of(data.original_request, request_type)
+            ):
+                return False
+            if hasattr(data, "data") and data.data is not None and not is_instance_of(data.data, response_type):
+                return False
+        return True
+
+    # Case 7: Other custom generic classes - check origin type only
+    # For generic classes, we check if data is an instance of the origin type
+    # We don't validate the generic parameters at runtime since that's handled by type system
+    if origin and hasattr(origin, "__name__"):
+        return isinstance(data, origin)
+
     # Fallback: if we reach here, we assume data is an instance of the target_type
     return isinstance(data, target_type)
