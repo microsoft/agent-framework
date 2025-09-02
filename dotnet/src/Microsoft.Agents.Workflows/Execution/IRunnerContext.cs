@@ -9,9 +9,7 @@ internal interface IRunnerContext : IExternalRequestSink
     ValueTask AddEventAsync(WorkflowEvent workflowEvent);
     ValueTask SendMessageAsync(string sourceId, object message, string? targetId = null);
 
-    // TODO: State Management
-
     StepContext Advance();
     IWorkflowContext Bind(string executorId);
-    ValueTask<Executor> EnsureExecutorAsync(string executorId);
+    ValueTask<Executor> EnsureExecutorAsync(string executorId, IStepTracer? tracer);
 }

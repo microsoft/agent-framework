@@ -5,7 +5,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework.azure import AzureAssistantsClient
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 from pydantic import Field
 
 
@@ -18,7 +18,9 @@ def get_weather(
 
 
 async def main() -> None:
-    async with AzureAssistantsClient(ad_credential=DefaultAzureCredential()) as client:
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
+    async with AzureAssistantsClient(credential=AzureCliCredential()) as client:
         message = "What's the weather in Amsterdam and in Paris?"
         stream = False
         print(f"User: {message}")

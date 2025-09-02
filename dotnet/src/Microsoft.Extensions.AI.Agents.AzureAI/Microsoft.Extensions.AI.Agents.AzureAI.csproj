@@ -11,6 +11,7 @@
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
 
   <ItemGroup>
+    <PackageReference Include="System.Linq.Async" />
     <PackageReference Include="Azure.AI.Agents.Persistent" />
     <PackageReference Include="Microsoft.Extensions.AI" />
   </ItemGroup>

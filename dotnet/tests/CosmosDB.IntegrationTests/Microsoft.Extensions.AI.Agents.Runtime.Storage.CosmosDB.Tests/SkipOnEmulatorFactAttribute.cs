@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using CosmosDB.Testing.AppHost;
+
 namespace Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests;
 
 /// <summary>
@@ -13,9 +15,14 @@ public sealed class SkipOnEmulatorFactAttribute : FactAttribute
     /// </summary>
     public SkipOnEmulatorFactAttribute()
     {
-        if (CosmosDBTestConstants.UseEmulatorForTesting)
+        if (CosmosDBTestConstants.UseAspireEmulatorForTesting)
         {
-            this.Skip = "Skipping test on CosmosDB emulator.";
+            this.Skip = "Skipping test on Aspire-configured CosmosDB emulator.";
+        }
+
+        if (CosmosDBTestConstants.UseEmulatorInCICD)
+        {
+            this.Skip = "Skipping test on CICD-configured CosmosDB emulator.";
         }
     }
 }
