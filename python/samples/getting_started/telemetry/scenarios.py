@@ -251,7 +251,7 @@ async def run_ai_function() -> None:
     with tracer.start_as_current_span("Scenario: AI Function", kind=SpanKind.CLIENT):
         print("Running scenario: AI Function")
         func = ai_function(get_weather)
-        func.model_diagnostics_settings = ModelDiagnosticSettings(enable_otel=True, enable_sensitive_data=True)
+        func.model_diagnostic_settings = ModelDiagnosticSettings(enable_otel=True, enable_sensitive_data=True)
         weather = await func.invoke(location="Amsterdam")
         print(f"Weather in Amsterdam:\n{weather}")
 

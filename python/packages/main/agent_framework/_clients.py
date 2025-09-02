@@ -525,7 +525,12 @@ class ChatClientBuilder:
     """A builder class for creating ChatClient instances."""
 
     def __init__(self, chat_client: type[ChatClient] | ChatClient | None = None) -> None:
-        self.chat_client = self._chat_client
+        """Create a chat client builder.
+
+        Args:
+            chat_client: a chat client or a instance of one.
+        """
+        self.chat_client = self._chat_client  # type: ignore[method-assign]
         self._base_chat_client: type[ChatClient] | ChatClient | None = chat_client
         self._decorators: list[Callable[[ChatClient], ChatClient]] = []
 
@@ -615,8 +620,8 @@ class ChatClientBuilder:
             raise ValueError("Base chat client must be set before building.")
         chat_client = self._base_chat_client() if isclass(self._base_chat_client) else self._base_chat_client
         for decorator in self._decorators:
-            chat_client = decorator(chat_client)
-        return chat_client
+            chat_client = decorator(chat_client)  # type: ignore[arg-type]
+        return chat_client  # type: ignore[return-value]
 
     async def __aenter__(self) -> ChatClient:
         return self.build()

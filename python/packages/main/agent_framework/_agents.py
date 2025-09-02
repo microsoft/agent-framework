@@ -327,8 +327,8 @@ class ChatClientAgent(AgentBase):
         should check if there is already a agent name defined, and if not
         set it to this value.
         """
-        if hasattr(self.chat_client, "_update_agent_name") and callable(self.chat_client._update_agent_name):  # type: ignore[reportAttributeAccessIssue]
-            self.chat_client._update_agent_name(self.name)  # type: ignore[reportAttributeAccessIssue]
+        if hasattr(self.chat_client, "_update_agent_name") and callable(self.chat_client._update_agent_name):  # type: ignore[reportAttributeAccessIssue, attr-defined]
+            self.chat_client._update_agent_name(self.name)  # type: ignore[reportAttributeAccessIssue, attr-defined]
 
     async def run(
         self,
@@ -758,11 +758,11 @@ def agent(
                         return AgentThread()
 
                 return RunFunctionAgent(
-                    f,  # type: ignore[reportArgumentType]
-                    id,
-                    agent_name,
-                    agent_description,
-                    agent_instructions,
+                    run=f,  # type: ignore[reportArgumentType, arg-type]
+                    id=id,
+                    name=agent_name,
+                    description=agent_description,
+                    instructions=agent_instructions,
                 )
             if isasyncgenfunction(f):
 
@@ -784,17 +784,37 @@ def agent(
                         self.additional_properties = kwargs
                         self.display_name = name or self.id
 
-                    async def run(self, *args, **kwargs) -> AgentRunResponse:
+                    async def run(
+                        self,
+                        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+                        *,
+                        thread: AgentThread | None = None,
+                        **kwargs: Any,
+                    ) -> AgentRunResponse:
+                        """Run function of the agent."""
                         raise NotImplementedError("Streaming is not supported for this agent.")
 
-                    async def run_streaming(self, *args, **kwargs) -> AsyncIterable[AgentRunResponseUpdate]:
-                        async for update in self._func(*args, **kwargs):
+                    async def run_streaming(
+                        self,
+                        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+                        *,
+                        thread: AgentThread | None = None,
+                        **kwargs: Any,
+                    ) -> AsyncIterable[AgentRunResponseUpdate]:
+                        """Streaming run function of the agent."""
+                        async for update in self._func(messages=messages, thread=thread, **kwargs):
                             yield update
 
                     def get_new_thread(self) -> AgentThread:
                         return AgentThread()
 
-                return StreamingRunFunctionAgent(f, id, agent_name, agent_description, agent_instructions)
+                return StreamingRunFunctionAgent(
+                    run_streaming=f,
+                    id=id,
+                    name=agent_name,
+                    description=agent_description,
+                    instructions=agent_instructions,
+                )
 
             raise ValueError("Invalid function type.")
 

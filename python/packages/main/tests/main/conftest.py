@@ -49,11 +49,11 @@ def model_diagnostic_settings(monkeypatch, request) -> ModelDiagnosticSettings:
     enabled = getattr(request, "param", (None, None))[0]
     sensitive = getattr(request, "param", (None, None))[1]
     if enabled is None:
-        monkeypatch.delenv("AGENT_FRAMEWORK_GENAI_ENABLE_OTEL_DIAGNOSTICS", raising=False)
+        monkeypatch.delenv("AGENT_FRAMEWORK_GENAI_ENABLE_OTEL", raising=False)
     else:
-        monkeypatch.setenv("AGENT_FRAMEWORK_GENAI_ENABLE_OTEL_DIAGNOSTICS", str(enabled).lower())
+        monkeypatch.setenv("AGENT_FRAMEWORK_GENAI_ENABLE_OTEL", str(enabled).lower())
     if sensitive is None:
-        monkeypatch.delenv("AGENT_FRAMEWORK_GENAI_ENABLE_OTEL_DIAGNOSTICS_SENSITIVE", raising=False)
+        monkeypatch.delenv("AGENT_FRAMEWORK_GENAI_ENABLE_SENSITIVE_DATA", raising=False)
     else:
-        monkeypatch.setenv("AGENT_FRAMEWORK_GENAI_ENABLE_OTEL_DIAGNOSTICS_SENSITIVE", str(sensitive).lower())
+        monkeypatch.setenv("AGENT_FRAMEWORK_GENAI_ENABLE_SENSITIVE_DATA", str(sensitive).lower())
     return ModelDiagnosticSettings(env_file_path="test.env")

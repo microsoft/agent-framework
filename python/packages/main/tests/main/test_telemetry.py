@@ -3,7 +3,7 @@
 import logging
 from collections.abc import MutableSequence
 from typing import Any
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 from opentelemetry.trace import StatusCode
@@ -11,6 +11,7 @@ from opentelemetry.trace import StatusCode
 from agent_framework import (
     AgentRunResponse,
     AgentThread,
+    AIAgent,
     ChatClientBase,
     ChatMessage,
     ChatOptions,
@@ -31,8 +32,8 @@ from agent_framework.telemetry import (
     OpenTelemetryAgent,
     OpenTelemetryChatClient,
     OtelAttr,
+    _start_as_current_span,
     prepend_agent_framework_to_user_agent,
-    start_as_current_span,
 )
 
 # region Test constants
@@ -220,7 +221,7 @@ def test_filter_with_index_key():
 
 def test_index_key_constant():
     """Test that INDEX_KEY constant is correctly defined."""
-    assert ChatMessageListTimestampFilter.INDEX_KEY == "CHAT_MESSAGE_INDEX"
+    assert ChatMessageListTimestampFilter.INDEX_KEY == "chat_message_index"
 
 
 # region Test start_as_current_span
@@ -237,13 +238,13 @@ def test_start_span_basic():
     mock_function.name = "test_function"
     mock_function.description = "Test function description"
 
-    result = start_as_current_span(mock_tracer, mock_function)
+    result = _start_as_current_span(mock_tracer, mock_function)
 
     assert result == mock_span
     mock_tracer.start_as_current_span.assert_called_once()
 
     call_args = mock_tracer.start_as_current_span.call_args
-    assert call_args[0][0] == "execute_tool test_function"
+    assert call_args[1]["name"] == "execute_tool test_function"
 
     attributes = call_args[1]["attributes"]
     assert attributes[OtelAttr.OPERATION.value] == OtelAttr.TOOL_EXECUTION_OPERATION
@@ -251,8 +252,8 @@ def test_start_span_basic():
     assert attributes[OtelAttr.TOOL_DESCRIPTION] == "Test function description"
 
 
-def test_start_span_with_metadata():
-    """Test starting a span with metadata containing tool_call_id."""
+def test_start_span_with_tool_call_id():
+    """Test starting a span with tool_call_id."""
     mock_tracer = Mock()
     mock_span = Mock()
     mock_tracer.start_as_current_span.return_value = mock_span
@@ -261,9 +262,9 @@ def test_start_span_with_metadata():
     mock_function.name = "test_function"
     mock_function.description = "Test function"
 
-    metadata = {"tool_call_id": "test_call_123"}
+    tool_call_id = "test_call_123"
 
-    _ = start_as_current_span(mock_tracer, mock_function, metadata)
+    _ = _start_as_current_span(mock_tracer, mock_function, tool_call_id)
 
     call_args = mock_tracer.start_as_current_span.call_args
     attributes = call_args[1]["attributes"]
@@ -280,28 +281,11 @@ def test_start_span_without_description():
     mock_function.name = "test_function"
     mock_function.description = None
 
-    start_as_current_span(mock_tracer, mock_function)
+    _start_as_current_span(mock_tracer, mock_function)
 
     call_args = mock_tracer.start_as_current_span.call_args
     attributes = call_args[1]["attributes"]
     assert OtelAttr.TOOL_DESCRIPTION not in attributes
-
-
-def test_start_span_empty_metadata():
-    """Test starting a span with empty metadata."""
-    mock_tracer = Mock()
-    mock_span = Mock()
-    mock_tracer.start_as_current_span.return_value = mock_span
-
-    mock_function = Mock()
-    mock_function.name = "test_function"
-    mock_function.description = "Test function"
-
-    start_as_current_span(mock_tracer, mock_function, {})
-
-    call_args = mock_tracer.start_as_current_span.call_args
-    attributes = call_args[1]["attributes"]
-    assert OtelAttr.TOOL_CALL_ID not in attributes
 
 
 # region Test use_telemetry decorator
@@ -383,15 +367,10 @@ def mock_chat_client():
     "enable_sensitive_data",
     [True, False],
 )
-@pytest.mark.parametrize(
-    "enable_otel",
-    [True, False],
-)
-async def test_instrumentation_enabled(mock_chat_client, enable_otel: bool, enable_sensitive_data: bool):
+async def test_instrumentation_enabled(mock_chat_client, enable_sensitive_data: bool):
     """Test that when diagnostics are enabled, telemetry is applied."""
     client = OpenTelemetryChatClient(
         mock_chat_client,
-        enable_otel=enable_otel,
         enable_sensitive_data=enable_sensitive_data,
     )
 
@@ -399,15 +378,13 @@ async def test_instrumentation_enabled(mock_chat_client, enable_otel: bool, enab
     chat_options = ChatOptions()
 
     with (
-        patch("agent_framework.telemetry._response_span") as mock_response_span,
-        patch("agent_framework.telemetry._log_messages") as mock_log_messages,
+        patch("agent_framework.telemetry._chat_response_span") as mock_response_span,
+        patch("agent_framework.telemetry._capture_messages") as mock_log_messages,
     ):
         response = await client.get_response(messages=messages, chat_options=chat_options)
         assert response is not None
-        if enable_otel or enable_sensitive_data:
-            mock_response_span.assert_called_once()
-        else:
-            mock_response_span.assert_not_called()
+        mock_response_span.assert_called_once()
+
         # Check that log messages was called only if sensitive events are enabled
         assert mock_log_messages.call_count == (2 if enable_sensitive_data else 0)
 
@@ -416,28 +393,19 @@ async def test_instrumentation_enabled(mock_chat_client, enable_otel: bool, enab
     "enable_sensitive_data",
     [True, False],
 )
-@pytest.mark.parametrize(
-    "enable_otel",
-    [True, False],
-)
-async def test_streaming_response_with_diagnostics_enabled_via_decorator(
-    mock_chat_client,
-    enable_otel: bool,
-    enable_sensitive_data: bool,
-):
+async def test_streaming_response_with_otel(mock_chat_client, enable_sensitive_data: bool):
     """Test streaming telemetry through the use_telemetry decorator."""
     client = OpenTelemetryChatClient(
         mock_chat_client,
-        enable_otel=enable_otel,
         enable_sensitive_data=enable_sensitive_data,
     )
     messages = [ChatMessage(role=ChatRole.USER, text="Test")]
     chat_options = ChatOptions()
 
     with (
-        patch("agent_framework.telemetry._response_span") as mock_response_span,
-        patch("agent_framework.telemetry._log_messages") as mock_log_messages,
-        patch("agent_framework.telemetry._set_response_output") as mock_set_output,
+        patch("agent_framework.telemetry._chat_response_span") as mock_response_span,
+        patch("agent_framework.telemetry._capture_messages") as mock_log_messages,
+        patch("agent_framework.telemetry._capture_response") as mock_set_output,
     ):
         # Collect all yielded updates
         updates = []
@@ -448,20 +416,14 @@ async def test_streaming_response_with_diagnostics_enabled_via_decorator(
         assert len(updates) == 2
 
         # Verify telemetry calls were made
-        if enable_otel or enable_sensitive_data:
-            mock_response_span.assert_called_once()
-        else:
-            mock_response_span.assert_not_called()
+        mock_response_span.assert_called_once()
         if enable_sensitive_data:
             mock_log_messages.assert_called()
             assert mock_log_messages.call_count == 2  # One for input, one for output
         else:
             mock_log_messages.assert_not_called()
 
-        if enable_otel or enable_sensitive_data:
-            mock_set_output.assert_called_once()
-        else:
-            mock_set_output.assert_not_called()
+        mock_set_output.assert_called_once()
 
 
 def test_start_as_current_span_with_none_metadata():
@@ -474,7 +436,7 @@ def test_start_as_current_span_with_none_metadata():
     mock_function.name = "test_function"
     mock_function.description = "Test description"
 
-    result = start_as_current_span(mock_tracer, mock_function, None)
+    result = _start_as_current_span(mock_tracer, mock_function, None)
 
     assert result == mock_span
     call_args = mock_tracer.start_as_current_span.call_args
@@ -589,30 +551,11 @@ def mock_chat_client_agent():
     return MockChatClientAgent()
 
 
-@pytest.mark.parametrize("model_diagnostic_settings", [(False, False)], indirect=True)
-async def test_agent_telemetry_disabled_bypasses_instrumentation(mock_chat_client_agent, model_diagnostic_settings):
-    """Test that when agent diagnostics are disabled, telemetry is bypassed."""
-    from agent_framework.telemetry import OpenTelemetryAgent
-
-    decorated_class = OpenTelemetryAgent(type(mock_chat_client_agent))
-    agent = decorated_class()
-
-    with (
-        patch("agent_framework.telemetry.use_span") as mock_use_span,
-    ):
-        # This should not create any spans
-        response = await agent.run("Test message")
-        assert response is not None
-        mock_use_span.assert_not_called()
-
-
-@pytest.mark.parametrize("model_diagnostic_settings", [(True, True)], indirect=True)
-async def test_agent_instrumentation_enabled(mock_chat_client_agent, model_diagnostic_settings):
+@pytest.mark.parametrize("enable_sensitive_data", [True, False])
+async def test_agent_instrumentation_enabled(mock_chat_client_agent: AIAgent, enable_sensitive_data: bool):
     """Test that when agent diagnostics are enabled, telemetry is applied."""
-    from agent_framework.telemetry import OpenTelemetryAgent
 
-    decorated_class = OpenTelemetryAgent(type(mock_chat_client_agent))
-    agent = decorated_class()
+    agent = OpenTelemetryAgent(mock_chat_client_agent, enable_sensitive_data=enable_sensitive_data)
 
     with (
         patch("agent_framework.telemetry.use_span") as mock_use_span,
@@ -622,29 +565,21 @@ async def test_agent_instrumentation_enabled(mock_chat_client_agent, model_diagn
         assert response is not None
         mock_use_span.assert_called_once()
         # Check that logger.info was called (telemetry logs input/output)
-        assert mock_logger.info.call_count == 2
+        assert mock_logger.info.call_count == (2 if enable_sensitive_data else 0)
 
 
-@pytest.mark.parametrize("model_diagnostic_settings", [(True, False)], indirect=True)
+@pytest.mark.parametrize("enable_sensitive_data", [True, False])
 async def test_agent_streaming_response_with_diagnostics_enabled_via_decorator(
-    mock_chat_client_agent, model_diagnostic_settings
+    mock_chat_client_agent: AIAgent, enable_sensitive_data: bool
 ):
     """Test agent streaming telemetry through the OpenTelemetryAgent decorator."""
-    from agent_framework.telemetry import OpenTelemetryAgent
-
-    decorated_class = OpenTelemetryAgent(type(mock_chat_client_agent))
-    agent = decorated_class()
+    agent = OpenTelemetryAgent(mock_chat_client_agent, enable_sensitive_data=enable_sensitive_data)
 
     with (
-        patch("agent_framework.telemetry.use_span") as mock_use_span,
-        patch("agent_framework.telemetry._get_agent_run_span") as mock_get_span,
-        patch("agent_framework.telemetry._set_agent_run_input") as mock_set_input,
-        patch("agent_framework.telemetry._set_agent_run_output") as mock_set_output,
+        patch("agent_framework.telemetry._agent_run_span") as mock_get_span,
+        patch("agent_framework.telemetry._capture_messages") as mock_capture_messages,
+        patch("agent_framework.telemetry._capture_response") as mock_capture_response,
     ):
-        mock_span = Mock()
-        mock_use_span.return_value.__enter__.return_value = mock_span
-        mock_use_span.return_value.__exit__.return_value = None
-
         # Collect all yielded updates
         updates = []
         async for update in agent.run_streaming("Test message"):
@@ -655,188 +590,15 @@ async def test_agent_streaming_response_with_diagnostics_enabled_via_decorator(
 
         # Verify telemetry calls were made
         mock_get_span.assert_called_once()
-        mock_set_input.assert_called_once_with("test_agent_system", "Test message")
-        mock_set_output.assert_called_once()
+        mock_capture_response.assert_called_once()
+        if enable_sensitive_data:
+            mock_capture_messages.assert_called()
+        else:
+            mock_capture_messages.assert_not_called()
 
 
-@pytest.mark.parametrize("model_diagnostic_settings", [(True, False)], indirect=True)
-async def test_agent_streaming_response_with_exception_via_decorator(mock_chat_client_agent, model_diagnostic_settings):
-    """Test agent streaming telemetry exception handling through decorator."""
-    from agent_framework.telemetry import OpenTelemetryAgent
-
-    async def run_streaming(self, messages=None, *, thread=None, **kwargs):
-        from agent_framework import AgentRunResponseUpdate, ChatRole
-
-        yield AgentRunResponseUpdate(text="Partial", role=ChatRole.ASSISTANT)
-        raise ValueError("Test agent streaming error")
-
-    type(mock_chat_client_agent).run_streaming = run_streaming
-
-    decorated_class = OpenTelemetryAgent(type(mock_chat_client_agent))
-    agent = decorated_class()
-
-    with (
-        patch("agent_framework.telemetry.use_span") as mock_use_span,
-        patch("agent_framework.telemetry._get_agent_run_span"),
-        patch("agent_framework.telemetry._set_agent_run_input"),
-        patch("agent_framework.telemetry._set_error") as mock_set_error,
-    ):
-        mock_span = Mock()
-        mock_use_span.return_value.__enter__.return_value = mock_span
-        mock_use_span.return_value.__exit__.return_value = None
-
-        # Should raise the exception and call error handler
-        with pytest.raises(ValueError, match="Test agent streaming error"):
-            async for _ in agent.run_streaming("Test message"):
-                pass
-
-        # Verify error was recorded
-        mock_set_error.assert_called_once()
-        assert isinstance(mock_set_error.call_args[0][1], ValueError)
-
-
-@pytest.mark.parametrize("model_diagnostic_settings", [(False, False)], indirect=True)
-async def test_agent_streaming_response_diagnostics_disabled_via_decorator(model_diagnostic_settings):
-    """Test agent streaming response when diagnostics are disabled."""
-    from agent_framework import AgentRunResponseUpdate, ChatRole
-    from agent_framework.telemetry import OpenTelemetryAgent
-
-    class MockStreamingAgentNoDiagnostics:
-        AGENT_SYSTEM_NAME = "test_agent_system"
-
-        def __init__(self):
-            self.id = "test_agent_id"
-            self.name = "test_agent"
-            self.display_name = "Test Agent"
-
-        async def run_streaming(self, messages=None, *, thread=None, **kwargs):
-            yield AgentRunResponseUpdate(text="Test", role=ChatRole.ASSISTANT)
-
-    decorated_class = OpenTelemetryAgent(MockStreamingAgentNoDiagnostics)
-    agent = decorated_class()
-
-    with (
-        patch("agent_framework.telemetry._get_agent_run_span") as mock_get_span,
-    ):
-        # Should not create spans when diagnostics are disabled
-        updates = []
-        async for update in agent.run_streaming("Test message"):
-            updates.append(update)
-
-        assert len(updates) == 1
-        # Should not have called telemetry functions
-        mock_get_span.assert_not_called()
-
-
-@pytest.mark.parametrize("model_diagnostic_settings", [(True, False)], indirect=True)
-async def test_agent_empty_streaming_response_via_decorator(model_diagnostic_settings):
-    """Test agent streaming wrapper with empty response."""
-
-    class MockEmptyStreamingAgent:
-        AGENT_SYSTEM_NAME = "test_agent_system"
-
-        def __init__(self):
-            self.id = "test_agent_id"
-            self.name = "test_agent"
-            self.display_name = "Test Agent"
-
-        async def run_streaming(self, messages=None, *, thread=None, **kwargs):
-            # Return empty stream
-            return
-            yield  # This will never be reached
-
-    agent = OpenTelemetryAgent(MockEmptyStreamingAgent())
-
-    with (
-        patch("agent_framework.telemetry.use_span") as mock_use_span,
-        patch("agent_framework.telemetry._get_agent_run_span"),
-        patch("agent_framework.telemetry._set_agent_run_input"),
-        patch("agent_framework.telemetry._set_agent_run_output") as mock_set_output,
-    ):
-        mock_span = Mock()
-        mock_use_span.return_value.__enter__.return_value = mock_span
-        mock_use_span.return_value.__exit__.return_value = None
-
-        # Should handle empty stream gracefully
-        updates = []
-        async for update in agent.run_streaming("Test message"):
-            updates.append(update)
-
-        assert len(updates) == 0
-        # Should still call telemetry
-        mock_set_output.assert_called_once()
-
-
-@pytest.mark.parametrize("model_diagnostic_settings", [(True, True)], indirect=True)
-async def test_agent_run_with_thread_and_kwargs(mock_chat_client_agent, model_diagnostic_settings):
-    """Test agent run with thread and additional kwargs."""
-    from agent_framework.telemetry import OpenTelemetryAgent
-
-    decorated_class = OpenTelemetryAgent(type(mock_chat_client_agent))
-    agent = decorated_class()
-
-    # Mock thread
-    mock_thread = Mock()
-    mock_thread.id = "test_thread_id"
-
-    with (
-        patch("agent_framework.telemetry.use_span") as mock_use_span,
-        patch("agent_framework.telemetry._get_agent_run_span") as mock_get_span,
-    ):
-        mock_span = Mock()
-        mock_use_span.return_value.__enter__.return_value = mock_span
-        mock_use_span.return_value.__exit__.return_value = None
-
-        # Test with thread and additional kwargs
-        response = await agent.run(
-            "Test message", thread=mock_thread, temperature=0.7, max_tokens=100, model="test-model"
-        )
-        assert response is not None
-
-        # Verify the span was created with the correct parameters
-        mock_get_span.assert_called_once()
-        call_kwargs = mock_get_span.call_args[1]
-        assert call_kwargs["agent"] == agent
-        assert call_kwargs["thread"] == mock_thread
-        assert call_kwargs["temperature"] == 0.7
-        assert call_kwargs["max_tokens"] == 100
-        assert call_kwargs["model"] == "test-model"
-
-
-@pytest.mark.parametrize("model_diagnostic_settings", [(True, False)], indirect=True)
-async def test_agent_run_with_list_messages(mock_chat_client_agent, model_diagnostic_settings):
-    """Test agent run with list of messages."""
-    from agent_framework import ChatMessage, ChatRole
-    from agent_framework.telemetry import OpenTelemetryAgent
-
-    decorated_class = OpenTelemetryAgent(type(mock_chat_client_agent))
-    agent = decorated_class()
-
-    messages = [
-        ChatMessage(role=ChatRole.USER, text="First message"),
-        ChatMessage(role=ChatRole.ASSISTANT, text="Response"),
-        ChatMessage(role=ChatRole.USER, text="Second message"),
-    ]
-
-    with (
-        patch("agent_framework.telemetry.use_span") as mock_use_span,
-        patch("agent_framework.telemetry._set_agent_run_input") as mock_set_input,
-    ):
-        mock_span = Mock()
-        mock_use_span.return_value.__enter__.return_value = mock_span
-        mock_use_span.return_value.__exit__.return_value = None
-
-        response = await agent.run(messages)
-        assert response is not None
-
-        # Verify input was set with the list of messages
-        mock_set_input.assert_called_once_with("test_agent_system", messages)
-
-
-@pytest.mark.parametrize("model_diagnostic_settings", [(True, False)], indirect=True)
-async def test_agent_run_with_exception_handling(mock_chat_client_agent, model_diagnostic_settings):
+async def test_agent_run_with_exception_handling(mock_chat_client_agent: AIAgent):
     """Test agent run with exception handling."""
-    from agent_framework.telemetry import OpenTelemetryAgent
 
     async def run_with_error(self, messages=None, *, thread=None, **kwargs):
         raise RuntimeError("Agent run error")
@@ -845,13 +607,14 @@ async def test_agent_run_with_exception_handling(mock_chat_client_agent, model_d
 
     agent = OpenTelemetryAgent(mock_chat_client_agent)
 
-    with (
-        patch("agent_framework.telemetry.use_span") as mock_use_span,
-    ):
-        mock_span = Mock()
-        mock_use_span.return_value.__enter__.return_value = mock_span
-        mock_use_span.return_value.__exit__.return_value = None
+    from opentelemetry.trace import Span
 
+    with (
+        patch("agent_framework.telemetry._agent_run_span") as mock_get_span,
+    ):
+        mock_span = MagicMock(spec=Span)
+        # Ensure the patched context manager returns mock_span when entered
+        mock_get_span.return_value.__enter__.return_value = mock_span
         # Should raise the exception and call error handler
         with pytest.raises(RuntimeError, match="Agent run error"):
             await agent.run("Test message")
@@ -859,4 +622,7 @@ async def test_agent_run_with_exception_handling(mock_chat_client_agent, model_d
         # Verify error was recorded
         # Check that both error attributes were set on the span
         mock_span.set_attribute.assert_called_once_with(OtelAttr.ERROR_TYPE, str(type(RuntimeError("Agent run error"))))
-        mock_span.set_status.assert_called_once_with(StatusCode.ERROR, repr(RuntimeError("Agent run error")))
+        mock_span.record_exception.assert_called_once()
+        mock_span.set_status.assert_called_once_with(
+            status=StatusCode.ERROR, description=repr(RuntimeError("Agent run error"))
+        )

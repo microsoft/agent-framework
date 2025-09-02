@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field, PrivateAttr, create_model
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
 from .exceptions import ChatClientInitializationError
-from .telemetry import ModelDiagnosticSettings, OtelAttr, set_exception, start_as_current_span
+from .telemetry import ModelDiagnosticSettings, OtelAttr, _capture_exception, _start_as_current_span
 
 if TYPE_CHECKING:
     from ._clients import ChatClient
@@ -285,7 +285,6 @@ class AIFunction(AIToolBase, Generic[ArgsT, ReturnT]):
 
     func: Callable[..., Awaitable[ReturnT] | ReturnT]
     input_model: type[ArgsT]
-    model_diagnostics_settings: ModelDiagnosticSettings | None = None
     _invocation_duration_histogram: metrics.Histogram = PrivateAttr(
         default_factory=lambda: meter.create_histogram(
             OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION,
@@ -302,14 +301,14 @@ class AIFunction(AIToolBase, Generic[ArgsT, ReturnT]):
         self,
         *,
         arguments: ArgsT | None = None,
-        model_diagnostics_settings: ModelDiagnosticSettings | None = None,
+        model_diagnostic_settings: ModelDiagnosticSettings | None = None,
         **kwargs: Any,
     ) -> ReturnT:
         """Run the AI function with the provided arguments as a Pydantic model.
 
         Args:
             arguments: A Pydantic model instance containing the arguments for the function.
-            model_diagnostics_settings: Optional model diagnostics settings to override the default settings.
+            model_diagnostic_settings: Optional model diagnostics settings to override the default settings.
             kwargs: keyword arguments to pass to the function, will not be used if `arguments` is provided.
         """
         tool_call_id = kwargs.pop("tool_call_id", None)
@@ -317,8 +316,10 @@ class AIFunction(AIToolBase, Generic[ArgsT, ReturnT]):
             if not isinstance(arguments, self.input_model):
                 raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
             kwargs = arguments.model_dump(exclude_none=True)
-        model_diagnostics = model_diagnostics_settings or self.model_diagnostics_settings
-        if not model_diagnostics or not model_diagnostics.ENABLED:
+
+        if not model_diagnostic_settings and self.additional_properties:
+            model_diagnostic_settings = self.additional_properties.get("model_diagnostic_settings")
+        if not model_diagnostic_settings or not model_diagnostic_settings.ENABLED:
             logger.info(f"Function name: {self.name}")
             logger.debug(f"Function arguments: {kwargs}")
             res = self.__call__(**kwargs)
@@ -326,7 +327,7 @@ class AIFunction(AIToolBase, Generic[ArgsT, ReturnT]):
             logger.info(f"Function {self.name} succeeded.")
             logger.debug(f"Function result: {result or 'None'}")
             return result  # type: ignore[reportReturnType]
-        with start_as_current_span(
+        with _start_as_current_span(
             tracer=tracer,
             function=self,
             tool_call_id=tool_call_id,
@@ -336,21 +337,22 @@ class AIFunction(AIToolBase, Generic[ArgsT, ReturnT]):
                 OtelAttr.TOOL_CALL_ID: tool_call_id or "unknown",
             }
             logger.info(f"Function name: {self.name}")
-            if model_diagnostics.SENSITIVE_DATA_ENABLED:
+            if model_diagnostic_settings and model_diagnostic_settings.SENSITIVE_DATA_ENABLED:
                 logger.debug(f"Function arguments: {kwargs}")
             starting_time_stamp = perf_counter()
             try:
                 res = self.__call__(**kwargs)
                 result = await res if inspect.isawaitable(res) else res
-                logger.info(f"Function {self.name} succeeded.")
-                if model_diagnostics.SENSITIVE_DATA_ENABLED:
-                    logger.debug(f"Function result: {result or 'None'}")
-                return result  # type: ignore[reportReturnType]
             except Exception as exception:
-                set_exception(current_span, exception, time_ns())
+                _capture_exception(current_span, exception, time_ns())
                 logger.error(f"Function failed. Error: {exception}")
                 hist_attributes[OtelAttr.ERROR_TYPE] = str(type(exception))
                 raise
+            else:
+                logger.info(f"Function {self.name} succeeded.")
+                if model_diagnostic_settings.SENSITIVE_DATA_ENABLED:
+                    logger.debug(f"Function result: {result or 'None'}")
+                return result  # type: ignore[reportReturnType]
             finally:
                 duration = perf_counter() - starting_time_stamp
                 current_span.set_attribute(OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION, duration)
@@ -465,7 +467,7 @@ async def _auto_invoke_function(
     tool_map: dict[str, AIFunction[BaseModel, Any]],
     sequence_index: int | None = None,
     request_index: int | None = None,
-    model_diagnostics_settings: ModelDiagnosticSettings | None = None,
+    model_diagnostic_settings: ModelDiagnosticSettings | None = None,
 ) -> "AIContents":
     """Invoke a function call requested by the agent, applying filters that are defined in the agent."""
     from ._types import FunctionResultContent
@@ -484,7 +486,7 @@ async def _auto_invoke_function(
         function_result = await tool.invoke(
             arguments=args,
             tool_call_id=function_call_content.call_id,
-            model_diagnostics_settings=model_diagnostics_settings,
+            model_diagnostic_settings=model_diagnostic_settings,
         )  # type: ignore[arg-type]
     except Exception as ex:
         exception = ex
@@ -503,8 +505,8 @@ def _get_tool_map(
     | list[Callable[..., Any]] \
     | MutableMapping[str, Any] \
     | list[MutableMapping[str, Any]]",
-) -> dict[str, AIFunction]:
-    ai_function_list: dict[str, AIFunction] = {}
+) -> dict[str, AIFunction[Any, Any]]:
+    ai_function_list: dict[str, AIFunction[Any, Any]] = {}
     for tool in tools if isinstance(tools, list) else [tools]:
         if isinstance(tool, AIFunction):
             ai_function_list[tool.name] = tool
@@ -521,7 +523,7 @@ async def execute_function_calls(
     attempt_idx: int,
     function_calls: Sequence["FunctionCallContent"],
     tools: "AITool | list[AITool] | Callable[..., Any] | list[Callable[..., Any]] | MutableMapping[str, Any] | list[MutableMapping[str, Any]]",  # noqa: E501
-    model_diagnostics_settings: ModelDiagnosticSettings | None = None,
+    model_diagnostic_settings: ModelDiagnosticSettings | None = None,
 ) -> list["AIContents"]:
     tool_map = _get_tool_map(tools)
     # Run all function calls concurrently
@@ -532,7 +534,7 @@ async def execute_function_calls(
             tool_map=tool_map,
             sequence_index=seq_idx,
             request_index=attempt_idx,
-            model_diagnostics_settings=model_diagnostics_settings,
+            model_diagnostic_settings=model_diagnostic_settings,
         )
         for seq_idx, function_call in enumerate(function_calls)
     ])
@@ -541,14 +543,14 @@ async def execute_function_calls(
 def _handle_function_calls_response(
     get_response_func: Callable[..., Awaitable["ChatResponse"]],
     max_iterations: int = 10,
-    model_diagnostics_settings: ModelDiagnosticSettings | None = None,
+    model_diagnostic_settings: ModelDiagnosticSettings | None = None,
 ) -> Callable[..., Awaitable["ChatResponse"]]:
     """Decorate the get_response method to enable function calls.
 
     Args:
         get_response_func: The get_response method to decorate.
         max_iterations: The maximum number of function call iterations to perform.
-        model_diagnostics_settings: Optional model diagnostics settings to apply to function invocations.
+        model_diagnostic_settings: Optional model diagnostics settings to apply to function invocations.
 
     """
 
@@ -558,7 +560,7 @@ def _handle_function_calls_response(
         **kwargs: Any,
     ) -> "ChatResponse":
         from ._clients import _prepare_messages
-        from ._types import ChatMessage, FunctionCallContent, FunctionResultContent
+        from ._types import ChatMessage, ChatOptions, FunctionCallContent, FunctionResultContent
 
         prepped_messages = _prepare_messages(messages)
         response: "ChatResponse | None" = None
@@ -574,16 +576,20 @@ def _handle_function_calls_response(
                 for it in response.messages[0].contents
                 if isinstance(it, FunctionCallContent) and it.call_id not in function_results
             ]
-            if function_calls and (tools := kwargs.get("tools")):
+
+            tools = kwargs.get("tools")
+            if not tools and (chat_options := kwargs.get("chat_options")) and isinstance(chat_options, ChatOptions):
+                tools = chat_options.tools
+            if function_calls and tools:
                 function_results = await execute_function_calls(
-                    kwargs,
-                    attempt_idx,
-                    function_calls,
-                    tools,
-                    model_diagnostics_settings=model_diagnostics_settings,
+                    custom_args=kwargs,
+                    attempt_idx=attempt_idx,
+                    function_calls=function_calls,
+                    tools=tools,  # type: ignore
+                    model_diagnostic_settings=model_diagnostic_settings,
                 )
                 # add a single ChatMessage to the response with the results
-                result_message = ChatMessage(role="tool", contents=function_results)
+                result_message = ChatMessage(role="tool", contents=function_results)  # type: ignore[call-overload]
                 response.messages.append(result_message)
                 # response should contain 2 messages after this,
                 # one with function call contents
@@ -622,14 +628,14 @@ def _handle_function_calls_response(
 def _handle_function_calls_streaming_response(
     get_streaming_response_func: Callable[..., AsyncIterable["ChatResponseUpdate"]],
     max_iterations: int = 10,
-    model_diagnostics_settings: ModelDiagnosticSettings | None = None,
+    model_diagnostic_settings: ModelDiagnosticSettings | None = None,
 ) -> Callable[..., AsyncIterable["ChatResponseUpdate"]]:
     """Decorate the get_streaming_response method to handle function calls.
 
     Args:
         get_streaming_response_func: The get_streaming_response method to decorate.
         max_iterations: The maximum number of function call iterations to perform.
-        model_diagnostics_settings: Optional model diagnostics settings to apply to function invocations.
+        model_diagnostic_settings: Optional model diagnostics settings to apply to function invocations.
 
     """
 
@@ -677,11 +683,11 @@ def _handle_function_calls_streaming_response(
 
             if function_calls and tools:
                 function_results = await execute_function_calls(
-                    kwargs,
-                    attempt_idx,
-                    function_calls,
-                    tools,
-                    model_diagnostics_settings=model_diagnostics_settings,
+                    custom_args=kwargs,
+                    attempt_idx=attempt_idx,
+                    function_calls=function_calls,
+                    tools=tools,  # type: ignore[reportArgumentType]
+                    model_diagnostic_settings=model_diagnostic_settings,
                 )
                 function_result_msg = ChatMessage(role="tool", contents=function_results)
                 yield ChatResponseUpdate(contents=function_results, role="tool")
@@ -705,7 +711,7 @@ def FunctionInvokingChatClient(
     """Class decorator that enables tool calling for a chat client."""
     if max_iterations is None:
         max_iterations = 10
-    model_diagnostics = getattr(chat_client, "_model_diagnostics_settings", None)
+    model_diagnostics = getattr(chat_client, "_model_diagnostic_settings", None)
     try:
         object.__setattr__(
             chat_client,
@@ -713,7 +719,7 @@ def FunctionInvokingChatClient(
             _handle_function_calls_response(
                 get_response_func=chat_client.get_response,
                 max_iterations=max_iterations,
-                model_diagnostics_settings=model_diagnostics,
+                model_diagnostic_settings=model_diagnostics,
             ),
         )
     except AttributeError as ex:
@@ -725,7 +731,7 @@ def FunctionInvokingChatClient(
             _handle_function_calls_streaming_response(
                 get_streaming_response_func=chat_client.get_streaming_response,
                 max_iterations=max_iterations,
-                model_diagnostics_settings=model_diagnostics,
+                model_diagnostic_settings=model_diagnostics,
             ),
         )
     except AttributeError as ex:

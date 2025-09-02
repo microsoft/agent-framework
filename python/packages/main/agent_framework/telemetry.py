@@ -2,7 +2,7 @@
 
 import logging
 import os
-from collections.abc import AsyncIterable, Awaitable, Callable
+from collections.abc import AsyncIterable, Awaitable, Callable, Generator
 from contextlib import contextmanager
 from enum import Enum
 from functools import wraps
@@ -32,6 +32,7 @@ if TYPE_CHECKING:  # pragma: no cover
         ChatResponseUpdate,
     )
 
+TAgent = TypeVar("TAgent", bound="AIAgent")
 TChatClientAgent = TypeVar("TChatClientAgent", bound="ChatClientAgent")
 
 tracer = get_tracer("agent_framework")
@@ -75,7 +76,6 @@ class ChatMessageListTimestampFilter(logging.Filter):
         return True
 
 
-# Creates a tracer from the global tracer provider
 logger.addFilter(ChatMessageListTimestampFilter())
 
 
@@ -238,45 +238,6 @@ class ModelDiagnosticSettings(AFBaseSettings):
         return self.enable_sensitive_data
 
 
-def start_as_current_span(
-    tracer: trace.Tracer,
-    function: "AIFunction[Any, Any]",
-    tool_call_id: str | None = None,
-) -> "_AgnosticContextManager[Span]":
-    """Starts a span for the given function using the provided tracer.
-
-    Args:
-        tracer: The OpenTelemetry tracer to use.
-        function: The function for which to start the span.
-        tool_call_id: The id of the tool_call that was requested.
-
-    Returns:
-        trace.Span: The started span as a context manager.
-    """
-    attributes: dict[str, str] = {
-        OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
-        OtelAttr.TOOL_NAME: function.name,
-        OtelAttr.TOOL_CALL_ID: tool_call_id or "unknown",
-    }
-    if function.description:
-        attributes[OtelAttr.TOOL_DESCRIPTION] = function.description
-
-    return tracer.start_as_current_span(
-        name=f"{OtelAttr.TOOL_EXECUTION_OPERATION} {function.name}",
-        attributes=attributes,
-        set_status_on_exception=False,
-        end_on_exit=True,
-        record_exception=False,
-    )
-
-
-def set_exception(span: Span, exception: Exception, timestamp: int | None = None) -> None:
-    """Set an error for spans."""
-    span.set_attribute(OtelAttr.ERROR_TYPE, str(type(exception)))
-    span.record_exception(exception=exception, timestamp=timestamp)
-    span.set_status(status=StatusCode.ERROR, description=repr(exception))
-
-
 # region OtelChatClient
 
 
@@ -299,7 +260,7 @@ def _trace_get_response(
         messages: "str | ChatMessage | list[str] | list[ChatMessage]",
         **kwargs: Any,
     ) -> "ChatResponse":
-        model_diagnostics = chat_client._model_diagnostics_settings
+        model_diagnostics = chat_client._model_diagnostic_settings  # type: ignore[reportAttributeAccessIssue, attr-defined]
         if not model_diagnostics and not model_diagnostics.ENABLED:
             # If model diagnostics are not enabled, just return the completion
             return await get_response_func(
@@ -314,16 +275,17 @@ def _trace_get_response(
             **kwargs,
         ) as span:
             if model_diagnostics.SENSITIVE_DATA_ENABLED and messages:
-                _log_messages(system_name=model_provider, messages=messages)
+                _capture_messages(system_name=model_provider, messages=messages)
             try:
                 response = await get_response_func(messages=messages, **kwargs)
             except Exception as exception:
-                set_exception(span=span, exception=exception, timestamp=time_ns())
+                _capture_exception(span=span, exception=exception, timestamp=time_ns())
                 raise
-            _set_response_output(span=span, response=response)
-            if model_diagnostics.SENSITIVE_DATA_ENABLED and response.messages:
-                _log_messages(system_name=model_provider, messages=response.messages)
-            return response
+            else:
+                _capture_response(span=span, response=response)
+                if model_diagnostics.SENSITIVE_DATA_ENABLED and response.messages:
+                    _capture_messages(system_name=model_provider, messages=response.messages)
+                return response
 
     return wrap_get_response
 
@@ -346,7 +308,7 @@ def _trace_get_streaming_response(
     async def wrap_get_streaming_response(
         messages: "str | ChatMessage | list[str] | list[ChatMessage]", **kwargs: Any
     ) -> AsyncIterable["ChatResponseUpdate"]:
-        model_diagnostics = chat_client._model_diagnostics_settings
+        model_diagnostics = chat_client._model_diagnostic_settings  # type: ignore[reportAttributeAccessIssue, attr-defined]
         if not model_diagnostics and not model_diagnostics.ENABLED:
             # If model diagnostics are not enabled, just return the completion
             async for streaming_chat_message_contents in get_streaming_response_func(messages=messages, **kwargs):
@@ -364,21 +326,22 @@ def _trace_get_streaming_response(
             **kwargs,
         ) as span:
             if model_diagnostics.SENSITIVE_DATA_ENABLED and messages:
-                _log_messages(system_name=model_provider, messages=messages)
+                _capture_messages(system_name=model_provider, messages=messages)
             try:
                 async for update in get_streaming_response_func(messages=messages, **kwargs):
                     all_updates.append(update)
                     yield update
             except Exception as exception:
-                set_exception(span=span, exception=exception, timestamp=time_ns())
+                _capture_exception(span=span, exception=exception, timestamp=time_ns())
                 raise
-            from ._types import ChatResponse
+            else:
+                from ._types import ChatResponse
 
-            response = ChatResponse.from_chat_response_updates(all_updates)
-            _set_response_output(span=span, response=response)
+                response = ChatResponse.from_chat_response_updates(all_updates)
+                _capture_response(span=span, response=response)
 
-            if model_diagnostics.SENSITIVE_DATA_ENABLED and response.messages:
-                _log_messages(system_name=model_provider, messages=response.messages)
+                if model_diagnostics.SENSITIVE_DATA_ENABLED and response.messages:
+                    _capture_messages(system_name=model_provider, messages=response.messages)
 
     return wrap_get_streaming_response
 
@@ -401,7 +364,7 @@ def OpenTelemetryChatClient(
         model_provider_name: The model provider name.
             If None, uses the value from the chat client's MODEL_PROVIDER_NAME variable.
     """
-    chat_client._model_diagnostics_settings = ModelDiagnosticSettings(
+    chat_client._model_diagnostic_settings = ModelDiagnosticSettings(  # type: ignore[reportAttributeAccessIssue, attr-defined]
         enable_otel=True,
         enable_sensitive_data=enable_sensitive_data,  # type: ignore[reportArgumentType]
     )
@@ -457,7 +420,7 @@ def _trace_agent_run(
         thread: "AgentThread | None" = None,
         **kwargs: Any,
     ) -> "AgentRunResponse":
-        model_diagnostics = agent._model_diagnostics_settings
+        model_diagnostics = agent._model_diagnostic_settings  # type: ignore[reportAttributeAccessIssue, attr-defined]
         if not model_diagnostics.ENABLED:
             # If model diagnostics are not enabled, just return the completion
             return await run_func(
@@ -469,21 +432,22 @@ def _trace_agent_run(
         with _agent_run_span(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             agent=agent,
-            system=agent_system_name,
+            system_name=agent_system_name,
             thread=thread,
             **kwargs,
         ) as current_span:
             if model_diagnostics.SENSITIVE_DATA_ENABLED and messages:
-                _log_messages(system_name=agent_system_name, messages=messages)
+                _capture_messages(system_name=agent_system_name, messages=messages)
             try:
                 response = await run_func(messages=messages, thread=thread, **kwargs)
             except Exception as exception:
-                set_exception(span=current_span, exception=exception, timestamp=time_ns())
+                _capture_exception(span=current_span, exception=exception, timestamp=time_ns())
                 raise
-            _set_response_output(current_span, response)
-            if model_diagnostics.SENSITIVE_DATA_ENABLED and response.messages:
-                _log_messages(agent_system_name, response.messages)
-            return response
+            else:
+                _capture_response(current_span, response)
+                if model_diagnostics.SENSITIVE_DATA_ENABLED and response.messages:
+                    _capture_messages(agent_system_name, response.messages)
+                return response
 
     return wrap_run
 
@@ -508,7 +472,7 @@ def _trace_agent_run_streaming(
         thread: "AgentThread | None" = None,
         **kwargs: Any,
     ) -> AsyncIterable["AgentRunResponseUpdate"]:
-        model_diagnostics = agent._model_diagnostics_settings
+        model_diagnostics = agent._model_diagnostic_settings  # type: ignore[reportAttributeAccessIssue, attr-defined]
         if not model_diagnostics.ENABLED:
             # If model diagnostics are not enabled, just return the completion
             async for streaming_agent_response in run_streaming_func(messages=messages, thread=thread, **kwargs):
@@ -522,36 +486,36 @@ def _trace_agent_run_streaming(
         with _agent_run_span(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             agent=agent,
-            system=agent_system_name,
+            system_name=agent_system_name,
             thread=thread,
             **kwargs,
         ) as current_span:
             if model_diagnostics.SENSITIVE_DATA_ENABLED and messages:
-                _log_messages(system_name=agent_system_name, messages=messages)
+                _capture_messages(system_name=agent_system_name, messages=messages)
             try:
                 async for update in run_streaming_func(messages=messages, thread=thread, **kwargs):
                     all_updates.append(update)
                     yield update
-
             except Exception as exception:
-                set_exception(span=current_span, exception=exception, timestamp=time_ns())
+                _capture_exception(span=current_span, exception=exception, timestamp=time_ns())
                 raise
-            response = AgentRunResponse.from_agent_run_response_updates(all_updates)
-            _set_response_output(current_span, response)
-            if model_diagnostics.SENSITIVE_DATA_ENABLED and response.messages:
-                _log_messages(agent_system_name, response.messages)
+            else:
+                response = AgentRunResponse.from_agent_run_response_updates(all_updates)
+                _capture_response(current_span, response)
+                if model_diagnostics.SENSITIVE_DATA_ENABLED and response.messages:
+                    _capture_messages(agent_system_name, response.messages)
 
     return wrap_run_streaming
 
 
 def OpenTelemetryAgent(
-    agent: "AIAgent",
+    agent: TAgent,
     *,
     enable_sensitive_data: bool | None = None,
     agent_system_name: str | None = None,
-) -> "AIAgent":
+) -> TAgent:
     """Class decorator that enables telemetry for an agent."""
-    agent._model_diagnostics_settings = ModelDiagnosticSettings(
+    agent._model_diagnostic_settings = ModelDiagnosticSettings(  # type: ignore[reportAttributeAccessIssue, attr-defined]
         enable_otel=True,
         enable_sensitive_data=enable_sensitive_data,  # type: ignore[reportArgumentType]
     )
@@ -573,14 +537,45 @@ def OpenTelemetryAgent(
 # region Otel Helpers
 
 
+def _start_as_current_span(
+    tracer: trace.Tracer,
+    function: "AIFunction[Any, Any]",
+    tool_call_id: str | None = None,
+) -> "_AgnosticContextManager[Span]":
+    """Starts a span for the given function using the provided tracer.
+
+    Args:
+        tracer: The OpenTelemetry tracer to use.
+        function: The function for which to start the span.
+        tool_call_id: The id of the tool_call that was requested.
+
+    Returns:
+        trace.Span: The started span as a context manager.
+    """
+    attributes: dict[str, str] = {
+        OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
+        OtelAttr.TOOL_NAME: function.name,
+        OtelAttr.TOOL_CALL_ID: tool_call_id or "unknown",
+    }
+    if function.description:
+        attributes[OtelAttr.TOOL_DESCRIPTION] = function.description
+
+    return tracer.start_as_current_span(
+        name=f"{OtelAttr.TOOL_EXECUTION_OPERATION} {function.name}",
+        attributes=attributes,
+        set_status_on_exception=False,
+        end_on_exit=True,
+        record_exception=False,
+    )
+
+
 @contextmanager
 def _chat_response_span(
-    *,
     operation_name: str,
     system_name: str,
     chat_client: "ChatClient",
     **kwargs: Any,
-) -> Span:
+) -> Generator[Span, Any, Any]:
     """Start a text or chat completion span for a given model.
 
     Note that `start_span` doesn't make the span the current span.
@@ -633,13 +628,12 @@ def _chat_response_span(
 
 @contextmanager
 def _agent_run_span(
-    *,
     operation_name: str,
     agent: "AIAgent",
     system_name: str,
     thread: "AgentThread | None",
     **kwargs: Any,
-) -> Span:
+) -> Generator[Span, Any, Any]:
     """Start a text or chat completion span for a given model.
 
     Note that `start_span` doesn't make the span the current span.
@@ -689,17 +683,24 @@ def _agent_run_span(
             encoding_formats if isinstance(encoding_formats, list) else [encoding_formats],
         )
     with use_span(
-        span,
+        span=span,
         end_on_exit=True,
         record_exception=False,
         set_status_on_exception=False,
-    ):
-        yield span
+    ) as current_span:
+        yield current_span
 
 
-def _log_messages(
+def _capture_exception(span: Span, exception: Exception, timestamp: int | None = None) -> None:
+    """Set an error for spans."""
+    span.set_attribute(OtelAttr.ERROR_TYPE, str(type(exception)))
+    span.record_exception(exception=exception, timestamp=timestamp)
+    span.set_status(status=StatusCode.ERROR, description=repr(exception))
+
+
+def _capture_messages(
     system_name: str,
-    messages: "str | ChatMessage | list[str] | list[ChatMessage] | None",
+    messages: "str | ChatMessage | list[str] | list[ChatMessage]",
 ) -> None:
     """Log messages with extra information."""
     from ._clients import _prepare_messages
@@ -716,7 +717,7 @@ def _log_messages(
         )
 
 
-def _set_response_output(
+def _capture_response(
     span: Span,
     response: "ChatResponse | AgentRunResponse",
 ) -> None:
@@ -726,7 +727,7 @@ def _set_response_output(
         span.set_attribute(OtelAttr.RESPONSE_ID, response.response_id)
 
     # Set the finish reason
-    finish_reason = response.finish_reason
+    finish_reason = getattr(response, "finish_reason", None)
     if not finish_reason:
         finish_reason = (
             getattr(response.raw_representation, "finish_reason", None) if response.raw_representation else None

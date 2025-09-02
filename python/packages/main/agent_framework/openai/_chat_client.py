@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
+import sys
 from collections.abc import AsyncIterable, Mapping, MutableMapping, MutableSequence, Sequence
 from datetime import datetime
 from itertools import chain
@@ -40,6 +41,11 @@ from ..exceptions import (
 )
 from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIConfigBase, OpenAIHandler, OpenAISettings, prepare_function_call_results
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 __all__ = ["OpenAIChatClient"]
 
@@ -375,13 +381,14 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
             case _:
                 return content.model_dump(exclude_none=True)
 
-    def service_url(self) -> str | None:
+    @override
+    def service_url(self) -> str:
         """Get the URL of the service.
 
         Override this in the subclass to return the proper URL.
         If the service does not have a URL, return None.
         """
-        return str(self.client.base_url) if self.client else None
+        return str(self.client.base_url) if self.client else "Unknown"
 
 
 # region Public client
