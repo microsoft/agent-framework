@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Core actor abstractions for the Python agent runtime."""
+"""Core actor abstractions for the Python actor runtime."""
 
 from dataclasses import dataclass
 from enum import Enum
