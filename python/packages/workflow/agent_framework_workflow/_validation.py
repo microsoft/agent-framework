@@ -268,6 +268,68 @@ class WorkflowGraphValidator:
                         f"T_Out contains invalid entries: {invalid}. Use proper types or typing generics",
                     )
 
+            # Also validate instance-level handler specs if present
+            if hasattr(executor, "_instance_handler_specs"):
+
+                def _is_type_like(x: Any) -> bool:
+                    # A "type-like" entry is either a class/type or a typing alias
+                    # (e.g., list[str] has an origin and args)
+                    return isinstance(x, type) or get_origin(x) is not None
+
+                for spec in executor._instance_handler_specs:
+                    handler_name = spec.get("name", "unknown")
+                    ctx_ann = spec.get("ctx_annotation")
+
+                    if ctx_ann is None:
+                        continue  # Skip if no annotation stored
+
+                    # Validate that the ctx annotation is WorkflowContext[...] and is properly parameterized
+                    ctx_origin = get_origin(ctx_ann)
+                    if ctx_origin is None:
+                        if ctx_ann is WorkflowContext:
+                            raise HandlerOutputAnnotationError(
+                                executor_id,
+                                handler_name,
+                                "T_Out is missing; use WorkflowContext[None] or specify concrete types",
+                            )
+                    else:
+                        if ctx_origin is not WorkflowContext:
+                            raise HandlerOutputAnnotationError(
+                                executor_id, handler_name, f"ctx must be WorkflowContext[T], got {ctx_ann}"
+                            )
+
+                    # Extract and validate T_Out
+                    type_args = get_args(ctx_ann)
+                    if not type_args:
+                        raise HandlerOutputAnnotationError(
+                            executor_id,
+                            handler_name,
+                            "T_Out is missing; use WorkflowContext[None] or specify concrete types",
+                        )
+
+                    t_out = type_args[0]
+
+                    # Allow Any for T_Out (unspecified outputs)
+                    if t_out is Any:
+                        continue
+
+                    # Allow None (no outputs) explicitly declared
+                    if t_out is type(None):
+                        continue
+
+                    # If T_Out is a union, validate each member
+                    union_origin = get_origin(t_out)
+                    items: list[Any]
+                    items = list(get_args(t_out)) if union_origin in (Union, UnionType) else [t_out]
+
+                    invalid = [x for x in items if not _is_type_like(x) and x is not type(None)]
+                    if invalid:
+                        raise HandlerOutputAnnotationError(
+                            executor_id,
+                            handler_name,
+                            f"T_Out contains invalid entries: {invalid}. Use proper types or typing generics",
+                        )
+
     # endregion
 
     # region Edge and Type Validation
@@ -407,6 +469,12 @@ class WorkflowGraphValidator:
             for request_type in executor._request_interceptors:
                 if isinstance(request_type, type):
                     output_types.append(request_type)
+
+        # Include output types from instance-level handler specs
+        if hasattr(executor, "_instance_handler_specs"):
+            for spec in executor._instance_handler_specs:
+                handler_output_types = spec.get("output_types", [])
+                output_types.extend(handler_output_types)
 
         return output_types
 
