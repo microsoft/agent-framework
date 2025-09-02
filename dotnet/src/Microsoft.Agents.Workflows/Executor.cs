@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Execution;
 
@@ -25,9 +26,15 @@ public abstract class Executor : IIdentified
     /// </summary>
     /// <param name="id">A optional unique identifier for the executor. If <c>null</c>, a type-tagged
     /// UUID will be generated.</param>
-    protected Executor(string? id = null)
+    protected Executor(string? id = null) : this(ExecutorOptions.Default, id)
+    {
+    }
+
+    private readonly ExecutorOptions _options;
+    internal Executor(ExecutorOptions options, string? id = null)
     {
         this.Id = id ?? $"{this.GetType().Name}/{Guid.NewGuid():N}";
+        this._options = options;
     }
 
     /// <summary>
@@ -54,11 +61,13 @@ public abstract class Executor : IIdentified
     /// Process an incoming message using the registered handlers.
     /// </summary>
     /// <param name="message">The message to be processed by the executor.</param>
+    /// <param name="messageType">The "declared" type of the message (captured when it was being sent). This is
+    /// used to enable routing messages as their base types, in absence of true polymorphic type routing.</param>
     /// <param name="context">The workflow context in which the executor executes.</param>
     /// <returns>A ValueTask representing the asynchronous operation, wrapping the output from the executor.</returns>
     /// <exception cref="NotSupportedException">No handler found for the message type.</exception>
     /// <exception cref="TargetInvocationException">An exception is generated while handling the message.</exception>
-    public async ValueTask<object?> ExecuteAsync(object message, IWorkflowContext context)
+    public async ValueTask<object?> ExecuteAsync(object message, Type messageType, IWorkflowContext context)
     {
         await context.AddEventAsync(new ExecutorInvokeEvent(this.Id, message)).ConfigureAwait(false);
 
@@ -94,13 +103,29 @@ public abstract class Executor : IIdentified
         }
 
         // If we had a real return type, raise it as a SendMessage; TODO: Should we have a way to disable this behaviour?
-        if (result.Result != null && ExecutorOptions.Default.AutoSendMessageHandlerResultObject)
+        if (result.Result != null && this._options.AutoSendMessageHandlerResultObject)
         {
             await context.SendMessageAsync(result.Result).ConfigureAwait(false);
         }
 
         return result.Result;
     }
+
+    /// <summary>
+    /// Invoked before a checkpoint is saved, allowing custom pre-save logic in derived classes.
+    /// </summary>
+    /// <param name="context">The workflow context.</param>
+    /// <returns>A ValueTask representing the asynchronous operation.</returns>
+    /// <param name="cancellation"></param>
+    protected internal virtual ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellation = default) => default;
+
+    /// <summary>
+    /// Invoked after a checkpoint is loaded, allowing custom post-load logic in derived classes.
+    /// </summary>
+    /// <param name="context">The workflow context.</param>
+    /// <returns>A ValueTask representing the asynchronous operation.</returns>
+    /// <param name="cancellation"></param>
+    protected internal virtual ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellation = default) => default;
 
     /// <summary>
     /// A set of <see cref="Type"/>s, representing the messages this executor can handle.

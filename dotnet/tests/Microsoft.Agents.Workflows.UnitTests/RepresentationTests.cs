@@ -1,0 +1,180 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using FluentAssertions;
+using Microsoft.Agents.Workflows.Checkpointing;
+using Microsoft.Agents.Workflows.Sample;
+using Microsoft.Agents.Workflows.Specialized;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
+
+namespace Microsoft.Agents.Workflows.UnitTests;
+
+public class RepresentationTests
+{
+    private sealed class TestExecutor : Executor
+    {
+        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) => routeBuilder;
+    }
+
+    private sealed class TestAgent : AIAgent
+    {
+        public override Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            throw new NotImplementedException();
+        }
+
+        public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            throw new NotImplementedException();
+        }
+    }
+
+    private static InputPort TestInputPort =>
+        InputPort.Create<FunctionCallContent, FunctionResultContent>("ExternalFunction");
+
+    private static List<T> ListAggregator<T>(List<T>? current, T incoming)
+    {
+        if (current is null)
+        {
+            return [incoming];
+        }
+
+        current.Add(incoming);
+        return current;
+    }
+
+    private static void RunExecutorishInfoMatchTest(ExecutorIsh target)
+    {
+        ExecutorRegistration registration = target.Registration;
+        ExecutorInfo info = registration.ToExecutorInfo();
+
+        info.IsMatch(registration.Provider()).Should().BeTrue();
+    }
+
+    [Fact]
+    public void Test_Executorish_Infos()
+    {
+        int testsRun = 0;
+        RunExecutorishTest(new TestExecutor());
+        RunExecutorishTest(TestInputPort);
+        RunExecutorishTest(new TestAgent());
+
+        if (Enum.GetValues(typeof(ExecutorIsh.Type)).Length > testsRun + 1)
+        {
+            Assert.Fail("Not all ExecutorIsh types were tested.");
+        }
+
+        void RunExecutorishTest(ExecutorIsh executorish)
+        {
+            RunExecutorishInfoMatchTest(executorish);
+            testsRun++;
+        }
+    }
+
+    [Fact]
+    public void Test_SpecializedExecutor_Infos()
+    {
+        RunExecutorishInfoMatchTest(new AIAgentHostExecutor(new TestAgent()));
+        RunExecutorishInfoMatchTest(new RequestInfoExecutor(TestInputPort));
+
+        OutputCollectorExecutor<ChatMessage, IEnumerable<ChatMessage>> outputCollector = new(StreamingAggregators.Union<ChatMessage>());
+        RunExecutorishInfoMatchTest(outputCollector);
+    }
+
+    private static string Source(string id) => $"Source/{id}";
+    private static string Source(int id) => $"Source/{id}";
+    private static string Sink(string id) => $"Sink/{id}";
+    private static string Sink(int id) => $"Sink/{id}";
+
+    private static Func<object?, bool> Condition() => Condition<object>();
+    private static Func<TIn?, bool> Condition<TIn>() => _ => true;
+
+    private static Func<object?, int, IEnumerable<int>> EdgeAssigner() => EdgeAssigner<object>();
+    private static Func<TIn?, int, IEnumerable<int>> EdgeAssigner<TIn>() => (_, _) => [];
+
+    [Fact]
+    public void Test_EdgeInfos()
+    {
+        // Direct Edges
+        Edge directEdgeNoCondition = new(new DirectEdgeData(Source(1), Sink(2)));
+        RunEdgeInfoMatchTest(directEdgeNoCondition);
+
+        Edge directEdgeNoCondition2 = new(new DirectEdgeData(Source(1), Sink(2)));
+        RunEdgeInfoMatchTest(directEdgeNoCondition, directEdgeNoCondition2);
+
+        Edge directEdgeNoCondition3 = new(new DirectEdgeData(Source(3), Sink(4)));
+        RunEdgeInfoMatchTest(directEdgeNoCondition, directEdgeNoCondition3, expect: false);
+
+        Edge directEdgeWithCondition = new(new DirectEdgeData(Source(3), Sink(4), Condition()));
+        RunEdgeInfoMatchTest(directEdgeWithCondition);
+        RunEdgeInfoMatchTest(directEdgeNoCondition2, directEdgeWithCondition, expect: false);
+        RunEdgeInfoMatchTest(directEdgeNoCondition3, directEdgeWithCondition, expect: false);
+
+        // FanOut Edges
+        Edge fanOutEdgeNoAssigner = new(new FanOutEdgeData(Source(1), [Sink(2), Sink(3), Sink(4)]));
+        RunEdgeInfoMatchTest(fanOutEdgeNoAssigner);
+
+        Edge fanOutEdgeNoAssigner2 = new(new FanOutEdgeData(Source(1), [Sink(2), Sink(3), Sink(4)]));
+        RunEdgeInfoMatchTest(fanOutEdgeNoAssigner, fanOutEdgeNoAssigner2);
+
+        Edge fanOutEdgeNoAssigner3 = new(new FanOutEdgeData(Source(1), [Sink(3), Sink(4), Sink(2)]));
+        RunEdgeInfoMatchTest(fanOutEdgeNoAssigner, fanOutEdgeNoAssigner3, expect: false); // Order matters (though without Assigner maybe it shouldn't?)
+
+        Edge fanOutEdgeNoAssigner4 = new(new FanOutEdgeData(Source(1), [Sink(2), Sink(3), Sink(5)]));
+        Edge fanOutEdgeNoAssigner5 = new(new FanOutEdgeData(Source(2), [Sink(2), Sink(3), Sink(4)]));
+        RunEdgeInfoMatchTest(fanOutEdgeNoAssigner, fanOutEdgeNoAssigner4, expect: false); // Identity matters
+        RunEdgeInfoMatchTest(fanOutEdgeNoAssigner, fanOutEdgeNoAssigner5, expect: false);
+
+        Edge fanOutEdgeWithAssigner = new(new FanOutEdgeData(Source(1), [Sink(2), Sink(3), Sink(4)], EdgeAssigner()));
+        RunEdgeInfoMatchTest(fanOutEdgeWithAssigner);
+
+        // FanIn Edges
+        Edge fanInEdge = new(new FanInEdgeData([Source(1), Source(2), Source(3)], Sink(1)));
+        RunEdgeInfoMatchTest(fanInEdge);
+
+        Edge fanInEdge2 = new(new FanInEdgeData([Source(1), Source(2), Source(3)], Sink(1)));
+        RunEdgeInfoMatchTest(fanInEdge, fanInEdge2);
+
+        Edge fanInEdge3 = new(new FanInEdgeData([Source(2), Source(3), Source(1)], Sink(1)));
+        RunEdgeInfoMatchTest(fanInEdge, fanInEdge3, expect: false); // Order matters (though for FanIn maybe it shouldn't?)
+
+        Edge fanInEdge4 = new(new FanInEdgeData([Source(1), Source(2), Source(4)], Sink(1)));
+        Edge fanInEdge5 = new(new FanInEdgeData([Source(1), Source(2), Source(3)], Sink(2)));
+        RunEdgeInfoMatchTest(fanInEdge, fanInEdge4, expect: false); // Identity matters
+        RunEdgeInfoMatchTest(fanInEdge, fanInEdge5, expect: false);
+
+        void RunEdgeInfoMatchTest(Edge edge, Edge? comparatorEdge = null, bool expect = true)
+        {
+            comparatorEdge ??= edge;
+
+            EdgeInfo info = edge.ToEdgeInfo();
+            info.IsMatch(comparatorEdge).Should().Be(expect);
+        }
+    }
+
+    [Fact]
+    public void Test_Sample_WorkflowInfos()
+    {
+        RunWorkflowInfoMatchTest(Step1EntryPoint.WorkflowInstance);
+        RunWorkflowInfoMatchTest(Step2EntryPoint.WorkflowInstance);
+        RunWorkflowInfoMatchTest(Step3EntryPoint.WorkflowInstance);
+        RunWorkflowInfoMatchTest(Step4EntryPoint.WorkflowInstance);
+        // Step 5 reuses the workflow from Step 4, so we don't need to test it separately.
+        RunWorkflowInfoMatchTest(Step6EntryPoint.CreateWorkflow(2));
+        // Step 7 reuses the workflow from Step 6, so we don't need to test it separately.
+
+        RunWorkflowInfoMatchTest(Step1EntryPoint.WorkflowInstance, Step2EntryPoint.WorkflowInstance, expect: false);
+
+        void RunWorkflowInfoMatchTest<TInput>(Workflow<TInput> workflow, Workflow<TInput>? comparator = null, bool expect = true)
+        {
+            comparator ??= workflow;
+
+            WorkflowInfo info = workflow.ToWorkflowInfo();
+            info.IsMatch(comparator).Should().Be(expect);
+        }
+    }
+}

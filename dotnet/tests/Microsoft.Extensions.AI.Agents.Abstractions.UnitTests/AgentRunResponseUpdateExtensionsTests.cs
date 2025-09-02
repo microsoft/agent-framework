@@ -10,6 +10,26 @@ namespace Microsoft.Extensions.AI.Agents.Abstractions.UnitTests;
 
 public class AgentRunResponseUpdateExtensionsTests
 {
+    public static IEnumerable<object[]> ToAgentRunResponseCoalescesVariousSequenceAndGapLengthsMemberData()
+    {
+        foreach (bool useAsync in new[] { false, true })
+        {
+            for (int numSequences = 1; numSequences <= 3; numSequences++)
+            {
+                for (int sequenceLength = 1; sequenceLength <= 3; sequenceLength++)
+                {
+                    for (int gapLength = 1; gapLength <= 3; gapLength++)
+                    {
+                        foreach (bool gapBeginningEnd in new[] { false, true })
+                        {
+                            yield return new object[] { useAsync, numSequences, sequenceLength, gapLength, false };
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     [Fact]
     public void ToAgentRunResponseWithInvalidArgsThrows()
     {
@@ -57,26 +77,6 @@ public class AgentRunResponseUpdateExtensionsTests
         Assert.Equal("d", response.AdditionalProperties["c"]);
 
         Assert.Equal("Hello, world!", response.Text);
-    }
-
-    public static IEnumerable<object[]> ToAgentRunResponseCoalescesVariousSequenceAndGapLengthsMemberData()
-    {
-        foreach (bool useAsync in new[] { false, true })
-        {
-            for (int numSequences = 1; numSequences <= 3; numSequences++)
-            {
-                for (int sequenceLength = 1; sequenceLength <= 3; sequenceLength++)
-                {
-                    for (int gapLength = 1; gapLength <= 3; gapLength++)
-                    {
-                        foreach (bool gapBeginningEnd in new[] { false, true })
-                        {
-                            yield return new object[] { useAsync, numSequences, sequenceLength, gapLength, false };
-                        }
-                    }
-                }
-            }
-        }
     }
 
     [Theory]

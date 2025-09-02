@@ -8,7 +8,7 @@ from typing import Annotated
 from agent_framework import ChatClientAgent
 from agent_framework.foundry import FoundryChatClient
 from azure.ai.projects.aio import AIProjectClient
-from azure.identity.aio import DefaultAzureCredential
+from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
 
@@ -25,7 +25,7 @@ async def main() -> None:
 
     # Create the client
     async with (
-        DefaultAzureCredential() as credential,
+        AzureCliCredential() as credential,
         AIProjectClient(endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=credential) as client,
     ):
         # Create an agent that will persist
