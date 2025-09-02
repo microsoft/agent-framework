@@ -789,7 +789,6 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                 # call_id for the result needs to be the same as the call_id for the function call
                 args: dict[str, Any] = {
                     "call_id": content.call_id,
-                    "id": call_id_to_id.get(content.call_id),
                     "type": "function_call_output",
                 }
                 if content.result:
@@ -862,9 +861,14 @@ class OpenAIResponsesClient(OpenAIConfigBase, OpenAIResponsesClientBase):
             raise ServiceInitializationError("Failed to create OpenAI settings.", ex) from ex
 
         if not async_client and not openai_settings.api_key:
-            raise ServiceInitializationError("The OpenAI API key is required.")
+            raise ServiceInitializationError(
+                "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
+            )
         if not openai_settings.responses_model_id:
-            raise ServiceInitializationError("The OpenAI model ID is required.")
+            raise ServiceInitializationError(
+                "OpenAI model ID is required. "
+                "Set via 'ai_model_id' parameter or 'OPENAI_RESPONSES_MODEL_ID' environment variable."
+            )
 
         super().__init__(
             ai_model_id=openai_settings.responses_model_id,

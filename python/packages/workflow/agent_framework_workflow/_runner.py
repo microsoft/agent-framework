@@ -179,7 +179,16 @@ class Runner:
                                         f"from sub-workflow '{sub_request.sub_workflow_id}' "
                                         f"to executor '{executor.id}' for interception."
                                     )
-                                    await executor.execute(sub_request, self._ctx)  # type: ignore[arg-type]
+                                    # Create WorkflowContext with trace context from message
+                                    workflow_ctx: WorkflowContext[Any] = WorkflowContext(
+                                        executor.id,
+                                        [message.source_id],
+                                        self._shared_state,
+                                        self._ctx,
+                                        trace_contexts=[message.trace_context] if message.trace_context else None,
+                                        source_span_ids=[message.source_span_id] if message.source_span_id else None,
+                                    )
+                                    await executor.execute(sub_request, workflow_ctx)
                                     interceptor_found = True
                                     break
                             if interceptor_found:
@@ -192,18 +201,20 @@ class Runner:
                         request_info_executor = self._find_request_info_executor()
 
                         if request_info_executor:
-                            workflow_ctx: WorkflowContext[None] = WorkflowContext(
+                            request_info_workflow_ctx: WorkflowContext[None] = WorkflowContext(
                                 request_info_executor.id,
-                                ["Runner"],
+                                [message.source_id],
                                 self._shared_state,
                                 self._ctx,
+                                trace_contexts=[message.trace_context] if message.trace_context else None,
+                                source_span_ids=[message.source_span_id] if message.source_span_id else None,
                             )
                             logger.info(
                                 f"Sending sub-workflow request of type '{sub_request.data.__class__.__name__}' "
                                 f"from sub-workflow '{sub_request.sub_workflow_id}' to RequestInfoExecutor "
                                 f"'{request_info_executor.id}'"
                             )
-                            await request_info_executor.execute(sub_request, workflow_ctx)
+                            await request_info_executor.execute(sub_request, request_info_workflow_ctx)
                         else:
                             logger.warning(
                                 f"Sub-workflow request of type '{sub_request.data.__class__.__name__}' "

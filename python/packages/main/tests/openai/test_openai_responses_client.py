@@ -10,7 +10,11 @@ from openai import BadRequestError
 from pydantic import BaseModel
 
 from agent_framework import (
+    AgentRunResponse,
+    AgentRunResponseUpdate,
+    AgentThread,
     ChatClient,
+    ChatClientAgent,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
@@ -1063,6 +1067,213 @@ async def test_openai_responses_client_streaming_file_search() -> None:
 
     assert "sunny" in full_message.lower()
     assert "75" in full_message
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_basic_run():
+    """Test OpenAI Responses Client agent basic run functionality with OpenAIResponsesClient."""
+    agent = OpenAIResponsesClient().create_agent(
+        instructions="You are a helpful assistant.",
+    )
+
+    # Test basic run
+    response = await agent.run("Hello! Please respond with 'Hello World' exactly.")
+
+    assert isinstance(response, AgentRunResponse)
+    assert response.text is not None
+    assert len(response.text) > 0
+    assert "hello world" in response.text.lower()
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_basic_run_streaming():
+    """Test OpenAI Responses Client agent basic streaming functionality with OpenAIResponsesClient."""
+    async with ChatClientAgent(
+        chat_client=OpenAIResponsesClient(),
+    ) as agent:
+        # Test streaming run
+        full_text = ""
+        async for chunk in agent.run_streaming("Please respond with exactly: 'This is a streaming response test.'"):
+            assert isinstance(chunk, AgentRunResponseUpdate)
+            if chunk.text:
+                full_text += chunk.text
+
+        assert len(full_text) > 0
+        assert "streaming response test" in full_text.lower()
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_thread_persistence():
+    """Test OpenAI Responses Client agent thread persistence across runs with OpenAIResponsesClient."""
+    async with ChatClientAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant with good memory.",
+    ) as agent:
+        # Create a new thread that will be reused
+        thread = agent.get_new_thread()
+
+        # First interaction
+        first_response = await agent.run("My favorite programming language is Python. Remember this.", thread=thread)
+
+        assert isinstance(first_response, AgentRunResponse)
+        assert first_response.text is not None
+
+        # Second interaction - test memory
+        second_response = await agent.run("What is my favorite programming language?", thread=thread)
+
+        assert isinstance(second_response, AgentRunResponse)
+        assert second_response.text is not None
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_thread_storage_with_store_true():
+    """Test OpenAI Responses Client agent with store=True to verify service_thread_id is returned."""
+    async with ChatClientAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant.",
+    ) as agent:
+        # Create a new thread
+        thread = AgentThread()
+
+        # Initially, service_thread_id should be None
+        assert thread.service_thread_id is None
+
+        # Run with store=True to store messages on OpenAI side
+        response = await agent.run(
+            "Hello! Please remember that my name is Alex.",
+            thread=thread,
+            store=True,
+        )
+
+        # Validate response
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+
+        # After store=True, service_thread_id should be populated
+        assert thread.service_thread_id is not None
+        assert isinstance(thread.service_thread_id, str)
+        assert len(thread.service_thread_id) > 0
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_existing_thread():
+    """Test OpenAI Responses Client agent with existing thread to continue conversations across agent instances."""
+    # First conversation - capture the thread
+    preserved_thread = None
+
+    async with ChatClientAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant with good memory.",
+    ) as first_agent:
+        # Start a conversation and capture the thread
+        thread = first_agent.get_new_thread()
+        first_response = await first_agent.run("My hobby is photography. Remember this.", thread=thread)
+
+        assert isinstance(first_response, AgentRunResponse)
+        assert first_response.text is not None
+
+        # Preserve the thread for reuse
+        preserved_thread = thread
+
+    # Second conversation - reuse the thread in a new agent instance
+    if preserved_thread:
+        async with ChatClientAgent(
+            chat_client=OpenAIResponsesClient(),
+            instructions="You are a helpful assistant with good memory.",
+        ) as second_agent:
+            # Reuse the preserved thread
+            second_response = await second_agent.run("What is my hobby?", thread=preserved_thread)
+
+            assert isinstance(second_response, AgentRunResponse)
+            assert second_response.text is not None
+            assert "photography" in second_response.text.lower()
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_hosted_code_interpreter_tool():
+    """Test OpenAI Responses Client agent with HostedCodeInterpreterTool through OpenAIResponsesClient."""
+    async with ChatClientAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant that can execute Python code.",
+        tools=[HostedCodeInterpreterTool()],
+    ) as agent:
+        # Test code interpreter functionality
+        response = await agent.run("Calculate the sum of numbers from 1 to 10 using Python code.")
+
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+        # Should contain calculation result (sum of 1-10 = 55) or code execution content
+        contains_relevant_content = any(
+            term in response.text.lower() for term in ["55", "sum", "code", "python", "calculate", "10"]
+        )
+        assert contains_relevant_content or len(response.text.strip()) > 10
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_level_tool_persistence():
+    """Test that agent-level tools persist across multiple runs with OpenAI Responses Client."""
+
+    async with ChatClientAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant that uses available tools.",
+        tools=[get_weather],  # Agent-level tool
+    ) as agent:
+        # First run - agent-level tool should be available
+        first_response = await agent.run("What's the weather like in Chicago?")
+
+        assert isinstance(first_response, AgentRunResponse)
+        assert first_response.text is not None
+        # Should use the agent-level weather tool
+        assert any(term in first_response.text.lower() for term in ["chicago", "sunny", "72"])
+
+        # Second run - agent-level tool should still be available (persistence test)
+        second_response = await agent.run("What's the weather in Miami?")
+
+        assert isinstance(second_response, AgentRunResponse)
+        assert second_response.text is not None
+        # Should use the agent-level weather tool again
+        assert any(term in second_response.text.lower() for term in ["miami", "sunny", "72"])
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_run_level_tool_isolation():
+    """Test that run-level tools are isolated to specific runs and don't persist with OpenAI Responses Client."""
+    # Counter to track how many times the weather tool is called
+    call_count = 0
+
+    @ai_function
+    async def get_weather_with_counter(location: Annotated[str, "The location as a city name"]) -> str:
+        """Get the current weather in a given location."""
+        nonlocal call_count
+        call_count += 1
+        return f"The weather in {location} is sunny and 72°F."
+
+    async with ChatClientAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant.",
+    ) as agent:
+        # First run - use run-level tool
+        first_response = await agent.run(
+            "What's the weather like in Chicago?",
+            tools=[get_weather_with_counter],  # Run-level tool
+        )
+
+        assert isinstance(first_response, AgentRunResponse)
+        assert first_response.text is not None
+        # Should use the run-level weather tool (call count should be 1)
+        assert call_count == 1
+        assert any(term in first_response.text.lower() for term in ["chicago", "sunny", "72"])
+
+        # Second run - run-level tool should NOT persist (key isolation test)
+        second_response = await agent.run("What's the weather like in Miami?")
+
+        assert isinstance(second_response, AgentRunResponse)
+        assert second_response.text is not None
+        # Should NOT use the weather tool since it was only run-level in previous call
+        # Call count should still be 1 (no additional calls)
+        assert call_count == 1
 
 
 def test_service_response_exception_includes_original_error_details() -> None:

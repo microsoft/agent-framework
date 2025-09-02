@@ -94,7 +94,9 @@ internal class AIAgentHostExecutor : Executor
         bool emitEvents = token.EmitEvents.HasValue ? token.EmitEvents.Value : this._emitEvents;
         IAsyncEnumerable<AgentRunResponseUpdate> agentStream = this._agent.RunStreamingAsync(this._pendingMessages, this.EnsureThread(context));
 
-        List<AgentRunResponseUpdate> updates = new();
+        List<AIContent> updates = new();
+        ChatMessage? currentStreamingMessage = null;
+
         await foreach (AgentRunResponseUpdate update in agentStream.ConfigureAwait(false))
         {
             if (emitEvents)
@@ -107,19 +109,36 @@ internal class AIAgentHostExecutor : Executor
             // providing some mechanisms to help the user complete the request, or route it out of the
             // workflow.
 
-            updates.Add(update);
-            ChatMessage message = new(update.Role ?? ChatRole.Assistant, update.Contents)
+            if (currentStreamingMessage == null || currentStreamingMessage.MessageId != update.MessageId)
             {
-                AuthorName = update.AuthorName,
-                CreatedAt = update.CreatedAt,
-                MessageId = update.MessageId,
-                RawRepresentation = update.RawRepresentation,
-                AdditionalProperties = update.AdditionalProperties
-            };
+                await PublishCurrentMessageAsync().ConfigureAwait(false);
+                currentStreamingMessage = new(update.Role ?? ChatRole.Assistant, update.Contents)
+                {
+                    AuthorName = update.AuthorName,
+                    CreatedAt = update.CreatedAt,
+                    MessageId = update.MessageId,
+                    RawRepresentation = update.RawRepresentation,
+                    AdditionalProperties = update.AdditionalProperties
+                };
+            }
 
-            await context.SendMessageAsync(message).ConfigureAwait(false);
+            updates.AddRange(update.Contents);
         }
 
+        await PublishCurrentMessageAsync().ConfigureAwait(false);
         await context.SendMessageAsync(token).ConfigureAwait(false);
+
+        async ValueTask PublishCurrentMessageAsync()
+        {
+            if (currentStreamingMessage != null)
+            {
+                currentStreamingMessage.Contents = updates;
+                updates = [];
+
+                await context.SendMessageAsync(currentStreamingMessage).ConfigureAwait(false);
+            }
+
+            currentStreamingMessage = null;
+        }
     }
 }

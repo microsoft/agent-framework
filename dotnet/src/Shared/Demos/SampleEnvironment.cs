@@ -35,7 +35,7 @@ internal static class SampleEnvironment
             Console.ForegroundColor = ConsoleColor.Yellow;
             Console.Write(key);
             Console.ForegroundColor = ConsoleColor.Green;
-            Console.Write("'> ");
+            Console.Write("'. Just press enter to accept the default. > ");
             Console.ForegroundColor = color;
             value = Console.ReadLine();
             value = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
