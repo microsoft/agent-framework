@@ -8,6 +8,7 @@ using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI.Agents.Hosting;
+using Microsoft.Extensions.AI.Agents.Hosting.A2A.AspNetCore;
 using Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -91,6 +92,18 @@ app.UseSwaggerUI(options =>
 app.UseExceptionHandler();
 
 app.MapActors();
+
+// attach a2a with simple message communication
+app.AttachA2A(agentName: "pirate", path: "/a2a/pirate");
+app.AttachA2A(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves", agentCard: new()
+{
+    Name = "Knights and Knaves",
+    Description = "An agent that helps you solve the knights and knaves puzzle.",
+    Version = "1.0",
+
+    // Url can be not set, and SDK will help assign it.
+    // Url = "http://localhost:5390/a2a/knights-and-knaves"
+});
 
 // Map the agents HTTP endpoints
 app.MapAgentDiscovery("/agents");

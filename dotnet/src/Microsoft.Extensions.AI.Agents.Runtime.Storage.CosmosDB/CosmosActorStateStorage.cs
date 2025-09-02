@@ -11,7 +11,7 @@ namespace Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB;
 /// <summary>
 /// Cosmos DB implementation of actor state storage.
 /// </summary>
-public class CosmosActorStateStorage : IActorStateStorage
+public class CosmosActorStateStorage : IActorStateStorage, IAsyncDisposable
 {
     private readonly LazyCosmosContainer _lazyContainer;
     private const string InitialEtag = "0"; // Initial ETag value when no state exists
@@ -47,8 +47,8 @@ public class CosmosActorStateStorage : IActorStateStorage
         }
 
         var container = await this._lazyContainer.GetContainerAsync().ConfigureAwait(false);
-        var batch = container.CreateTransactionalBatch(GetPartitionKey(actorId));
-        var actorIdStr = actorId.ToString();
+        var (partitionKey, actorType, actorKey) = BuildPartitionKey(actorId);
+        var batch = container.CreateTransactionalBatch(partitionKey);
 
         // Add data operations to batch
         foreach (var op in operations)
@@ -61,7 +61,8 @@ public class CosmosActorStateStorage : IActorStateStorage
                     var item = new ActorStateDocument
                     {
                         Id = docId,
-                        ActorId = actorIdStr,
+                        ActorType = actorType,
+                        ActorKey = actorKey,
                         Key = set.Key,
                         Value = set.Value
                     };
@@ -83,7 +84,8 @@ public class CosmosActorStateStorage : IActorStateStorage
         var newRoot = new ActorRootDocument
         {
             Id = RootDocumentId,
-            ActorId = actorId.ToString(),
+            ActorType = actorType,
+            ActorKey = actorKey,
             LastModified = DateTimeOffset.UtcNow,
         };
 
@@ -103,6 +105,7 @@ public class CosmosActorStateStorage : IActorStateStorage
             var result = await batch.ExecuteAsync(cancellationToken).ConfigureAwait(false);
             if (!result.IsSuccessStatusCode)
             {
+                _ = result.ErrorMessage;
                 return new WriteResponse(eTag: string.Empty, success: false);
             }
 
@@ -135,6 +138,8 @@ public class CosmosActorStateStorage : IActorStateStorage
 
         // Read root document first to get actor-level ETag
         string actorETag = await this.GetActorETagAsync(container, actorId, cancellationToken).ConfigureAwait(false);
+        var actorType = actorId.Type.ToString();
+        var actorKey = actorId.Key;
 
         foreach (var op in operations)
         {
@@ -162,14 +167,16 @@ public class CosmosActorStateStorage : IActorStateStorage
                     QueryDefinition query;
                     if (!string.IsNullOrEmpty(list.KeyPrefix))
                     {
-                        query = new QueryDefinition("SELECT c.key FROM c WHERE c.actorId = @actorId AND c.key != null AND STARTSWITH(c.key, @keyPrefix)")
-                            .WithParameter("@actorId", actorId.ToString())
+                        query = new QueryDefinition("SELECT c.key FROM c WHERE c.actorType = @actorType AND c.actorKey = @actorKey AND c.key != null AND STARTSWITH(c.key, @keyPrefix)")
+                            .WithParameter("@actorType", actorType)
+                            .WithParameter("@actorKey", actorKey)
                             .WithParameter("@keyPrefix", list.KeyPrefix);
                     }
                     else
                     {
-                        query = new QueryDefinition("SELECT c.key FROM c WHERE c.actorId = @actorId AND c.key != null")
-                            .WithParameter("@actorId", actorId.ToString());
+                        query = new QueryDefinition("SELECT c.key FROM c WHERE c.actorType = @actorType AND c.actorKey = @actorKey AND c.key != null")
+                            .WithParameter("@actorType", actorType)
+                            .WithParameter("@actorKey", actorKey);
                     }
 
                     var requestOptions = new QueryRequestOptions
@@ -212,7 +219,18 @@ public class CosmosActorStateStorage : IActorStateStorage
     private const string RootDocumentId = "rootdoc";
 
     private static PartitionKey GetPartitionKey(ActorId actorId)
-        => new(actorId.ToString());
+    {
+        var (partitionKey, _, _) = BuildPartitionKey(actorId);
+        return partitionKey;
+    }
+
+    private static (PartitionKey partitionKey, string actorType, string actorKey) BuildPartitionKey(ActorId actorId)
+    {
+        var actorType = actorId.Type.ToString();
+        var actorKey = actorId.Key;
+        var partitionKey = new PartitionKeyBuilder().Add(actorType).Add(actorKey).Build();
+        return (partitionKey, actorType, actorKey);
+    }
 
     /// <summary>
     /// Gets the current ETag for the actor's root document.
@@ -233,5 +251,14 @@ public class CosmosActorStateStorage : IActorStateStorage
             // No root document means no actor state exists - return initial ETag
             return InitialEtag;
         }
+    }
+
+    /// <summary>
+    /// Disposes the Cosmos DB container asynchronously.
+    /// </summary>
+    public async ValueTask DisposeAsync()
+    {
+        await this._lazyContainer.DisposeAsync().ConfigureAwait(false);
+        GC.SuppressFinalize(this);
     }
 }

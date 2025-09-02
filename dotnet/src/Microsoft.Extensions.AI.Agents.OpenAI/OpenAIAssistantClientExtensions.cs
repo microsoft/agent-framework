@@ -86,9 +86,11 @@ public static class OpenAIAssistantClientExtensions
             {
                 switch (tool)
                 {
-                    case AIFunction aiFunction:
-                        assistantOptions.Tools.Add(ToOpenAIAssistantsFunctionToolDefinition(aiFunction));
-                        break;
+                    // Attempting to set the tools at the agent level throws
+                    // https://github.com/dotnet/extensions/issues/6743
+                    //case AIFunction aiFunction:
+                    //    assistantOptions.Tools.Add(ToOpenAIAssistantsFunctionToolDefinition(aiFunction));
+                    //    break;
 
                     case HostedCodeInterpreterTool:
                         var codeInterpreterToolDefinition = new CodeInterpreterToolDefinition();
@@ -178,9 +180,11 @@ public static class OpenAIAssistantClientExtensions
             {
                 switch (tool)
                 {
-                    case AIFunction aiFunction:
-                        assistantOptions.Tools.Add(ToOpenAIAssistantsFunctionToolDefinition(aiFunction));
-                        break;
+                    // Attempting to set the tools at the agent level throws
+                    // https://github.com/dotnet/extensions/issues/6743
+                    //case AIFunction aiFunction:
+                    //    assistantOptions.Tools.Add(ToOpenAIAssistantsFunctionToolDefinition(aiFunction));
+                    //    break;
 
                     case HostedCodeInterpreterTool:
                         var codeInterpreterToolDefinition = new CodeInterpreterToolDefinition();
@@ -206,7 +210,7 @@ public static class OpenAIAssistantClientExtensions
         };
 
 #pragma warning disable CA2000 // Dispose objects before losing scope
-        var chatClient = client.AsIChatClient(assistantId);
+        var chatClient = client.AsNewIChatClient(assistantId);
 #pragma warning restore CA2000 // Dispose objects before losing scope
         return new ChatClientAgent(chatClient, agentOptions, loggerFactory);
     }

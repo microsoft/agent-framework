@@ -1,0 +1,25 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+namespace Microsoft.Agents.Workflows;
+
+/// <summary>
+/// Base class for SuperStep-scoped events, for example, <see cref="SuperStepCompletedEvent"/>
+/// </summary>
+public class SuperStepEvent(int stepNumber, object? data = null) : WorkflowEvent(data)
+{
+    /// <summary>
+    /// The zero-based index of the SuperStep associated with this event.
+    /// </summary>
+    public int StepNumber => stepNumber;
+
+    /// <inheritdoc/>
+    public override string ToString()
+    {
+        if (this.Data != null)
+        {
+            return $"{this.GetType().Name}(Step = {this.StepNumber}, Data: {this.Data.GetType()} = {this.Data})";
+        }
+
+        return $"{this.GetType().Name}(Step = {this.StepNumber})";
+    }
+}
