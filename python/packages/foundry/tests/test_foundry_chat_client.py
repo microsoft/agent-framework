@@ -24,6 +24,7 @@ from agent_framework import (
     ai_function,
 )
 from agent_framework.exceptions import ServiceInitializationError
+from agent_framework.foundry import FoundryChatClient, FoundrySettings
 from azure.ai.agents.models import (
     RequiredFunctionToolCall,
     SubmitToolOutputsAction,
@@ -32,8 +33,6 @@ from azure.ai.agents.models import (
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field, ValidationError
-
-from agent_framework_foundry import FoundryChatClient, FoundrySettings
 
 skip_if_foundry_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
@@ -61,8 +60,7 @@ def create_test_foundry_chat_client(
         thread_id=thread_id,
         _should_delete_agent=should_delete_agent,
         agent_name=foundry_settings.agent_name,  # type: ignore[reportCallIssue]
-        ai_model_deployment_name=foundry_settings.model_deployment_name,  # type:
-        credential=None,
+        ai_model_id=foundry_settings.model_deployment_name,
     )
 
 

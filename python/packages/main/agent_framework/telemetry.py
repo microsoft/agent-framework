@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import json
 import logging
 import os
 from collections.abc import AsyncIterable, Awaitable, Callable
+from contextlib import contextmanager
 from enum import Enum
 from functools import wraps
 from time import time_ns
@@ -15,6 +15,7 @@ from opentelemetry.trace import Span, StatusCode, get_tracer, use_span
 from . import __version__ as version_info
 from ._logging import get_logger
 from ._pydantic import AFBaseSettings
+from .exceptions import AgentException, ChatClientInitializationError
 
 if TYPE_CHECKING:  # pragma: no cover
     from opentelemetry.util._decorator import _AgnosticContextManager  # type: ignore[reportPrivateUsage]
@@ -39,11 +40,16 @@ logger = get_logger()
 __all__ = [
     "AGENT_FRAMEWORK_USER_AGENT",
     "APP_INFO",
+    "OPEN_TELEMETRY_AGENT_MARKER",
+    "OPEN_TELEMETRY_CHAT_CLIENT_MARKER",
     "USER_AGENT_KEY",
+    "OpenTelemetryAgent",
     "OpenTelemetryChatClient",
     "prepend_agent_framework_to_user_agent",
-    "use_agent_telemetry",
 ]
+
+OPEN_TELEMETRY_CHAT_CLIENT_MARKER: Final[str] = "__open_telemetry_chat_client__"
+OPEN_TELEMETRY_AGENT_MARKER: Final[str] = "__open_telemetry_agent__"
 
 
 # We're recording multiple events for the chat history, some of them are emitted within (hundreds of)
@@ -204,16 +210,16 @@ class ModelDiagnosticSettings(AFBaseSettings):
         Sensitive events should only be enabled on test and development environments.
 
     Required settings for prefix 'AGENT_FRAMEWORK_GENAI_' are:
-    - enable_otel_diagnostics: bool - Enable OpenTelemetry diagnostics. Default is False.
-                (Env var AGENT_FRAMEWORK_GENAI_ENABLE_OTEL_DIAGNOSTICS)
-    - enable_otel_diagnostics_sensitive: bool - Enable OpenTelemetry sensitive events. Default is False.
-                (Env var AGENT_FRAMEWORK_GENAI_ENABLE_OTEL_DIAGNOSTICS_SENSITIVE)
+    - enable_otel: bool - Enable OpenTelemetry diagnostics. Default is False.
+                (Env var AGENT_FRAMEWORK_GENAI_ENABLE_OTEL)
+    - enable_sensitive_data: bool - Enable OpenTelemetry sensitive events. Default is False.
+                (Env var AGENT_FRAMEWORK_GENAI_ENABLE_SENSITIVE_DATA)
     """
 
     env_prefix: ClassVar[str] = "AGENT_FRAMEWORK_GENAI_"
 
-    enable_otel_diagnostics: bool = False
-    enable_otel_diagnostics_sensitive: bool = False
+    enable_otel: bool = False
+    enable_sensitive_data: bool = False
 
     @property
     def ENABLED(self) -> bool:
@@ -221,18 +227,15 @@ class ModelDiagnosticSettings(AFBaseSettings):
 
         Model diagnostics are enabled if either diagnostic is enabled or diagnostic with sensitive events is enabled.
         """
-        return self.enable_otel_diagnostics or self.enable_otel_diagnostics_sensitive
+        return self.enable_otel or self.enable_sensitive_data
 
     @property
-    def SENSITIVE_EVENTS_ENABLED(self) -> bool:
+    def SENSITIVE_DATA_ENABLED(self) -> bool:
         """Check if sensitive events are enabled.
 
         Sensitive events are enabled if the diagnostic with sensitive events is enabled.
         """
-        return self.enable_otel_diagnostics_sensitive
-
-
-MODEL_DIAGNOSTICS_SETTINGS = ModelDiagnosticSettings()
+        return self.enable_sensitive_data
 
 
 def start_as_current_span(
@@ -274,13 +277,12 @@ def set_exception(span: Span, exception: Exception, timestamp: int | None = None
     span.set_status(status=StatusCode.ERROR, description=repr(exception))
 
 
-# region ChatClient
+# region OtelChatClient
 
 
 def _trace_get_response(
     chat_client: "ChatClient",
     get_response_func: Callable[..., Awaitable["ChatResponse"]],
-    model_diagnostics: ModelDiagnosticSettings,
     model_provider: str,
 ) -> Callable[..., Awaitable["ChatResponse"]]:
     """Decorator to trace chat completion activities.
@@ -288,7 +290,7 @@ def _trace_get_response(
     Args:
         chat_client: the chat client
         get_response_func: The function to trace.
-        model_diagnostics: the settings for what to trace
+        # model_diagnostics: the settings for what to trace
         model_provider: The model provider name.
     """
 
@@ -297,50 +299,38 @@ def _trace_get_response(
         messages: "str | ChatMessage | list[str] | list[ChatMessage]",
         **kwargs: Any,
     ) -> "ChatResponse":
-        if not model_diagnostics.ENABLED:
+        model_diagnostics = chat_client._model_diagnostics_settings
+        if not model_diagnostics and not model_diagnostics.ENABLED:
             # If model diagnostics are not enabled, just return the completion
             return await get_response_func(
                 messages=messages,
                 **kwargs,
             )
 
-        with use_span(
-            span=_get_response_span(
-                operation_name=OtelAttr.CHAT_COMPLETION_OPERATION,
-                model_provider=model_provider,
-                chat_client=chat_client,
-                **kwargs,
-            ),
-            end_on_exit=True,
-            record_exception=False,
-            set_status_on_exception=False,
-        ) as current_span:
-            if model_diagnostics.SENSITIVE_EVENTS_ENABLED:
-                from ._clients import _prepare_messages
-
-                _log_messages(
-                    model_provider=model_provider,
-                    messages=_prepare_messages(messages),
-                )
+        with _chat_response_span(
+            operation_name=OtelAttr.CHAT_COMPLETION_OPERATION,
+            model_provider=model_provider,
+            chat_client=chat_client,
+            **kwargs,
+        ) as span:
+            if model_diagnostics.SENSITIVE_DATA_ENABLED and messages:
+                _log_messages(system_name=model_provider, messages=messages)
             try:
                 response = await get_response_func(messages=messages, **kwargs)
             except Exception as exception:
-                set_exception(span=current_span, exception=exception, timestamp=time_ns())
+                set_exception(span=span, exception=exception, timestamp=time_ns())
                 raise
-            _set_response_output(span=current_span, response=response)
-            if model_diagnostics.SENSITIVE_EVENTS_ENABLED:
-                _log_messages(model_provider=model_provider, messages=response.messages)
+            _set_response_output(span=span, response=response)
+            if model_diagnostics.SENSITIVE_DATA_ENABLED and response.messages:
+                _log_messages(system_name=model_provider, messages=response.messages)
             return response
 
-    # Mark the wrapper decorator as a chat completion decorator
-    wrap_get_response.__model_diagnostics_chat_client__ = True  # type: ignore
     return wrap_get_response
 
 
 def _trace_get_streaming_response(
     chat_client: "ChatClient",
     get_streaming_response_func: Callable[..., AsyncIterable["ChatResponseUpdate"]],
-    model_diagnostics: ModelDiagnosticSettings,
     model_provider: str,
 ) -> Callable[..., AsyncIterable["ChatResponseUpdate"]]:
     """Decorator to trace streaming chat completion activities.
@@ -356,7 +346,8 @@ def _trace_get_streaming_response(
     async def wrap_get_streaming_response(
         messages: "str | ChatMessage | list[str] | list[ChatMessage]", **kwargs: Any
     ) -> AsyncIterable["ChatResponseUpdate"]:
-        if not model_diagnostics.ENABLED:
+        model_diagnostics = chat_client._model_diagnostics_settings
+        if not model_diagnostics and not model_diagnostics.ENABLED:
             # If model diagnostics are not enabled, just return the completion
             async for streaming_chat_message_contents in get_streaming_response_func(messages=messages, **kwargs):
                 yield streaming_chat_message_contents
@@ -366,100 +357,227 @@ def _trace_get_streaming_response(
         # the function results are handled there and passed.
         all_updates: list["ChatResponseUpdate"] = []
 
-        with use_span(
-            span=_get_response_span(
-                operation_name=OtelAttr.CHAT_COMPLETION_OPERATION,
-                model_provider=model_provider,
-                chat_client=chat_client,
-                **kwargs,
-            ),
-            end_on_exit=True,
-            record_exception=False,
-            set_status_on_exception=False,
-        ) as current_span:
-            if model_diagnostics.SENSITIVE_EVENTS_ENABLED:
-                from ._clients import _prepare_messages
-
-                _log_messages(
-                    model_provider=model_provider,
-                    messages=_prepare_messages(messages),
-                )
+        with _chat_response_span(
+            operation_name=OtelAttr.CHAT_COMPLETION_OPERATION,
+            model_provider=model_provider,
+            chat_client=chat_client,
+            **kwargs,
+        ) as span:
+            if model_diagnostics.SENSITIVE_DATA_ENABLED and messages:
+                _log_messages(system_name=model_provider, messages=messages)
             try:
                 async for update in get_streaming_response_func(messages=messages, **kwargs):
                     all_updates.append(update)
                     yield update
             except Exception as exception:
-                set_exception(span=current_span, exception=exception, timestamp=time_ns())
+                set_exception(span=span, exception=exception, timestamp=time_ns())
                 raise
             from ._types import ChatResponse
 
             response = ChatResponse.from_chat_response_updates(all_updates)
-            _set_response_output(span=current_span, response=response)
+            _set_response_output(span=span, response=response)
 
-            if model_diagnostics.SENSITIVE_EVENTS_ENABLED:
-                _log_messages(
-                    model_provider=model_provider,
-                    messages=response.messages,
-                )
+            if model_diagnostics.SENSITIVE_DATA_ENABLED and response.messages:
+                _log_messages(system_name=model_provider, messages=response.messages)
 
-    # Mark the wrapper decorator as a streaming chat completion decorator
-    wrap_get_streaming_response.__model_diagnostics_streaming_chat_completion__ = True  # type: ignore
     return wrap_get_streaming_response
 
 
 def OpenTelemetryChatClient(
     chat_client: "ChatClient",
     *,
-    enable_otel_diagnostics: bool | None = None,
-    enable_otel_diagnostics_sensitive: bool | None = None,
+    enable_sensitive_data: bool | None = None,
     model_provider_name: str | None = None,
 ) -> "ChatClient":
     """Class decorator that enables telemetry for a chat client.
 
+    Since this decorator is applied deliberately, it is assumed that the user intends to enable telemetry.
+
     Args:
         chat_client: The chat client to decorate.
-        enable_otel_diagnostics: Enable OpenTelemetry diagnostics.
-            If None, uses the value from the environment.
-            If those are not present, the default is False.
-        enable_otel_diagnostics_sensitive: Enable OpenTelemetry sensitive events.
+        enable_sensitive_data: Enable OpenTelemetry sensitive events.
             If None, uses the value from the environment.
             If those are not present, the default is False.
         model_provider_name: The model provider name.
             If None, uses the value from the chat client's MODEL_PROVIDER_NAME variable.
     """
-    model_diagnostics = ModelDiagnosticSettings(
-        enable_otel_diagnostics=enable_otel_diagnostics,  # type: ignore[reportArgumentType]
-        enable_otel_diagnostics_sensitive=enable_otel_diagnostics_sensitive,  # type: ignore[reportArgumentType]
+    chat_client._model_diagnostics_settings = ModelDiagnosticSettings(
+        enable_otel=True,
+        enable_sensitive_data=enable_sensitive_data,  # type: ignore[reportArgumentType]
     )
     model_provider = model_provider_name or str(getattr(chat_client, "MODEL_PROVIDER_NAME", "unknown"))
-
-    object.__setattr__(
-        chat_client,
-        "get_response",
-        _trace_get_response(
-            chat_client=chat_client,
-            get_response_func=chat_client.get_response,
-            model_diagnostics=model_diagnostics,
-            model_provider=model_provider,
-        ),
-    )
-    object.__setattr__(
-        chat_client,
-        "get_streaming_response",
-        _trace_get_streaming_response(
-            chat_client=chat_client,
-            get_streaming_response_func=chat_client.get_streaming_response,
-            model_diagnostics=model_diagnostics,
-            model_provider=model_provider,
-        ),
-    )
-    setattr(chat_client, "__open_telemetry_chat_client__", True)  # noqa: B010
+    try:
+        object.__setattr__(
+            chat_client,
+            "get_response",
+            _trace_get_response(
+                chat_client=chat_client,
+                get_response_func=chat_client.get_response,
+                model_provider=model_provider,
+            ),
+        )
+    except AttributeError as ex:
+        raise ChatClientInitializationError("Chat client does not have a 'get_response' method.", ex) from ex
+    try:
+        object.__setattr__(
+            chat_client,
+            "get_streaming_response",
+            _trace_get_streaming_response(
+                chat_client=chat_client,
+                get_streaming_response_func=chat_client.get_streaming_response,
+                model_provider=model_provider,
+            ),
+        )
+    except AttributeError as ex:
+        raise ChatClientInitializationError("Chat client does not have a 'get_streaming_response' method.", ex) from ex
+    setattr(chat_client, OPEN_TELEMETRY_CHAT_CLIENT_MARKER, True)
     return chat_client
 
 
-def _get_response_span(
+# region Agent
+
+
+def _trace_agent_run(
+    agent: "AIAgent",
+    run_func: Callable[..., Awaitable["AgentRunResponse"]],
+    agent_system_name: str,
+) -> Callable[..., Awaitable["AgentRunResponse"]]:
+    """Decorator to trace chat completion activities.
+
+    Args:
+        agent: The agent that is wrapped.
+        run_func: The function to trace.
+        agent_system_name: The system name used for Open Telemetry.
+    """
+
+    @wraps(run_func)
+    async def wrap_run(
+        messages: "str | ChatMessage | list[str] | list[ChatMessage] | None" = None,
+        *,
+        thread: "AgentThread | None" = None,
+        **kwargs: Any,
+    ) -> "AgentRunResponse":
+        model_diagnostics = agent._model_diagnostics_settings
+        if not model_diagnostics.ENABLED:
+            # If model diagnostics are not enabled, just return the completion
+            return await run_func(
+                messages=messages,
+                thread=thread,
+                **kwargs,
+            )
+
+        with _agent_run_span(
+            operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
+            agent=agent,
+            system=agent_system_name,
+            thread=thread,
+            **kwargs,
+        ) as current_span:
+            if model_diagnostics.SENSITIVE_DATA_ENABLED and messages:
+                _log_messages(system_name=agent_system_name, messages=messages)
+            try:
+                response = await run_func(messages=messages, thread=thread, **kwargs)
+            except Exception as exception:
+                set_exception(span=current_span, exception=exception, timestamp=time_ns())
+                raise
+            _set_response_output(current_span, response)
+            if model_diagnostics.SENSITIVE_DATA_ENABLED and response.messages:
+                _log_messages(agent_system_name, response.messages)
+            return response
+
+    return wrap_run
+
+
+def _trace_agent_run_streaming(
+    agent: "AIAgent",
+    run_streaming_func: Callable[..., AsyncIterable["AgentRunResponseUpdate"]],
+    agent_system_name: str,
+) -> Callable[..., AsyncIterable["AgentRunResponseUpdate"]]:
+    """Decorator to trace streaming agent run activities.
+
+    Args:
+        agent: The agent that is wrapped.
+        run_streaming_func: The function to trace.
+        agent_system_name: The system name used for Open Telemetry.
+    """
+
+    @wraps(run_streaming_func)
+    async def wrap_run_streaming(
+        messages: "str | ChatMessage | list[str] | list[ChatMessage] | None" = None,
+        *,
+        thread: "AgentThread | None" = None,
+        **kwargs: Any,
+    ) -> AsyncIterable["AgentRunResponseUpdate"]:
+        model_diagnostics = agent._model_diagnostics_settings
+        if not model_diagnostics.ENABLED:
+            # If model diagnostics are not enabled, just return the completion
+            async for streaming_agent_response in run_streaming_func(messages=messages, thread=thread, **kwargs):
+                yield streaming_agent_response
+            return
+
+        from ._types import AgentRunResponse
+
+        all_updates: list["AgentRunResponseUpdate"] = []
+
+        with _agent_run_span(
+            operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
+            agent=agent,
+            system=agent_system_name,
+            thread=thread,
+            **kwargs,
+        ) as current_span:
+            if model_diagnostics.SENSITIVE_DATA_ENABLED and messages:
+                _log_messages(system_name=agent_system_name, messages=messages)
+            try:
+                async for update in run_streaming_func(messages=messages, thread=thread, **kwargs):
+                    all_updates.append(update)
+                    yield update
+
+            except Exception as exception:
+                set_exception(span=current_span, exception=exception, timestamp=time_ns())
+                raise
+            response = AgentRunResponse.from_agent_run_response_updates(all_updates)
+            _set_response_output(current_span, response)
+            if model_diagnostics.SENSITIVE_DATA_ENABLED and response.messages:
+                _log_messages(agent_system_name, response.messages)
+
+    return wrap_run_streaming
+
+
+def OpenTelemetryAgent(
+    agent: "AIAgent",
+    *,
+    enable_sensitive_data: bool | None = None,
+    agent_system_name: str | None = None,
+) -> "AIAgent":
+    """Class decorator that enables telemetry for an agent."""
+    agent._model_diagnostics_settings = ModelDiagnosticSettings(
+        enable_otel=True,
+        enable_sensitive_data=enable_sensitive_data,  # type: ignore[reportArgumentType]
+    )
+    agent_system_name = agent_system_name or str(getattr(agent, "AGENT_SYSTEM_NAME", "Unknown"))
+    try:
+        object.__setattr__(agent, "run", _trace_agent_run(agent, agent.run, agent_system_name))
+    except AttributeError as ex:
+        raise AgentException("Agent does not have `run` method.", ex) from ex
+    try:
+        object.__setattr__(
+            agent, "run_streaming", _trace_agent_run_streaming(agent, agent.run_streaming, agent_system_name)
+        )
+    except AttributeError as ex:
+        raise AgentException("Agent does not have `run_streaming` method.", ex) from ex
+    setattr(agent, OPEN_TELEMETRY_AGENT_MARKER, True)
+    return agent
+
+
+# region Otel Helpers
+
+
+@contextmanager
+def _chat_response_span(
+    *,
     operation_name: str,
-    model_provider: str,
+    system_name: str,
     chat_client: "ChatClient",
     **kwargs: Any,
 ) -> Span:
@@ -474,14 +592,15 @@ def _get_response_span(
     # Set attributes on the span
     span.set_attributes({
         OtelAttr.OPERATION: operation_name,
-        OtelAttr.SYSTEM: model_provider,
+        OtelAttr.SYSTEM: system_name,
         OtelAttr.MODEL: model_name,
         OtelAttr.CHOICE_COUNT: 1,
     })
 
     if (service_url_func := getattr(chat_client, "service_url")) and callable(service_url_func):  # noqa: B009
         span.set_attribute(OtelAttr.ADDRESS, service_url_func())  # type: ignore[reportArgumentType]
-
+    if conversation_id := kwargs.get("conversation_id"):
+        span.set_attribute(OtelAttr.CONVERSATION_ID, conversation_id)
     if seed := kwargs.get("seed"):
         span.set_attribute(OtelAttr.SEED, seed)
     if frequency_penalty := kwargs.get("frequency_penalty"):
@@ -503,168 +622,21 @@ def _get_response_span(
             OtelAttr.ENCODING_FORMATS,
             encoding_formats if isinstance(encoding_formats, list) else [encoding_formats],
         )
-    return span
+    with use_span(
+        span=span,
+        end_on_exit=True,
+        record_exception=False,
+        set_status_on_exception=False,
+    ) as current_span:
+        yield current_span
 
 
-def _log_messages(
-    model_provider: str,
-    messages: "list[ChatMessage]",
-) -> None:
-    """Log messages with extra information."""
-    for index, message in enumerate(messages):
-        logger.info(
-            message.model_dump_json(exclude_none=True),
-            extra={
-                OtelAttr.EVENT_NAME: ROLE_EVENT_MAP.get(message.role.value),
-                OtelAttr.SYSTEM: model_provider,
-                ChatMessageListTimestampFilter.INDEX_KEY: index,
-            },
-        )
-
-
-def _set_response_output(
-    span: Span,
-    response: "ChatResponse",
-) -> None:
-    """Set the response for a given span."""
-    # Set the response ID
-    if response_id := response.response_id:
-        span.set_attribute(OtelAttr.RESPONSE_ID, response_id)
-
-    # Set the finish reason
-    if finish_reason := response.finish_reason:
-        span.set_attribute(OtelAttr.FINISH_REASONS, [finish_reason.value])  # type: ignore[reportArgumentType]
-
-    # Set usage attributes
-    if usage := response.usage_details:
-        if usage.input_token_count:
-            span.set_attribute(OtelAttr.INPUT_TOKENS, usage.input_token_count)
-        if usage.output_token_count:
-            span.set_attribute(OtelAttr.OUTPUT_TOKENS, usage.output_token_count)
-
-
-# region Agent
-
-
-def _trace_agent_run(
-    run_func: Callable[..., Awaitable["AgentRunResponse"]],
-) -> Callable[..., Awaitable["AgentRunResponse"]]:
-    """Decorator to trace chat completion activities.
-
-    Args:
-        run_func: The function to trace.
-    """
-
-    @wraps(run_func)
-    async def wrap_run(
-        self: "ChatClientAgent",
-        messages: "str | ChatMessage | list[str] | list[ChatMessage] | None" = None,
-        *,
-        thread: "AgentThread | None" = None,
-        **kwargs: Any,
-    ) -> "AgentRunResponse":
-        if not MODEL_DIAGNOSTICS_SETTINGS.ENABLED:
-            # If model diagnostics are not enabled, just return the completion
-            return await run_func(
-                self,
-                messages=messages,
-                thread=thread,
-                **kwargs,
-            )
-
-        with use_span(
-            _get_agent_run_span(
-                operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
-                agent=self,
-                system=self.AGENT_SYSTEM_NAME,
-                thread=thread,
-                **kwargs,
-            ),
-            end_on_exit=True,
-        ) as current_span:
-            _set_agent_run_input(self.AGENT_SYSTEM_NAME, messages)
-            try:
-                response = await run_func(self, messages=messages, thread=thread, **kwargs)
-                _set_agent_run_output(current_span, response, self.AGENT_SYSTEM_NAME)
-                return response
-            except Exception as exception:
-                set_exception(span=current_span, exception=exception, timestamp=time_ns())
-                raise
-
-    # Mark the wrapper decorator as a agent run decorator
-    wrap_run.__model_diagnostics_agent_run__ = True  # type: ignore
-
-    return wrap_run
-
-
-def _trace_agent_run_streaming(
-    run_func: Callable[..., AsyncIterable["AgentRunResponseUpdate"]],
-) -> Callable[..., AsyncIterable["AgentRunResponseUpdate"]]:
-    """Decorator to trace streaming agent run activities.
-
-    Args:
-        run_func: The function to trace.
-    """
-
-    @wraps(run_func)
-    async def wrap_run_streaming(
-        self: "ChatClientAgent",
-        messages: "str | ChatMessage | list[str] | list[ChatMessage] | None" = None,
-        *,
-        thread: "AgentThread | None" = None,
-        **kwargs: Any,
-    ) -> AsyncIterable["AgentRunResponseUpdate"]:
-        if not MODEL_DIAGNOSTICS_SETTINGS.ENABLED:
-            # If model diagnostics are not enabled, just return the completion
-            async for streaming_agent_response in run_func(self, messages=messages, thread=thread, **kwargs):
-                yield streaming_agent_response
-            return
-
-        from ._types import AgentRunResponse
-
-        all_updates: list["AgentRunResponseUpdate"] = []
-
-        with use_span(
-            _get_agent_run_span(
-                operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
-                agent=self,
-                system=self.AGENT_SYSTEM_NAME,
-                thread=thread,
-                **kwargs,
-            ),
-            end_on_exit=True,
-        ) as current_span:
-            _set_agent_run_input(self.AGENT_SYSTEM_NAME, messages)
-            try:
-                async for response in run_func(self, messages=messages, thread=thread, **kwargs):
-                    all_updates.append(response)
-                    yield response
-
-                all_messages_flattened = AgentRunResponse.from_agent_run_response_updates(all_updates)
-                _set_agent_run_output(current_span, all_messages_flattened, self.AGENT_SYSTEM_NAME)
-            except Exception as exception:
-                set_exception(span=current_span, exception=exception, timestamp=time_ns())
-                raise
-
-    # Mark the wrapper decorator as a streaming agent run decorator
-    wrap_run_streaming.__model_diagnostics_streaming_agent_run__ = True  # type: ignore
-    return wrap_run_streaming
-
-
-def use_agent_telemetry(cls: type[TChatClientAgent]) -> type[TChatClientAgent]:
-    """Class decorator that enables telemetry for an agent."""
-    if run := getattr(cls, "run", None):
-        cls.run = _trace_agent_run(run)  # type: ignore
-    if run_streaming := getattr(cls, "run_streaming", None):
-        cls.run_streaming = _trace_agent_run_streaming(run_streaming)  # type: ignore
-    return cls
-
-
-def _get_agent_run_span(
+@contextmanager
+def _agent_run_span(
     *,
     operation_name: str,
     agent: "AIAgent",
-    system: str,
+    system_name: str,
     thread: "AgentThread | None",
     **kwargs: Any,
 ) -> Span:
@@ -680,7 +652,7 @@ def _get_agent_run_span(
     # Set attributes on the span
     span.set_attributes({
         OtelAttr.OPERATION: operation_name,
-        OtelAttr.SYSTEM: system,
+        OtelAttr.SYSTEM: system_name,
         OtelAttr.CHOICE_COUNT: 1,
         OtelAttr.AGENT_ID: agent.id,
     })
@@ -688,103 +660,83 @@ def _get_agent_run_span(
         span.set_attribute(OtelAttr.AGENT_NAME, agent.name)
     if agent.description:
         span.set_attribute(OtelAttr.AGENT_DESCRIPTION, agent.description)
-    if thread and thread.service_thread_id:
-        span.set_attribute(OtelAttr.CONVERSATION_ID, thread.service_thread_id)
-    if "model" in kwargs:
-        span.set_attribute(OtelAttr.MODEL, kwargs["model"])
-    if "seed" in kwargs:
-        span.set_attribute(OtelAttr.SEED, kwargs["seed"])
-    if "frequency_penalty" in kwargs:
-        span.set_attribute(OtelAttr.FREQUENCY_PENALTY, kwargs["frequency_penalty"])
-    if "presence_penalty" in kwargs:
-        span.set_attribute(OtelAttr.PRESENCE_PENALTY, kwargs["presence_penalty"])
-    if "max_tokens" in kwargs:
-        span.set_attribute(OtelAttr.MAX_TOKENS, kwargs["max_tokens"])
-    if "stop" in kwargs:
-        span.set_attribute(OtelAttr.STOP_SEQUENCES, kwargs["stop"])
-    if "temperature" in kwargs:
-        span.set_attribute(OtelAttr.TEMPERATURE, kwargs["temperature"])
-    if "top_p" in kwargs:
-        span.set_attribute(OtelAttr.TOP_P, kwargs["top_p"])
-    if "top_k" in kwargs:
-        span.set_attribute(OtelAttr.TOP_K, kwargs["top_k"])
-    if "encoding_formats" in kwargs:
-        span.set_attribute(OtelAttr.ENCODING_FORMATS, kwargs["encoding_formats"])
-    return span
+    conversation_id = kwargs.get("conversation_id")
+    if thread:
+        conversation_id = thread.service_thread_id
+    if conversation_id:
+        span.set_attribute(OtelAttr.CONVERSATION_ID, conversation_id)
+    if model := kwargs.get("ai_model_id"):
+        span.set_attribute(OtelAttr.MODEL, model)
+    if seed := kwargs.get("seed"):
+        span.set_attribute(OtelAttr.SEED, seed)
+    if frequency_penalty := kwargs.get("frequency_penalty"):
+        span.set_attribute(OtelAttr.FREQUENCY_PENALTY, frequency_penalty)
+    if presence_penalty := kwargs.get("presence_penalty"):
+        span.set_attribute(OtelAttr.PRESENCE_PENALTY, presence_penalty)
+    if max_tokens := kwargs.get("max_tokens"):
+        span.set_attribute(OtelAttr.MAX_TOKENS, max_tokens)
+    if stop := kwargs.get("stop"):
+        span.set_attribute(OtelAttr.STOP_SEQUENCES, stop)
+    if temperature := kwargs.get("temperature"):
+        span.set_attribute(OtelAttr.TEMPERATURE, temperature)
+    if top_p := kwargs.get("top_p"):
+        span.set_attribute(OtelAttr.TOP_P, top_p)
+    if top_k := kwargs.get("top_k"):
+        span.set_attribute(OtelAttr.TOP_K, top_k)
+    if encoding_formats := kwargs.get("encoding_formats"):
+        span.set_attribute(
+            OtelAttr.ENCODING_FORMATS,
+            encoding_formats if isinstance(encoding_formats, list) else [encoding_formats],
+        )
+    with use_span(
+        span,
+        end_on_exit=True,
+        record_exception=False,
+        set_status_on_exception=False,
+    ):
+        yield span
 
 
-def _set_agent_run_input(
-    system: str,
-    messages: "str | ChatMessage | list[str] | list[ChatMessage] | list[str | ChatMessage] | None" = None,
+def _log_messages(
+    system_name: str,
+    messages: "str | ChatMessage | list[str] | list[ChatMessage] | None",
 ) -> None:
-    """Set the input for a chat response.
+    """Log messages with extra information."""
+    from ._clients import _prepare_messages
 
-    The logs will be associated to the current span.
-    """
-    if messages and MODEL_DIAGNOSTICS_SETTINGS.SENSITIVE_EVENTS_ENABLED:
-        if not isinstance(messages, list):
-            messages = [messages]
-        for idx, message in enumerate(messages):
-            if isinstance(message, str):
-                logger.info(
-                    message,
-                    extra={
-                        # assume user message
-                        OtelAttr.EVENT_NAME.value: OtelAttr.USER_MESSAGE,
-                        OtelAttr.SYSTEM: system,
-                        ChatMessageListTimestampFilter.INDEX_KEY: idx,
-                    },
-                )
-            else:
-                logger.info(
-                    message.model_dump_json(exclude_none=True),
-                    extra={
-                        OtelAttr.EVENT_NAME.value: ROLE_EVENT_MAP.get(message.role.value),
-                        OtelAttr.SYSTEM: system,
-                        ChatMessageListTimestampFilter.INDEX_KEY: idx,
-                    },
-                )
+    prepped = _prepare_messages(messages)
+    for index, message in enumerate(prepped):
+        logger.info(
+            message.model_dump_json(exclude_none=True),
+            extra={
+                OtelAttr.EVENT_NAME: ROLE_EVENT_MAP.get(message.role.value),
+                OtelAttr.SYSTEM: system_name,
+                ChatMessageListTimestampFilter.INDEX_KEY: index,
+            },
+        )
 
 
-def _set_agent_run_output(
-    current_span: Span,
-    response: "AgentRunResponse",
-    model_provider: str,
+def _set_response_output(
+    span: Span,
+    response: "ChatResponse | AgentRunResponse",
 ) -> None:
-    """Set the agent response for a given span."""
-    first_completion = response.messages[0]
-
+    """Set the response for a given span."""
     # Set the response ID
-    response_id = (
-        first_completion.additional_properties.get("id") if first_completion.additional_properties is not None else None
-    )
-    if response_id:
-        current_span.set_attribute(OtelAttr.RESPONSE_ID, response_id)
+    if response.response_id:
+        span.set_attribute(OtelAttr.RESPONSE_ID, response.response_id)
 
     # Set the finish reason
-    finish_reason = getattr(response.raw_representation, "finish_reason", None) if response.raw_representation else None
+    finish_reason = response.finish_reason
+    if not finish_reason:
+        finish_reason = (
+            getattr(response.raw_representation, "finish_reason", None) if response.raw_representation else None
+        )
     if finish_reason:
-        current_span.set_attribute(OtelAttr.FINISH_REASONS.value, [finish_reason])
+        span.set_attribute(OtelAttr.FINISH_REASONS, [finish_reason.value])  # type: ignore[reportArgumentType]
 
     # Set usage attributes
-    usage = response.usage_details
-    if usage:
+    if usage := response.usage_details:
         if usage.input_token_count:
-            current_span.set_attribute(OtelAttr.INPUT_TOKENS, usage.input_token_count)
+            span.set_attribute(OtelAttr.INPUT_TOKENS, usage.input_token_count)
         if usage.output_token_count:
-            current_span.set_attribute(OtelAttr.OUTPUT_TOKENS, usage.output_token_count)
-
-    # Set the completion event
-    if MODEL_DIAGNOSTICS_SETTINGS.SENSITIVE_EVENTS_ENABLED:
-        for msg in response.messages:
-            full_response: dict[str, Any] = {
-                "message": msg.model_dump(exclude_none=True),
-            }
-            full_response["index"] = response.response_id
-            logger.info(
-                json.dumps(full_response),
-                extra={
-                    OtelAttr.EVENT_NAME.value: OtelAttr.CHOICE,
-                    OtelAttr.SYSTEM: model_provider,
-                },
-            )
+            span.set_attribute(OtelAttr.OUTPUT_TOKENS, usage.output_token_count)

@@ -9,6 +9,7 @@ from typing import Annotated, Literal
 
 from agent_framework import ChatClientBuilder, __version__, ai_function
 from agent_framework.openai import OpenAIChatClient
+from agent_framework.telemetry import ModelDiagnosticSettings
 from azure.monitor.opentelemetry import configure_azure_monitor
 from opentelemetry import trace
 from opentelemetry._logs import set_logger_provider
@@ -199,8 +200,8 @@ async def run_chat_client(stream: bool = False, function_calling_outside: bool =
     if function_calling_outside:
         client = (
             ChatClientBuilder(OpenAIChatClient())
-            .open_telemetry_with(enable_otel_diagnostics_sensitive=True)
-            .function_calling.build()
+            .function_calling.open_telemetry_with(enable_sensitive_data=True)
+            .build()
         )
         scenario_name = (
             "Chat Client Stream - Otel around function call loop"
@@ -210,8 +211,8 @@ async def run_chat_client(stream: bool = False, function_calling_outside: bool =
     else:
         client = (
             ChatClientBuilder(OpenAIChatClient())
-            .function_calling.open_telemetry_with(enable_otel_diagnostics_sensitive=True)
-            .build()
+            .open_telemetry_with(enable_sensitive_data=True)
+            .function_calling.build()
         )
         scenario_name = (
             "Chat Client Stream - Otel within function call loop"
@@ -250,6 +251,7 @@ async def run_ai_function() -> None:
     with tracer.start_as_current_span("Scenario: AI Function", kind=SpanKind.CLIENT):
         print("Running scenario: AI Function")
         func = ai_function(get_weather)
+        func.model_diagnostics_settings = ModelDiagnosticSettings(enable_otel=True, enable_sensitive_data=True)
         weather = await func.invoke(location="Amsterdam")
         print(f"Weather in Amsterdam:\n{weather}")
 
@@ -262,23 +264,23 @@ async def main(scenario: Literal["chat_client", "chat_client_stream", "ai_functi
     set_up_metrics()
 
     tracer = trace.get_tracer("agent_framework", __version__)
-    with tracer.start_as_current_span("Scenario's", kind=SpanKind.CLIENT) as current_span:
+    with tracer.start_as_current_span("Sample Scenario's", kind=SpanKind.CLIENT) as current_span:
         print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
 
         # Scenarios where telemetry is collected in the SDK, from the most basic to the most complex.
         if scenario == "ai_function" or scenario == "all":
             with suppress(Exception):
                 await run_ai_function()
-        if scenario == "chat_client_stream" or scenario == "all":
-            with suppress(Exception):
-                await run_chat_client(stream=True, function_calling_outside=True)
-            with suppress(Exception):
-                await run_chat_client(stream=True, function_calling_outside=False)
         if scenario == "chat_client" or scenario == "all":
             with suppress(Exception):
                 await run_chat_client(stream=False, function_calling_outside=True)
             with suppress(Exception):
                 await run_chat_client(stream=False, function_calling_outside=False)
+        if scenario == "chat_client_stream" or scenario == "all":
+            with suppress(Exception):
+                await run_chat_client(stream=True, function_calling_outside=True)
+            with suppress(Exception):
+                await run_chat_client(stream=True, function_calling_outside=False)
 
 
 if __name__ == "__main__":

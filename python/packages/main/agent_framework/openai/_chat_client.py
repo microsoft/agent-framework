@@ -231,11 +231,26 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
         )
 
     def _usage_details_from_openai(self, usage: CompletionUsage) -> UsageDetails:
-        return UsageDetails(
-            prompt_tokens=usage.prompt_tokens,
-            completion_tokens=usage.completion_tokens,
-            total_tokens=usage.total_tokens,
+        details = UsageDetails(
+            input_token_count=usage.prompt_tokens,
+            output_token_count=usage.completion_tokens,
+            total_token_count=usage.total_tokens,
         )
+        if usage.completion_tokens_details:
+            if tokens := usage.completion_tokens_details.accepted_prediction_tokens:
+                details["completion/accepted_prediction_tokens"] = tokens
+            if tokens := usage.completion_tokens_details.audio_tokens:
+                details["completion/audio_tokens"] = tokens
+            if tokens := usage.completion_tokens_details.reasoning_tokens:
+                details["completion/reasoning_tokens"] = tokens
+            if tokens := usage.completion_tokens_details.rejected_prediction_tokens:
+                details["completion/rejected_prediction_tokens"] = tokens
+        if usage.prompt_tokens_details:
+            if tokens := usage.prompt_tokens_details.audio_tokens:
+                details["prompt/audio_tokens"] = tokens
+            if tokens := usage.prompt_tokens_details.cached_tokens:
+                details["prompt/cached_tokens"] = tokens
+        return details
 
     def _parse_text_from_choice(self, choice: Choice | ChunkChoice) -> TextContent | None:
         """Parse the choice into a TextContent object."""

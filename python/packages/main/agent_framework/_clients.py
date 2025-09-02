@@ -3,8 +3,8 @@
 import asyncio
 import sys
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, MutableSequence, Sequence
-from functools import partial, wraps
+from collections.abc import AsyncIterable, Callable, MutableMapping, MutableSequence, Sequence
+from functools import partial
 from inspect import isclass
 from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
 
@@ -13,16 +13,13 @@ from pydantic import BaseModel
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
 from ._threads import ChatMessageStore
-from ._tools import AIFunction, AITool, ai_function
+from ._tools import AITool, FunctionInvokingChatClient
 from ._types import (
-    AIContents,
     ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     ChatToolMode,
-    FunctionCallContent,
-    FunctionResultContent,
     GeneratedEmbeddings,
 )
 from .telemetry import OpenTelemetryChatClient
@@ -46,243 +43,7 @@ __all__ = [
     "ChatClientBase",
     "ChatClientBuilder",
     "EmbeddingGenerator",
-    "FunctionInvokingChatClient",
 ]
-
-# region Tool Calling Functions and Decorators
-
-
-async def _auto_invoke_function(
-    function_call_content: FunctionCallContent,
-    custom_args: dict[str, Any] | None = None,
-    *,
-    tool_map: dict[str, AIFunction[BaseModel, Any]],
-    sequence_index: int | None = None,
-    request_index: int | None = None,
-) -> AIContents:
-    """Invoke a function call requested by the agent, applying filters that are defined in the agent."""
-    tool: AIFunction[BaseModel, Any] | None = tool_map.get(function_call_content.name)
-    if tool is None:
-        raise KeyError(f"No tool or function named '{function_call_content.name}'")
-
-    parsed_args: dict[str, Any] = dict(function_call_content.parse_arguments() or {})
-
-    # Merge with user-supplied args; right-hand side dominates, so parsed args win on conflicts.
-    merged_args: dict[str, Any] = (custom_args or {}) | parsed_args
-    args = tool.input_model.model_validate(merged_args)
-    exception = None
-    try:
-        function_result = await tool.invoke(arguments=args, tool_call_id=function_call_content.call_id)
-    except Exception as ex:
-        exception = ex
-        function_result = None
-    return FunctionResultContent(
-        call_id=function_call_content.call_id,
-        exception=exception,
-        result=function_result,
-    )
-
-
-def _get_tool_map(
-    tools: "AITool \
-    | list[AITool]\
-    | Callable[..., Any] \
-    | list[Callable[..., Any]] \
-    | MutableMapping[str, Any] \
-    | list[MutableMapping[str, Any]]",
-) -> dict[str, AIFunction]:
-    ai_function_list: dict[str, AIFunction] = {}
-    for tool in tools if isinstance(tools, list) else [tools]:
-        if isinstance(tool, AIFunction):
-            ai_function_list[tool.name] = tool
-            continue
-        if callable(tool):
-            # Convert to AITool if it's a function or callable
-            ai_tool = ai_function(tool)
-            ai_function_list[ai_tool.name] = ai_tool
-    return ai_function_list
-
-
-async def execute_function_calls(
-    custom_args: dict[str, Any],
-    attempt_idx: int,
-    function_calls: Sequence[FunctionCallContent],
-    tools: "AITool | list[AITool] | Callable[..., Any] | list[Callable[..., Any]] | MutableMapping[str, Any] | list[MutableMapping[str, Any]]",  # noqa: E501
-) -> list[AIContents]:
-    tool_map = _get_tool_map(tools)
-    # Run all function calls concurrently
-    return await asyncio.gather(*[
-        _auto_invoke_function(
-            function_call_content=function_call,
-            custom_args=custom_args,
-            tool_map=tool_map,
-            sequence_index=seq_idx,
-            request_index=attempt_idx,
-        )
-        for seq_idx, function_call in enumerate(function_calls)
-    ])
-
-
-def _handle_function_calls_response(
-    get_response_func: Callable[..., Awaitable["ChatResponse"]],
-    max_iterations: int = 10,
-) -> Callable[..., Awaitable["ChatResponse"]]:
-    """Decorate the get_response method to enable function calls.
-
-    Args:
-        get_response_func: The get_response method to decorate.
-        max_iterations: The maximum number of function call iterations to perform.
-
-    """
-
-    @wraps(get_response_func)
-    async def wrap_get_response(
-        messages: "str | ChatMessage | list[str] | list[ChatMessage]",
-        **kwargs: Any,
-    ) -> ChatResponse:
-        from ._clients import _prepare_messages
-
-        prepped_messages = _prepare_messages(messages)
-        response: ChatResponse | None = None
-        fcc_messages: "list[ChatMessage]" = []
-        for attempt_idx in range(max_iterations):
-            response = await get_response_func(messages=prepped_messages, **kwargs)
-            # if there are function calls, we will handle them first
-            function_results = {
-                it.call_id for it in response.messages[0].contents if isinstance(it, FunctionResultContent)
-            }
-            function_calls = [
-                it
-                for it in response.messages[0].contents
-                if isinstance(it, FunctionCallContent) and it.call_id not in function_results
-            ]
-            if function_calls and (tools := kwargs.get("tools")):
-                function_results = await execute_function_calls(kwargs, attempt_idx, function_calls, tools)
-                # add a single ChatMessage to the response with the results
-                result_message = ChatMessage(role="tool", contents=function_results)
-                response.messages.append(result_message)
-                # response should contain 2 messages after this,
-                # one with function call contents
-                # and one with function result contents
-                # the amount and call_id's should match
-                # this runs in every but the first run
-                # we need to keep track of all function call messages
-                fcc_messages.extend(response.messages)
-                # and add them as additional context to the messages
-                if kwargs.get("store"):
-                    prepped_messages.clear()
-                    prepped_messages.append(result_message)
-                else:
-                    prepped_messages.extend(response.messages)
-                continue
-            # If we reach this point, it means there were no function calls to handle,
-            # we'll add the previous function call and responses
-            # to the front of the list, so that the final response is the last one
-            # TODO (eavanvalkenburg): control this behavior?
-            if fcc_messages:
-                for msg in reversed(fcc_messages):
-                    response.messages.insert(0, msg)
-            return response
-
-        # Failsafe: give up on tools, ask model for plain answer
-        kwargs["tool_choice"] = "none"
-        response = await get_response_func(messages=prepped_messages, **kwargs)
-        if fcc_messages:
-            for msg in reversed(fcc_messages):
-                response.messages.insert(0, msg)
-        return response
-
-    return wrap_get_response
-
-
-def _handle_function_calls_streaming_response(
-    get_streaming_response_func: Callable[..., AsyncIterable["ChatResponseUpdate"]],
-    max_iterations: int = 10,
-) -> Callable[..., AsyncIterable["ChatResponseUpdate"]]:
-    """Decorate the get_streaming_response method to handle function calls.
-
-    Args:
-        get_streaming_response_func: The get_streaming_response method to decorate.
-        max_iterations: The maximum number of function call iterations to perform.
-
-    """
-
-    @wraps(get_streaming_response_func)
-    async def wrap_get_streaming_response(
-        messages: "str | ChatMessage | list[str] | list[ChatMessage]",
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        """Wrap the inner get streaming response method to handle tool calls."""
-        from ._clients import _prepare_messages
-
-        prepped_messages = _prepare_messages(messages)
-        for attempt_idx in range(max_iterations):
-            all_updates: list[ChatResponseUpdate] = []
-            async for update in get_streaming_response_func(messages=prepped_messages, **kwargs):
-                all_updates.append(update)
-                yield update
-
-            # efficient check for FunctionCallContent in the updates
-            # if there is at least one, this stops and continuous
-            # if there are no FCC's then it returns
-            if not any(isinstance(item, FunctionCallContent) for upd in all_updates for item in upd.contents):
-                return
-
-            # Now combining the updates to create the full response.
-            # Depending on the prompt, the message may contain both function call
-            # content and others
-            response: ChatResponse = ChatResponse.from_chat_response_updates(all_updates)
-            # add the response message to the previous messages
-            prepped_messages.append(response.messages[0])
-            # get the fccs
-            function_calls = [item for item in response.messages[0].contents if isinstance(item, FunctionCallContent)]
-
-            # When conversation id is present, it means that messages are hosted on the server.
-            # In this case, we need to update kwargs with conversation id and also clear messages
-            if response.conversation_id is not None:
-                kwargs["conversation_id"] = response.conversation_id
-                prepped_messages = []
-
-            if function_calls and (tools := kwargs.get("tools")):
-                function_results = await execute_function_calls(kwargs, attempt_idx, function_calls, tools)
-                function_result_msg = ChatMessage(role="tool", contents=function_results)
-                yield ChatResponseUpdate(contents=function_results, role="tool")
-                response.messages.append(function_result_msg)
-                prepped_messages.append(function_result_msg)
-                continue
-
-        # Failsafe: give up on tools, ask model for plain answer
-        kwargs["tool_choice"] = "none"
-        async for update in get_streaming_response_func(messages=prepped_messages, **kwargs):
-            yield update
-
-    return wrap_get_streaming_response
-
-
-def FunctionInvokingChatClient(
-    chat_client: "ChatClient",
-    *,
-    max_iterations: int = 10,
-) -> "ChatClient":
-    """Class decorator that enables tool calling for a chat client."""
-    object.__setattr__(
-        chat_client,
-        "get_response",
-        _handle_function_calls_response(
-            get_response_func=chat_client.get_response,
-            max_iterations=max_iterations,
-        ),
-    )
-    object.__setattr__(
-        chat_client,
-        "get_streaming_response",
-        _handle_function_calls_streaming_response(
-            get_streaming_response_func=chat_client.get_streaming_response,
-            max_iterations=max_iterations,
-        ),
-    )
-    setattr(chat_client, "__function_invoking_chat_client__", True)  # noqa: B010
-    return chat_client
 
 
 # region ChatClient Protocol
@@ -410,6 +171,9 @@ class ChatClient(Protocol):
             ValueError: If the input message sequence is `None`.
         """
         ...
+
+
+# region ChatClientBase
 
 
 def _prepare_messages(messages: str | ChatMessage | list[str] | list[ChatMessage]) -> list[ChatMessage]:
@@ -671,13 +435,13 @@ class ChatClientBase(AFBaseModel, ABC):
         else:
             chat_options.tool_choice = chat_tool_mode.mode
 
-    def service_url(self) -> str | None:
+    def service_url(self) -> str:
         """Get the URL of the service.
 
         Override this in the subclass to return the proper URL.
         If the service does not have a URL, return None.
         """
-        return None
+        return "Unknown"
 
     def create_agent(
         self,
@@ -718,6 +482,38 @@ class ChatClientBase(AFBaseModel, ABC):
             chat_message_store_factory=chat_message_store_factory,
             **kwargs,
         )
+
+    def with_function_calling(self, *, max_iterations: int | None = None) -> Self:
+        """Create a new chat client with function calling capabilities.
+
+        Args:
+            max_iterations: The maximum number of function calling iterations to perform.
+                If not provided, the default is determined by the FunctionInvokingChatClient.
+
+        Returns:
+            The chat client with function calling enabled.
+        """
+        return FunctionInvokingChatClient(self, max_iterations=max_iterations)  # type: ignore
+
+    def with_open_telemetry(
+        self, *, enable_sensitive_data: bool | None = None, model_provider_name: str | None = None
+    ) -> Self:
+        """Create a new chat client with OpenTelemetry capabilities.
+
+        Args:
+            enable_sensitive_data: Whether to enable sensitive data in telemetry.
+                If not provided, the default is False.
+            model_provider_name: The name of the model provider to use in telemetry.
+                If not provided, the default is the MODEL_PROVIDER_NAME of the base client.
+
+        Returns:
+            The chat client with OpenTelemetry enabled.
+        """
+        return OpenTelemetryChatClient(
+            self,
+            enable_sensitive_data=enable_sensitive_data,
+            model_provider_name=model_provider_name,
+        )  # type: ignore
 
 
 # region ChatClientBuilder
@@ -792,8 +588,7 @@ class ChatClientBuilder:
     def open_telemetry_with(
         self,
         *,
-        enable_otel_diagnostics: bool | None = None,
-        enable_otel_diagnostics_sensitive: bool | None = None,
+        enable_sensitive_data: bool | None = None,
         model_provider_name: str | None = None,
     ) -> Self:
         """Add OpenTelemetry tracing to the chat client.
@@ -804,8 +599,7 @@ class ChatClientBuilder:
         self.add_decorator(
             partial(
                 OpenTelemetryChatClient,
-                enable_otel_diagnostics=enable_otel_diagnostics,
-                enable_otel_diagnostics_sensitive=enable_otel_diagnostics_sensitive,
+                enable_sensitive_data=enable_sensitive_data,
                 model_provider_name=model_provider_name,
             )
         )

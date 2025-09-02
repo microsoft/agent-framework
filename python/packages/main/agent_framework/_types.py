@@ -225,7 +225,11 @@ def _process_update(
     is_new_message = False
     if (
         not response.messages
-        or (update.message_id and response.messages[-1].message_id != update.message_id)
+        or (
+            update.message_id
+            and response.messages[-1].message_id
+            and response.messages[-1].message_id != update.message_id
+        )
         or (update.role and response.messages[-1].role != update.role)
     ):
         is_new_message = True

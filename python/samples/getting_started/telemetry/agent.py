@@ -159,31 +159,28 @@ async def main():
     set_up_tracing()
     set_up_metrics()
 
+    questions = ["What's the weather in Amsterdam?", "and in Paris, and which is better?", "Why is the sky blue?"]
+
     tracer = trace.get_tracer("agent_framework")
-    with tracer.start_as_current_span("Scenario: Agent Chat", kind=SpanKind.CLIENT) as current_span:
+    with tracer.start_as_current_span("Scenario: Agent Chat", kind=SpanKind.CLIENT):
         print("Running scenario: Agent Chat")
         print("Welcome to the chat, type 'exit' to quit.")
         agent = ChatClientAgent(
-            chat_client=OpenAIChatClient(),
+            chat_client=OpenAIChatClient().with_open_telemetry(),
             tools=get_weather,
             name="WeatherAgent",
             instructions="You are a weather assistant.",
-        )
+        ).with_open_telemetry(enable_sensitive_data=True)
         thread = agent.get_new_thread()
-        message = input("User: ")
-        try:
-            while message.lower() != "exit":
-                print(f"{agent.display_name}: ", end="")
-                async for update in agent.run_streaming(
-                    message,
-                    thread=thread,
-                ):
-                    if update.text:
-                        print(update.text, end="")
-                message = input("\nUser: ")
-        except Exception as e:
-            current_span.record_exception(e)
-            print(f"\nError running interactive chat: {e}")
+        for question in questions:
+            print(f"User: {question}")
+            print(f"{agent.display_name}: ", end="")
+            async for update in agent.run_streaming(
+                question,
+                thread=thread,
+            ):
+                if update.text:
+                    print(update.text, end="")
 
 
 if __name__ == "__main__":

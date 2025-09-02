@@ -32,7 +32,7 @@ async def builder_with_custom_function_and_telemetry():
     chat_client = (
         ChatClientBuilder.chat_client(OpenAIResponsesClient)
         .function_calling_with(max_iterations=5)
-        .open_telemetry_with(enable_otel_diagnostics_sensitive=False)
+        .open_telemetry_with(enable_sensitive_data=False)
         .build()
     )
 

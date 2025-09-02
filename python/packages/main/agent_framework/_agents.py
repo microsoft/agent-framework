@@ -11,12 +11,12 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, PrivateAttr
 
-from ._clients import ChatClient, ChatClientBase, ChatClientBuilder, FunctionInvokingChatClient
+from ._clients import ChatClient, ChatClientBuilder
 from ._logging import get_logger
 from ._mcp import McpTool
 from ._pydantic import AFBaseModel
 from ._threads import AgentThread, ChatMessageStore, deserialize_thread_state, thread_on_new_messages
-from ._tools import AITool
+from ._tools import FUNCTION_INVOKING_CHAT_CLIENT_MARKER, AITool, FunctionInvokingChatClient
 from ._types import (
     AgentRunResponse,
     AgentRunResponseUpdate,
@@ -28,7 +28,6 @@ from ._types import (
     ChatToolMode,
 )
 from .exceptions import AgentExecutionException
-from .telemetry import use_agent_telemetry
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -175,7 +174,6 @@ class AgentBase(AFBaseModel):
 # region ChatClientAgent
 
 
-@use_agent_telemetry
 class ChatClientAgent(AgentBase):
     """A Chat Client Agent."""
 
@@ -256,7 +254,7 @@ class ChatClientAgent(AgentBase):
                 Unused, can be used by subclasses of this Agent.
         """
         chat_client = chat_client.build() if isinstance(chat_client, ChatClientBuilder) else chat_client
-        if not hasattr(chat_client, "__function_invoking_chat_client__") and isinstance(chat_client, ChatClientBase):
+        if not hasattr(chat_client, FUNCTION_INVOKING_CHAT_CLIENT_MARKER) and isinstance(chat_client, ChatClient):
             logger.debug("Chat client has to have function invoking enabled.")
             chat_client = FunctionInvokingChatClient(chat_client)
 
@@ -663,6 +661,36 @@ class ChatClientAgent(AgentBase):
 
     def _get_agent_name(self) -> str:
         return self.name or "UnnamedAgent"
+
+    def with_open_telemetry(
+        self,
+        enable_sensitive_data: bool | None = None,
+        agent_system_name: str | None = None,
+        enable_telemetry_on_chat_client: bool | None = None,
+    ) -> "ChatClientAgent":
+        """Enable open telemetry for this agent.
+
+        Args:
+            enable_sensitive_data: Whether to include sensative data in the logs.
+            agent_system_name: the name to use for the system value.
+            enable_telemetry_on_chat_client: If the telemetry on the underlying chat_client is not enabled,
+                setting this to True, enables it.
+        """
+        from .telemetry import OPEN_TELEMETRY_CHAT_CLIENT_MARKER, OpenTelemetryAgent
+
+        if enable_telemetry_on_chat_client and not hasattr(self.chat_client, OPEN_TELEMETRY_CHAT_CLIENT_MARKER):
+            from .telemetry import OpenTelemetryChatClient
+
+            self.chat_client = OpenTelemetryChatClient(
+                self.chat_client,
+                enable_sensitive_data=enable_sensitive_data,
+            )
+
+        return OpenTelemetryAgent(
+            self,
+            enable_sensitive_data=enable_sensitive_data,
+            agent_system_name=agent_system_name,
+        )
 
 
 def agent(

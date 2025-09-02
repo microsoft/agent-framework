@@ -18,11 +18,11 @@ from agent_framework import (
     ChatRole,
     EmbeddingGenerator,
     FunctionCallContent,
+    FunctionInvokingChatClient,
     FunctionResultContent,
     GeneratedEmbeddings,
     TextContent,
     ai_function,
-    use_tool_calling,
 )
 
 if sys.version_info >= (3, 12):
@@ -53,7 +53,6 @@ class MockChatClient:
         yield ChatResponseUpdate(contents=[TextContent(text="another update")], role="assistant")
 
 
-@use_tool_calling
 class MockChatClientBase(ChatClientBase):
     """Mock implementation of the ChatClientBase."""
 
@@ -176,6 +175,7 @@ async def test_base_client_get_streaming_response(chat_client_base: MockChatClie
 
 async def test_base_client_with_function_calling(chat_client_base: MockChatClientBase):
     exec_counter = 0
+    chat_client = FunctionInvokingChatClient(chat_client_base)
 
     @ai_function(name="test_function")
     def ai_func(arg1: str) -> str:
@@ -183,7 +183,7 @@ async def test_base_client_with_function_calling(chat_client_base: MockChatClien
         exec_counter += 1
         return f"Processed {arg1}"
 
-    chat_client_base.run_responses = [
+    chat_client.run_responses = [
         ChatResponse(
             messages=ChatMessage(
                 role="assistant",
@@ -192,7 +192,7 @@ async def test_base_client_with_function_calling(chat_client_base: MockChatClien
         ),
         ChatResponse(messages=ChatMessage(role="assistant", text="done")),
     ]
-    response = await chat_client_base.get_response("hello", tool_choice="auto", tools=[ai_func])
+    response = await chat_client.get_response("hello", tool_choice="auto", tools=[ai_func])
     assert exec_counter == 1
     assert len(response.messages) == 3
     assert response.messages[0].role == ChatRole.ASSISTANT
@@ -209,7 +209,6 @@ async def test_base_client_with_function_calling(chat_client_base: MockChatClien
 
 
 async def test_base_client_with_function_calling_disabled(chat_client_base: MockChatClientBase):
-    chat_client_base.__maximum_iterations_per_request = 0
     exec_counter = 0
 
     @ai_function(name="test_function")
@@ -231,10 +230,11 @@ async def test_base_client_with_function_calling_disabled(chat_client_base: Mock
     assert exec_counter == 0
     assert len(response.messages) == 1
     assert response.messages[0].role == ChatRole.ASSISTANT
-    assert response.messages[0].text == "test response - hello"
+    assert isinstance(response.messages[0].contents[0], FunctionCallContent)
 
 
 async def test_base_client_with_streaming_function_calling(chat_client_base: MockChatClientBase):
+    chat_client = FunctionInvokingChatClient(chat_client_base)
     exec_counter = 0
 
     @ai_function(name="test_function")
@@ -243,7 +243,7 @@ async def test_base_client_with_streaming_function_calling(chat_client_base: Moc
         exec_counter += 1
         return f"Processed {arg1}"
 
-    chat_client_base.streaming_responses = [
+    chat_client.streaming_responses = [
         [
             ChatResponseUpdate(
                 contents=[FunctionCallContent(call_id="1", name="test_function", arguments='{"arg1":')],
@@ -262,7 +262,7 @@ async def test_base_client_with_streaming_function_calling(chat_client_base: Moc
         ],
     ]
     updates = []
-    async for update in chat_client_base.get_streaming_response("hello", tool_choice="auto", tools=[ai_func]):
+    async for update in chat_client.get_streaming_response("hello", tool_choice="auto", tools=[ai_func]):
         updates.append(update)
     assert len(updates) == 4  # two updates with the function call, the function result and the final text
     assert updates[0].contents[0].call_id == "1"
@@ -270,38 +270,3 @@ async def test_base_client_with_streaming_function_calling(chat_client_base: Moc
     assert updates[2].contents[0].call_id == "1"
     assert updates[3].text == "Processed value1"
     assert exec_counter == 1
-
-
-async def test_base_client_with_streaming_function_calling_disabled(chat_client_base: MockChatClientBase):
-    chat_client_base.__maximum_iterations_per_request = 0
-    exec_counter = 0
-
-    @ai_function(name="test_function")
-    def ai_func(arg1: str) -> str:
-        nonlocal exec_counter
-        exec_counter += 1
-        return f"Processed {arg1}"
-
-    chat_client_base.streaming_responses = [
-        [
-            ChatResponseUpdate(
-                contents=[FunctionCallContent(call_id="1", name="test_function", arguments='{"arg1":')],
-                role="assistant",
-            ),
-            ChatResponseUpdate(
-                contents=[FunctionCallContent(call_id="1", name="test_function", arguments='"value1"}')],
-                role="assistant",
-            ),
-        ],
-        [
-            ChatResponseUpdate(
-                contents=[TextContent(text="Processed value1")],
-                role="assistant",
-            )
-        ],
-    ]
-    updates = []
-    async for update in chat_client_base.get_streaming_response("hello", tool_choice="auto", tools=[ai_func]):
-        updates.append(update)
-    assert len(updates) == 1
-    assert exec_counter == 0
