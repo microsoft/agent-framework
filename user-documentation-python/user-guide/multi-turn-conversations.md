@@ -82,7 +82,8 @@ async with AzureCliCredential() as credential:
 
 `AIAgent` instances are stateless and the same agent instance can be used with multiple `AgentThread` instances.
 
-Not all agents support all thread types though. For example if you are using a `ChatClientAgent` with different Foundry services, `AgentThread` instances created by one agent may not work with a different `ChatClientAgent` using a different Foundry Agent service.
+Not all agents support all thread types though. For example if you are using a `ChatClientAgent` with the responses service, `AgentThread` instances created by this agent, will not work with a `ChatClientAgent` using the Foundry Agent service.
+This is because these services both support saving the conversation history in the service, and the `AgentThread`
 This is because these services support saving the conversation history in the service, and the `AgentThread`
 only has a reference to this service managed thread.
 
@@ -138,4 +139,3 @@ For complete threading examples, see:
 | OpenAI Responses | Service managed persistent threads OR in-memory threads |
 | OpenAI ChatCompletion | In-memory threads |
 | OpenAI Assistants | Service managed threads |
-| A2A | Service managed threads |
