@@ -2,7 +2,7 @@ import asyncio
 
 from typing import Annotated
 
-from agent_framework import ChatResponseUpdate, ChatMessage, FunctionResultContent, TextContent, ai_function
+from agent_framework import ChatResponseUpdate, ChatMessage, TextContent, ai_function
 from agent_framework.openai import OpenAIResponsesClient
 
 @ai_function

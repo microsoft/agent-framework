@@ -8,7 +8,6 @@ import pytest
 from pydantic import BaseModel
 
 from agent_framework import ChatClient, ChatMessage, ChatResponse, ChatResponseUpdate, ResponseStatus, ai_function
-from agent_framework.exceptions import ServiceResponseException
 from agent_framework.openai import OpenAIResponsesClient
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
@@ -54,11 +53,13 @@ async def test_openai_responses_client_background_response() -> None:
     assert isinstance(response, ChatResponse)
     assert response.status and response.status != ResponseStatus.COMPLETED
 
-    response = await openai_responses_client.get_response(
-        message_id=response.response_id,
-        # Uncomment this lines if you want to poll
-        # background=True,
-    )
+    while response.status and response.status != ResponseStatus.COMPLETED:
+        assert response.response_id is not None
+        response = await openai_responses_client.get_response(
+            message_id=response.response_id,
+            background=True,
+            store=True,
+        )
     assert "sunny" in response.messages[0].text.lower()
 
 
@@ -84,12 +85,14 @@ async def test_openai_responses_client_background_structured_response() -> None:
     assert isinstance(response, ChatResponse)
     assert response.status and response.status != ResponseStatus.COMPLETED
 
-    final_response = await openai_responses_client.get_response(
-        message_id=response.response_id,
-        # Uncomment this lines if you want to poll
-        # background=True,
-    )
-    output = OutputStruct.model_validate_json(final_response.messages[0].text)
+    while response.status and response.status != ResponseStatus.COMPLETED:
+        assert response.response_id is not None
+        response = await openai_responses_client.get_response(
+            message_id=response.response_id,
+            background=True,
+            store=True,
+        )
+    output = OutputStruct.model_validate_json(response.messages[0].text)
     assert "new york" in output.location.lower()
     assert "sunny" in output.weather.lower()
 
@@ -126,6 +129,8 @@ async def test_openai_responses_client_background_streaming_response() -> None:
     stream = openai_responses_client.get_streaming_response(
         conversation_id=conversation_id,
         sequence_number=restart_idx,
+        background=True,
+        store=True,
     )
     assert stream is not None
     async for response in stream:
@@ -166,18 +171,19 @@ async def test_openai_responses_client_background_streaming_structured_response(
     assert conversation_id is not None
     restart_idx = floor(len(all_messages) / 2)
     # Currently broken. See https://github.com/openai/openai-python/issues/2579
-    with pytest.raises(ServiceResponseException):
-        stream = openai_responses_client.get_streaming_response(
-            conversation_id=conversation_id,
-            sequence_number=restart_idx,
-            response_format=OutputStruct,
-        )
-        assert stream is not None
-        async for response in stream:
-            assert isinstance(response, ChatResponseUpdate)
-            partial_messages.append(response.text)
+    stream = openai_responses_client.get_streaming_response(
+        conversation_id=conversation_id,
+        sequence_number=restart_idx,
+        response_format=OutputStruct,
+        background=True,
+        store=True,
+    )
+    assert stream is not None
+    async for response in stream:
+        assert isinstance(response, ChatResponseUpdate)
+        partial_messages.append(response.text)
 
-        assert partial_messages == all_messages[restart_idx + 1 :]
-        output = OutputStruct.model_validate_json("".join(all_messages))
-        assert "new york" in output.location.lower()
-        assert "sunny" in output.weather.lower()
+    assert partial_messages == all_messages[restart_idx + 1 :]
+    output = OutputStruct.model_validate_json("".join(all_messages))
+    assert "new york" in output.location.lower()
+    assert "sunny" in output.weather.lower()

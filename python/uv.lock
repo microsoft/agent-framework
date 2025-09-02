@@ -67,7 +67,7 @@ requires-dist = [
     { name = "agent-framework-foundry", marker = "extra == 'foundry'", editable = "packages/foundry" },
     { name = "agent-framework-workflow", marker = "extra == 'workflow'", editable = "packages/workflow" },
     { name = "mcp", specifier = ">=1.12" },
-    { name = "openai", specifier = ">=1.94.0" },
+    { name = "openai", specifier = ">=1.103.0" },
     { name = "opentelemetry-api", specifier = "~=1.24" },
     { name = "opentelemetry-sdk", specifier = "~=1.24" },
     { name = "pydantic", specifier = ">=2.11.7" },
@@ -1894,7 +1894,7 @@ wheels = [
 
 [[package]]
 name = "openai"
-version = "1.99.9"
+version = "1.103.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -1906,9 +1906,9 @@ dependencies = [
     { name = "tqdm", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8a/d2/ef89c6f3f36b13b06e271d3cc984ddd2f62508a0972c1cbcc8485a6644ff/openai-1.99.9.tar.gz", hash = "sha256:f2082d155b1ad22e83247c3de3958eb4255b20ccf4a1de2e6681b6957b554e92", size = 506992, upload-time = "2025-08-12T02:31:10.054Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cb/0b/4cacc14f976601edf35b74f7c5c2d6305f7402257cb13b9956b4eaabf94d/openai-1.103.0.tar.gz", hash = "sha256:f84f8741536f01adfdae1acfe31ec1874fc0985d33f53344f9edca773f150a36", size = 556049, upload-time = "2025-09-02T14:03:11.533Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e8/fb/df274ca10698ee77b07bff952f302ea627cc12dac6b85289485dd77db6de/openai-1.99.9-py3-none-any.whl", hash = "sha256:9dbcdb425553bae1ac5d947147bebbd630d91bbfc7788394d4c4f3a35682ab3a", size = 786816, upload-time = "2025-08-12T02:31:08.34Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/c0/f5d440153d96c6be42e5d05c39adf33e0c324c9f035daf0e537a71fe2d11/openai-1.103.0-py3-none-any.whl", hash = "sha256:60a69224f0d210a720e7364947d3b712fe0036373f25dc1cb801fc25abb3f864", size = 926169, upload-time = "2025-09-02T14:03:09.666Z" },
 ]
 
 [[package]]
