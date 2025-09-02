@@ -2,7 +2,7 @@
 
 The Microsoft Agent Framework provides built-in support for managing multi-turn conversations with AI agents. This includes maintaining context across multiple interactions. Different agent types and underlying services that are used to build agents may support different threading types, and the Agent Framework abstracts these differences away, providing a consistent interface for developers.
 
-For example, when using a `ChatClientAgent` based on a Foundry agent, the conversation history is persisted in the service. While, when using a `ChatClientAgent` based on chat completion with gpt-4, the conversation history is in-memory and managed by the agent.
+For example, when using a `ChatClientAgent` based on a Foundry agent, the conversation history is persisted in the service. While when using a `ChatClientAgent` based on chat completion with gpt-4, the conversation history is in-memory and managed by the agent.
 
 The differences between the underlying threading models are abstracted away via the `AgentThread` type.
 
