@@ -16,7 +16,7 @@ Before you begin, ensure you have the following prerequisites:
 - .NET 8.0 SDK or later
 - Azure OpenAI service endpoint and deployment configured
 - Azure CLI installed and authenticated (for Azure credential authentication)
-- User has access to the Azure OpenAI resource i.e., user requires the `Cognitive Services OpenAI Contributor` role.
+- User has the `Cognitive Services OpenAI Contributor` role for the Azure OpenAI resource.
 
 **Note**: This demo uses Azure CLI credentials for authentication. Make sure you're logged in with `az login` and have access to the Azure OpenAI resource i.e., has the `Cognitive Services OpenAI Contributor` role. For more information, see the [Azure CLI documentation](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
 
