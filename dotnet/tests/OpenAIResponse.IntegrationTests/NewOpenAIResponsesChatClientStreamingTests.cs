@@ -127,6 +127,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         string responseText = "";
         string? sequenceNumber = null;
         string? responseId = null;
+        string? conversationId = null;
 
         await foreach (var update in this._chatClient.GetStreamingResponseAsync("What is the capital of France?", options))
         {
@@ -137,9 +138,10 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
 
             responseText += update;
 
-            // Capture the response id and sequence number of the first event so we can continue
-            // getting the rest of the events starting from the same point in the test below.
+            // Capture the response id, conversation id and sequence number of the first event so we
+            // can continue getting the rest of the events starting from the same point in the test below.
             responseId = update.ResponseId;
+            conversationId = update.ConversationId;
             sequenceNumber = update.GetSequenceNumber();
             break;
         }
@@ -148,10 +150,11 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         Assert.NotNull(responseText);
         Assert.NotNull(sequenceNumber);
         Assert.NotNull(responseId);
+        Assert.NotNull(conversationId);
 
         // Part 2: Continue getting the rest of the response from the saved point
         options.SetAwaitRunResult(!continueInBackground);
-        options.ConversationId = responseId;
+        options.ConversationId = conversationId;
         options.SetPreviousResponseId(responseId);
         options.SetStartAfter(sequenceNumber);
         statuses.Clear();
@@ -224,6 +227,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         string responseText = "";
         string? sequenceNumber = null;
         string? responseId = null;
+        string? conversationId = null;
 
         await foreach (var update in this._chatClient.GetStreamingResponseAsync("What time is it?", options))
         {
@@ -234,9 +238,10 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
 
             responseText += update;
 
-            // Capture the response id and sequence number of the first event so we can continue
-            // getting the rest of the events starting from the same point in the test below.
+            // Capture the response id, conversation id and sequence number of the first event so we
+            // can continue getting the rest of the events starting from the same point in the test below.
             responseId = update.ResponseId;
+            conversationId = update.ConversationId;
             sequenceNumber = update.GetSequenceNumber();
             break;
         }
@@ -245,10 +250,11 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         Assert.NotNull(responseText);
         Assert.NotNull(sequenceNumber);
         Assert.NotNull(responseId);
+        Assert.NotNull(conversationId);
 
         // Part 2: Continue getting the rest of the response from the saved point
         options.SetAwaitRunResult(!continueInBackground);
-        options.ConversationId = responseId;
+        options.ConversationId = conversationId;
         options.SetPreviousResponseId(responseId);
         options.SetStartAfter(sequenceNumber);
         statuses.Clear();
@@ -291,22 +297,25 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
 
         string? sequenceNumber = null;
         string? responseId = null;
+        string? conversationId = null;
 
         await foreach (var update in this._chatClient.GetStreamingResponseAsync("What time is it?", options))
         {
             // Stop processing updates as soon as we see the function call update received
             if (update.RawRepresentation is StreamingResponseOutputItemAddedUpdate)
             {
-                // Capture the response id and sequence number of the event so we can continue
-                // getting the rest of the events starting from the same point in the test below.
+                // Capture the response id, conversation id, and sequence number of the event so we
+                // can continue getting the rest of the events starting from the same point in the test below.
                 responseId = update.ResponseId;
                 sequenceNumber = update.GetSequenceNumber();
+                conversationId = update.ConversationId;
                 break;
             }
         }
 
         Assert.NotNull(sequenceNumber);
         Assert.NotNull(responseId);
+        Assert.NotNull(conversationId);
 
         // Part 2: Continue getting the rest of the response from the saved point using a new client that does not have the previous state containing the first part of function call.
         using IChatClient chatClient = this._openAIResponseClient
@@ -316,7 +325,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
             .Build();
         string responseText = "";
         options.SetAwaitRunResult(!continueInBackground);
-        options.ConversationId = responseId;
+        options.ConversationId = conversationId;
         options.SetPreviousResponseId(responseId);
         options.SetStartAfter(sequenceNumber);
 

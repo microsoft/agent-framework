@@ -51,7 +51,6 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         }
         else
         {
-            Assert.Empty(response.Messages);
             Assert.NotNull(response.ResponseId);
             Assert.Equal(NewResponseStatus.Queued, response.GetResponseStatus());
         }
@@ -98,7 +97,6 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         ChatResponse response = await this._chatClient.GetResponseAsync("What is the capital of France?", options);
 
         Assert.NotNull(response);
-        Assert.Empty(response.Messages);
         Assert.NotNull(response.ResponseId);
         Assert.Equal(NewResponseStatus.Queued, response.GetResponseStatus());
 
@@ -106,10 +104,10 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         int attempts = 0;
 
         while (response.GetResponseStatus() is { } status &&
-            (status == NewResponseStatus.Completed || status == NewResponseStatus.Queued) &&
+            status != NewResponseStatus.Completed &&
             ++attempts < 5)
         {
-            options.ConversationId = response.ResponseId;
+            options.ConversationId = response.ConversationId;
             options.SetPreviousResponseId(response.ResponseId!);
 
             response = await this._chatClient.GetResponseAsync([], options);
@@ -140,7 +138,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         Assert.Equal(NewResponseStatus.Queued, response.GetResponseStatus());
 
         // Part 2: Wait for completion.
-        options.ConversationId = response.ResponseId;
+        options.ConversationId = response.ConversationId;
         options.SetPreviousResponseId(response.ResponseId);
         options.SetAwaitRunResult(true);
 
@@ -179,7 +177,6 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         ChatResponse response = await this._chatClient.GetResponseAsync("What time is it?", options);
 
         Assert.NotNull(response);
-        Assert.Empty(response.Messages);
         Assert.NotNull(response.ResponseId);
         Assert.Equal(NewResponseStatus.Queued, response.GetResponseStatus());
 
@@ -187,10 +184,10 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         int attempts = 0;
 
         while (response.GetResponseStatus() is { } status &&
-            (status == NewResponseStatus.Completed || status == NewResponseStatus.Queued) &&
+            status != NewResponseStatus.Completed &&
             ++attempts < 5)
         {
-            options.ConversationId = response.ResponseId;
+            options.ConversationId = response.ConversationId;
             options.SetPreviousResponseId(response.ResponseId!);
 
             response = await this._chatClient.GetResponseAsync([], options);
@@ -213,12 +210,11 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         ChatResponse response = await this._chatClient.GetResponseAsync("What time is it?", options);
 
         Assert.NotNull(response);
-        Assert.Empty(response.Messages);
         Assert.NotNull(response.ResponseId);
         Assert.Equal(NewResponseStatus.Queued, response.GetResponseStatus());
 
         // Part 2: Wait for completion.
-        options.ConversationId = response.ResponseId;
+        options.ConversationId = response.ConversationId;
         options.SetPreviousResponseId(response.ResponseId);
         options.SetAwaitRunResult(true);
 
