@@ -1,15 +1,15 @@
-# Getting started steps
+# Getting started with agents
 
-The getting started steps samples demonstrate the fundamental concepts and functionalities
-of the agent framework and can be used with any agent type.
+The getting started with agents samples demonstrate the fundamental concepts and functionalities
+of single agents and can be used with any agent type.
 
 While the functionality can be used with any agent type, these samples use Azure OpenAI as the AI provider
 and use ChatCompletion as the type of service.
 
 For other samples that demonstrate how to create and configure each type of agent that come with the agent framework,
-see the [How to create an AIAgent for each provider](../HowToCreateAnAIAgentByProvider/README.md) samples.
+see the [How to create an agent for each provider](../AgentProviders/README.md) samples.
 
-## Getting started steps prerequisites
+## Getting started with agents prerequisites
 
 Before you begin, ensure you have the following prerequisites:
 
@@ -23,22 +23,22 @@ Before you begin, ensure you have the following prerequisites:
 
 |Sample|Description|
 |---|---|
-|[Running a simple agent](./Step01_Agent_Running/)|This sample demonstrates how to create and run a basic agent with instructions|
-|[Multi-turn conversation with a simple agent](./Step02_Agent_MultiturnConversation/)|This sample demonstrates how to implement a multi-turn conversation with a simple agent|
-|[Using function tools with a simple agent](./Step03_Agent_UsingFunctionTools/)|This sample demonstrates how to use function tools with a simple agent|
-|[Using function tools with approvals](./Step04_Agent_UsingFunctionToolsWithApprovals/)|This sample demonstrates how to use function tools where approvals require human in the loop approvals before execution|
-|[Structured output with a simple agent](./Step05_Agent_StructuredOutput/)|This sample demonstrates how to use structured output with a simple agent|
-|[Persisted conversations with a simple agent](./Step06_Agent_PersistedConversations/)|This sample demonstrates how to persist conversations and reload them later. This is useful for cases where an agent is hosted in a stateless service|
-|[3rd party thread storage with a simple agent](./Step07_Agent_3rdPartyThreadStorage/)|This sample demonstrates how to store conversation history in a 3rd party storage solution|
-|[Telemetry with a simple agent](./Step08_Agent_Telemetry/)|This sample demonstrates how to add telemetry to a simple agent|
-|[Dependency injection with a simple agent](./Step09_Agent_DependencyInjection/)|This sample demonstrates how to add and resolve an agent with a dependency injection container|
+|[Running a simple agent](./Agents_Step01_Running/)|This sample demonstrates how to create and run a basic agent with instructions|
+|[Multi-turn conversation with a simple agent](./Agents_Step02_MultiturnConversation/)|This sample demonstrates how to implement a multi-turn conversation with a simple agent|
+|[Using function tools with a simple agent](./Agents_Step03_UsingFunctionTools/)|This sample demonstrates how to use function tools with a simple agent|
+|[Using function tools with approvals](./Agents_Step04_UsingFunctionToolsWithApprovals/)|This sample demonstrates how to use function tools where approvals require human in the loop approvals before execution|
+|[Structured output with a simple agent](./Agents_Step05_StructuredOutput/)|This sample demonstrates how to use structured output with a simple agent|
+|[Persisted conversations with a simple agent](./Agents_Step06_PersistedConversations/)|This sample demonstrates how to persist conversations and reload them later. This is useful for cases where an agent is hosted in a stateless service|
+|[3rd party thread storage with a simple agent](./Agents_Step07_3rdPartyThreadStorage/)|This sample demonstrates how to store conversation history in a 3rd party storage solution|
+|[Telemetry with a simple agent](./Agents_Step08_Telemetry/)|This sample demonstrates how to add telemetry to a simple agent|
+|[Dependency injection with a simple agent](./Agents_Step09_DependencyInjection/)|This sample demonstrates how to add and resolve an agent with a dependency injection container|
 
 ## Running the samples from the console
 
 To run the samples, navigate to the desired sample directory, e.g.
 
 ```powershell
-cd Step01_Agent_Running
+cd Agents_Step01_Running
 ```
 
 Set the following environment variables:

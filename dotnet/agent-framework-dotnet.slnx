@@ -13,7 +13,9 @@
     <Project Path="samples/AgentWebChat/AgentWebChat.ServiceDefaults/AgentWebChat.ServiceDefaults.csproj" />
     <Project Path="samples/AgentWebChat/AgentWebChat.Web/AgentWebChat.Web.csproj" />
   </Folder>
-  <Folder Name="/Samples/GettingStarted/" />
+  <Folder Name="/Samples/GettingStarted/">
+    <File Path="samples/GettingStarted/README.md" />
+  </Folder>
   <Folder Name="/Samples/GettingStarted/AgentOrchestration/">
     <Project Path="samples/GettingStarted/AgentOrchestration/AgentOrchestration.csproj" />
   </Folder>
@@ -29,15 +31,15 @@
   </Folder>
   <Folder Name="/Samples/GettingStarted/Agents/">
     <File Path="samples/GettingStarted/Agents/README.md" />
-    <Project Path="samples/GettingStarted/Agents/Step01_Agent_Running/Step01_Agent_Running.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Step02_Agent_MultiturnConversation/Step02_Agent_MultiturnConversation.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Step03_Agent_UsingFunctionTools/Step03_Agent_UsingFunctionTools.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Step04_Agent_UsingFunctionToolsWithApprovals/Step04_Agent_UsingFunctionToolsWithApprovals.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Step05_Agent_StructuredOutput/Step05_Agent_StructuredOutput.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Step06_Agent_PersistedConversations/Step06_Agent_PersistedConversations.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Step07_Agent_3rdPartyThreadStorage/Step07_Agent_3rdPartyThreadStorage.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Step08_Agent_Telemetry/Step08_Agent_Telemetry.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Step09_Agent_DependencyInjection/Step09_Agent_DependencyInjection.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agents_Step01_Running/Agents_Step01_Running.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agents_Step02_MultiturnConversation/Agents_Step02_MultiturnConversation.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agents_Step03_UsingFunctionTools/Agents_Step03_UsingFunctionTools.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agents_Step04_UsingFunctionToolsWithApprovals/Agents_Step04_UsingFunctionToolsWithApprovals.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agents_Step05_StructuredOutput/Agents_Step05_StructuredOutput.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agents_Step06_PersistedConversations/Agents_Step06_PersistedConversations.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agents_Step07_3rdPartyThreadStorage/Agents_Step07_3rdPartyThreadStorage.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agents_Step08_Telemetry/Agents_Step08_Telemetry.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agents_Step09_DependencyInjection/Agents_Step09_DependencyInjection.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Telemetry/">
     <Project Path="samples/GettingStarted/AgentOpenTelemetry/AgentOpenTelemetry.csproj" />
