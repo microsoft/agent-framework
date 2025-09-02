@@ -329,7 +329,7 @@ async def test_end_to_end_workflow_tracing(tracing_enabled: Any, span_exporter: 
     assert build_span.attributes.get("workflow.id") == workflow.id
     assert build_span.attributes.get("workflow.definition") is not None
     definition = build_span.attributes.get("workflow.definition")
-    assert definition == workflow.model_dump_json()
+    assert definition == workflow.model_dump_json(by_alias=True)
 
     # Check build events
     assert build_span.events is not None
