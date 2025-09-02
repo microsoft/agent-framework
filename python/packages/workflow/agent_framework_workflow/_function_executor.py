@@ -4,7 +4,7 @@
 
 This module provides:
 - FunctionExecutor: an Executor subclass that wraps a user-defined async function
-  with signature (message, ctx: WorkflowContext[T]).
+  with signature (message) or (message, ctx: WorkflowContext[T]).
 - executor decorator: converts such a function into a ready-to-use Executor instance
   with proper type validation and handler registration.
 """
@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from collections.abc import Awaitable, Callable
 from types import UnionType
-from typing import Any, Awaitable, Callable, Union, get_args, get_origin
+from typing import Any, Union, get_args, get_origin, overload
 
 from ._executor import Executor
 from ._workflow_context import WorkflowContext
@@ -82,7 +83,7 @@ class FunctionExecutor(Executor):
     """
 
     @staticmethod
-    def _validate_function(func: Callable[[Any, WorkflowContext[Any]], Awaitable[Any]]) -> None:
+    def _validate_function(func: Callable[..., Awaitable[Any]]) -> None:
         """Validate that the function has the correct signature for an executor.
 
         Args:
@@ -98,47 +99,51 @@ class FunctionExecutor(Executor):
         signature = inspect.signature(func)
         params = list(signature.parameters.values())
 
-        if len(params) != 2:
+        if len(params) not in (1, 2):
             raise ValueError(
-                f"Function {func.__name__} must have exactly two parameters: "
-                f"(message: T, ctx: WorkflowContext[U]). Got {len(params)} parameters."
+                f"Function {func.__name__} must have one or two parameters: "
+                f"(message: T) or (message: T, ctx: WorkflowContext[U]). Got {len(params)} parameters."
             )
 
-        message_param, ctx_param = params
+        message_param = params[0]
 
         # Check message parameter has type annotation
         if message_param.annotation == inspect.Parameter.empty:
             raise ValueError(f"Function {func.__name__} must have a type annotation for the message parameter")
 
-        # Check ctx parameter has proper type annotation
-        if ctx_param.annotation == inspect.Parameter.empty:
-            raise ValueError(f"Function {func.__name__} second parameter must be annotated as WorkflowContext[T]")
+        # If there's a second parameter, validate it's WorkflowContext[T]
+        if len(params) == 2:
+            ctx_param = params[1]
 
-        # Validate that ctx parameter is WorkflowContext[T]
-        if not _is_workflow_context_type(ctx_param.annotation):
-            raise ValueError(
-                f"Function {func.__name__} second parameter must be annotated as WorkflowContext[T], "
-                f"got {ctx_param.annotation}"
-            )
+            # Check ctx parameter has proper type annotation
+            if ctx_param.annotation == inspect.Parameter.empty:
+                raise ValueError(f"Function {func.__name__} second parameter must be annotated as WorkflowContext[T]")
 
-        # Check that WorkflowContext has a concrete type parameter
-        if ctx_param.annotation is WorkflowContext:
-            # This is unparameterized WorkflowContext
-            raise ValueError(
-                f"Function {func.__name__} WorkflowContext must be parameterized with a concrete T. "
-                f"Use WorkflowContext[str], WorkflowContext[int], etc."
-            )
+            # Validate that ctx parameter is WorkflowContext[T]
+            if not _is_workflow_context_type(ctx_param.annotation):
+                raise ValueError(
+                    f"Function {func.__name__} second parameter must be annotated as WorkflowContext[T], "
+                    f"got {ctx_param.annotation}"
+                )
 
-        if hasattr(ctx_param.annotation, "__args__") and ctx_param.annotation.__args__:
-            # This is WorkflowContext[T] with a concrete T
-            pass
-        else:
-            raise ValueError(
-                f"Function {func.__name__} WorkflowContext must be parameterized with a concrete T. "
-                f"Use WorkflowContext[str], WorkflowContext[int], etc."
-            )
+            # Check that WorkflowContext has a concrete type parameter
+            if ctx_param.annotation is WorkflowContext:
+                # This is unparameterized WorkflowContext
+                raise ValueError(
+                    f"Function {func.__name__} WorkflowContext must be parameterized with a concrete T. "
+                    f"Use WorkflowContext[str], WorkflowContext[int], etc."
+                )
 
-    def __init__(self, func: Callable[[Any, WorkflowContext[Any]], Awaitable[Any]], id: str | None = None):
+            if hasattr(ctx_param.annotation, "__args__") and ctx_param.annotation.__args__:
+                # This is WorkflowContext[T] with a concrete T
+                pass
+            else:
+                raise ValueError(
+                    f"Function {func.__name__} WorkflowContext must be parameterized with a concrete T. "
+                    f"Use WorkflowContext[str], WorkflowContext[int], etc."
+                )
+
+    def __init__(self, func: Callable[..., Awaitable[Any]], id: str | None = None):
         """Initialize the FunctionExecutor with a user-defined function.
 
         Args:
@@ -153,8 +158,17 @@ class FunctionExecutor(Executor):
         params = list(signature.parameters.values())
 
         message_type = params[0].annotation
-        ctx_annotation = params[1].annotation
-        output_types = _infer_output_types_from_ctx_annotation(ctx_annotation)
+
+        # Determine if function has WorkflowContext parameter
+        has_context = len(params) == 2
+
+        if has_context:
+            ctx_annotation = params[1].annotation
+            output_types = _infer_output_types_from_ctx_annotation(ctx_annotation)
+        else:
+            # For single-parameter functions, we can't infer output types
+            ctx_annotation = None
+            output_types = []
 
         # Initialize parent WITHOUT calling _discover_handlers yet
         # We'll manually set up the attributes first
@@ -170,10 +184,24 @@ class FunctionExecutor(Executor):
         self._request_interceptors: dict[type | str, list[dict[str, Any]]] = {}
         self._instance_handler_specs: list[dict[str, Any]] = []
 
+        # Store the original function and whether it has context
+        self._original_func = func
+        self._has_context = has_context
+
+        # Create a wrapper function that always accepts both message and context
+        if has_context:
+            # Function already has the right signature
+            wrapped_func: Callable[[Any, WorkflowContext[Any]], Awaitable[Any]] = func  # type: ignore
+        else:
+            # Function only takes message, create wrapper that ignores context
+            async def wrapped_func(message: Any, ctx: WorkflowContext[Any]) -> Any:
+                # Call the original function with just the message
+                return await func(message)
+
         # Now register our instance handler
         self.register_instance_handler(
             name=func.__name__,
-            func=func,
+            func=wrapped_func,
             message_type=message_type,
             ctx_annotation=ctx_annotation,
             output_types=output_types,
@@ -183,20 +211,45 @@ class FunctionExecutor(Executor):
         self._discover_handlers()
 
 
+@overload
+def executor(func: Callable[..., Awaitable[Any]]) -> FunctionExecutor: ...
+
+
+@overload
+def executor(*, id: str | None = None) -> Callable[[Callable[..., Awaitable[Any]]], FunctionExecutor]: ...
+
+
 def executor(
-    *, id: str | None = None
-) -> Callable[[Callable[[Any, WorkflowContext[Any]], Awaitable[Any]]], FunctionExecutor]:
+    func: Callable[..., Awaitable[Any]] | None = None, *, id: str | None = None
+) -> Callable[[Callable[..., Awaitable[Any]]], FunctionExecutor] | FunctionExecutor:
     """Decorator that converts an async function into a FunctionExecutor instance.
 
     Usage:
+
+    .. code-block:: python
+
+        # With arguments:
         @executor(id="upper_case")
         async def to_upper(text: str, ctx: WorkflowContext[str]):
             await ctx.send_message(text.upper())
 
-    Returns an Executor instance that can be wired into a WorkflowBuilder.
+
+        # Without arguments and context for sending messages.
+        @executor
+        async def process_data(data: str):
+            # Process data without sending messages
+            return processed_data
+
+    Returns:
+        An Executor instance that can be wired into a Workflow.
     """
 
-    def wrapper(func: Callable[[Any, WorkflowContext[Any]], Awaitable[Any]]) -> FunctionExecutor:
+    def wrapper(func: Callable[..., Awaitable[Any]]) -> FunctionExecutor:
         return FunctionExecutor(func, id=id)
 
+    # If func is provided, this means @executor was used without parentheses
+    if func is not None:
+        return wrapper(func)
+
+    # Otherwise, return the wrapper for @executor() or @executor(id="...")
     return wrapper
