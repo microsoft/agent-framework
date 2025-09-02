@@ -1,0 +1,32 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using System.Collections.Generic;
+using System.Text.Json;
+
+namespace Microsoft.Extensions.AI.Agents.A2A;
+
+/// <summary>
+/// Extension methods for A2A metadata dictionary.
+/// </summary>
+internal static class A2AMetadataExtensions
+{
+    /// <summary>
+    /// Converts a dictionary of metadata to an <see cref="AdditionalPropertiesDictionary"/>.
+    /// </summary>
+    /// <param name="metadata">The metadata dictionary to convert.</param>
+    /// <returns>The converted <see cref="AdditionalPropertiesDictionary"/>, or null if the input is null or empty.</returns>
+    public static AdditionalPropertiesDictionary? ToAdditionalProperties(this Dictionary<string, JsonElement>? metadata)
+    {
+        if (metadata is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var additionalProperties = new AdditionalPropertiesDictionary();
+        foreach (var kvp in metadata)
+        {
+            additionalProperties[kvp.Key] = kvp.Value;
+        }
+        return additionalProperties;
+    }
+}

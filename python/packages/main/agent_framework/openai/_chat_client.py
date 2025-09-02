@@ -68,17 +68,17 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
         except BadRequestError as ex:
             if ex.code == "content_filter":
                 raise OpenAIContentFilterException(
-                    f"{type(self)} service encountered a content error",
-                    ex,
+                    f"{type(self)} service encountered a content error: {ex}",
+                    inner_exception=ex,
                 ) from ex
             raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt",
-                ex,
+                f"{type(self)} service failed to complete the prompt: {ex}",
+                inner_exception=ex,
             ) from ex
         except Exception as ex:
             raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt",
-                ex,
+                f"{type(self)} service failed to complete the prompt: {ex}",
+                inner_exception=ex,
             ) from ex
 
     async def _inner_get_streaming_response(
@@ -98,17 +98,17 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
         except BadRequestError as ex:
             if ex.code == "content_filter":
                 raise OpenAIContentFilterException(
-                    f"{type(self)} service encountered a content error",
-                    ex,
+                    f"{type(self)} service encountered a content error: {ex}",
+                    inner_exception=ex,
                 ) from ex
             raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt",
-                ex,
+                f"{type(self)} service failed to complete the prompt: {ex}",
+                inner_exception=ex,
             ) from ex
         except Exception as ex:
             raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt",
-                ex,
+                f"{type(self)} service failed to complete the prompt: {ex}",
+                inner_exception=ex,
             ) from ex
 
     # region content creation
@@ -208,6 +208,8 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
                 contents=[UsageContent(details=self._usage_details_from_openai(chunk.usage), raw_representation=chunk)],
                 ai_model_id=chunk.model,
                 additional_properties=chunk_metadata,
+                response_id=chunk.id,
+                message_id=chunk.id,
             )
         contents: list[AIContents] = []
         finish_reason: ChatFinishReason | None = None
@@ -227,6 +229,8 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
             additional_properties=chunk_metadata,
             finish_reason=finish_reason,
             raw_representation=chunk,
+            response_id=chunk.id,
+            message_id=chunk.id,
         )
 
     def _usage_details_from_openai(self, usage: CompletionUsage) -> UsageDetails:
@@ -417,9 +421,14 @@ class OpenAIChatClient(OpenAIConfigBase, OpenAIChatClientBase):
             raise ServiceInitializationError("Failed to create OpenAI settings.", ex) from ex
 
         if not async_client and not openai_settings.api_key:
-            raise ServiceInitializationError("The OpenAI API key is required.")
+            raise ServiceInitializationError(
+                "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
+            )
         if not openai_settings.chat_model_id:
-            raise ServiceInitializationError("The OpenAI model ID is required.")
+            raise ServiceInitializationError(
+                "OpenAI model ID is required. "
+                "Set via 'ai_model_id' parameter or 'OPENAI_CHAT_MODEL_ID' environment variable."
+            )
 
         super().__init__(
             ai_model_id=openai_settings.chat_model_id,
