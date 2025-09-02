@@ -31,15 +31,15 @@
   </Folder>
   <Folder Name="/Samples/GettingStarted/Agents/">
     <File Path="samples/GettingStarted/Agents/README.md" />
-    <Project Path="samples/GettingStarted/Agents/Agents_Step01_Running/Agents_Step01_Running.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agents_Step02_MultiturnConversation/Agents_Step02_MultiturnConversation.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agents_Step03_UsingFunctionTools/Agents_Step03_UsingFunctionTools.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agents_Step04_UsingFunctionToolsWithApprovals/Agents_Step04_UsingFunctionToolsWithApprovals.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agents_Step05_StructuredOutput/Agents_Step05_StructuredOutput.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agents_Step06_PersistedConversations/Agents_Step06_PersistedConversations.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agents_Step07_3rdPartyThreadStorage/Agents_Step07_3rdPartyThreadStorage.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agents_Step08_Telemetry/Agents_Step08_Telemetry.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agents_Step09_DependencyInjection/Agents_Step09_DependencyInjection.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step01_Running/Agent_Step01_Running.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step02_MultiturnConversation/Agent_Step02_MultiturnConversation.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step03_UsingFunctionTools/Agent_Step03_UsingFunctionTools.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step04_UsingFunctionToolsWithApprovals/Agent_Step04_UsingFunctionToolsWithApprovals.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step05_StructuredOutput/Agent_Step05_StructuredOutput.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step06_PersistedConversations/Agent_Step06_PersistedConversations.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step07_3rdPartyThreadStorage/Agent_Step07_3rdPartyThreadStorage.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step08_Telemetry/Agent_Step08_Telemetry.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step09_DependencyInjection/Agent_Step09_DependencyInjection.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Telemetry/">
     <Project Path="samples/GettingStarted/AgentOpenTelemetry/AgentOpenTelemetry.csproj" />
