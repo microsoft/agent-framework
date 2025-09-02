@@ -45,7 +45,7 @@ chat_client = AzureChatClient(
 )
 ```
 
-See the following [setup guide](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started) for more information.
+See the following [setup guide](./samples/getting_started) for more information.
 
 ## 2. Create a Simple Agent
 
