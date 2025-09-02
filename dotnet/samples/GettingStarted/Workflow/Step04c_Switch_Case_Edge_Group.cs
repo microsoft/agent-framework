@@ -6,16 +6,24 @@ using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Reflection;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
+using Microsoft.Shared.Samples;
 
 namespace Workflow;
 
 /// <summary>
-/// This class demonstrates how to configure a workflow with switch-case logic using edges.
-/// Building on top the previous examples, this workflow incorporates conditional branching
-/// to handle different scenarios based on the spam detection results. More specifically,
-/// a new "unknown" case is added to handle situations where the agent cannot determine if
-/// an email is spam, in which case it will trigger the default case and route the email
-/// to a new executor for special handling.
+/// This sample demonstrates advanced conditional routing using switch-case logic for complex decision trees.
+///
+/// Building on the previous email automation examples, this workflow adds a third decision path
+/// to handle ambiguous cases where spam detection is uncertain. Now the workflow can route emails
+/// three ways based on the detection result:
+///
+/// 1. ✅ Not Spam → Email Assistant → Send Email
+/// 2. ❌ Spam → Handle Spam Executor
+/// 3. ❓ Uncertain → Handle Uncertain Executor (default case)
+///
+/// The switch-case pattern provides cleaner syntax than multiple individual edge conditions,
+/// especially when dealing with multiple possible outcomes. This approach scales well for
+/// workflows that need to handle many different scenarios.
 /// </summary>
 public class Step04c_Switch_Case_Edge_Group(ITestOutputHelper output) : WorkflowSample(output)
 {
@@ -33,7 +41,7 @@ public class Step04c_Switch_Case_Edge_Group(ITestOutputHelper output) : Workflow
         var emailAssistantExecutor = new EmailAssistantExecutor(emailAssistantAgent);
         var sendEmailExecutor = new SendEmailExecutor();
         var handleSpamExecutor = new HandleSpamExecutor();
-        var handleUnknownExecutor = new HandleUnknownExecutor();
+        var handleUncertainExecutor = new HandleUncertainExecutor();
 
         // Build the workflow
         WorkflowBuilder builder = new(spamDetectionExecutor);
@@ -48,16 +56,18 @@ public class Step04c_Switch_Case_Edge_Group(ITestOutputHelper output) : Workflow
                 handleSpamExecutor
             )
             .WithDefault(
-                handleUnknownExecutor
+                handleUncertainExecutor
             )
         )
         // After the email assistant writes a response, it will be sent to the send email executor
         .AddEdge(emailAssistantExecutor, sendEmailExecutor);
-
         var workflow = builder.Build<ChatMessage>();
 
+        // Read a email from a text file
+        string email = Resources.Read("ambiguous_email.txt");
+
         // Execute the workflow
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, new ChatMessage(ChatRole.User, "Hello World!"));
+        StreamingRun run = await InProcessExecution.StreamAsync(workflow, new ChatMessage(ChatRole.User, email));
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
@@ -68,13 +78,19 @@ public class Step04c_Switch_Case_Edge_Group(ITestOutputHelper output) : Workflow
         }
     }
 
+    /// <summary>
+    /// Represents the possible decisions for spam detection.
+    /// </summary>
     public enum SpamDecision
     {
         NotSpam,
         Spam,
-        Unknown
+        Uncertain
     }
 
+    /// <summary>
+    /// Represents the result of spam detection.
+    /// </summary>
     public sealed class DetectionResult
     {
         [JsonPropertyName("spam_decision")]
@@ -88,6 +104,9 @@ public class Step04c_Switch_Case_Edge_Group(ITestOutputHelper output) : Workflow
         public string EmailId { get; set; } = string.Empty;
     }
 
+    /// <summary>
+    /// Represents an email.
+    /// </summary>
     private sealed class Email
     {
         [JsonPropertyName("email_id")]
@@ -97,6 +116,11 @@ public class Step04c_Switch_Case_Edge_Group(ITestOutputHelper output) : Workflow
         public string EmailContent { get; set; } = string.Empty;
     }
 
+    /// <summary>
+    /// Creates a condition for routing messages based on the expected spam detection result.
+    /// </summary>
+    /// <param name="expectedDecision">The expected spam detection decision</param>
+    /// <returns>A function that evaluates whether a message meets the expected result</returns>
     private Func<object?, bool> GetCondition(SpamDecision expectedDecision)
     {
         return detectionResult =>
@@ -105,9 +129,13 @@ public class Step04c_Switch_Case_Edge_Group(ITestOutputHelper output) : Workflow
         };
     }
 
+    /// <summary>
+    /// Creates a spam detection agent.
+    /// </summary>
+    /// <returns>A ChatClientAgent configured for spam detection</returns>
     private ChatClientAgent GetSpamDetectionAgent()
     {
-        string instructions = "You are a spam detection assistant that identifies spam emails.";
+        string instructions = "You are a spam detection assistant that identifies spam emails. Be less confident in your assessments.";
         var agentOptions = new ChatClientAgentOptions(instructions: instructions)
         {
             ChatOptions = new()
@@ -121,18 +149,22 @@ public class Step04c_Switch_Case_Edge_Group(ITestOutputHelper output) : Workflow
         return new ChatClientAgent(GetAzureOpenAIChatClient(), agentOptions);
     }
 
+    /// <summary>
+    /// Executor that detects spam using an AI agent.
+    /// </summary>
     private sealed class SpamDetectionExecutor : ReflectingExecutor<SpamDetectionExecutor>, IMessageHandler<ChatMessage, DetectionResult>
     {
         private readonly AIAgent _spamDetectionAgent;
 
+        /// <summary>
+        /// Creates a new instance of the <see cref="SpamDetectionExecutor"/> class.
+        /// </summary>
+        /// <param name="spamDetectionAgent">The AI agent used for spam detection</param>
         public SpamDetectionExecutor(AIAgent spamDetectionAgent) : base("SpamDetectionExecutor")
         {
             _spamDetectionAgent = spamDetectionAgent;
         }
 
-        /// <summary>
-        /// Simulate the detection of spam.
-        /// </summary>
         public async ValueTask<DetectionResult> HandleAsync(ChatMessage message, IWorkflowContext context)
         {
             // Generate a random email ID and store the email content
@@ -143,6 +175,7 @@ public class Step04c_Switch_Case_Edge_Group(ITestOutputHelper output) : Workflow
             };
             await context.QueueStateUpdateAsync<Email>(newEmail.EmailId, newEmail, scopeName: EmailStateScope);
 
+            // Invoke the agent
             var response = await _spamDetectionAgent.RunAsync(message);
             var detectionResult = JsonSerializer.Deserialize<DetectionResult>(response.Text);
 
@@ -161,6 +194,10 @@ public class Step04c_Switch_Case_Edge_Group(ITestOutputHelper output) : Workflow
         public string Response { get; set; } = string.Empty;
     }
 
+    /// <summary>
+    /// Creates an email assistant agent.
+    /// </summary>
+    /// <returns>A ChatClientAgent configured for email assistance</returns>
     private ChatClientAgent GetEmailAssistantAgent()
     {
         string instructions = "You are an email assistant that helps users draft responses to emails with professionalism.";
@@ -177,10 +214,17 @@ public class Step04c_Switch_Case_Edge_Group(ITestOutputHelper output) : Workflow
         return new ChatClientAgent(GetAzureOpenAIChatClient(), agentOptions);
     }
 
+    /// <summary>
+    /// Executor that assists with email responses using an AI agent.
+    /// </summary>
     private sealed class EmailAssistantExecutor : ReflectingExecutor<EmailAssistantExecutor>, IMessageHandler<DetectionResult, EmailResponse>
     {
         private readonly AIAgent _emailAssistantAgent;
 
+        /// <summary>
+        /// Creates a new instance of the <see cref="EmailAssistantExecutor"/> class.
+        /// </summary>
+        /// <param name="emailAssistantAgent">The AI agent used for email assistance</param>
         public EmailAssistantExecutor(AIAgent emailAssistantAgent) : base("EmailAssistantExecutor")
         {
             _emailAssistantAgent = emailAssistantAgent;
@@ -196,6 +240,7 @@ public class Step04c_Switch_Case_Edge_Group(ITestOutputHelper output) : Workflow
             // Retrieve the email content from the context
             var email = await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateScope);
 
+            // Invoke the agent
             var response = await _emailAssistantAgent.RunAsync(email!.EmailContent);
             var emailResponse = JsonSerializer.Deserialize<EmailResponse>(response.Text);
 
@@ -203,6 +248,9 @@ public class Step04c_Switch_Case_Edge_Group(ITestOutputHelper output) : Workflow
         }
     }
 
+    /// <summary>
+    /// Executor that sends emails.
+    /// </summary>
     private sealed class SendEmailExecutor() : ReflectingExecutor<SendEmailExecutor>("SendEmailExecutor"), IMessageHandler<EmailResponse>
     {
         /// <summary>
@@ -214,6 +262,9 @@ public class Step04c_Switch_Case_Edge_Group(ITestOutputHelper output) : Workflow
         }
     }
 
+    /// <summary>
+    /// Executor that handles spam messages.
+    /// </summary>
     private sealed class HandleSpamExecutor() : ReflectingExecutor<HandleSpamExecutor>("HandleSpamExecutor"), IMessageHandler<DetectionResult>
     {
         /// <summary>
@@ -232,21 +283,24 @@ public class Step04c_Switch_Case_Edge_Group(ITestOutputHelper output) : Workflow
         }
     }
 
-    private sealed class HandleUnknownExecutor() : ReflectingExecutor<HandleUnknownExecutor>("HandleUnknownExecutor"), IMessageHandler<DetectionResult>
+    /// <summary>
+    /// Executor that handles uncertain emails.
+    /// </summary>
+    private sealed class HandleUncertainExecutor() : ReflectingExecutor<HandleUncertainExecutor>("HandleUncertainExecutor"), IMessageHandler<DetectionResult>
     {
         /// <summary>
-        /// Simulate the handling of an unknown spam decision.
+        /// Simulate the handling of an uncertain spam decision.
         /// </summary>
         public async ValueTask HandleAsync(DetectionResult message, IWorkflowContext context)
         {
-            if (message.spamDecision == SpamDecision.Unknown)
+            if (message.spamDecision == SpamDecision.Uncertain)
             {
                 var email = await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateScope);
-                await context.AddEventAsync(new WorkflowCompletedEvent($"Email marked as unknown: {message.Reason}. Email content: {email?.EmailContent}"));
+                await context.AddEventAsync(new WorkflowCompletedEvent($"Email marked as uncertain: {message.Reason}. Email content: {email?.EmailContent}"));
             }
             else
             {
-                throw new InvalidOperationException("This executor should only handle unknown spam decisions.");
+                throw new InvalidOperationException("This executor should only handle uncertain spam decisions.");
             }
         }
     }

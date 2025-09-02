@@ -6,17 +6,23 @@ using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Reflection;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
+using Microsoft.Shared.Samples;
 
 namespace Workflow;
 
 /// <summary>
-/// This class demonstrates the use of edge conditions in a workflow. By providing conditions
-/// on the edges, the workflow can route messages according to the conditions defined for each edge.
-/// In this sample, we are creating a simple automatic email response workflow. There is a spam
-/// detection agent that intelligently analyzes incoming emails and classifies them as spam or not.
-/// Based on the classification, the email will either be handled by the HandleSpamExecutor
-/// or routed to the EmailAssistantExecutor, after which the reply will be sent to the SendEmailExecutor
-/// for final delivery.
+/// This sample demonstrates conditional routing using edge conditions to create decision-based workflows.
+///
+/// This workflow creates an automated email response system that routes emails down different paths based
+/// on spam detection results:
+///
+/// 1. Spam Detection Agent analyzes incoming emails and classifies them as spam or legitimate
+/// 2. Based on the classification:
+///    - Legitimate emails → Email Assistant Agent → Send Email Executor
+///    - Spam emails → Handle Spam Executor (marks as spam)
+///
+/// Edge conditions enable workflows to make intelligent routing decisions, allowing you to
+/// build sophisticated automation that responds differently based on the data being processed.
 /// </summary>
 public class Step04a_Edge_Condition(ITestOutputHelper output) : WorkflowSample(output)
 {
@@ -33,16 +39,16 @@ public class Step04a_Edge_Condition(ITestOutputHelper output) : WorkflowSample(o
 
         // Build the workflow
         WorkflowBuilder builder = new(spamDetectionAgent);
-        // If it's not a spam, the result will be routed to the email assistant
         builder.AddEdge(spamDetectionAgent, emailAssistantAgent, condition: GetCondition(expectedResult: false));
-        // After the email assistant writes a response, it will be sent to the send email executor
         builder.AddEdge(emailAssistantAgent, sendEmailExecutor);
-        // If it's spam, the result will be routed to the handle spam executor
         builder.AddEdge(spamDetectionAgent, handleSpamExecutor, condition: GetCondition(expectedResult: true));
         var workflow = builder.Build<ChatMessage>();
 
+        // Read a email from a text file
+        string email = Resources.Read("email.txt");
+
         // Execute the workflow
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, new ChatMessage(ChatRole.User, "Hello World!"));
+        StreamingRun run = await InProcessExecution.StreamAsync(workflow, new ChatMessage(ChatRole.User, email));
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
@@ -70,6 +76,11 @@ public class Step04a_Edge_Condition(ITestOutputHelper output) : WorkflowSample(o
         public string EmailContent { get; set; } = string.Empty;
     }
 
+    /// <summary>
+    /// Creates a condition for routing messages based on the expected spam detection result.
+    /// </summary>
+    /// <param name="expectedResult">The expected spam detection result</param>
+    /// <returns>A function that evaluates whether a message meets the expected result</returns>
     private Func<object?, bool> GetCondition(bool expectedResult)
     {
         return message =>
@@ -85,6 +96,10 @@ public class Step04a_Edge_Condition(ITestOutputHelper output) : WorkflowSample(o
         };
     }
 
+    /// <summary>
+    /// Creates a spam detection agent.
+    /// </summary>
+    /// <returns>A ChatClientAgent configured for spam detection</returns>
     private ChatClientAgent GetSpamDetectionAgent()
     {
         string instructions = "You are a spam detection assistant that identifies spam emails.";
@@ -110,6 +125,10 @@ public class Step04a_Edge_Condition(ITestOutputHelper output) : WorkflowSample(o
         public string Response { get; set; } = string.Empty;
     }
 
+    /// <summary>
+    /// Creates an email assistant agent.
+    /// </summary>
+    /// <returns>A ChatClientAgent configured for email assistance</returns>
     private ChatClientAgent GetEmailAssistantAgent()
     {
         string instructions = "You are an email assistant that helps users draft responses to emails with professionalism.";
@@ -126,6 +145,9 @@ public class Step04a_Edge_Condition(ITestOutputHelper output) : WorkflowSample(o
         return new ChatClientAgent(GetAzureOpenAIChatClient(), agentOptions);
     }
 
+    /// <summary>
+    /// Executor that sends the email.
+    /// </summary>
     private sealed class SendEmailExecutor() : ReflectingExecutor<SendEmailExecutor>("SendEmailExecutor"), IMessageHandler<ChatMessage>
     {
         /// <summary>
@@ -138,6 +160,9 @@ public class Step04a_Edge_Condition(ITestOutputHelper output) : WorkflowSample(o
         }
     }
 
+    /// <summary>
+    /// Executor that handles spam messages.
+    /// </summary>
     private sealed class HandleSpamExecutor() : ReflectingExecutor<HandleSpamExecutor>("HandleSpamExecutor"), IMessageHandler<ChatMessage>
     {
         /// <summary>

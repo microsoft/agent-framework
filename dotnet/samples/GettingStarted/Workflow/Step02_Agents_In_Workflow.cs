@@ -7,7 +7,15 @@ using Microsoft.Extensions.AI.Agents;
 namespace Workflow;
 
 /// <summary>
-/// This class demonstrates the use of agents within a workflow.
+/// This sample shows how to use AI agents as executors within a workflow.
+///
+/// Instead of simple text processing executors, this workflow uses three translation agents:
+/// 1. French Agent - translates input text to French
+/// 2. Spanish Agent - translates French text to Spanish
+/// 3. English Agent - translates Spanish text back to English
+///
+/// The agents are connected sequentially, creating a translation chain that demonstrates
+/// how AI-powered components can be seamlessly integrated into workflow pipelines.
 /// </summary>
 public class Step02_Agents_In_Workflow(ITestOutputHelper output) : WorkflowSample(output)
 {
@@ -37,6 +45,11 @@ public class Step02_Agents_In_Workflow(ITestOutputHelper output) : WorkflowSampl
         }
     }
 
+    /// <summary>
+    /// Creates a translation agent for the specified target language.
+    /// </summary>
+    /// <param name="targetLanguage">The target language for translation</param>
+    /// <returns>A ChatClientAgent configured for the specified language</returns>
     private ChatClientAgent GetTranslationAgent(string targetLanguage)
     {
         string instructions = $"You are a translation assistant that translates the provided text to {targetLanguage}.";

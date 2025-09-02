@@ -6,13 +6,15 @@ using Microsoft.Agents.Workflows.Reflection;
 namespace Workflow;
 
 /// <summary>
-/// This class demonstrates a simple sequential workflow with two executors.
-/// Executors and edges are basic building blocks of workflows. In this sample,
-/// the workflow consists of an UppercaseExecutor followed by a ReverseTextExecutor.
-/// The UpperCaseExecutor converts input text to uppercase, and the ReverseTextExecutor
-/// reverses the text. The two executors are connected via an edge. Data flows from
-/// one executor to the next through these edges. Together, the resulting workflow
-/// processes the input text by first converting it to uppercase and then reversing it.
+/// This sample demonstrates how to create a basic sequential workflow using two executors.
+///
+/// Workflows are built from executors (processing units) connected by edges (data flow paths).
+/// In this example, we create a simple text processing pipeline that:
+/// 1. Takes input text and converts it to uppercase using an UppercaseExecutor
+/// 2. Takes the uppercase text and reverses it using a ReverseTextExecutor
+///
+/// The executors are connected sequentially, so data flows from one to the next in order.
+/// For input "Hello, World!", the workflow produces "!DLROW ,OLLEH".
 /// </summary>
 public class Step01a_Sequential(ITestOutputHelper output) : WorkflowSample(output)
 {
@@ -23,12 +25,12 @@ public class Step01a_Sequential(ITestOutputHelper output) : WorkflowSample(outpu
         UppercaseExecutor uppercase = new();
         ReverseTextExecutor reverse = new();
 
-        // Build the workflow
+        // Build the workflow by connecting executors sequentially
         WorkflowBuilder builder = new(uppercase);
         builder.AddEdge(uppercase, reverse);
         var workflow = builder.Build<string>();
 
-        // Execute the workflow
+        // Execute the workflow with input data
         Run run = await InProcessExecution.RunAsync(workflow, "Hello, World!");
         foreach (WorkflowEvent evt in run.NewEvents)
         {
@@ -38,24 +40,47 @@ public class Step01a_Sequential(ITestOutputHelper output) : WorkflowSample(outpu
             }
         }
     }
+
+    /// <summary>
+    /// First executor: converts input text to uppercase.
+    /// </summary>
     private sealed class UppercaseExecutor() : ReflectingExecutor<UppercaseExecutor>("UppercaseExecutor"), IMessageHandler<string, string>
     {
+        /// <summary>
+        /// Processes the input message by converting it to uppercase.
+        /// </summary>
+        /// <param name="message">The input text to convert</param>
+        /// <param name="context">Workflow context for accessing workflow services and adding events</param>
+        /// <returns>The input text converted to uppercase</returns>
         public async ValueTask<string> HandleAsync(string message, IWorkflowContext context)
         {
             string result = message.ToUpperInvariant();
+
+            // The return value will be sent as a message along an edge to subsequent executors
             return result;
         }
     }
 
+    /// <summary>
+    /// Second executor: reverses the input text and completes the workflow.
+    /// </summary>
     private sealed class ReverseTextExecutor() : ReflectingExecutor<ReverseTextExecutor>("ReverseTextExecutor"), IMessageHandler<string, string>
     {
+        /// <summary>
+        /// Processes the input message by reversing the text.
+        /// </summary>
+        /// <param name="message">The input text to reverse</param>
+        /// <param name="context">Workflow context for accessing workflow services and adding events</param>
+        /// <returns>The input text reversed</returns>
         public async ValueTask<string> HandleAsync(string message, IWorkflowContext context)
         {
             char[] charArray = message.ToCharArray();
             System.Array.Reverse(charArray);
             string result = new(charArray);
 
+            // Signal that the workflow is complete
             await context.AddEventAsync(new WorkflowCompletedEvent(result)).ConfigureAwait(false);
+
             return result;
         }
     }

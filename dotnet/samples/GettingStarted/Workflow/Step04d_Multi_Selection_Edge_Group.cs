@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -6,16 +6,25 @@ using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Reflection;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
+using Microsoft.Shared.Samples;
 
 namespace Workflow;
 
 /// <summary>
-/// This class demonstrates how to configure a workflow with switch-case logic using edges.
-/// Building on top the previous examples, this workflow incorporates conditional branching
-/// to handle different scenarios based on the spam detection results. More specifically,
-/// a new "unknown" case is added to handle situations where the agent cannot determine if
-/// an email is spam, in which case it will trigger the default case and route the email
-/// to a new executor for special handling.
+/// This sample demonstrates multi-selection routing where one executor can trigger multiple downstream executors.
+///
+/// Building on the switch-case pattern from Step04c, this workflow adds intelligent multi-path routing
+/// based on email analysis results. Instead of routing to just one executor, the workflow can now
+/// trigger multiple executors simultaneously when certain conditions are met.
+///
+/// Key features:
+/// - For legitimate emails: triggers Email Assistant (always) + Email Summary (if email is long)
+/// - For spam emails: triggers Handle Spam executor only
+/// - For uncertain emails: triggers Handle Uncertain executor only
+/// - Database logging happens for both short emails and summarized long emails
+///
+/// This pattern is powerful for workflows that need parallel processing based on data characteristics,
+/// such as triggering different analytics pipelines or multiple notification systems.
 /// </summary>
 public class Step04d_Multi_Selection_Edge_Group(ITestOutputHelper output) : WorkflowSample(output)
 {
@@ -36,7 +45,7 @@ public class Step04d_Multi_Selection_Edge_Group(ITestOutputHelper output) : Work
         var emailSummaryExecutor = new EmailSummaryExecutor(emailSummaryAgent);
         var sendEmailExecutor = new SendEmailExecutor();
         var handleSpamExecutor = new HandleSpamExecutor();
-        var handleUnknownExecutor = new HandleUnknownExecutor();
+        var handleUncertainExecutor = new HandleUncertainExecutor();
         var databaseAccessExecutor = new DatabaseAccessExecutor();
 
         // Build the workflow
@@ -47,7 +56,7 @@ public class Step04d_Multi_Selection_Edge_Group(ITestOutputHelper output) : Work
                 handleSpamExecutor,
                 emailAssistantExecutor,
                 emailSummaryExecutor,
-                handleUnknownExecutor,
+                handleUncertainExecutor,
             ],
             partitioner: GetPartitioner()
         )
@@ -60,11 +69,13 @@ public class Step04d_Multi_Selection_Edge_Group(ITestOutputHelper output) : Work
             condition: analysisResult => analysisResult is AnalysisResult result && result.EmailLength <= LongEmailThreshold)
         // Save the analysis result to the database with summary
         .AddEdge(emailSummaryExecutor, databaseAccessExecutor);
-
         var workflow = builder.Build<ChatMessage>();
 
+        // Read a email from a text file
+        string email = Resources.Read("email.txt");
+
         // Execute the workflow
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, new ChatMessage(ChatRole.User, "Hello World!"));
+        StreamingRun run = await InProcessExecution.StreamAsync(workflow, new ChatMessage(ChatRole.User, email));
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
@@ -72,16 +83,27 @@ public class Step04d_Multi_Selection_Edge_Group(ITestOutputHelper output) : Work
             {
                 Console.WriteLine($"{completedEvent}");
             }
+
+            if (evt is DatabaseEvent databaseEvent)
+            {
+                Console.WriteLine($"{databaseEvent}");
+            }
         }
     }
 
+    /// <summary>
+    /// Represents the possible decisions for spam detection.
+    /// </summary>
     public enum SpamDecision
     {
         NotSpam,
         Spam,
-        Unknown
+        Uncertain
     }
 
+    /// <summary>
+    /// Represents the result of email analysis.
+    /// </summary>
     public sealed class AnalysisResult
     {
         [JsonPropertyName("spam_decision")]
@@ -101,6 +123,9 @@ public class Step04d_Multi_Selection_Edge_Group(ITestOutputHelper output) : Work
         public string EmailId { get; set; } = string.Empty;
     }
 
+    /// <summary>
+    /// Represents an email.
+    /// </summary>
     private sealed class Email
     {
         [JsonPropertyName("email_id")]
@@ -110,6 +135,10 @@ public class Step04d_Multi_Selection_Edge_Group(ITestOutputHelper output) : Work
         public string EmailContent { get; set; } = string.Empty;
     }
 
+    /// <summary>
+    /// Creates a partitioner for routing messages based on the analysis result.
+    /// </summary>
+    /// <returns>A function that takes an analysis result and returns the target partitions.</returns>
     private Func<object?, int, IEnumerable<int>> GetPartitioner()
     {
         return (analysisResult, targetCount) =>
@@ -140,6 +169,10 @@ public class Step04d_Multi_Selection_Edge_Group(ITestOutputHelper output) : Work
         };
     }
 
+    /// <summary>
+    /// Create an email analysis agent.
+    /// </summary>
+    /// <returns>A ChatClientAgent configured for email analysis</returns>
     private ChatClientAgent GetEmailAnalysisAgent()
     {
         string instructions = "You are a spam detection assistant that identifies spam emails.";
@@ -156,18 +189,22 @@ public class Step04d_Multi_Selection_Edge_Group(ITestOutputHelper output) : Work
         return new ChatClientAgent(GetAzureOpenAIChatClient(), agentOptions);
     }
 
+    /// <summary>
+    /// Executor that analyzes emails using an AI agent.
+    /// </summary>
     private sealed class EmailAnalysisExecutor : ReflectingExecutor<EmailAnalysisExecutor>, IMessageHandler<ChatMessage, AnalysisResult>
     {
-        private readonly AIAgent _spamDetectionAgent;
-
-        public EmailAnalysisExecutor(AIAgent spamDetectionAgent) : base("EmailAnalysisExecutor")
-        {
-            _spamDetectionAgent = spamDetectionAgent;
-        }
+        private readonly AIAgent _emailAnalysisAgent;
 
         /// <summary>
-        /// Simulate the detection of spam.
+        /// Creates a new instance of the <see cref="EmailAnalysisExecutor"/> class.
         /// </summary>
+        /// <param name="emailAnalysisAgent">The AI agent used for email analysis</param>
+        public EmailAnalysisExecutor(AIAgent emailAnalysisAgent) : base("EmailAnalysisExecutor")
+        {
+            _emailAnalysisAgent = emailAnalysisAgent;
+        }
+
         public async ValueTask<AnalysisResult> HandleAsync(ChatMessage message, IWorkflowContext context)
         {
             // Generate a random email ID and store the email content
@@ -178,7 +215,8 @@ public class Step04d_Multi_Selection_Edge_Group(ITestOutputHelper output) : Work
             };
             await context.QueueStateUpdateAsync<Email>(newEmail.EmailId, newEmail, scopeName: EmailStateScope);
 
-            var response = await _spamDetectionAgent.RunAsync(message);
+            // Invoke the agent
+            var response = await _emailAnalysisAgent.RunAsync(message);
             var AnalysisResult = JsonSerializer.Deserialize<AnalysisResult>(response.Text);
 
             AnalysisResult!.EmailId = newEmail.EmailId;
@@ -197,6 +235,10 @@ public class Step04d_Multi_Selection_Edge_Group(ITestOutputHelper output) : Work
         public string Response { get; set; } = string.Empty;
     }
 
+    /// <summary>
+    /// Creates an email assistant agent.
+    /// </summary>
+    /// <returns>A ChatClientAgent configured for email assistance</returns>
     private ChatClientAgent GetEmailAssistantAgent()
     {
         string instructions = "You are an email assistant that helps users draft responses to emails with professionalism.";
@@ -213,10 +255,17 @@ public class Step04d_Multi_Selection_Edge_Group(ITestOutputHelper output) : Work
         return new ChatClientAgent(GetAzureOpenAIChatClient(), agentOptions);
     }
 
+    /// <summary>
+    /// Executor that assists with email responses using an AI agent.
+    /// </summary>
     private sealed class EmailAssistantExecutor : ReflectingExecutor<EmailAssistantExecutor>, IMessageHandler<AnalysisResult, EmailResponse>
     {
         private readonly AIAgent _emailAssistantAgent;
 
+        /// <summary>
+        /// Creates a new instance of the <see cref="EmailAssistantExecutor"/> class.
+        /// </summary>
+        /// <param name="emailAssistantAgent">The AI agent used for email assistance</param>
         public EmailAssistantExecutor(AIAgent emailAssistantAgent) : base("EmailAssistantExecutor")
         {
             _emailAssistantAgent = emailAssistantAgent;
@@ -232,6 +281,7 @@ public class Step04d_Multi_Selection_Edge_Group(ITestOutputHelper output) : Work
             // Retrieve the email content from the context
             var email = await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateScope);
 
+            // Invoke the agent
             var response = await _emailAssistantAgent.RunAsync(email!.EmailContent);
             var emailResponse = JsonSerializer.Deserialize<EmailResponse>(response.Text);
 
@@ -239,6 +289,9 @@ public class Step04d_Multi_Selection_Edge_Group(ITestOutputHelper output) : Work
         }
     }
 
+    /// <summary>
+    /// Executor that sends emails.
+    /// </summary>
     private sealed class SendEmailExecutor() : ReflectingExecutor<SendEmailExecutor>("SendEmailExecutor"), IMessageHandler<EmailResponse>
     {
         /// <summary>
@@ -250,6 +303,9 @@ public class Step04d_Multi_Selection_Edge_Group(ITestOutputHelper output) : Work
         }
     }
 
+    /// <summary>
+    /// Executor that handles spam messages.
+    /// </summary>
     private sealed class HandleSpamExecutor() : ReflectingExecutor<HandleSpamExecutor>("HandleSpamExecutor"), IMessageHandler<AnalysisResult>
     {
         /// <summary>
@@ -268,21 +324,24 @@ public class Step04d_Multi_Selection_Edge_Group(ITestOutputHelper output) : Work
         }
     }
 
-    private sealed class HandleUnknownExecutor() : ReflectingExecutor<HandleUnknownExecutor>("HandleUnknownExecutor"), IMessageHandler<AnalysisResult>
+    /// <summary>
+    /// Executor that handles uncertain messages.
+    /// </summary>
+    private sealed class HandleUncertainExecutor() : ReflectingExecutor<HandleUncertainExecutor>("HandleUncertainExecutor"), IMessageHandler<AnalysisResult>
     {
         /// <summary>
-        /// Simulate the handling of an unknown spam decision.
+        /// Simulate the handling of an uncertain spam decision.
         /// </summary>
         public async ValueTask HandleAsync(AnalysisResult message, IWorkflowContext context)
         {
-            if (message.spamDecision == SpamDecision.Unknown)
+            if (message.spamDecision == SpamDecision.Uncertain)
             {
                 var email = await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateScope);
-                await context.AddEventAsync(new WorkflowCompletedEvent($"Email marked as unknown: {message.Reason}. Email content: {email?.EmailContent}"));
+                await context.AddEventAsync(new WorkflowCompletedEvent($"Email marked as uncertain: {message.Reason}. Email content: {email?.EmailContent}"));
             }
             else
             {
-                throw new InvalidOperationException("This executor should only handle unknown spam decisions.");
+                throw new InvalidOperationException("This executor should only handle uncertain spam decisions.");
             }
         }
     }
@@ -296,6 +355,10 @@ public class Step04d_Multi_Selection_Edge_Group(ITestOutputHelper output) : Work
         public string Summary { get; set; } = string.Empty;
     }
 
+    /// <summary>
+    /// Creates an agent that summarizes emails.
+    /// </summary>
+    /// <returns>A ChatClientAgent configured for email summarization</returns>
     private ChatClientAgent GetEmailSummaryAgent()
     {
         string instructions = "You are an assistant that helps users summarize emails.";
@@ -312,10 +375,17 @@ public class Step04d_Multi_Selection_Edge_Group(ITestOutputHelper output) : Work
         return new ChatClientAgent(GetAzureOpenAIChatClient(), agentOptions);
     }
 
+    /// <summary>
+    /// Executor that summarizes emails using an AI agent.
+    /// </summary>
     private sealed class EmailSummaryExecutor : ReflectingExecutor<EmailSummaryExecutor>, IMessageHandler<AnalysisResult, AnalysisResult>
     {
         private readonly AIAgent _emailSummaryAgent;
 
+        /// <summary>
+        /// Creates a new instance of the <see cref="EmailSummaryExecutor"/> class.
+        /// </summary>
+        /// <param name="emailSummaryAgent">The AI agent used for email summarization</param>
         public EmailSummaryExecutor(AIAgent emailSummaryAgent) : base("EmailSummaryExecutor")
         {
             _emailSummaryAgent = emailSummaryAgent;
@@ -323,9 +393,11 @@ public class Step04d_Multi_Selection_Edge_Group(ITestOutputHelper output) : Work
 
         public async ValueTask<AnalysisResult> HandleAsync(AnalysisResult message, IWorkflowContext context)
         {
+            // Read the email content from the shared states
             var email = await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateScope);
-            var response = await _emailSummaryAgent.RunAsync(email!.EmailContent);
 
+            // Invoke the agent
+            var response = await _emailSummaryAgent.RunAsync(email!.EmailContent);
             var emailSummary = JsonSerializer.Deserialize<EmailSummary>(response.Text);
             message.EmailSummary = emailSummary!.Summary;
 
@@ -333,6 +405,15 @@ public class Step04d_Multi_Selection_Edge_Group(ITestOutputHelper output) : Work
         }
     }
 
+    /// <summary>
+    /// A custom workflow event for database operations.
+    /// </summary>
+    /// <param name="message">The message associated with the event</param>
+    private sealed class DatabaseEvent(string message) : WorkflowEvent(message) { }
+
+    /// <summary>
+    /// Executor that handles database access.
+    /// </summary>
     private sealed class DatabaseAccessExecutor() : ReflectingExecutor<DatabaseAccessExecutor>("DatabaseAccessExecutor"), IMessageHandler<AnalysisResult>
     {
         public async ValueTask HandleAsync(AnalysisResult message, IWorkflowContext context)
@@ -346,7 +427,7 @@ public class Step04d_Multi_Selection_Edge_Group(ITestOutputHelper output) : Work
 
             // Not using the `WorkflowCompletedEvent` because this is not the end of the workflow.
             // The end of the workflow is signaled by the `SendEmailExecutor` or the `HandleUnknownExecutor`.
-            await context.AddEventAsync(new WorkflowEvent($"Email {message.EmailId} saved to database."));
+            await context.AddEventAsync(new DatabaseEvent($"Email {message.EmailId} saved to database."));
         }
     }
 }
