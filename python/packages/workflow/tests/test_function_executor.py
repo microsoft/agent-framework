@@ -227,7 +227,7 @@ class TestFunctionExecutor:
             await ctx.send_message(result)
 
         spec = process_list._instance_handler_specs[0]
-        assert spec["message_type"] is list[str]
+        assert spec["message_type"] == list[str]
         assert spec["output_types"] == [dict[str, int]]
 
     def test_single_parameter_function(self):
