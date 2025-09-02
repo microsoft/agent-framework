@@ -312,6 +312,12 @@ $env:AZURE_FOUNDRY_PROJECT_ENDPOINT = "https://<your-project>-resource.services.
 $env:OPENAI_API_KEY = "sk-..."
 ```
 
+**For Azure OpenAI and Azure OpenAI Assistants projects:**
+```powershell
+$env:AZUREOPENAI_ENDPOINT = "https://<your-project>.cognitiveservices.azure.com/"
+$env:AZUREOPENAI_DEPLOYMENT_NAME = "gpt-4o" # Optional, defaults to gpt-4o
+```
+
 **Optional debug mode:**
 ```powershell
 $env:AF_SHOW_ALL_DEMO_SETTING_VALUES = "Y"
@@ -326,8 +332,12 @@ The migration samples are organized into three categories, each demonstrating di
 |Category|Description|
 |---|---|
 |[AzureAIFoundry](./AzureAIFoundry/)|Azure OpenAI service integration samples|
+|[AzureOpenAI](./AzureOpenAI/)|Direct Azure OpenAI API integration samples|
+|[AzureOpenAIAssistants](./AzureOpenAIAssistants/)|Azure OpenAI Assistants API integration samples|
+|[AzureOpenAIResponses](./AzureOpenAIResponses/)|Azure OpenAI Responses API integration samples|
 |[OpenAI](./OpenAI/)|Direct OpenAI API integration samples|
-|[OpenAIAssistants](./OpenAIAssistants/)|OpenAI Assistant API integration samples|
+|[OpenAIAssistants](./OpenAIAssistants/)|OpenAI Assistants API integration samples|
+|[OpenAIResponses](./OpenAIResponses/)|OpenAI Responses API integration samples|
 
 ## Running the samples from the console
 
@@ -338,20 +348,26 @@ To run any migration sample, navigate to the desired sample directory:
 cd "AzureAIFoundry\Step01_Basics"
 dotnet run
 
-cd "AzureAIFoundry\Step03_ToolCall"
+# Azure OpenAI Examples
+cd "AzureOpenAI\Step01_Basics"
 dotnet run
 
 # OpenAI Examples
 cd "OpenAI\Step01_Basics"
 dotnet run
 
-cd "OpenAI\Step02_DependencyInjection"
-dotnet run
-
 # OpenAI Assistants Examples
 cd "OpenAIAssistants\Step01_Basics"
 dotnet run
 
-cd "OpenAIAssistants\Step04_CodeInterpreter"
+# OpenAI Responses Examples
+cd "OpenAIResponses\Step01_Basics"
+
+# Azure OpenAI Examples
+cd "AzureOpenAI\Step01_Basics"
+dotnet run
+
+# Azure OpenAI Assistants Examples
+cd "AzureOpenAIAssistants\Step01_Basics"
 dotnet run
 ```

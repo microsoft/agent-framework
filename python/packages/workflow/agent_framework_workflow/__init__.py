@@ -2,6 +2,7 @@
 
 import importlib.metadata
 
+from ._agent import WorkflowAgent
 from ._checkpoint import (
     CheckpointStorage,
     FileCheckpointStorage,
@@ -14,7 +15,7 @@ from ._const import (
 from ._edge import Case, Default
 from ._events import (
     AgentRunEvent,
-    AgentRunStreamingEvent,
+    AgentRunUpdateEvent,
     ExecutorCompletedEvent,
     ExecutorEvent,
     ExecutorInvokeEvent,
@@ -88,7 +89,7 @@ __all__ = [
     "AgentExecutorRequest",
     "AgentExecutorResponse",
     "AgentRunEvent",
-    "AgentRunStreamingEvent",
+    "AgentRunUpdateEvent",
     "Case",
     "CheckpointStorage",
     "Default",
@@ -132,6 +133,7 @@ __all__ = [
     "TypeCompatibilityError",
     "ValidationTypeEnum",
     "Workflow",
+    "WorkflowAgent",
     "WorkflowBuilder",
     "WorkflowCheckpoint",
     "WorkflowCompletedEvent",
@@ -155,3 +157,5 @@ import contextlib
 with contextlib.suppress(AttributeError, TypeError, ValueError):
     # Rebuild WorkflowExecutor to resolve Workflow forward reference
     WorkflowExecutor.model_rebuild()
+    # Rebuild WorkflowAgent to resolve Workflow forward reference
+    WorkflowAgent.model_rebuild()
