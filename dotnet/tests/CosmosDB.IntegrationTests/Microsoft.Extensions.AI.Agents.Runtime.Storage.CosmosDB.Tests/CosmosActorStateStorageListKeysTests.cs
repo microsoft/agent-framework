@@ -26,7 +26,7 @@ public class CosmosActorStateStorageListKeysTests
         using var cts = new CancellationTokenSource(s_defaultTimeout);
         var cancellationToken = cts.Token;
 
-        var storage = new CosmosActorStateStorage(this._fixture.Container);
+        await using var storage = new CosmosActorStateStorage(this._fixture.Container);
         var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
 
         var prefixKey1 = "prefix_key1";
@@ -69,7 +69,7 @@ public class CosmosActorStateStorageListKeysTests
         using var cts = new CancellationTokenSource(s_defaultTimeout);
         var cancellationToken = cts.Token;
 
-        var storage = new CosmosActorStateStorage(this._fixture.Container);
+        await using var storage = new CosmosActorStateStorage(this._fixture.Container);
         var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
 
         var key1 = "key1";
@@ -107,7 +107,7 @@ public class CosmosActorStateStorageListKeysTests
         using var cts = new CancellationTokenSource(s_defaultTimeout);
         var cancellationToken = cts.Token;
 
-        var storage = new CosmosActorStateStorage(this._fixture.Container);
+        await using var storage = new CosmosActorStateStorage(this._fixture.Container);
         var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
 
         // Act - List keys for actor with no state
@@ -132,7 +132,7 @@ public class CosmosActorStateStorageListKeysTests
         using var cts = new CancellationTokenSource(s_defaultTimeout);
         var cancellationToken = cts.Token;
 
-        var storage = new CosmosActorStateStorage(this._fixture.Container);
+        await using var storage = new CosmosActorStateStorage(this._fixture.Container);
         var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
 
         var key1 = "key1";
@@ -173,7 +173,7 @@ public class CosmosActorStateStorageListKeysTests
         using var cts = new CancellationTokenSource(s_defaultTimeout);
         var cancellationToken = cts.Token;
 
-        var storage = new CosmosActorStateStorage(this._fixture.Container);
+        await using var storage = new CosmosActorStateStorage(this._fixture.Container);
         var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
 
         var key1 = "key1";
@@ -225,7 +225,7 @@ public class CosmosActorStateStorageListKeysTests
         using var cts = new CancellationTokenSource(s_defaultTimeout);
         var cancellationToken = cts.Token;
 
-        var storage = new CosmosActorStateStorage(this._fixture.Container);
+        await using var storage = new CosmosActorStateStorage(this._fixture.Container);
         var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
 
         // Create keys with different prefixes

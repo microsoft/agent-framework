@@ -14,7 +14,7 @@ from agent_framework_azure._entra_id_authentication import (
 
 @pytest.fixture
 def mock_credential() -> MagicMock:
-    """Mock synchronous ChainedTokenCredential."""
+    """Mock synchronous TokenCredential."""
     mock_cred = MagicMock()
     # Create a mock token object with a .token attribute
     mock_token = MagicMock()
@@ -25,7 +25,7 @@ def mock_credential() -> MagicMock:
 
 @pytest.fixture
 def mock_async_credential() -> MagicMock:
-    """Mock asynchronous ChainedTokenCredential."""
+    """Mock asynchronous AsyncTokenCredential."""
     mock_cred = MagicMock()
     # Create a mock token object with a .token attribute
     mock_token = MagicMock()
