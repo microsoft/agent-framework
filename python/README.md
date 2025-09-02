@@ -212,15 +212,13 @@ if __name__ == "__main__":
 
 ## More Examples & Samples
 
-- [Getting Started with Agents](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/agents): Basic agent creation and tool usage
-- [Chat Client Examples](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/chat_client): Direct chat client usage patterns
-- [Azure Integration](https://github.com/microsoft/agent-framework/tree/main/python/packages/azure): Azure OpenAI and AI Foundry integration
-- [.NET Orchestration Samples](https://github.com/microsoft/agent-framework/tree/main/dotnet/samples/GettingStarted/Orchestration): Advanced multi-agent patterns (.NET)
+- [Getting Started with Agents](./samples/getting_started/agents): Basic agent creation and tool usage
+- [Chat Client Examples](./samples/getting_started/chat_client): Direct chat client usage patterns
 
 ## Agent Framework Documentation
 
 - [Agent Framework Repository](https://github.com/microsoft/agent-framework)
-- [Python Package Documentation](https://github.com/microsoft/agent-framework/tree/main/python)
-- [.NET Package Documentation](https://github.com/microsoft/agent-framework/tree/main/dotnet)
-- [Design Documents](https://github.com/microsoft/agent-framework/tree/main/docs/design)
+- [Python Package Documentation](../user-documentation-python/README.md)
+- [.NET Package Documentation](../user-documentation-dotnet/README.md)
+- [Design Documents](../docs/design)
 - Learn docs are coming soon.
