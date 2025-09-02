@@ -605,8 +605,6 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient
                 continue;
             }
         }
-
-        yield break;
     }
 
     /// <summary>Extract usage details from an <see cref="OpenAIResponse"/>.</summary>
