@@ -203,11 +203,9 @@ class ChatClientAgent(AgentBase):
         temperature: float | None = None,
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
         tools: AITool
-        | list[AITool]
         | Callable[..., Any]
-        | list[Callable[..., Any]]
         | MutableMapping[str, Any]
-        | list[MutableMapping[str, Any]]
+        | list[AITool | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         top_p: float | None = None,
         user: str | None = None,
@@ -386,7 +384,7 @@ class ChatClientAgent(AgentBase):
         agent_name = self._get_agent_name()
 
         # Resolve final tool list (runtime provided tools + local MCP server tools)
-        final_tools: list[AITool | dict[str, Any] | Callable[..., Any]] = []
+        final_tools: list[AITool | Callable[..., Any] | dict[str, Any]] = []
         # Normalize tools argument to a list without mutating the original parameter
         normalized_tools = [] if tools is None else tools if isinstance(tools, list) else [tools]
         for tool in normalized_tools:
@@ -462,11 +460,9 @@ class ChatClientAgent(AgentBase):
         temperature: float | None = None,
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = None,
         tools: AITool
-        | list[AITool]
         | Callable[..., Any]
-        | list[Callable[..., Any]]
         | MutableMapping[str, Any]
-        | list[MutableMapping[str, Any]]
+        | list[AITool | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         top_p: float | None = None,
         user: str | None = None,

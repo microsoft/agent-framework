@@ -31,8 +31,6 @@ from openai.types.responses.web_search_tool_param import UserLocation as WebSear
 from openai.types.responses.web_search_tool_param import WebSearchToolParam
 from pydantic import BaseModel, SecretStr, ValidationError
 
-from agent_framework import DataContent, TextReasoningContent, UriContent, UsageContent
-
 from .._clients import ChatClientBase, use_tool_calling
 from .._logging import get_logger
 from .._tools import AIFunction, AITool, HostedCodeInterpreterTool, HostedFileSearchTool, HostedWebSearchTool
@@ -44,12 +42,16 @@ from .._types import (
     ChatResponseUpdate,
     ChatRole,
     CitationAnnotation,
+    DataContent,
     FunctionCallContent,
     FunctionResultContent,
     HostedFileContent,
     HostedVectorStoreContent,
     TextContent,
+    TextReasoningContent,
     TextSpanRegion,
+    UriContent,
+    UsageContent,
     UsageDetails,
 )
 from ..exceptions import (
@@ -109,11 +111,9 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         temperature: float | None = None,
         tool_choice: "ChatToolMode" | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
         tools: AITool
-        | list[AITool]
         | Callable[..., Any]
-        | list[Callable[..., Any]]
         | MutableMapping[str, Any]
-        | list[MutableMapping[str, Any]]
+        | list[AITool | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         top_p: float | None = None,
         user: str | None = None,
@@ -201,11 +201,9 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         temperature: float | None = None,
         tool_choice: "ChatToolMode" | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
         tools: AITool
-        | list[AITool]
         | Callable[..., Any]
-        | list[Callable[..., Any]]
         | MutableMapping[str, Any]
-        | list[MutableMapping[str, Any]]
+        | list[AITool | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         top_p: float | None = None,
         user: str | None = None,
