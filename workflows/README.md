@@ -1,4 +1,4 @@
-# No-Code Workflows
+# Declarative Workflows
 
 This folder contains sample workflow definitions than be ran using the
 [Declarative Workflow](../dotnet/demos/DeclarativeWorkflow) demo.
