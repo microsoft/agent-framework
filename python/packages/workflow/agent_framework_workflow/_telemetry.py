@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from agent_framework._pydantic import AFBaseSettings
@@ -11,11 +12,23 @@ if TYPE_CHECKING:
     from ._workflow import Workflow
 
 
+class EdgeGroupDeliveryStatus(Enum):
+    """Enum for edge group delivery status values."""
+
+    DELIVERED = "delivered"
+    DROPPED_TYPE_MISMATCH = "dropped for type mismatch"
+    DROPPED_TARGET_MISMATCH = "dropped for target mismatch"
+    DROPPED_CONDITION_FALSE = "dropped for condition evaluated to false"
+    EXCEPTION = "exception"
+    BUFFERED = "buffered"
+
+
 # Span name constants
 _WORKFLOW_BUILD_SPAN = "workflow.build"
 _WORKFLOW_RUN_SPAN = "workflow.run"
 _EXECUTOR_PROCESS_SPAN = "executor.process"
 _MESSAGE_SEND_SPAN = "message.send"
+_EDGE_GROUP_PROCESS_SPAN = "edge_group.process"
 
 
 class WorkflowDiagnosticSettings(AFBaseSettings):
@@ -37,6 +50,7 @@ class WorkflowTracer:
     - Workflow execution spans (workflow.run)
     - Executor processing spans (executor.process)
     - Message sending spans (message.send)
+    - Edge group processing spans (edge_group.process)
 
     Implements span linking for causality without unwanted nesting.
     """
@@ -130,6 +144,36 @@ class WorkflowTracer:
             kind=SpanKind.PRODUCER,
             attributes=attributes,
         )
+
+    def create_edge_group_processing_span(self, edge_group_type: str) -> Any:
+        """Create an edge group processing span.
+
+        Edge group processing spans track the processing operations in edge runners
+        before message delivery, including condition checking and routing decisions.
+        """
+        attributes: dict[str, str] = {
+            "edge_group.type": edge_group_type,
+        }
+
+        return self.tracer.start_as_current_span(
+            _EDGE_GROUP_PROCESS_SPAN,
+            kind=SpanKind.INTERNAL,
+            attributes=attributes,
+        )
+
+    def set_edge_group_span_attributes(self, delivered: bool, delivery_status: EdgeGroupDeliveryStatus) -> None:
+        """Set edge group span attributes for delivery status.
+
+        Args:
+            delivered: Whether the message was delivered.
+            delivery_status: The delivery status from EdgeGroupDeliveryStatus enum.
+        """
+        span = get_current_span()
+        if span and span.is_recording():
+            span.set_attributes({
+                "edge_group.delivered": delivered,
+                "edge_group.delivery_status": delivery_status.value,
+            })
 
     def add_workflow_event(self, event_name: str, attributes: Attributes | None = None) -> None:
         """Add an event to the current workflow span.

@@ -207,6 +207,51 @@ async def test_single_edge_group_send_message_with_invalid_data() -> None:
     assert success is False
 
 
+async def test_single_edge_group_send_message_with_condition_pass() -> None:
+    """Test sending a message through a single edge runner with a condition that passes."""
+    source = MockExecutor(id="source_executor")
+    target = MockExecutor(id="target_executor")
+
+    executors: dict[str, Executor] = {source.id: source, target.id: target}
+    # Create edge group with condition that passes when data == "test"
+    edge_group = SingleEdgeGroup(source_id=source.id, target_id=target.id, condition=lambda x: x.data == "test")
+
+    edge_runner = create_edge_runner(edge_group, executors)
+    shared_state = SharedState()
+    ctx = InProcRunnerContext()
+
+    data = MockMessage(data="test")
+    message = Message(data=data, source_id=source.id)
+
+    success = await edge_runner.send_message(message, shared_state, ctx)
+    assert success is True
+    assert target.call_count == 1
+    assert target.last_message.data == "test"
+
+
+async def test_single_edge_group_send_message_with_condition_fail() -> None:
+    """Test sending a message through a single edge runner with a condition that fails."""
+    source = MockExecutor(id="source_executor")
+    target = MockExecutor(id="target_executor")
+
+    executors: dict[str, Executor] = {source.id: source, target.id: target}
+    # Create edge group with condition that passes when data == "test"
+    edge_group = SingleEdgeGroup(source_id=source.id, target_id=target.id, condition=lambda x: x.data == "test")
+
+    edge_runner = create_edge_runner(edge_group, executors)
+    shared_state = SharedState()
+    ctx = InProcRunnerContext()
+
+    data = MockMessage(data="different")
+    message = Message(data=data, source_id=source.id)
+
+    success = await edge_runner.send_message(message, shared_state, ctx)
+    # Should return True because message was processed, but condition failed
+    assert success is True
+    # Target should not be called because condition failed
+    assert target.call_count == 0
+
+
 # endregion SingleEdgeGroup
 
 
