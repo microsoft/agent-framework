@@ -29,8 +29,8 @@ public interface IWorkflowContext
     ValueTask SendMessageAsync(object message, string? targetId = null);
 
     /// <summary>
-    /// Reads a state value from the workflow's state store. If no scope is provided, the executor's private
-    /// scope is used.
+    /// Reads a state value from the workflow's state store. If no scope is provided, the executor's
+    /// default scope is used.
     /// </summary>
     /// <typeparam name="T">The type of the state value.</typeparam>
     /// <param name="key">The key of the state value.</param>

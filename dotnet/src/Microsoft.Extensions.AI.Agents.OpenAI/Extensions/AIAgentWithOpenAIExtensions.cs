@@ -1,8 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.ClientModel;
 using System.Text;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
+using Microsoft.Extensions.AI.Agents.OpenAI.ChatCompletion;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Chat;
 
@@ -72,6 +74,58 @@ public static class AIAgentWithOpenAIExtensions
 
         var chatCompletion = response.AsChatCompletion();
         return chatCompletion;
+    }
+
+    /// <summary>
+    /// Runs the AI agent with a single OpenAI chat message and returns the response as collection of native OpenAI <see cref="StreamingChatCompletionUpdate"/>.
+    /// </summary>
+    /// <param name="agent">The AI agent to run.</param>
+    /// <param name="message">The OpenAI chat message to send to the agent.</param>
+    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided message and agent response.</param>
+    /// <param name="options">Optional parameters for agent invocation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A <see cref="Task{ChatCompletion}"/> representing the asynchronous operation that returns a native OpenAI <see cref="ChatCompletion"/> response.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="agent"/> or <paramref name="message"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">Thrown when the agent's response cannot be converted to a <see cref="ChatCompletion"/>, typically when the underlying representation is not an OpenAI response.</exception>
+    /// <exception cref="NotSupportedException">Thrown when the <paramref name="message"/> type is not supported by the message conversion method.</exception>
+    /// <remarks>
+    /// This method converts the OpenAI chat message to the Microsoft Extensions AI format using the appropriate conversion method,
+    /// runs the agent, and then extracts the native OpenAI <see cref="ChatCompletion"/> from the response using <see cref="AgentRunResponseExtensions.AsChatCompletion"/>.
+    /// </remarks>
+    public static AsyncCollectionResult<StreamingChatCompletionUpdate> RunStreamingAsync(this AIAgent agent, OpenAI.Chat.ChatMessage message, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        Throw.IfNull(agent);
+        Throw.IfNull(message);
+
+        IAsyncEnumerable<AgentRunResponseUpdate> response = agent.RunStreamingAsync(message.AsChatMessage(), thread, options, cancellationToken);
+
+        return new AsyncStreamingUpdateCollectionResult(response);
+    }
+
+    /// <summary>
+    /// Runs the AI agent with a single OpenAI chat message and returns the response as collection of native OpenAI <see cref="StreamingChatCompletionUpdate"/>.
+    /// </summary>
+    /// <param name="agent">The AI agent to run.</param>
+    /// <param name="messages">The collection of OpenAI chat messages to send to the agent.</param>
+    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided message and agent response.</param>
+    /// <param name="options">Optional parameters for agent invocation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A <see cref="Task{ChatCompletion}"/> representing the asynchronous operation that returns a native OpenAI <see cref="ChatCompletion"/> response.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="agent"/> or <paramref name="messages"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">Thrown when the agent's response cannot be converted to a <see cref="ChatCompletion"/>, typically when the underlying representation is not an OpenAI response.</exception>
+    /// <exception cref="NotSupportedException">Thrown when the <paramref name="messages"/> type is not supported by the message conversion method.</exception>
+    /// <remarks>
+    /// This method converts the OpenAI chat message to the Microsoft Extensions AI format using the appropriate conversion method,
+    /// runs the agent, and then extracts the native OpenAI <see cref="ChatCompletion"/> from the response using <see cref="AgentRunResponseExtensions.AsChatCompletion"/>.
+    /// </remarks>
+    public static AsyncCollectionResult<StreamingChatCompletionUpdate> RunStreamingAsync(this AIAgent agent, IEnumerable<OpenAI.Chat.ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        Throw.IfNull(agent);
+        Throw.IfNull(messages);
+
+        IAsyncEnumerable<AgentRunResponseUpdate> response = agent.RunStreamingAsync([.. messages.AsChatMessages()], thread, options, cancellationToken);
+
+        return new AsyncStreamingUpdateCollectionResult(response);
     }
 
     /// <summary>
