@@ -20,6 +20,8 @@ Make sure to set the following environment variables:
 - `FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
 - `FOUNDRY_MODEL_DEPLOYMENT_NAME`: The name of your model deployment
 
+For detailed information about different ways to run examples and configure environment variables, see [Running Examples Guide](running_examples.md).
+
 ### Sample Code
 
 ```python
