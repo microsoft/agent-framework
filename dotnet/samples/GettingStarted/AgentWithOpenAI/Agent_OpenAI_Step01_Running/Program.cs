@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to create and use a simple AI agent with Azure OpenAI as the backend.
+// This sample shows how to create and use a simple AI agent with OpenAI as the backend.
 
 using System;
 using System.ClientModel;
