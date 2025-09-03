@@ -38,6 +38,7 @@ from ._executor import (
     handler,
     intercepts_request,
 )
+from ._function_executor import FunctionExecutor, executor
 from ._magentic import (
     MagenticAgentDeltaEvent,
     MagenticAgentExecutor,
@@ -99,6 +100,7 @@ __all__ = [
     "ExecutorEvent",
     "ExecutorInvokeEvent",
     "FileCheckpointStorage",
+    "FunctionExecutor",
     "GraphConnectivityError",
     "InMemoryCheckpointStorage",
     "InProcRunnerContext",
@@ -145,6 +147,7 @@ __all__ = [
     "WorkflowValidationError",
     "WorkflowViz",
     "__version__",
+    "executor",
     "handler",
     "intercepts_request",
     "validate_workflow_graph",
