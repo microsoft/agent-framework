@@ -165,10 +165,10 @@ ROLE_EVENT_MAP = {
     "tool": OtelAttr.TOOL_MESSAGE,
 }
 FINISH_REASON_MAP = {
-    ChatFinishReason.STOP.value: "stop",
-    ChatFinishReason.CONTENT_FILTER.value: "content_filter",
-    ChatFinishReason.TOOL_CALLS.value: "tool_call",
-    ChatFinishReason.LENGTH.value: "length",
+    "stop": "stop",
+    "content_filter": "content_filter",
+    "tool_calls": "tool_call",
+    "length": "length",
 }
 # Note that if this environment variable does not exist, telemetry is enabled.
 TELEMETRY_DISABLED_ENV_VAR = "AZURE_TELEMETRY_DISABLED"
