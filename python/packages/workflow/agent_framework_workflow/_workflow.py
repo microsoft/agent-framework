@@ -5,7 +5,7 @@ import logging
 import sys
 import uuid
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agent_framework._pydantic import AFBaseModel
 from pydantic import Field
@@ -38,6 +38,9 @@ else:
 
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:  # Avoid runtime import cycles; enables proper type checking of as_agent return type
+    from ._agent import WorkflowAgent
 
 
 class WorkflowRunResult(list[WorkflowEvent]):
@@ -533,6 +536,20 @@ class Workflow(AFBaseModel):
                         source_span_ids=msg_data.get("source_span_ids"),
                     )
                 )
+
+    def as_agent(self, name: str | None = None) -> "WorkflowAgent":
+        """Create a WorkflowAgent that wraps this workflow.
+
+        Args:
+            name: Optional name for the agent. If None, a default name will be generated.
+
+        Returns:
+            A WorkflowAgent instance that wraps this workflow.
+        """
+        # Import here to avoid circular imports
+        from ._agent import WorkflowAgent
+
+        return WorkflowAgent(workflow=self, name=name)
 
 
 # region WorkflowBuilder
