@@ -20,7 +20,8 @@ from agent_framework.workflow import (
     WorkflowContext,
     handler,
 )
-from step_10a_workflow_agent_reflection_pattern import ReviewRequest, ReviewResponse, Worker
+
+from samples.getting_started.workflow.step_12a_workflow_as_agent import ReviewRequest, ReviewResponse, Worker
 
 
 @dataclass

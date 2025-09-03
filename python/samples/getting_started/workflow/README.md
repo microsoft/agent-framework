@@ -47,6 +47,8 @@ To export visualization images you also need to [install GraphViz](https://graph
 | Sub‑Workflow: Parallel Requests | [step_10c_sub_workflow_parallel_requests.py](./step_10c_sub_workflow_parallel_requests.py) | Proper multi‑type interception and external forwarding patterns |
 | Magentic Workflow (Multi‑Agent) | [step_11a_magentic.py](./step_11a_magentic.py) | Orchestrate multiple agents with Magentic manager and streaming callbacks |
 | Magentic + Human Plan Review | [step_11b_magentic_human_plan_update.py](./step_11b_magentic_human_plan_update.py) | Human reviews/updates the plan before execution via request/response |
+| Workflow as Agent | [step_12a_workflow_as_agent.py](./step_12a_workflow_as_agent.py) | Wrap a workflow to allow it to behave like an agent |
+| Work as Agent with Human-In-The-Loop (HITL) | [step_12b_workflow_as_agent_human_in_the_loop.py](./step_12b_workflow_as_agent_human_in_the_loop.py) | Build on the previous workflow-as-an-agent sample, adding HITL. |
 
 Notes
 - Agent‑based samples use provider SDKs (Azure/OpenAI, etc.). Ensure credentials are configured, or adapt agents accordingly.
