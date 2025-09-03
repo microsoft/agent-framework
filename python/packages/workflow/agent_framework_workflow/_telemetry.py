@@ -173,7 +173,7 @@ class WorkflowTracer:
         if span and span.is_recording():
             span.set_attributes({
                 "workflow.id": workflow.id,
-                "workflow.definition": workflow.model_dump_json(),
+                "workflow.definition": workflow.model_dump_json(by_alias=True),
             })
 
     def add_build_event(self, event_name: str, attributes: Attributes | None = None) -> None:

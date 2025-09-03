@@ -42,6 +42,9 @@ foundry = [
 workflow = [
     "agent-framework-workflow"
 ]
+runtime = [
+    "agent-framework-runtime"
+]
 
 [tool.uv]
 prerelease = "if-necessary-or-explicit"

@@ -47,7 +47,7 @@ class TestSerializationWorkflowClasses:
         executor = SampleExecutor(id="test-executor")
 
         # Test model_dump
-        data = executor.model_dump()
+        data = executor.model_dump(by_alias=True)
         assert data["id"] == "test-executor"
 
         # Test type field
@@ -55,7 +55,7 @@ class TestSerializationWorkflowClasses:
         assert data["type"] == "SampleExecutor", f"Expected type 'SampleExecutor', got {data['type']}"
 
         # Test model_dump_json
-        json_str = executor.model_dump_json()
+        json_str = executor.model_dump_json(by_alias=True)
         parsed = json.loads(json_str)
         assert parsed["id"] == "test-executor"
 
@@ -124,7 +124,7 @@ class TestSerializationWorkflowClasses:
         edge_group = SingleEdgeGroup(source_id="source", target_id="target")
 
         # Test model_dump
-        data = edge_group.model_dump()
+        data = edge_group.model_dump(by_alias=True)
         assert "id" in data
         assert data["id"].startswith("SingleEdgeGroup/")
 
@@ -434,7 +434,7 @@ class TestSerializationWorkflowClasses:
         )
 
         # Test serialization of the nested structure
-        data = outer_workflow.model_dump()
+        data = outer_workflow.model_dump(by_alias=True)
 
         # Verify outer structure
         assert data["start_executor_id"] == "outer-exec"
@@ -473,7 +473,7 @@ class TestSerializationWorkflowClasses:
         assert "inner-exec" in innermost_workflow_data["executors"]
 
         # Test JSON serialization preserves the complete nested structure
-        json_str = outer_workflow.model_dump_json()
+        json_str = outer_workflow.model_dump_json(by_alias=True)
         parsed = json.loads(json_str)
 
         # Verify the complete structure is preserved in JSON
@@ -499,7 +499,7 @@ class TestSerializationWorkflowClasses:
         assert "inner-exec" in innermost_workflow_json["executors"]
 
         # Test that WorkflowExecutor also serializes correctly when accessed directly
-        direct_middle_data = middle_workflow_executor.model_dump()
+        direct_middle_data = middle_workflow_executor.model_dump(by_alias=True)
         assert "workflow" in direct_middle_data
         assert direct_middle_data["type"] == "WorkflowExecutor"
         assert "executors" in direct_middle_data["workflow"]
