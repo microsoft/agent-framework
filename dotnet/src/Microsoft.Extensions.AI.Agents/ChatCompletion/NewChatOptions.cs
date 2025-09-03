@@ -63,7 +63,7 @@ public class NewChatOptions : ChatOptions
             options.Tools = new List<AITool>(this.Tools);
         }
 
-        // The following property is specific to the NewChatOptions
+        // The following properties are specific to NewChatOptions
         options.AwaitRunResult = this.AwaitRunResult;
         options.StartAfter = this.StartAfter;
         options.PreviousResponseId = this.PreviousResponseId;

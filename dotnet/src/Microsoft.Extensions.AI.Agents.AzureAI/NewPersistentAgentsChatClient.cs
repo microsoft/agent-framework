@@ -715,7 +715,7 @@ namespace Azure.AI.Agents.Persistent
             }
 
             // Otherwise, use the value specified at initialization
-            return _awaitRun ?? false;
+            return _awaitRun ?? true;
         }
 
         private async IAsyncEnumerable<ChatResponseUpdate> GetRunUpdatesAsync(ThreadRun run, bool streamingCall, ChatOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)

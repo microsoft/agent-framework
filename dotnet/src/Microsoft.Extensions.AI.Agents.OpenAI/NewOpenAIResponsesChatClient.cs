@@ -151,7 +151,7 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
     internal static ChatResponse FromOpenAIResponse(OpenAIResponse openAIResponse, ResponseCreationOptions? openAIOptions)
     {
         // Convert and return the results.
-        ChatResponse response = new()
+        NewChatResponse response = new()
         {
             ConversationId = openAIOptions?.StoredOutputEnabled is false ? null : openAIResponse.Id,
             CreatedAt = openAIResponse.CreatedAt,
@@ -187,8 +187,8 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
             }
         }
 
-        response.SetResponseStatus(ToResponseStatus(openAIResponse.Status));
-        response.SetRunId(openAIResponse.Id);
+        response.Status = ToResponseStatus(openAIResponse.Status);
+        response.RunId = openAIResponse.Id;
 
         return response;
     }
@@ -884,7 +884,7 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
         }
 
         // Otherwise, use the value specified at initialization
-        return _awaitRun ?? false;
+        return _awaitRun ?? true;
     }
 
     /// <summary>Converts a <see cref="ResponseStatus"/> to a <see cref="NewResponseStatus"/>.</summary>

@@ -318,14 +318,12 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         var runId = (await streamingResponse.ElementAtAsync(0)).GetRunId();
 
         // Act
-        ChatResponse? response = await runnableChatClient.CancelRunAsync(runId!);
+        NewChatResponse? response = (NewChatResponse?)await runnableChatClient.CancelRunAsync(runId!);
 
         // Assert
         Assert.NotNull(response);
 
-        var status = response.GetResponseStatus();
-        Assert.NotNull(status);
-        Assert.True(status == NewResponseStatus.Cancelling || status == NewResponseStatus.Canceled);
+        Assert.True(response.Status == NewResponseStatus.Cancelling || response.Status == NewResponseStatus.Canceled);
     }
 
     [Fact]

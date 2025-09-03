@@ -41,7 +41,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         };
 
         // Act
-        ChatResponse response = await this._chatClient.GetResponseAsync("What is the capital of France?", options);
+        NewChatResponse response = (NewChatResponse)await this._chatClient.GetResponseAsync("What is the capital of France?", options);
 
         // Assert
         Assert.NotNull(response);
@@ -54,7 +54,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         else
         {
             Assert.NotNull(response.ResponseId);
-            Assert.Equal(NewResponseStatus.Queued, response.GetResponseStatus());
+            Assert.Equal(NewResponseStatus.Queued, response.Status);
         }
     }
 
@@ -71,7 +71,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
             .Build();
 
         // Act
-        ChatResponse response = await client.GetResponseAsync("What is the capital of France?");
+        NewChatResponse response = (NewChatResponse)await client.GetResponseAsync("What is the capital of France?");
 
         // Assert
         Assert.NotNull(response);
@@ -85,7 +85,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         {
             Assert.Empty(response.Messages);
             Assert.NotNull(response.ResponseId);
-            Assert.Equal(NewResponseStatus.Queued, response.GetResponseStatus());
+            Assert.Equal(NewResponseStatus.Queued, response.Status);
         }
     }
 
@@ -98,23 +98,23 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
             AwaitRunResult = false
         };
 
-        ChatResponse response = await this._chatClient.GetResponseAsync("What is the capital of France?", options);
+        NewChatResponse response = (NewChatResponse)await this._chatClient.GetResponseAsync("What is the capital of France?", options);
 
         Assert.NotNull(response);
         Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Queued, response.GetResponseStatus());
+        Assert.Equal(NewResponseStatus.Queued, response.Status);
 
         // Part 2: Poll for completion.
         int attempts = 0;
 
-        while (response.GetResponseStatus() is { } status &&
+        while (response.Status is { } status &&
             status != NewResponseStatus.Completed &&
             ++attempts < 5)
         {
             options.ConversationId = response.ConversationId;
             options.PreviousResponseId = response.ResponseId!;
 
-            response = await this._chatClient.GetResponseAsync([], options);
+            response = (NewChatResponse)await this._chatClient.GetResponseAsync([], options);
 
             // Wait for the response to be processed
             await Task.Delay(2000);
@@ -124,7 +124,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         Assert.Single(response.Messages);
         Assert.Contains("Paris", response.Text);
         Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Completed, response.GetResponseStatus());
+        Assert.Equal(NewResponseStatus.Completed, response.Status);
     }
 
     [Fact]
@@ -136,25 +136,25 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
             AwaitRunResult = false
         };
 
-        ChatResponse response = await this._chatClient.GetResponseAsync("What is the capital of France?", options);
+        NewChatResponse response = (NewChatResponse)await this._chatClient.GetResponseAsync("What is the capital of France?", options);
 
         Assert.NotNull(response);
         Assert.Empty(response.Messages);
         Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Queued, response.GetResponseStatus());
+        Assert.Equal(NewResponseStatus.Queued, response.Status);
 
         // Part 2: Wait for completion.
         options.ConversationId = response.ConversationId;
         options.PreviousResponseId = response.ResponseId;
         options.AwaitRunResult = true;
 
-        response = await this._chatClient.GetResponseAsync([], options);
+        response = (NewChatResponse)await this._chatClient.GetResponseAsync([], options);
 
         Assert.NotNull(response);
         Assert.Single(response.Messages);
         Assert.Contains("Paris", response.Text);
         Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Completed, response.GetResponseStatus());
+        Assert.Equal(NewResponseStatus.Completed, response.Status);
     }
 
     [Fact]
@@ -184,23 +184,23 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
-        ChatResponse response = await this._chatClient.GetResponseAsync("What time is it?", options);
+        NewChatResponse response = (NewChatResponse)await this._chatClient.GetResponseAsync("What time is it?", options);
 
         Assert.NotNull(response);
         Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Queued, response.GetResponseStatus());
+        Assert.Equal(NewResponseStatus.Queued, response.Status);
 
         // Part 2: Poll for completion.
         int attempts = 0;
 
-        while (response.GetResponseStatus() is { } status &&
+        while (response.Status is { } status &&
             status != NewResponseStatus.Completed &&
             ++attempts < 5)
         {
             options.ConversationId = response.ConversationId;
             options.PreviousResponseId = response.ResponseId!;
 
-            response = await this._chatClient.GetResponseAsync([], options);
+            response = (NewChatResponse)await this._chatClient.GetResponseAsync([], options);
 
             // Wait for the response to be processed
             await Task.Delay(2000);
@@ -219,24 +219,24 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
-        ChatResponse response = await this._chatClient.GetResponseAsync("What time is it?", options);
+        NewChatResponse response = (NewChatResponse)await this._chatClient.GetResponseAsync("What time is it?", options);
 
         Assert.NotNull(response);
         Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Queued, response.GetResponseStatus());
+        Assert.Equal(NewResponseStatus.Queued, response.Status);
 
         // Part 2: Wait for completion.
         options.ConversationId = response.ConversationId;
         options.PreviousResponseId = response.ResponseId;
         options.AwaitRunResult = true;
 
-        response = await this._chatClient.GetResponseAsync([], options);
+        response = (NewChatResponse)await this._chatClient.GetResponseAsync([], options);
 
         Assert.NotNull(response);
         Assert.Equal(3, response.Messages.Count);
         Assert.Contains("5:43", response.Text);
         Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Completed, response.GetResponseStatus());
+        Assert.Equal(NewResponseStatus.Completed, response.Status);
     }
 
     [Fact]
@@ -250,16 +250,16 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
 
         INewRunnableChatClient runnableChatClient = this._chatClient.GetService<INewRunnableChatClient>()!;
 
-        ChatResponse response = await runnableChatClient.GetResponseAsync("What is the capital of France?", options);
+        NewChatResponse response = (NewChatResponse)await runnableChatClient.GetResponseAsync("What is the capital of France?", options);
 
         // Act
-        ChatResponse? cancelResponse = await runnableChatClient.CancelRunAsync(response.GetRunId()!);
+        NewChatResponse? cancelResponse = (NewChatResponse?)await runnableChatClient.CancelRunAsync(response.RunId!);
 
         // Assert
         Assert.NotNull(cancelResponse);
         Assert.Empty(cancelResponse.Messages);
         Assert.NotNull(cancelResponse.ResponseId);
-        Assert.Equal(NewResponseStatus.Canceled, cancelResponse.GetResponseStatus());
+        Assert.Equal(NewResponseStatus.Canceled, cancelResponse.Status);
     }
 
     [Fact]
@@ -273,10 +273,10 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
 
         INewRunnableChatClient runnableChatClient = this._chatClient.GetService<INewRunnableChatClient>()!;
 
-        ChatResponse response = await runnableChatClient.GetResponseAsync("What is the capital of France?", options);
+        NewChatResponse response = (NewChatResponse)await runnableChatClient.GetResponseAsync("What is the capital of France?", options);
 
         // Act
-        ChatResponse? deleteResponse = await runnableChatClient.DeleteRunAsync(response.GetRunId()!);
+        ChatResponse? deleteResponse = await runnableChatClient.DeleteRunAsync(response.RunId!);
 
         // Assert
         Assert.NotNull(deleteResponse);

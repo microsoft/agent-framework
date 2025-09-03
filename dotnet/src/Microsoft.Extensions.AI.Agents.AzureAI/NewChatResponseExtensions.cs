@@ -126,12 +126,12 @@ public static class NewChatResponseExtensions
     /// message boundaries, as well as coalescing contiguous <see cref="AIContent"/> items where applicable, e.g. multiple
     /// <see cref="TextContent"/> instances in a row may be combined into a single <see cref="TextContent"/>.
     /// </remarks>
-    public static ChatResponse NewToChatResponse(
+    public static NewChatResponse NewToChatResponse(
         this IEnumerable<ChatResponseUpdate> updates)
     {
         _ = Throw.IfNull(updates);
 
-        ChatResponse response = new();
+        NewChatResponse response = new();
 
         foreach (var update in updates)
         {
@@ -411,7 +411,18 @@ public static class NewChatResponseExtensions
 
         if (update.GetResponseStatus() is { } status)
         {
-            response.SetResponseStatus(status);
+            if (response is NewChatResponse newResponse)
+            {
+                newResponse.Status = status;
+            }
+        }
+
+        if (update.GetRunId() is { } runId)
+        {
+            if (response is NewChatResponse newResponse)
+            {
+                newResponse.RunId = runId;
+            }
         }
     }
 }

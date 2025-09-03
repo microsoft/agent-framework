@@ -335,13 +335,13 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         var runId = (await streamingResponse.ElementAtAsync(0)).GetRunId();
 
         // Act
-        ChatResponse? response = await runnableChatClient.CancelRunAsync(runId!);
+        NewChatResponse? response = (NewChatResponse?)await runnableChatClient.CancelRunAsync(runId!);
 
         // Assert
         Assert.NotNull(response);
         Assert.Empty(response.Messages);
         Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Canceled, response.GetResponseStatus());
+        Assert.Equal(NewResponseStatus.Canceled, response.Status);
     }
 
     [Fact]
