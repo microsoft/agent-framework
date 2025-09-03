@@ -1,11 +1,14 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
+using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Microsoft.Extensions.AI.Agents;
 
 #pragma warning disable RCS1037 // Remove trailing white-space
+#pragma warning disable RCS1036 // Remove unnecessary blank line
 /// <summary>
-/// /// Generic options available for certain models, configurations, or tools.
+/// Generic options available for certain models, configurations, or tools.
 /// This can include additional settings or parameters that are not strictly defined
 /// and are used by various providers to specify custom behavior or metadata.
 /// 
@@ -15,8 +18,9 @@ namespace Microsoft.Extensions.AI.Agents;
 ///   customSetting: true
 ///   timeout: 5000
 ///   retryAttempts: 3
-///  ```.
+///  ```
 /// </summary>
+[ExcludeFromCodeCoverage]
 public sealed class Options
 {
     /// <summary>
@@ -35,3 +39,5 @@ public sealed class Options
     }
 }
 #pragma warning restore RCS1037 // Remove trailing white-space
+#pragma warning restore RCS1036 // Remove unnecessary blank line
+

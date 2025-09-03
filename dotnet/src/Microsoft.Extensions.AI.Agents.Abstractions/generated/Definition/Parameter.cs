@@ -1,13 +1,16 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Microsoft.Extensions.AI.Agents;
 
 #pragma warning disable RCS1037 // Remove trailing white-space
+#pragma warning disable RCS1036 // Remove unnecessary blank line
 /// <summary>
-/// /// Represents a parameter for a tool..
+/// Represents a parameter for a tool.
 /// </summary>
+[ExcludeFromCodeCoverage]
 public sealed class Parameter
 {
     /// <summary>
@@ -29,30 +32,42 @@ public sealed class Parameter
         Required = props.GetValueOrDefault<bool?>("required");
         Enum = props.GetValueOrDefault<IList<object>?>("enum");
     }
-
+    
     /// <summary>
-    /// The name of the item
+    /// Name of the parameter
     /// </summary>
+    
     public string Name { get; set; } = string.Empty;
-
+    
+    
     /// <summary>
     /// The data type of the tool parameter
     /// </summary>
+    
     public string Type { get; set; } = string.Empty;
-
+    
+    
     /// <summary>
     /// A short description of the property
     /// </summary>
+    
     public string? Description { get; set; }
-
+    
+    
     /// <summary>
     /// Whether the tool parameter is required
     /// </summary>
+    
     public bool? Required { get; set; }
-
+    
+    
     /// <summary>
     /// Allowed enumeration values for the parameter
     /// </summary>
+    
     public IList<object>? Enum { get; set; }
+    
 }
 #pragma warning restore RCS1037 // Remove trailing white-space
+#pragma warning restore RCS1036 // Remove unnecessary blank line
+

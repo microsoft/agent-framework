@@ -1,12 +1,14 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Microsoft.Extensions.AI.Agents;
 
 #pragma warning disable RCS1037 // Remove trailing white-space
+#pragma warning disable RCS1036 // Remove unnecessary blank line
 /// <summary>
-/// /// Template model for defining prompt templates.
+/// Template model for defining prompt templates.
 /// 
 /// This model specifies the rendering engine used for slot filling prompts,
 /// the parser used to process the rendered template into API-compatible format,
@@ -20,8 +22,9 @@ namespace Microsoft.Extensions.AI.Agents;
 /// template:
 ///   format: jinja2
 ///   parser: prompty
-/// ```.
+/// ```
 /// </summary>
+[ExcludeFromCodeCoverage]
 public sealed class Template
 {
     /// <summary>
@@ -42,25 +45,35 @@ public sealed class Template
         Strict = props.GetValueOrDefault<bool?>("strict");
         Options = props.GetValueOrDefault<Options?>("options");
     }
-
+    
     /// <summary>
     /// Template rendering engine used for slot filling prompts (e.g., mustache, jinja2)
     /// </summary>
+    
     public string Format { get; set; } = string.Empty;
-
+    
+    
     /// <summary>
     /// Parser used to process the rendered template into API-compatible format
     /// </summary>
+    
     public string Parser { get; set; } = string.Empty;
-
+    
+    
     /// <summary>
     /// Whether the template can emit structural text for parsing output
     /// </summary>
+    
     public bool? Strict { get; set; }
-
+    
+    
     /// <summary>
     /// Additional options for the template engine
     /// </summary>
+    
     public Options? Options { get; set; }
+    
 }
 #pragma warning restore RCS1037 // Remove trailing white-space
+#pragma warning restore RCS1036 // Remove unnecessary blank line
+

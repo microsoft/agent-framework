@@ -1,19 +1,22 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Microsoft.Extensions.AI.Agents;
 
 #pragma warning disable RCS1037 // Remove trailing white-space
+#pragma warning disable RCS1036 // Remove unnecessary blank line
 /// <summary>
-/// /// Represents a tool that can be used in prompts..
+/// Represents a tool that can be used in prompts.
 /// </summary>
-public sealed class Tool
+[ExcludeFromCodeCoverage]
+public abstract class Tool
 {
     /// <summary>
     /// Initializes a new instance of <see cref="Tool"/>.
     /// </summary>
-    public Tool()
+    protected Tool()
     {
     }
 
@@ -26,27 +29,37 @@ public sealed class Tool
         Name = props.GetValueOrDefault<string>("name") ?? throw new ArgumentException("Properties must contain a property named: name", nameof(props));
         Type = props.GetValueOrDefault<string>("type") ?? throw new ArgumentException("Properties must contain a property named: type", nameof(props));
         Description = props.GetValueOrDefault<string?>("description");
-        Binding = props.GetValueOrDefault<IList<Binding>?>("binding");
+        Bindings = props.GetValueOrDefault<IList<Binding>?>("bindings");
     }
-
+    
     /// <summary>
-    /// The name of the item
+    /// Name of the item
     /// </summary>
-    public string Name { get; set; } = string.Empty;
-
+    
+    public virtual string Name { get; set; } = string.Empty;
+    
+    
     /// <summary>
     /// The type identifier for the tool
     /// </summary>
-    public string Type { get; set; } = string.Empty;
-
+    
+    public virtual string Type { get; set; } = string.Empty;
+    
+    
     /// <summary>
     /// A short description of the tool for metadata purposes
     /// </summary>
-    public string? Description { get; set; }
-
+    
+    public virtual string? Description { get; set; }
+    
+    
     /// <summary>
     /// Tool argument bindings to input properties
     /// </summary>
-    public IList<Binding>? Binding { get; set; }
+    
+    public virtual IList<Binding>? Bindings { get; set; }
+    
 }
 #pragma warning restore RCS1037 // Remove trailing white-space
+#pragma warning restore RCS1036 // Remove unnecessary blank line
+

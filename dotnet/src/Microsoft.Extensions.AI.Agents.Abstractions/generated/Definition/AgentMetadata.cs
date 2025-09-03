@@ -1,13 +1,16 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
+using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Microsoft.Extensions.AI.Agents;
 
 #pragma warning disable RCS1037 // Remove trailing white-space
+#pragma warning disable RCS1036 // Remove unnecessary blank line
 /// <summary>
-/// /// Metadata model that can be used to store additional information about the model.
+/// Metadata model that can be used to store additional information about the model.
 /// This can include arbitrary key-value pairs that provide context or configuration
-/// for the model's behavior or usage.
+/// for the model&#39;s behavior or usage.
 /// 
 /// Example:
 /// ```yaml
@@ -21,8 +24,9 @@ namespace Microsoft.Extensions.AI.Agents;
 ///     - tag1
 ///     - tag2
 ///     - tag3
-/// ```.
+/// ```
 /// </summary>
+[ExcludeFromCodeCoverage]
 public sealed class AgentMetadata
 {
     /// <summary>
@@ -41,3 +45,5 @@ public sealed class AgentMetadata
     }
 }
 #pragma warning restore RCS1037 // Remove trailing white-space
+#pragma warning restore RCS1036 // Remove unnecessary blank line
+

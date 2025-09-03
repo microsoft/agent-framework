@@ -1,13 +1,16 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Microsoft.Extensions.AI.Agents;
 
 #pragma warning disable RCS1037 // Remove trailing white-space
+#pragma warning disable RCS1036 // Remove unnecessary blank line
 /// <summary>
-/// /// Represents a binding between an input property and a tool parameter..
+/// Represents a binding between an input property and a tool parameter.
 /// </summary>
+[ExcludeFromCodeCoverage]
 public sealed class Binding
 {
     /// <summary>
@@ -26,15 +29,21 @@ public sealed class Binding
         Name = props.GetValueOrDefault<string>("name") ?? throw new ArgumentException("Properties must contain a property named: name", nameof(props));
         Input = props.GetValueOrDefault<string>("input") ?? throw new ArgumentException("Properties must contain a property named: input", nameof(props));
     }
-
+    
     /// <summary>
-    /// The name of the item
+    /// Name of the binding
     /// </summary>
+    
     public string Name { get; set; } = string.Empty;
-
+    
+    
     /// <summary>
     /// The input property that will be bound to the tool parameter argument
     /// </summary>
+    
     public string Input { get; set; } = string.Empty;
+    
 }
 #pragma warning restore RCS1037 // Remove trailing white-space
+#pragma warning restore RCS1036 // Remove unnecessary blank line
+

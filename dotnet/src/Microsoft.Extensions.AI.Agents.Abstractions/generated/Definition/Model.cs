@@ -1,12 +1,14 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Microsoft.Extensions.AI.Agents;
 
 #pragma warning disable RCS1037 // Remove trailing white-space
+#pragma warning disable RCS1036 // Remove unnecessary blank line
 /// <summary>
-/// /// Model for defining the structure and behavior of AI agents.
+/// Model for defining the structure and behavior of AI agents.
 /// Yaml Example:
 /// ```yaml
 /// name: Basic Prompt
@@ -32,8 +34,9 @@ namespace Microsoft.Extensions.AI.Agents;
 /// description: A basic prompt that uses the GPT-3 chat API to answer questions
 /// model:
 ///   id: gpt-35-turbo
-/// ```.
+/// ```
 /// </summary>
+[ExcludeFromCodeCoverage]
 public sealed class Model
 {
     /// <summary>
@@ -52,15 +55,21 @@ public sealed class Model
         Id = props.GetValueOrDefault<string>("id") ?? throw new ArgumentException("Properties must contain a property named: id", nameof(props));
         Connection = props.GetValueOrDefault<Connection?>("connection");
     }
-
+    
     /// <summary>
     /// The unique identifier of the model
     /// </summary>
+    
     public string Id { get; set; } = string.Empty;
-
+    
+    
     /// <summary>
     /// The connection configuration for the model
     /// </summary>
+    
     public Connection? Connection { get; set; }
+    
 }
 #pragma warning restore RCS1037 // Remove trailing white-space
+#pragma warning restore RCS1036 // Remove unnecessary blank line
+
