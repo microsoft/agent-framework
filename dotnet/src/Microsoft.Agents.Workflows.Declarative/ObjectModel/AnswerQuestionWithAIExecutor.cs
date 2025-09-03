@@ -119,7 +119,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, W
             if (assignValue != null && conversationId == null)
             {
                 conversationId = assignValue;
-                await context.AddEventAsync(new DeclarativeWorkflowInvokeEvent(this.Id, conversationId)).ConfigureAwait(false);
+                await context.AddEventAsync(new ConversationUpdateEvent(this.Id, conversationId)).ConfigureAwait(false);
             }
         }
     }

@@ -104,7 +104,7 @@ internal sealed class Program
             {
                 Debug.WriteLine($"STEP ERROR #{executorFailure.ExecutorId}: {executorFailure.Data?.Message ?? "Unknown"}");
             }
-            else if (evt is DeclarativeWorkflowInvokeEvent invokeEvent)
+            else if (evt is ConversationUpdateEvent invokeEvent)
             {
                 Debug.WriteLine($"CONVERSATION: {invokeEvent.Data}");
             }
