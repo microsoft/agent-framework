@@ -1,8 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Step 06b — Multi-Selection Edge Group sample."""
+
 import asyncio
+import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Literal
+from uuid import uuid4
 
 from agent_framework import ChatMessage, ChatRole
 from agent_framework.azure import AzureChatClient
@@ -10,141 +14,258 @@ from agent_framework.workflow import (
     AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
-    Executor,
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
-    handler,
+    WorkflowEvent,
+    executor,
 )
 from azure.identity import AzureCliCredential
+from pydantic import BaseModel
 
 """
-Multi-Selection Edge Group (with Agent Classifier)
+Step 06b — Multi-Selection Edge Group
 
-What it does:
-- Classifies email with an agent, parses the result, and selects one or many targets using a selection function.
-- Demonstrates dynamic subset fan-out based on content.
-
-Prerequisites:
-- Azure AI/ Azure OpenAI for `AzureChatClient` agent.
-- Authentication via `azure-identity` — uses `AzureCliCredential()` (run `az login`).
+Mirrors the .NET sample by:
+- Analyzing email (spam decision + reason) and enriching with length and id
+- Multi-path routing (fan-out subset) based on the analysis result
+  - NotSpam → Email Assistant (always) + Email Summary (if long)
+  - Spam → Handle Spam
+  - Uncertain → Handle Uncertain
+- Database logging for both short emails and summarized long emails
 """
+
+EMAIL_STATE_PREFIX = "email:"
+CURRENT_EMAIL_ID_KEY = "current_email_id"
+LONG_EMAIL_THRESHOLD = 100
+
+
+class AnalysisResultAgent(BaseModel):
+    spam_decision: Literal["NotSpam", "Spam", "Uncertain"]
+    reason: str
+
+
+class EmailResponse(BaseModel):
+    response: str
+
+
+class EmailSummaryModel(BaseModel):
+    summary: str
 
 
 @dataclass
-class SpamDetectorResponse:
-    """A data class to hold the email message content."""
-
-    email: str
-    is_spam: bool = False
+class Email:
+    email_id: str
+    email_content: str
 
 
-class SubmitToSpamClassifier(Executor):
-    """Wrap email string into AgentExecutorRequest and send to classifier by target_id."""
-
-    def __init__(self, classifier_id: str, id: str | None = None):
-        super().__init__(id=id)
-        self._classifier_id = classifier_id
-
-    @handler
-    async def submit(self, email: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
-        user_msg = ChatMessage(ChatRole.USER, text=email)
-        await ctx.send_message(
-            AgentExecutorRequest(messages=[user_msg], should_respond=True),
-            target_id=self._classifier_id,
-        )
+@dataclass
+class AnalysisResult:
+    spam_decision: str
+    reason: str
+    email_length: int
+    email_summary: str
+    email_id: str
 
 
-class SendResponse(Executor):
-    """An executor that responds to a message based on spam detection."""
-
-    @handler
-    async def handle_detector_response(
-        self,
-        spam_detector_response: SpamDetectorResponse,
-        ctx: WorkflowContext[None],
-    ) -> None:
-        """Respond with a message based on whether the input is spam."""
-        if spam_detector_response.is_spam:
-            raise RuntimeError("Input is spam, cannot respond.")
-
-        # Simulate processing delay
-        print(f"Responding to message: {spam_detector_response.email}")
-        await asyncio.sleep(1)
-
-        await ctx.add_event(WorkflowCompletedEvent("Message processed successfully."))
+class DatabaseEvent(WorkflowEvent): ...
 
 
-class RemoveSpam(Executor):
-    """An executor that removes spam messages."""
+@executor(id="store_email")
+async def store_email(email_text: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
+    new_email = Email(email_id=str(uuid4()), email_content=email_text)
+    await ctx.set_shared_state(f"{EMAIL_STATE_PREFIX}{new_email.email_id}", new_email)
+    await ctx.set_shared_state(CURRENT_EMAIL_ID_KEY, new_email.email_id)
 
-    @handler
-    async def handle_detector_response(
-        self,
-        spam_detector_response: SpamDetectorResponse,
-        ctx: WorkflowContext[None],
-    ) -> None:
-        """Remove the spam message."""
-        if spam_detector_response.is_spam is False:
-            raise RuntimeError("Input is not spam, cannot remove.")
-
-        # Simulate processing delay
-        print(f"Removing spam message: {spam_detector_response.email}")
-        await asyncio.sleep(1)
-
-        await ctx.add_event(WorkflowCompletedEvent("Spam message removed."))
-
-
-class ParseAndRoute(Executor):
-    """Parse AgentExecutorResponse into SpamDetectorResponse for selection."""
-
-    @handler
-    async def route(self, response: AgentExecutorResponse, ctx: WorkflowContext[Any]) -> None:
-        text = response.agent_run_response.text.strip().upper()
-        is_spam = "SPAM" in text and "NOT_SPAM" not in text
-        await ctx.send_message(SpamDetectorResponse(email="<redacted>", is_spam=is_spam))
-
-
-async def main():
-    """Main function to run the workflow."""
-    # Agent classifier
-    chat_client = AzureChatClient(credential=AzureCliCredential())
-    spam_classifier = AgentExecutor(
-        chat_client.create_agent(
-            instructions=(
-                "You are an email spam classifier. Given ONLY the email body, respond with exactly one token:"
-                " 'SPAM' or 'NOT_SPAM'."
-            )
-        ),
-        id="spam_classifier",
+    await ctx.send_message(
+        AgentExecutorRequest(messages=[ChatMessage(ChatRole.USER, text=new_email.email_content)], should_respond=True)
     )
 
-    # Step 1: Create the executors.
-    submitter = SubmitToSpamClassifier(spam_classifier.id, id="submitter")
-    send_response = SendResponse(id="send_response")
-    remove_spam = RemoveSpam(id="remove_spam")
-    router = ParseAndRoute(id="router")
 
-    # Step 2: Build the workflow using a multi-selection edge group.
-    # The selection function returns a list of target IDs to invoke.
-    # You can return multiple IDs to execute several targets in parallel.
-    def select_targets(result: SpamDetectorResponse, target_ids: list[str]) -> list[str]:
-        # target_ids are in the same order as the "targets" list below
-        remove_spam_id, send_response_id = target_ids
-        return [remove_spam_id] if result.is_spam else [send_response_id]
+@executor(id="to_analysis_result")
+async def to_analysis_result(response: AgentExecutorResponse, ctx: WorkflowContext[AnalysisResult]) -> None:
+    parsed = AnalysisResultAgent.model_validate_json(response.agent_run_response.text)
+    email_id: str = await ctx.get_shared_state(CURRENT_EMAIL_ID_KEY)
+    email: Email = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{email_id}")
+    await ctx.send_message(
+        AnalysisResult(
+            spam_decision=parsed.spam_decision,
+            reason=parsed.reason,
+            email_length=len(email.email_content),
+            email_summary="",
+            email_id=email_id,
+        )
+    )
+
+
+@executor(id="submit_to_email_assistant")
+async def submit_to_email_assistant(analysis: AnalysisResult, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
+    if analysis.spam_decision != "NotSpam":
+        raise RuntimeError("This executor should only handle NotSpam messages.")
+
+    email: Email = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{analysis.email_id}")
+    await ctx.send_message(
+        AgentExecutorRequest(messages=[ChatMessage(ChatRole.USER, text=email.email_content)], should_respond=True)
+    )
+
+
+@executor(id="finalize_and_send")
+async def finalize_and_send(response: AgentExecutorResponse, ctx: WorkflowContext[None]) -> None:
+    parsed = EmailResponse.model_validate_json(response.agent_run_response.text)
+    await ctx.add_event(WorkflowCompletedEvent(f"Email sent: {parsed.response}"))
+
+
+@executor(id="summarize_email")
+async def summarize_email(analysis: AnalysisResult, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
+    # Only called for long NotSpam emails by selection_func
+    email: Email = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{analysis.email_id}")
+    await ctx.send_message(
+        AgentExecutorRequest(messages=[ChatMessage(ChatRole.USER, text=email.email_content)], should_respond=True)
+    )
+
+
+@executor(id="merge_summary")
+async def merge_summary(response: AgentExecutorResponse, ctx: WorkflowContext[AnalysisResult]) -> None:
+    summary = EmailSummaryModel.model_validate_json(response.agent_run_response.text)
+    email_id: str = await ctx.get_shared_state(CURRENT_EMAIL_ID_KEY)
+    email: Email = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{email_id}")
+    # Build an AnalysisResult mirroring to_analysis_result but with summary
+    await ctx.send_message(
+        AnalysisResult(
+            spam_decision="NotSpam",
+            reason="",
+            email_length=len(email.email_content),
+            email_summary=summary.summary,
+            email_id=email_id,
+        )
+    )
+
+
+@executor(id="handle_spam")
+async def handle_spam(analysis: AnalysisResult, ctx: WorkflowContext[None]) -> None:
+    if analysis.spam_decision == "Spam":
+        await ctx.add_event(WorkflowCompletedEvent(f"Email marked as spam: {analysis.reason}"))
+    else:
+        raise RuntimeError("This executor should only handle Spam messages.")
+
+
+@executor(id="handle_uncertain")
+async def handle_uncertain(analysis: AnalysisResult, ctx: WorkflowContext[None]) -> None:
+    if analysis.spam_decision == "Uncertain":
+        email: Email | None = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{analysis.email_id}")
+        await ctx.add_event(
+            WorkflowCompletedEvent(
+                f"Email marked as uncertain: {analysis.reason}. Email content: {getattr(email, 'email_content', '')}"
+            )
+        )
+    else:
+        raise RuntimeError("This executor should only handle Uncertain messages.")
+
+
+@executor(id="database_access")
+async def database_access(analysis: AnalysisResult, ctx: WorkflowContext[None]) -> None:
+    # Simulate DB writes for email and analysis (and summary if present)
+    await asyncio.sleep(0.05)
+    await ctx.add_event(DatabaseEvent(f"Email {analysis.email_id} saved to database."))
+
+
+async def main() -> None:
+    # Agents
+    chat_client = AzureChatClient(credential=AzureCliCredential())
+
+    email_analysis_agent = AgentExecutor(
+        chat_client.create_agent(
+            instructions=(
+                "You are a spam detection assistant that identifies spam emails. "
+                "Always return JSON with fields 'spam_decision' (one of NotSpam, Spam, Uncertain) "
+                "and 'reason' (string)."
+            ),
+            response_format=AnalysisResultAgent,
+        ),
+        id="email_analysis_agent",
+    )
+
+    email_assistant_agent = AgentExecutor(
+        chat_client.create_agent(
+            instructions=(
+                "You are an email assistant that helps users draft responses to emails with professionalism."
+            ),
+            response_format=EmailResponse,
+        ),
+        id="email_assistant_agent",
+    )
+
+    email_summary_agent = AgentExecutor(
+        chat_client.create_agent(
+            instructions=("You are an assistant that helps users summarize emails."),
+            response_format=EmailSummaryModel,
+        ),
+        id="email_summary_agent",
+    )
+
+    # Build the workflow
+    def select_targets(analysis: AnalysisResult, target_ids: list[str]) -> list[str]:
+        # Order: [handle_spam, submit_to_email_assistant, summarize_email, handle_uncertain]
+        handle_spam_id, submit_to_email_assistant_id, summarize_email_id, handle_uncertain_id = target_ids
+        if analysis.spam_decision == "Spam":
+            return [handle_spam_id]
+        if analysis.spam_decision == "NotSpam":
+            targets = [submit_to_email_assistant_id]
+            if analysis.email_length > LONG_EMAIL_THRESHOLD:
+                targets.append(summarize_email_id)
+            return targets
+        return [handle_uncertain_id]
 
     workflow = (
         WorkflowBuilder()
-        .set_start_executor(submitter)
-        .add_edge(submitter, spam_classifier)
-        .add_edge(spam_classifier, router)
-        .add_multi_selection_edge_group(router, [remove_spam, send_response], selection_func=select_targets)
+        .set_start_executor(store_email)
+        .add_edge(store_email, email_analysis_agent)
+        .add_edge(email_analysis_agent, to_analysis_result)
+        .add_multi_selection_edge_group(
+            to_analysis_result,
+            [handle_spam, submit_to_email_assistant, summarize_email, handle_uncertain],
+            selection_func=select_targets,
+        )
+        .add_edge(submit_to_email_assistant, email_assistant_agent)
+        .add_edge(email_assistant_agent, finalize_and_send)
+        .add_edge(summarize_email, email_summary_agent)
+        .add_edge(email_summary_agent, merge_summary)
+        # Save to DB if short (no summary path)
+        .add_edge(to_analysis_result, database_access, condition=lambda r: r.email_length <= LONG_EMAIL_THRESHOLD)
+        # Save to DB with summary when long
+        .add_edge(merge_summary, database_access)
         .build()
     )
 
-    # Step 3: Run the workflow with an input message.
-    async for event in workflow.run_streaming("This is a spam."):
-        print(f"Event: {event}")
+    # Read an email sample
+    resources_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "resources", "email.txt")
+    if os.path.exists(resources_path):
+        with open(resources_path, encoding="utf-8") as f:  # noqa: ASYNC230
+            email = f.read()
+    else:
+        email = "Hello team, here are the updates for this week..."
+
+    async for event in workflow.run_streaming(email):
+        if isinstance(event, (WorkflowCompletedEvent, DatabaseEvent)):
+            print(f"{event}")
+
+    """
+    Sample Output:
+
+    WorkflowCompletedEvent(data=Email sent: Hi Alex,
+
+    Thank you for summarizing the action items from this morning's meeting.
+    I have noted the three tasks and will begin working on them right away.
+    I'll aim to have the updated project timeline ready by Friday and will
+    coordinate with the team to schedule the client presentation for next week.
+    I'll also review the Q4 budget allocation and share my feedback soon.
+
+    If anything else comes up, please let me know.
+
+    Best regards,
+    Sarah)
+    DatabaseEvent(data=Email 32021432-2d4e-4c54-b04c-f81b4120340c saved to database.)
+    """  # noqa: E501
 
 
 if __name__ == "__main__":
