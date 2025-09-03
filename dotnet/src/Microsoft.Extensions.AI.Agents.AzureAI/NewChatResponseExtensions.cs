@@ -113,7 +113,7 @@ public static class NewChatResponseExtensions
 
         static async Task AddMessagesAsync(
             IList<ChatMessage> list, IAsyncEnumerable<ChatResponseUpdate> updates, CancellationToken cancellationToken) =>
-            list.NewAddMessages(await updates.NewToChatResponseAsync(cancellationToken).ConfigureAwait(false));
+            list.NewAddMessages(await updates.ToNewChatResponseAsync(cancellationToken).ConfigureAwait(false));
     }
 
     /// <summary>Combines <see cref="ChatResponseUpdate"/> instances into a single <see cref="ChatResponse"/>.</summary>
@@ -154,7 +154,7 @@ public static class NewChatResponseExtensions
     /// message boundaries, as well as coalescing contiguous <see cref="AIContent"/> items where applicable, e.g. multiple
     /// <see cref="TextContent"/> instances in a row may be combined into a single <see cref="TextContent"/>.
     /// </remarks>
-    public static Task<ChatResponse> NewToChatResponseAsync(
+    public static Task<ChatResponse> ToNewChatResponseAsync(
         this IAsyncEnumerable<ChatResponseUpdate> updates, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(updates);

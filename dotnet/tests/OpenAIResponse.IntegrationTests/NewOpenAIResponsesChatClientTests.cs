@@ -239,13 +239,13 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         ChatResponse response = await runnableChatClient.GetResponseAsync("What is the capital of France?", options);
 
         // Act
-        response = await runnableChatClient.CancelRunAsync(response.ResponseId!);
+        ChatResponse? cancelResponse = await runnableChatClient.CancelRunAsync(response.GetRunId()!);
 
         // Assert
-        Assert.NotNull(response);
-        Assert.Empty(response.Messages);
-        Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Canceled, response.GetResponseStatus());
+        Assert.NotNull(cancelResponse);
+        Assert.Empty(cancelResponse.Messages);
+        Assert.NotNull(cancelResponse.ResponseId);
+        Assert.Equal(NewResponseStatus.Canceled, cancelResponse.GetResponseStatus());
     }
 
     [Fact]
@@ -260,13 +260,13 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         ChatResponse response = await runnableChatClient.GetResponseAsync("What is the capital of France?", options);
 
         // Act
-        response = await runnableChatClient.DeleteRunAsync(response.ResponseId!);
+        ChatResponse? deleteResponse = await runnableChatClient.DeleteRunAsync(response.GetRunId()!);
 
         // Assert
-        Assert.NotNull(response);
-        Assert.Empty(response.Messages);
-        Assert.NotNull(response.ResponseId);
-        Assert.True(((ResponseDeletionResult)response.RawRepresentation!).Deleted);
+        Assert.NotNull(deleteResponse);
+        Assert.Empty(deleteResponse.Messages);
+        Assert.NotNull(deleteResponse.ResponseId);
+        Assert.True(((ResponseDeletionResult)deleteResponse.RawRepresentation!).Deleted);
     }
 
     public void Dispose()

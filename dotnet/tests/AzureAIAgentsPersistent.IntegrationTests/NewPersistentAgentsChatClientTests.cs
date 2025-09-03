@@ -220,51 +220,48 @@ public sealed class NewPersistentAgentsChatClientTests
         Assert.Equal(NewResponseStatus.Completed, response.GetResponseStatus());
     }
 
-    //[Fact]
-    //public async Task CancelRunAsync_WhenCalled_CancelsRunAsync()
-    //{
-    //    // Arrange
-    //    using var client = await CreateChatClientAsync();
+    [Fact]
+    public async Task CancelRunAsync_WhenCalled_CancelsRunAsync()
+    {
+        // Arrange
+        using var client = await CreateChatClientAsync();
 
-    //    ChatOptions options = new();
-    //    options.SetAwaitRunResult(false);
+        ChatOptions options = new();
+        options.SetAwaitRunResult(false);
+        options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
 
-    //    INewRunnableChatClient runnableChatClient = client.GetService<INewRunnableChatClient>()!;
+        INewRunnableChatClient runnableChatClient = client.GetService<INewRunnableChatClient>()!;
 
-    //    ChatResponse response = await runnableChatClient.GetResponseAsync("What is the capital of France?", options);
+        ChatResponse response = await runnableChatClient.GetResponseAsync("What time is it?", options);
 
-    //    // Act
-    //    response = await runnableChatClient.CancelRunAsync(response.ResponseId!);
+        // Act
+        ChatResponse? cancelResponse = await runnableChatClient.CancelRunAsync(response.GetRunId()!);
 
-    //    // Assert
-    //    Assert.NotNull(response);
-    //    Assert.Empty(response.Messages);
-    //    Assert.NotNull(response.ResponseId);
-    //    Assert.Equal(NewResponseStatus.Canceled, response.GetResponseStatus());
-    //}
+        // Assert
+        Assert.NotNull(cancelResponse);
 
-    //[Fact]
-    //public async Task DeleteRunAsync_WhenCalled_DeletesRunAsync()
-    //{
-    //    // Arrange
-    //    using var client = await CreateChatClientAsync();
-    //
-    //    ChatOptions options = new();
-    //    options.SetAwaitRunResult(false);
+        var status = cancelResponse.GetResponseStatus();
+        Assert.NotNull(status);
+        Assert.True(status == NewResponseStatus.Cancelling || status == NewResponseStatus.Canceled);
+    }
 
-    //    INewRunnableChatClient runnableChatClient = this._chatClient.GetService<INewRunnableChatClient>()!;
+    [Fact]
+    public async Task DeleteRunAsync_WhenCalled_DeletesRunAsync()
+    {
+        // Arrange
+        using var client = await CreateChatClientAsync();
 
-    //    ChatResponse response = await runnableChatClient.GetResponseAsync("What is the capital of France?", options);
+        ChatOptions options = new();
+        options.SetAwaitRunResult(false);
 
-    //    // Act
-    //    response = await runnableChatClient.DeleteRunAsync(response.ResponseId!);
+        INewRunnableChatClient runnableChatClient = client.GetService<INewRunnableChatClient>()!;
 
-    //    // Assert
-    //    Assert.NotNull(response);
-    //    Assert.Empty(response.Messages);
-    //    Assert.NotNull(response.ResponseId);
-    //    Assert.True(((ResponseDeletionResult)response.RawRepresentation!).Deleted);
-    //}
+        // Act
+        ChatResponse? deleteResponse = await runnableChatClient.DeleteRunAsync("any-id");  // Deletion of runs is not supported
+
+        // Assert
+        Assert.Null(deleteResponse);
+    }
 
     private static async Task<IChatClient> CreateChatClientAsync(bool? awaitRun = null)
     {

@@ -16,11 +16,12 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.Diagnostics;
 
 namespace Azure.AI.Agents.Persistent
 {
     /// <summary>Represents an <see cref="IChatClient"/> for an Azure.AI.Agents.Persistent <see cref="PersistentAgentsClient"/>.</summary>
-    internal partial class NewPersistentAgentsChatClient : IChatClient
+    internal partial class NewPersistentAgentsChatClient : INewRunnableChatClient
     {
         /// <summary>The name of the chat client provider.</summary>
         private const string ProviderName = "azure";
@@ -74,7 +75,7 @@ namespace Azure.AI.Agents.Persistent
             // This wouldn't be needed if the API Change Proposal below is accepted:
             // https://github.com/dotnet/extensions/issues/6746
             var updates = await GetStreamingResponseCoreAsync(messages, streamingCall: false, options, cancellationToken).ToListAsync(cancellationToken).ConfigureAwait(false);
-            var response = updates.ToChatResponse();
+            var response = updates.NewToChatResponse();
 
             // Expose all the raw representations of the updates.
             response.RawRepresentation = updates.Select(u => u.RawRepresentation).ToArray();
@@ -230,6 +231,7 @@ namespace Azure.AI.Agents.Persistent
                         };
 
                         ruUpdate.SetResponseStatus(ToResponseStatus(runStatus));
+                        ruUpdate.SetRunId($"{responseId}:{threadId}");
 
                         if (ru.Value.Usage is { } usage)
                         {
@@ -311,6 +313,7 @@ namespace Azure.AI.Agents.Persistent
                         }
 
                         textUpdate.SetResponseStatus(ToResponseStatus(runStatus));
+                        textUpdate.SetRunId($"{responseId}:{threadId}");
 
                         yield return textUpdate;
                         break;
@@ -329,6 +332,7 @@ namespace Azure.AI.Agents.Persistent
 
                         updateToReturn.SetResponseStatus(ToResponseStatus(runStatus));
                         updateToReturn.SetSequenceNumber(stepId);
+                        updateToReturn.SetRunId($"{responseId}:{threadId}");
 
                         yield return updateToReturn;
                         break;
@@ -830,6 +834,7 @@ namespace Azure.AI.Agents.Persistent
                 Role = message?.Role == MessageRole.User ? ChatRole.User : ChatRole.Assistant,
             };
 
+            update.SetRunId($"{run.Id}:{run.ThreadId}");
             update.SetResponseStatus(ToResponseStatus(run.Status));
             update.SetSequenceNumber(step?.Id);
 
@@ -882,6 +887,41 @@ namespace Azure.AI.Agents.Persistent
                     }
                 }
             }
+        }
+
+        public async Task<ChatResponse?> CancelRunAsync(string runId, CancellationToken cancellationToken = default)
+        {
+            _ = Throw.IfNullOrEmpty(runId);
+
+            string[] parts = runId.Split(':');
+            if (parts.Length != 2 || string.IsNullOrWhiteSpace(parts[0]) || string.IsNullOrWhiteSpace(parts[1]))
+            {
+                throw new ArgumentException("Invalid run ID format. Expected format is '<runId>:<threadId>'.", nameof(runId));
+            }
+
+            ThreadRun run;
+
+            try
+            {
+                run = await _client!.Runs.CancelRunAsync(threadId: parts[1], runId: parts[0], cancellationToken).ConfigureAwait(false);
+            }
+            // Swallow the exception if the run is already completed. Original message: "Cannot cancel run with status 'completed'"
+            catch (RequestFailedException ex) when (ex.Status == 400 && ex.Message.Contains("completed"))
+            {
+                return null;
+            }
+            // Do nothing if the run is not found.
+            catch (RequestFailedException ex) when (ex.Status == 404)
+            {
+                return null;
+            }
+
+            return new[] { CreateChatResponseUpdate(run) }.NewToChatResponse();
+        }
+
+        public Task<ChatResponse?> DeleteRunAsync(string runId, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<ChatResponse?>(null);
         }
 
         [JsonSerializable(typeof(JsonElement))]

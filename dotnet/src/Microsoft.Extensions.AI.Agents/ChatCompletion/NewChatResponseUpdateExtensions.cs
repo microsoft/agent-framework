@@ -107,4 +107,51 @@ public static class NewChatResponseUpdateExtensions
 
         return null;
     }
+
+    /// <summary>
+    /// Sets the run identifier for the specified <see cref="ChatResponseUpdate"/>.
+    /// </summary>
+    /// <remarks>
+    /// This is a temporary extension method that will be removed once the official
+    /// <see cref="ChatResponseUpdate"/> class has been updated with the new properties.
+    /// Therefore, please expect a breaking change if you are using this method directly in your code.
+    /// </remarks>
+    /// <param name="update">The <see cref="ChatResponseUpdate"/> instance to read from.</param>
+    /// <param name="runId">The run identifier to assign.</param>
+    public static void SetRunId(this ChatResponseUpdate update, string runId)
+    {
+        if (update is null)
+        {
+            throw new ArgumentNullException(nameof(update));
+        }
+
+        (update.AdditionalProperties ??= [])["RunId"] = runId;
+    }
+
+    /// <summary>
+    /// Gets the run identifier from the specified <see cref="ChatResponseUpdate"/>.
+    /// </summary>
+    /// <remarks>
+    /// This is a temporary extension method that will be removed once the official
+    /// <see cref="ChatResponseUpdate"/> class has been updated with the new properties.
+    /// Therefore, please expect a breaking change if you are using this method directly in your code.
+    /// </remarks>
+    /// <param name="update">The <see cref="ChatResponseUpdate"/> instance to read from.</param>
+    /// <returns>The run identifier if it exists; otherwise, <c>null</c>.</returns>
+    public static string? GetRunId(this ChatResponseUpdate update)
+    {
+        if (update is null)
+        {
+            throw new ArgumentNullException(nameof(update));
+        }
+
+        if (update.AdditionalProperties is not null &&
+            update.AdditionalProperties.TryGetValue("RunId", out var value) &&
+            value is string runId)
+        {
+            return runId;
+        }
+
+        return null;
+    }
 }

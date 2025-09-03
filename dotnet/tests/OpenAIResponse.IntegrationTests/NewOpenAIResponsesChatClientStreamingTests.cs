@@ -322,10 +322,10 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
 
         IAsyncEnumerable<ChatResponseUpdate> streamingResponse = runnableChatClient.GetStreamingResponseAsync("What is the capital of France?", options);
 
-        var responseId = (await streamingResponse.ElementAtAsync(0)).ResponseId;
+        var runId = (await streamingResponse.ElementAtAsync(0)).GetRunId();
 
         // Act
-        ChatResponse response = await runnableChatClient.CancelRunAsync(responseId!);
+        ChatResponse? response = await runnableChatClient.CancelRunAsync(runId!);
 
         // Assert
         Assert.NotNull(response);
@@ -345,10 +345,10 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
 
         IAsyncEnumerable<ChatResponseUpdate> streamingResponse = runnableChatClient.GetStreamingResponseAsync("What is the capital of France?", options);
 
-        var responseId = (await streamingResponse.ElementAtAsync(0)).ResponseId;
+        var runId = (await streamingResponse.ElementAtAsync(0)).GetRunId();
 
         // Act
-        ChatResponse response = await runnableChatClient.DeleteRunAsync(responseId!);
+        ChatResponse? response = await runnableChatClient.DeleteRunAsync(runId!);
 
         // Assert
         Assert.NotNull(response);

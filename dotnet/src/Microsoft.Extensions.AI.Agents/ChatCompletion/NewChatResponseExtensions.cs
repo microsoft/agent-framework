@@ -64,4 +64,51 @@ public static class NewChatResponseExtensions
 
         return null;
     }
+
+    /// <summary>
+    /// Sets the run identifier for the specified <see cref="ChatResponse"/>.
+    /// </summary>
+    /// <remarks>
+    /// This is a temporary extension method that will be removed once the official
+    /// <see cref="ChatResponse"/> class has been updated with the new properties.
+    /// Therefore, please expect a breaking change if you are using this method directly in your code.
+    /// </remarks>
+    /// <param name="response">The <see cref="ChatResponse"/> instance whose run identifier is to be set.</param>
+    /// <param name="runId">The run identifier to assign.</param>
+    public static void SetRunId(this ChatResponse response, string runId)
+    {
+        if (response is null)
+        {
+            throw new ArgumentNullException(nameof(response));
+        }
+
+        (response.AdditionalProperties ??= [])["RunId"] = runId;
+    }
+
+    /// <summary>
+    /// Gets the run identifier from the specified <see cref="ChatResponse"/>.
+    /// </summary>
+    /// <remarks>
+    /// This is a temporary extension method that will be removed once the official
+    /// <see cref="ChatResponse"/> class has been updated with the new properties.
+    /// Therefore, please expect a breaking change if you are using this method directly in your code.
+    /// </remarks>
+    /// <param name="response">The <see cref="ChatResponse"/> instance from which to retrieve the run identifier.</param>
+    /// <returns>The run identifier if it exists; otherwise, <c>null</c>.</returns>
+    public static string? GetRunId(this ChatResponse response)
+    {
+        if (response is null)
+        {
+            throw new ArgumentNullException(nameof(response));
+        }
+
+        if (response.AdditionalProperties is not null &&
+            response.AdditionalProperties.TryGetValue("RunId", out var value) &&
+            value is string runId)
+        {
+            return runId;
+        }
+
+        return null;
+    }
 }

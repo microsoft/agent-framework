@@ -124,7 +124,7 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
     }
 
     /// <inheritdoc />
-    public async Task<ChatResponse> CancelRunAsync(string runId, CancellationToken cancellationToken = default)
+    public async Task<ChatResponse?> CancelRunAsync(string runId, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNullOrEmpty(runId);
 
@@ -135,7 +135,7 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
     }
 
     /// <inheritdoc />
-    public async Task<ChatResponse> DeleteRunAsync(string runId, CancellationToken cancellationToken = default)
+    public async Task<ChatResponse?> DeleteRunAsync(string runId, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNullOrEmpty(runId);
 
@@ -188,6 +188,7 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
         }
 
         response.SetResponseStatus(ToResponseStatus(openAIResponse.Status));
+        response.SetRunId(openAIResponse.Id);
 
         return response;
     }
@@ -311,6 +312,10 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
 
                 update.SetResponseStatus(responseStatus);
                 update.SetSequenceNumber(streamingUpdate.SequenceNumber.ToString());
+                if (responseId is not null)
+                {
+                    update.SetRunId(responseId);
+                }
 
                 return update;
             }
