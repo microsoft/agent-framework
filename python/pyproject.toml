@@ -7,7 +7,7 @@ dependencies = [
     "agent-framework",
     "agent-framework-azure",
     "agent-framework-foundry",
-    "agent_framework-workflow",
+    "agent-framework-workflow",
 ]
 
 [dependency-groups]
