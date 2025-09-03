@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import contextlib
 import json
 import sys
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence
@@ -372,7 +371,7 @@ class FoundryChatClient(ChatClientBase):
         """Process events from the agent stream and yield ChatResponseUpdate objects."""
         # Use 'async with' only if the stream supports async context management (main agent stream).
         # Tool output handlers only support async iteration, not context management.
-        if isinstance(stream, contextlib.AbstractAsyncContextManager):
+        if isinstance(stream, AsyncAgentRunStream):
             async with stream as response_stream:  # type: ignore
                 async for update in self._process_stream_events_from_iterator(response_stream, thread_id):
                     yield update

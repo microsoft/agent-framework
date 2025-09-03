@@ -270,7 +270,7 @@ def _trace_get_response(
 
         with _chat_response_span(
             operation_name=OtelAttr.CHAT_COMPLETION_OPERATION,
-            model_provider=model_provider,
+            system_name=model_provider,
             chat_client=chat_client,
             **kwargs,
         ) as span:
@@ -321,7 +321,7 @@ def _trace_get_streaming_response(
 
         with _chat_response_span(
             operation_name=OtelAttr.CHAT_COMPLETION_OPERATION,
-            model_provider=model_provider,
+            system_name=model_provider,
             chat_client=chat_client,
             **kwargs,
         ) as span:
