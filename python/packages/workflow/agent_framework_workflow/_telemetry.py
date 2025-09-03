@@ -16,9 +16,9 @@ class EdgeGroupDeliveryStatus(Enum):
     """Enum for edge group delivery status values."""
 
     DELIVERED = "delivered"
-    DROPPED_TYPE_MISMATCH = "dropped for type mismatch"
-    DROPPED_TARGET_MISMATCH = "dropped for target mismatch"
-    DROPPED_CONDITION_FALSE = "dropped for condition evaluated to false"
+    DROPPED_TYPE_MISMATCH = "dropped type mismatch"
+    DROPPED_TARGET_MISMATCH = "dropped target mismatch"
+    DROPPED_CONDITION_FALSE = "dropped condition evaluated to false"
     EXCEPTION = "exception"
     BUFFERED = "buffered"
 
