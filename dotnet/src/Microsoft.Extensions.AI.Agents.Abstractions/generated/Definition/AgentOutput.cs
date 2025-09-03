@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 using System;
 using System.Collections.Generic;
 
@@ -29,22 +29,22 @@ public sealed class AgentOutput
         Description = props.GetValueOrDefault<string?>("description");
         Required = props.GetValueOrDefault<bool?>("required");
     }
-    
+
     /// <summary>
     /// The name of the item
     /// </summary>
     public string Name { get; set; } = string.Empty;
-    
+
     /// <summary>
     /// The data type of the output property
     /// </summary>
     public string Type { get; set; } = "string";
-    
+
     /// <summary>
     /// A short description of the output property
     /// </summary>
     public string? Description { get; set; }
-    
+
     /// <summary>
     /// Whether the output property is required
     /// </summary>

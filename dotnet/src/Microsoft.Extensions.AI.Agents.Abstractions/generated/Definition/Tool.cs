@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 using System;
 using System.Collections.Generic;
 
@@ -28,22 +28,22 @@ public sealed class Tool
         Description = props.GetValueOrDefault<string?>("description");
         Binding = props.GetValueOrDefault<IList<Binding>?>("binding");
     }
-    
+
     /// <summary>
     /// The name of the item
     /// </summary>
     public string Name { get; set; } = string.Empty;
-    
+
     /// <summary>
     /// The type identifier for the tool
     /// </summary>
     public string Type { get; set; } = string.Empty;
-    
+
     /// <summary>
     /// A short description of the tool for metadata purposes
     /// </summary>
     public string? Description { get; set; }
-    
+
     /// <summary>
     /// Tool argument bindings to input properties
     /// </summary>

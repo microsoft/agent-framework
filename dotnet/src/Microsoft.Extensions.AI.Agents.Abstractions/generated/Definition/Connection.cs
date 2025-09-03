@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 using System;
 using System.Collections.Generic;
 
@@ -30,22 +30,22 @@ public sealed class Connection
         Endpoint = props.GetValueOrDefault<string>("endpoint") ?? throw new ArgumentException("Properties must contain a property named: endpoint", nameof(props));
         Options = props.GetValueOrDefault<Options?>("options");
     }
-    
+
     /// <summary>
     /// The unique provider of the connection
     /// </summary>
     public string Provider { get; set; } = string.Empty;
-    
+
     /// <summary>
     /// The type of connection used to tell the runtime how to load and execute the agent
     /// </summary>
     public string Type { get; set; } = string.Empty;
-    
+
     /// <summary>
     /// The endpoint URL for the connection
     /// </summary>
     public string Endpoint { get; set; } = string.Empty;
-    
+
     /// <summary>
     /// Additional options for model execution
     /// </summary>

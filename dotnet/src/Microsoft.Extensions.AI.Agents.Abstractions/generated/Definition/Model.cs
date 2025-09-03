@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 using System;
 using System.Collections.Generic;
 
@@ -52,12 +52,12 @@ public sealed class Model
         Id = props.GetValueOrDefault<string>("id") ?? throw new ArgumentException("Properties must contain a property named: id", nameof(props));
         Connection = props.GetValueOrDefault<Connection?>("connection");
     }
-    
+
     /// <summary>
     /// The unique identifier of the model
     /// </summary>
     public string Id { get; set; } = string.Empty;
-    
+
     /// <summary>
     /// The connection configuration for the model
     /// </summary>

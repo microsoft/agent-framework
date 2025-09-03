@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 using System;
 using System.Collections.Generic;
 
@@ -42,22 +42,22 @@ public sealed class Template
         Strict = props.GetValueOrDefault<bool?>("strict");
         Options = props.GetValueOrDefault<Options?>("options");
     }
-    
+
     /// <summary>
     /// Template rendering engine used for slot filling prompts (e.g., mustache, jinja2)
     /// </summary>
     public string Format { get; set; } = string.Empty;
-    
+
     /// <summary>
     /// Parser used to process the rendered template into API-compatible format
     /// </summary>
     public string Parser { get; set; } = string.Empty;
-    
+
     /// <summary>
     /// Whether the template can emit structural text for parsing output
     /// </summary>
     public bool? Strict { get; set; }
-    
+
     /// <summary>
     /// Additional options for the template engine
     /// </summary>

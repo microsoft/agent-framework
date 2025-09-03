@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 using System;
 using System.Collections.Generic;
 
@@ -26,12 +26,12 @@ public sealed class Binding
         Name = props.GetValueOrDefault<string>("name") ?? throw new ArgumentException("Properties must contain a property named: name", nameof(props));
         Input = props.GetValueOrDefault<string>("input") ?? throw new ArgumentException("Properties must contain a property named: input", nameof(props));
     }
-    
+
     /// <summary>
     /// The name of the item
     /// </summary>
     public string Name { get; set; } = string.Empty;
-    
+
     /// <summary>
     /// The input property that will be bound to the tool parameter argument
     /// </summary>
