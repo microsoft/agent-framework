@@ -409,7 +409,7 @@ public static class NewChatResponseExtensions
             }
         }
 
-        if (update.GetResponseStatus() is { } status)
+        if (update is NewChatResponseUpdate { Status: { } status })
         {
             if (response is NewChatResponse newResponse)
             {
@@ -417,7 +417,7 @@ public static class NewChatResponseExtensions
             }
         }
 
-        if (update.GetRunId() is { } runId)
+        if (update is NewChatResponseUpdate { RunId: { } runId })
         {
             if (response is NewChatResponse newResponse)
             {

@@ -300,7 +300,7 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
             // Create an update populated with the current state of the response.
             ChatResponseUpdate CreateUpdate(AIContent? content = null)
             {
-                ChatResponseUpdate update = new(lastRole, content is not null ? [content] : null)
+                return new NewChatResponseUpdate(lastRole, content is not null ? [content] : null)
                 {
                     ConversationId = conversationId,
                     CreatedAt = createdAt,
@@ -308,16 +308,10 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
                     ModelId = modelId,
                     RawRepresentation = streamingUpdate,
                     ResponseId = responseId,
+                    Status = responseStatus,
+                    SequenceNumber = streamingUpdate.SequenceNumber.ToString(),
+                    RunId = responseId,
                 };
-
-                update.SetResponseStatus(responseStatus);
-                update.SetSequenceNumber(streamingUpdate.SequenceNumber.ToString());
-                if (responseId is not null)
-                {
-                    update.SetRunId(responseId);
-                }
-
-                return update;
             }
 
             switch (streamingUpdate)

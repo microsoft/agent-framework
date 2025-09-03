@@ -32,9 +32,9 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         string responseText = "";
 
         // Act
-        await foreach (var update in client.GetStreamingResponseAsync("What is the capital of France?", options))
+        await foreach (var update in client.GetStreamingResponseAsync("What is the capital of France?", options).Select(u => (NewChatResponseUpdate)u))
         {
-            if (update.GetResponseStatus() is { } status)
+            if (update.Status is { } status)
             {
                 statuses.Add(status);
             }
@@ -69,9 +69,9 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         string responseText = "";
 
         // Act
-        await foreach (var update in client.GetStreamingResponseAsync("What is the capital of France?"))
+        await foreach (var update in client.GetStreamingResponseAsync("What is the capital of France?").Select(u => (NewChatResponseUpdate)u))
         {
-            if (update.GetResponseStatus() is { } status)
+            if (update.Status is { } status)
             {
                 statuses.Add(status);
             }
@@ -112,9 +112,9 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         string? responseId = null;
         string? conversationId = null;
 
-        await foreach (var update in client.GetStreamingResponseAsync("What is the capital of France?", options))
+        await foreach (var update in client.GetStreamingResponseAsync("What is the capital of France?", options).Select(u => (NewChatResponseUpdate)u))
         {
-            if (update.GetResponseStatus() is { } status)
+            if (update.Status is { } status)
             {
                 statuses.Add(status);
             }
@@ -138,14 +138,14 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         options.PreviousResponseId = responseId;
         statuses.Clear();
 
-        await foreach (var item in client.GetStreamingResponseAsync([], options))
+        await foreach (var update in client.GetStreamingResponseAsync([], options).Select(u => (NewChatResponseUpdate)u))
         {
-            if (item.GetResponseStatus() is { } status)
+            if (update.Status is { } status)
             {
                 statuses.Add(status);
             }
 
-            responseText += item;
+            responseText += update;
         }
 
         Assert.Contains("Paris", responseText);
@@ -169,14 +169,14 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         string responseText = "";
 
         // Act
-        await foreach (var item in client.GetStreamingResponseAsync("What time is it?", options))
+        await foreach (var update in client.GetStreamingResponseAsync("What time is it?", options).Select(u => (NewChatResponseUpdate)u))
         {
-            if (item.GetResponseStatus() is { } status)
+            if (update.Status is { } status)
             {
                 statuses.Add(status);
             }
 
-            responseText += item;
+            responseText += update;
         }
 
         // Assert
@@ -203,9 +203,9 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         string? responseId = null;
         string? conversationId = null;
 
-        await foreach (var update in client.GetStreamingResponseAsync("What time is it?", options))
+        await foreach (var update in client.GetStreamingResponseAsync("What time is it?", options).Select(u => (NewChatResponseUpdate)u))
         {
-            if (update.GetResponseStatus() is { } status)
+            if (update.Status is { } status)
             {
                 statuses.Add(status);
             }
@@ -229,14 +229,14 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         options.PreviousResponseId = responseId;
         statuses.Clear();
 
-        await foreach (var item in client.GetStreamingResponseAsync([], options))
+        await foreach (var update in client.GetStreamingResponseAsync([], options).Select(u => (NewChatResponseUpdate)u))
         {
-            if (item.GetResponseStatus() is { } status)
+            if (update.Status is { } status)
             {
                 statuses.Add(status);
             }
 
-            responseText += item;
+            responseText += update;
         }
 
         Assert.Contains("5:43", responseText);
@@ -313,9 +313,9 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
 
         INewRunnableChatClient runnableChatClient = client.GetService<INewRunnableChatClient>()!;
 
-        IAsyncEnumerable<ChatResponseUpdate> streamingResponse = runnableChatClient.GetStreamingResponseAsync("What time is it?", options);
+        IAsyncEnumerable<NewChatResponseUpdate> streamingResponse = runnableChatClient.GetStreamingResponseAsync("What time is it?", options).Select(u => (NewChatResponseUpdate)u);
 
-        var runId = (await streamingResponse.ElementAtAsync(0)).GetRunId();
+        var runId = (await streamingResponse.ElementAtAsync(0)).RunId;
 
         // Act
         NewChatResponse? response = (NewChatResponse?)await runnableChatClient.CancelRunAsync(runId!);
@@ -350,12 +350,18 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
             name: "LongRunningExecutionAgent",
             instructions: "You are a helpful assistant.");
 
-        var chatClient = persistentAgentsClient.AsNewIChatClient(persistentAgentResponse.Value.Id, awaitRun: awaitRun)
-            .AsBuilder()
-            .UseFunctionInvocation()
-            .Build();
+        var persistentChatClient = persistentAgentsClient.AsNewIChatClient(persistentAgentResponse.Value.Id, awaitRun: awaitRun);
 
-        return new ChatClientTestProxy(persistentAgentsClient, persistentAgentResponse.Value.Id, chatClient);
+        var functionInvokingChatClient = new NewFunctionInvokingChatClient(persistentChatClient);
+
+        return new ChatClientTestProxy(persistentAgentsClient, persistentAgentResponse.Value.Id, functionInvokingChatClient);
+
+        //var chatClient = persistentAgentsClient.AsNewIChatClient(persistentAgentResponse.Value.Id, awaitRun: awaitRun)
+        //    .AsBuilder()
+        //    .UseFunctionInvocation()
+        //    .Build();
+
+        //return new ChatClientTestProxy(persistentAgentsClient, persistentAgentResponse.Value.Id, chatClient);
     }
 
     private sealed class ChatClientTestProxy : IChatClient

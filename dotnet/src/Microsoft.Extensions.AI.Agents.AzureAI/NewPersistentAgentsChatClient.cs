@@ -218,7 +218,7 @@ namespace Azure.AI.Agents.Persistent
                         responseId ??= ru.Value.Id;
                         runStatus = ru.Value.Status;
 
-                        ChatResponseUpdate ruUpdate = new()
+                        NewChatResponseUpdate ruUpdate = new()
                         {
                             AuthorName = ru.Value.AssistantId,
                             ConversationId = threadId,
@@ -228,10 +228,9 @@ namespace Azure.AI.Agents.Persistent
                             RawRepresentation = ru,
                             ResponseId = responseId,
                             Role = ChatRole.Assistant,
+                            Status = ToResponseStatus(runStatus),
+                            RunId = $"{responseId}:{threadId}"
                         };
-
-                        ruUpdate.SetResponseStatus(ToResponseStatus(runStatus));
-                        ruUpdate.SetRunId($"{responseId}:{threadId}");
 
                         if (ru.Value.Usage is { } usage)
                         {
@@ -267,13 +266,15 @@ namespace Azure.AI.Agents.Persistent
                         break;
 
                     case MessageContentUpdate mcu:
-                        ChatResponseUpdate textUpdate = new(mcu.Role == MessageRole.User ? ChatRole.User : ChatRole.Assistant, mcu.Text)
+                        NewChatResponseUpdate textUpdate = new(mcu.Role == MessageRole.User ? ChatRole.User : ChatRole.Assistant, mcu.Text)
                         {
                             AuthorName = _agentId,
                             ConversationId = threadId,
                             MessageId = responseId,
                             RawRepresentation = mcu,
                             ResponseId = responseId,
+                            Status = ToResponseStatus(runStatus),
+                            RunId = $"{responseId}:{threadId}"
                         };
 
                         // Add any annotations from the text update. The OpenAI Assistants API does not support passing these back
@@ -312,15 +313,12 @@ namespace Azure.AI.Agents.Persistent
                             }
                         }
 
-                        textUpdate.SetResponseStatus(ToResponseStatus(runStatus));
-                        textUpdate.SetRunId($"{responseId}:{threadId}");
-
                         yield return textUpdate;
                         break;
 
                     default:
                     {
-                        var updateToReturn = new ChatResponseUpdate
+                        var updateToReturn = new NewChatResponseUpdate
                         {
                             AuthorName = _agentId,
                             ConversationId = threadId,
@@ -328,11 +326,10 @@ namespace Azure.AI.Agents.Persistent
                             RawRepresentation = update,
                             ResponseId = responseId,
                             Role = ChatRole.Assistant,
+                            Status = ToResponseStatus(runStatus),
+                            SequenceNumber = stepId,
+                            RunId = $"{responseId}:{threadId}"
                         };
-
-                        updateToReturn.SetResponseStatus(ToResponseStatus(runStatus));
-                        updateToReturn.SetSequenceNumber(stepId);
-                        updateToReturn.SetRunId($"{responseId}:{threadId}");
 
                         yield return updateToReturn;
                         break;
@@ -820,9 +817,9 @@ namespace Azure.AI.Agents.Persistent
             }
         }
 
-        private static ChatResponseUpdate CreateChatResponseUpdate(ThreadRun run, RunStep? step = null, PersistentThreadMessage? message = null, IEnumerable<FunctionCallContent>? functionCallContents = null)
+        private static NewChatResponseUpdate CreateChatResponseUpdate(ThreadRun run, RunStep? step = null, PersistentThreadMessage? message = null, IEnumerable<FunctionCallContent>? functionCallContents = null)
         {
-            var update = new ChatResponseUpdate
+            var update = new NewChatResponseUpdate
             {
                 AuthorName = run.AssistantId,
                 ConversationId = run.ThreadId,
@@ -832,11 +829,10 @@ namespace Azure.AI.Agents.Persistent
                 RawRepresentation = message ?? step as object ?? run,
                 ResponseId = run.Id,
                 Role = message?.Role == MessageRole.User ? ChatRole.User : ChatRole.Assistant,
+                Status = ToResponseStatus(run.Status),
+                SequenceNumber = step?.Id,
+                RunId = $"{run.Id}:{run.ThreadId}"
             };
-
-            update.SetRunId($"{run.Id}:{run.ThreadId}");
-            update.SetResponseStatus(ToResponseStatus(run.Status));
-            update.SetSequenceNumber(step?.Id);
 
             if (run.Usage is { } usage)
             {

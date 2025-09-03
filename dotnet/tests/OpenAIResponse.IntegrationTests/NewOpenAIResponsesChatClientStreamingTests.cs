@@ -18,17 +18,21 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
 
     private readonly OpenAIResponseClient _openAIResponseClient;
 
+#pragma warning disable CA1859 // Use concrete types when possible for improved performance
     private readonly IChatClient _chatClient;
+#pragma warning restore CA1859 // Use concrete types when possible for improved performance
 
     public NewOpenAIResponsesChatClientStreamingTests()
     {
         this._openAIResponseClient = new OpenAIClient(s_config.ApiKey).GetOpenAIResponseClient(s_config.ChatModelId);
 
-        this._chatClient = this._openAIResponseClient
-            .AsNewIChatClient()
-            .AsBuilder()
-            .UseFunctionInvocation()
-            .Build();
+        this._chatClient = new NewFunctionInvokingChatClient(this._openAIResponseClient.AsNewIChatClient());
+
+        //this._chatClient = this._openAIResponseClient
+        //    .AsNewIChatClient()
+        //    .AsBuilder()
+        //    .UseFunctionInvocation()
+        //    .Build();
     }
 
     [Theory]
@@ -46,9 +50,9 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         string responseText = "";
 
         // Act
-        await foreach (var update in this._chatClient.GetStreamingResponseAsync("What is the capital of France?", options))
+        await foreach (var update in this._chatClient.GetStreamingResponseAsync("What is the capital of France?", options).Select(u => (NewChatResponseUpdate)u))
         {
-            if (update.GetResponseStatus() is { } status)
+            if (update.Status is { } status)
             {
                 statuses.Add(status);
             }
@@ -87,9 +91,9 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         string responseText = "";
 
         // Act
-        await foreach (var update in client.GetStreamingResponseAsync("What is the capital of France?"))
+        await foreach (var update in client.GetStreamingResponseAsync("What is the capital of France?").Select(u => (NewChatResponseUpdate)u))
         {
-            if (update.GetResponseStatus() is { } status)
+            if (update.Status is { } status)
             {
                 statuses.Add(status);
             }
@@ -129,9 +133,9 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         string? responseId = null;
         string? conversationId = null;
 
-        await foreach (var update in this._chatClient.GetStreamingResponseAsync("What is the capital of France?", options))
+        await foreach (var update in this._chatClient.GetStreamingResponseAsync("What is the capital of France?", options).Select(u => (NewChatResponseUpdate)u))
         {
-            if (update.GetResponseStatus() is { } status)
+            if (update.Status is { } status)
             {
                 statuses.Add(status);
             }
@@ -142,7 +146,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
             // can continue getting the rest of the events starting from the same point in the test below.
             responseId = update.ResponseId;
             conversationId = update.ConversationId;
-            sequenceNumber = update.GetSequenceNumber();
+            sequenceNumber = update.SequenceNumber;
         }
 
         Assert.Contains(NewResponseStatus.Queued, statuses);
@@ -158,14 +162,14 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         options.StartAfter = sequenceNumber;
         statuses.Clear();
 
-        await foreach (var item in this._chatClient.GetStreamingResponseAsync([], options))
+        await foreach (var update in this._chatClient.GetStreamingResponseAsync([], options).Select(u => (NewChatResponseUpdate)u))
         {
-            if (item.GetResponseStatus() is { } status)
+            if (update.Status is { } status)
             {
                 statuses.Add(status);
             }
 
-            responseText += item;
+            responseText += update;
         }
 
         Assert.Contains("Paris", responseText);
@@ -189,14 +193,14 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         string responseText = "";
 
         // Act
-        await foreach (var item in this._chatClient.GetStreamingResponseAsync("What time is it?", options))
+        await foreach (var update in this._chatClient.GetStreamingResponseAsync("What time is it?", options).Select(u => (NewChatResponseUpdate)u))
         {
-            if (item.GetResponseStatus() is { } status)
+            if (update.Status is { } status)
             {
                 statuses.Add(status);
             }
 
-            responseText += item;
+            responseText += update;
         }
 
         // Assert
@@ -223,9 +227,9 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         string? responseId = null;
         string? conversationId = null;
 
-        await foreach (var update in this._chatClient.GetStreamingResponseAsync("What time is it?", options))
+        await foreach (var update in this._chatClient.GetStreamingResponseAsync("What time is it?", options).Select(u => (NewChatResponseUpdate)u))
         {
-            if (update.GetResponseStatus() is { } status)
+            if (update.Status is { } status)
             {
                 statuses.Add(status);
             }
@@ -236,7 +240,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
             // can continue getting the rest of the events starting from the same point in the test below.
             responseId = update.ResponseId;
             conversationId = update.ConversationId;
-            sequenceNumber = update.GetSequenceNumber();
+            sequenceNumber = update.SequenceNumber;
         }
 
         Assert.Contains(NewResponseStatus.Queued, statuses);
@@ -252,14 +256,14 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         options.StartAfter = sequenceNumber;
         statuses.Clear();
 
-        await foreach (var item in this._chatClient.GetStreamingResponseAsync([], options))
+        await foreach (var update in this._chatClient.GetStreamingResponseAsync([], options).Select(u => (NewChatResponseUpdate)u))
         {
-            if (item.GetResponseStatus() is { } status)
+            if (update.Status is { } status)
             {
                 statuses.Add(status);
             }
 
-            responseText += item;
+            responseText += update;
         }
 
         Assert.Contains("5:43", responseText);
@@ -330,9 +334,9 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
 
         INewRunnableChatClient runnableChatClient = this._chatClient.GetService<INewRunnableChatClient>()!;
 
-        IAsyncEnumerable<ChatResponseUpdate> streamingResponse = runnableChatClient.GetStreamingResponseAsync("What is the capital of France?", options);
+        IAsyncEnumerable<NewChatResponseUpdate> streamingResponse = runnableChatClient.GetStreamingResponseAsync("What is the capital of France?", options).Select(u => (NewChatResponseUpdate)u);
 
-        var runId = (await streamingResponse.ElementAtAsync(0)).GetRunId();
+        var runId = (await streamingResponse.ElementAtAsync(0)).RunId;
 
         // Act
         NewChatResponse? response = (NewChatResponse?)await runnableChatClient.CancelRunAsync(runId!);
@@ -355,9 +359,9 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
 
         INewRunnableChatClient runnableChatClient = this._chatClient.GetService<INewRunnableChatClient>()!;
 
-        IAsyncEnumerable<ChatResponseUpdate> streamingResponse = runnableChatClient.GetStreamingResponseAsync("What is the capital of France?", options);
+        IAsyncEnumerable<NewChatResponseUpdate> streamingResponse = runnableChatClient.GetStreamingResponseAsync("What is the capital of France?", options).Select(u => (NewChatResponseUpdate)u);
 
-        var runId = (await streamingResponse.ElementAtAsync(0)).GetRunId();
+        var runId = (await streamingResponse.ElementAtAsync(0)).RunId;
 
         // Act
         ChatResponse? response = await runnableChatClient.DeleteRunAsync(runId!);

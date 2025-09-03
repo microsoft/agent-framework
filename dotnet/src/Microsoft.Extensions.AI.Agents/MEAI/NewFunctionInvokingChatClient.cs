@@ -1455,9 +1455,9 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
         return responseMessages;
     }
 
-    private static ChatResponseUpdate ConvertToolResultMessageToUpdate(ChatMessage message, string? conversationId, string? messageId)
+    private static NewChatResponseUpdate ConvertToolResultMessageToUpdate(ChatMessage message, string? conversationId, string? messageId)
     {
-        return new()
+        return new NewChatResponseUpdate()
         {
             AdditionalProperties = message.AdditionalProperties,
             AuthorName = message.AuthorName,

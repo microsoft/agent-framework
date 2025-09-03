@@ -16,17 +16,21 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
 
     private readonly OpenAIResponseClient _openAIResponseClient;
 
+#pragma warning disable CA1859 // Use concrete types when possible for improved performance
     private readonly IChatClient _chatClient;
+#pragma warning restore CA1859 // Use concrete types when possible for improved performance
 
     public NewOpenAIResponsesChatClientTests()
     {
         this._openAIResponseClient = new OpenAIClient(s_config.ApiKey).GetOpenAIResponseClient(s_config.ChatModelId);
 
-        this._chatClient = this._openAIResponseClient
-            .AsNewIChatClient()
-            .AsBuilder()
-            .UseFunctionInvocation()
-            .Build();
+        this._chatClient = new NewFunctionInvokingChatClient(this._openAIResponseClient.AsNewIChatClient());
+
+        //this._chatClient = this._openAIResponseClient
+        //    .AsNewIChatClient()
+        //    .AsBuilder()
+        //    .UseFunctionInvocation()
+        //    .Build();
     }
 
     [Theory]

@@ -286,12 +286,18 @@ public sealed class NewPersistentAgentsChatClientTests
             name: "LongRunningExecutionAgent",
             instructions: "You are a helpful assistant.");
 
-        var chatClient = persistentAgentsClient.AsNewIChatClient(persistentAgentResponse.Value.Id, awaitRun: awaitRun)
-            .AsBuilder()
-            .UseFunctionInvocation()
-            .Build();
+        var persistentChatClient = persistentAgentsClient.AsNewIChatClient(persistentAgentResponse.Value.Id, awaitRun: awaitRun);
 
-        return new ChatClientTestProxy(persistentAgentsClient, persistentAgentResponse.Value.Id, chatClient);
+        var functionInvokingChatClient = new NewFunctionInvokingChatClient(persistentChatClient);
+
+        return new ChatClientTestProxy(persistentAgentsClient, persistentAgentResponse.Value.Id, functionInvokingChatClient);
+
+        //var chatClient = persistentAgentsClient.AsNewIChatClient(persistentAgentResponse.Value.Id, awaitRun: awaitRun)
+        //    .AsBuilder()
+        //    .UseFunctionInvocation()
+        //    .Build();
+
+        //return new ChatClientTestProxy(persistentAgentsClient, persistentAgentResponse.Value.Id, chatClient);
     }
 
     private sealed class ChatClientTestProxy : IChatClient
