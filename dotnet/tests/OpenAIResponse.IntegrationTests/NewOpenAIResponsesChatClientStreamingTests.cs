@@ -37,8 +37,10 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
     public async Task GetStreamingResponseAsync_WithBackgroundModeProvidedViaOptions_ReturnsExpectedResponseAsync(bool awaitRun)
     {
         // Arrange
-        ChatOptions options = new();
-        options.SetAwaitRunResult(awaitRun);
+        NewChatOptions options = new()
+        {
+            AwaitRunResult = awaitRun
+        };
 
         List<NewResponseStatus> statuses = [];
         string responseText = "";
@@ -116,8 +118,10 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
     public async Task GetStreamingResponseAsync_HavingReturnedInitialResponse_AllowsToContinueItAsync(bool continueInBackground)
     {
         // Part 1: Start the background run and get the first part of the response.
-        ChatOptions options = new();
-        options.SetAwaitRunResult(false);
+        NewChatOptions options = new()
+        {
+            AwaitRunResult = false
+        };
 
         List<NewResponseStatus> statuses = [];
         string responseText = "";
@@ -148,10 +152,10 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         Assert.NotNull(conversationId);
 
         // Part 2: Continue getting the rest of the response from the saved point
-        options.SetAwaitRunResult(!continueInBackground);
+        options.AwaitRunResult = !continueInBackground;
         options.ConversationId = conversationId;
-        options.SetPreviousResponseId(responseId);
-        options.SetStartAfter(sequenceNumber);
+        options.PreviousResponseId = responseId;
+        options.StartAfter = sequenceNumber;
         statuses.Clear();
 
         await foreach (var item in this._chatClient.GetStreamingResponseAsync([], options))
@@ -175,9 +179,11 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
     public async Task GetStreamingResponseAsync_WithFunctionCalling_AndBackgroundModeDisabled_CallsFunctionAsync()
     {
         // Arrange
-        ChatOptions options = new();
-        options.SetAwaitRunResult(true);
-        options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
+        NewChatOptions options = new()
+        {
+            AwaitRunResult = true,
+            Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
+        };
 
         List<NewResponseStatus> statuses = [];
         string responseText = "";
@@ -205,9 +211,11 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
     public async Task GetStreamingResponseAsync_WithFunctionCalling_HavingReturnedInitialResponse_AllowsToContinueItAsync(bool continueInBackground)
     {
         // Part 1: Start the background run.
-        ChatOptions options = new();
-        options.SetAwaitRunResult(false);
-        options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
+        NewChatOptions options = new()
+        {
+            AwaitRunResult = false,
+            Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
+        };
 
         List<NewResponseStatus> statuses = [];
         string responseText = "";
@@ -238,10 +246,10 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         Assert.NotNull(conversationId);
 
         // Part 2: Continue getting the rest of the response from the saved point
-        options.SetAwaitRunResult(!continueInBackground);
+        options.AwaitRunResult = !continueInBackground;
         options.ConversationId = conversationId;
-        options.SetPreviousResponseId(responseId);
-        options.SetStartAfter(sequenceNumber);
+        options.PreviousResponseId = responseId;
+        options.StartAfter = sequenceNumber;
         statuses.Clear();
 
         await foreach (var item in this._chatClient.GetStreamingResponseAsync([], options))
@@ -266,7 +274,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
     //public async Task GetStreamingResponseAsync_WithFunctionCallingInterrupted_AllowsToContinueItAsync(bool continueInBackground)
     //{
     //    // Part 1: Start the background run.
-    //    ChatOptions options = new();
+    //    NewChatOptions options = new();
     //    options.SetAwaitRunResult(false);
     //    options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
 
@@ -315,8 +323,10 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
     public async Task CancelRunAsync_WhenCalled_CancelsRunAsync()
     {
         // Arrange
-        ChatOptions options = new();
-        options.SetAwaitRunResult(false);
+        NewChatOptions options = new()
+        {
+            AwaitRunResult = false
+        };
 
         INewRunnableChatClient runnableChatClient = this._chatClient.GetService<INewRunnableChatClient>()!;
 
@@ -338,8 +348,10 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
     public async Task DeleteRunAsync_WhenCalled_DeletesRunAsync()
     {
         // Arrange
-        var options = new ChatOptions();
-        options.SetAwaitRunResult(false);
+        NewChatOptions options = new()
+        {
+            AwaitRunResult = false
+        };
 
         INewRunnableChatClient runnableChatClient = this._chatClient.GetService<INewRunnableChatClient>()!;
 

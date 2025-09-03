@@ -24,8 +24,10 @@ public sealed class NewPersistentAgentsChatClientTests
         // Arrange
         using var client = await CreateChatClientAsync();
 
-        ChatOptions options = new();
-        options.SetAwaitRunResult(awaitRun);
+        NewChatOptions options = new()
+        {
+            AwaitRunResult = awaitRun
+        };
 
         // Act
         ChatResponse response = await client.GetResponseAsync("What is the capital of France?", options);
@@ -77,8 +79,10 @@ public sealed class NewPersistentAgentsChatClientTests
         // Part 1: Start the background run.
         using var client = await CreateChatClientAsync();
 
-        ChatOptions options = new();
-        options.SetAwaitRunResult(false);
+        NewChatOptions options = new()
+        {
+            AwaitRunResult = false
+        };
 
         ChatResponse response = await client.GetResponseAsync("What is the capital of France?", options);
 
@@ -94,7 +98,7 @@ public sealed class NewPersistentAgentsChatClientTests
             ++attempts < 5)
         {
             options.ConversationId = response.ConversationId;
-            options.SetPreviousResponseId(response.ResponseId!);
+            options.PreviousResponseId = response.ResponseId!;
 
             response = await client.GetResponseAsync([], options);
 
@@ -115,8 +119,10 @@ public sealed class NewPersistentAgentsChatClientTests
         // Part 1: Start the background run.
         using var client = await CreateChatClientAsync();
 
-        ChatOptions options = new();
-        options.SetAwaitRunResult(false);
+        NewChatOptions options = new()
+        {
+            AwaitRunResult = false
+        };
 
         ChatResponse response = await client.GetResponseAsync("What is the capital of France?", options);
 
@@ -126,8 +132,8 @@ public sealed class NewPersistentAgentsChatClientTests
 
         // Part 2: Wait for completion.
         options.ConversationId = response.ConversationId;
-        options.SetPreviousResponseId(response.ResponseId);
-        options.SetAwaitRunResult(true);
+        options.PreviousResponseId = response.ResponseId;
+        options.AwaitRunResult = true;
 
         response = await client.GetResponseAsync([], options);
 
@@ -144,9 +150,11 @@ public sealed class NewPersistentAgentsChatClientTests
         // Arrange
         using var client = await CreateChatClientAsync();
 
-        ChatOptions options = new();
-        options.SetAwaitRunResult(true);
-        options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
+        NewChatOptions options = new()
+        {
+            AwaitRunResult = true,
+            Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
+        };
 
         // Act
         ChatResponse response = await client.GetResponseAsync("What time is it?", options);
@@ -161,9 +169,11 @@ public sealed class NewPersistentAgentsChatClientTests
         // Part 1: Start the background run.
         using var client = await CreateChatClientAsync();
 
-        ChatOptions options = new();
-        options.SetAwaitRunResult(false);
-        options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
+        NewChatOptions options = new()
+        {
+            AwaitRunResult = false,
+            Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
+        };
 
         ChatResponse response = await client.GetResponseAsync("What time is it?", options);
 
@@ -179,7 +189,7 @@ public sealed class NewPersistentAgentsChatClientTests
             ++attempts < 5)
         {
             options.ConversationId = response.ConversationId;
-            options.SetPreviousResponseId(response.ResponseId!);
+            options.PreviousResponseId = response.ResponseId!;
 
             response = await client.GetResponseAsync([], options);
 
@@ -196,9 +206,11 @@ public sealed class NewPersistentAgentsChatClientTests
         // Part 1: Start the background run.
         using var client = await CreateChatClientAsync();
 
-        ChatOptions options = new();
-        options.SetAwaitRunResult(false);
-        options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
+        NewChatOptions options = new()
+        {
+            AwaitRunResult = false,
+            Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
+        };
 
         ChatResponse response = await client.GetResponseAsync("What time is it?", options);
 
@@ -208,8 +220,8 @@ public sealed class NewPersistentAgentsChatClientTests
 
         // Part 2: Wait for completion.
         options.ConversationId = response.ConversationId;
-        options.SetPreviousResponseId(response.ResponseId);
-        options.SetAwaitRunResult(true);
+        options.PreviousResponseId = response.ResponseId;
+        options.AwaitRunResult = true;
 
         response = await client.GetResponseAsync([], options);
 
@@ -226,9 +238,11 @@ public sealed class NewPersistentAgentsChatClientTests
         // Arrange
         using var client = await CreateChatClientAsync();
 
-        ChatOptions options = new();
-        options.SetAwaitRunResult(false);
-        options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
+        NewChatOptions options = new()
+        {
+            AwaitRunResult = false,
+            Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
+        };
 
         INewRunnableChatClient runnableChatClient = client.GetService<INewRunnableChatClient>()!;
 
@@ -251,8 +265,10 @@ public sealed class NewPersistentAgentsChatClientTests
         // Arrange
         using var client = await CreateChatClientAsync();
 
-        ChatOptions options = new();
-        options.SetAwaitRunResult(false);
+        NewChatOptions options = new()
+        {
+            AwaitRunResult = false
+        };
 
         INewRunnableChatClient runnableChatClient = client.GetService<INewRunnableChatClient>()!;
 

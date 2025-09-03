@@ -94,10 +94,10 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
         // fetch the status/result because the method for doing so does not accept messages and therefore can't accept function
         // call results to send to the model. As such, if a function result content is found in the messages, we always create
         // a new response instead of fetching the previous one.
-        if (options?.GetPreviousResponseId() is { } prevResponseId && !messages.Any(m => m.Contents.OfType<FunctionResultContent>().Any()))
+        if (options is NewChatOptions { PreviousResponseId: { } previousResponseId } && !messages.Any(m => m.Contents.OfType<FunctionResultContent>().Any()))
         {
             // If previous response id is provided, and no functions are involved, get the response by id.
-            openAIResponse = (await _responseClient.GetResponseAsync(prevResponseId, cancellationToken).ConfigureAwait(false)).Value;
+            openAIResponse = (await _responseClient.GetResponseAsync(previousResponseId, cancellationToken).ConfigureAwait(false)).Value;
         }
         else
         {
@@ -258,12 +258,12 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
         // fetch the status/result because the method for doing so does not accept messages and therefore can't accept function
         // call results to send to the model. As such, if a function result content is found in the messages, we always create
         // a new response instead of fetching the previous one.
-        if (options?.GetPreviousResponseId() is { } prevResponseId && !messages.Any(m => m.Contents.OfType<FunctionResultContent>().Any()))
+        if (options is NewChatOptions { PreviousResponseId: { } previousResponseId } && !messages.Any(m => m.Contents.OfType<FunctionResultContent>().Any()))
         {
-            var startingAfter = options.GetStartAfter() is { } startAfter ? int.Parse(startAfter) : (int?)null;
+            var startingAfter = options is NewChatOptions { StartAfter: { } startAfter } ? int.Parse(startAfter) : (int?)null;
 
             // If previous response id is provided, and no functions are involved, get the response by id.
-            streamingUpdates = _responseClient.GetResponseStreamingAsync(prevResponseId, startingAfter, cancellationToken);
+            streamingUpdates = _responseClient.GetResponseStreamingAsync(previousResponseId, startingAfter, cancellationToken);
         }
         else
         {
@@ -273,7 +273,7 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
             // If not awaiting the run result, and not returning status/result for requested response,
             // return sequence containing the first update from the original response so the caller
             // will get run id and status.
-            if (!ShouldAwaitRunResult(options) && options?.GetPreviousResponseId() is null)
+            if (!ShouldAwaitRunResult(options) && (options as NewChatOptions)?.PreviousResponseId is null)
             {
                 streamingUpdates = GetEnumerableWithFirstItemAsync(streamingUpdates, cancellationToken);
             }
@@ -878,7 +878,7 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
     private bool ShouldAwaitRunResult(ChatOptions? options)
     {
         // If specified in options, use that.
-        if (options?.GetAwaitRunResult() is { } awaitRun)
+        if (options is NewChatOptions { AwaitRunResult: { } awaitRun })
         {
             return awaitRun;
         }

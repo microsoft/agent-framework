@@ -35,8 +35,10 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
     public async Task GetResponseAsync_WithBackgroundModeProvidedViaOptions_ReturnsExpectedResponseAsync(bool awaitRun)
     {
         // Arrange
-        ChatOptions options = new();
-        options.SetAwaitRunResult(awaitRun);
+        NewChatOptions options = new()
+        {
+            AwaitRunResult = awaitRun
+        };
 
         // Act
         ChatResponse response = await this._chatClient.GetResponseAsync("What is the capital of France?", options);
@@ -91,8 +93,10 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
     public async Task GetResponseAsync_HavingReturnedInitialResponse_AllowsCallerToPollAsync()
     {
         // Part 1: Start the background run.
-        ChatOptions options = new();
-        options.SetAwaitRunResult(false);
+        NewChatOptions options = new()
+        {
+            AwaitRunResult = false
+        };
 
         ChatResponse response = await this._chatClient.GetResponseAsync("What is the capital of France?", options);
 
@@ -108,7 +112,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
             ++attempts < 5)
         {
             options.ConversationId = response.ConversationId;
-            options.SetPreviousResponseId(response.ResponseId!);
+            options.PreviousResponseId = response.ResponseId!;
 
             response = await this._chatClient.GetResponseAsync([], options);
 
@@ -127,8 +131,10 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
     public async Task GetResponseAsync_HavingReturnedInitialResponse_CanDoPollingItselfAsync()
     {
         // Part 1: Start the background run.
-        ChatOptions options = new();
-        options.SetAwaitRunResult(false);
+        NewChatOptions options = new()
+        {
+            AwaitRunResult = false
+        };
 
         ChatResponse response = await this._chatClient.GetResponseAsync("What is the capital of France?", options);
 
@@ -139,8 +145,8 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
 
         // Part 2: Wait for completion.
         options.ConversationId = response.ConversationId;
-        options.SetPreviousResponseId(response.ResponseId);
-        options.SetAwaitRunResult(true);
+        options.PreviousResponseId = response.ResponseId;
+        options.AwaitRunResult = true;
 
         response = await this._chatClient.GetResponseAsync([], options);
 
@@ -155,9 +161,11 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
     public async Task GetResponseAsync_WithFunctionCalling_AndBackgroundModeDisabled_CallsFunctionAsync()
     {
         // Arrange
-        ChatOptions options = new();
-        options.SetAwaitRunResult(true);
-        options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
+        NewChatOptions options = new()
+        {
+            AwaitRunResult = true,
+            Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
+        };
 
         // Act
         ChatResponse response = await this._chatClient.GetResponseAsync("What time is it?", options);
@@ -170,9 +178,11 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
     public async Task GetResponseAsync_WithFunctionCalling_HavingReturnedInitialResponse_AllowsCallerPollAsync()
     {
         // Part 1: Start the background run.
-        ChatOptions options = new();
-        options.SetAwaitRunResult(false);
-        options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
+        NewChatOptions options = new()
+        {
+            AwaitRunResult = false,
+            Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
+        };
 
         ChatResponse response = await this._chatClient.GetResponseAsync("What time is it?", options);
 
@@ -188,7 +198,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
             ++attempts < 5)
         {
             options.ConversationId = response.ConversationId;
-            options.SetPreviousResponseId(response.ResponseId!);
+            options.PreviousResponseId = response.ResponseId!;
 
             response = await this._chatClient.GetResponseAsync([], options);
 
@@ -203,9 +213,11 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
     public async Task GetResponseAsync_WithFunctionCalling_HavingReturnedInitialResponse_CanDoPollingItselfAsync()
     {
         // Part 1: Start the background run.
-        ChatOptions options = new();
-        options.SetAwaitRunResult(false);
-        options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
+        NewChatOptions options = new()
+        {
+            AwaitRunResult = false,
+            Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
+        };
 
         ChatResponse response = await this._chatClient.GetResponseAsync("What time is it?", options);
 
@@ -215,8 +227,8 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
 
         // Part 2: Wait for completion.
         options.ConversationId = response.ConversationId;
-        options.SetPreviousResponseId(response.ResponseId);
-        options.SetAwaitRunResult(true);
+        options.PreviousResponseId = response.ResponseId;
+        options.AwaitRunResult = true;
 
         response = await this._chatClient.GetResponseAsync([], options);
 
@@ -231,8 +243,10 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
     public async Task CancelRunAsync_WhenCalled_CancelsRunAsync()
     {
         // Arrange
-        ChatOptions options = new();
-        options.SetAwaitRunResult(false);
+        NewChatOptions options = new()
+        {
+            AwaitRunResult = false
+        };
 
         INewRunnableChatClient runnableChatClient = this._chatClient.GetService<INewRunnableChatClient>()!;
 
@@ -252,8 +266,10 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
     public async Task DeleteRunAsync_WhenCalled_DeletesRunAsync()
     {
         // Arrange
-        ChatOptions options = new();
-        options.SetAwaitRunResult(false);
+        NewChatOptions options = new()
+        {
+            AwaitRunResult = false
+        };
 
         INewRunnableChatClient runnableChatClient = this._chatClient.GetService<INewRunnableChatClient>()!;
 

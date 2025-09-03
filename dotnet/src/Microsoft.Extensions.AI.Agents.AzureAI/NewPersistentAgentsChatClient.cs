@@ -113,9 +113,9 @@ namespace Azure.AI.Agents.Persistent
             ThreadRun? threadRun = null;
             if (threadId is not null)
             {
-                if (options?.GetPreviousResponseId() is not null)
+                if (options is NewChatOptions { PreviousResponseId: string runId })
                 {
-                    threadRun = await _client!.Runs.GetRunAsync(threadId, options?.GetPreviousResponseId(), cancellationToken: cancellationToken).ConfigureAwait(false);
+                    threadRun = await _client!.Runs.GetRunAsync(threadId, runId, cancellationToken: cancellationToken).ConfigureAwait(false);
                 }
                 else
                 {
@@ -144,7 +144,7 @@ namespace Azure.AI.Agents.Persistent
             }
             else
             {
-                if (options?.GetPreviousResponseId() is not null && threadRun is not null)
+                if (options is NewChatOptions { PreviousResponseId: not null } && threadRun is not null)
                 {
                     await foreach (var update in GetRunUpdatesAsync(threadRun!, streamingCall, options, cancellationToken).ConfigureAwait(false))
                     {
@@ -258,7 +258,7 @@ namespace Azure.AI.Agents.Persistent
                         if (isFirstUpdate)
                         {
                             isFirstUpdate = false;
-                            if (!ShouldAwaitRunResult(options) && options?.GetPreviousResponseId() is null)
+                            if (!ShouldAwaitRunResult(options) && (options as NewChatOptions)?.PreviousResponseId is null)
                             {
                                 yield break;
                             }
@@ -709,7 +709,7 @@ namespace Azure.AI.Agents.Persistent
         private bool ShouldAwaitRunResult(ChatOptions? options)
         {
             // If specified in options, use that.
-            if (options?.GetAwaitRunResult() is { } awaitRun)
+            if (options is NewChatOptions { AwaitRunResult: { } awaitRun })
             {
                 return awaitRun;
             }
@@ -734,7 +734,7 @@ namespace Azure.AI.Agents.Persistent
                 {
                     //TBD: Use polling settings
                     await Task.Delay(500, cancellationToken).ConfigureAwait(false);
-                    run = await _client!.Runs.GetRunAsync(run.ThreadId, options?.GetPreviousResponseId(), cancellationToken: cancellationToken).ConfigureAwait(false);
+                    run = await _client!.Runs.GetRunAsync(run.ThreadId, (options as NewChatOptions)?.PreviousResponseId, cancellationToken: cancellationToken).ConfigureAwait(false);
 
                     // Return any new updates.
                     await foreach (var update in GetRunUpdates_InternalAsync(run, options, cancellationToken).ConfigureAwait(false))
@@ -768,7 +768,7 @@ namespace Azure.AI.Agents.Persistent
                 {
                     List<RunStep> steps = [];
 
-                    string? stepIdToStartAfter = options?.GetStartAfter();
+                    string? stepIdToStartAfter = (options as NewChatOptions)?.StartAfter;
                     bool skipSteps = !string.IsNullOrWhiteSpace(stepIdToStartAfter);
 
                     await foreach (var step in _client!.Runs.GetRunStepsAsync(run, order: ListSortOrder.Ascending, cancellationToken: cancellationToken).ConfigureAwait(false))

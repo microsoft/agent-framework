@@ -25,8 +25,8 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         // Arrange
         using var client = await CreateChatClientAsync();
 
-        ChatOptions options = new();
-        options.SetAwaitRunResult(awaitRun);
+        NewChatOptions options = new();
+        options.AwaitRunResult = awaitRun;
 
         List<NewResponseStatus> statuses = [];
         string responseText = "";
@@ -102,8 +102,10 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         // Part 1: Start the background run and get the first part of the response.
         using var client = await CreateChatClientAsync();
 
-        ChatOptions options = new();
-        options.SetAwaitRunResult(false);
+        NewChatOptions options = new()
+        {
+            AwaitRunResult = false
+        };
 
         List<NewResponseStatus> statuses = [];
         string responseText = "";
@@ -131,9 +133,9 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         Assert.NotNull(conversationId);
 
         // Part 2: Continue getting the rest of the response from the saved point
-        options.SetAwaitRunResult(!continueInBackground);
+        options.AwaitRunResult = !continueInBackground;
         options.ConversationId = conversationId;
-        options.SetPreviousResponseId(responseId);
+        options.PreviousResponseId = responseId;
         statuses.Clear();
 
         await foreach (var item in client.GetStreamingResponseAsync([], options))
@@ -157,9 +159,11 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         // Arrange
         using var client = await CreateChatClientAsync();
 
-        ChatOptions options = new();
-        options.SetAwaitRunResult(true);
-        options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
+        NewChatOptions options = new()
+        {
+            AwaitRunResult = true,
+            Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
+        };
 
         List<NewResponseStatus> statuses = [];
         string responseText = "";
@@ -190,8 +194,8 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         // Part 1: Start the background run.
         using var client = await CreateChatClientAsync();
 
-        ChatOptions options = new();
-        options.SetAwaitRunResult(false);
+        NewChatOptions options = new();
+        options.AwaitRunResult = false;
         options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
 
         List<NewResponseStatus> statuses = [];
@@ -220,9 +224,9 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         Assert.NotNull(conversationId);
 
         // Part 2: Continue getting the rest of the response from the saved point
-        options.SetAwaitRunResult(!continueInBackground);
+        options.AwaitRunResult = !continueInBackground;
         options.ConversationId = conversationId;
-        options.SetPreviousResponseId(responseId);
+        options.PreviousResponseId = responseId;
         statuses.Clear();
 
         await foreach (var item in client.GetStreamingResponseAsync([], options))
@@ -248,9 +252,11 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
     //public async Task GetStreamingResponseAsync_WithFunctionCallingInterrupted_AllowsToContinueItAsync(bool continueInBackground)
     //{
     //    // Part 1: Start the background run.
-    //    ChatOptions options = new();
-    //    options.SetAwaitRunResult(false);
-    //    options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
+    //    NewChatOptions options = new()
+    //    {
+    //        AwaitRunResult = false,
+    //        Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
+    //    };
 
     //    string? sequenceNumber = null;
     //    string? responseId = null;
@@ -299,9 +305,11 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         // Arrange
         using var client = await CreateChatClientAsync();
 
-        ChatOptions options = new();
-        options.SetAwaitRunResult(false);
-        options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
+        NewChatOptions options = new()
+        {
+            AwaitRunResult = false,
+            Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
+        };
 
         INewRunnableChatClient runnableChatClient = client.GetService<INewRunnableChatClient>()!;
 
