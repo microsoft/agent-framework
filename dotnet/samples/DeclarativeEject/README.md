@@ -184,7 +184,7 @@ internal sealed class AgentResponseExecutor : AgentActionExecutor(id: "agent_inv
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        await .InvokeAgentAsync(
+        await this.InvokeAgentAsync(
             context,
             agentId: StringExpression.Expression("=Env.FOUNDRY_AGENT_ID"), 
             input: ValueExpression.Expression("=Topic.InputTask"), 
