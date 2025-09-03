@@ -108,15 +108,15 @@ internal sealed class Program
             {
                 Debug.WriteLine($"CONVERSATION: {invokeEvent.Data}");
             }
-            else if (evt is DeclarativeWorkflowStreamEvent streamEvent)
+            else if (evt is AgentRunUpdateEvent streamEvent)
             {
-                if (!string.Equals(messageId, streamEvent.Data.MessageId, StringComparison.Ordinal))
+                if (!string.Equals(messageId, streamEvent.Update.MessageId, StringComparison.Ordinal))
                 {
-                    messageId = streamEvent.Data.MessageId;
+                    messageId = streamEvent.Update.MessageId;
 
                     if (messageId is not null)
                     {
-                        string? agentId = streamEvent.Data.AuthorName;
+                        string? agentId = streamEvent.Update.AuthorName;
                         if (agentId is not null)
                         {
                             if (!s_nameCache.TryGetValue(agentId, out string? realName))
@@ -135,7 +135,7 @@ internal sealed class Program
                     }
                 }
 
-                ChatResponseUpdate? chatUpdate = streamEvent.Data.RawRepresentation as ChatResponseUpdate;
+                ChatResponseUpdate? chatUpdate = streamEvent.Update.RawRepresentation as ChatResponseUpdate;
                 switch (chatUpdate?.RawRepresentation)
                 {
                     case MessageContentUpdate messageUpdate:
@@ -157,24 +157,24 @@ internal sealed class Program
                     Console.ResetColor();
                 }
             }
-            else if (evt is DeclarativeWorkflowMessageEvent messageEvent)
+            else if (evt is AgentRunResponseEvent messageEvent)
             {
                 try
                 {
                     Console.WriteLine();
-                    if (messageEvent.Data.MessageId is null)
+                    if (messageEvent.Response.AgentId is null)
                     {
                         Console.ForegroundColor = ConsoleColor.Cyan;
                         Console.WriteLine("ACTIVITY:");
                         Console.ForegroundColor = ConsoleColor.Yellow;
-                        Console.WriteLine(messageEvent.Data?.Text.Trim());
+                        Console.WriteLine(messageEvent.Response?.Text.Trim());
                     }
                     else
                     {
-                        if (messageEvent.Usage is not null)
+                        if (messageEvent.Response.Usage is not null)
                         {
                             Console.ForegroundColor = ConsoleColor.DarkGray;
-                            Console.WriteLine($"[Tokens Total: {messageEvent.Usage.TotalTokenCount}, Input: {messageEvent.Usage.InputTokenCount}, Output: {messageEvent.Usage.OutputTokenCount}]");
+                            Console.WriteLine($"[Tokens Total: {messageEvent.Response.Usage.TotalTokenCount}, Input: {messageEvent.Response.Usage.InputTokenCount}, Output: {messageEvent.Response.Usage.OutputTokenCount}]");
                         }
                     }
                 }

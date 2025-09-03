@@ -80,7 +80,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, W
             await AssignConversationId(((ChatResponseUpdate?)update.RawRepresentation)?.ConversationId).ConfigureAwait(false);
             if (this.Model.AutoSend)
             {
-                await context.AddEventAsync(new DeclarativeWorkflowStreamEvent(update)).ConfigureAwait(false);
+                await context.AddEventAsync(new AgentRunUpdateEvent(this.Id, update)).ConfigureAwait(false);
             }
         }
 
@@ -90,7 +90,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, W
         await this.State.SetLastMessageAsync(context, response).ConfigureAwait(false);
         if (this.Model.AutoSend)
         {
-            await context.AddEventAsync(new DeclarativeWorkflowMessageEvent(response, agentResponse.Usage)).ConfigureAwait(false);
+            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
         }
 
         // Assign conversation ID if it wasn't already assigned.
@@ -119,7 +119,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, W
             if (assignValue != null && conversationId == null)
             {
                 conversationId = assignValue;
-                await context.AddEventAsync(new DeclarativeWorkflowInvokeEvent(conversationId)).ConfigureAwait(false);
+                await context.AddEventAsync(new DeclarativeWorkflowInvokeEvent(this.Id, conversationId)).ConfigureAwait(false);
             }
         }
     }

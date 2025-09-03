@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
@@ -25,7 +26,8 @@ internal sealed class SendActivityExecutor(SendActivity model, DeclarativeWorkfl
             string? activityText = this.State.Format(messageActivity.Text)?.Trim();
             templateBuilder.AppendLine(activityText);
 
-            await context.AddEventAsync(new DeclarativeWorkflowMessageEvent(new ChatMessage(ChatRole.Assistant, templateBuilder.ToString().Trim()))).ConfigureAwait(false);
+            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, templateBuilder.ToString().Trim())]);
+            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
         }
 
         return default;

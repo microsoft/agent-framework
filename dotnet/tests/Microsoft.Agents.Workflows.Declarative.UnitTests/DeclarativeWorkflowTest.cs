@@ -226,7 +226,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
 
     private void AssertMessage(string message)
     {
-        Assert.Contains(this.WorkflowEvents.OfType<DeclarativeWorkflowMessageEvent>(), e => string.Equals(e.Data.Text.Trim(), message, StringComparison.Ordinal));
+        Assert.Contains(this.WorkflowEvents.OfType<AgentRunResponseEvent>(), e => string.Equals(e.Response.Messages[0].Text.Trim(), message, StringComparison.Ordinal));
     }
 
     private Task RunWorkflow(string workflowPath) => this.RunWorkflow<string>(workflowPath, string.Empty);
@@ -249,9 +249,9 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
                 DeclarativeExecutorResult? message = invokeEvent.Data as DeclarativeExecutorResult;
                 this.Output.WriteLine($"EXEC: {invokeEvent.ExecutorId} << {message?.ExecutorId ?? "?"} [{message?.Result ?? "-"}]");
             }
-            else if (workflowEvent is DeclarativeWorkflowMessageEvent messageEvent)
+            else if (workflowEvent is AgentRunResponseEvent messageEvent)
             {
-                this.Output.WriteLine($"MESSAGE: {messageEvent.Data.Text.Trim()}");
+                this.Output.WriteLine($"MESSAGE: {messageEvent.Response.Messages[0].Text.Trim()}");
             }
         }
         this.WorkflowEventCounts = this.WorkflowEvents.GroupBy(e => e.GetType()).ToImmutableDictionary(e => e.Key, e => e.Count());
