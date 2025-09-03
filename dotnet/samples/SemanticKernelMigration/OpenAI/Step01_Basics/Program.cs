@@ -55,6 +55,7 @@ async Task AFAgent()
     var agentOptions = new ChatClientAgentRunOptions(new() { MaxOutputTokens = 1000 });
 
     var result = await agent.RunAsync(userInput, thread, agentOptions);
+    Console.WriteLine(result);
 
     Console.WriteLine("---");
     await foreach (var update in agent.RunStreamingAsync(userInput, thread, agentOptions))

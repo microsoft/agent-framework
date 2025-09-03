@@ -18,7 +18,7 @@ from pydantic import Field
 
 from ._events import (
     AgentRunEvent,
-    AgentRunStreamingEvent,
+    AgentRunUpdateEvent,
     ExecutorCompletedEvent,
     ExecutorInvokeEvent,
     RequestInfoEvent,
@@ -39,7 +39,7 @@ class Executor(AFBaseModel):
         min_length=1,
         description="Unique identifier for the executor",
     )
-    type: str = Field(default="", description="The type of executor, corresponding to the class name")
+    type_: str = Field(default="", alias="type", description="The type of executor, corresponding to the class name")
 
     def __init__(self, id: str | None = None, **kwargs: Any) -> None:
         """Initialize the executor with a unique identifier.
@@ -52,8 +52,8 @@ class Executor(AFBaseModel):
         executor_id = f"{self.__class__.__name__}/{uuid.uuid4()}" if id is None else id
 
         kwargs.update({"id": executor_id})
-        if "type" not in kwargs:
-            kwargs["type"] = self.__class__.__name__
+        if "type" not in kwargs and "type_" not in kwargs:
+            kwargs["type_"] = self.__class__.__name__
 
         super().__init__(**kwargs)
 
@@ -253,6 +253,17 @@ class Executor(AFBaseModel):
             True if the executor can handle the message type, False otherwise.
         """
         return any(is_instance_of(message, message_type) for message_type in self._handlers)
+
+    def can_handle_type(self, message_type: type[Any]) -> bool:
+        """Check if the executor can handle a given message type.
+
+        Args:
+            message_type: The message type to check.
+
+        Returns:
+            True if the executor can handle the message type, False otherwise.
+        """
+        return message_type in self._handlers
 
 
 # endregion: Executor
@@ -783,7 +794,7 @@ class AgentExecutor(Executor):
                     thread=self._agent_thread,
                 ):
                     updates.append(update)
-                    await ctx.add_event(AgentRunStreamingEvent(self.id, update))
+                    await ctx.add_event(AgentRunUpdateEvent(self.id, update))
                 response = AgentRunResponse.from_agent_run_response_updates(updates)
             else:
                 response = await self._agent.run(

@@ -119,7 +119,7 @@ class ExecutorCompletedEvent(ExecutorEvent):
         return f"{self.__class__.__name__}(executor_id={self.executor_id})"
 
 
-class AgentRunStreamingEvent(ExecutorEvent):
+class AgentRunUpdateEvent(ExecutorEvent):
     """Event triggered when an agent is streaming messages."""
 
     def __init__(self, executor_id: str, data: AgentRunResponseUpdate | None = None):
