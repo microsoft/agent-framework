@@ -4,7 +4,7 @@ This guide explains different ways to run the Agent Framework examples and how t
 
 ## Different Approaches to Running Examples
 
-There are several ways to run the agent examples, each requiring different environment variable configurations:
+There are several ways to run the examples, each requiring different environment variable configurations:
 
 ### 1. Running within IDE (VS Code with F5)
 
