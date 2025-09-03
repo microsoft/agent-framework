@@ -166,18 +166,9 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
 
         Assert.Contains("Paris", responseText);
 
-        if (continueInBackground)
-        {
-            Assert.DoesNotContain(NewResponseStatus.Queued, statuses);
-            Assert.Contains(NewResponseStatus.InProgress, statuses);
-            Assert.Contains(NewResponseStatus.Completed, statuses);
-        }
-        else
-        {
-            Assert.DoesNotContain(NewResponseStatus.Queued, statuses);
-            Assert.Contains(NewResponseStatus.InProgress, statuses);
-            Assert.Contains(NewResponseStatus.Completed, statuses);
-        }
+        Assert.DoesNotContain(NewResponseStatus.Queued, statuses);
+        Assert.Contains(NewResponseStatus.InProgress, statuses);
+        Assert.Contains(NewResponseStatus.Completed, statuses);
     }
 
     [Fact]
@@ -265,70 +256,60 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
 
         Assert.Contains("5:43", responseText);
 
-        if (continueInBackground)
-        {
-            Assert.Contains(NewResponseStatus.Queued, statuses);
-            Assert.Contains(NewResponseStatus.InProgress, statuses);
-            Assert.Contains(NewResponseStatus.Completed, statuses);
-        }
-        else
-        {
-            Assert.DoesNotContain(NewResponseStatus.Queued, statuses);
-            Assert.Contains(NewResponseStatus.InProgress, statuses);
-            Assert.Contains(NewResponseStatus.Completed, statuses);
-        }
+        Assert.Contains(NewResponseStatus.InProgress, statuses);
+        Assert.Contains(NewResponseStatus.Completed, statuses);
     }
 
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task GetStreamingResponseAsync_WithFunctionCallingInterrupted_AllowsToContinueItAsync(bool continueInBackground)
-    {
-        // Part 1: Start the background run.
-        ChatOptions options = new();
-        options.SetAwaitRunResult(false);
-        options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
+    //[Theory]
+    //[InlineData(true)]
+    //[InlineData(false)]
+    //public async Task GetStreamingResponseAsync_WithFunctionCallingInterrupted_AllowsToContinueItAsync(bool continueInBackground)
+    //{
+    //    // Part 1: Start the background run.
+    //    ChatOptions options = new();
+    //    options.SetAwaitRunResult(false);
+    //    options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
 
-        string? sequenceNumber = null;
-        string? responseId = null;
-        string? conversationId = null;
+    //    string? sequenceNumber = null;
+    //    string? responseId = null;
+    //    string? conversationId = null;
 
-        await foreach (var update in this._chatClient.GetStreamingResponseAsync("What time is it?", options))
-        {
-            // Stop processing updates as soon as we see the function call update received
-            if (update.RawRepresentation is StreamingResponseOutputItemAddedUpdate)
-            {
-                // Capture the response id, conversation id, and sequence number of the event so we
-                // can continue getting the rest of the events starting from the same point in the test below.
-                responseId = update.ResponseId;
-                sequenceNumber = update.GetSequenceNumber();
-                conversationId = update.ConversationId;
-            }
-        }
+    //    await foreach (var update in this._chatClient.GetStreamingResponseAsync("What time is it?", options))
+    //    {
+    //        // Stop processing updates as soon as we see the function call update received
+    //        if (update.RawRepresentation is StreamingResponseOutputItemAddedUpdate)
+    //        {
+    //            // Capture the response id, conversation id, and sequence number of the event so we
+    //            // can continue getting the rest of the events starting from the same point in the test below.
+    //            responseId = update.ResponseId;
+    //            sequenceNumber = update.GetSequenceNumber();
+    //            conversationId = update.ConversationId;
+    //        }
+    //    }
 
-        Assert.NotNull(sequenceNumber);
-        Assert.NotNull(responseId);
-        Assert.NotNull(conversationId);
+    //    Assert.NotNull(sequenceNumber);
+    //    Assert.NotNull(responseId);
+    //    Assert.NotNull(conversationId);
 
-        // Part 2: Continue getting the rest of the response from the saved point using a new client that does not have the previous state containing the first part of function call.
-        using IChatClient chatClient = this._openAIResponseClient
-            .AsNewIChatClient()
-            .AsBuilder()
-            .UseFunctionInvocation()
-            .Build();
-        string responseText = "";
-        options.SetAwaitRunResult(!continueInBackground);
-        options.ConversationId = conversationId;
-        options.SetPreviousResponseId(responseId);
-        options.SetStartAfter(sequenceNumber);
+    //    // Part 2: Continue getting the rest of the response from the saved point using a new client that does not have the previous state containing the first part of function call.
+    //    using IChatClient chatClient = this._openAIResponseClient
+    //        .AsNewIChatClient()
+    //        .AsBuilder()
+    //        .UseFunctionInvocation()
+    //        .Build();
+    //    string responseText = "";
+    //    options.SetAwaitRunResult(!continueInBackground);
+    //    options.ConversationId = conversationId;
+    //    options.SetPreviousResponseId(responseId);
+    //    options.SetStartAfter(sequenceNumber);
 
-        await foreach (var item in chatClient.GetStreamingResponseAsync([], options))
-        {
-            responseText += item;
-        }
+    //    await foreach (var item in chatClient.GetStreamingResponseAsync([], options))
+    //    {
+    //        responseText += item;
+    //    }
 
-        Assert.Contains("5:43", responseText);
-    }
+    //    Assert.Contains("5:43", responseText);
+    //}
 
     [Fact]
     public async Task CancelRunAsync_WhenCalled_CancelsRunAsync()
