@@ -6,29 +6,57 @@ namespace Microsoft.Extensions.AI.Agents.OpenAI.ChatCompletion;
 
 internal sealed class StreamingUpdatePipelineResponse : PipelineResponse
 {
-    public override int Status => throw new NotImplementedException();
+    /// <summary>
+    /// Gets the HTTP status code. For streaming responses, this is typically 200.
+    /// </summary>
+    public override int Status => 200;
 
-    public override string ReasonPhrase => throw new NotImplementedException();
+    /// <summary>
+    /// Gets the reason phrase. For streaming responses, this is typically "OK".
+    /// </summary>
+    public override string ReasonPhrase => "OK";
 
-    public override Stream? ContentStream { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
+    /// <summary>
+    /// Streaming responses do not support direct content stream access.
+    /// </summary>
+    public override Stream? ContentStream
+    {
+        get => null;
+        set { /* no-op */ }
+    }
 
-    public override BinaryData Content => throw new NotImplementedException();
+    /// <summary>
+    /// Streaming responses do not support direct content access.
+    /// </summary>
+    public override BinaryData Content => BinaryData.FromString(string.Empty);
 
-    protected override PipelineResponseHeaders HeadersCore => throw new NotImplementedException();
+    /// <summary>
+    /// Streaming responses do not have headers.
+    /// </summary>
+    protected override PipelineResponseHeaders HeadersCore => PipelineResponseHeaders.Empty;
 
+    /// <summary>
+    /// Buffering content is not supported for streaming responses.
+    /// </summary>
     public override BinaryData BufferContent(CancellationToken cancellationToken = default)
     {
-        throw new NotImplementedException();
+        throw new NotSupportedException("Buffering content is not supported for streaming responses.");
     }
 
+    /// <summary>
+    /// Buffering content asynchronously is not supported for streaming responses.
+    /// </summary>
     public override ValueTask<BinaryData> BufferContentAsync(CancellationToken cancellationToken = default)
     {
-        throw new NotImplementedException();
+        throw new NotSupportedException("Buffering content asynchronously is not supported for streaming responses.");
     }
 
+    /// <summary>
+    /// Disposes resources. No resources to dispose for streaming response.
+    /// </summary>
     public override void Dispose()
     {
-        throw new NotImplementedException();
+        // No resources to dispose.
     }
 
     internal StreamingUpdatePipelineResponse(IAsyncEnumerable<AgentRunResponseUpdate> updates)
