@@ -10,5 +10,5 @@ Agent Framework provides additional support to allow OpenAI developers to use th
 
 |Sample|Description|
 |---|---|
-|[Creating an AIAgent](./Agent_OpenAI_Step01_Running/)|This sample demonstrates how to create and run a basic agent with instructions.|
+|[Creating an AIAgent](./Agent_OpenAI_Step01_Running/)|This sample demonstrates how to create and run a basic agent instructions with native OpenAI SDK types.|
 
