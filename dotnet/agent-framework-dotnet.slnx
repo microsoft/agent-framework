@@ -41,6 +41,9 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step08_Telemetry/Agent_Step08_Telemetry.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step09_DependencyInjection/Agent_Step09_DependencyInjection.csproj" />
   </Folder>
+  <Folder Name="/Samples/GettingStarted/AgentWithOpenAI/">
+    <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step01_Running/Agent_OpenAI_Step01_Running.csproj" />
+  </Folder>
   <Folder Name="/Samples/GettingStarted/Telemetry/">
     <Project Path="samples/GettingStarted/AgentOpenTelemetry/AgentOpenTelemetry.csproj" />
   </Folder>
