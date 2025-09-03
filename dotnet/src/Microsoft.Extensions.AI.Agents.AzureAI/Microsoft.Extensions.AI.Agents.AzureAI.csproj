@@ -24,6 +24,7 @@
     <!-- NuGet Package Settings -->
     <Title>Microsoft.Extensions.AI.Agents.AzureAI</Title>
     <Description>Implementation of generative AI abstractions for Azure AI Persistent Agents.</Description>
+    <InjectSharedThrow>true</InjectSharedThrow>
   </PropertyGroup>
 
 </Project>

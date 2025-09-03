@@ -40,8 +40,11 @@ namespace Azure.AI.Agents.Persistent
         /// <summary>Lazily-retrieved agent instance. Used for its properties.</summary>
         private PersistentAgent? _agent;
 
+        /// <summary>Specifies whether the client should await the run result or not.</summary>
+        private readonly bool? _awaitRun;
+
         /// <summary>Initializes a new instance of the <see cref="PersistentAgentsChatClient"/> class for the specified <see cref="PersistentAgentsClient"/>.</summary>
-        public NewPersistentAgentsChatClient(PersistentAgentsClient client, string agentId, string? defaultThreadId = null)
+        public NewPersistentAgentsChatClient(PersistentAgentsClient client, string agentId, string? defaultThreadId = null, bool? awaitRun = null)
         {
             Argument.AssertNotNull(client, nameof(client));
             Argument.AssertNotNullOrWhiteSpace(agentId, nameof(agentId));
@@ -49,6 +52,7 @@ namespace Azure.AI.Agents.Persistent
             _client = client;
             _agentId = agentId;
             _defaultThreadId = defaultThreadId;
+            _awaitRun = awaitRun;
 
             _metadata = new(ProviderName);
         }
@@ -69,7 +73,7 @@ namespace Azure.AI.Agents.Persistent
             // Changing the original implementation to provide a RawRepresentation as a list of RawRepresentations of the updates.
             // This wouldn't be needed if the API Change Proposal below is accepted:
             // https://github.com/dotnet/extensions/issues/6746
-            var updates = await GetStreamingResponseAsync(messages, options, cancellationToken).ToListAsync(cancellationToken).ConfigureAwait(false);
+            var updates = await GetStreamingResponseCoreAsync(messages, streamingCall: false, options, cancellationToken).ToListAsync(cancellationToken).ConfigureAwait(false);
             var response = updates.ToChatResponse();
 
             // Expose all the raw representations of the updates.
@@ -80,6 +84,16 @@ namespace Azure.AI.Agents.Persistent
         /// <inheritdoc />
         public virtual async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
             IEnumerable<ChatMessage> messages, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await foreach (var update in GetStreamingResponseCoreAsync(messages, streamingCall: true, options, cancellationToken).ConfigureAwait(false))
+            {
+                yield return update;
+            }
+        }
+
+        /// <inheritdoc />
+        private async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseCoreAsync(
+            IEnumerable<ChatMessage> messages, bool streamingCall, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             Argument.AssertNotNull(messages, nameof(messages));
 
@@ -98,12 +112,19 @@ namespace Azure.AI.Agents.Persistent
             ThreadRun? threadRun = null;
             if (threadId is not null)
             {
-                await foreach (ThreadRun? run in _client!.Runs.GetRunsAsync(threadId, limit: 1, ListSortOrder.Descending, cancellationToken: cancellationToken).ConfigureAwait(false))
+                if (options?.GetPreviousResponseId() is not null)
                 {
-                    if (run.Status != RunStatus.Completed && run.Status != RunStatus.Cancelled && run.Status != RunStatus.Failed && run.Status != RunStatus.Expired)
+                    threadRun = await _client!.Runs.GetRunAsync(threadId, options?.GetPreviousResponseId(), cancellationToken: cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    await foreach (ThreadRun? run in _client!.Runs.GetRunsAsync(threadId, limit: 1, ListSortOrder.Descending, cancellationToken: cancellationToken).ConfigureAwait(false))
                     {
-                        threadRun = run;
-                        break;
+                        if (run.Status != RunStatus.Completed && run.Status != RunStatus.Cancelled && run.Status != RunStatus.Failed && run.Status != RunStatus.Expired)
+                        {
+                            threadRun = run;
+                            break;
+                        }
                     }
                 }
             }
@@ -122,6 +143,15 @@ namespace Azure.AI.Agents.Persistent
             }
             else
             {
+                if (options?.GetPreviousResponseId() is not null && threadRun is not null)
+                {
+                    await foreach (var update in GetRunUpdatesAsync(threadRun!, streamingCall, options, cancellationToken).ConfigureAwait(false))
+                    {
+                        yield return update;
+                    }
+                    yield break;
+                }
+
                 if (threadId is null)
                 {
                     // No thread ID was provided, so create a new thread.
@@ -167,6 +197,9 @@ namespace Azure.AI.Agents.Persistent
 
             // Process each update.
             string? responseId = null;
+            RunStatus runStatus = RunStatus.InProgress;
+            bool isFirstUpdate = true;
+            string? stepId = null;
             await foreach (StreamingUpdate? update in updates.ConfigureAwait(false))
             {
                 switch (update)
@@ -175,9 +208,14 @@ namespace Azure.AI.Agents.Persistent
                         threadId ??= tu.Value.Id;
                         goto default;
 
+                    case RunStepUpdate rsu:
+                        stepId = rsu.Value.Id;
+                        goto default;
+
                     case RunUpdate ru:
                         threadId ??= ru.Value.ThreadId;
                         responseId ??= ru.Value.Id;
+                        runStatus = ru.Value.Status;
 
                         ChatResponseUpdate ruUpdate = new()
                         {
@@ -190,6 +228,8 @@ namespace Azure.AI.Agents.Persistent
                             ResponseId = responseId,
                             Role = ChatRole.Assistant,
                         };
+
+                        ruUpdate.SetResponseStatus(ToResponseStatus(runStatus));
 
                         if (ru.Value.Usage is { } usage)
                         {
@@ -211,6 +251,17 @@ namespace Azure.AI.Agents.Persistent
                         }
 
                         yield return ruUpdate;
+
+                        // Stop here if this is the first update and we are not awaiting the run result.
+                        if (isFirstUpdate)
+                        {
+                            isFirstUpdate = false;
+                            if (!ShouldAwaitRunResult(options) && options?.GetPreviousResponseId() is null)
+                            {
+                                yield break;
+                            }
+                        }
+
                         break;
 
                     case MessageContentUpdate mcu:
@@ -259,11 +310,14 @@ namespace Azure.AI.Agents.Persistent
                             }
                         }
 
+                        textUpdate.SetResponseStatus(ToResponseStatus(runStatus));
+
                         yield return textUpdate;
                         break;
 
                     default:
-                        yield return new ChatResponseUpdate
+                    {
+                        var updateToReturn = new ChatResponseUpdate
                         {
                             AuthorName = _agentId,
                             ConversationId = threadId,
@@ -272,7 +326,13 @@ namespace Azure.AI.Agents.Persistent
                             ResponseId = responseId,
                             Role = ChatRole.Assistant,
                         };
+
+                        updateToReturn.SetResponseStatus(ToResponseStatus(runStatus));
+                        updateToReturn.SetSequenceNumber(stepId);
+
+                        yield return updateToReturn;
                         break;
+                    }
                 }
             }
         }
@@ -588,6 +648,240 @@ namespace Azure.AI.Agents.Persistent
             }
 
             return runId;
+        }
+
+        /// <summary>Converts a <see cref="RunStatus"/> to a <see cref="NewResponseStatus"/>.</summary>
+        private static NewResponseStatus? ToResponseStatus(RunStatus? status)
+        {
+            if (status is null)
+            {
+                return null;
+            }
+
+            if (status == RunStatus.Queued)
+            {
+                return NewResponseStatus.Queued;
+            }
+
+            if (status == RunStatus.InProgress)
+            {
+                return NewResponseStatus.InProgress;
+            }
+
+            if (status == RunStatus.RequiresAction)
+            {
+                return NewResponseStatus.RequiresAction;
+            }
+
+            if (status == RunStatus.Cancelling)
+            {
+                return NewResponseStatus.Cancelling;
+            }
+
+            if (status == RunStatus.Cancelled)
+            {
+                return NewResponseStatus.Canceled;
+            }
+
+            if (status == RunStatus.Failed)
+            {
+                return NewResponseStatus.Failed;
+            }
+
+            if (status == RunStatus.Completed)
+            {
+                return NewResponseStatus.Completed;
+            }
+
+            if (status == RunStatus.Expired)
+            {
+                return NewResponseStatus.Expired;
+            }
+
+            throw new ArgumentOutOfRangeException(nameof(status), status, "Unknown response status.");
+        }
+
+        /// <summary>Determines whether to await run result or run in background.</summary>
+        private bool ShouldAwaitRunResult(ChatOptions? options)
+        {
+            // If specified in options, use that.
+            if (options?.GetAwaitRunResult() is { } awaitRun)
+            {
+                return awaitRun;
+            }
+
+            // Otherwise, use the value specified at initialization
+            return _awaitRun ?? false;
+        }
+
+        private async IAsyncEnumerable<ChatResponseUpdate> GetRunUpdatesAsync(ThreadRun run, bool streamingCall, ChatOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            // If this method is called via streaming api, we keep polling the run until the end.
+            if (streamingCall)
+            {
+                // Return updates for the provided run first.
+                await foreach (var update in GetRunUpdates_InternalAsync(run, options, cancellationToken).ConfigureAwait(false))
+                {
+                    yield return update;
+                }
+
+                // Keep polling the run and returning its updates until it completes.
+                while (run.Status == RunStatus.Queued || run.Status == RunStatus.InProgress || run.Status == RunStatus.Cancelling)
+                {
+                    //TBD: Use polling settings
+                    await Task.Delay(500, cancellationToken).ConfigureAwait(false);
+                    run = await _client!.Runs.GetRunAsync(run.ThreadId, options?.GetPreviousResponseId(), cancellationToken: cancellationToken).ConfigureAwait(false);
+
+                    // Return any new updates.
+                    await foreach (var update in GetRunUpdates_InternalAsync(run, options, cancellationToken).ConfigureAwait(false))
+                    {
+                        yield return update;
+                    }
+                }
+            }
+            // If this method is called via non-streaming api, we either poll to completion if requested or return the current status.
+            else
+            {
+                if (ShouldAwaitRunResult(options))
+                {
+                    while (run.Status == RunStatus.Queued || run.Status == RunStatus.InProgress || run.Status == RunStatus.Cancelling)
+                    {
+                        //TBD: Use polling settings
+                        await Task.Delay(500, cancellationToken).ConfigureAwait(false);
+                        run = await _client!.Runs.GetRunAsync(run.ThreadId, run.Id, cancellationToken: cancellationToken).ConfigureAwait(false);
+                    }
+                }
+
+                await foreach (var update in GetRunUpdates_InternalAsync(run, options, cancellationToken).ConfigureAwait(false))
+                {
+                    yield return update;
+                }
+            }
+
+            async IAsyncEnumerable<ChatResponseUpdate> GetRunUpdates_InternalAsync(ThreadRun run, ChatOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)
+            {
+                if (run.Status == RunStatus.Completed || run.Status == RunStatus.Cancelled || run.Status == RunStatus.Failed || run.Status == RunStatus.Expired)
+                {
+                    List<RunStep> steps = [];
+
+                    string? stepIdToStartAfter = options?.GetStartAfter();
+                    bool skipSteps = !string.IsNullOrWhiteSpace(stepIdToStartAfter);
+
+                    await foreach (var step in _client!.Runs.GetRunStepsAsync(run, order: ListSortOrder.Ascending, cancellationToken: cancellationToken).ConfigureAwait(false))
+                    {
+                        // Skipping all steps until we find the one to start after.
+                        if (step.Id == stepIdToStartAfter)
+                        {
+                            skipSteps = false;
+                            continue;
+                        }
+
+                        if (skipSteps)
+                        {
+                            continue;
+                        }
+
+                        steps.Add(step);
+                    }
+
+                    foreach (RunStep step in steps)
+                    {
+                        if (step.Type == RunStepType.ToolCalls)
+                        {
+                            // TBD: Handle tool calls
+                        }
+                        else if (step.Type == RunStepType.MessageCreation)
+                        {
+                            RunStepMessageCreationDetails messageDetails = (RunStepMessageCreationDetails)step.StepDetails;
+
+                            var message = await _client.Messages.GetMessageAsync(step.ThreadId, messageDetails.MessageCreation.MessageId, cancellationToken).ConfigureAwait(false);
+
+                            yield return CreateChatResponseUpdate(run, step, message);
+                        }
+                    }
+                }
+                else if (run.Status == RunStatus.Queued || run.Status == RunStatus.InProgress || run.Status == RunStatus.Cancelling)
+                {
+                    yield return CreateChatResponseUpdate(run);
+                }
+                else if (run.Status == RunStatus.RequiresAction)
+                {
+                    await foreach (var step in _client!.Runs.GetRunStepsAsync(run, cancellationToken: cancellationToken).ConfigureAwait(false))
+                    {
+                        var functionCallContents = GetFunctionCallContents(step);
+
+                        yield return CreateChatResponseUpdate(run, step, functionCallContents: functionCallContents);
+                    }
+                }
+            }
+        }
+
+        private static ChatResponseUpdate CreateChatResponseUpdate(ThreadRun run, RunStep? step = null, PersistentThreadMessage? message = null, IEnumerable<FunctionCallContent>? functionCallContents = null)
+        {
+            var update = new ChatResponseUpdate
+            {
+                AuthorName = run.AssistantId,
+                ConversationId = run.ThreadId,
+                CreatedAt = message?.CreatedAt ?? step?.CreatedAt ?? run.CreatedAt,
+                MessageId = message?.Id ?? step?.Id ?? run.Id,
+                ModelId = run.Model,
+                RawRepresentation = message ?? step as object ?? run,
+                ResponseId = run.Id,
+                Role = message?.Role == MessageRole.User ? ChatRole.User : ChatRole.Assistant,
+            };
+
+            update.SetResponseStatus(ToResponseStatus(run.Status));
+            update.SetSequenceNumber(step?.Id);
+
+            if (run.Usage is { } usage)
+            {
+                update.Contents.Add(new UsageContent(new()
+                {
+                    InputTokenCount = usage.PromptTokens,
+                    OutputTokenCount = usage.CompletionTokens,
+                    TotalTokenCount = usage.TotalTokens,
+                }));
+            }
+
+            foreach (MessageContent itemContent in message?.ContentItems ?? [])
+            {
+                if (itemContent is MessageTextContent textContent)
+                {
+                    update.Contents.Add(new TextContent(textContent.Text));
+
+                    // TBD: Handle annotations
+                }
+                else if (itemContent is MessageImageFileContent imageContent)
+                {
+                    update.Contents.Add(new HostedFileContent(imageContent.FileId));
+                }
+            }
+
+            foreach (FunctionCallContent functionCallContent in functionCallContents ?? [])
+            {
+                update.Contents.Add(functionCallContent);
+            }
+
+            return update;
+        }
+
+        private static IEnumerable<FunctionCallContent> GetFunctionCallContents(RunStep step)
+        {
+            if (step.Status == RunStepStatus.InProgress && step.Type == RunStepType.ToolCalls)
+            {
+                RunStepToolCallDetails toolCallDetails = (RunStepToolCallDetails)step.StepDetails;
+
+                foreach (RunStepToolCall toolCall in toolCallDetails.ToolCalls)
+                {
+                    if (toolCall is RunStepFunctionToolCall functionCall)
+                    {
+                        yield return new FunctionCallContent(
+                            callId: JsonSerializer.Serialize([step.RunId, toolCall.Id], AgentsChatClientJsonContext.Default.StringArray),
+                            name: functionCall.Name,
+                            arguments: JsonSerializer.Deserialize(functionCall.Arguments, AgentsChatClientJsonContext.Default.IDictionaryStringObject)!);
+                    }
+                }
+            }
         }
 
         [JsonSerializable(typeof(JsonElement))]
