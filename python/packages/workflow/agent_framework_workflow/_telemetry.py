@@ -145,15 +145,34 @@ class WorkflowTracer:
             attributes=attributes,
         )
 
-    def create_edge_group_processing_span(self, edge_group_type: str) -> Any:
+    def create_edge_group_processing_span(
+        self,
+        edge_group_type: str,
+        edge_group_id: str | None = None,
+        message_source_id: str | None = None,
+        message_target_id: str | None = None,
+    ) -> Any:
         """Create an edge group processing span.
 
         Edge group processing spans track the processing operations in edge runners
         before message delivery, including condition checking and routing decisions.
+
+        Args:
+            edge_group_type: The type of the edge group (class name).
+            edge_group_id: The unique ID of the edge group.
+            message_source_id: The source ID of the message being processed.
+            message_target_id: The target ID of the message being processed.
         """
         attributes: dict[str, str] = {
             "edge_group.type": edge_group_type,
         }
+
+        if edge_group_id is not None:
+            attributes["edge_group.id"] = edge_group_id
+        if message_source_id is not None:
+            attributes["message.source_id"] = message_source_id
+        if message_target_id is not None:
+            attributes["message.target_id"] = message_target_id
 
         return self.tracer.start_as_current_span(
             _EDGE_GROUP_PROCESS_SPAN,

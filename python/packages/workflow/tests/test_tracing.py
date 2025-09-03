@@ -573,12 +573,26 @@ async def test_edge_group_processing_spans(tracing_enabled: Any, span_exporter: 
         assert "edge_group.delivered" in span.attributes
         assert "edge_group.delivery_status" in span.attributes
 
+        # Check for new span attributes
+        assert "edge_group.id" in span.attributes
+        assert "message.source_id" in span.attributes
+        # message.target_id might be None for some messages, so we check if key exists
+        # but don't require a non-None value
+
         edge_group_type = span.attributes.get("edge_group.type")
         delivered = span.attributes.get("edge_group.delivered")
         delivery_status = span.attributes.get("edge_group.delivery_status")
+        edge_group_id = span.attributes.get("edge_group.id")
+        message_source_id = span.attributes.get("message.source_id")
 
         # Verify edge group types are correct
         assert edge_group_type in ["SingleEdgeGroup", "FanOutEdgeGroup", "FanInEdgeGroup"]
+
+        # Verify edge group ID is not empty
+        assert edge_group_id is not None and isinstance(edge_group_id, str) and len(edge_group_id) > 0
+
+        # Verify message source ID is not empty
+        assert message_source_id is not None and isinstance(message_source_id, str) and len(message_source_id) > 0
 
         # Verify delivery status values are correct
         assert delivery_status in [
@@ -812,3 +826,12 @@ async def test_edge_group_span_target_mismatch(tracing_enabled: Any, span_export
         target_mismatch_span.attributes.get("edge_group.delivery_status")
         == EdgeGroupDeliveryStatus.DROPPED_TARGET_MISMATCH.value
     )
+
+    # Verify new span attributes are present
+    assert "edge_group.id" in target_mismatch_span.attributes
+    assert "message.source_id" in target_mismatch_span.attributes
+    assert "message.target_id" in target_mismatch_span.attributes
+
+    # Verify the values are correct
+    assert target_mismatch_span.attributes.get("message.target_id") == "nonexistent_target"
+    assert target_mismatch_span.attributes.get("message.source_id") == "executor1"

@@ -91,7 +91,12 @@ class SingleEdgeRunner(EdgeRunner):
         target_id = None
         source_id = None
 
-        with workflow_tracer.create_edge_group_processing_span(self._edge_group.__class__.__name__):
+        with workflow_tracer.create_edge_group_processing_span(
+            self._edge_group.__class__.__name__,
+            edge_group_id=self._edge_group.id,
+            message_source_id=message.source_id,
+            message_target_id=message.target_id,
+        ):
             try:
                 if message.target_id and message.target_id != self._edge.target_id:
                     workflow_tracer.set_edge_group_span_attributes(
@@ -142,7 +147,12 @@ class FanOutEdgeRunner(EdgeRunner):
         single_target_edge = None
 
         # Process routing logic within span
-        with workflow_tracer.create_edge_group_processing_span(self._edge_group.__class__.__name__):
+        with workflow_tracer.create_edge_group_processing_span(
+            self._edge_group.__class__.__name__,
+            edge_group_id=self._edge_group.id,
+            message_source_id=message.source_id,
+            message_target_id=message.target_id,
+        ):
             try:
                 selection_results = (
                     self._selection_func(message.data, self._target_ids) if self._selection_func else self._target_ids
@@ -237,7 +247,12 @@ class FanInEdgeRunner(EdgeRunner):
         """Send a message through all edges in the fan-in edge group."""
         execution_data: dict[str, Any] | None = None
 
-        with workflow_tracer.create_edge_group_processing_span(self._edge_group.__class__.__name__):
+        with workflow_tracer.create_edge_group_processing_span(
+            self._edge_group.__class__.__name__,
+            edge_group_id=self._edge_group.id,
+            message_source_id=message.source_id,
+            message_target_id=message.target_id,
+        ):
             try:
                 if message.target_id and message.target_id != self._edges[0].target_id:
                     workflow_tracer.set_edge_group_span_attributes(False, EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH)
