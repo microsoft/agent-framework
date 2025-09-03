@@ -7,6 +7,7 @@ namespace Microsoft.Extensions.AI.Agents;
 
 #pragma warning disable RCS1037 // Remove trailing white-space
 #pragma warning disable RCS1036 // Remove unnecessary blank line
+#pragma warning disable IDE0055 // Fix formatting 
 /// <summary>
 /// Generic options available for certain models, configurations, or tools.
 /// This can include additional settings or parameters that are not strictly defined
@@ -40,4 +41,5 @@ public sealed class Options
 }
 #pragma warning restore RCS1037 // Remove trailing white-space
 #pragma warning restore RCS1036 // Remove unnecessary blank line
+#pragma warning restore IDE0055 // Fix formatting 
 

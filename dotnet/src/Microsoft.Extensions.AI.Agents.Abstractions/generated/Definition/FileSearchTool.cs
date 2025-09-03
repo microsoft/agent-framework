@@ -7,6 +7,7 @@ namespace Microsoft.Extensions.AI.Agents;
 
 #pragma warning disable RCS1037 // Remove trailing white-space
 #pragma warning disable RCS1036 // Remove unnecessary blank line
+#pragma warning disable IDE0055 // Fix formatting 
 /// <summary>
 /// A tool for searching files.
 /// This tool allows an AI agent to search for files based on a query.
@@ -47,4 +48,5 @@ public sealed class FileSearchTool : Tool
 }
 #pragma warning restore RCS1037 // Remove trailing white-space
 #pragma warning restore RCS1036 // Remove unnecessary blank line
+#pragma warning restore IDE0055 // Fix formatting 
 

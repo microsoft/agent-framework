@@ -7,6 +7,7 @@ namespace Microsoft.Extensions.AI.Agents;
 
 #pragma warning disable RCS1037 // Remove trailing white-space
 #pragma warning disable RCS1036 // Remove unnecessary blank line
+#pragma warning disable IDE0055 // Fix formatting 
 /// <summary>
 /// Connection configuration for AI agents.
 /// `provider`, `type`, and `endpoint` are required properties here,
@@ -64,4 +65,5 @@ public sealed class Connection
 }
 #pragma warning restore RCS1037 // Remove trailing white-space
 #pragma warning restore RCS1036 // Remove unnecessary blank line
+#pragma warning restore IDE0055 // Fix formatting 
 

@@ -7,6 +7,7 @@ namespace Microsoft.Extensions.AI.Agents;
 
 #pragma warning disable RCS1037 // Remove trailing white-space
 #pragma warning disable RCS1036 // Remove unnecessary blank line
+#pragma warning disable IDE0055 // Fix formatting 
 /// <summary>
 /// Utilities for retrieving property values.
 /// </summary>
@@ -26,3 +27,4 @@ internal static class Utils
 }
 #pragma warning restore RCS1037 // Remove trailing white-space
 #pragma warning restore RCS1036 // Remove unnecessary blank line
+#pragma warning restore IDE0055 // Fix formatting 

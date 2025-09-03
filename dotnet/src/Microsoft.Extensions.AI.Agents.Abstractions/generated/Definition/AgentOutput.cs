@@ -7,6 +7,7 @@ namespace Microsoft.Extensions.AI.Agents;
 
 #pragma warning disable RCS1037 // Remove trailing white-space
 #pragma warning disable RCS1036 // Remove unnecessary blank line
+#pragma warning disable IDE0055 // Fix formatting 
 /// <summary>
 /// Represents the output properties of an AI agent.
 /// Each output property can be a simple type, an array, or an object.
@@ -63,4 +64,5 @@ public sealed class AgentOutput
 }
 #pragma warning restore RCS1037 // Remove trailing white-space
 #pragma warning restore RCS1036 // Remove unnecessary blank line
+#pragma warning restore IDE0055 // Fix formatting 
 

@@ -7,6 +7,7 @@ namespace Microsoft.Extensions.AI.Agents;
 
 #pragma warning disable RCS1037 // Remove trailing white-space
 #pragma warning disable RCS1036 // Remove unnecessary blank line
+#pragma warning disable IDE0055 // Fix formatting 
 /// <summary>
 /// The following is a specification for defining AI agents with structured metadata, inputs, outputs, tools, and templates.
 /// It provides a way to create reusable and composable AI agents that can be executed with specific configurations.
@@ -139,4 +140,5 @@ public sealed class AgentDefinition
 }
 #pragma warning restore RCS1037 // Remove trailing white-space
 #pragma warning restore RCS1036 // Remove unnecessary blank line
+#pragma warning restore IDE0055 // Fix formatting 
 
