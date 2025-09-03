@@ -1,3 +1,1 @@
-pushd ./CreateAgents
-dotnet run
-popd
+dotnet run --project ../../dotnet/samples/CreateAgents/CreateAgents.csproj

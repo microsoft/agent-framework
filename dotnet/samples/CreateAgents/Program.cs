@@ -23,7 +23,7 @@ Console.WriteLine($"{Environment.NewLine}Foundry: {projectEndpoint}");
 
 StringBuilder scriptBuilder = new();
 StringBuilder secretBuilder = new();
-string[] files = args.Length > 0 ? args : Directory.GetFiles(@"..\", "*.yaml");
+string[] files = args.Length > 0 ? args : Directory.GetFiles(@".\", "*.yaml");
 foreach (string file in files)
 {
     string agentText = await File.ReadAllTextAsync(file);
@@ -43,7 +43,7 @@ foreach (string file in files)
     {
         Console.WriteLine("Unexpected failure creating agent...");
         continue;
-    }    
+    }
 
     Console.WriteLine();
     Console.WriteLine(Path.GetFileName(file));
