@@ -21,7 +21,7 @@ public static class AgentRunResponseUpdateExtensions
     /// Extracts a native OpenAI <see cref="StreamingChatCompletionUpdate"/> object from an <see cref="AgentRunResponseUpdate"/>.
     /// </summary>
     /// <param name="agentResponseUpdate">The agent response containing the raw OpenAI representation.</param>
-    /// <returns>The native OpenAI <see cref="ChatCompletion"/> object.</returns>
+    /// <returns>The native OpenAI <see cref="StreamingChatCompletionUpdate"/> object.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="agentResponseUpdate"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">
     /// Thrown when the <see cref="AgentRunResponse.RawRepresentation"/> is not a <see cref="ChatCompletion"/> object.
