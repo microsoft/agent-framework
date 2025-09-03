@@ -18,6 +18,7 @@ class AgentFrameworkException(Exception):
         This emits a debug log, with the inner_exception if provided.
         """
         logger.debug(message, exc_info=inner_exception)
+        kwargs["inner_exception"] = inner_exception
         super().__init__(message, *args, **kwargs)  # type: ignore
 
 
@@ -94,3 +95,14 @@ class ToolExecutionException(ToolException):
     """An error occurred while executing a tool."""
 
     pass
+
+
+class AdditionItemMismatch(AgentFrameworkException):
+    """An error occurred while adding two types."""
+
+    def __init__(self):
+        """Create an AdditionItemMismatch.
+
+        Unlike the AgentFrameworkException, this does not log the message automatically,
+        """
+        pass

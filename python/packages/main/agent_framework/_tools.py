@@ -41,8 +41,8 @@ __all__ = [
     "AIFunction",
     "HostedCodeInterpreterTool",
     "HostedFileSearchTool",
-    "HostedMcpSpecificApproval",
-    "HostedMcpTool",
+    "HostedMCPSpecificApproval",
+    "HostedMCPTool",
     "HostedWebSearchTool",
     "ToolProtocol",
     "ai_function",
@@ -209,7 +209,7 @@ class HostedWebSearchTool(BaseTool):
         super().__init__(**args, **kwargs)
 
 
-class HostedMcpSpecificApproval(TypedDict, total=False):
+class HostedMCPSpecificApproval(TypedDict, total=False):
     """Represents the `specific` mode for a hosted tool.
 
     When using this mode, the user must specify which tools always or never require approval.
@@ -223,11 +223,11 @@ class HostedMcpSpecificApproval(TypedDict, total=False):
     never_require_approval: Collection[str] | None
 
 
-class HostedMcpTool(AIToolBase):
+class HostedMCPTool(AIToolBase):
     """Represents a MCP tool that is managed and executed by the service."""
 
     url: AnyUrl
-    approval_mode: Literal["always_require", "never_require"] | HostedMcpSpecificApproval | None = None
+    approval_mode: Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None = None
     allowed_tools: set[str] | None = None
     headers: dict[str, str] | None = None
 
@@ -237,7 +237,7 @@ class HostedMcpTool(AIToolBase):
         name: str,
         description: str | None = None,
         url: AnyUrl | str,
-        approval_mode: Literal["always_require", "never_require"] | HostedMcpSpecificApproval | None = None,
+        approval_mode: Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None = None,
         allowed_tools: Collection[str] | None = None,
         headers: dict[str, str] | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -276,7 +276,7 @@ class HostedMcpTool(AIToolBase):
         try:
             super().__init__(**args, **kwargs)
         except ValidationError as err:
-            raise ToolException(f"Error initializing HostedMcpTool: {err}", inner_exception=err) from err
+            raise ToolException(f"Error initializing HostedMCPTool: {err}", inner_exception=err) from err
 
     @field_validator("approval_mode")
     def validate_approval_mode(cls, approval_mode: str | dict[str, Any] | None) -> str | dict[str, Any] | None:

@@ -3,7 +3,7 @@
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from agent_framework import ChatClientAgent, HostedMcpTool
+from agent_framework import ChatClientAgent, HostedMCPTool
 from agent_framework.openai import OpenAIResponsesClient
 
 if TYPE_CHECKING:
@@ -18,19 +18,16 @@ async def handle_approvals_without_thread(query: str, agent: "AIAgent"):
     while len(result.user_input_requests) > 0:
         new_inputs: list[Any] = [query]
         for user_input_needed in result.user_input_requests:
-            if user_input_needed.type == "function_approval_request":
-                print(
-                    f"User Input Request for function from {agent.name}: {user_input_needed.function_call.name}"
-                    f" with arguments: {user_input_needed.function_call.arguments}"
-                )
-                new_inputs.append(ChatMessage(role="assistant", contents=[user_input_needed]))
-                user_approval = input("Approve function call? (y/n): ")
-                new_inputs.append(
-                    ChatMessage(role="user", contents=[user_input_needed.create_response(user_approval.lower() == "y")])
-                )
+            print(
+                f"User Input Request for function from {agent.name}: {user_input_needed.function_call.name}"
+                f" with arguments: {user_input_needed.function_call.arguments}"
+            )
+            new_inputs.append(ChatMessage(role="assistant", contents=[user_input_needed]))
+            user_approval = input("Approve function call? (y/n): ")
+            new_inputs.append(
+                ChatMessage(role="user", contents=[user_input_needed.create_response(user_approval.lower() == "y")])
+            )
 
-            else:
-                print(f"Other user input requested: {user_input_needed.type}")
         result = await agent.run(new_inputs)
     return result
 
@@ -43,17 +40,14 @@ async def handle_approvals_with_thread(query: str, agent: "AIAgent", thread: "Ag
     while len(result.user_input_requests) > 0:
         new_input: list[Any] = []
         for user_input_needed in result.user_input_requests:
-            if user_input_needed.type == "function_approval_request":
-                print(
-                    f"User Input Request for function from {agent.name}: {user_input_needed.function_call.name}"
-                    f" with arguments: {user_input_needed.function_call.arguments}"
-                )
-                user_approval = input("Approve function call? (y/n): ")
-                new_input.append(
-                    ChatMessage(role="user", contents=[user_input_needed.create_response(user_approval.lower() == "y")])
-                )
-            else:
-                print(f"Other user input requested: {user_input_needed.type}")
+            print(
+                f"User Input Request for function from {agent.name}: {user_input_needed.function_call.name}"
+                f" with arguments: {user_input_needed.function_call.arguments}"
+            )
+            user_approval = input("Approve function call? (y/n): ")
+            new_input.append(
+                ChatMessage(role="user", contents=[user_input_needed.create_response(user_approval.lower() == "y")])
+            )
         result = await agent.run(new_input, thread=thread, store=True)
     return result
 
@@ -70,18 +64,17 @@ async def handle_approvals_with_thread_streaming(query: str, agent: "AIAgent", t
         async for update in agent.run_streaming(new_input, thread=thread, store=True):
             if update.user_input_requests:
                 for user_input_needed in update.user_input_requests:
-                    if user_input_needed.type == "function_approval_request":
-                        print(
-                            f"User Input Request for function from {agent.name}: {user_input_needed.function_call.name}"
-                            f" with arguments: {user_input_needed.function_call.arguments}"
+                    print(
+                        f"User Input Request for function from {agent.name}: {user_input_needed.function_call.name}"
+                        f" with arguments: {user_input_needed.function_call.arguments}"
+                    )
+                    user_approval = input("Approve function call? (y/n): ")
+                    new_input.append(
+                        ChatMessage(
+                            role="user", contents=[user_input_needed.create_response(user_approval.lower() == "y")]
                         )
-                        user_approval = input("Approve function call? (y/n): ")
-                        new_input.append(
-                            ChatMessage(
-                                role="user", contents=[user_input_needed.create_response(user_approval.lower() == "y")]
-                            )
-                        )
-                        new_input_added = True
+                    )
+                    new_input_added = True
             else:
                 yield update
 
@@ -96,7 +89,7 @@ async def run_hosted_mcp_without_thread_and_specific_approval() -> None:
         chat_client=OpenAIResponsesClient(),
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
-        tools=HostedMcpTool(
+        tools=HostedMCPTool(
             name="Microsoft Learn MCP",
             url="https://learn.microsoft.com/api/mcp",
             # we don't require approval for microsoft_docs_search tool calls
@@ -127,7 +120,7 @@ async def run_hosted_mcp_without_approval() -> None:
         chat_client=OpenAIResponsesClient(),
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
-        tools=HostedMcpTool(
+        tools=HostedMCPTool(
             name="Microsoft Learn MCP",
             url="https://learn.microsoft.com/api/mcp",
             # we don't require approval for any function calls
@@ -159,7 +152,7 @@ async def run_hosted_mcp_with_thread() -> None:
         chat_client=OpenAIResponsesClient(),
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
-        tools=HostedMcpTool(
+        tools=HostedMCPTool(
             name="Microsoft Learn MCP",
             url="https://learn.microsoft.com/api/mcp",
             # we require approval for all function calls
@@ -190,7 +183,7 @@ async def run_hosted_mcp_with_thread_streaming() -> None:
         chat_client=OpenAIResponsesClient(),
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
-        tools=HostedMcpTool(
+        tools=HostedMCPTool(
             name="Microsoft Learn MCP",
             url="https://learn.microsoft.com/api/mcp",
             # we require approval for all function calls

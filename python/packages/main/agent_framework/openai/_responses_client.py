@@ -31,7 +31,7 @@ from .._tools import (
     AIFunction,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
-    HostedMcpTool,
+    HostedMCPTool,
     HostedWebSearchTool,
     ToolProtocol,
 )
@@ -374,7 +374,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         for tool in tools:
             if isinstance(tool, ToolProtocol):
                 match tool:
-                    case HostedMcpTool():
+                    case HostedMCPTool():
                         mcp: Mcp = {
                             "type": "mcp",
                             "server_label": tool.name.replace(" ", "_"),

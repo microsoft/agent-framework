@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from agent_framework import (
     AIFunction,
     HostedCodeInterpreterTool,
-    HostedMcpTool,
+    HostedMCPTool,
     ToolProtocol,
     ai_function,
 )
@@ -519,12 +519,12 @@ def test_hosted_code_interpreter_tool_with_unknown_input():
         HostedCodeInterpreterTool(inputs={"hosted_file": "file-single"})
 
 
-# region HostedMcpTool tests
+# region HostedMCPTool tests
 
 
 def test_hosted_mcp_tool_with_other_fields():
-    """Test creating a HostedMcpTool with a specific approval dict, headers and additional properties."""
-    tool = HostedMcpTool(
+    """Test creating a HostedMCPTool with a specific approval dict, headers and additional properties."""
+    tool = HostedMCPTool(
         name="mcp-tool",
         url="https://mcp.example",
         description="A test MCP tool",
@@ -557,8 +557,8 @@ def test_hosted_mcp_tool_with_other_fields():
     ids=["always_require", "never_require", "specific", "specific_with_parsing"],
 )
 def test_hosted_mcp_tool_with_approval_mode(approval_mode: str | dict[str, Any]):
-    """Test creating a HostedMcpTool with a specific approval dict, headers and additional properties."""
-    tool = HostedMcpTool(name="mcp-tool", url="https://mcp.example", approval_mode=approval_mode)
+    """Test creating a HostedMCPTool with a specific approval dict, headers and additional properties."""
+    tool = HostedMCPTool(name="mcp-tool", url="https://mcp.example", approval_mode=approval_mode)
 
     assert tool.name == "mcp-tool"
     # pydantic AnyUrl preserves as string-like
@@ -576,7 +576,7 @@ def test_hosted_mcp_tool_with_approval_mode(approval_mode: str | dict[str, Any])
 def test_hosted_mcp_tool_invalid_approval_mode_raises():
     """Invalid approval_mode string should raise ServiceInitializationError."""
     with pytest.raises(ToolException):
-        HostedMcpTool(name="bad", url="https://x", approval_mode="invalid_mode")
+        HostedMCPTool(name="bad", url="https://x", approval_mode="invalid_mode")
 
 
 @pytest.mark.parametrize(
@@ -595,8 +595,8 @@ def test_hosted_mcp_tool_invalid_approval_mode_raises():
     ],
 )
 def test_hosted_mcp_tool_with_allowed_tools(tools: list[str] | tuple[str, ...] | set[str]):
-    """Test creating a HostedMcpTool with a list of allowed tools."""
-    tool = HostedMcpTool(
+    """Test creating a HostedMCPTool with a list of allowed tools."""
+    tool = HostedMCPTool(
         name="mcp-tool",
         url="https://mcp.example",
         allowed_tools=tools,
@@ -611,9 +611,9 @@ def test_hosted_mcp_tool_with_allowed_tools(tools: list[str] | tuple[str, ...] |
 
 
 def test_hosted_mcp_tool_with_dict_of_allowed_tools():
-    """Test creating a HostedMcpTool with a dict of allowed tools."""
+    """Test creating a HostedMCPTool with a dict of allowed tools."""
     with pytest.raises(ToolException):
-        HostedMcpTool(
+        HostedMCPTool(
             name="mcp-tool",
             url="https://mcp.example",
             allowed_tools={"toolA": "Tool A", "toolC": "Tool C"},

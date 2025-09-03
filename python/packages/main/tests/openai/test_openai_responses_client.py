@@ -25,7 +25,7 @@ from agent_framework import (
     HostedCodeInterpreterTool,
     HostedFileContent,
     HostedFileSearchTool,
-    HostedMcpTool,
+    HostedMCPTool,
     HostedVectorStoreContent,
     HostedWebSearchTool,
     Role,
@@ -648,10 +648,10 @@ def test_response_content_creation_with_function_call() -> None:
 
 
 def test_tools_to_response_tools_with_hosted_mcp() -> None:
-    """Test that HostedMcpTool is converted to the correct response tool dict."""
+    """Test that HostedMCPTool is converted to the correct response tool dict."""
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
-    tool = HostedMcpTool(
+    tool = HostedMCPTool(
         name="My MCP",
         url="https://mcp.example",
         description="An MCP server",

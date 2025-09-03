@@ -40,6 +40,7 @@ from agent_framework import (
     UsageDetails,
     ai_function,
 )
+from agent_framework.exceptions import AdditionItemMismatch
 
 
 @fixture
@@ -298,9 +299,8 @@ def test_function_call_content_add_merging_and_errors():
     # incompatible call ids
     a = FunctionCallContent(call_id="1", name="f", arguments="abc")
     b = FunctionCallContent(call_id="2", name="f", arguments="def")
-    from agent_framework.exceptions import AgentFrameworkException
 
-    with raises(AgentFrameworkException):
+    with raises(AdditionItemMismatch):
         _ = a + b
 
 

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, runt
 from pydantic import BaseModel
 
 from ._logging import get_logger
-from ._mcp import McpTool
+from ._mcp import MCPTool
 from ._pydantic import AFBaseModel
 from ._threads import ChatMessageStore
 from ._tools import AIFunction, ToolProtocol
@@ -407,7 +407,7 @@ class BaseChatClient(AFBaseModel, ABC):
         if not tools:
             return final_tools
         for tool in tools if isinstance(tools, list) else [tools]:  # type: ignore[reportUnknownType]
-            if isinstance(tool, McpTool):
+            if isinstance(tool, MCPTool):
                 final_tools.extend(tool.functions)  # type: ignore
                 continue
             final_tools.append(tool)  # type: ignore

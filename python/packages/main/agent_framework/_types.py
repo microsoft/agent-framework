@@ -29,7 +29,7 @@ from pydantic import (
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
 from ._tools import ToolProtocol, ai_function
-from .exceptions import AgentFrameworkException
+from .exceptions import AdditionItemMismatch
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -226,7 +226,11 @@ def _process_update(
     is_new_message = False
     if (
         not response.messages
-        or (update.message_id and response.messages[-1].message_id != update.message_id)
+        or (
+            update.message_id
+            and response.messages[-1].message_id
+            and response.messages[-1].message_id != update.message_id
+        )
         or (update.role and response.messages[-1].role != update.role)
     ):
         is_new_message = True
@@ -251,7 +255,7 @@ def _process_update(
         ):
             try:
                 message.contents[-1] += content
-            except AgentFrameworkException:
+            except AdditionItemMismatch:
                 message.contents.append(content)
         elif isinstance(content, UsageContent):
             if response.usage_details is None:
@@ -926,7 +930,7 @@ class FunctionCallContent(BaseContent):
         if not isinstance(other, FunctionCallContent):
             raise TypeError("Incompatible type")
         if other.call_id and self.call_id != other.call_id:
-            raise AgentFrameworkException("Incompatible function call contents")
+            raise AdditionItemMismatch
         if not self.arguments:
             arguments = other.arguments
         elif not other.arguments:
@@ -1095,21 +1099,21 @@ class HostedVectorStoreContent(BaseContent):
         )
 
 
-class UserInputRequestContent(BaseContent):
+class BaseUserInputRequest(BaseContent):
     """Base class for all user requests."""
 
     type: Literal["user_input_request"] = "user_input_request"  # type: ignore[assignment]
     id: Annotated[str, Field(..., min_length=1)]
 
 
-class UserInputResponseContent(BaseContent):
+class BaseUserInputResponse(BaseContent):
     """Base class for all user responses."""
 
     type: Literal["user_input_response"] = "user_input_response"  # type: ignore[assignment]
     id: Annotated[str, Field(..., min_length=1)]
 
 
-class FunctionApprovalResponseContent(UserInputResponseContent):
+class FunctionApprovalResponseContent(BaseUserInputResponse):
     """Represents a response for user approval of a function call."""
 
     type: Literal["function_approval_response"] = "function_approval_response"  # type: ignore[assignment]
@@ -1149,7 +1153,7 @@ class FunctionApprovalResponseContent(UserInputResponseContent):
         )
 
 
-class FunctionApprovalRequestContent(UserInputRequestContent):
+class FunctionApprovalRequestContent(BaseUserInputRequest):
     """Represents a request for user approval of a function call."""
 
     type: Literal["function_approval_request"] = "function_approval_request"  # type: ignore[assignment]
@@ -1195,7 +1199,7 @@ class FunctionApprovalRequestContent(UserInputRequestContent):
 
 
 UserInputRequestContents = Annotated[
-    FunctionApprovalRequestContent | UserInputRequestContent,
+    FunctionApprovalRequestContent,
     Field(discriminator="type"),
 ]
 
@@ -2067,9 +2071,9 @@ class AgentRunResponse(AFBaseModel):
 
     @property
     def user_input_requests(self) -> list[UserInputRequestContents]:
-        """Get all UserInputRequestContent messages from the response."""
+        """Get all BaseUserInputRequest messages from the response."""
         return [
-            content for msg in self.messages for content in msg.contents if isinstance(content, UserInputRequestContent)
+            content for msg in self.messages for content in msg.contents if isinstance(content, BaseUserInputRequest)
         ]
 
     @classmethod
@@ -2124,8 +2128,8 @@ class AgentRunResponseUpdate(AFBaseModel):
 
     @property
     def user_input_requests(self) -> list[UserInputRequestContents]:
-        """Get all UserInputRequestContent messages from the response."""
-        return [content for content in self.contents if isinstance(content, UserInputRequestContent)]
+        """Get all BaseUserInputRequest messages from the response."""
+        return [content for content in self.contents if isinstance(content, BaseUserInputRequest)]
 
     def __str__(self) -> str:
         return self.text
