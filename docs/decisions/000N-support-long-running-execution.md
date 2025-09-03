@@ -935,14 +935,17 @@ Some of them allow resuming streaming from a specific point in the stream, while
 
 | API                     | Can Resume Streaming                 | Model                                                                                                      |
 |-------------------------|--------------------------------------|------------------------------------------------------------------------------------------------------------|
-| OpenAI Responses        | Yes                                  | StreamingResponseUpdate.**SequenceNumber** &  GetResponseStreamingAsync(responseId, **startingAfter**, ct) |
-| Azure AI Foundry Agents | TBD                                  |          																				                  |
+| OpenAI Responses        | Yes                                  | StreamingResponseUpdate.**SequenceNumber** + GetResponseStreamingAsync(responseId, **startingAfter**, ct)  |
+| Azure AI Foundry Agents | Yes<sup>2</sup>                      | RunStep.**Id** + custom pseudo code: client.Runs.GetRunStepsAsync(...).AllStepsAfter(**stepId**)           |
 | A2A                     | Implementation dependent<sup>1</sup> |          																				                  |
 
 <sup>1</sup> The [A2A specification](https://github.com/a2aproject/A2A/blob/main/docs/topics/streaming-and-async.md#1-streaming-with-server-sent-events-sse)
 allows an A2A agent implementation to decide how to handle streaming resumption: _If a client's SSE connection breaks prematurely while 
 a task is still active (and the server hasn't sent a final: true event for that phase), the client can attempt to reconnect to the stream using the tasks/resubscribe RPC method. 
 The server's behavior regarding missed events during the disconnection period (e.g., whether it backfills or only sends new updates) is implementation-dependent._
+
+<sup>2</sup> The Azure AI Foundry Agents API has an API to start a streaming run but does not have an API to resume streaming from a specific point in the stream.
+However, it has non-streaming APIs to access already started runs, which can be used to emulate streaming resumption by accessing a run and its steps and streaming all the steps after a specific step.
 
 ### Required Changes
 
@@ -953,6 +956,9 @@ To support streaming resumption, the following model changes are required:
 
 All the chat clients supporting the streaming resumption will need to return the `SequenceNumber` property as part of the `ChatResponseUpdate` class and 
 honor the `StartAfter` property of the `ChatOptions` class.
+
+TBD: Explore options to abstract the streaming resumption model to support different resumption identifiers used by different APIs. For example, A2A can resume streaming of a task
+identified by its id rather than a sequence number.
 
 ### Function Calling
 
