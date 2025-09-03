@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import json
 import logging
 import os
 from collections.abc import AsyncIterable, Awaitable, Callable, Generator
@@ -27,6 +28,8 @@ if TYPE_CHECKING:  # pragma: no cover
     from ._types import (
         AgentRunResponse,
         AgentRunResponseUpdate,
+        AIContents,
+        ChatFinishReason,
         ChatMessage,
         ChatResponse,
         ChatResponseUpdate,
@@ -123,6 +126,9 @@ class OtelAttr(str, Enum):
     CONVERSATION_ID = "gen_ai.conversation.id"
     DATA_SOURCE_ID = "gen_ai.data_source.id"
     OUTPUT_TYPE = "gen_ai.output.type"
+    INPUT_MESSAGES = "gen_ai.input.messages"
+    OUTPUT_MESSAGES = "gen_ai.output.messages"
+    SYSTEM_INSTRUCTIONS = "gen_ai.system_instructions"
 
     # Activity events
     EVENT_NAME = "event.name"
@@ -157,6 +163,12 @@ ROLE_EVENT_MAP = {
     "user": OtelAttr.USER_MESSAGE,
     "assistant": OtelAttr.ASSISTANT_MESSAGE,
     "tool": OtelAttr.TOOL_MESSAGE,
+}
+FINISH_REASON_MAP = {
+    ChatFinishReason.STOP.value: "stop",
+    ChatFinishReason.CONTENT_FILTER.value: "content_filter",
+    ChatFinishReason.TOOL_CALLS.value: "tool_call",
+    ChatFinishReason.LENGTH.value: "length",
 }
 # Note that if this environment variable does not exist, telemetry is enabled.
 TELEMETRY_DISABLED_ENV_VAR = "AZURE_TELEMETRY_DISABLED"
@@ -275,7 +287,7 @@ def _trace_get_response(
             **kwargs,
         ) as span:
             if model_diagnostics.SENSITIVE_DATA_ENABLED and messages:
-                _capture_messages(system_name=model_provider, messages=messages)
+                _capture_messages(span=span, system_name=model_provider, messages=messages)
             try:
                 response = await get_response_func(messages=messages, **kwargs)
             except Exception as exception:
@@ -284,7 +296,13 @@ def _trace_get_response(
             else:
                 _capture_response(span=span, response=response)
                 if model_diagnostics.SENSITIVE_DATA_ENABLED and response.messages:
-                    _capture_messages(system_name=model_provider, messages=response.messages)
+                    _capture_messages(
+                        span=span,
+                        system_name=model_provider,
+                        messages=response.messages,
+                        finish_reason=response.finish_reason,
+                        output=True,
+                    )
                 return response
 
     return wrap_get_response
@@ -326,7 +344,11 @@ def _trace_get_streaming_response(
             **kwargs,
         ) as span:
             if model_diagnostics.SENSITIVE_DATA_ENABLED and messages:
-                _capture_messages(system_name=model_provider, messages=messages)
+                _capture_messages(
+                    span=span,
+                    system_name=model_provider,
+                    messages=messages,
+                )
             try:
                 async for update in get_streaming_response_func(messages=messages, **kwargs):
                     all_updates.append(update)
@@ -341,7 +363,13 @@ def _trace_get_streaming_response(
                 _capture_response(span=span, response=response)
 
                 if model_diagnostics.SENSITIVE_DATA_ENABLED and response.messages:
-                    _capture_messages(system_name=model_provider, messages=response.messages)
+                    _capture_messages(
+                        span=span,
+                        system_name=model_provider,
+                        messages=response.messages,
+                        finish_reason=response.finish_reason,
+                        output=True,
+                    )
 
     return wrap_get_streaming_response
 
@@ -437,7 +465,12 @@ def _trace_agent_run(
             **kwargs,
         ) as current_span:
             if model_diagnostics.SENSITIVE_DATA_ENABLED and messages:
-                _capture_messages(system_name=agent_system_name, messages=messages)
+                _capture_messages(
+                    span=current_span,
+                    system_name=agent_system_name,
+                    messages=messages,
+                    system_instructions=getattr(agent, "instructions", None),
+                )
             try:
                 response = await run_func(messages=messages, thread=thread, **kwargs)
             except Exception as exception:
@@ -446,7 +479,12 @@ def _trace_agent_run(
             else:
                 _capture_response(current_span, response)
                 if model_diagnostics.SENSITIVE_DATA_ENABLED and response.messages:
-                    _capture_messages(agent_system_name, response.messages)
+                    _capture_messages(
+                        span=current_span,
+                        system_name=agent_system_name,
+                        messages=response.messages,
+                        output=True,
+                    )
                 return response
 
     return wrap_run
@@ -491,7 +529,12 @@ def _trace_agent_run_streaming(
             **kwargs,
         ) as current_span:
             if model_diagnostics.SENSITIVE_DATA_ENABLED and messages:
-                _capture_messages(system_name=agent_system_name, messages=messages)
+                _capture_messages(
+                    span=current_span,
+                    system_name=agent_system_name,
+                    messages=messages,
+                    system_instructions=getattr(agent, "instructions", None),
+                )
             try:
                 async for update in run_streaming_func(messages=messages, thread=thread, **kwargs):
                     all_updates.append(update)
@@ -503,7 +546,12 @@ def _trace_agent_run_streaming(
                 response = AgentRunResponse.from_agent_run_response_updates(all_updates)
                 _capture_response(current_span, response)
                 if model_diagnostics.SENSITIVE_DATA_ENABLED and response.messages:
-                    _capture_messages(agent_system_name, response.messages)
+                    _capture_messages(
+                        span=current_span,
+                        system_name=agent_system_name,
+                        messages=response.messages,
+                        output=True,
+                    )
 
     return wrap_run_streaming
 
@@ -615,7 +663,7 @@ def _chat_response_span(
     if encoding_formats := kwargs.get("encoding_formats"):
         span.set_attribute(
             OtelAttr.ENCODING_FORMATS,
-            encoding_formats if isinstance(encoding_formats, list) else [encoding_formats],
+            json.dumps(encoding_formats if isinstance(encoding_formats, list) else [encoding_formats]),
         )
     with use_span(
         span=span,
@@ -680,7 +728,7 @@ def _agent_run_span(
     if encoding_formats := kwargs.get("encoding_formats"):
         span.set_attribute(
             OtelAttr.ENCODING_FORMATS,
-            encoding_formats if isinstance(encoding_formats, list) else [encoding_formats],
+            json.dumps(encoding_formats if isinstance(encoding_formats, list) else [encoding_formats]),
         )
     with use_span(
         span=span,
@@ -699,8 +747,12 @@ def _capture_exception(span: Span, exception: Exception, timestamp: int | None =
 
 
 def _capture_messages(
+    span: Span,
     system_name: str,
     messages: "str | ChatMessage | list[str] | list[ChatMessage]",
+    system_instructions: str | list[str] | None = None,
+    output: bool = False,
+    finish_reason: "ChatFinishReason | None" = None,
 ) -> None:
     """Log messages with extra information."""
     from ._clients import _prepare_messages
@@ -710,11 +762,41 @@ def _capture_messages(
         logger.info(
             message.model_dump_json(exclude_none=True),
             extra={
-                OtelAttr.EVENT_NAME: ROLE_EVENT_MAP.get(message.role.value),
+                OtelAttr.EVENT_NAME: OtelAttr.CHOICE if output else ROLE_EVENT_MAP.get(message.role.value),
                 OtelAttr.SYSTEM: system_name,
                 ChatMessageListTimestampFilter.INDEX_KEY: index,
             },
         )
+    otel_messages = [_to_otel_message(message) for message in prepped]
+    if finish_reason:
+        otel_messages[-1]["finish_reason"] = FINISH_REASON_MAP[finish_reason.value]
+    span.set_attribute(OtelAttr.OUTPUT_MESSAGES if output else OtelAttr.INPUT_MESSAGES, json.dumps(otel_messages))
+    if system_instructions:
+        if not isinstance(system_instructions, list):
+            system_instructions = [system_instructions]
+        otel_sys_instructions = [{"type": "text", "content": instruction} for instruction in system_instructions]
+        span.set_attribute(OtelAttr.SYSTEM_INSTRUCTIONS, json.dumps(otel_sys_instructions))
+
+
+def _to_otel_message(message: "ChatMessage") -> dict[str, Any]:
+    """Create a otel representation of a message."""
+    return {"role": message.role.value, "parts": [_to_otel_part(content) for content in message.contents]}
+
+
+def _to_otel_part(content: "AIContents") -> dict[str, Any] | None:
+    """Create a otel representation of a Content."""
+    match content.type:
+        case "text":
+            return {"type": "text", "content": content.text}
+        case "function_call":
+            return {"type": "tool_call", "id": content.call_id, "name": content.name, "arguments": content.arguments}
+        case "function_result":
+            return {"type": "tool_call_response", "id": content.call_id, "response": content.result}
+        case _:
+            # GenericPart in otel output messages json spec.
+            # just required type, and arbitrary other fields.
+            return content.model_dump(exclude_none=True)
+    return None
 
 
 def _capture_response(
