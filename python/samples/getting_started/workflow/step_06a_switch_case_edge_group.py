@@ -1,8 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from dataclasses import dataclass
-from typing import Any
+from typing import Optional
 
 from agent_framework import ChatMessage, ChatRole
 from agent_framework.azure import AzureChatClient
@@ -25,7 +24,7 @@ Switch-Case Edge Group (with Agent Classifier)
 
 What it does:
 - Classifies email with an agent, parses the result, and branches using `add_switch_case_edge_group`.
-- Demonstrates `Case`/`Default` behavior with an agent-produced boolean.
+- Demonstrates three paths via `Case`/`Default`: spam, not spam, unknown.
 
 Prerequisites:
 - Azure AI/ Azure OpenAI for `AzureChatClient` agent.
@@ -33,45 +32,21 @@ Prerequisites:
 """
 
 
-@dataclass
-class SpamDetectorResponse:
-    """A data class to hold the email message content."""
-
-    email: str
-    is_spam: bool = False
-
-
-class SubmitToSpamClassifier(Executor):
-    """Wrap email string into AgentExecutorRequest and send to classifier by target_id."""
-
-    def __init__(self, classifier_id: str, id: str | None = None):
-        super().__init__(id=id)
-        self._classifier_id = classifier_id
-
-    @handler
-    async def submit(self, email: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
-        user_msg = ChatMessage(ChatRole.USER, text=email)
-        await ctx.send_message(
-            AgentExecutorRequest(messages=[user_msg], should_respond=True),
-            target_id=self._classifier_id,
-        )
-
-
 class SendResponse(Executor):
-    """An executor that responds to a message based on spam detection."""
+    """Respond to a message that is explicitly NOT spam."""
 
     @handler
-    async def handle_detector_response(
+    async def handle_classifier_response(
         self,
-        spam_detector_response: SpamDetectorResponse,
+        response: AgentExecutorResponse,
         ctx: WorkflowContext[None],
     ) -> None:
-        """Respond with a message based on whether the input is spam."""
-        if spam_detector_response.is_spam:
-            raise RuntimeError("Input is spam, cannot respond.")
+        """Respond only when the classifier marked it NOT spam."""
+        if _tri_state(response) is not False:
+            raise RuntimeError("Input is not explicitly NOT_SPAM, cannot respond.")
 
         # Simulate processing delay
-        print(f"Responding to message: {spam_detector_response.email}")
+        print("Responding to message (NOT_SPAM)")
         await asyncio.sleep(1)
 
         await ctx.add_event(WorkflowCompletedEvent("Message processed successfully."))
@@ -81,30 +56,48 @@ class RemoveSpam(Executor):
     """An executor that removes spam messages."""
 
     @handler
-    async def handle_detector_response(
+    async def handle_classifier_response(
         self,
-        spam_detector_response: SpamDetectorResponse,
+        response: AgentExecutorResponse,
         ctx: WorkflowContext[None],
     ) -> None:
         """Remove the spam message."""
-        if spam_detector_response.is_spam is False:
+        if _tri_state(response) is not True:
             raise RuntimeError("Input is not spam, cannot remove.")
 
         # Simulate processing delay
-        print(f"Removing spam message: {spam_detector_response.email}")
+        print("Removing spam message (SPAM)")
         await asyncio.sleep(1)
 
         await ctx.add_event(WorkflowCompletedEvent("Spam message removed."))
 
 
-class ParseAndRoute(Executor):
-    """Parse AgentExecutorResponse into SpamDetectorResponse for routing."""
+class HandleUnknown(Executor):
+    """Handle messages that could not be confidently classified."""
 
     @handler
-    async def route(self, response: AgentExecutorResponse, ctx: WorkflowContext[Any]) -> None:
-        text = response.agent_run_response.text.strip().upper()
-        is_spam = "SPAM" in text and "NOT_SPAM" not in text
-        await ctx.send_message(SpamDetectorResponse(email="<redacted>", is_spam=is_spam))
+    async def handle_classifier_response(
+        self,
+        response: AgentExecutorResponse,
+        ctx: WorkflowContext[None],
+    ) -> None:
+        if _tri_state(response) is not None:
+            raise RuntimeError("Input is known spam/not_spam, not unknown.")
+
+        print("Unable to classify message. Escalating for review (UNKNOWN).")
+        await asyncio.sleep(1)
+
+        await ctx.add_event(WorkflowCompletedEvent("Message requires manual review (UNKNOWN)."))
+
+
+def _tri_state(response: AgentExecutorResponse) -> Optional[bool]:
+    """Return True for SPAM, False for NOT_SPAM, None for UNKNOWN/other."""
+    text = (response.agent_run_response.text or "").strip().upper()
+    if "NOT_SPAM" in text:
+        return False
+    if "SPAM" in text and "NOT_SPAM" not in text:
+        return True
+    return None
 
 
 async def main():
@@ -115,36 +108,36 @@ async def main():
         chat_client.create_agent(
             instructions=(
                 "You are an email spam classifier. Given ONLY the email body, respond with exactly one token: "
-                "'SPAM' or 'NOT_SPAM'."
+                "'SPAM', 'NOT_SPAM', or 'UNKNOWN' if genuinely uncertain."
             )
         ),
         id="spam_classifier",
     )
 
-    # Step 1: Create the executors.
-    submitter = SubmitToSpamClassifier(spam_classifier.id, id="submitter")
+    # Step 1: Create the executors (keep only the three action executors).
     send_response = SendResponse(id="send_response")
     remove_spam = RemoveSpam(id="remove_spam")
-    router = ParseAndRoute(id="router")
+    handle_unknown = HandleUnknown(id="handle_unknown")
 
-    # Step 2: Build the workflow with the defined edges with conditions.
+    # Step 2: Build the workflow. Start from the classifier and branch by switch-case directly.
     workflow = (
         WorkflowBuilder()
-        .set_start_executor(submitter)
-        .add_edge(submitter, spam_classifier)
-        .add_edge(spam_classifier, router)
+        .set_start_executor(spam_classifier)
         .add_switch_case_edge_group(
-            router,
+            spam_classifier,
             [
-                Case(condition=lambda x: x.is_spam, target=remove_spam),
-                Default(target=send_response),
+                Case(condition=lambda resp: _tri_state(resp) is True, target=remove_spam),
+                Case(condition=lambda resp: _tri_state(resp) is False, target=send_response),
+                Default(target=handle_unknown),
             ],
         )
         .build()
     )
 
     # Step 3: Run the workflow with an input message.
-    async for event in workflow.run_streaming("This is a spam."):
+    user_msg = ChatMessage(ChatRole.USER, text="This is a spam.")
+    request = AgentExecutorRequest(messages=[user_msg], should_respond=True)
+    async for event in workflow.run_streaming(request):
         print(f"Event: {event}")
 
 

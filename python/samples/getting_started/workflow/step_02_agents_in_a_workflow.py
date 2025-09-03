@@ -49,7 +49,7 @@ async def main():
     workflow = WorkflowBuilder().set_start_executor(writer).add_edge(writer, reviewer).build()
 
     # Step 3: Run the workflow with an initial message.
-    completion_event = None
+    event = None
     async for event in workflow.run_streaming(
         "Create a slogan for a new electric SUV that is affordable and fun to drive."
     ):
@@ -57,10 +57,7 @@ async def main():
             print(f"{event}")
 
         if isinstance(event, WorkflowCompletedEvent):
-            completion_event = event
-
-    if completion_event:
-        print(f"Completion Event: {completion_event}")
+            print(f"Completion Event: {event}")
 
 
 if __name__ == "__main__":

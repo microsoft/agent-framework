@@ -50,7 +50,7 @@ class Email:
     email_content: str
 
 
-class SpamDetectionExecutor(Executor):
+class SpamDetection(Executor):
     """Classify spam and persist the email content in shared state once."""
 
     def __init__(self, spam_keywords: list[str], id: str | None = None):
@@ -99,7 +99,7 @@ class SubmitToReplyAgent(Executor):
         )
 
 
-class FinalizeAndSendExecutor(Executor):
+class FinalizeAndSend(Executor):
     """Convert the agent response to a final completion event (simulate sending)."""
 
     @handler
@@ -107,7 +107,7 @@ class FinalizeAndSendExecutor(Executor):
         await ctx.add_event(WorkflowCompletedEvent(f"Email sent: {response.agent_run_response.text}"))
 
 
-class HandleSpamExecutor(Executor):
+class HandleSpam(Executor):
     """Handle spam by emitting a completion event with the reason."""
 
     @handler
@@ -133,10 +133,10 @@ async def main() -> None:
     )
 
     # Create executors
-    spam_detector = SpamDetectionExecutor(spam_keywords, id="spam_detector")
+    spam_detector = SpamDetection(spam_keywords, id="spam_detector")
     submitter = SubmitToReplyAgent(reply_agent_id=reply_agent.id, id="submit_reply_agent")
-    sender = FinalizeAndSendExecutor(id="send_email")
-    spam_handler = HandleSpamExecutor(id="handle_spam")
+    sender = FinalizeAndSend(id="send_email")
+    spam_handler = HandleSpam(id="handle_spam")
 
     # Build the workflow with conditional routing, showcasing shared state usage
     workflow = (
