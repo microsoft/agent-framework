@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from typing import Optional
+from typing import Literal
 
 from agent_framework import ChatMessage, ChatRole
 from agent_framework.azure import AzureChatClient
@@ -18,6 +18,7 @@ from agent_framework.workflow import (
     handler,
 )
 from azure.identity import AzureCliCredential
+from pydantic import BaseModel
 
 """
 Switch-Case Edge Group (with Agent Classifier)
@@ -32,6 +33,12 @@ Prerequisites:
 """
 
 
+class ClassificationType(BaseModel):
+    """Structured classifier output for response_format."""
+
+    classification: Literal["SPAM", "NOT_SPAM", "UNKNOWN"]
+
+
 class SendResponse(Executor):
     """Respond to a message that is explicitly NOT spam."""
 
@@ -42,7 +49,7 @@ class SendResponse(Executor):
         ctx: WorkflowContext[None],
     ) -> None:
         """Respond only when the classifier marked it NOT spam."""
-        if _tri_state(response) is not False:
+        if _classification(response) != "NOT_SPAM":
             raise RuntimeError("Input is not explicitly NOT_SPAM, cannot respond.")
 
         # Simulate processing delay
@@ -62,7 +69,7 @@ class RemoveSpam(Executor):
         ctx: WorkflowContext[None],
     ) -> None:
         """Remove the spam message."""
-        if _tri_state(response) is not True:
+        if _classification(response) != "SPAM":
             raise RuntimeError("Input is not spam, cannot remove.")
 
         # Simulate processing delay
@@ -81,7 +88,7 @@ class HandleUnknown(Executor):
         response: AgentExecutorResponse,
         ctx: WorkflowContext[None],
     ) -> None:
-        if _tri_state(response) is not None:
+        if _classification(response) != "UNKNOWN":
             raise RuntimeError("Input is known spam/not_spam, not unknown.")
 
         print("Unable to classify message. Escalating for review (UNKNOWN).")
@@ -90,14 +97,14 @@ class HandleUnknown(Executor):
         await ctx.add_event(WorkflowCompletedEvent("Message requires manual review (UNKNOWN)."))
 
 
-def _tri_state(response: AgentExecutorResponse) -> Optional[bool]:
-    """Return True for SPAM, False for NOT_SPAM, None for UNKNOWN/other."""
-    text = (response.agent_run_response.text or "").strip().upper()
-    if "NOT_SPAM" in text:
-        return False
-    if "SPAM" in text and "NOT_SPAM" not in text:
-        return True
-    return None
+def _classification(response: AgentExecutorResponse) -> str:
+    """Return classification label using structured output when available."""
+    raw = response.agent_run_response.raw_representation
+    if raw is not None:
+        val = getattr(raw, "value", None)
+        if isinstance(val, ClassificationType):
+            return val.classification
+    return ClassificationType.model_validate_json(response.agent_run_response.text).classification
 
 
 async def main():
@@ -109,7 +116,8 @@ async def main():
             instructions=(
                 "You are an email spam classifier. Given ONLY the email body, respond with exactly one token: "
                 "'SPAM', 'NOT_SPAM', or 'UNKNOWN' if genuinely uncertain."
-            )
+            ),
+            response_format=ClassificationType,
         ),
         id="spam_classifier",
     )
@@ -126,8 +134,8 @@ async def main():
         .add_switch_case_edge_group(
             spam_classifier,
             [
-                Case(condition=lambda resp: _tri_state(resp) is True, target=remove_spam),
-                Case(condition=lambda resp: _tri_state(resp) is False, target=send_response),
+                Case(condition=lambda resp: _classification(resp) == "SPAM", target=remove_spam),
+                Case(condition=lambda resp: _classification(resp) == "NOT_SPAM", target=send_response),
                 Default(target=handle_unknown),
             ],
         )
