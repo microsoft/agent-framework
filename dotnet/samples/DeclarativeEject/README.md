@@ -72,6 +72,8 @@ Workflow<string> workflow = ...;
 
 ## Translation
 
+All three options rely 
+
 #### Source:
 
 Here is the YAML source for a simple workflow that assings a variable based on input and invokes an Azure agent.
@@ -176,7 +178,8 @@ internal sealed class SetInputTaskExecutor() : ActionExecutor(id: "set_input_tas
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        await context.QueueStateUpdateAsync("InputTask", ValueExpression.Expression("=System.LastMessage"), "Topic").ConfigureAwait(false);
+        ChatMessage? value = await context.ReadStateAsync<ChatMessage>("LastMessage", "System").ConfigureAwait(false);
+        await context.QueueStateUpdateAsync("InputTask", value), "Topic").ConfigureAwait(false);
     }
 }
 
@@ -184,11 +187,9 @@ internal sealed class AgentResponseExecutor : AgentActionExecutor(id: "agent_inv
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        await this.InvokeAgentAsync(
-            context,
-            agentId: StringExpression.Expression("=Env.FOUNDRY_AGENT_ID"), 
-            input: ValueExpression.Expression("=Topic.InputTask"), 
-            cancellationToken).ConfigureAwait(false);        
+        string agentId = await context.ReadStateAsync<ChatMessage>("FOUNDRY_AGENT_ID", "Env").ConfigureAwait(false);
+        ChatMessage? input = await context.ReadStateAsync<ChatMessage>("InputTask", "Topic").ConfigureAwait(false);
+        await this.InvokeAgentAsync(context, agentId, input, cancellationToken).ConfigureAwait(false);        
     }
 }
 
