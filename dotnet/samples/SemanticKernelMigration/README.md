@@ -334,8 +334,10 @@ The migration samples are organized into three categories, each demonstrating di
 |[AzureAIFoundry](./AzureAIFoundry/)|Azure OpenAI service integration samples|
 |[AzureOpenAI](./AzureOpenAI/)|Direct Azure OpenAI API integration samples|
 |[AzureOpenAIAssistants](./AzureOpenAIAssistants/)|Azure OpenAI Assistants API integration samples|
+|[AzureOpenAIResponses](./AzureOpenAIResponses/)|Azure OpenAI Responses API integration samples|
 |[OpenAI](./OpenAI/)|Direct OpenAI API integration samples|
-|[OpenAIAssistants](./OpenAIAssistants/)|OpenAI Assistant API integration samples|
+|[OpenAIAssistants](./OpenAIAssistants/)|OpenAI Assistants API integration samples|
+|[OpenAIResponses](./OpenAIResponses/)|OpenAI Responses API integration samples|
 
 ## Running the samples from the console
 
@@ -346,6 +348,10 @@ To run any migration sample, navigate to the desired sample directory:
 cd "AzureAIFoundry\Step01_Basics"
 dotnet run
 
+# Azure OpenAI Examples
+cd "AzureOpenAI\Step01_Basics"
+dotnet run
+
 # OpenAI Examples
 cd "OpenAI\Step01_Basics"
 dotnet run
@@ -353,6 +359,9 @@ dotnet run
 # OpenAI Assistants Examples
 cd "OpenAIAssistants\Step01_Basics"
 dotnet run
+
+# OpenAI Responses Examples
+cd "OpenAIResponses\Step01_Basics"
 
 # Azure OpenAI Examples
 cd "AzureOpenAI\Step01_Basics"
