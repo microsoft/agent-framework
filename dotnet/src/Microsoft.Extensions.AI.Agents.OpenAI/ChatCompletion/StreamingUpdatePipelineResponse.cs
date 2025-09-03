@@ -33,7 +33,7 @@ internal sealed class StreamingUpdatePipelineResponse : PipelineResponse
     /// <summary>
     /// Streaming responses do not have headers.
     /// </summary>
-    protected override PipelineResponseHeaders HeadersCore => PipelineResponseHeaders.Empty;
+    protected override PipelineResponseHeaders HeadersCore => new EmptyPipelineResponseHeaders();
 
     /// <summary>
     /// Buffering content is not supported for streaming responses.
@@ -65,4 +65,22 @@ internal sealed class StreamingUpdatePipelineResponse : PipelineResponse
     }
 
     private readonly IAsyncEnumerable<AgentRunResponseUpdate> _updates;
+
+    private sealed class EmptyPipelineResponseHeaders : PipelineResponseHeaders
+    {
+        public override bool TryGetValue(string name, out string? value)
+        {
+            value = null;
+            return false;
+        }
+        public override bool TryGetValues(string name, out IEnumerable<string>? values)
+        {
+            values = null;
+            return false;
+        }
+        public override IEnumerator<KeyValuePair<string, string>> GetEnumerator()
+        {
+            yield break;
+        }
+    }
 }
