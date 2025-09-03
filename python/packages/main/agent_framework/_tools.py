@@ -252,7 +252,7 @@ class HostedMCPTool(AIToolBase):
             approval_mode: The approval mode for the tool. This can be:
                 - "always_require": The tool always requires approval before use.
                 - "never_require": The tool never requires approval before use.
-                - A dict with keys `always_require_approval` and `never_require_approval`,
+                - A dict with keys `always_require_approval` or `never_require_approval`,
                   followed by a sequence of strings with the names of the relevant tools.
             allowed_tools: A list of tools that are allowed to use this tool.
             headers: Headers to include in requests to the tool.
