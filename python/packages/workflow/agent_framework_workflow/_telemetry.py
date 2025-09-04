@@ -151,17 +151,22 @@ class WorkflowTracer:
         edge_group_id: str | None = None,
         message_source_id: str | None = None,
         message_target_id: str | None = None,
+        source_trace_contexts: list[dict[str, str]] | None = None,
+        source_span_ids: list[str] | None = None,
     ) -> Any:
-        """Create an edge group processing span.
+        """Create an edge group processing span with optional links to source spans.
 
         Edge group processing spans track the processing operations in edge runners
         before message delivery, including condition checking and routing decisions.
+        Links to source spans provide causality tracking without unwanted nesting.
 
         Args:
             edge_group_type: The type of the edge group (class name).
             edge_group_id: The unique ID of the edge group.
             message_source_id: The source ID of the message being processed.
             message_target_id: The target ID of the message being processed.
+            source_trace_contexts: Optional trace contexts from source spans for linking.
+            source_span_ids: Optional source span IDs for linking.
         """
         attributes: dict[str, str] = {
             "edge_group.type": edge_group_type,
@@ -174,10 +179,38 @@ class WorkflowTracer:
         if message_target_id is not None:
             attributes["message.target_id"] = message_target_id
 
+        # Create links to source spans for causality without nesting
+        links = []
+        if source_trace_contexts and source_span_ids:
+            # Create links for all source spans (supporting fan-in with multiple sources)
+            for trace_context, span_id in zip(source_trace_contexts, source_span_ids, strict=False):
+                try:
+                    # Extract trace and span IDs from the trace context
+                    # This is a simplified approach - in production you'd want more robust parsing
+                    traceparent = trace_context.get("traceparent", "")
+                    if traceparent:
+                        # traceparent format: "00-{trace_id}-{parent_span_id}-{trace_flags}"
+                        parts = traceparent.split("-")
+                        if len(parts) >= 3:
+                            trace_id_hex = parts[1]
+                            # Use the source_span_id that was saved from the publishing span
+
+                            # Create span context for linking
+                            span_context = SpanContext(
+                                trace_id=int(trace_id_hex, 16),
+                                span_id=int(span_id, 16),
+                                is_remote=True,
+                            )
+                            links.append(Link(span_context))
+                except (ValueError, TypeError, AttributeError):
+                    # If linking fails, continue without link (graceful degradation)
+                    pass
+
         return self.tracer.start_as_current_span(
             _EDGE_GROUP_PROCESS_SPAN,
             kind=SpanKind.INTERNAL,
             attributes=attributes,
+            links=links,
         )
 
     def set_edge_group_span_attributes(self, delivered: bool, delivery_status: EdgeGroupDeliveryStatus) -> None:

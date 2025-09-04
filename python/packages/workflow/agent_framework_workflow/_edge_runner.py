@@ -96,6 +96,8 @@ class SingleEdgeRunner(EdgeRunner):
             edge_group_id=self._edge_group.id,
             message_source_id=message.source_id,
             message_target_id=message.target_id,
+            source_trace_contexts=message.trace_contexts,
+            source_span_ids=message.source_span_ids,
         ):
             try:
                 if message.target_id and message.target_id != self._edge.target_id:
@@ -152,6 +154,8 @@ class FanOutEdgeRunner(EdgeRunner):
             edge_group_id=self._edge_group.id,
             message_source_id=message.source_id,
             message_target_id=message.target_id,
+            source_trace_contexts=message.trace_contexts,
+            source_span_ids=message.source_span_ids,
         ):
             try:
                 selection_results = (
@@ -252,10 +256,14 @@ class FanInEdgeRunner(EdgeRunner):
             edge_group_id=self._edge_group.id,
             message_source_id=message.source_id,
             message_target_id=message.target_id,
+            source_trace_contexts=message.trace_contexts,
+            source_span_ids=message.source_span_ids,
         ):
             try:
                 if message.target_id and message.target_id != self._edges[0].target_id:
-                    workflow_tracer.set_edge_group_span_attributes(False, EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH)
+                    workflow_tracer.set_edge_group_span_attributes(
+                        False, EdgeGroupDeliveryStatus.DROPPED_TARGET_MISMATCH
+                    )
                     return False
 
                 # Check if target can handle list of message data (fan-in aggregates multiple messages)

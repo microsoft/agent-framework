@@ -315,8 +315,12 @@ async def test_single_edge_group_tracing_success(span_exporter) -> None:
     shared_state = SharedState()
     ctx = InProcRunnerContext()
 
+    # Create trace context and span IDs to simulate a message with tracing information
+    trace_contexts = [{"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"}]
+    source_span_ids = ["00f067aa0ba902b7"]
+
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id)
+    message = Message(data=data, source_id=source.id, trace_contexts=trace_contexts, source_span_ids=source_span_ids)
 
     # Clear any build spans
     span_exporter.clear()
@@ -336,6 +340,15 @@ async def test_single_edge_group_tracing_success(span_exporter) -> None:
     assert span.attributes.get("edge_group.delivery_status") == EdgeGroupDeliveryStatus.DELIVERED.value
     assert span.attributes.get("edge_group.id") is not None
     assert span.attributes.get("message.source_id") == source.id
+
+    # Verify span links are created
+    assert span.links is not None
+    assert len(span.links) == 1
+
+    link = span.links[0]
+    # Verify the link points to the correct trace and span
+    assert link.context.trace_id == int("4bf92f3577b34da6a3ce929d0e0e4736", 16)
+    assert link.context.span_id == int("00f067aa0ba902b7", 16)
 
 
 async def test_single_edge_group_tracing_condition_failure(span_exporter) -> None:
@@ -771,8 +784,12 @@ async def test_fan_out_edge_group_tracing_success(span_exporter) -> None:
     shared_state = SharedState()
     ctx = InProcRunnerContext()
 
+    # Create trace context and span IDs to simulate a message with tracing information
+    trace_contexts = [{"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"}]
+    source_span_ids = ["00f067aa0ba902b7"]
+
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id)
+    message = Message(data=data, source_id=source.id, trace_contexts=trace_contexts, source_span_ids=source_span_ids)
 
     # Clear any build spans
     span_exporter.clear()
@@ -793,6 +810,15 @@ async def test_fan_out_edge_group_tracing_success(span_exporter) -> None:
     assert span.attributes.get("edge_group.id") is not None
     assert span.attributes.get("message.source_id") == source.id
 
+    # Verify span links are created
+    assert span.links is not None
+    assert len(span.links) == 1
+
+    link = span.links[0]
+    # Verify the link points to the correct trace and span
+    assert link.context.trace_id == int("4bf92f3577b34da6a3ce929d0e0e4736", 16)
+    assert link.context.span_id == int("00f067aa0ba902b7", 16)
+
 
 async def test_fan_out_edge_group_tracing_with_target(span_exporter) -> None:
     """Test that fan-out edge group processing creates proper spans for targeted messages."""
@@ -807,8 +833,18 @@ async def test_fan_out_edge_group_tracing_with_target(span_exporter) -> None:
     shared_state = SharedState()
     ctx = InProcRunnerContext()
 
+    # Create trace context and span IDs to simulate a message with tracing information
+    trace_contexts = [{"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"}]
+    source_span_ids = ["00f067aa0ba902b7"]
+
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id, target_id=target1.id)
+    message = Message(
+        data=data,
+        source_id=source.id,
+        target_id=target1.id,
+        trace_contexts=trace_contexts,
+        source_span_ids=source_span_ids,
+    )
 
     # Clear any build spans
     span_exporter.clear()
@@ -827,6 +863,15 @@ async def test_fan_out_edge_group_tracing_with_target(span_exporter) -> None:
     assert span.attributes.get("edge_group.delivered") is True
     assert span.attributes.get("edge_group.delivery_status") == EdgeGroupDeliveryStatus.DELIVERED.value
     assert span.attributes.get("message.target_id") == target1.id
+
+    # Verify span links are created
+    assert span.links is not None
+    assert len(span.links) == 1
+
+    link = span.links[0]
+    # Verify the link points to the correct trace and span
+    assert link.context.trace_id == int("4bf92f3577b34da6a3ce929d0e0e4736", 16)
+    assert link.context.span_id == int("00f067aa0ba902b7", 16)
 
 
 # endregion FanOutEdgeGroup
@@ -956,12 +1001,19 @@ async def test_fan_in_edge_group_tracing_buffered(span_exporter) -> None:
 
     data = MockMessage(data="test")
 
+    # Create trace context and span IDs to simulate a message with tracing information
+    trace_contexts1 = [{"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"}]
+    source_span_ids1 = ["00f067aa0ba902b7"]
+
+    trace_contexts2 = [{"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b8-01"}]
+    source_span_ids2 = ["00f067aa0ba902b8"]
+
     # Clear any build spans
     span_exporter.clear()
 
     # Send first message (should be buffered)
     success = await edge_runner.send_message(
-        Message(data=data, source_id=source1.id),
+        Message(data=data, source_id=source1.id, trace_contexts=trace_contexts1, source_span_ids=source_span_ids1),
         shared_state,
         ctx,
     )
@@ -979,11 +1031,20 @@ async def test_fan_in_edge_group_tracing_buffered(span_exporter) -> None:
     assert span.attributes.get("edge_group.delivery_status") == EdgeGroupDeliveryStatus.BUFFERED.value
     assert span.attributes.get("message.source_id") == source1.id
 
+    # Verify span links are created for first message
+    assert span.links is not None
+    assert len(span.links) == 1
+
+    link = span.links[0]
+    # Verify the link points to the correct trace and span
+    assert link.context.trace_id == int("4bf92f3577b34da6a3ce929d0e0e4736", 16)
+    assert link.context.span_id == int("00f067aa0ba902b7", 16)
+
     # Clear spans and send second message (should trigger delivery)
     span_exporter.clear()
 
     success = await edge_runner.send_message(
-        Message(data=data, source_id=source2.id),
+        Message(data=data, source_id=source2.id, trace_contexts=trace_contexts2, source_span_ids=source_span_ids2),
         shared_state,
         ctx,
     )
@@ -1000,6 +1061,15 @@ async def test_fan_in_edge_group_tracing_buffered(span_exporter) -> None:
     assert span.attributes.get("edge_group.delivered") is True
     assert span.attributes.get("edge_group.delivery_status") == EdgeGroupDeliveryStatus.DELIVERED.value
     assert span.attributes.get("message.source_id") == source2.id
+
+    # Verify span links are created for second message
+    assert span.links is not None
+    assert len(span.links) == 1
+
+    link = span.links[0]
+    # Verify the link points to the correct trace and span for the second message
+    assert link.context.trace_id == int("4bf92f3577b34da6a3ce929d0e0e4736", 16)
+    assert link.context.span_id == int("00f067aa0ba902b8", 16)
 
 
 async def test_fan_in_edge_group_tracing_type_mismatch(span_exporter) -> None:
