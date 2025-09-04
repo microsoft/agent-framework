@@ -5,7 +5,7 @@ import os
 from random import randint
 from typing import Annotated
 
-from agent_framework import ChatClientAgent
+from agent_framework import ChatAgent
 from agent_framework.openai import OpenAIAssistantsClient
 from openai import AsyncOpenAI
 from pydantic import Field
@@ -31,7 +31,7 @@ async def main() -> None:
     )
 
     try:
-        async with ChatClientAgent(
+        async with ChatAgent(
             chat_client=OpenAIAssistantsClient(async_client=client, assistant_id=created_assistant.id),
             instructions="You are a helpful weather agent.",
             tools=get_weather,

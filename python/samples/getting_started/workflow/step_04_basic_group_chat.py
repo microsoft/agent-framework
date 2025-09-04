@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatMessage, ChatRole
+from agent_framework import ChatMessage, Role
 from agent_framework.azure import AzureChatClient
 from agent_framework.workflow import (
     AgentExecutor,
@@ -36,7 +36,7 @@ class RoundRobinGroupChatManager(Executor):
     @handler
     async def start(self, task: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
         """Execute the task by sending messages to the next executor in the round-robin sequence."""
-        initial_message = ChatMessage(ChatRole.USER, text=task)
+        initial_message = ChatMessage(Role.USER, text=task)
 
         # Send the initial message to the members
         await asyncio.gather(*[
@@ -132,7 +132,7 @@ async def main():
 
     # Step 3: Run the workflow with an initial message.
     completion_event = None
-    async for event in workflow.run_streaming(
+    async for event in workflow.run_stream(
         "Create a slogan for a new electric SUV that is affordable and fun to drive."
     ):
         if isinstance(event, AgentRunEvent):

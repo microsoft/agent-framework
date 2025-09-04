@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar, Union, get_args, get_or
 if TYPE_CHECKING:
     from ._workflow import Workflow
 
-from agent_framework import AgentRunResponse, AgentRunResponseUpdate, AgentThread, AIAgent, ChatMessage
+from agent_framework import AgentProtocol, AgentRunResponse, AgentRunResponseUpdate, AgentThread, ChatMessage
 from agent_framework._pydantic import AFBaseModel
 from pydantic import Field
 
@@ -789,7 +789,7 @@ class AgentExecutor(Executor):
 
     def __init__(
         self,
-        agent: AIAgent,
+        agent: AgentProtocol,
         *,
         agent_thread: AgentThread | None = None,
         streaming: bool = False,
@@ -818,7 +818,7 @@ class AgentExecutor(Executor):
         if request.should_respond:
             if self._streaming:
                 updates: list[AgentRunResponseUpdate] = []
-                async for update in self._agent.run_streaming(
+                async for update in self._agent.run_stream(
                     self._cache,
                     thread=self._agent_thread,
                 ):
@@ -894,7 +894,7 @@ class WorkflowExecutor(Executor):
 
         try:
             # Run the sub-workflow and collect all events
-            events = [event async for event in self.workflow.run_streaming(input_data)]
+            events = [event async for event in self.workflow.run_stream(input_data)]
 
             # Count requests and initialize response tracking
             request_count = 0
