@@ -79,7 +79,6 @@ KNOWN_MEDIA_TYPES = [
 __all__ = [
     "AgentRunResponse",
     "AgentRunResponseUpdate",
-    "AnnotatedRegion",
     "AnnotatedRegions",
     "Annotations",
     "BaseAnnotation",
@@ -316,19 +315,7 @@ def _finalize_response(response: "ChatResponse | AgentRunResponse") -> None:
 # region BaseAnnotation
 
 
-class AnnotatedRegion(AFBaseModel):
-    """Represents a collection of annotated regions.
-
-    Attributes:
-        regions: A list of regions that have been annotated.
-        additional_properties: Optional additional properties associated with the content.
-        raw_representation: Optional raw representation of the content from an underlying implementation.
-    """
-
-    type: Literal["annotated_regions"] = "annotated_regions"  # type: ignore[assignment]
-
-
-class TextSpanRegion(AnnotatedRegion):
+class TextSpanRegion(AFBaseModel):
     """Represents a region of text that has been annotated."""
 
     type: Literal["text_span"] = "text_span"  # type: ignore[assignment]
@@ -337,7 +324,7 @@ class TextSpanRegion(AnnotatedRegion):
 
 
 AnnotatedRegions = Annotated[
-    TextSpanRegion | AnnotatedRegion,
+    TextSpanRegion,
     Field(discriminator="type"),
 ]
 
@@ -346,13 +333,11 @@ class BaseAnnotation(AFBaseModel):
     """Base class for all AI Annotation types.
 
     Args:
-        type: The type of content, which is always "ai_annotation" for this class.
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content from an underlying implementation.
 
     """
 
-    type: Literal["ai_annotation"] = "ai_annotation"
     annotated_regions: list[AnnotatedRegions] | None = None
     additional_properties: dict[str, Any] | None = None
     raw_representation: Any | None = Field(default=None, repr=False)
@@ -394,14 +379,12 @@ class BaseContent(AFBaseModel):
     """Represents content used by AI services.
 
     Attributes:
-        type: The type of content, which is always "ai" for this class.
         annotations: Optional annotations associated with the content.
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content from an underlying implementation.
 
     """
 
-    type: Literal["ai"] = "ai"
     annotations: list[Annotations] | None = None
     additional_properties: dict[str, Any] | None = None
     raw_representation: Any | None = Field(default=None, repr=False, exclude=True)

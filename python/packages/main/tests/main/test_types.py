@@ -10,8 +10,6 @@ from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
     AIFunction,
-    AnnotatedRegion,
-    BaseAnnotation,
     BaseContent,
     ChatMessage,
     ChatOptions,
@@ -914,18 +912,16 @@ def test_error_content_str():
 
 def test_annotations_models_and_roundtrip():
     span = TextSpanRegion(start_index=0, end_index=5)
-    base_region = AnnotatedRegion()
-    ann: BaseAnnotation = BaseAnnotation(annotated_regions=[span, base_region])
     cit = CitationAnnotation(title="Doc", url="http://example.com", snippet="Snippet", annotated_regions=[span])
 
     # Attach to content
     content = TextContent(text="hello", additional_properties={"v": 1})
-    content.annotations = [ann, cit]
+    content.annotations = [cit]
 
     dumped = content.model_dump()
     loaded = TextContent.model_validate(dumped)
     assert isinstance(loaded.annotations, list)
-    assert len(loaded.annotations) == 2
+    assert len(loaded.annotations) == 1
     assert isinstance(loaded.annotations[0], dict) is False  # pydantic parsed into models
     # discriminators preserved
     assert any(getattr(a, "type", None) == "citation" for a in loaded.annotations)
