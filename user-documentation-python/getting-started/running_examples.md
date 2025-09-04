@@ -13,7 +13,7 @@ If you clone the repository and run examples within an IDE like VS Code using F5
 1. Clone the repository:
    ```bash
    git clone https://github.com/microsoft/agent-framework.git
-   cd agent-framework
+   cd agent-framework/python
    ```
 
 2. Configure environment variables in the `agent-framework/python` folder by creating a `.env` file (use [.env.example](../../python/.env.example) as example):
