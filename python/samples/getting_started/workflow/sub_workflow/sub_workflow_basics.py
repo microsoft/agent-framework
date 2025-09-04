@@ -15,7 +15,7 @@ from agent_framework.workflow import (
 )
 
 """
-Sub-Workflows (Basics)
+Sample: Sub-Workflows (Basics)
 
 What it does:
 - Shows how a parent workflow invokes a sub-workflow via `WorkflowExecutor` and collects results.

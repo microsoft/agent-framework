@@ -34,6 +34,8 @@ except ImportError:
     )
 
 """
+Sample: Sub-workflow with parallel requests
+
 This sample demonstrates the PROPER pattern for request interception.
 
 Prerequisites:

@@ -21,7 +21,7 @@ from agent_framework.workflow import (
 from azure.identity import AzureCliCredential
 
 """
-Concurrent (Fan-out/Fan-in) with Agents + Visualization
+Sample: Concurrent (Fan-out/Fan-in) with Agents + Visualization
 
 What it does:
 - Fan-out: dispatch the same prompt to multiple domain agents (research, marketing, legal).

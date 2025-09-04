@@ -24,16 +24,28 @@ from azure.identity import AzureCliCredential
 from pydantic import BaseModel
 
 """
-Step 06b — Multi-Selection Edge Group
+Sample: Multi-Selection Edge Group for email triage and response. 
 
-Mirrors the .NET sample by:
-- Analyzing email (spam decision + reason) and enriching with length and id
-- Multi-path routing (fan-out subset) based on the analysis result
-  - NotSpam → Email Assistant (always) + Email Summary (if long)
-  - Spam → Handle Spam
-  - Uncertain → Handle Uncertain
-- Database logging for both short emails and summarized long emails
+The workflow stores an email,
+classifies it as NotSpam, Spam, or Uncertain, and then routes to one or more branches.
+Non-spam emails are drafted into replies, long ones are also summarized, spam is blocked, and uncertain cases are
+flagged. Each path ends with simulated database persistence.
+
+Purpose:
+Demonstrate how to use a multi-selection edge group to fan out from one executor to multiple possible targets.
+Show how to:
+- Implement a selection function that chooses one or more downstream branches based on analysis.
+- Share state across branches so different executors can read the same email content.
+- Validate agent outputs with Pydantic models for robust structured data exchange.
+- Merge results from multiple branches (e.g., a summary) back into a typed state.
+- Apply conditional persistence logic (short vs long emails).
+
+Prerequisites:
+- Familiarity with WorkflowBuilder, executors, edges, and events.
+- Understanding of multi-selection edge groups and how their selection function maps to target ids.
+- Experience with shared state in workflows for persisting and reusing objects.
 """
+
 
 EMAIL_STATE_PREFIX = "email:"
 CURRENT_EMAIL_ID_KEY = "current_email_id"

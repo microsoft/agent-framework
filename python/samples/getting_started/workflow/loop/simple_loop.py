@@ -19,7 +19,7 @@ from agent_framework.workflow import (
 from azure.identity import AzureCliCredential
 
 """
-Simple Loop (with an Agent Judge)
+Sample: Simple Loop (with an Agent Judge)
 
 What it does:
 - Guesser performs a binary search; judge is an agent that returns ABOVE/BELOW/MATCHED.

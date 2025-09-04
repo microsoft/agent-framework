@@ -21,31 +21,51 @@ from agent_framework.workflow import (
 from azure.identity import AzureCliCredential
 
 """
-Checkpointing & Resume (with an Agent Stage)
+Sample: Checkpointing and Resuming a Workflow (with an Agent stage)
 
-What it does:
-- Demonstrates checkpointing and resume at superstep boundaries with shared state.
-- Flow: UpperCase -> Reverse -> SubmitToLowerAgent -> LowerAgent (AgentExecutor) -> Finalize.
-- Resumes from the checkpoint after Reverse to run only the agent + finalize stages.
+Purpose:
+This sample shows how to enable checkpointing at superstep boundaries, persist both
+executor-local state and shared workflow state, and then resume execution from a specific
+checkpoint. The workflow demonstrates a simple text-processing pipeline that includes
+an LLM-backed AgentExecutor stage.
+
+Pipeline:
+1) UpperCaseExecutor converts input to uppercase and records state.
+2) ReverseTextExecutor reverses the string.
+3) SubmitToLowerAgent prepares an AgentExecutorRequest for the lowercasing agent.
+4) lower_agent (AgentExecutor) converts text to lowercase via Azure OpenAI.
+5) FinalizeFromAgent emits a WorkflowCompletedEvent with the final result.
+
+What you learn:
+- How to persist executor state using ctx.get_state and ctx.set_state.
+- How to persist shared workflow state using ctx.set_shared_state for cross-executor visibility.
+- How to configure FileCheckpointStorage and call with_checkpointing on WorkflowBuilder.
+- How to list and inspect checkpoints programmatically.
+- How to resume a workflow from a chosen checkpoint using run_streaming_from_checkpoint.
 
 Prerequisites:
-- Azure AI/ Azure OpenAI for `AzureChatClient` agent.
-- Authentication via `azure-identity` — uses `AzureCliCredential()` (run `az login`).
-- Filesystem access to write checkpoints (local temp folder).
+- Azure AI or Azure OpenAI available for AzureChatClient.
+- Authentication with azure-identity via AzureCliCredential. Run az login locally.
+- Filesystem access for writing JSON checkpoint files in a temp directory.
 """
 
-# Define the temporary directory for storing checkpoints
+# Define the temporary directory for storing checkpoints.
+# These files allow the workflow to be resumed later.
 DIR = os.path.dirname(__file__)
 TEMP_DIR = os.path.join(DIR, "tmp", "checkpoints")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 
 class UpperCaseExecutor(Executor):
+    """Uppercases the input text and persists both local and shared state."""
+
     @handler
     async def to_upper_case(self, text: str, ctx: WorkflowContext[str]) -> None:
         result = text.upper()
         print(f"UpperCaseExecutor: '{text}' -> '{result}'")
-        # Persist executor state into checkpointable context
+
+        # Persist executor-local state so it is captured in checkpoints
+        # and available after resume for observability or logic.
         prev = await ctx.get_state() or {}
         count = int(prev.get("count", 0)) + 1
         await ctx.set_state({
@@ -53,14 +73,17 @@ class UpperCaseExecutor(Executor):
             "last_input": text,
             "last_output": result,
         })
-        # Write to shared_state so downstream executors (and checkpoints) can see it
+
+        # Write to shared_state so downstream executors and any resumed runs can read it.
         await ctx.set_shared_state("original_input", text)
         await ctx.set_shared_state("upper_output", result)
+
+        # Send transformed text to the next executor.
         await ctx.send_message(result)
 
 
 class SubmitToLowerAgent(Executor):
-    """Prepare AgentExecutorRequest to lower-case the text and keep shared-state visibility."""
+    """Builds an AgentExecutorRequest to send to the lowercasing agent while keeping shared-state visibility."""
 
     def __init__(self, agent_id: str, id: str | None = None):
         super().__init__(id=id)
@@ -68,12 +91,16 @@ class SubmitToLowerAgent(Executor):
 
     @handler
     async def submit(self, text: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
-        # Read from shared_state written by UpperCaseExecutor (for demo visibility)
+        # Demonstrate reading shared_state written by UpperCaseExecutor.
+        # Shared state survives across checkpoints and is visible to all executors.
         orig = await ctx.get_shared_state("original_input")
         upper = await ctx.get_shared_state("upper_output")
         print(f"LowerAgent (shared_state): original_input='{orig}', upper_output='{upper}'")
 
+        # Build a minimal, deterministic prompt for the AgentExecutor.
         prompt = f"Convert the following text to lowercase. Return ONLY the transformed text.\n\nText: {text}"
+
+        # Send to the AgentExecutor. should_respond=True instructs the agent to produce a reply.
         await ctx.send_message(
             AgentExecutorRequest(messages=[ChatMessage(ChatRole.USER, text=prompt)], should_respond=True),
             target_id=self._agent_id,
@@ -81,10 +108,13 @@ class SubmitToLowerAgent(Executor):
 
 
 class FinalizeFromAgent(Executor):
+    """Consumes the AgentExecutorResponse and emits the terminal WorkflowCompletedEvent."""
+
     @handler
     async def finalize(self, response: AgentExecutorResponse, ctx: WorkflowContext[Any]) -> None:
         result = response.agent_run_response.text or ""
-        # Persist executor state into checkpointable context
+
+        # Persist executor-local state for auditability when inspecting checkpoints.
         prev = await ctx.get_state() or {}
         count = int(prev.get("count", 0)) + 1
         await ctx.set_state({
@@ -92,10 +122,14 @@ class FinalizeFromAgent(Executor):
             "last_output": result,
             "final": True,
         })
+
+        # Emit a terminal event so external consumers see the final value.
         await ctx.add_event(WorkflowCompletedEvent(result))
 
 
 class ReverseTextExecutor(Executor):
+    """Reverses the input text and persists local state."""
+
     def __init__(self, id: str):
         """Initialize the executor with an ID."""
         super().__init__(id=id)
@@ -104,7 +138,8 @@ class ReverseTextExecutor(Executor):
     async def reverse_text(self, text: str, ctx: WorkflowContext[str]) -> None:
         result = text[::-1]
         print(f"ReverseTextExecutor: '{text}' -> '{result}'")
-        # Persist executor state into checkpointable context
+
+        # Persist executor-local state so checkpoint inspection can reveal progress.
         prev = await ctx.get_state() or {}
         count = int(prev.get("count", 0)) + 1
         await ctx.set_state({
@@ -112,16 +147,22 @@ class ReverseTextExecutor(Executor):
             "last_input": text,
             "last_output": result,
         })
+
+        # Forward the reversed string to the next stage.
         await ctx.send_message(result)
 
 
 async def find_checkpoint_with_message(
     checkpoint_storage: FileCheckpointStorage, workflow_id: str, needle: str
 ) -> str | None:
-    """Find the checkpoint that contains a message data value exactly equal to 'needle'."""
+    """Search checkpoints for a message whose data equals the given needle. Return its checkpoint_id if found."""
     checkpoints = await checkpoint_storage.list_checkpoints(workflow_id=workflow_id)
-    # Sort by timestamp ascending so earlier checkpoints appear first
+
+    # Sort by timestamp so we search in chronological order.
     checkpoints.sort(key=lambda cp: cp.timestamp)
+
+    # Each checkpoint contains a map of executor_id -> list[message dict].
+    # We scan messages for an exact data match.
     for checkpoint in checkpoints:
         for executor_messages in checkpoint.messages.values():
             for message in executor_messages:
@@ -131,14 +172,16 @@ async def find_checkpoint_with_message(
 
 
 async def main():
-    # Clear existing checkpoints in this sample directory
+    # Clear existing checkpoints in this sample directory for a clean run.
     checkpoint_dir = Path(TEMP_DIR)
     for file in checkpoint_dir.glob("*.json"):
         file.unlink()
 
+    # Instantiate the pipeline executors.
     upper_case_executor = UpperCaseExecutor(id="upper_case_executor")
     reverse_text_executor = ReverseTextExecutor(id="reverse_text_executor")
-    # Agent for lower-casing
+
+    # Configure the agent stage that lowercases the text.
     chat_client = AzureChatClient(credential=AzureCliCredential())
     lower_agent = AgentExecutor(
         chat_client.create_agent(
@@ -146,36 +189,41 @@ async def main():
         ),
         id="lower_agent",
     )
+
+    # Bridge to the agent and terminalization stage.
     submit_lower = SubmitToLowerAgent(agent_id=lower_agent.id, id="submit_lower")
     finalize = FinalizeFromAgent(id="finalize")
 
+    # Backing store for checkpoints written by with_checkpointing.
     checkpoint_storage = FileCheckpointStorage(storage_path=TEMP_DIR)
 
+    # Build the workflow with checkpointing enabled.
     workflow = (
         WorkflowBuilder(max_iterations=5)
-        .add_edge(upper_case_executor, reverse_text_executor)
-        .add_edge(reverse_text_executor, submit_lower)
-        .add_edge(submit_lower, lower_agent)
-        .add_edge(lower_agent, finalize)
-        .set_start_executor(upper_case_executor)
-        .with_checkpointing(checkpoint_storage=checkpoint_storage)
+        .add_edge(upper_case_executor, reverse_text_executor)  # Uppercase -> Reverse
+        .add_edge(reverse_text_executor, submit_lower)  # Reverse -> Build Agent request
+        .add_edge(submit_lower, lower_agent)  # Submit to AgentExecutor
+        .add_edge(lower_agent, finalize)  # Agent output -> Finalize
+        .set_start_executor(upper_case_executor)  # Entry point
+        .with_checkpointing(checkpoint_storage=checkpoint_storage)  # Enable persistence
         .build()
     )
 
+    # Run the full workflow once and observe events as they stream.
     print("Running workflow with initial message...")
     async for event in workflow.run_streaming(message="hello world"):
         print(f"Event: {event}")
 
-    # Inspect checkpoints
+    # Inspect checkpoints written during the run.
     all_checkpoints = await checkpoint_storage.list_checkpoints()
     if not all_checkpoints:
         print("No checkpoints found!")
         return
 
-    # All checkpoints from this run share one workflow_id
+    # All checkpoints created by this run share the same workflow_id.
     workflow_id = all_checkpoints[0].workflow_id
 
-    # Dump a quick summary including shared_state keys of interest
+    # Dump a quick summary including shared_state keys to illustrate what persisted.
     print("\nCheckpoint summary:")
     for cp in sorted(all_checkpoints, key=lambda c: c.timestamp):
         msg_count = sum(len(v) for v in cp.messages.values())
@@ -188,16 +236,16 @@ async def main():
             f"shared_state: original_input='{orig}', upper_output='{upper}'"
         )
 
-    # Find the checkpoint with DLROW OLLEH
-    # This will have us resume at the third (last) executor (node)
+    # Locate the checkpoint whose recorded message data equals the reversed uppercase string.
+    # Resuming from that point will execute only the agent stage and the finalizer.
     checkpoint_id = await find_checkpoint_with_message(checkpoint_storage, workflow_id, "DLROW OLLEH")
     if not checkpoint_id:
         print("Could not find checkpoint with 'DLROW OLLEH'!")
         return
 
-    # The previous workflow can also be used.
-    # Showing that the workflow can run from a previous checkpoint,
-    # when checkpointing is not enabled for the particular instance.
+    # You can reuse the same workflow graph definition and resume from a prior checkpoint.
+    # This second workflow instance does not enable checkpointing to show that resumption
+    # reads from stored state but need not write new checkpoints.
     new_workflow = (
         WorkflowBuilder(max_iterations=5)
         .add_edge(upper_case_executor, reverse_text_executor)

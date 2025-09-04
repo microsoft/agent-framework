@@ -18,7 +18,7 @@ from agent_framework_workflow import (
 )
 
 """
-Sub‑Workflows with Request Interception
+Sample: Sub-Workflows with Request Interception
 
 This sample shows how to:
 1. Create workflows that execute other workflows as sub-workflows

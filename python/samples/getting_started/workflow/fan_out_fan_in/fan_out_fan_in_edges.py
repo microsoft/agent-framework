@@ -4,36 +4,42 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
-from agent_framework import ChatMessage, ChatRole
-from agent_framework.azure import AzureChatClient
+from agent_framework import ChatMessage, ChatRole  # Core chat primitives to build LLM requests
+from agent_framework.azure import AzureChatClient  # Client wrapper for Azure OpenAI chat models
 from agent_framework.workflow import (
-    AgentExecutor,
-    AgentExecutorRequest,
-    AgentExecutorResponse,
-    AgentRunEvent,
-    Executor,
-    WorkflowBuilder,
-    WorkflowCompletedEvent,
-    WorkflowContext,
-    handler,
+    AgentExecutor,  # Wraps an LLM agent for use inside a workflow
+    AgentExecutorRequest,  # The message bundle sent to an AgentExecutor
+    AgentExecutorResponse,  # The structured result returned by an AgentExecutor
+    AgentRunEvent,  # Tracing event for agent execution steps
+    Executor,  # Base class for custom Python executors
+    WorkflowBuilder,  # Fluent builder for wiring the workflow graph
+    WorkflowCompletedEvent,  # Terminal event carrying the final result
+    WorkflowContext,  # Per run context and event bus
+    handler,  # Decorator to mark an Executor method as invokable
 )
-from azure.identity import AzureCliCredential
+from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 
 """
-Concurrent (Fan-out/Fan-in) with Agents
+Sample: Concurrent fan out and fan in with three domain agents
 
-What it does:
-- Fan-out: dispatch the same prompt to multiple domain agents (research, marketing, legal).
-- Fan-in: aggregate their responses into one consolidated output.
+A dispatcher fans out the same user prompt to research, marketing, and legal AgentExecutor nodes.
+An aggregator then fans in their responses and produces a single consolidated report.
+
+Purpose:
+Show how to construct a parallel branch pattern in workflows. Demonstrate:
+- Fan out by targeting multiple AgentExecutor nodes from one dispatcher.
+- Fan in by collecting a list of AgentExecutorResponse objects and reducing them to a single result.
+- Simple tracing using AgentRunEvent to observe execution order and progress.
 
 Prerequisites:
-- Azure AI/ Azure OpenAI for `AzureChatClient` agents.
-- Authentication via `azure-identity` — uses `AzureCliCredential()` (run `az login`).
+- Familiarity with WorkflowBuilder, executors, edges, events, and streaming runs.
+- Azure OpenAI access configured for AzureChatClient. Log in with Azure CLI and set any required environment variables.
+- Comfort reading AgentExecutorResponse.agent_run_response.text for assistant output aggregation.
 """
 
 
 class DispatchToExperts(Executor):
-    """Dispatches the incoming prompt to all expert agent executors (fan-out)."""
+    """Dispatches the incoming prompt to all expert agent executors for parallel processing (fan out)."""
 
     def __init__(self, expert_ids: list[str], id: str | None = None):
         super().__init__(id)
@@ -42,6 +48,7 @@ class DispatchToExperts(Executor):
     @handler
     async def dispatch(self, prompt: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
         # Wrap the incoming prompt as a user message for each expert and request a response.
+        # Each send_message targets a different AgentExecutor by id so that branches run in parallel.
         initial_message = ChatMessage(ChatRole.USER, text=prompt)
         for expert_id in self._expert_ids:
             await ctx.send_message(
@@ -52,7 +59,7 @@ class DispatchToExperts(Executor):
 
 @dataclass
 class AggregatedInsights:
-    """Structured output from the aggregator."""
+    """Typed container for the aggregator to hold per domain strings before formatting."""
 
     research: str
     marketing: str
@@ -60,7 +67,7 @@ class AggregatedInsights:
 
 
 class AggregateInsights(Executor):
-    """Aggregates expert agent responses into a single consolidated result (fan-in)."""
+    """Aggregates expert agent responses into a single consolidated result (fan in)."""
 
     def __init__(self, expert_ids: list[str], id: str | None = None):
         super().__init__(id)
@@ -71,7 +78,7 @@ class AggregateInsights(Executor):
         # Map responses to text by executor id for a simple, predictable demo.
         by_id: dict[str, str] = {}
         for r in results:
-            # AgentExecutorResponse.agent_run_response.text contains concatenated assistant text
+            # AgentExecutorResponse.agent_run_response.text is the assistant text produced by the agent.
             by_id[r.executor_id] = r.agent_run_response.text
 
         research_text = by_id.get("researcher", "")
@@ -133,22 +140,22 @@ async def main() -> None:
     dispatcher = DispatchToExperts(expert_ids=expert_ids, id="dispatcher")
     aggregator = AggregateInsights(expert_ids=expert_ids, id="aggregator")
 
-    # 2) Build a simple fan-out/fan-in workflow
+    # 2) Build a simple fan out and fan in workflow
     workflow = (
         WorkflowBuilder()
         .set_start_executor(dispatcher)
-        .add_fan_out_edges(dispatcher, [researcher, marketer, legal])
-        .add_fan_in_edges([researcher, marketer, legal], aggregator)
+        .add_fan_out_edges(dispatcher, [researcher, marketer, legal])  # Parallel branches
+        .add_fan_in_edges([researcher, marketer, legal], aggregator)  # Join at the aggregator
         .build()
     )
 
-    # 3) Run with a single prompt
+    # 3) Run with a single prompt and print progress plus the final consolidated output
     completion: WorkflowCompletedEvent | None = None
     async for event in workflow.run_streaming(
         "We are launching a new budget-friendly electric bike for urban commuters."
     ):
         if isinstance(event, AgentRunEvent):
-            # Show which agent ran and what step completed.
+            # Show which agent ran and what step completed for lightweight observability.
             print(event)
         if isinstance(event, WorkflowCompletedEvent):
             completion = event
