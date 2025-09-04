@@ -165,7 +165,7 @@ class AzureOpenAISettings(AFBaseSettings):
         return self
 
 
-class AzureOpenAIConfigBase(OpenAIBase):
+class AzureOpenAIBaseConfig(OpenAIBase):
     """Internal class for configuring a connection to an Azure OpenAI service."""
 
     MODEL_PROVIDER_NAME: ClassVar[str] = "azure_openai"  # type: ignore[reportIncompatibleVariableOverride, misc]

@@ -39,7 +39,7 @@ from ..exceptions import (
 )
 from ..telemetry import use_telemetry
 from ._exceptions import OpenAIContentFilterException
-from ._shared import OpenAIBase, OpenAIConfigBase, OpenAISettings, prepare_function_call_results
+from ._shared import OpenAIBase, OpenAIBaseConfig, OpenAISettings, prepare_function_call_results
 
 __all__ = ["OpenAIChatClient"]
 
@@ -376,7 +376,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
 TOpenAIChatClient = TypeVar("TOpenAIChatClient", bound="OpenAIChatClient")
 
 
-class OpenAIChatClient(OpenAIConfigBase, OpenAIBaseChatClient):
+class OpenAIChatClient(OpenAIBaseConfig, OpenAIBaseChatClient):
     """OpenAI Chat completion class."""
 
     def __init__(

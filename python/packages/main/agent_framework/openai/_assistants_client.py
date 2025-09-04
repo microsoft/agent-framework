@@ -39,7 +39,7 @@ from .._types import (
 )
 from ..exceptions import ServiceInitializationError
 from ..telemetry import use_telemetry
-from ._shared import OpenAIConfigBase, OpenAISettings
+from ._shared import OpenAIBaseConfig, OpenAISettings
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -52,7 +52,7 @@ __all__ = ["OpenAIAssistantsClient"]
 
 @use_telemetry
 @use_tool_calling
-class OpenAIAssistantsClient(OpenAIConfigBase, BaseChatClient):
+class OpenAIAssistantsClient(OpenAIBaseConfig, BaseChatClient):
     """OpenAI Assistants client."""
 
     assistant_id: str | None = Field(default=None)

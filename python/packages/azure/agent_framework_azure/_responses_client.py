@@ -14,7 +14,7 @@ from pydantic import SecretStr, ValidationError
 from pydantic.networks import AnyUrl
 
 from ._shared import (
-    AzureOpenAIConfigBase,
+    AzureOpenAIBaseConfig,
     AzureOpenAISettings,
 )
 
@@ -23,7 +23,7 @@ TAzureResponsesClient = TypeVar("TAzureResponsesClient", bound="AzureResponsesCl
 
 @use_telemetry
 @use_tool_calling
-class AzureResponsesClient(AzureOpenAIConfigBase, OpenAIBaseResponsesClient):
+class AzureResponsesClient(AzureOpenAIBaseConfig, OpenAIBaseResponsesClient):
     """Azure Responses completion class."""
 
     def __init__(
