@@ -41,6 +41,10 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step08_Telemetry/Agent_Step08_Telemetry.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step09_DependencyInjection/Agent_Step09_DependencyInjection.csproj" />
   </Folder>
+  <Folder Name="/Samples/GettingStarted/DeclarativeAgents/">
+    <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_ChatClient/DeclarativeAgent_ChatClient.csproj" />
+    <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_AzureOpenAI/DeclarativeAgent_AzureOpenAI.csproj" />
+  </Folder>
   <Folder Name="/Samples/GettingStarted/Telemetry/">
     <Project Path="samples/GettingStarted/AgentOpenTelemetry/AgentOpenTelemetry.csproj" />
   </Folder>
@@ -187,6 +191,7 @@
     <Project Path="src/Microsoft.Extensions.AI.Agents.Runtime.Abstractions/Microsoft.Extensions.AI.Agents.Runtime.Abstractions.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.Runtime/Microsoft.Extensions.AI.Agents.Runtime.csproj" />
+    <Project Path="src/Microsoft.Extensions.AI.Agents.Yaml/Microsoft.Extensions.AI.Agents.Yaml.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents/Microsoft.Extensions.AI.Agents.csproj" />
   </Folder>
   <Folder Name="/Tests/" />
