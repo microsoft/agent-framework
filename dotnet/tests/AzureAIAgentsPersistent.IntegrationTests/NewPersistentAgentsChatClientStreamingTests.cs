@@ -311,7 +311,7 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
-        INewRunnableChatClient runnableChatClient = client.GetService<INewRunnableChatClient>()!;
+        ILongRunningChatClient runnableChatClient = client.GetService<ILongRunningChatClient>()!;
 
         IAsyncEnumerable<NewChatResponseUpdate> streamingResponse = runnableChatClient.GetStreamingResponseAsync("What time is it?", options).Select(u => (NewChatResponseUpdate)u);
 
@@ -332,7 +332,7 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         // Arrange
         using var client = await CreateChatClientAsync();
 
-        INewRunnableChatClient runnableChatClient = client.GetService<INewRunnableChatClient>()!;
+        ILongRunningChatClient runnableChatClient = client.GetService<ILongRunningChatClient>()!;
 
         // Act
         ChatResponse? response = await runnableChatClient.DeleteRunAsync(new RunId()); // Deletion of runs is not supported

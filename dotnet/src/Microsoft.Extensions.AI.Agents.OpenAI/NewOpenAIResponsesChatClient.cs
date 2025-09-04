@@ -27,7 +27,7 @@ namespace Microsoft.Extensions.AI;
 
 /// <summary>Represents an <see cref="IChatClient"/> for an <see cref="OpenAIResponseClient"/>.</summary>
 [ExcludeFromCodeCoverage]
-internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
+internal sealed class NewOpenAIResponsesChatClient : ILongRunningChatClient
 {
     /// <summary>Type info for serializing and deserializing arbitrary JSON objects.</summary>
     private static readonly JsonTypeInfo s_jsonTypeInfo = AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(object));

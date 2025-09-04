@@ -244,7 +244,7 @@ public sealed class NewPersistentAgentsChatClientTests
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
-        INewRunnableChatClient runnableChatClient = client.GetService<INewRunnableChatClient>()!;
+        ILongRunningChatClient runnableChatClient = client.GetService<ILongRunningChatClient>()!;
 
         NewChatResponse response = (NewChatResponse)await runnableChatClient.GetResponseAsync("What time is it?", options);
 
@@ -268,7 +268,7 @@ public sealed class NewPersistentAgentsChatClientTests
             AwaitRunResult = false
         };
 
-        INewRunnableChatClient runnableChatClient = client.GetService<INewRunnableChatClient>()!;
+        ILongRunningChatClient runnableChatClient = client.GetService<ILongRunningChatClient>()!;
 
         // Act
         ChatResponse? deleteResponse = await runnableChatClient.DeleteRunAsync(new RunId());  // Deletion of runs is not supported

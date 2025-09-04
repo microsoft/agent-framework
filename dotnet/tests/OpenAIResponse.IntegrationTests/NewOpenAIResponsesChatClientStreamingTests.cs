@@ -332,7 +332,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
             AwaitRunResult = false
         };
 
-        INewRunnableChatClient runnableChatClient = this._chatClient.GetService<INewRunnableChatClient>()!;
+        ILongRunningChatClient runnableChatClient = this._chatClient.GetService<ILongRunningChatClient>()!;
 
         IAsyncEnumerable<NewChatResponseUpdate> streamingResponse = runnableChatClient.GetStreamingResponseAsync("What is the capital of France?", options).Select(u => (NewChatResponseUpdate)u);
 
@@ -357,7 +357,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
             AwaitRunResult = false
         };
 
-        INewRunnableChatClient runnableChatClient = this._chatClient.GetService<INewRunnableChatClient>()!;
+        ILongRunningChatClient runnableChatClient = this._chatClient.GetService<ILongRunningChatClient>()!;
 
         IAsyncEnumerable<NewChatResponseUpdate> streamingResponse = runnableChatClient.GetStreamingResponseAsync("What is the capital of France?", options).Select(u => (NewChatResponseUpdate)u);
 

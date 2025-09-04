@@ -252,7 +252,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
             AwaitRunResult = false
         };
 
-        INewRunnableChatClient runnableChatClient = this._chatClient.GetService<INewRunnableChatClient>()!;
+        ILongRunningChatClient runnableChatClient = this._chatClient.GetService<ILongRunningChatClient>()!;
 
         NewChatResponse response = (NewChatResponse)await runnableChatClient.GetResponseAsync("What is the capital of France?", options);
 
@@ -275,7 +275,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
             AwaitRunResult = false
         };
 
-        INewRunnableChatClient runnableChatClient = this._chatClient.GetService<INewRunnableChatClient>()!;
+        ILongRunningChatClient runnableChatClient = this._chatClient.GetService<ILongRunningChatClient>()!;
 
         NewChatResponse response = (NewChatResponse)await runnableChatClient.GetResponseAsync("What is the capital of France?", options);
 

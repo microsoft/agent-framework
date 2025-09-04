@@ -21,7 +21,7 @@ using Microsoft.Shared.Diagnostics;
 namespace Azure.AI.Agents.Persistent
 {
     /// <summary>Represents an <see cref="IChatClient"/> for an Azure.AI.Agents.Persistent <see cref="PersistentAgentsClient"/>.</summary>
-    internal partial class NewPersistentAgentsChatClient : INewRunnableChatClient
+    internal partial class NewPersistentAgentsChatClient : ILongRunningChatClient
     {
         /// <summary>The name of the chat client provider.</summary>
         private const string ProviderName = "azure";
