@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Reflection;
@@ -6,7 +6,7 @@ using Microsoft.Agents.Workflows.Reflection;
 namespace Workflow;
 
 /// <summary>
-/// This sample demonstrates how to create a basic sequential workflow using two executors.
+/// This sample introduces the concepts of executors and edges in a workflow.
 ///
 /// Workflows are built from executors (processing units) connected by edges (data flow paths).
 /// In this example, we create a simple text processing pipeline that:
@@ -16,7 +16,7 @@ namespace Workflow;
 /// The executors are connected sequentially, so data flows from one to the next in order.
 /// For input "Hello, World!", the workflow produces "!DLROW ,OLLEH".
 /// </summary>
-public class Step01a_Sequential(ITestOutputHelper output) : WorkflowSample(output)
+public class WorkflowSharedStates(ITestOutputHelper output) : WorkflowSample(output)
 {
     [Fact]
     public async Task RunAsync()

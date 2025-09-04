@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.Workflows;
 using Microsoft.Extensions.AI;
@@ -7,7 +7,7 @@ using Microsoft.Extensions.AI.Agents;
 namespace Workflow;
 
 /// <summary>
-/// This sample shows how to use AI agents as executors within a workflow.
+/// This sample introduces the use of AI agents as executors within a workflow.
 ///
 /// Instead of simple text processing executors, this workflow uses three translation agents:
 /// 1. French Agent - translates input text to French
@@ -17,7 +17,11 @@ namespace Workflow;
 /// The agents are connected sequentially, creating a translation chain that demonstrates
 /// how AI-powered components can be seamlessly integrated into workflow pipelines.
 /// </summary>
-public class Step02_Agents_In_Workflow(ITestOutputHelper output) : WorkflowSample(output)
+/// <remarks>
+/// Pre-requisites:
+/// - An Azure OpenAI chat completion deployment must be configured.
+/// </remarks>
+public class AgentsInWorkflows(ITestOutputHelper output) : WorkflowSample(output)
 {
     [Fact]
     public async Task RunAsync()
@@ -35,6 +39,9 @@ public class Step02_Agents_In_Workflow(ITestOutputHelper output) : WorkflowSampl
 
         // Execute the workflow
         StreamingRun run = await InProcessExecution.StreamAsync(workflow, new ChatMessage(ChatRole.User, "Hello World!"));
+        // Must send the turn token to trigger the agents.
+        // The agents are wrapped as executors. When they receive messages,
+        // they will cache the messages and only start processing when they receive a TurnToken.
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {

@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -11,7 +11,7 @@ using Microsoft.Shared.Samples;
 namespace Workflow;
 
 /// <summary>
-/// This sample demonstrates multi-selection routing where one executor can trigger multiple downstream executors.
+/// This sample introduces multi-selection routing where one executor can trigger multiple downstream executors.
 ///
 /// Building on the switch-case pattern from Step06a, this workflow adds intelligent multi-path routing
 /// based on email analysis results. Instead of routing to just one executor, the workflow can now
@@ -26,7 +26,13 @@ namespace Workflow;
 /// This pattern is powerful for workflows that need parallel processing based on data characteristics,
 /// such as triggering different analytics pipelines or multiple notification systems.
 /// </summary>
-public class Step06b_Multi_Selection_Edge_Group(ITestOutputHelper output) : WorkflowSample(output)
+/// <remarks>
+/// Pre-requisites:
+/// - Foundational samples must be completed first.
+/// - Shared state is used in this sample to persist email data between executors.
+/// - An Azure OpenAI chat completion deployment that supports structured outputs must be configured.
+/// </remarks>
+public class MultiSelection(ITestOutputHelper output) : WorkflowSample(output)
 {
     private const string EmailStateScope = "EmailState";
     private const int LongEmailThreshold = 100;

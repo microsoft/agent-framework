@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Reflection;
@@ -6,16 +6,17 @@ using Microsoft.Agents.Workflows.Reflection;
 namespace Workflow;
 
 /// <summary>
-/// This sample demonstrates the same sequential workflow as Step01a, but with streaming output.
+/// This sample introduces the concepts of executors and edges in a workflow.
 ///
-/// While Step01a_Sequential waits for the entire workflow to complete before showing results,
-/// this example streams events back to you in real-time as each executor finishes processing.
-/// This is useful for monitoring long-running workflows or providing live feedback to users.
+/// Workflows are built from executors (processing units) connected by edges (data flow paths).
+/// In this example, we create a simple text processing pipeline that:
+/// 1. Takes input text and converts it to uppercase using an UppercaseExecutor
+/// 2. Takes the uppercase text and reverses it using a ReverseTextExecutor
 ///
-/// The workflow logic is identical: uppercase text, then reverse it. The difference is in
-/// how we observe the execution - we see intermediate results as they happen.
+/// The executors are connected sequentially, so data flows from one to the next in order.
+/// For input "Hello, World!", the workflow produces "!DLROW ,OLLEH".
 /// </summary>
-public class Step01b_Sequential_Streaming(ITestOutputHelper output) : WorkflowSample(output)
+public class ExecutorsAndEdges(ITestOutputHelper output) : WorkflowSample(output)
 {
     [Fact]
     public async Task RunAsync()
@@ -29,9 +30,9 @@ public class Step01b_Sequential_Streaming(ITestOutputHelper output) : WorkflowSa
         builder.AddEdge(uppercase, reverse);
         var workflow = builder.Build<string>();
 
-        // Execute the workflow in streaming mode
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, "Hello, World!");
-        await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
+        // Execute the workflow with input data
+        Run run = await InProcessExecution.RunAsync(workflow, "Hello, World!");
+        foreach (WorkflowEvent evt in run.NewEvents)
         {
             if (evt is ExecutorCompleteEvent executorComplete)
             {

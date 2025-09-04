@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Reflection;
@@ -8,7 +8,7 @@ using Microsoft.Extensions.AI.Agents;
 namespace Workflow;
 
 /// <summary>
-/// This sample demonstrates concurrent execution using "fan-out" and "fan-in" patterns.
+/// This sample introduces concurrent execution using "fan-out" and "fan-in" patterns.
 ///
 /// Unlike sequential workflows where executors run one after another, this workflow
 /// runs multiple executors in parallel to process the same input simultaneously.
@@ -21,7 +21,12 @@ namespace Workflow;
 /// This pattern is useful when you want multiple perspectives on the same input,
 /// or when you can break work into independent parallel tasks for better performance.
 /// </summary>
-public class Step03_Concurrent(ITestOutputHelper output) : WorkflowSample(output)
+/// <remarks>
+/// Pre-requisites:
+/// - Foundational samples must be completed first.
+/// - An Azure OpenAI chat completion deployment must be configured.
+/// </remarks>
+public class ConcurrentExecution(ITestOutputHelper output) : WorkflowSample(output)
 {
     [Fact]
     public async Task RunAsync()
