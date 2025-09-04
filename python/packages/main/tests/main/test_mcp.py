@@ -14,7 +14,6 @@ from pydantic import AnyUrl, ValidationError
 from agent_framework import (
     ChatMessage,
     DataContent,
-    MCPSseTools,
     MCPStdioTool,
     MCPStreamableHTTPTool,
     MCPWebsocketTool,
@@ -494,13 +493,6 @@ def test_local_mcp_stdio_tool_init():
     assert tool.name == "test"
     assert tool.command == "echo"
     assert tool.args == ["hello"]
-
-
-def test_local_mcp_sse_tools_init():
-    """Test MCPSseTools initialization."""
-    tool = MCPSseTools(name="test", url="http://localhost:8080")
-    assert tool.name == "test"
-    assert tool.url == "http://localhost:8080"
 
 
 def test_local_mcp_websocket_tool_init():
