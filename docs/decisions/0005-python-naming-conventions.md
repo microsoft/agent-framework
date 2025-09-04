@@ -1,7 +1,7 @@
 ---
-status: proposed
+status: accepted
 contact: eavanvalkenburg
-date: 2025-09-03
+date: 2025-09-04
 deciders: markwallace-microsoft, dmytrostruk, peterychang, ekzhu, sphenry
 consulted: taochenosu, alliscode, moonbox3, johanste
 ---
