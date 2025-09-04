@@ -9,16 +9,16 @@ from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
     AgentThread,
-    ChatClient,
-    ChatClientAgent,
+    ChatAgent,
+    ChatClientProtocol,
     ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    ChatRole,
     FunctionCallContent,
     FunctionResultContent,
     HostedCodeInterpreterTool,
+    Role,
     TextContent,
     UriContent,
     ai_function,
@@ -98,7 +98,7 @@ def test_foundry_chat_client_init_with_client(mock_ai_project_client: MagicMock)
     assert chat_client.agent_id == "existing-agent-id"
     assert chat_client.thread_id == "test-thread-id"
     assert not chat_client._should_delete_agent  # type: ignore
-    assert isinstance(chat_client, ChatClient)
+    assert isinstance(chat_client, ChatClientProtocol)
 
 
 def test_foundry_chat_client_init_auto_create_client(
@@ -252,9 +252,9 @@ async def test_foundry_chat_client_tool_results_without_thread_error_via_public_
 
     # Create messages with tool results but no thread/conversation ID
     messages = [
-        ChatMessage(role=ChatRole.USER, text="Hello"),
+        ChatMessage(role=Role.USER, text="Hello"),
         ChatMessage(
-            role=ChatRole.TOOL, contents=[FunctionResultContent(call_id='["run_123", "call_456"]', result="Result")]
+            role=Role.TOOL, contents=[FunctionResultContent(call_id='["run_123", "call_456"]', result="Result")]
         ),
     ]
 
@@ -283,7 +283,7 @@ async def test_foundry_chat_client_thread_management_through_public_api(mock_ai_
     mock_stream.__aenter__ = AsyncMock(return_value=empty_async_iter())
     mock_stream.__aexit__ = AsyncMock(return_value=None)
 
-    messages = [ChatMessage(role=ChatRole.USER, text="Hello")]
+    messages = [ChatMessage(role=Role.USER, text="Hello")]
 
     # Call without existing thread - should create new one
     response = chat_client.get_streaming_response(messages)
@@ -379,7 +379,7 @@ def test_foundry_chat_client_create_run_options_basic(mock_ai_project_client: Ma
     """Test _create_run_options with basic ChatOptions."""
     chat_client = create_test_foundry_chat_client(mock_ai_project_client)
 
-    messages = [ChatMessage(role=ChatRole.USER, text="Hello")]
+    messages = [ChatMessage(role=Role.USER, text="Hello")]
     chat_options = ChatOptions(max_tokens=100, temperature=0.7)
 
     run_options, tool_results = chat_client._create_run_options(messages, chat_options)  # type: ignore
@@ -392,7 +392,7 @@ def test_foundry_chat_client_create_run_options_no_chat_options(mock_ai_project_
     """Test _create_run_options with no ChatOptions."""
     chat_client = create_test_foundry_chat_client(mock_ai_project_client)
 
-    messages = [ChatMessage(role=ChatRole.USER, text="Hello")]
+    messages = [ChatMessage(role=Role.USER, text="Hello")]
 
     run_options, tool_results = chat_client._create_run_options(messages, None)  # type: ignore
 
@@ -406,7 +406,7 @@ def test_foundry_chat_client_create_run_options_with_image_content(mock_ai_proje
     chat_client = create_test_foundry_chat_client(mock_ai_project_client, agent_id="test-agent")
 
     image_content = UriContent(uri="https://example.com/image.jpg", media_type="image/jpeg")
-    messages = [ChatMessage(role=ChatRole.USER, contents=[image_content])]
+    messages = [ChatMessage(role=Role.USER, contents=[image_content])]
 
     run_options, _ = chat_client._create_run_options(messages, None)  # type: ignore
 
@@ -502,8 +502,8 @@ def test_foundry_chat_client_create_run_options_with_messages(mock_ai_project_cl
 
     # Test with system message (becomes instruction)
     messages = [
-        ChatMessage(role=ChatRole.SYSTEM, text="You are a helpful assistant"),
-        ChatMessage(role=ChatRole.USER, text="Hello"),
+        ChatMessage(role=Role.SYSTEM, text="You are a helpful assistant"),
+        ChatMessage(role=Role.USER, text="Hello"),
     ]
 
     run_options, _ = chat_client._create_run_options(messages, None)  # type: ignore
@@ -517,17 +517,17 @@ def test_foundry_chat_client_create_run_options_with_messages(mock_ai_project_cl
 async def test_foundry_chat_client_inner_get_response(mock_ai_project_client: MagicMock) -> None:
     """Test _inner_get_response method."""
     chat_client = create_test_foundry_chat_client(mock_ai_project_client, agent_id="test-agent")
-    messages = [ChatMessage(role=ChatRole.USER, text="Hello")]
+    messages = [ChatMessage(role=Role.USER, text="Hello")]
     chat_options = ChatOptions()
 
     async def mock_streaming_response():
-        yield ChatResponseUpdate(role=ChatRole.ASSISTANT, text="Hello back")
+        yield ChatResponseUpdate(role=Role.ASSISTANT, text="Hello back")
 
     with (
         patch.object(chat_client, "_inner_get_streaming_response", return_value=mock_streaming_response()),
         patch("agent_framework.ChatResponse.from_chat_response_generator") as mock_from_generator,
     ):
-        mock_response = ChatResponse(role=ChatRole.ASSISTANT, text="Hello back")
+        mock_response = ChatResponse(role=Role.ASSISTANT, text="Hello back")
         mock_from_generator.return_value = mock_response
 
         result = await chat_client._inner_get_response(messages=messages, chat_options=chat_options)  # type: ignore
@@ -667,7 +667,7 @@ def get_weather(
 async def test_foundry_chat_client_get_response() -> None:
     """Test Foundry Chat Client response."""
     async with FoundryChatClient(async_credential=AzureCliCredential()) as foundry_chat_client:
-        assert isinstance(foundry_chat_client, ChatClient)
+        assert isinstance(foundry_chat_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
         messages.append(
@@ -691,7 +691,7 @@ async def test_foundry_chat_client_get_response() -> None:
 async def test_foundry_chat_client_get_response_tools() -> None:
     """Test Foundry Chat Client response with tools."""
     async with FoundryChatClient(async_credential=AzureCliCredential()) as foundry_chat_client:
-        assert isinstance(foundry_chat_client, ChatClient)
+        assert isinstance(foundry_chat_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
         messages.append(ChatMessage(role="user", text="What's the weather like in Seattle?"))
@@ -712,7 +712,7 @@ async def test_foundry_chat_client_get_response_tools() -> None:
 async def test_foundry_chat_client_streaming() -> None:
     """Test Foundry Chat Client streaming response."""
     async with FoundryChatClient(async_credential=AzureCliCredential()) as foundry_chat_client:
-        assert isinstance(foundry_chat_client, ChatClient)
+        assert isinstance(foundry_chat_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
         messages.append(
@@ -742,7 +742,7 @@ async def test_foundry_chat_client_streaming() -> None:
 async def test_foundry_chat_client_streaming_tools() -> None:
     """Test Foundry Chat Client streaming response with tools."""
     async with FoundryChatClient(async_credential=AzureCliCredential()) as foundry_chat_client:
-        assert isinstance(foundry_chat_client, ChatClient)
+        assert isinstance(foundry_chat_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
         messages.append(ChatMessage(role="user", text="What's the weather like in Seattle?"))
@@ -766,8 +766,8 @@ async def test_foundry_chat_client_streaming_tools() -> None:
 
 @skip_if_foundry_integration_tests_disabled
 async def test_foundry_chat_client_agent_basic_run() -> None:
-    """Test ChatClientAgent basic run functionality with FoundryChatClient."""
-    async with ChatClientAgent(
+    """Test ChatAgent basic run functionality with FoundryChatClient."""
+    async with ChatAgent(
         chat_client=FoundryChatClient(async_credential=AzureCliCredential()),
     ) as agent:
         # Run a simple query
@@ -782,13 +782,13 @@ async def test_foundry_chat_client_agent_basic_run() -> None:
 
 @skip_if_foundry_integration_tests_disabled
 async def test_foundry_chat_client_agent_basic_run_streaming() -> None:
-    """Test ChatClientAgent basic streaming functionality with FoundryChatClient."""
-    async with ChatClientAgent(
+    """Test ChatAgent basic streaming functionality with FoundryChatClient."""
+    async with ChatAgent(
         chat_client=FoundryChatClient(async_credential=AzureCliCredential()),
     ) as agent:
         # Run streaming query
         full_message: str = ""
-        async for chunk in agent.run_streaming("Please respond with exactly: 'This is a streaming response test.'"):
+        async for chunk in agent.run_stream("Please respond with exactly: 'This is a streaming response test.'"):
             assert chunk is not None
             assert isinstance(chunk, AgentRunResponseUpdate)
             if chunk.text:
@@ -801,8 +801,8 @@ async def test_foundry_chat_client_agent_basic_run_streaming() -> None:
 
 @skip_if_foundry_integration_tests_disabled
 async def test_foundry_chat_client_agent_thread_persistence() -> None:
-    """Test ChatClientAgent thread persistence across runs with FoundryChatClient."""
-    async with ChatClientAgent(
+    """Test ChatAgent thread persistence across runs with FoundryChatClient."""
+    async with ChatAgent(
         chat_client=FoundryChatClient(async_credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as agent:
@@ -826,8 +826,8 @@ async def test_foundry_chat_client_agent_thread_persistence() -> None:
 
 @skip_if_foundry_integration_tests_disabled
 async def test_foundry_chat_client_agent_existing_thread_id() -> None:
-    """Test ChatClientAgent existing thread ID functionality with FoundryChatClient."""
-    async with ChatClientAgent(
+    """Test ChatAgent existing thread ID functionality with FoundryChatClient."""
+    async with ChatAgent(
         chat_client=FoundryChatClient(async_credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as first_agent:
@@ -844,7 +844,7 @@ async def test_foundry_chat_client_agent_existing_thread_id() -> None:
         assert existing_thread_id is not None
 
     # Now continue with the same thread ID in a new agent instance
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=FoundryChatClient(thread_id=existing_thread_id, async_credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as second_agent:
@@ -863,9 +863,9 @@ async def test_foundry_chat_client_agent_existing_thread_id() -> None:
 
 @skip_if_foundry_integration_tests_disabled
 async def test_foundry_chat_client_agent_code_interpreter():
-    """Test ChatClientAgent with code interpreter through FoundryChatClient."""
+    """Test ChatAgent with code interpreter through FoundryChatClient."""
 
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=FoundryChatClient(async_credential=AzureCliCredential()),
         instructions="You are a helpful assistant that can write and execute Python code.",
         tools=[HostedCodeInterpreterTool()],
@@ -883,7 +883,7 @@ async def test_foundry_chat_client_agent_code_interpreter():
 @skip_if_foundry_integration_tests_disabled
 async def test_foundry_chat_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with FoundryChatClient."""
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=FoundryChatClient(async_credential=AzureCliCredential()),
         instructions="You are a helpful assistant that uses available tools.",
         tools=[get_weather],
@@ -918,7 +918,7 @@ async def test_foundry_chat_client_run_level_tool_isolation():
         call_count += 1
         return f"The weather in {location} is sunny and 25°C."
 
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=FoundryChatClient(async_credential=AzureCliCredential()),
         instructions="You are a helpful assistant.",
     ) as agent:

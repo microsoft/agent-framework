@@ -18,8 +18,8 @@ from ._pydantic import AFBaseSettings
 if TYPE_CHECKING:  # pragma: no cover
     from opentelemetry.util._decorator import _AgnosticContextManager  # type: ignore[reportPrivateUsage]
 
-    from ._agents import AIAgent, ChatClientAgent
-    from ._clients import ChatClientBase
+    from ._agents import AgentProtocol, ChatAgent
+    from ._clients import BaseChatClient
     from ._threads import AgentThread
     from ._tools import AIFunction
     from ._types import (
@@ -31,8 +31,8 @@ if TYPE_CHECKING:  # pragma: no cover
         ChatResponseUpdate,
     )
 
-TChatClientBase = TypeVar("TChatClientBase", bound="ChatClientBase")
-TChatClientAgent = TypeVar("TChatClientAgent", bound="ChatClientAgent")
+TBaseChatClient = TypeVar("TBaseChatClient", bound="BaseChatClient")
+TChatClientAgent = TypeVar("TChatClientAgent", bound="ChatAgent")
 
 tracer = get_tracer("agent_framework")
 logger = get_logger()
@@ -269,7 +269,7 @@ def _set_error(span: Span, error: Exception) -> None:
     span.set_status(StatusCode.ERROR, repr(error))
 
 
-# region ChatClient
+# region ChatClientProtocol
 
 
 def _trace_chat_get_response(
@@ -283,7 +283,7 @@ def _trace_chat_get_response(
 
     @functools.wraps(completion_func)
     async def wrap_inner_get_response(
-        self: "ChatClientBase",
+        self: "BaseChatClient",
         *,
         messages: MutableSequence["ChatMessage"],
         chat_options: "ChatOptions",
@@ -334,7 +334,7 @@ def _trace_chat_get_streaming_response(
 
     @functools.wraps(completion_func)
     async def wrap_inner_get_streaming_response(
-        self: "ChatClientBase", *, messages: MutableSequence["ChatMessage"], chat_options: "ChatOptions", **kwargs: Any
+        self: "BaseChatClient", *, messages: MutableSequence["ChatMessage"], chat_options: "ChatOptions", **kwargs: Any
     ) -> AsyncIterable["ChatResponseUpdate"]:
         if not MODEL_DIAGNOSTICS_SETTINGS.ENABLED:
             # If model diagnostics are not enabled, just return the completion
@@ -375,11 +375,11 @@ def _trace_chat_get_streaming_response(
     return wrap_inner_get_streaming_response
 
 
-def use_telemetry(cls: type[TChatClientBase]) -> type[TChatClientBase]:
+def use_telemetry(cls: type[TBaseChatClient]) -> type[TBaseChatClient]:
     """Class decorator that enables telemetry for a chat client.
 
     Remarks:
-        This only works on classes that derive from ChatClientBase
+        This only works on classes that derive from BaseChatClient
         and the _inner_get_response
         and _inner_get_streaming_response methods.
         It also relies on the presence of the MODEL_PROVIDER_NAME class variable.
@@ -520,7 +520,7 @@ def _trace_agent_run(
 
     @functools.wraps(run_func)
     async def wrap_run(
-        self: "ChatClientAgent",
+        self: "ChatAgent",
         messages: "str | ChatMessage | list[str] | list[ChatMessage] | None" = None,
         *,
         thread: "AgentThread | None" = None,
@@ -560,7 +560,7 @@ def _trace_agent_run(
     return wrap_run
 
 
-def _trace_agent_run_streaming(
+def _trace_agent_run_stream(
     run_func: Callable[..., AsyncIterable["AgentRunResponseUpdate"]],
 ) -> Callable[..., AsyncIterable["AgentRunResponseUpdate"]]:
     """Decorator to trace streaming agent run activities.
@@ -570,8 +570,8 @@ def _trace_agent_run_streaming(
     """
 
     @functools.wraps(run_func)
-    async def wrap_run_streaming(
-        self: "ChatClientAgent",
+    async def wrap_run_stream(
+        self: "ChatAgent",
         messages: "str | ChatMessage | list[str] | list[ChatMessage] | None" = None,
         *,
         thread: "AgentThread | None" = None,
@@ -610,23 +610,23 @@ def _trace_agent_run_streaming(
                 raise
 
     # Mark the wrapper decorator as a streaming agent run decorator
-    wrap_run_streaming.__model_diagnostics_streaming_agent_run__ = True  # type: ignore
-    return wrap_run_streaming
+    wrap_run_stream.__model_diagnostics_streaming_agent_run__ = True  # type: ignore
+    return wrap_run_stream
 
 
 def use_agent_telemetry(cls: type[TChatClientAgent]) -> type[TChatClientAgent]:
     """Class decorator that enables telemetry for an agent."""
     if run := getattr(cls, "run", None):
         cls.run = _trace_agent_run(run)  # type: ignore
-    if run_streaming := getattr(cls, "run_streaming", None):
-        cls.run_streaming = _trace_agent_run_streaming(run_streaming)  # type: ignore
+    if run_stream := getattr(cls, "run_stream", None):
+        cls.run_stream = _trace_agent_run_stream(run_stream)  # type: ignore
     return cls
 
 
 def _get_agent_run_span(
     *,
     operation_name: str,
-    agent: "AIAgent",
+    agent: "AgentProtocol",
     system: str,
     thread: "AgentThread | None",
     **kwargs: Any,

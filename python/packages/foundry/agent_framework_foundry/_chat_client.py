@@ -7,19 +7,19 @@ from collections.abc import AsyncIterable, MutableMapping, MutableSequence
 from typing import Any, ClassVar, TypeVar
 
 from agent_framework import (
-    AIContents,
     AIFunction,
-    ChatClientBase,
+    BaseChatClient,
     ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    ChatRole,
     ChatToolMode,
+    Contents,
     DataContent,
     FunctionCallContent,
     FunctionResultContent,
     HostedCodeInterpreterTool,
+    Role,
     TextContent,
     UriContent,
     UsageContent,
@@ -98,7 +98,7 @@ TFoundryChatClient = TypeVar("TFoundryChatClient", bound="FoundryChatClient")
 
 @use_telemetry
 @use_tool_calling
-class FoundryChatClient(ChatClientBase):
+class FoundryChatClient(BaseChatClient):
     """Azure AI Foundry Chat client."""
 
     MODEL_PROVIDER_NAME: ClassVar[str] = "azure_ai_foundry"  # type: ignore[reportIncompatibleVariableOverride, misc]
@@ -385,12 +385,12 @@ class FoundryChatClient(ChatClientBase):
                     message_id=response_id,
                     raw_representation=event_data,
                     response_id=response_id,
-                    role=ChatRole.ASSISTANT,
+                    role=Role.ASSISTANT,
                 )
             elif event_type == AgentStreamEvent.THREAD_RUN_STEP_CREATED and isinstance(event_data, RunStep):
                 response_id = event_data.run_id
             elif event_type == AgentStreamEvent.THREAD_MESSAGE_DELTA and isinstance(event_data, MessageDeltaChunk):
-                role = ChatRole.USER if event_data.delta.role == MessageRole.USER else ChatRole.ASSISTANT
+                role = Role.USER if event_data.delta.role == MessageRole.USER else Role.ASSISTANT
                 yield ChatResponseUpdate(
                     role=role,
                     text=event_data.text,
@@ -407,7 +407,7 @@ class FoundryChatClient(ChatClientBase):
                 contents = self._create_function_call_contents(event_data, response_id)
                 if contents:
                     yield ChatResponseUpdate(
-                        role=ChatRole.ASSISTANT,
+                        role=Role.ASSISTANT,
                         contents=contents,
                         conversation_id=thread_id,
                         message_id=response_id,
@@ -427,7 +427,7 @@ class FoundryChatClient(ChatClientBase):
                     )
                 )
                 yield ChatResponseUpdate(
-                    role=ChatRole.ASSISTANT,
+                    role=Role.ASSISTANT,
                     contents=[usage_content],
                     conversation_id=thread_id,
                     message_id=response_id,
@@ -447,12 +447,12 @@ class FoundryChatClient(ChatClientBase):
                     message_id=response_id,
                     raw_representation=event_data,  # type: ignore
                     response_id=response_id,
-                    role=ChatRole.ASSISTANT,
+                    role=Role.ASSISTANT,
                 )
 
-    def _create_function_call_contents(self, event_data: ThreadRun, response_id: str | None) -> list[AIContents]:
+    def _create_function_call_contents(self, event_data: ThreadRun, response_id: str | None) -> list[Contents]:
         """Create function call contents from a tool action event."""
-        contents: list[AIContents] = []
+        contents: list[Contents] = []
 
         if isinstance(event_data.required_action, SubmitToolOutputsAction):
             for tool_call in event_data.required_action.submit_tool_outputs.tool_calls:
@@ -563,7 +563,7 @@ class FoundryChatClient(ChatClientBase):
                     additional_messages = []
                 additional_messages.append(
                     ThreadMessageOptions(
-                        role=MessageRole.AGENT if chat_message.role == ChatRole.ASSISTANT else MessageRole.USER,
+                        role=MessageRole.AGENT if chat_message.role == Role.ASSISTANT else MessageRole.USER,
                         content=message_contents,
                     )
                 )

@@ -12,13 +12,13 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar, Union, get_args, get_or
 if TYPE_CHECKING:
     from ._workflow import Workflow
 
-from agent_framework import AgentRunResponse, AgentRunResponseUpdate, AgentThread, AIAgent, ChatMessage
+from agent_framework import AgentProtocol, AgentRunResponse, AgentRunResponseUpdate, AgentThread, ChatMessage
 from agent_framework._pydantic import AFBaseModel
 from pydantic import Field
 
 from ._events import (
     AgentRunEvent,
-    AgentRunStreamingEvent,
+    AgentRunUpdateEvent,
     ExecutorCompletedEvent,
     ExecutorInvokeEvent,
     RequestInfoEvent,
@@ -39,7 +39,7 @@ class Executor(AFBaseModel):
         min_length=1,
         description="Unique identifier for the executor",
     )
-    type: str = Field(default="", description="The type of executor, corresponding to the class name")
+    type_: str = Field(default="", alias="type", description="The type of executor, corresponding to the class name")
 
     def __init__(self, id: str | None = None, **kwargs: Any) -> None:
         """Initialize the executor with a unique identifier.
@@ -52,13 +52,14 @@ class Executor(AFBaseModel):
         executor_id = f"{self.__class__.__name__}/{uuid.uuid4()}" if id is None else id
 
         kwargs.update({"id": executor_id})
-        if "type" not in kwargs:
-            kwargs["type"] = self.__class__.__name__
+        if "type" not in kwargs and "type_" not in kwargs:
+            kwargs["type_"] = self.__class__.__name__
 
         super().__init__(**kwargs)
 
         self._handlers: dict[type, Callable[[Any, WorkflowContext[Any]], Any]] = {}
         self._request_interceptors: dict[type | str, list[dict[str, Any]]] = {}
+        self._instance_handler_specs: list[dict[str, Any]] = []
         self._discover_handlers()
 
         if not self._handlers and not self._request_interceptors:
@@ -253,6 +254,45 @@ class Executor(AFBaseModel):
             True if the executor can handle the message type, False otherwise.
         """
         return any(is_instance_of(message, message_type) for message_type in self._handlers)
+
+    def register_instance_handler(
+        self,
+        name: str,
+        func: Callable[[Any, WorkflowContext[Any]], Awaitable[Any]],
+        message_type: type,
+        ctx_annotation: Any,
+        output_types: list[type],
+    ) -> None:
+        """Register a handler at instance level.
+
+        Args:
+            name: Name of the handler function for error reporting
+            func: The async handler function to register
+            message_type: Type of message this handler processes
+            ctx_annotation: The WorkflowContext[T] annotation from the function
+            output_types: List of output types inferred from ctx_annotation
+        """
+        if message_type in self._handlers:
+            raise ValueError(f"Handler for type {message_type} already registered in {self.__class__.__name__}")
+
+        self._handlers[message_type] = func
+        self._instance_handler_specs.append({
+            "name": name,
+            "message_type": message_type,
+            "ctx_annotation": ctx_annotation,
+            "output_types": output_types,
+        })
+
+    def can_handle_type(self, message_type: type[Any]) -> bool:
+        """Check if the executor can handle a given message type.
+
+        Args:
+            message_type: The message type to check.
+
+        Returns:
+            True if the executor can handle the message type, False otherwise.
+        """
+        return message_type in self._handlers
 
 
 # endregion: Executor
@@ -749,7 +789,7 @@ class AgentExecutor(Executor):
 
     def __init__(
         self,
-        agent: AIAgent,
+        agent: AgentProtocol,
         *,
         agent_thread: AgentThread | None = None,
         streaming: bool = False,
@@ -778,12 +818,12 @@ class AgentExecutor(Executor):
         if request.should_respond:
             if self._streaming:
                 updates: list[AgentRunResponseUpdate] = []
-                async for update in self._agent.run_streaming(
+                async for update in self._agent.run_stream(
                     self._cache,
                     thread=self._agent_thread,
                 ):
                     updates.append(update)
-                    await ctx.add_event(AgentRunStreamingEvent(self.id, update))
+                    await ctx.add_event(AgentRunUpdateEvent(self.id, update))
                 response = AgentRunResponse.from_agent_run_response_updates(updates)
             else:
                 response = await self._agent.run(
@@ -854,7 +894,7 @@ class WorkflowExecutor(Executor):
 
         try:
             # Run the sub-workflow and collect all events
-            events = [event async for event in self.workflow.run_streaming(input_data)]
+            events = [event async for event in self.workflow.run_stream(input_data)]
 
             # Count requests and initialize response tracking
             request_count = 0

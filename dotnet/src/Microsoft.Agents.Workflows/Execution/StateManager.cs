@@ -140,19 +140,19 @@ internal class StateManager
 
     public async ValueTask PublishUpdatesAsync(IStepTracer? tracer)
     {
-        Dictionary<ScopeId, Dictionary<string, List<StateUpdate>>> updatesByScope = new();
+        Dictionary<ScopeId, Dictionary<string, List<StateUpdate>>> updatesByScope = [];
 
         // Aggregate the updates for each scope
         foreach (UpdateKey key in this._queuedUpdates.Keys)
         {
             if (!updatesByScope.TryGetValue(key.ScopeId, out Dictionary<string, List<StateUpdate>>? scopeUpdates))
             {
-                updatesByScope[key.ScopeId] = scopeUpdates = new();
+                updatesByScope[key.ScopeId] = scopeUpdates = [];
             }
 
             if (!scopeUpdates.TryGetValue(key.Key, out List<StateUpdate>? stateUpdates))
             {
-                scopeUpdates[key.Key] = stateUpdates = new();
+                scopeUpdates[key.Key] = stateUpdates = [];
             }
 
             stateUpdates.Add(this._queuedUpdates[key]);

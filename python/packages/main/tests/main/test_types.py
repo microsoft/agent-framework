@@ -9,32 +9,30 @@ from pytest import fixture, mark, raises
 from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
-    AIAnnotation,
-    AIContent,
-    AIContents,
     AIFunction,
-    AITool,
-    AnnotatedRegion,
-    ChatFinishReason,
+    BaseContent,
     ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    ChatRole,
     ChatToolMode,
     CitationAnnotation,
+    Contents,
     DataContent,
     ErrorContent,
+    FinishReason,
     FunctionCallContent,
     FunctionResultContent,
     GeneratedEmbeddings,
     HostedFileContent,
     HostedVectorStoreContent,
+    Role,
     SpeechToTextOptions,
     TextContent,
     TextReasoningContent,
     TextSpanRegion,
     TextToSpeechOptions,
+    ToolProtocol,
     UriContent,
     UsageContent,
     UsageDetails,
@@ -43,8 +41,8 @@ from agent_framework import (
 
 
 @fixture
-def ai_tool() -> AITool:
-    """Returns a generic AITool."""
+def ai_tool() -> ToolProtocol:
+    """Returns a generic ToolProtocol."""
 
     class GenericTool(BaseModel):
         name: str
@@ -61,8 +59,8 @@ def ai_tool() -> AITool:
 
 
 @fixture
-def ai_function_tool() -> AITool:
-    """Returns a executable AITool."""
+def ai_function_tool() -> ToolProtocol:
+    """Returns a executable ToolProtocol."""
 
     @ai_function
     def simple_function(x: int, y: int) -> int:
@@ -76,7 +74,7 @@ def ai_function_tool() -> AITool:
 
 
 def test_text_content_positional():
-    """Test the TextContent class to ensure it initializes correctly and inherits from AIContent."""
+    """Test the TextContent class to ensure it initializes correctly and inherits from BaseContent."""
     # Create an instance of TextContent
     content = TextContent("Hello, world!", raw_representation="Hello, world!", additional_properties={"version": 1})
 
@@ -85,14 +83,14 @@ def test_text_content_positional():
     assert content.text == "Hello, world!"
     assert content.raw_representation == "Hello, world!"
     assert content.additional_properties["version"] == 1
-    # Ensure the instance is of type AIContent
-    assert isinstance(content, AIContent)
+    # Ensure the instance is of type BaseContent
+    assert isinstance(content, BaseContent)
     with raises(ValidationError):
         content.type = "ai"
 
 
 def test_text_content_keyword():
-    """Test the TextContent class to ensure it initializes correctly and inherits from AIContent."""
+    """Test the TextContent class to ensure it initializes correctly and inherits from BaseContent."""
     # Create an instance of TextContent
     content = TextContent(
         text="Hello, world!", raw_representation="Hello, world!", additional_properties={"version": 1}
@@ -103,8 +101,8 @@ def test_text_content_keyword():
     assert content.text == "Hello, world!"
     assert content.raw_representation == "Hello, world!"
     assert content.additional_properties["version"] == 1
-    # Ensure the instance is of type AIContent
-    assert isinstance(content, AIContent)
+    # Ensure the instance is of type BaseContent
+    assert isinstance(content, BaseContent)
     with raises(ValidationError):
         content.type = "ai"
 
@@ -124,8 +122,8 @@ def test_data_content_bytes():
     assert content.has_top_level_media_type("image") is False
     assert content.additional_properties["version"] == 1
 
-    # Ensure the instance is of type AIContent
-    assert isinstance(content, AIContent)
+    # Ensure the instance is of type BaseContent
+    assert isinstance(content, BaseContent)
 
 
 def test_data_content_uri():
@@ -140,8 +138,8 @@ def test_data_content_uri():
     assert content.has_top_level_media_type("application") is False
     assert content.additional_properties["version"] == 1
 
-    # Ensure the instance is of type AIContent
-    assert isinstance(content, AIContent)
+    # Ensure the instance is of type BaseContent
+    assert isinstance(content, BaseContent)
 
 
 def test_data_content_invalid():
@@ -185,8 +183,8 @@ def test_uri_content():
     assert content.has_top_level_media_type("application") is False
     assert content.additional_properties["version"] == 1
 
-    # Ensure the instance is of type AIContent
-    assert isinstance(content, AIContent)
+    # Ensure the instance is of type BaseContent
+    assert isinstance(content, BaseContent)
 
 
 # region: HostedFileContent
@@ -201,8 +199,8 @@ def test_hosted_file_content():
     assert content.file_id == "file-123"
     assert content.additional_properties["version"] == 1
 
-    # Ensure the instance is of type AIContent
-    assert isinstance(content, AIContent)
+    # Ensure the instance is of type BaseContent
+    assert isinstance(content, BaseContent)
 
 
 def test_hosted_file_content_minimal():
@@ -215,8 +213,8 @@ def test_hosted_file_content_minimal():
     assert content.additional_properties is None
     assert content.raw_representation is None
 
-    # Ensure the instance is of type AIContent
-    assert isinstance(content, AIContent)
+    # Ensure the instance is of type BaseContent
+    assert isinstance(content, BaseContent)
 
 
 # region: HostedVectorStoreContent
@@ -231,9 +229,9 @@ def test_hosted_vector_store_content():
     assert content.vector_store_id == "vs-789"
     assert content.additional_properties["version"] == 1
 
-    # Ensure the instance is of type AIContent
+    # Ensure the instance is of type BaseContent
     assert isinstance(content, HostedVectorStoreContent)
-    assert isinstance(content, AIContent)
+    assert isinstance(content, BaseContent)
 
 
 def test_hosted_vector_store_content_minimal():
@@ -246,9 +244,9 @@ def test_hosted_vector_store_content_minimal():
     assert content.additional_properties is None
     assert content.raw_representation is None
 
-    # Ensure the instance is of type AIContent
+    # Ensure the instance is of type BaseContent
     assert isinstance(content, HostedVectorStoreContent)
-    assert isinstance(content, AIContent)
+    assert isinstance(content, BaseContent)
 
 
 # region FunctionCallContent
@@ -263,8 +261,8 @@ def test_function_call_content():
     assert content.name == "example_function"
     assert content.arguments == {"param1": "value1"}
 
-    # Ensure the instance is of type AIContent
-    assert isinstance(content, AIContent)
+    # Ensure the instance is of type BaseContent
+    assert isinstance(content, BaseContent)
 
 
 def test_function_call_content_parse_arguments():
@@ -315,8 +313,8 @@ def test_function_result_content():
     assert content.type == "function_result"
     assert content.result == {"param1": "value1"}
 
-    # Ensure the instance is of type AIContent
-    assert isinstance(content, AIContent)
+    # Ensure the instance is of type BaseContent
+    assert isinstance(content, BaseContent)
 
 
 # region UsageDetails
@@ -381,7 +379,7 @@ def test_usage_details_add_with_none_and_type_errors():
         u += 42  # type: ignore[arg-type]
 
 
-# region AIContent Serialization
+# region BaseContent Serialization
 
 
 @mark.parametrize(
@@ -396,14 +394,14 @@ def test_usage_details_add_with_none_and_type_errors():
         (HostedVectorStoreContent, {"vector_store_id": "vs-789"}),
     ],
 )
-def test_ai_content_serialization(content_type: type[AIContent], args: dict):
+def test_ai_content_serialization(content_type: type[BaseContent], args: dict):
     content = content_type(**args)
     serialized = content.model_dump()
     deserialized = content_type.model_validate(serialized)
     assert deserialized == content
 
     class TestModel(BaseModel):
-        content: AIContents
+        content: Contents
 
     test_item = TestModel.model_validate({"content": serialized})
 
@@ -419,14 +417,14 @@ def test_chat_message_text():
     message = ChatMessage(role="user", text="Hello, how are you?")
 
     # Check the type and content
-    assert message.role == ChatRole.USER
+    assert message.role == Role.USER
     assert len(message.contents) == 1
     assert isinstance(message.contents[0], TextContent)
     assert message.contents[0].text == "Hello, how are you?"
     assert message.text == "Hello, how are you?"
 
-    # Ensure the instance is of type AIContent
-    assert isinstance(message.contents[0], AIContent)
+    # Ensure the instance is of type BaseContent
+    assert isinstance(message.contents[0], BaseContent)
 
 
 def test_chat_message_contents():
@@ -437,7 +435,7 @@ def test_chat_message_contents():
     message = ChatMessage(role="user", contents=[content1, content2])
 
     # Check the type and content
-    assert message.role == ChatRole.USER
+    assert message.role == Role.USER
     assert len(message.contents) == 2
     assert isinstance(message.contents[0], TextContent)
     assert isinstance(message.contents[1], TextContent)
@@ -447,8 +445,8 @@ def test_chat_message_contents():
 
 
 def test_chat_message_with_chatrole_instance():
-    m = ChatMessage(role=ChatRole.USER, text="hi")
-    assert m.role == ChatRole.USER
+    m = ChatMessage(role=Role.USER, text="hi")
+    assert m.role == Role.USER
     assert m.text == "hi"
 
 
@@ -464,7 +462,7 @@ def test_chat_response():
     response = ChatResponse(messages=message)
 
     # Check the type and content
-    assert response.messages[0].role == ChatRole.ASSISTANT
+    assert response.messages[0].role == Role.ASSISTANT
     assert response.messages[0].text == "I'm doing well, thank you!"
     assert isinstance(response.messages[0], ChatMessage)
     # __str__ returns text
@@ -484,7 +482,7 @@ def test_chat_response_with_format():
     response = ChatResponse(messages=message)
 
     # Check the type and content
-    assert response.messages[0].role == ChatRole.ASSISTANT
+    assert response.messages[0].role == Role.ASSISTANT
     assert response.messages[0].text == '{"response": "Hello"}'
     assert isinstance(response.messages[0], ChatMessage)
     assert response.text == '{"response": "Hello"}'
@@ -503,7 +501,7 @@ def test_chat_response_with_format_init():
     response = ChatResponse(messages=message, response_format=OutputModel)
 
     # Check the type and content
-    assert response.messages[0].role == ChatRole.ASSISTANT
+    assert response.messages[0].role == Role.ASSISTANT
     assert response.messages[0].text == '{"response": "Hello"}'
     assert isinstance(response.messages[0], ChatMessage)
     assert response.text == '{"response": "Hello"}'
@@ -767,7 +765,7 @@ def test_chat_options_init_with_args(ai_function_tool, ai_tool) -> None:
     assert options.frequency_penalty == 0.0
     assert options.user == "user-123"
     for tool in options.tools:
-        assert isinstance(tool, AITool)
+        assert isinstance(tool, ToolProtocol)
         assert tool.name is not None
         assert tool.description is not None
         if isinstance(tool, AIFunction):
@@ -809,7 +807,7 @@ def test_chat_options_and(ai_function_tool, ai_tool) -> None:
 
 @fixture
 def chat_message() -> ChatMessage:
-    return ChatMessage(role=ChatRole.USER, text="Hello")
+    return ChatMessage(role=Role.USER, text="Hello")
 
 
 @fixture
@@ -824,7 +822,7 @@ def agent_run_response(chat_message: ChatMessage) -> AgentRunResponse:
 
 @fixture
 def agent_run_response_update(text_content: TextContent) -> AgentRunResponseUpdate:
-    return AgentRunResponseUpdate(role=ChatRole.ASSISTANT, contents=[text_content])
+    return AgentRunResponseUpdate(role=Role.ASSISTANT, contents=[text_content])
 
 
 # region AgentRunResponse
@@ -914,18 +912,16 @@ def test_error_content_str():
 
 def test_annotations_models_and_roundtrip():
     span = TextSpanRegion(start_index=0, end_index=5)
-    base_region = AnnotatedRegion()
-    ann: AIAnnotation = AIAnnotation(annotated_regions=[span, base_region])
     cit = CitationAnnotation(title="Doc", url="http://example.com", snippet="Snippet", annotated_regions=[span])
 
     # Attach to content
     content = TextContent(text="hello", additional_properties={"v": 1})
-    content.annotations = [ann, cit]
+    content.annotations = [cit]
 
     dumped = content.model_dump()
     loaded = TextContent.model_validate(dumped)
     assert isinstance(loaded.annotations, list)
-    assert len(loaded.annotations) == 2
+    assert len(loaded.annotations) == 1
     assert isinstance(loaded.annotations[0], dict) is False  # pydantic parsed into models
     # discriminators preserved
     assert any(getattr(a, "type", None) == "citation" for a in loaded.annotations)
@@ -1032,16 +1028,16 @@ def test_generated_embeddings_operations():
     assert g.additional_properties == {}
 
 
-# region ChatRole & ChatFinishReason basics
+# region Role & FinishReason basics
 
 
 def test_chat_role_str_and_repr():
-    assert str(ChatRole.USER) == "user"
-    assert "ChatRole(value=" in repr(ChatRole.USER)
+    assert str(Role.USER) == "user"
+    assert "Role(value=" in repr(Role.USER)
 
 
 def test_chat_finish_reason_constants():
-    assert ChatFinishReason.STOP.value == "stop"
+    assert FinishReason.STOP.value == "stop"
 
 
 def test_response_update_propagates_fields_and_metadata():
@@ -1054,7 +1050,7 @@ def test_response_update_propagates_fields_and_metadata():
         conversation_id="cid",
         ai_model_id="model-x",
         created_at="t0",
-        finish_reason=ChatFinishReason.STOP,
+        finish_reason=FinishReason.STOP,
         additional_properties={"k": "v"},
     )
     resp = ChatResponse.from_chat_response_updates([upd])
@@ -1062,9 +1058,9 @@ def test_response_update_propagates_fields_and_metadata():
     assert resp.created_at == "t0"
     assert resp.conversation_id == "cid"
     assert resp.ai_model_id == "model-x"
-    assert resp.finish_reason == ChatFinishReason.STOP
+    assert resp.finish_reason == FinishReason.STOP
     assert resp.additional_properties and resp.additional_properties["k"] == "v"
-    assert resp.messages[0].role == ChatRole.ASSISTANT
+    assert resp.messages[0].role == Role.ASSISTANT
     assert resp.messages[0].author_name == "bot"
     assert resp.messages[0].message_id == "mid"
 
